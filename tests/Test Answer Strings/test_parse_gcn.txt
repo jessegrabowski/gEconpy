@@ -1,0 +1,1 @@
+block HOUSEHOLD { definitions { u[] = log ( C[] ) - log ( L[] ) ; }; objective { U[] = u[] + beta * E[] [ U[1] ] ; }; controls { C[], L[] ; }; constraints { C[] = w[] * L[] ; }; calibration { beta = 0.99 ; }; };
