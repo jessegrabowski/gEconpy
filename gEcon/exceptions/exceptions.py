@@ -198,6 +198,53 @@ class UnusedParameterError(ValueError):
         super().__init__(message)
 
 
+class InvalidParameterException(ValueError):
+    def __init__(self, variable_name, d_name, canon_param_name, param_name, constraints):
+        message = f'The {canon_param_name} of the {d_name} distribution associated with "{variable_name}" (passed as' \
+                  f'{param_name} is invalid. It should respect the following constraints: {constraints}'
+
+        super().__init__(message)
+
+
+class InvalidMeanException(ValueError):
+    def __init__(self, variable_name, d_name, mean, a, b):
+        message = f'The mean value of the {d_name} distribution associated with "{variable_name}" is invalid. Given ' \
+                  f'bounds [{a}, {b}], the requested mean {mean} is not possible. If you declare moments of a ' \
+                  f'distribution in the GCN file (such as mu, sigma, mean, or sd) along with upper and lower bounds, ' \
+                  f'gEcon.py will always produce a distribution that matches these moments given these bounds. As a ' \
+                  f'result, you cannot, for example, have a mean of 0 with a lower bound of zero.\n' \
+                  f'To avoid this behavior, pass "loc" and "scale" parameters, rather than "mean" and "std"' \
+                  f' parameters. This will produce a truncated distribution centered at "loc" with dispersion "scale",' \
+                  f'but the moments will NOT be as expected.'
+
+        super().__init__(message)
+
+
+class DistributionOverDefinedException(ValueError):
+
+    def __init__(self, variable_name, d_name, parameters):
+        message = f'The {d_name} distribution associated wth {variable_name} is over-defined. Please pass only moment' \
+                  f'conditions (mean, std), or valid {d_name} parameters '
+
+        if len(parameters) > 1:
+            message += ', '.join(parameters[:-1]) + f', and {parameters[-1]}.'
+        else:
+            message += f'{parameters[0]},'
+
+        message += ' (plus an optional location parameter) but not a combination of both.'
+
+        super().__init__(message)
+
+
+class InsufficientDegreesOfFreedomException(ValueError):
+    def __init__(self, variable_name, d_name):
+        message = f'The {d_name} distribution associated with model variable "{variable_name}" has only one parameter,' \
+                  f'and cannot meet two moment conditions. Please only pass either a mean or a std if you wish to match ' \
+                  f'a moment, or use the loc and scale parameters directly.'
+
+        super().__init__(message)
+
+
 class IgnoredCloseMatchWarning(UserWarning):
     pass
 
