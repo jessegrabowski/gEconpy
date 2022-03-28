@@ -1,6 +1,7 @@
-from gEcon.parser import gEcon_parser, parse_equations
-from gEcon.classes.TimeAwareSymbol import TimeAwareSymbol
-from gEcon.classes.utilities import diff_through_time, unpack_keys_and_values, set_equality_equals_zero
+from gEcon.parser import parse_equations
+from gEcon.classes.time_aware_symbol import TimeAwareSymbol
+from gEcon.shared.utilities import diff_through_time, unpack_keys_and_values, set_equality_equals_zero, \
+    expand_subs_for_all_times
 from gEcon.exceptions.exceptions import BlockNotInitializedException, DynamicCalibratingEquationException, \
     OptimizationProblemNotDefinedException, MultipleObjectiveFunctionsException, ControlVariableNotFoundException
 
@@ -19,7 +20,9 @@ class Block:
     TODO: Split components out into their own class/protocol and let them handle their own parsing?
     """
 
-    def __init__(self, name: str, block_dict: dict, solution_hints: Optional[Dict[str, str]] = None,
+    def __init__(self, name: str,
+                 block_dict: Dict[str, str],
+                 solution_hints: Optional[Dict[str, str]] = None,
                  allow_incomplete_initialization: bool = False) -> None:
         """
         :param name: str, the name of the block
@@ -379,6 +382,7 @@ class Block:
                 # x = y will have 2 atoms, x = -y will have 3
                 if len(eq.atoms()) <= 3:
                     sub_dict = sp.solve(eq, x, dict=True)[0]
+                    sub_dict = expand_subs_for_all_times(sub_dict)
                     simplified_system = [eq.subs(sub_dict) for eq in simplified_system]
                     break
 

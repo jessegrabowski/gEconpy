@@ -56,14 +56,21 @@ def parse_options_flags(options: str) -> Optional[Dict[str, bool]]:
     return result
 
 
-def extract_block(text: str, block_name: str) -> Dict[str, str]:
+def extract_special_block(text: str, block_name: str) -> Dict[str, List[str]]:
     """
-    :param text: str, raw text of a model block
-    :param block_name: str, name of the model block
-    :return: dict, a dictionary with the block name as the key and any block contents as the value.
+    Parameters
+    ----------
+    text: str
+        Plaintext representation of a block form a GCN file. Should already be preprocessed by the
+        preprocess_gcn function.
+    block_name: str
+        Name of the block, used as the key in the block dictionary.
 
-    This is the first step of decomposing the model file into a system of SymPy equations. The block name is removed
-    from the text, and the text is converted into a dictionary with key value pair block_name:text.
+    Returns
+    -------
+    block_dict: dict
+        A dictionary with the name as the key and the contents of the block as the values. The contents are split into
+        a list of strings, with each item in the list as a single line from the GCN file. Empty lines are discarded.
     """
     result = {block_name: None}
 
@@ -85,6 +92,7 @@ def extract_block(text: str, block_name: str) -> Dict[str, str]:
         block = [x.strip() for x in block.split(',')]
 
     result[block_name] = block
+
     return result
 
 
@@ -102,9 +110,10 @@ def split_gcn_into_block_dictionary(text: str) -> Dict[str, str]:
     TODO: Add checks that model blocks follow the correct format and fail more helpfully.
     """
     results = dict()
-    for name in [block.name for block in list(SPECIAL_BLOCK_NAMES)]:
+
+    for name in SPECIAL_BLOCK_NAMES:
         name = name.lower()
-        result = extract_block(text, name)
+        result = extract_special_block(text, name)
         results.update(result)
         text = delete_block(text, name)
 

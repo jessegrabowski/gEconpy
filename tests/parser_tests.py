@@ -3,7 +3,10 @@ from gEcon.parser import gEcon_parser, parse_plaintext, parse_equations, file_lo
 import pyparsing
 import sympy as sp
 
-from gEcon.classes.TimeAwareSymbol import TimeAwareSymbol
+from gEcon.classes.time_aware_symbol import TimeAwareSymbol
+from gEcon.parser.parse_distributions import CompositeDistribution
+
+from scipy.stats import norm, invgamma
 
 
 class ParserDistributionCases(unittest.TestCase):
@@ -21,9 +24,9 @@ class ParserDistributionCases(unittest.TestCase):
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(self.model)
 
         self.assertEqual(list(prior_dict.keys()), ['epsilon[]', 'alpha', 'rho', 'gamma', 'sigma_epsilon'])
-        self.assertEqual(list(prior_dict.values()), ['N(0, sigma_epsilon)', 'Beta(mu=0.5, sigma=0.1)',
-                                                     'Beta(mu=0.95, sigma=0.1)', 'HalfNormal(sigma=1)',
-                                                     'Inv_Gamma(mu=0.1, sigma=0.1)'])
+        self.assertEqual(list(prior_dict.values()), ['N(mean=0, sd=sigma_epsilon)', 'Beta(mean=0.5, sd=0.1)',
+                                                     'Beta(mean=0.95, sd=0.04)', 'HalfNormal(sigma=1)',
+                                                     'Inv_Gamma(mean=0.1, sd=0.01)'])
 
 
 class ParserTestCases(unittest.TestCase):
@@ -126,8 +129,8 @@ class ParserTestCases(unittest.TestCase):
                         '''
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
 
-        results = gEcon_parser.extract_block(parser_output, 'options')
-        results.update(gEcon_parser.extract_block(parser_output, 'tryreduce'))
+        results = gEcon_parser.extract_special_block(parser_output, 'options')
+        results.update(gEcon_parser.extract_special_block(parser_output, 'tryreduce'))
 
         self.assertEqual(list(results.keys()), ['options', 'tryreduce'])
         self.assertIsInstance(results['options'], dict)
@@ -331,6 +334,20 @@ class ParserTestCases(unittest.TestCase):
         for i, (component, equations) in enumerate(block_dict.items()):
             block_dict[component] = parse_equations.build_sympy_equations(equations)
             self.assertEqual(block_dict[component][0], answers[i])
+
+    def test_composite_distribution(self):
+        sigma_epsilon = invgamma(a=20)
+        mu_epsilon = norm(loc=1, scale=0.1)
+
+        d = CompositeDistribution(norm, loc=mu_epsilon, scale=sigma_epsilon)
+        self.assertEqual(d.rv_params['loc'].mean(), mu_epsilon.mean())
+        self.assertEqual(d.rv_params['loc'].std(), mu_epsilon.std())
+        self.assertEqual(d.rv_params['scale'].mean(), sigma_epsilon.mean())
+        self.assertEqual(d.rv_params['scale'].std(), sigma_epsilon.std())
+
+        point_dict = {'loc': 0.1, 'scale': 1, 'epsilon': 1}
+        self.assertEqual(d.logpdf(point_dict),
+                         mu_epsilon.logpdf(0.1) + sigma_epsilon.logpdf(1) + norm(loc=0.1, scale=1).logpdf(1))
 
 
 if __name__ == '__main__':

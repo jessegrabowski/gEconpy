@@ -1,7 +1,7 @@
 import re
 from gEcon.parser.constants import EXPECTATION_TOKEN, LAG_TOKEN, LEAD_TOKEN, SS_TOKEN, CALIBRATING_EQ_TOKEN, \
     BLOCK_END_TOKEN, OPERATORS
-from gEcon.exceptions.exceptions import DistributionParsingError
+from gEcon.exceptions.exceptions import DistributionParsingError, MissingParameterValueException
 
 from typing import Tuple, Dict
 
@@ -64,8 +64,8 @@ def extract_distributions(text: str) -> Tuple[str, Dict[str, str]]:
     Strip out all the syntax related to definition of prior distributions over parameters and return the "clean"
     GCN, along with a dictionary of the form parameter:distribution
     Example:
-    >> Input: alpha ~ Beta(mu=0.5, sigma=0.1) = 0.55;
-    >> Output: alpha = 0.55;, {"alpha": "Beta(mu=0.5, sigma=0.1)"}
+    >> Input: alpha ~ Beta(mean=0.5, sd=0.1) = 0.55;
+    >> Output: alpha = 0.55;, {"alpha": "Beta(mean=0.5, sd=0.1)"}
     """
     lines = text.split('\n')
     output = []
@@ -81,10 +81,16 @@ def extract_distributions(text: str) -> Tuple[str, Dict[str, str]]:
                 dist_info = other.strip().replace(';', '')
                 new_line = param_name.strip() + ';'
 
-            # This is a parameter definition.
+            # This is a parameter definition, but it might be missing a default value
             else:
+                # Extract the distribution declaration
                 *dist_info, param_value = other.split('=')
                 dist_info = '='.join(dist_info)
+
+                # This should only happen in the user didn't give a default value
+                if ')' in param_value:
+                    raise MissingParameterValueException(param_name)
+
                 new_line = f'{param_name.strip()} = {param_value.strip()}'
             output.append(new_line)
             prior_dict[param_name.strip()] = dist_info.strip()

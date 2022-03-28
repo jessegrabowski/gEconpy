@@ -1,6 +1,7 @@
 import unittest
-from gEcon.classes.Model import gEconModel
-from gEcon.classes.TimeAwareSymbol import TimeAwareSymbol
+from gEcon.classes.model import gEconModel
+from gEcon.classes.time_aware_symbol import TimeAwareSymbol
+from gEcon.shared.utilities import string_keys_to_sympy
 import sympy as sp
 import numpy as np
 import pandas as pd
@@ -23,15 +24,15 @@ class ModelClassTestsOne(unittest.TestCase):
         result = [block_name for block_name in self.model.blocks.keys()]
         self.assertEqual(block_names, result)
 
-        alpha, theta, beta, delta, tau, rho = sp.symbols(['alpha', 'theta', 'beta', 'delta', 'tau', 'rho'])
-        param_dict = {theta: 0.357, beta: 0.99, delta: 0.02, tau: 2, rho: 0.95}
+        param_dict = {'theta': 0.357, 'beta': 0.99, 'delta': 0.02, 'tau': 2, 'rho': 0.95}
 
         self.assertEqual(all([x in param_dict.keys() for x in self.model.param_dict.keys()]), True)
         self.assertEqual(all([self.model.param_dict[x] == param_dict[x] for x in param_dict.keys()]), True)
-        self.assertEqual(self.model.params_to_calibrate, [alpha])
+        self.assertEqual(self.model.params_to_calibrate, [sp.Symbol('alpha')])
 
     def test_steady_state(self):
-        self.model.steady_state()
+        self.model.steady_state(verbose=False)
+        self.assertEqual(self.model.steady_state_solved, True)
 
         alpha, theta, beta, delta, tau, rho = sp.symbols(['alpha', 'theta', 'beta', 'delta', 'tau', 'rho'])
         K_ss, L_ss, Y_ss, I_ss, C_ss, q_ss, lambda_ss, U_ss, A_ss = [TimeAwareSymbol('K', 0).to_ss(),
@@ -63,15 +64,17 @@ class ModelClassTestsOne(unittest.TestCase):
                                           (1 - answer_dict[L_ss]) ** (1 - theta)) ** (1 - tau) / answer_dict[C_ss]
         answer_dict[q_ss] = answer_dict[lambda_ss]
 
-        for key, value in self.model.steady_state_dict.items():
-            expected_result = answer_dict[key].subs(self.model.param_dict) if not isinstance(answer_dict[key], int) \
+        sympy_sub_dict = string_keys_to_sympy(self.model.param_dict)
+        for key, value in answer_dict.items():
+            expected_result = answer_dict[key].subs(sympy_sub_dict) if not isinstance(answer_dict[key], int) \
                 else answer_dict[key]
 
-            self.assertAlmostEqual(value, expected_result, places=1)
+            self.assertAlmostEqual(self.model.steady_state_dict[key.safe_name], expected_result, places=1)
 
     def test_solve_model(self):
-        self.model.steady_state()
-        self.model.solve_model()
+        self.model.steady_state(verbose=False)
+        self.assertEqual(self.model.steady_state_solved, True)
+        self.model.solve_model(verbose=False)
 
         # Values from R gEcon solution
         P = np.array([[0.950, 0.0000],
@@ -98,7 +101,7 @@ class ModelClassTestsOne(unittest.TestCase):
 
         # TODO: Bug? When the SS value is negative, the sign of the S and R matrix entries are flipped relative to
         #   those of gEcon. This code flips the sign on my values to make the comparison. -- Check IRFs, Check Dynare.
-        ss_df = pd.Series(self.model.steady_state_dict)
+        ss_df = pd.Series(string_keys_to_sympy(self.model.steady_state_dict))
         ss_df.index = list(map(lambda x: x.exit_ss().name, ss_df.index))
         ss_df = ss_df.reindex(self.model.S.index)
         neg_ss_mask = ss_df < 0
@@ -131,17 +134,15 @@ class ModelClassTestsTwo(unittest.TestCase):
         result = [block_name for block_name in self.model.blocks.keys()]
         self.assertEqual(result, block_names)
 
-        alpha, beta, delta, rho_A, sigma_C, sigma_L = sp.symbols(['alpha', 'beta', 'delta', 'rho_A', 'sigma_C',
-                                                                  'sigma_L'])
+        param_dict = {'beta': 0.985, 'delta': 0.025, 'sigma_C': 2, 'sigma_L': 1.5, 'alpha': 0.35, 'rho_A': 0.95}
 
-        param_dict = {beta: 0.985, delta: 0.025, sigma_C: 2, sigma_L: 1.5, alpha: 0.35, rho_A: 0.95}
-
-        self.assertEqual(all([x in param_dict.keys() for x in self.model.param_dict.keys()]), True)
         self.assertEqual(all([self.model.param_dict[x] == param_dict[x] for x in param_dict.keys()]), True)
-        self.assertIsNone(self.model.params_to_calibrate)
+        self.assertEqual(self.model.params_to_calibrate, [])
 
     def test_steady_state(self):
-        self.model.steady_state()
+        self.model.steady_state(verbose=False)
+        self.assertEqual(self.model.steady_state_solved, True)
+
         alpha, beta, delta, rho_A, sigma_C, sigma_L = sp.symbols(['alpha', 'beta', 'delta', 'rho_A', 'sigma_C',
                                                                   'sigma_L'])
         A_ss, C_ss, I_ss, K_ss, L_ss, P_ss, TC_ss, U_ss, Y_ss, lambda_ss, q_ss, r_ss, w_ss = \
@@ -183,14 +184,16 @@ class ModelClassTestsTwo(unittest.TestCase):
 
         answer_dict[TC_ss] = -(answer_dict[r_ss] * answer_dict[K_ss] + answer_dict[w_ss] * answer_dict[L_ss])
 
-        for key, value in self.model.steady_state_dict.items():
+        sympy_results = string_keys_to_sympy(self.model.steady_state_dict)
+        for key, value in sympy_results.items():
             expected_result = answer_dict[key].subs(self.model.param_dict) if not isinstance(answer_dict[key], int) \
                 else answer_dict[key]
             self.assertAlmostEqual(value, expected_result, places=8)
 
     def test_solve_model(self):
-        self.model.steady_state()
-        self.model.solve_model()
+        self.model.steady_state(verbose=False)
+        self.assertEqual(self.model.steady_state_solved, True)
+        self.model.solve_model(verbose=False)
 
         P = np.array([[0.95000000, 0.0000000],
                       [0.08887552, 0.9614003]])
@@ -223,7 +226,8 @@ class ModelClassTestsTwo(unittest.TestCase):
                       [1.0970823]])
 
         index_11 = ['lambda_t', 'q_t', 'r_t', 'w_t', 'C_t', 'I_t', 'L_t', 'P_t', 'TC_t', 'U_t', 'Y_t']
-        ss_df = pd.Series(self.model.steady_state_dict)
+        sympy_results = string_keys_to_sympy(self.model.steady_state_dict)
+        ss_df = pd.Series(sympy_results)
         ss_df.index = list(map(lambda x: x.exit_ss().name, ss_df.index))
         ss_df = ss_df.reindex(self.model.S.index)
         neg_ss_mask = ss_df < 0
@@ -256,10 +260,6 @@ class ModelClassTestsThree(unittest.TestCase):
         result = [block_name for block_name in self.model.blocks.keys()]
         self.assertEqual(result, block_names)
 
-        alpha, beta, delta, rho_A, sigma_C, sigma_L, gamma_I, phi_H = sp.symbols(['alpha', 'beta', 'delta', 'rho_A',
-                                                                                  'sigma_C', 'sigma_L', 'gamma_I',
-                                                                                  'phi_H'])
-        psi_w, eta_w, psi_p, eta_p, rho_preference = sp.symbols(['psi_w', 'eta_w', 'psi_p', 'eta_p', 'rho_preference'])
         rho_technology, gamma_R, gamma_pi, gamma_Y, phi_pi_obj, phi_pi, rho_pi_dot = sp.symbols(['rho_technology',
                                                                                                  'gamma_R',
                                                                                                  'gamma_pi',
@@ -268,16 +268,17 @@ class ModelClassTestsThree(unittest.TestCase):
                                                                                                  'phi_pi',
                                                                                                  'rho_pi_dot'])
 
-        param_dict = {delta: 0.025, beta: 0.99, sigma_C: 2, sigma_L: 1.5, gamma_I: 10, phi_H: 0.5, psi_w: 0.782,
-                      eta_w: 0.75, alpha: 0.35, rho_technology: 0.95, rho_preference: 0.95, psi_p: 0.6,
-                      eta_p: 0.75, gamma_R: 0.9, gamma_pi: 1.5, gamma_Y: 0.05, rho_pi_dot: 0.924}
+        param_dict = {'delta': 0.025, 'beta': 0.99, 'sigma_C': 2, 'sigma_L': 1.5, 'gamma_I': 10, 'phi_H': 0.5, 'psi_w': 0.782,
+                      'eta_w': 0.75, 'alpha': 0.35, 'rho_technology': 0.95, 'rho_preference': 0.95, 'psi_p': 0.6,
+                      'eta_p': 0.75, 'gamma_R': 0.9, 'gamma_pi': 1.5, 'gamma_Y': 0.05, 'rho_pi_dot': 0.924}
 
         self.assertEqual(all([x in param_dict.keys() for x in self.model.param_dict.keys()]), True)
         self.assertEqual(all([self.model.param_dict[x] == param_dict[x] for x in param_dict.keys()]), True)
         self.assertEqual(self.model.params_to_calibrate, [phi_pi_obj, phi_pi])
 
     def test_steady_state(self):
-        self.model.steady_state()
+        self.model.steady_state(verbose=False)
+        self.assertEqual(self.model.steady_state_solved, True)
 
         alpha, beta, delta, rho_A, sigma_C, sigma_L, gamma_I, phi_H = sp.symbols(['alpha', 'beta', 'delta', 'rho_A',
                                                                                   'sigma_C', 'sigma_L', 'gamma_I',
@@ -378,14 +379,16 @@ class ModelClassTestsThree(unittest.TestCase):
 
         answer_dict[RHS_w_ss] = answer_dict[LHS_w_ss]
 
-        for key, value in self.model.steady_state_dict.items():
+        sympy_results = string_keys_to_sympy(self.model.steady_state_dict)
+        for key, value in sympy_results.items():
             expected_result = answer_dict[key].subs(self.model.param_dict) if not isinstance(answer_dict[key], int) \
                 else answer_dict[key]
             self.assertAlmostEqual(value, expected_result, places=8)
 
     # def test_solve_model(self):
-    #     self.model.steady_state()
-    #     self.model.solve_model()
+    #     self.model.steady_state(verbose=False)
+
+    #     self.model.solve_model(verbose=False)
     #
     #     P = np.array([[0.92400000, 0.00000000, 0.000000000, 0.000000000, 0.000000000, 0.0000000000, 0.0000000000,
     #                    0.000000000, 0.00000000, 0.0000000000],
@@ -477,6 +480,24 @@ class ModelClassTestsThree(unittest.TestCase):
     #             result.loc[neg_ss_mask, :] = result.loc[neg_ss_mask, :] * -1
     #         self.assertEqual(np.allclose(answer, result.values), True)
 
+
+class ModelWithSteadyStateTest(unittest.TestCase):
+
+    def setUp(self):
+        file_path = 'Test GCNs/One_Block_Simple_1_w_Steady_State.gcn'
+        self.model = gEconModel(file_path, verbose=False)
+
+    def test_steady_state_block(self):
+        pass
+
+    def test_f_params_to_ss(self):
+        pass
+        # self.model.steady_state()
+        # self.model.print_steady_state()
+        #
+        # self.model.param_dict['beta'] = 0.95
+        # self.model.steady_state()
+        # self.model.print_steady_state()
 
 if __name__ == '__main__':
     unittest.main()

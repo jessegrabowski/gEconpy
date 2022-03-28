@@ -1,7 +1,6 @@
 import unittest
 import numpy as np
-from gEcon.gensys.gensys import gensys, qzdiv, qzswitch, build_u_v_d, \
-    split_matrix_on_eigen_stability, determine_n_unstable
+from solvers.gensys import qzdiv, qzswitch, split_matrix_on_eigen_stability, determine_n_unstable
 
 
 class GensysComponentTests(unittest.TestCase):

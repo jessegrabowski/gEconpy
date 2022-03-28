@@ -1,3 +1,4 @@
+from gEcon.shared.utilities import ListEnum
 import sympy as sp
 from sympy.abc import _clash1, _clash2
 import re
@@ -20,12 +21,19 @@ EXPECTATION_TOKEN = 'E[]'
 CALIBRATING_EQ_TOKEN = '->'
 
 
-class SPECIAL_BLOCK_NAMES(Enum):
+class SPECIAL_BLOCK_NAMES(Enum, metaclass=ListEnum):
     OPTIONS = 'OPTIONS'
     TRYREDUCE = 'TRYREDUCE'
 
 
-class BLOCK_COMPONENTS(Enum):
+class STEADY_STATE_NAMES(Enum, metaclass=ListEnum):
+    STEADY_STATE = 'STEADY_STATE'
+    SS = 'SS'
+    STEADYSTATE = 'STEADYSTATE'
+    STEADY = 'STEADY'
+
+
+class BLOCK_COMPONENTS(Enum, metaclass=ListEnum):
     DEFINITIONS = 'DEFINITIONS'
     CONTROLS = 'CONTROLS'
     OBJECTIVE = 'OBJECTIVE'

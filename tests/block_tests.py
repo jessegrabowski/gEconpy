@@ -1,9 +1,9 @@
 import unittest
-from gEcon.classes.Block import Block
-from gEcon.classes.utilities import unpack_keys_and_values, set_equality_equals_zero
+from gEcon.classes.block import Block
+from gEcon.shared.utilities import unpack_keys_and_values, set_equality_equals_zero
 
 from gEcon.parser import file_loaders, gEcon_parser, constants
-from gEcon.classes.TimeAwareSymbol import TimeAwareSymbol
+from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 
 import sympy as sp
 import numpy as np
@@ -13,15 +13,15 @@ class BlockTestCases(unittest.TestCase):
 
     def setUp(self):
         test_file = file_loaders.load_gcn('Test GCNs/One_Block_Simple_2.gcn')
-        parser_output = gEcon_parser.preprocess_gcn(test_file)
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict['HOUSEHOLD'])
 
         self.block = Block('HOUSEHOLD', block_dict)
 
     def test_attributes_present(self):
-        for component in (x.name.lower() for x in list(constants.BLOCK_COMPONENTS)):
-            self.assertNotEqual(getattr(self.block, component), None)
+        for component in constants.BLOCK_COMPONENTS:
+            self.assertNotEqual(getattr(self.block, component.lower()), None)
 
     def test_eq_number(self):
         self.assertEqual(self.block.n_equations, 12)
@@ -119,16 +119,16 @@ class BlockTestCases(unittest.TestCase):
         eps = TimeAwareSymbol('epsilon', 0)
 
         alpha, beta, delta, theta, tau, rho = sp.symbols(['alpha', 'beta', 'delta', 'theta', 'tau', 'rho'])
-        all_variables = [U, U.step_backward(), Y, C, I, K, L, A, A.step_backward(), lamb, lamb_H_1, q, q.step_forward(),
-                         alpha, beta, delta, theta, tau, rho, eps, L.to_ss(), K.to_ss()]
+        all_variables = [U, U.step_backward(), Y, C, I, K, K.step_backward(), L, A, A.step_backward(), lamb,
+                         lamb_H_1, q, q.step_forward(), alpha, beta, delta, theta, tau, rho, eps, L.to_ss(), K.to_ss()]
 
         sub_dict = dict(zip(all_variables, np.random.uniform(0, 1, size=len(all_variables))))
 
         dL_dC = (C ** theta * (1 - L) ** (1 - theta)) ** (-tau) * C ** (theta - 1) * (1 - L) ** (1 - theta) * theta \
-                - lamb
+            - lamb
 
         dL_dL = (C ** theta * (1 - L) ** (1 - theta)) ** (-tau) * C ** theta * (1 - L) ** (-theta) * (1 - theta) * -1 \
-                + lamb_H_1 * (1 - alpha) * A * K ** alpha * L ** (-alpha)
+            + lamb_H_1 * (1 - alpha) * A * K ** alpha * L ** (-alpha)
         dL_dK = lamb_H_1 * A * alpha * K ** (alpha - 1) * L ** (1 - alpha) - q + beta * (1 - delta) * q.step_forward()
         dL_dI = -lamb + q
 
@@ -139,14 +139,13 @@ class BlockTestCases(unittest.TestCase):
 
     def test_firm_block_lagrange_parsing(self):
         test_file = file_loaders.load_gcn('Test GCNs/Two_Block_RBC_1.gcn')
-        parser_output = gEcon_parser.preprocess_gcn(test_file)
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict['FIRM'])
 
-        block = Block('FIRM', block_dict)
+        block = Block('FIRM', block_dict, prior_dict)
 
         Y = TimeAwareSymbol('Y', 0)
-        TC = TimeAwareSymbol('TC', 0)
         K = TimeAwareSymbol('K', -1)
         L = TimeAwareSymbol('L', 0)
         A = TimeAwareSymbol('A', 0)
@@ -163,11 +162,11 @@ class BlockTestCases(unittest.TestCase):
 
     def test_firm_FOC(self):
         test_file = file_loaders.load_gcn('Test GCNs/Two_Block_RBC_1.gcn')
-        parser_output = gEcon_parser.preprocess_gcn(test_file)
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         firm_dict = gEcon_parser.parsed_block_to_dict(block_dict['FIRM'])
 
-        firm_block = Block('FIRM', firm_dict)
+        firm_block = Block('FIRM', firm_dict, prior_dict)
         firm_block.solve_optimization()
 
         Y = TimeAwareSymbol('Y', 0)
@@ -195,6 +194,9 @@ class BlockTestCases(unittest.TestCase):
             self.assertIn(solution.subs(sub_dict), subbed_system)
 
     def test_get_param_dict_and_calibrating_equations(self):
+
+        self.block.solve_optimization(try_simplify=False)
+
         alpha, theta, beta, delta, tau, rho = sp.symbols(['alpha', 'theta', 'beta', 'delta', 'tau', 'rho'])
         K = TimeAwareSymbol('K', 0).to_ss()
         L = TimeAwareSymbol('L', 0).to_ss()
@@ -205,10 +207,12 @@ class BlockTestCases(unittest.TestCase):
         for key in self.block.param_dict:
             self.assertEqual(answer[key], self.block.param_dict[key])
 
-        assert(self.block.params_to_calibrate == [alpha])
+        assert (self.block.params_to_calibrate == [alpha])
 
-        eq = alpha - L / K + 0.36
-        self.assertIn(eq, self.block.system_equations)
+        calibrating_eqs = [alpha - L / K + 0.36]
+
+        for i, eq in enumerate(calibrating_eqs):
+            self.assertEqual(eq, self.block.params_to_calibrate[i] - self.block.calibrating_equations[i])
 
 
 if __name__ == '__main__':

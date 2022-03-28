@@ -1,7 +1,7 @@
 from typing import List
 import re
 import sympy as sp
-from gEcon.classes.TimeAwareSymbol import TimeAwareSymbol
+from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from gEcon.parser.constants import CALIBRATING_EQ_TOKEN, LOCAL_DICT
 
 

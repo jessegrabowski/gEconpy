@@ -24,10 +24,9 @@ def validate_key(key: str, block_name: str) -> None:
 
     TODO: Allow arbitrary component names? Is there any need to?
     """
-    try:
-        BLOCK_COMPONENTS(key.upper())
-    except ValueError as e:
-        valid_names = ', '.join([s.name.lower() for s in list(BLOCK_COMPONENTS)])
+
+    if key.upper() not in BLOCK_COMPONENTS:
+        valid_names = ', '.join(BLOCK_COMPONENTS)
         error = f'Valid sub-block names are: {valid_names}\n'
         error += f'Found: {key} in block {block_name}'
 

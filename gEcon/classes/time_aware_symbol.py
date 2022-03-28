@@ -19,6 +19,7 @@ class TimeAwareSymbol(sp.Symbol):
         obj.time_index = time_index
         obj.base_name = name
         obj.name = obj._create_name_from_time_index()
+        obj.safe_name = obj.name.replace('+', 'p').replace('-', 'm')
         return obj
 
     def _determine_operator(self):
@@ -64,4 +65,8 @@ class TimeAwareSymbol(sp.Symbol):
 
     def exit_ss(self):
         obj = TimeAwareSymbol(self.base_name, 0)
+        return obj
+
+    def set_t(self, t):
+        obj = TimeAwareSymbol(self.base_name, t)
         return obj

@@ -1,7 +1,7 @@
 import sympy as sp
 from typing import List, Optional
 from gEcon.parser.constants import BLOCK_COMPONENTS
-from gEcon.classes.TimeAwareSymbol import TimeAwareSymbol
+from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 
 
 class GCNSyntaxError(ValueError):
@@ -10,11 +10,9 @@ class GCNSyntaxError(ValueError):
         self.block_name = block_name
         self.key = key
 
-        valid_components = [x.name for x in list(BLOCK_COMPONENTS)]
-
         message = f'While parsing block {block_name}, found {" ".join(key)} outside of a block component. All ' \
                   f'equations must be inside components with one of valid component names:' \
-                  f' {", ".join(valid_components)}'
+                  f' {", ".join(BLOCK_COMPONENTS)}'
 
         super().__init__(message)
 
@@ -28,6 +26,14 @@ class DistributionParsingError(ValueError):
                   f'"parameter ~ d(a=, b=, ...) = initial_value;"'
 
         super().__init__(message)
+
+
+class MissingParameterValueException(ValueError):
+
+    def __init__(self, parameter_name):
+        message = f'The prior distribution associated with parameter {parameter_name} does not appear to have an ' \
+                  f'initial value. Please declare an initial value for all parameters following the syntax: ' \
+                  f'parameter ~ d(a=, b=, ...) = initial_value;'
 
 
 class InvalidComponentNameException(ValueError):
@@ -110,6 +116,16 @@ class SteadyStateNotSolvedError(ValueError):
     def __init__(self):
         message = f'The system cannot be solved before the steady-state has been found! Call the .steady_state() method' \
                   f'to solve for the steady state.'
+
+        super().__init__(message)
+
+
+class MultipleSteadyStateBlocksException(ValueError):
+
+    def __init__(self, ss_block_names: List[str]):
+        message = f"Found multiple blocks with reserved steady states names: {', '.join(ss_block_names)}. Please pass" \
+                  f"only up to one steady state block, and do not name any blocks with the reserved steady states " \
+                  f"names."
 
         super().__init__(message)
 
@@ -200,8 +216,11 @@ class UnusedParameterError(ValueError):
 
 class InvalidParameterException(ValueError):
     def __init__(self, variable_name, d_name, canon_param_name, param_name, constraints):
-        message = f'The {canon_param_name} of the {d_name} distribution associated with "{variable_name}" (passed as' \
-                  f'{param_name} is invalid. It should respect the following constraints: {constraints}'
+        message = f'The {canon_param_name} of the {d_name.upper()} distribution associated with "{variable_name}" ' \
+                  f'(passed as {param_name}) is invalid. It should respect the following constraints: {constraints}.' \
+                  f'\nIf you defined the distribution using moment conditions, you can avoid this error by' \
+                  f' passing the parameters of the distribution directly instead (but you will need to work out what' \
+                  f' the resulting moments will be yourself).'
 
         super().__init__(message)
 
@@ -222,17 +241,10 @@ class InvalidMeanException(ValueError):
 
 class DistributionOverDefinedException(ValueError):
 
-    def __init__(self, variable_name, d_name, parameters):
-        message = f'The {d_name} distribution associated wth {variable_name} is over-defined. Please pass only moment' \
-                  f'conditions (mean, std), or valid {d_name} parameters '
-
-        if len(parameters) > 1:
-            message += ', '.join(parameters[:-1]) + f', and {parameters[-1]}.'
-        else:
-            message += f'{parameters[0]},'
-
-        message += ' (plus an optional location parameter) but not a combination of both.'
-
+    def __init__(self, variable_name, d_name, dist_n_params, n_params_passed, n_constraints):
+        message = f'The {d_name} distribution associated wth {variable_name} is over-defined. The distribution has ' \
+                  f'{dist_n_params} free parameters, but you passed {n_params_passed} plus {n_constraints} moment ' \
+                  f'conditions.'
         super().__init__(message)
 
 
