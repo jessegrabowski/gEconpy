@@ -1,7 +1,7 @@
 # gEcon.py
 A collection of tools for working with DSGE models in python, inspired by the fantastic R package gEcon, http://gecon.r-forge.r-project.org/.
 
-Like gEcon, gEcon.py solves first order conditions automatically, helping the researcher avoid math errors while facilitating rapid prototyping of models. By working in the optimization problem space rather than the FoC space, modifications to the model are much simpler. Adding an additional term to the utility function, for example, requires modifying only 2-3 lines of code, whereas in FoC space it would require re-solving the entire model by hand.
+Like gEcon, gEcon.py solves first order conditions automatically, helping the researcher avoid math errors while facilitating rapid prototyping of models. By working in the optimization problem space rather than the FoC space, modifications to the model are much simpler. Adding an additional term to the utility function, for example, requires modifying only 2-3 lines of code, whereas in FoC space it may require re-solving the entire model by hand.
 
 gEcon.py uses the GCN file originally created for the gEcon package. gEcon GCN files are fully compatable with gEcon.py, and includes all the great features of GCN files, including:
 * Automatically solve first order conditions
