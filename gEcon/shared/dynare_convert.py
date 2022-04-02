@@ -50,6 +50,8 @@ def make_var_to_matlab_sub_dict(var_list, clash_prefix='a'):
             var_name += f'_{time_index}'
         elif isinstance(var, sp.Symbol):
             var_name = var.name if var.name.lower() not in greeks else clash_prefix + var.name
+        else:
+            raise ValueError('var_list should contain only strings, symbols, or TimeAwareSymbols')
 
         sub_dict[var] = var_name
 
@@ -87,8 +89,11 @@ def write_lines_from_list(l, file, line_start='', line_max=50):
 
     return file
 
-def make_mod_file(model):
 
+UNDER_T_PATTERN = '_t(?=[^\w]|$)'
+
+
+def make_mod_file(model):
     var_list = model.variables
     param_dict = model.param_dict
     shocks = model.shocks
@@ -101,8 +106,10 @@ def make_mod_file(model):
     items_to_hash = list(var_to_matlab.keys()) + list(par_to_matlab.keys()) + list(shock_to_matlab.keys())
 
     file = ''
-    file = write_lines_from_list([var_to_matlab[x].replace('_t', '') for x in model.variables], file, line_start='var')
-    file = write_lines_from_list([x.replace('_t', '') for x in shock_to_matlab.values()], file, line_start='varexo')
+    file = write_lines_from_list([re.sub(UNDER_T_PATTERN, '', var_to_matlab[x]) for x in model.variables],
+                                 file, line_start='var')
+    file = write_lines_from_list([re.sub(UNDER_T_PATTERN, '', x) for x in shock_to_matlab.values()],
+                                 file, line_start='varexo')
     file += '\n'
     file = write_lines_from_list(par_to_matlab.values(), file, line_start='parameters')
     file += '\n'
@@ -173,7 +180,7 @@ def make_mod_file(model):
                 else:
                     matlab_eq += ' ' + atom
         matlab_eq += ' = 0;'
-        matlab_eq = re.sub('_t(?=[^\w])', '', matlab_eq)
+        matlab_eq = re.sub(UNDER_T_PATTERN, '', matlab_eq)
 
         file += matlab_eq + "\n"
 
@@ -190,9 +197,9 @@ def make_mod_file(model):
 
     file += 'shocks;\n'
     for shock in shocks:
-        file += 'var ' + shock_to_matlab[shock].replace('_t', '') + ';\n'
+        file += 'var ' + re.sub(UNDER_T_PATTERN, '', shock_to_matlab[shock]) + ';\n'
         file += 'stderr 0.01;\n'
     file += 'end;\n\n'
-    file += 'stoch_simul(order=2, periods=100, qz_zero_threshold=1e-20);'
+    file += 'stoch_simul(order=1, irf=100, qz_zero_threshold=1e-20);'
 
     return file
