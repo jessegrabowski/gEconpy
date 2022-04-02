@@ -120,6 +120,15 @@ class SteadyStateNotSolvedError(ValueError):
         super().__init__(message)
 
 
+class PerturbationSolutionNotFoundException(ValueError):
+
+    def __init__(self):
+        message = f'This operation cannot be completed until the model has a solved perturbation solution. Please ' \
+                  f'call the .solve() method to solve for the policy function.'
+
+        super().__init__(message)
+
+
 class MultipleSteadyStateBlocksException(ValueError):
 
     def __init__(self, ss_block_names: List[str]):

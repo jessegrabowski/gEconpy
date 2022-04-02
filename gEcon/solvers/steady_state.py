@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional, Callable, Any, Tuple, Union
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
-from gEcon.shared.types import VariableType
+from gEcon.shared.typing import VariableType
 from gEcon.shared.utilities import sympy_number_values_to_floats, is_variable, sort_dictionary, \
     sympy_keys_to_strings, sequential, safe_string_to_sympy, select_keys, string_keys_to_sympy, merge_dicts, \
     symbol_to_string
@@ -304,8 +304,8 @@ class SteadyStateSolver:
         The process terminates when no "simple" equations remain.
         """
 
-        n_eqs = len(steady_state_system)
         solved_mask = np.array([eq == 0 for eq in subbed_ss_system])
+        eq_to_var_dict = {}
         check_again_mask = np.full_like(solved_mask, True)
         numeric_solutions = solution_dict.copy()
 
@@ -328,12 +328,20 @@ class SteadyStateSolver:
                 variables = list(set([x for x in eq.atoms() if x in unknowns]))
                 if len(variables) > 0:
                     solved_mask[idx] = True
+                    eq_to_var_dict[variables[0]] = idx
+
                     symbolic_solution = sp.solve(steady_state_system[idx], variables[0])[0]
                     solution_dict[variables[0]] = symbolic_solution
-                    numeric_solutions[variables[0]] = symbolic_solution.subs(numeric_solutions)
-
+                    numeric_solutions[variables[0]] = symbolic_solution.subs(self.param_dict).subs(numeric_solutions)
                     check_again_mask[:] = True
+
                 else:
                     check_again_mask[idx] = False
+
+        numeric_solutions = sympy_number_values_to_floats(numeric_solutions)
+        for key, eq in numeric_solutions.items():
+            if not isinstance(eq, float):
+                del solution_dict[key]
+                solved_mask[eq_to_var_dict[key]] = False
 
         return solution_dict, solved_mask

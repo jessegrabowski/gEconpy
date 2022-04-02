@@ -4,9 +4,51 @@ from gEcon.shared.utilities import diff_through_time, unpack_keys_and_values, se
     expand_subs_for_all_times
 from gEcon.exceptions.exceptions import BlockNotInitializedException, DynamicCalibratingEquationException, \
     OptimizationProblemNotDefinedException, MultipleObjectiveFunctionsException, ControlVariableNotFoundException
+from gEcon.shared.typing import VariableType
 
 import sympy as sp
 from typing import List, Tuple, Optional, Union, Dict
+
+
+def sort_positive_then_negative(args):
+    if len(args) != 2:
+        return
+
+    if sum([-1 in arg.atoms() for arg in args]) != 1:
+        return
+
+    neg_arg = [arg for arg in args if -1 in arg.atoms()][0]
+    pos_arg = [arg for arg in args if arg != neg_arg][0]
+
+    return pos_arg, neg_arg
+
+
+def simple_log_exp_solver(eq: sp.Add, x: VariableType) -> Union[float, sp.Add]:
+    """
+    Parameters
+    ----------
+    eq: sp.Add
+        Equation to solve
+    x: VariableType
+        Variable to solve for
+
+    Returns
+    -------
+    solution: float or VariableType
+
+    It is common to write shocks in DSGE model in the form x = exp(a * log(x)), which sympy cannot solve using the
+    sp.solve function. This simple function logs both sides of the the equation to help the solver, which will be
+    enough in the case of the function written above. If it still can't get an answer, it returns None.
+
+    """
+    args = sort_positive_then_negative(eq.args)
+    # log "both sides" and then try to solve
+    equality = sp.log(args[0]) - sp.log(-1 * args[1])
+    try:
+        result = sp.solve(equality, x)
+        return result
+    except NotImplementedError:
+        return None
 
 
 class Block:

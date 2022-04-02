@@ -7,21 +7,21 @@ from gEcon.shared.utilities import unpack_keys_and_values, is_variable, eq_to_ss
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from gEcon.parser.constants import STEADY_STATE_NAMES
 from gEcon.exceptions.exceptions import SteadyStateNotSolvedError, GensysFailedException, VariableNotFoundException, \
-    MultipleSteadyStateBlocksException
-from gEcon.solvers.gensys import gensys
+    MultipleSteadyStateBlocksException, PerturbationSolutionNotFoundException
 from gEcon.solvers.steady_state import SteadyStateSolver
+from gEcon.solvers.perturbation import PerturbationSolver
 
 import numpy as np
 import sympy as sp
 import pandas as pd
 
-from scipy import linalg
+from scipy import linalg, stats
 
 from warnings import warn
 from functools import partial
 
 from numpy.typing import ArrayLike
-from typing import List, Dict, Tuple, Optional, Union, Callable, Any
+from typing import List, Dict, Optional, Union, Callable, Any
 
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
 
@@ -83,6 +83,7 @@ class gEconModel:
 
         # Assign Solvers
         self.steady_state_solver = SteadyStateSolver(self)
+        self.perturbation_solver = PerturbationSolver(self)
 
     def build(self, verbose: bool = True) -> None:
         """
@@ -238,6 +239,7 @@ class gEconModel:
         Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
         package by Grzegorz Klima, Karol Podemski, and Kaja Retkiewicz-Wijtiwiak., http://gecon.r-forge.r-project.org/.
         """
+
         loglin_sub_dict = string_keys_to_sympy(self.steady_state_dict.copy())
 
         if not_loglin_variable is None:
@@ -258,10 +260,10 @@ class gEconModel:
         if model_is_linear:
             warn('Model will be solved as though ALL system equations have already been linearized in the GCN file. No'
                  'checks are performed to ensure this is indeed the case. Proceed with caution.')
-            Fs = self._convert_linear_system_to_matrices()
+            Fs = self.perturbation_solver.convert_linear_system_to_matrices()
 
         else:
-            Fs = self._log_linearize_model()
+            Fs = self.perturbation_solver.log_linearize_model()
 
         shock_sub_dict = dict(zip([x.to_ss() for x in self.shocks], np.ones(self.n_shocks)))
 
@@ -274,18 +276,19 @@ class gEconModel:
         #   (i.e. during MCMC), it will be better to lambdify F.
         A, B, C, D = [F.doit().subs(loglin_sub_dict).subs(self.param_dict).subs(shock_sub_dict) for F in Fs]
 
-        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = self._solve_policy_function_with_gensys(A, B, C, D,
-                                                                                                           tol,
-                                                                                                           verbose)
+        gensys_results = self.perturbation_solver.solve_policy_function_with_gensys(A, B, C, D, tol, verbose)
+        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
+
         if G_1 is None:
             raise GensysFailedException(eu)
 
-        _, variables, _ = self._make_all_variable_time_combinations()
+        _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
 
-        P, Q, R, S, A_prime, R_prime, S_prime = self._extract_policy_matrices(A, G_1, impact, variables, tol)
+        policy_matrices = self.perturbation_solver.extract_policy_matrices(A, G_1, impact, variables, tol)
+        P, Q, R, S, A_prime, R_prime, S_prime = policy_matrices
 
-        norm_deterministic, norm_stochastic = self._residual_norms(B, C, D,
-                                                                   Q.values, P.values, A_prime, R_prime, S_prime)
+        resid_norms = self.perturbation_solver.residual_norms(B, C, D, Q.values, P.values, A_prime, R_prime, S_prime)
+        norm_deterministic, norm_stochastic = resid_norms
 
         if verbose:
             print(f'Norm of deterministic part: {norm_deterministic:0.9f}')
@@ -296,193 +299,97 @@ class gEconModel:
         self.R = R
         self.S = S
 
-    @staticmethod
-    def _solve_policy_function_with_gensys(A: sp.Matrix, B: sp.Matrix, C: sp.Matrix, D: sp.Matrix,
-                                           tol: float = 1e-8,
-                                           verbose: bool = True) -> Tuple[Optional[ArrayLike], Optional[ArrayLike],
-                                                                       Optional[ArrayLike], Optional[ArrayLike],
-                                                                       Optional[ArrayLike], Optional[ArrayLike],
-                                                                       Optional[ArrayLike], List[int],
-                                                                       Optional[ArrayLike]]:
-        n_eq, n_vars = A.shape
-        _, n_shocks = D.shape
+        self.perturbation_solved = True
 
-        lead_var_idx = np.where(np.sum(np.abs(C), axis=0) > tol)[0]
-        eqs_and_leads_idx = np.r_[np.arange(n_vars), lead_var_idx + n_vars].tolist()
+    def impulse_response_function(self,  simulation_length: int = 40, shock_size: float = 1.0):
+        if not self.perturbation_solved:
+            raise PerturbationSolutionNotFoundException()
 
-        n_leads = len(lead_var_idx)
+        S_prime = pd.concat([self.Q, self.S])
+        R_prime = pd.concat([self.P, self.R])
+        R_prime[self.R.index.str.replace('_t', '_t-1')] = 0
 
-        Gamma_0 = sp.Matrix.vstack(sp.Matrix.hstack(B, C),
-                                   sp.Matrix.hstack(-sp.eye(n_eq), sp.zeros(n_eq)))
+        T = simulation_length
 
-        Gamma_1 = sp.Matrix.vstack(sp.Matrix.hstack(A, sp.zeros(n_eq)),
-                                   sp.Matrix.hstack(sp.zeros(n_eq), sp.eye(n_eq)))
+        data = np.zeros((self.n_variables, T, self.n_shocks))
 
-        Pi = sp.Matrix.vstack(sp.zeros(n_eq), sp.eye(n_eq))
+        for i in range(self.n_shocks):
+            shock_path = np.zeros((self.n_shocks, T))
+            shock_path[i, 0] = shock_size
 
-        Psi = sp.Matrix.vstack(sp.Matrix(D),
-                               sp.zeros(n_eq, n_shocks))
+            for t in range(1, T):
+                stochastic = S_prime.values @ shock_path[:, t-1]
+                deterministic = R_prime.values @ data[:, t-1, i]
+                data[:, t, i] = (deterministic + stochastic)
 
-        Gamma_0 = Gamma_0[eqs_and_leads_idx, eqs_and_leads_idx]
-        Gamma_1 = Gamma_1[eqs_and_leads_idx, eqs_and_leads_idx]
-        Psi = Psi[eqs_and_leads_idx, :]
-        Pi = Pi[eqs_and_leads_idx, lead_var_idx.tolist()]
+        var_names = [x.replace('_t', '') for x in S_prime.index]
+        shock_names = [x.replace('_t', '') for x in S_prime.columns]
+        index = pd.MultiIndex.from_product([var_names,
+                                            np.arange(T),
+                                            shock_names],
+                                           names=['Variables', 'Time', 'Shocks'])
+        df = (pd.DataFrame(data.ravel(), index=index, columns=['Values'])
+              .unstack([1, 2])
+              .droplevel(axis=1, level=0)
+              .sort_index(axis=1))
 
-        # Is this necessary?
-        g0 = np.ascontiguousarray(np.array(-Gamma_0).astype(np.float64))  # NOTE THE IMPORTANT MINUS SIGN LURKING
-        g1 = np.ascontiguousarray(np.array(Gamma_1).astype(np.float64))
-        c = np.ascontiguousarray(np.zeros(shape=(n_vars + n_leads, 1)))
-        psi = np.ascontiguousarray(np.array(Psi).astype(np.float64))
-        pi = np.ascontiguousarray(np.array(Pi).astype(np.float64))
+        return df
 
-        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
+    def simulate(self, simulation_length: int = 40,
+                 n_simulations: int = 100,
+                 shock_dict: Optional[Dict[str, float]] = None,
+                 shock_cov_matrix: Optional[ArrayLike] = None):
 
-        if eu[0] == 1 and eu[1] == 1 and verbose:
-            print('Gensys found a unique solution.\n'
-                  'Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S')
+        if not self.perturbation_solved:
+            raise PerturbationSolutionNotFoundException()
 
-        return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
+        S_prime = pd.concat([self.Q, self.S])
+        R_prime = pd.concat([self.P, self.R])
+        R_prime[self.R.index.str.replace('_t', '_t-1')] = 0
 
-    def _extract_policy_matrices(self, A, G_1, impact, variables, tol):
-        n_vars = len(variables)
+        T = simulation_length
+        n_shocks = S_prime.shape[1]
 
-        g = G_1[:n_vars, :n_vars]
-        state_var_idx = np.where(np.abs(g[np.argmax(np.abs(g), axis=0), np.arange(n_vars)]) >= tol)[0]
-        state_var_mask = np.isin(np.arange(n_vars), state_var_idx)
+        if shock_cov_matrix is not None:
+            assert shock_cov_matrix.shape == (
+            n_shocks, n_shocks), f'The shock covariance matrix should have shape {n_shocks} x {n_shocks}'
+            d = stats.multivariate_normal(mean=np.zeros(n_shocks), cov=shock_cov_matrix)
+            epsilons = np.r_[[d.rvs(T) for _ in range(n_simulations)]]
 
-        n_shocks = self.n_shocks
-        shock_idx = np.arange(n_shocks)
+        elif shock_dict is not None:
+            epsilons = np.zeros((n_simulations, T, n_shocks))
+            for i, shock in enumerate(self.shocks):
+                if shock.base_name in shock_dict.keys():
+                    d = stats.norm(loc=0, scale=shock_dict[shock.base_name])
+                    epsilons[:, :, i] = np.r_[[d.rvs(T) for _ in range(n_simulations)]]
 
-        variables = np.atleast_1d(variables).squeeze()
+        elif any([shock in self.priors for shock in self.shocks]):
+            epsilons = np.zeros((n_simulations, T, n_shocks))
+            for i, shock in enumerate(self.shocks):
+                if shock in self.priors:
+                    epsilons[:, :, i] = np.r_[[self.priors[shock].rvs(T) for _ in range(n_simulations)]]
 
-        state_vars = variables[state_var_mask]
-        L1_state_vars = np.array([x.step_backward() for x in state_vars])
-        jumpers = np.atleast_1d(variables)[~state_var_mask]
+        else:
+            raise ValueError('To run a simulation, supply either a full covariance matrix, a dictionary of shocks and'
+                             'standard deviations, or specify priors on the shocks in your GCN file.')
 
-        state_vars = [x.name for x in state_vars]
-        L1_state_vars = [x.name for x in L1_state_vars]
-        jumpers = [x.name for x in jumpers]
-        shocks = [x.name for x in sorted(self.shocks, key=lambda x: x.base_name)]
+        data = np.zeros((self.n_variables, T, n_simulations))
+        if epsilons.ndim == 2:
+            epsilons = epsilons[:, :, None]
 
-        PP = g.copy()
-        PP[np.where(np.abs(PP) < tol)] = 0
-        QQ = impact.copy()
-        QQ = QQ[:n_vars, :]
-        QQ[np.where(np.abs(QQ) < tol)] = 0
+        for t in range(1, T):
+            stochastic = np.einsum('ij,sj', S_prime.values, epsilons[:, t-1, :])
+            deterministic = R_prime.values @ data[:, t-1, :]
+            data[:, t, :] = (deterministic + stochastic)
 
-        P = PP[state_var_mask, :][:, state_var_mask]
-        Q = QQ[state_var_mask, :][:, shock_idx]
-        R = PP[~state_var_mask, :][:, state_var_idx]
-        S = QQ[~state_var_mask, :][:, shock_idx]
+        var_names = [x.replace('_t', '') for x in S_prime.index]
+        index = pd.MultiIndex.from_product([var_names,
+                                            np.arange(T),
+                                            np.arange(n_simulations)],
+                                           names=['Variables', 'Time', 'Simulation'])
+        df = pd.DataFrame(data.ravel(), index=index, columns=['Values']).unstack([1,2]).droplevel(axis=1, level=0)
 
-        A_prime = np.array(A).astype(np.float64)[:, state_var_mask]
-        R_prime = PP[:, state_var_mask]
-        S_prime = QQ[:, shock_idx]
-
-        P = pd.DataFrame(P, index=state_vars, columns=L1_state_vars)
-        Q = pd.DataFrame(Q, index=state_vars, columns=shocks)
-        R = pd.DataFrame(R, index=jumpers, columns=L1_state_vars)
-        S = pd.DataFrame(S, index=jumpers, columns=shocks)
-
-        return P, Q, R, S, A_prime, R_prime, S_prime
-
-    @staticmethod
-    def _residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime):
-        B_np = np.array(B).astype(np.float64)
-        C_np = np.array(C).astype(np.float64)
-        D_np = np.array(D).astype(np.float64)
-
-        norm_deterministic = linalg.norm(A_prime + B_np @ R_prime +
-                                         C_np @ R_prime @ P)
-
-        norm_stochastic = linalg.norm(B_np @ S_prime +
-                                      C_np @ R_prime @ Q + D_np)
-
-        return norm_deterministic, norm_stochastic
-
-    def _log_linearize_model(self) -> List[sp.Matrix]:
-        """
-        :return: List, a list of Sympy matrices comprised of parameters and steady-state values, see docstring.
-
-        Convert the non-linear model to its log-linear approximation using a first-order Taylor expansion around the
-        deterministic steady state. The specific method of log-linearization is taken from the gEcon User's Guide,
-        page 54, equation 9.9.
-
-            F1 @ T @ y_{t-1} + F2 @ T @ y_t + F3 @ T @ y_{t+1} + F4 @ epsilon_t = 0
-
-        Where T is a diagonal matrix containing steady-state values on the diagonal. Evaluating the matrix
-        multiplications in the expression above obtains:
-
-            A @ y_{t-1} + B @ y_t + C @ y_{t+1} + D @ epsilon = 0
-
-        Matrices A, B, C, and D are returned by this function.
-
-        TODO: Presently, everything is done using sympy, which is extremely slow. This should all be re-written in a
-            way that is Numba and CUDA compatible.
-        """
-
-        Fs = []
-        lags, now, leads = self._make_all_variable_time_combinations()
-        shocks = self.shocks
-        for var_group in [lags, now, leads, shocks]:
-            F = []
-            T = sp.diag(*[x.to_ss() for x in var_group])
-
-            for eq in self.system_equations:
-                F_row = []
-                for var in var_group:
-                    dydx = sp.powsimp(eq_to_ss(eq.diff(var)))
-                    F_row.append(dydx)
-                F.append(F_row)
-            F = sp.Matrix(F)
-            Fs.append(sp.MatMul(F, T, evaluate=False))
-
-        return Fs
-
-    def _convert_linear_system_to_matrices(self) -> List[sp.Matrix]:
-        """
-
-        :return: List of sympy Matrices representing the linear system
-
-        If the model has already been log-linearized by hand, this method is used to simplify the construction of the
-        solution matrices. Following the gEcon user's guide, page 54, equation 9.10, the solution should be of the form:
-
-            A @ y_{t-1} + B @ y_t + C @ y_{t+1} + D @ epsilon = 0
-
-        This function organizes the model equations and returns matrices A, B, C, and D.
-
-        TODO: Add some checks to ensure that the model is indeed linear so that this can't be erroneously called.
-        """
-
-        Fs = []
-        lags, now, leads = self._make_all_variable_time_combinations()
-        shocks = self.shocks
-        model = self.system_equations
-
-        for var_group, name in zip([lags, now, leads, shocks], ['lags', 'now', 'leads', 'shocks']):
-            F = sp.zeros(len(var_group)) if name != 'shocks' else sp.zeros(rows=len(model), cols=len(var_group))
-            for i, var in enumerate(var_group):
-                for j, eq in enumerate(model):
-                    args = eq.expand().args
-                    for arg in args:
-                        if var in arg.atoms():
-                            F[j, i] = sp.simplify(arg / var)
-            Fs.append(F)
-
-        return Fs
-
-    def _make_all_variable_time_combinations(self) -> Tuple[List[TimeAwareSymbol],
-                                                            List[TimeAwareSymbol],
-                                                            List[TimeAwareSymbol]]:
-        """
-        :return: Tuple of three lists, containing all model variables at time steps t-1, t, and t+1, respectively.
-        """
-
-        now = sorted(self.variables, key=lambda x: x.base_name)
-        lags = [x.step_backward() for x in now]
-        leads = [x.step_forward() for x in now]
-
-        return lags, now, leads
+        return df
 
     def _build_prior_dict(self, prior_dict: Dict[str, str], package='scipy') -> None:
         """

@@ -50,7 +50,7 @@ def expand_subs_for_all_times(sub_dict: Dict[TimeAwareSymbol, TimeAwareSymbol]):
     result = {}
     for lhs, rhs in sub_dict.items():
         for t in [-1, 0, 1, 'ss']:
-            result[lhs.set_t(t)] = rhs.set_t(t)
+            result[lhs.set_t(t)] = rhs.set_t(t) if isinstance(rhs, TimeAwareSymbol) else rhs
 
     return result
 
