@@ -23,7 +23,7 @@ class SteadyStateSolver:
 
         self.n_variables: int = model.n_variables
 
-        self.param_dict: Dict[str, float] = model.param_dict
+        self.free_param_dict: Dict[str, float] = model.free_param_dict
         self.params_to_calibrate: List[VariableType] = model.params_to_calibrate
         self.calibrating_equations: List[sp.Add] = model.calibrating_equations
         self.system_equations: List[sp.Add] = model.system_equations
@@ -97,8 +97,8 @@ class SteadyStateSolver:
         incorrect steady state, this function will not catch it. It will, however, still fail if an optimizer fails
         to find a solution.
         """
-        param_dict = self.param_dict.copy()
-        parameters = list(param_dict.keys())
+        free_param_dict = self.free_param_dict.copy()
+        parameters = list(free_param_dict.keys())
         variables = list(self.steady_state_dict.keys())
 
         params_to_calibrate = [symbol_to_string(x) for x in self.params_to_calibrate]
@@ -121,16 +121,16 @@ class SteadyStateSolver:
             f_calib = lambda *args, **kwargs: {}
             additional_solutions = {}
 
-        solved_calib_params = list(f_calib(param_dict).keys())
+        solved_calib_params = list(f_calib(free_param_dict).keys())
 
         # Gather user provided steady state solutions
         f_provided = self._gather_provided_solutions(solved_calib_params)
 
-        calib_dict = f_calib(param_dict)
-        var_dict = f_provided(param_dict, calib_dict)
+        calib_dict = f_calib(free_param_dict)
+        var_dict = f_provided(free_param_dict, calib_dict)
 
         # If we have everything we're done. We don't need to use final_f, set it to return an empty dictionary.
-        if (set(params_and_variables) - set(var_dict.keys()).union(calib_dict.keys())) == set(param_dict.keys()):
+        if (set(params_and_variables) - set(var_dict.keys()).union(calib_dict.keys())) == set(free_param_dict.keys()):
             f_ss = self._create_final_function(final_f=lambda x: {}, f_calib=f_calib, f_provided=f_provided)
 
         else:
@@ -169,10 +169,10 @@ class SteadyStateSolver:
         """
         calibrating_equations = self.calibrating_equations
         symbolic_solutions = self.steady_state_relationships.copy()
-        param_dict = self.param_dict.copy()
+        free_param_dict = self.free_param_dict.copy()
         steady_state_system = self.steady_state_system
 
-        parameters = list(param_dict.keys())
+        parameters = list(free_param_dict.keys())
         variables = list(self.steady_state_dict.keys())
         params_to_calibrate = [symbol_to_string(x) for x in self.params_to_calibrate]
         params_and_variables = parameters + params_to_calibrate + variables
@@ -198,7 +198,7 @@ class SteadyStateSolver:
             # the calibrating parameters.
             # TODO: Are there cases when this isn't true?
 
-            sub_dict = merge_dictionaries(param_dict, calib_solutions)
+            sub_dict = merge_dictionaries(free_param_dict, calib_solutions)
             more_solutions, solved_mask = self.heuristic_solver(sub_dict,
                                                                 substitute_all_equations(steady_state_system, sub_dict),
                                                                 steady_state_system,
@@ -210,7 +210,7 @@ class SteadyStateSolver:
             # We potentially pick up additional solutions from this heuristic pass, we can save them and use them later
             # to help the heuristic solver later.
             additional_solutions = {key: value for key, value in more_solutions.items()
-                                    if (key not in params_to_calibrate) and (key not in param_dict)}
+                                    if (key not in params_to_calibrate) and (key not in free_param_dict)}
 
             calib_solutions = sequential(calib_solutions,
                                          [sympy_number_values_to_floats, sympy_keys_to_strings, sort_dictionary])
@@ -250,7 +250,7 @@ class SteadyStateSolver:
             f_calib = self._bundle_symbolic_solutions_with_optimizer_solutions(unknowns=calib_remaining_to_solve,
                                                                                f=f_calib,
                                                                                f_jac=f_jac,
-                                                                               param_dict=param_dict,
+                                                                               param_dict=free_param_dict,
                                                                                symbolic_solutions=calib_solutions,
                                                                                n_eqs=calib_n_eqs,
                                                                                output_names=calib_remaining_to_solve,
@@ -268,9 +268,9 @@ class SteadyStateSolver:
             a dictionary of variable values according to steady state equations supplied by the user
         """
 
-        param_dict = self.param_dict.copy()
+        free_param_dict = self.free_param_dict.copy()
         symbolic_solutions = self.steady_state_relationships.copy()
-        parameters = list(param_dict.keys())
+        parameters = list(free_param_dict.keys())
 
         _provided_lambda = sp.lambdify(parameters + solved_calib_params, [eq for eq in symbolic_solutions.values()])
 
@@ -310,11 +310,11 @@ class SteadyStateSolver:
             A function that takes model parameters as keyword arguments and returns steady-state values for each
             model variable without an explicit symbolic solution.
         """
-        param_dict = self.param_dict
+        free_param_dict = self.free_param_dict
         steady_state_system = self.steady_state_system
         calibrating_equations = self.calibrating_equations
 
-        parameters = list(param_dict.keys())
+        parameters = list(free_param_dict.keys())
         variables = list(self.steady_state_dict.keys())
         params_to_calibrate = [symbol_to_string(x) for x in self.params_to_calibrate]
 
@@ -324,7 +324,7 @@ class SteadyStateSolver:
         ss_solutions, solved_mask = self.heuristic_solver(sub_dict,
                                                           substitute_all_equations(
                                                               steady_state_system + calibrating_equations, sub_dict,
-                                                              param_dict),
+                                                              free_param_dict),
                                                           steady_state_system + calibrating_equations,
                                                           [safe_string_to_sympy(x) for x in params_and_variables])
 
@@ -354,7 +354,7 @@ class SteadyStateSolver:
         f_final = self._bundle_symbolic_solutions_with_optimizer_solutions(unknowns=ss_remaining_to_solve,
                                                                            f=f_unsolved_ss,
                                                                            f_jac=f_jac,
-                                                                           param_dict=param_dict,
+                                                                           param_dict=free_param_dict,
                                                                            symbolic_solutions=ss_solutions,
                                                                            n_eqs=n_eqs,
                                                                            output_names=ss_remaining_to_solve,
@@ -363,8 +363,8 @@ class SteadyStateSolver:
 
         return f_final
 
-    @staticmethod
-    def _create_final_function(final_f,
+    def _create_final_function(self,
+                               final_f,
                                f_calib,
                                f_provided):
         """
@@ -385,6 +385,7 @@ class SteadyStateSolver:
             model's steady state as two dictionaries: one with variable values, and one with calibrated parameter
             values.
         """
+        calib_params = [x.name for x in self.params_to_calibrate]
 
         def combined_function(param_dict):
             ss_out = {}
@@ -392,6 +393,11 @@ class SteadyStateSolver:
             calib_dict = f_calib(param_dict)
             var_dict = f_provided(param_dict, calib_dict)
             final_dict = final_f(param_dict)
+
+            for param in calib_params:
+                if param in final_dict.keys():
+                    calib_dict[param] = final_dict[param]
+                    del final_dict[param]
 
             ss_out.update(var_dict)
             ss_out.update(final_dict)
@@ -611,7 +617,7 @@ class SteadyStateSolver:
                     if len(symbolic_solution) == 1:
                         solution_dict[variables[0]] = symbolic_solution[0]
                         numeric_solutions[variables[0]] = (symbolic_solution[0]
-                                                           .subs(self.param_dict)
+                                                           .subs(self.free_param_dict)
                                                            .subs(numeric_solutions))
                         check_again_mask[:] = True
                         solved_mask[idx] = True

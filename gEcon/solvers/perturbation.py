@@ -27,7 +27,7 @@ class PerturbationSolver:
     def __init__(self, model):
         self.steady_state_dict = model.steady_state_dict
         self.steady_state_solved = model.steady_state_solved
-        self.param_dict = model.param_dict
+        self.param_dict = model.free_param_dict
         self.system_equations = model.system_equations
         self.variables = model.variables
 
@@ -35,7 +35,7 @@ class PerturbationSolver:
         self.n_shocks = model.n_shocks
 
     @staticmethod
-    def solve_policy_function_with_gensys(A: sp.Matrix, B: sp.Matrix, C: sp.Matrix, D: sp.Matrix,
+    def solve_policy_function_with_gensys(A: ArrayLike, B: ArrayLike, C: ArrayLike, D: ArrayLike,
                                           tol: float = 1e-8,
                                           verbose: bool = True) -> Tuple[Optional[ArrayLike], Optional[ArrayLike],
                                                                          Optional[ArrayLike], Optional[ArrayLike],
@@ -50,28 +50,27 @@ class PerturbationSolver:
 
         n_leads = len(lead_var_idx)
 
-        Gamma_0 = sp.Matrix.vstack(sp.Matrix.hstack(B, C),
-                                   sp.Matrix.hstack(-sp.eye(n_eq), sp.zeros(n_eq)))
+        Gamma_0 = np.vstack([np.hstack([B, C]),
+                            np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
 
-        Gamma_1 = sp.Matrix.vstack(sp.Matrix.hstack(A, sp.zeros(n_eq)),
-                                   sp.Matrix.hstack(sp.zeros(n_eq), sp.eye(n_eq)))
+        Gamma_1 = np.vstack([np.hstack([A, np.zeros((n_eq, n_eq))]),
+                            np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])])
 
-        Pi = sp.Matrix.vstack(sp.zeros(n_eq), sp.eye(n_eq))
+        Pi = np.vstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])
 
-        Psi = sp.Matrix.vstack(sp.Matrix(D),
-                               sp.zeros(n_eq, n_shocks))
+        Psi = np.vstack([D, np.zeros((n_eq, n_shocks))])
 
-        Gamma_0 = Gamma_0[eqs_and_leads_idx, eqs_and_leads_idx]
-        Gamma_1 = Gamma_1[eqs_and_leads_idx, eqs_and_leads_idx]
+        Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
+        Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
         Psi = Psi[eqs_and_leads_idx, :]
-        Pi = Pi[eqs_and_leads_idx, lead_var_idx.tolist()]
+        Pi = Pi[eqs_and_leads_idx, :][:, lead_var_idx]
 
         # Is this necessary?
-        g0 = np.ascontiguousarray(np.array(-Gamma_0).astype(np.float64))  # NOTE THE IMPORTANT MINUS SIGN LURKING
-        g1 = np.ascontiguousarray(np.array(Gamma_1).astype(np.float64))
+        g0 = -np.ascontiguousarray(Gamma_0).astype(np.float64)  # NOTE THE IMPORTANT MINUS SIGN LURKING
+        g1 = np.ascontiguousarray(Gamma_1).astype(np.float64)
         c = np.ascontiguousarray(np.zeros(shape=(n_vars + n_leads, 1)))
-        psi = np.ascontiguousarray(np.array(Psi).astype(np.float64))
-        pi = np.ascontiguousarray(np.array(Pi).astype(np.float64))
+        psi = np.ascontiguousarray(Psi).astype(np.float64)
+        pi = np.ascontiguousarray(Pi).astype(np.float64)
 
         G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
         if verbose:
@@ -154,7 +153,7 @@ class PerturbationSolver:
         Matrices A, B, C, and D are returned by this function.
 
         TODO: Presently, everything is done using sympy, which is extremely slow. This should all be re-written in a
-            way that is Numba and CUDA compatible.
+            way that is Numba and/or CUDA compatible.
         """
 
         Fs = []
@@ -162,7 +161,10 @@ class PerturbationSolver:
         shocks = self.shocks
         for var_group in [lags, now, leads, shocks]:
             F = []
-            T = sp.diag(*[x.to_ss() for x in var_group])
+
+            # If the user selects a variable to not be log linearized, we need to set the value in T to be one, but
+            # still replace all SS values in A, B, C, D as usual. These dummies facilitate that.
+            T = sp.diag(*[TimeAwareSymbol(x.base_name + '_T', 'ss') for x in var_group])
 
             for eq in self.system_equations:
                 F_row = []

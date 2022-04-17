@@ -26,8 +26,8 @@ class ModelClassTestsOne(unittest.TestCase):
 
         param_dict = {'theta': 0.357, 'beta': 0.99, 'delta': 0.02, 'tau': 2, 'rho': 0.95}
 
-        self.assertEqual(all([x in param_dict.keys() for x in self.model.param_dict.keys()]), True)
-        self.assertEqual(all([self.model.param_dict[x] == param_dict[x] for x in param_dict.keys()]), True)
+        self.assertEqual(all([x in param_dict.keys() for x in self.model.free_param_dict.keys()]), True)
+        self.assertEqual(all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]), True)
         self.assertEqual(self.model.params_to_calibrate, [sp.Symbol('alpha')])
 
     def test_steady_state(self):
@@ -64,7 +64,9 @@ class ModelClassTestsOne(unittest.TestCase):
                                           (1 - answer_dict[L_ss]) ** (1 - theta)) ** (1 - tau) / answer_dict[C_ss]
         answer_dict[q_ss] = answer_dict[lambda_ss]
 
-        sympy_sub_dict = string_keys_to_sympy(self.model.param_dict)
+        sympy_sub_dict = string_keys_to_sympy(self.model.free_param_dict)
+        sympy_sub_dict.update(string_keys_to_sympy(self.model.calib_param_dict))
+
         for key, value in answer_dict.items():
             expected_result = answer_dict[key].subs(sympy_sub_dict) if not isinstance(answer_dict[key], int) \
                 else answer_dict[key]
@@ -136,7 +138,7 @@ class ModelClassTestsTwo(unittest.TestCase):
 
         param_dict = {'beta': 0.985, 'delta': 0.025, 'sigma_C': 2, 'sigma_L': 1.5, 'alpha': 0.35, 'rho_A': 0.95}
 
-        self.assertEqual(all([self.model.param_dict[x] == param_dict[x] for x in param_dict.keys()]), True)
+        self.assertEqual(all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]), True)
         self.assertEqual(self.model.params_to_calibrate, [])
 
     def test_steady_state(self):
@@ -186,7 +188,7 @@ class ModelClassTestsTwo(unittest.TestCase):
 
         sympy_results = string_keys_to_sympy(self.model.steady_state_dict)
         for key, value in sympy_results.items():
-            expected_result = answer_dict[key].subs(self.model.param_dict) if not isinstance(answer_dict[key], int) \
+            expected_result = answer_dict[key].subs(self.model.free_param_dict) if not isinstance(answer_dict[key], int) \
                 else answer_dict[key]
             self.assertAlmostEqual(value, expected_result, places=8)
 
@@ -272,8 +274,8 @@ class ModelClassTestsThree(unittest.TestCase):
                       'eta_w': 0.75, 'alpha': 0.35, 'rho_technology': 0.95, 'rho_preference': 0.95, 'psi_p': 0.6,
                       'eta_p': 0.75, 'gamma_R': 0.9, 'gamma_pi': 1.5, 'gamma_Y': 0.05, 'rho_pi_dot': 0.924}
 
-        self.assertEqual(all([x in param_dict.keys() for x in self.model.param_dict.keys()]), True)
-        self.assertEqual(all([self.model.param_dict[x] == param_dict[x] for x in param_dict.keys()]), True)
+        self.assertEqual(all([x in param_dict.keys() for x in self.model.free_param_dict.keys()]), True)
+        self.assertEqual(all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]), True)
         self.assertEqual(self.model.params_to_calibrate, [phi_pi_obj, phi_pi])
 
     def test_steady_state(self):
@@ -381,7 +383,7 @@ class ModelClassTestsThree(unittest.TestCase):
 
         sympy_results = string_keys_to_sympy(self.model.steady_state_dict)
         for key, value in sympy_results.items():
-            expected_result = answer_dict[key].subs(self.model.param_dict) if not isinstance(answer_dict[key], int) \
+            expected_result = answer_dict[key].subs(self.model.free_param_dict) if not isinstance(answer_dict[key], int) \
                 else answer_dict[key]
             self.assertAlmostEqual(value, expected_result, places=8)
 

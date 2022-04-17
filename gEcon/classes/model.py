@@ -3,7 +3,8 @@ from gEcon.parser.parse_distributions import create_prior_distribution_dictionar
 from gEcon.parser.parse_equations import single_symbol_to_sympy
 from gEcon.classes.block import Block
 from gEcon.shared.utilities import unpack_keys_and_values, is_variable, eq_to_ss, sort_dictionary, \
-    sympy_keys_to_strings, sympy_number_values_to_floats, sequential, symbol_to_string, string_keys_to_sympy
+    sympy_keys_to_strings, sympy_number_values_to_floats, sequential, symbol_to_string, string_keys_to_sympy, \
+    merge_dictionaries
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from gEcon.parser.constants import STEADY_STATE_NAMES
 from gEcon.exceptions.exceptions import SteadyStateNotSolvedError, GensysFailedException, VariableNotFoundException, \
@@ -52,7 +53,8 @@ class gEconModel:
         self.system_equations: List[sp.Add] = []
         self.calibrating_equations: List[sp.Add] = []
         self.params_to_calibrate: List[sp.Symbol] = []
-        self.param_dict: Dict[sp.Symbol, float] = {}
+        self.free_param_dict: Dict[sp.Symbol, float] = {}
+        self.calib_param_dict: Dict[sp.Symbol, float] = {}
         self.steady_state_relationships: Dict[VariableType, sp.Add] = {}
 
         self.priors: Dict[str, Any] = {}
@@ -71,6 +73,9 @@ class gEconModel:
         self.steady_state_system: List[sp.Add] = []
         self.steady_state_dict: Dict[sp.Symbol, float] = {}
         self.residuals: List[float] = []
+
+        # Functional representation of the perturbation system
+        self.build_perturbation_matrices: Union[Callable, None] = None
 
         # Perturbation solution information
         self.perturbation_solved: bool = False
@@ -128,19 +133,19 @@ class gEconModel:
         cal_eq_str = "equation" if self.n_calibrating_equations == 1 else "equations"
         par_str = "parameter" if self.n_params_to_calibrate == 1 else "parameters"
 
-        n_params = len(self.param_dict)
+        n_params = len(self.free_param_dict) + len(self.calib_param_dict)
 
-        param_priors = set(self.param_dict.keys()).intersection(set(self.priors.keys()))
+        param_priors = set(self.free_param_dict.keys()).intersection(set(self.priors.keys()))
         shock_priors = set(self.shocks).intersection(set(self.priors.keys()))
 
         report = 'Model Building Complete.\nFound:\n'
         report += f'\t{self.n_equations} {eq_str}\n'
         report += f'\t{self.n_variables} {var_str}\n'
         report += f'\t{self.n_shocks} stochastic {shock_str}\n'
-        report += f'\t\t {len(shock_priors)} / {self.n_shocks} have a defined prior. \n'
+        report += f'\t\t {len(shock_priors)} / {self.n_shocks} {"have" if n_params > 1 else "has"} a defined prior. \n'
 
         report += f'\t{n_params} {par_str}\n'
-        report += f'\t\t {len(param_priors)} / {n_params} have a defined prior. \n'
+        report += f'\t\t {len(param_priors)} / {n_params} {"have" if n_params > 1 else "has"} a defined prior. \n'
         report += f'\t{self.n_calibrating_equations} calibrating {cal_eq_str}\n'
         report += f'\t{self.n_params_to_calibrate} {par_str} to calibrate\n '
 
@@ -184,19 +189,17 @@ class gEconModel:
             self.f_ss = self.steady_state_solver.solve_steady_state(optimizer_kwargs=optimizer_kwargs,
                                                                     param_bounds=param_bounds,
                                                                     use_jac=use_jac)
-            self.f_ss_resid = self.steady_state_solver.f_ss_resid
 
-        else:
-            self._clear_calibrated_parameters_from_param_dict()
+            self.f_ss_resid = self.steady_state_solver.f_ss_resid
 
         self._process_steady_state_results(verbose)
 
     def _process_steady_state_results(self, verbose=True) -> None:
-        self.steady_state_dict, calib_dict = self.f_ss(self.param_dict)
+        self.steady_state_dict, self.calib_param_dict = self.f_ss(self.free_param_dict)
 
-        self.param_dict.update(calib_dict)
-
-        self.residuals = np.array(self.f_ss_resid(**self.steady_state_dict, **self.param_dict))
+        self.residuals = np.array(self.f_ss_resid(**self.steady_state_dict,
+                                                  **self.free_param_dict,
+                                                  **self.calib_param_dict))
 
         self.steady_state_solved = np.allclose(self.residuals, 0)
 
@@ -206,28 +209,6 @@ class gEconModel:
             else:
                 print(f'Steady state NOT found. Sum of squared residuals is {(self.residuals ** 2).sum()}')
 
-        self._separate_param_results_and_variable_results()
-
-    def _clear_calibrated_parameters_from_param_dict(self):
-        params_to_calibrate = [] if self.params_to_calibrate is [] else [symbol_to_string(x) for x in
-                                                                         self.params_to_calibrate]
-
-        # If refitting a model with calibrated parameters, need to remove the old solution from the param dict.
-        for param in params_to_calibrate:
-            if param in self.param_dict.keys():
-                del self.param_dict[param]
-
-    def _separate_param_results_and_variable_results(self):
-
-        params_to_calibrate = self.params_to_calibrate
-
-        for param in params_to_calibrate:
-            name = symbol_to_string(param)
-
-            if name not in self.param_dict:
-                self.param_dict[name] = self.steady_state_dict[name]
-                del self.steady_state_dict[name]
-
     def print_steady_state(self):
         if self.steady_state_dict is None:
             print('Run the steady_state method to find a steady state before calling this method.')
@@ -236,17 +217,19 @@ class gEconModel:
         if not self.steady_state_solved:
             print('Values come from the latest solver iteration but are NOT a valid steady state.')
 
-        max_var_name = max([len(x) for x in self.steady_state_dict.keys()]) + 5
+        max_var_name = max([len(x) for x in
+                            list(self.steady_state_dict.keys()) + list(self.calib_param_dict.keys())]) + 5
         for key, value in self.steady_state_dict.items():
             print(f'{key:{max_var_name}}{value:>10.3f}')
 
         if self.params_to_calibrate is not None:
             print('\n')
             print('In addition, the following parameter values were calibrated:')
-            for param in self.params_to_calibrate:
-                print(f'{param.name:10}{self.param_dict[param.name]:>10.3f}')
+            for key, value in self.calib_param_dict.items():
+                print(f'{key:{max_var_name}}{value:>10.3f}')
 
-    def solve_model(self, not_loglin_variable: Optional[List[str]] = None,
+    def solve_model(self,
+                    not_loglin_variable: Optional[List[str]] = None,
                     order: int = 1,
                     model_is_linear: bool = False,
                     tol: float = 1e-8,
@@ -267,16 +250,83 @@ class gEconModel:
         package by Grzegorz Klima, Karol Podemski, and Kaja Retkiewicz-Wijtiwiak., http://gecon.r-forge.r-project.org/.
         """
 
-        loglin_sub_dict = string_keys_to_sympy(self.steady_state_dict.copy())
+        param_dict = merge_dictionaries(self.free_param_dict, self.calib_param_dict)
+        steady_state_dict = self.steady_state_dict
 
+        if self.build_perturbation_matrices is None:
+            self._perturbation_setup(not_loglin_variable, order, model_is_linear, tol, verbose)
+
+        # A, B, C, D = [F.doit().subs(loglin_sub_dict).subs(self.param_dict).subs(shock_sub_dict) for F in Fs]
+
+        A, B, C, D = self.build_perturbation_matrices(**param_dict, **steady_state_dict)
+
+        gensys_results = self.perturbation_solver.solve_policy_function_with_gensys(A, B, C, D, tol, verbose)
+        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
+
+        if G_1 is None:
+            raise GensysFailedException(eu)
+
+        _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
+
+        policy_matrices = self.perturbation_solver.extract_policy_matrices(A, G_1, impact, variables, tol)
+        P, Q, R, S, A_prime, R_prime, S_prime = policy_matrices
+
+        resid_norms = self.perturbation_solver.residual_norms(B, C, D, Q.values, P.values, A_prime, R_prime,
+                                                              S_prime)
+        norm_deterministic, norm_stochastic = resid_norms
+
+        if verbose:
+            print(f'Norm of deterministic part: {norm_deterministic:0.9f}')
+            print(f'Norm of stochastic part:    {norm_deterministic:0.9f}')
+
+        self.P = P
+        self.Q = Q
+        self.R = R
+        self.S = S
+
+        self.perturbation_solved = True
+
+    def _perturbation_setup(self, not_loglin_variable, order, model_is_linear, tol, verbose):
+        free_param_dict = self.free_param_dict.copy()
+
+        parameters = list(free_param_dict.keys())
+        variables = list(self.steady_state_dict.keys())
+        params_to_calibrate = list(self.calib_param_dict.keys())
+
+        params_and_variables = parameters + params_to_calibrate + variables
+
+        shocks = self.shocks
+        shock_ss_dict = dict(zip([x.to_ss() for x in shocks], np.zeros(self.n_shocks)))
+        variables_and_shocks = self.variables + shocks
+        valid_names = [x.base_name for x in variables_and_shocks]
+
+        steady_state_dict = self.steady_state_dict.copy()
+        loglin_sub_dict = {}
+
+        # We need shocks to be zero in A, B, C, D but 1 in T; can abuse the T_dummies to accomplish that.
         if not_loglin_variable is None:
-            not_loglin_variable = []
-        else:
-            for variable in not_loglin_variable:
-                new_var = TimeAwareSymbol(variable, 0).to_ss()
-                if new_var not in string_keys_to_sympy(self.steady_state_dict).keys():
-                    raise VariableNotFoundException(new_var)
-                loglin_sub_dict[new_var] = 1
+            not_loglin_variable = [x.base_name for x in shocks]
+
+        # Validate that all user-supplied variables are in the model
+        for variable in not_loglin_variable:
+            if variable not in valid_names:
+                raise VariableNotFoundException(variable)
+
+        # Set non-loglin variables (plus all shocks) to 1 in T
+        close_to_zero_warnings = []
+        for variable in variables_and_shocks:
+            T_dummy = TimeAwareSymbol(variable.base_name + '_T', 'ss')
+            if variable.base_name in not_loglin_variable:
+                loglin_sub_dict[T_dummy.name] = 1
+            elif abs(steady_state_dict[variable.to_ss().name]) < 1e-4:
+                loglin_sub_dict[T_dummy.name] = 1
+                close_to_zero_warnings.append(variable)
+            else:
+                loglin_sub_dict[T_dummy.name] = steady_state_dict[variable.to_ss().name]
+
+        if len(close_to_zero_warnings) > 0 and verbose:
+            warn('The following variables have steady state values close to zero and will not be log linearized: ' +
+                 ', '.join(close_to_zero_warnings))
 
         if order != 1:
             raise NotImplementedError
@@ -292,43 +342,11 @@ class gEconModel:
         else:
             Fs = self.perturbation_solver.log_linearize_model()
 
-        shock_sub_dict = dict(zip([x.to_ss() for x in self.shocks], np.ones(self.n_shocks)))
+        self.build_perturbation_matrices = sp.lambdify(params_and_variables,
+                                                       [F.subs(string_keys_to_sympy(loglin_sub_dict)).subs(
+                                                           shock_ss_dict) for F in Fs])
 
-        ss_values = np.array(list(loglin_sub_dict.values()))
-        zero_mask = np.abs(ss_values) < 1e-4
-        ss_values[zero_mask] = 1
-        loglin_sub_dict = dict(zip(loglin_sub_dict.keys(), ss_values))
-
-        # TODO: .subs() is way faster for a single substitution, but if we need to repeatedly get this jacobian
-        #   (i.e. during MCMC), it will be better to lambdify F.
-        A, B, C, D = [F.doit().subs(loglin_sub_dict).subs(self.param_dict).subs(shock_sub_dict) for F in Fs]
-
-        gensys_results = self.perturbation_solver.solve_policy_function_with_gensys(A, B, C, D, tol, verbose)
-        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
-
-        if G_1 is None:
-            raise GensysFailedException(eu)
-
-        _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
-
-        policy_matrices = self.perturbation_solver.extract_policy_matrices(A, G_1, impact, variables, tol)
-        P, Q, R, S, A_prime, R_prime, S_prime = policy_matrices
-
-        resid_norms = self.perturbation_solver.residual_norms(B, C, D, Q.values, P.values, A_prime, R_prime, S_prime)
-        norm_deterministic, norm_stochastic = resid_norms
-
-        if verbose:
-            print(f'Norm of deterministic part: {norm_deterministic:0.9f}')
-            print(f'Norm of stochastic part:    {norm_deterministic:0.9f}')
-
-        self.P = P
-        self.Q = Q
-        self.R = R
-        self.S = S
-
-        self.perturbation_solved = True
-
-    def impulse_response_function(self,  simulation_length: int = 40, shock_size: float = 1.0):
+    def impulse_response_function(self, simulation_length: int = 40, shock_size: float = 1.0):
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
 
@@ -345,8 +363,8 @@ class gEconModel:
             shock_path[i, 0] = shock_size
 
             for t in range(1, T):
-                stochastic = S_prime.values @ shock_path[:, t-1]
-                deterministic = R_prime.values @ data[:, t-1, i]
+                stochastic = S_prime.values @ shock_path[:, t - 1]
+                deterministic = R_prime.values @ data[:, t - 1, i]
                 data[:, t, i] = (deterministic + stochastic)
 
         var_names = [x.replace('_t', '') for x in S_prime.index]
@@ -379,7 +397,7 @@ class gEconModel:
 
         if shock_cov_matrix is not None:
             assert shock_cov_matrix.shape == (
-            n_shocks, n_shocks), f'The shock covariance matrix should have shape {n_shocks} x {n_shocks}'
+                n_shocks, n_shocks), f'The shock covariance matrix should have shape {n_shocks} x {n_shocks}'
             d = stats.multivariate_normal(mean=np.zeros(n_shocks), cov=shock_cov_matrix)
             epsilons = np.r_[[d.rvs(T) for _ in range(n_simulations)]]
 
@@ -405,8 +423,8 @@ class gEconModel:
             epsilons = epsilons[:, :, None]
 
         for t in range(1, T):
-            stochastic = np.einsum('ij,sj', S_prime.values, epsilons[:, t-1, :])
-            deterministic = R_prime.values @ data[:, t-1, :]
+            stochastic = np.einsum('ij,sj', S_prime.values, epsilons[:, t - 1, :])
+            deterministic = R_prime.values @ data[:, t - 1, :]
             data[:, t, :] = (deterministic + stochastic)
 
         var_names = [x.replace('_t', '') for x in S_prime.index]
@@ -414,7 +432,7 @@ class gEconModel:
                                             np.arange(T),
                                             np.arange(n_simulations)],
                                            names=['Variables', 'Time', 'Simulation'])
-        df = pd.DataFrame(data.ravel(), index=index, columns=['Values']).unstack([1,2]).droplevel(axis=1, level=0)
+        df = pd.DataFrame(data.ravel(), index=index, columns=['Values']).unstack([1, 2]).droplevel(axis=1, level=0)
 
         return df
 
@@ -442,7 +460,7 @@ class gEconModel:
 
         # Clean up the hyper parameters from the model, they aren't needed anymore
         for parameter in hyper_parameters:
-            del self.param_dict[single_symbol_to_sympy(parameter)]
+            del self.free_param_dict[single_symbol_to_sympy(parameter)]
 
         for key, value in priors.items():
             sympy_priors[single_symbol_to_sympy(key)] = value
@@ -478,10 +496,10 @@ class gEconModel:
     def _get_all_block_parameters(self) -> None:
         _, blocks = unpack_keys_and_values(self.blocks)
         for block in blocks:
-            self.param_dict.update(block.param_dict)
+            self.free_param_dict.update(block.param_dict)
 
-        self.param_dict = sequential(self.param_dict,
-                                     [sympy_keys_to_strings, sympy_number_values_to_floats, sort_dictionary])
+        self.free_param_dict = sequential(self.free_param_dict,
+                                          [sympy_keys_to_strings, sympy_number_values_to_floats, sort_dictionary])
 
     def _get_all_block_params_to_calibrate(self) -> None:
         _, blocks = unpack_keys_and_values(self.blocks)
