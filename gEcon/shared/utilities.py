@@ -2,15 +2,12 @@ import sympy as sp
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from enum import EnumMeta
 from typing import Dict, Union, Any, List, Callable
-from functools import wraps
 from copy import copy
-
-import numpy as np
 
 VariableType = Union[TimeAwareSymbol, sp.Symbol]
 
 
-class ListEnum(EnumMeta):
+class IterEnum(EnumMeta):
     def __init__(self, *args, **kwargs):
         self.__idx = 0
         super().__init__(*args, **kwargs)
@@ -94,6 +91,22 @@ def diff_through_time(eq, dx, discount_factor=1):
     return total_dydx
 
 
+def substitute_all_equations(eqs, *sub_dicts):
+    if len(sub_dicts) > 1:
+        merged_dict = merge_dictionaries(*sub_dicts)
+        sub_dict = string_keys_to_sympy(merged_dict)
+    else:
+        sub_dict = string_keys_to_sympy(sub_dicts[0])
+
+    if isinstance(eqs, list):
+        return [eq.subs(sub_dict) for eq in eqs]
+    else:
+        result = {}
+        for key in eqs:
+            result[key] = eqs[key] if isinstance(eqs[key], (int, float)) else eqs[key].subs(sub_dict)
+        return result
+
+
 def is_variable(x):
     return isinstance(x, TimeAwareSymbol)
 
@@ -152,6 +165,14 @@ def sympy_number_values_to_floats(d: Dict[VariableType, Any]):
     return d
 
 
+def float_values_to_sympy_float(d: Dict[VariableType, Any]):
+    for var, value in d.items():
+        if isinstance(value, (float, int)):
+            d[var] = sp.Float(value)
+
+    return d
+
+
 def symbol_to_string(symbol: Union[str, VariableType]):
     if isinstance(symbol, str):
         return symbol
@@ -180,6 +201,9 @@ SAFE_STRING_TO_INDEX_DICT = dict(ss='ss', tp1=1, tm1=1, t=0)
 
 
 def safe_string_to_sympy(s):
+    if isinstance(s, sp.Symbol):
+        return s
+
     *name, time_index_str = s.split('_')
     if time_index_str not in [str(x) for x in SAFE_STRING_TO_INDEX_DICT.keys()]:
         name.append(time_index_str)
@@ -201,6 +225,10 @@ def select_keys(d, keys):
 def string_keys_to_sympy(d):
     result = {}
     for key, value in d.items():
+        if isinstance(key, sp.Symbol):
+            result[key] = value
+            continue
+
         if '_' not in key:
             result[sp.Symbol(key)] = value
             continue
@@ -215,10 +243,54 @@ def reduce_system_via_substitution(system, sub_dict):
     return [eq for eq in reduced_system if eq != 0]
 
 
-def merge_dicts(d1, d2):
+def merge_dictionaries(*dicts):
+    if not isinstance(dicts, (list, tuple)):
+        return dicts
+
     result = {}
-    for key in d1:
-        result[key] = d1[key]
-    for key in d2:
-        result[key] = d2[key]
+    for d in dicts:
+        result.update(d)
     return result
+
+
+def merge_functions(funcs, *args, **kwargs):
+
+    def combined_function(*args, **kwargs):
+        output = {}
+
+        for f in funcs:
+            output.update(f(*args, **kwargs))
+
+        return output
+
+    return combined_function
+
+
+def find_exp_args(eq):
+    if eq is None:
+        return None
+    comp_tree = list(sp.postorder_traversal(eq))
+    for arg in comp_tree:
+        if arg.func == sp.exp:
+            return arg
+
+
+def find_log_args(eq):
+    if eq is None:
+        return None
+
+    comp_tree = list(sp.postorder_traversal(eq))
+    for arg in comp_tree:
+        if arg.func == sp.Mul:
+            if isinstance(arg.args[0], sp.Symbol) and arg.args[1].func == sp.log:
+                return arg
+
+
+def is_log_transform_candidate(eq):
+    inside_exp = sequential(eq, [find_exp_args, find_log_args])
+    return inside_exp is not None
+
+
+def log_transform_exp_shock(eq):
+    out = (-sp.log(-eq.args[0]) + sp.log(eq.args[1])).simplify(inverse=True)
+    return out

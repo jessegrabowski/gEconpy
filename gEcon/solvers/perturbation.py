@@ -13,6 +13,15 @@ from scipy import linalg
 import pandas as pd
 
 
+def print_gensys_results(eu):
+    if eu[0] == 1 and eu[1] == 1:
+        print('Gensys found a unique solution.\n'
+              'Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S')
+
+    else:
+        print(eu)
+
+
 class PerturbationSolver:
 
     def __init__(self, model):
@@ -65,9 +74,8 @@ class PerturbationSolver:
         pi = np.ascontiguousarray(np.array(Pi).astype(np.float64))
 
         G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
-        if eu[0] == 1 and eu[1] == 1 and verbose:
-            print('Gensys found a unique solution.\n'
-                  'Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S')
+        if verbose:
+            print_gensys_results(eu)
 
         return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
 

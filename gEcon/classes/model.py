@@ -21,7 +21,7 @@ from warnings import warn
 from functools import partial
 
 from numpy.typing import ArrayLike
-from typing import List, Dict, Optional, Union, Callable, Any
+from typing import List, Dict, Optional, Union, Callable, Any, Tuple
 
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
 
@@ -154,14 +154,37 @@ class gEconModel:
                       f'specification using available diagnostic tools, and check the GCN file for typos.'
             warn(message)
 
-    def steady_state(self, verbose=True, optimizer_kwargs=None, param_bounds=None, use_jac=True):
-        if not self.steady_state_solved:
-            self.steady_state_solver.solve_steady_state(optimizer_kwargs, param_bounds, use_jac=use_jac)
+    def steady_state(self,
+                     verbose: Optional[bool] = True,
+                     optimizer_kwargs: Optional[Dict[str, Any]] = None,
+                     param_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
+                     use_jac: Optional[bool] = True) -> None:
+        """
+        Parameters
+        ----------
+        verbose: bool
+            Flag controlling whether to print results of the steady state solver
+        optimizer_kwargs: dict
+            Dictionary of arguments to be passed to scipy.optimize.root or scipy.optimize.root_scalar, see those
+            functions for more details.
+        param_bounds: dict
+            Dictionary of variable/calibrated parameter names and bounds, currently given to the brentq root finding
+            algorithm. If this is None, all bounds will be assigned as (0, 1) if a solver requires bounds.
+        use_jac: bool
+            Boolean flag, whether to explicitly compute the jacobian function of the steady state. Helpful for solving
+            complex systems, but potentially slow.
+        Returns
+        -------
+        None
 
+        Solves for a function f(params) that computes steady state values and calibrated parameter values given
+        parameter values, stores results, and verifies that the residuals of the solution are zero.
+        """
+        if not self.steady_state_solved:
+            self.f_ss = self.steady_state_solver.solve_steady_state(optimizer_kwargs=optimizer_kwargs,
+                                                                    param_bounds=param_bounds,
+                                                                    use_jac=use_jac)
             self.f_ss_resid = self.steady_state_solver.f_ss_resid
-            self.f_ss = partial(self.steady_state_solver.f_ss,
-                                optimizer_kwargs=optimizer_kwargs,
-                                param_bounds=param_bounds)
 
         else:
             self._clear_calibrated_parameters_from_param_dict()
@@ -169,7 +192,9 @@ class gEconModel:
         self._process_steady_state_results(verbose)
 
     def _process_steady_state_results(self, verbose=True) -> None:
-        self.steady_state_dict = self.f_ss(self.param_dict)
+        self.steady_state_dict, calib_dict = self.f_ss(self.param_dict)
+
+        self.param_dict.update(calib_dict)
 
         self.residuals = np.array(self.f_ss_resid(**self.steady_state_dict, **self.param_dict))
 
@@ -194,12 +219,14 @@ class gEconModel:
 
     def _separate_param_results_and_variable_results(self):
 
-        params_to_calibrate = [] if self.params_to_calibrate is None else self.params_to_calibrate
+        params_to_calibrate = self.params_to_calibrate
 
         for param in params_to_calibrate:
             name = symbol_to_string(param)
-            self.param_dict[name] = self.steady_state_dict[name]
-            del self.steady_state_dict[name]
+
+            if name not in self.param_dict:
+                self.param_dict[name] = self.steady_state_dict[name]
+                del self.steady_state_dict[name]
 
     def print_steady_state(self):
         if self.steady_state_dict is None:
@@ -247,7 +274,7 @@ class gEconModel:
         else:
             for variable in not_loglin_variable:
                 new_var = TimeAwareSymbol(variable, 0).to_ss()
-                if new_var not in self.steady_state_dict.keys():
+                if new_var not in string_keys_to_sympy(self.steady_state_dict).keys():
                     raise VariableNotFoundException(new_var)
                 loglin_sub_dict[new_var] = 1
 

@@ -1,7 +1,7 @@
 from gEcon.parser import parse_equations
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from gEcon.shared.utilities import diff_through_time, unpack_keys_and_values, set_equality_equals_zero, \
-    expand_subs_for_all_times
+    expand_subs_for_all_times,is_log_transform_candidate, log_transform_exp_shock
 from gEcon.exceptions.exceptions import BlockNotInitializedException, DynamicCalibratingEquationException, \
     OptimizationProblemNotDefinedException, MultipleObjectiveFunctionsException, ControlVariableNotFoundException
 from gEcon.shared.typing import VariableType
@@ -432,6 +432,29 @@ class Block:
 
         self.system_equations = simplified_system
 
+    def try_to_rewrite_exponential_shocks(self) -> None:
+        """
+
+        Returns
+        -------
+        None
+
+        Sympy cannot handle functions of the form X[t] = exp(a * log(X[t-1]) + Z[t]), which unfortunately is a common way to
+        write the exogenous shock equations in DSGE models. This function tries to detect this type of equation, and
+        transforms it to log(X[t]) = a * log(X[t-1]) + Z[t], which is equivalent but solvable by Sympy.
+        """
+
+        system = self.system_equations.copy()
+        transformed_system = []
+        for eq in system:
+            if is_log_transform_candidate(eq):
+                new_eq = log_transform_exp_shock(eq)
+                transformed_system.append(new_eq)
+            else:
+                transformed_system.append(eq)
+
+        self.system_equations = transformed_system
+
     def solve_optimization(self, try_simplify: bool = True) -> None:
         """
         :return: None
@@ -474,6 +497,7 @@ class Block:
                 self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
 
         if self.controls is None and self.objective is None:
+            self.try_to_rewrite_exponential_shocks()
             return
 
         # Solve Lagrangian
@@ -501,3 +525,5 @@ class Block:
 
         if try_simplify:
             self.simplify_system_equations()
+
+        self.try_to_rewrite_exponential_shocks()

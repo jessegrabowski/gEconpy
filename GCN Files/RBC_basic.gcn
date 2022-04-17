@@ -1,0 +1,89 @@
+options
+{
+	output logfile = FALSE;
+	output LaTeX = FALSE;
+};
+
+tryreduce
+{
+    C[];
+};
+
+block HOUSEHOLD
+{
+	definitions
+	{
+		u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) - L[] ^ (1 + sigma_L) / (1 + sigma_L);
+	};
+
+	controls
+	{
+		C[], L[], I[], K[];
+	};
+
+	objective
+	{
+		U[] = u[] + beta * E[][U[1]];
+	};
+
+	constraints
+	{
+		C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
+		K[] = (1 - delta) * K[-1] + I[] : q[];
+	};
+
+	calibration
+	{
+		beta = 0.99;
+		delta = 0.02;
+		sigma_C = 1.5;
+		sigma_L = 2.0;
+	};
+};
+
+block FIRM
+{
+    controls
+    {
+        K[-1], L[];
+    };
+
+    objective
+    {
+        TC[] = -(r[] * K[-1] + w[] * L[]);
+    };
+
+    constraints
+    {
+        Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha) : mc[];
+    };
+
+    identities
+    {
+        # Perfect competition
+        mc[] = 1;
+    };
+
+    calibration
+    {
+        alpha = 0.35;
+    };
+};
+
+block TECHNOLOGY_SHOCKS
+{
+    identities
+    {
+        log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+    };
+
+    shocks
+    {
+        epsilon_A[];
+    };
+
+    calibration
+    {
+        rho_A = 0.95;
+    };
+};
