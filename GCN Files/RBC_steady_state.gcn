@@ -6,7 +6,7 @@ options
 
 tryreduce
 {
-    C[];
+
 };
 
 block STEADY_STATE
@@ -21,7 +21,7 @@ block STEADY_STATE
         A[ss] = 1;
         P[ss] = 1;
         r[ss] = P[ss] * (1 / beta - (1 - delta));
-        w[ss] = (1 - alpha) * P[ss] ^ (1 / (1 - alpha)) * (alpha / r[ss]) * (alpha / (1 - alpha));
+        w[ss] = (1 - alpha) * P[ss] ^ (1 / (1 - alpha)) * (alpha / r[ss]) ^ (alpha / (1 - alpha));
         Y[ss] = (r[ss] / (r[ss] - delta * alpha)) ^ (sigma_C / (sigma_C + sigma_L)) *
             (w[ss] / P[ss] * (w[ss] / P[ss] / (1 - alpha)) ^ sigma_L) ^ (1 / (sigma_C + sigma_L));
 
@@ -31,7 +31,7 @@ block STEADY_STATE
         L[ss] = (1 - alpha) * Y[ss] * P[ss] / w[ss];
 
 
-        U[ss] = (1 / (1 - beta)) * C[ss] ^ (1 - sigma_C) / (1 - sigma_C) - L[ss] ^ (1 + sigma_L) / (1 + sigma_L);
+        U[ss] = (1 / (1 - beta)) * (C[ss] ^ (1 - sigma_C) / (1 - sigma_C) - L[ss] ^ (1 + sigma_L) / (1 + sigma_L));
         lambda[ss] = C[ss] ^ (-sigma_C) / P[ss];
         q[ss] = lambda[ss];
         TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);

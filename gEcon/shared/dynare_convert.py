@@ -95,7 +95,9 @@ UNDER_T_PATTERN = '_t(?=[^\w]|$)'
 
 def make_mod_file(model):
     var_list = model.variables
-    param_dict = model.param_dict
+    param_dict = model.free_param_dict
+    param_dict.update(model.calib_param_dict)
+
     shocks = model.shocks
     ss_value_dict = model.steady_state_dict
 

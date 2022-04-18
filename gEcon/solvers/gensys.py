@@ -356,3 +356,15 @@ def gensys(g0: ArrayLike,
     y_wt = (Z @ y_wt)
 
     return G_1, C, impact, f_mat, f_wt, y_wt, gev, eu, loose
+
+
+def interpret_gensys_output(eu):
+    message = ''
+    if eu[0] == -2 and eu[1] == -2:
+        message = "Coincident zeros.  Indeterminacy and/or nonexistence."
+    elif eu[0] == -1:
+        message = f"System is indeterminate. There are {eu[2]} loose endogenous variables."
+    elif eu[1] == -1:
+        message = f'Solution exists, but it is not unique -- sunspots.'
+
+    return message

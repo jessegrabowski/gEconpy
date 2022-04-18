@@ -102,6 +102,15 @@ class CompositeDistribution:
 
         return log_pdf
 
+    def conditional_rvs(self, point_dicts):
+        n_samples = len(point_dicts)
+        samples = np.zeros(n_samples)
+        for idx in range(n_samples):
+            sample_params = {param: value.rvs() for param, value in self.rv_params.items()}
+            sample_params.update(point_dicts[idx])
+            samples[idx] = self.d(**sample_params).rvs()
+
+        return samples
 
 class BaseDistributionParser(ABC):
 

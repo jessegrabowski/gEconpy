@@ -2,6 +2,7 @@ import sympy as sp
 from typing import List, Optional
 from gEcon.parser.constants import BLOCK_COMPONENTS
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
+from gEcon.solvers.gensys import interpret_gensys_output
 
 
 class GCNSyntaxError(ValueError):
@@ -142,14 +143,7 @@ class MultipleSteadyStateBlocksException(ValueError):
 class GensysFailedException(ValueError):
 
     def __init__(self, eu):
-        message = ''
-        if eu[0] == -2 and eu[1] == -2:
-            message = "Coincident zeros.  Indeterminacy and/or nonexistence."
-        elif eu[0] == -1:
-            message = f"System is indeterminate. There are {eu[2]} loose endogenous variables."
-        elif eu[1] == -1:
-            message = f'Solution exists, but it is not unique -- sunspots.'
-
+        message = interpret_gensys_output(eu)
         super().__init__(message)
 
 

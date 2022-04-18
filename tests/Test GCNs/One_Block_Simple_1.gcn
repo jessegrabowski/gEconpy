@@ -1,11 +1,6 @@
 options
 {
-
-};
-
-tryreduce
-{
-
+	output LaTeX = FALSE;
 };
 
 block HOUSEHOLD

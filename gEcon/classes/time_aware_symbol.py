@@ -1,9 +1,14 @@
 import sympy as sp
 from sympy.core.cache import cacheit
+from typing import Union
 import re
 
-
 class TimeAwareSymbol(sp.Symbol):
+
+    __slots__ = ('time_index', 'base_name', '__dict__')
+    time_index: Union[int, str]
+    base_name: str
+
     def __new__(cls, name, time_index, **assumptions):
         cls._sanitize(assumptions, cls)
 
@@ -15,7 +20,7 @@ class TimeAwareSymbol(sp.Symbol):
     @staticmethod
     @cacheit
     def __xnew__(cls, name, time_index, **assumptions):
-        obj = sp.Symbol.__xnew__(cls, name, **assumptions)
+        obj = super().__xnew__(cls, name, **assumptions)
         obj.time_index = time_index
         obj.base_name = name
         obj.name = obj._create_name_from_time_index()
@@ -50,6 +55,9 @@ class TimeAwareSymbol(sp.Symbol):
 
     def _hashable_content(self):
         return super()._hashable_content() + (self.time_index,)
+
+    def __getnewargs_ex__(self):
+        return ((self.base_name, self.time_index,), self.assumptions0)
 
     def step_forward(self):
         obj = TimeAwareSymbol(self.base_name, self.time_index + 1)
