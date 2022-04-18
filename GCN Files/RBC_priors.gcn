@@ -1,0 +1,91 @@
+options
+{
+	output logfile = FALSE;
+	output LaTeX = FALSE;
+};
+
+tryreduce
+{
+
+};
+
+block HOUSEHOLD
+{
+	definitions
+	{
+		u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) - L[] ^ (1 + sigma_L) / (1 + sigma_L);
+	};
+
+	controls
+	{
+		C[], L[], I[], K[];
+	};
+
+	objective
+	{
+		U[] = u[] + beta * E[][U[1]];
+	};
+
+	constraints
+	{
+		C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
+		K[] = (1 - delta) * K[-1] + I[] : q[];
+	};
+
+	calibration
+	{
+		beta  = 0.99;
+		delta = 0.02;
+
+		sigma_C ~ N(loc=1.5, scale=0.1, lower=1.0) = 1.5;
+		sigma_L ~ N(loc=2.0, scale=0.1, lower=1.0) = 2.0;
+	};
+};
+
+block FIRM
+{
+    controls
+    {
+        K[-1], L[];
+    };
+
+    objective
+    {
+        TC[] = -(r[] * K[-1] + w[] * L[]);
+    };
+
+    constraints
+    {
+        Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha) : mc[];
+    };
+
+    identities
+    {
+        # Perfect competition
+        mc[] = 1;
+    };
+
+    calibration
+    {
+		alpha ~ Beta(mean=0.5, sd=0.1) = 0.35;
+    };
+};
+
+block TECHNOLOGY_SHOCKS
+{
+    identities
+    {
+        log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+    };
+
+    shocks
+    {
+        epsilon_A[] ~ N(mean=0, sd=sigma_epsilon);
+    };
+
+    calibration
+    {
+		rho_A ~ Beta(mean=0.95, sd=0.04) = 0.95;
+		sigma_epsilon ~ Inv_Gamma(mean=0.1, sd=0.01) = 0.01;
+    };
+};
