@@ -42,7 +42,8 @@ def simulate_trajectories_from_prior(model, n_samples=1000, n_simulations=100, s
             model.steady_state(verbose=False)
             model.solve_model(verbose=False, on_failure='ignore')
 
-            data = model.simulate(simulation_length=simulation_length, n_simulations=n_simulations)
+            data = model.simulate(simulation_length=simulation_length, n_simulations=n_simulations,
+                                  show_progress_bar=False)
             simulaton_ids = np.arange(n_simulations).astype(int)
 
             data = data.rename(axis=1, level=1, mapper=dict(zip(simulaton_ids, simulaton_ids + (n_simulations * i))))

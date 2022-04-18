@@ -26,7 +26,7 @@ class ProgressBar:
         elapsed = time.time() - self.start_time
         self.mean_time = alpha * elapsed + (1 - alpha) * self.mean_time
 
-        if time.time() - self.last_print_time > 0.25 or self.n_iters == self.total:
+        if (time.time() - self.last_print_time > 0.25) or (self.n_iters == self.total):
             self.print_progress()
 
     @staticmethod
@@ -46,7 +46,7 @@ class ProgressBar:
         remain_min, remain_sec = self._time_to_string(remaining)
         elapse_min, elapse_sec = self._time_to_string(elapsed)
 
-        iter_per_sec = self.n_iters / elapsed
+        iter_per_sec = self.n_iters / (elapsed + 1e-8)
 
         n_digits = len(str(self.total))
 

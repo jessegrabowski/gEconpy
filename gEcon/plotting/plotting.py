@@ -1,5 +1,8 @@
+from typing import Optional, Any
+
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+import matplotlib
 
 import pandas as pd
 import numpy as np
@@ -186,7 +189,7 @@ def plot_prior_steady_state_solvability(model, n_samples=1_000, seed=None, param
                       fontsize=8,
                       frameon=False)
     fig.suptitle('Steady State Solution Found by Parameter Values', y=0.95)
-    plt.show()
+    return fig
 
 
 def plot_eigenvalues(model, figsize=None, dpi=None):
@@ -210,4 +213,164 @@ def plot_eigenvalues(model, figsize=None, dpi=None):
     [spine.set_visible(False) for spine in ax.spines.values()]
     ax.grid(ls='--', lw=0.5)
     ax.set_title(f'Eigenvalues of Model Solution\n{n_infinity} Eigenvalues with Infinity Modulus not shown.')
-    plt.show()
+    return fig
+
+
+def plot_covariance_matrix(data, vars_to_plot=None, cbarlabel='Covariance', figsize=(8,8),
+                           dpi=100, cbar_kw=None, cmap='YlGn', annotation_fontsize=8):
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    im, cbar = plot_heatmap(data.loc[vars_to_plot, vars_to_plot],
+                            ax=ax, cbar_kw=cbar_kw, cmap=cmap, cbarlabel=cbarlabel)
+    annotate_heatmap(im, valfmt="{x:.2f}", fontsize=annotation_fontsize)
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_heatmap(data: pd.DataFrame,
+                 ax: Optional[Any] = None,
+                 cbar_kw: Optional[dict] = None,
+                 cbarlabel: Optional[str] = "",
+                            **kwargs):
+    """
+    Create a heatmap from a pandas dataframe.
+
+    Parameters
+    ----------
+    data: Dataframe
+        A pandas dataframe to plat
+    ax: matplotlib.axes.ax, Optional
+        A `matplotlib.axes.Axes` instance to which the heatmap is plotted.  If
+        not provided, use current axes or create a new one.
+    cbar_kw: Dict, Optional
+        A dictionary with arguments to `matplotlib.Figure.colorbar`.
+    cbarlabel: str, Optional
+        The label for the colorbar.  Optional.
+    **kwargs
+        All other arguments are forwarded to `imshow`.
+    """
+
+    if not ax:
+        ax = plt.gca()
+
+    if not cbar_kw:
+        cbar_kw = {}
+
+    # Plot the heatmap
+    im = ax.imshow(data, **kwargs)
+
+    n_rows, n_columns = data.shape
+
+    # Create colorbar
+    cbar = ax.figure.colorbar(im, ax=ax, **cbar_kw)
+    cbar.ax.set_ylabel(cbarlabel, rotation=-90, va="bottom")
+
+    # Show all ticks and label them with the respective list entries.
+    ax.set(xticks=np.arange(n_rows), xticklabels=data.columns,
+           yticks=np.arange(n_columns), yticklabels=data.index)
+
+    # Let the horizontal axes labeling appear on top.
+    ax.tick_params(top=True, bottom=False,
+                   labeltop=True, labelbottom=False)
+
+    # Rotate the tick labels and set their alignment.
+    plt.setp(ax.get_xticklabels(), rotation=-30, ha="right",
+             rotation_mode="anchor")
+
+    # Turn spines off and create white grid.
+    ax.spines[:].set_visible(False)
+
+    ax.set_xticks(np.arange(data.shape[1]+1)-.5, minor=True)
+    ax.set_yticks(np.arange(data.shape[0]+1)-.5, minor=True)
+    ax.grid(which="minor", color="w", linestyle='-', linewidth=3)
+    ax.tick_params(which="minor", bottom=False, left=False)
+
+    return im, cbar
+
+
+def annotate_heatmap(im,
+                     data=None,
+                     valfmt="{x:.2f}",
+                     textcolors=("black", "white"),
+                     threshold=None, **textkw):
+    """
+    A function to annotate a heatmap.
+
+    Parameters
+    ----------
+    im
+        The AxesImage to be labeled.
+    data
+        Data used to annotate.  If None, the image's data is used.  Optional.
+    valfmt
+        The format of the annotations inside the heatmap.  This should either
+        use the string format method, e.g. "$ {x:.2f}", or be a
+        `matplotlib.ticker.Formatter`.  Optional.
+    textcolors
+        A pair of colors.  The first is used for values below a threshold,
+        the second for those above.  Optional.
+    threshold
+        Value in data units according to which the colors from textcolors are
+        applied.  If None (the default) uses the middle of the colormap as
+        separation.  Optional.
+    **kwargs
+        All other arguments are forwarded to each call to `text` used to create
+        the text labels.
+    """
+
+    if not isinstance(data, (list, np.ndarray)):
+        data = im.get_array()
+
+    # Normalize the threshold to the images color range.
+    if threshold is not None:
+        threshold = im.norm(threshold)
+    else:
+        threshold = im.norm(data.max())/2.
+
+    # Set default alignment to center, but allow it to be
+    # overwritten by textkw.
+    kw = dict(horizontalalignment="center",
+              verticalalignment="center")
+    kw.update(textkw)
+
+    # Get the formatter in case a string is supplied
+    if isinstance(valfmt, str):
+        valfmt = matplotlib.ticker.StrMethodFormatter(valfmt)
+
+    # Loop over the data and create a `Text` for each "pixel".
+    # Change the text's color depending on the data.
+    texts = []
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            kw.update(color=textcolors[int(im.norm(data[i, j]) > threshold)])
+            text = im.axes.text(j, i, valfmt(data[i, j], None), **kw)
+            texts.append(text)
+
+    return texts
+
+
+def plot_acf(acorr_matrix, vars_to_plot=None, figsize=(14,4), dpi=100, n_cols=4):
+
+    if vars_to_plot is None:
+        vars_to_plot = acorr_matrix.index
+
+    n_plots = len(vars_to_plot)
+    n_cols = min(n_cols, n_plots)
+
+    fig = plt.figure(figsize=figsize, dpi=dpi)
+    gc, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_plots)
+
+    x_values = acorr_matrix.columns
+
+    for variable, plot_loc in zip(vars_to_plot, plot_locs):
+        axis = fig.add_subplot(gc[plot_loc])
+        axis.scatter(x_values, acorr_matrix.loc[variable, :])
+        axis.vlines(x_values, 0, acorr_matrix.loc[variable, :])
+
+        [spine.set_visible(False) for spine in axis.spines.values()]
+        axis.grid(ls='--', lw=0.5)
+        axis.set(title=variable)
+
+    fig.tight_layout()
+    return fig

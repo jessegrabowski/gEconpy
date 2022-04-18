@@ -12,12 +12,14 @@ from gEcon.exceptions.exceptions import SteadyStateNotSolvedError, GensysFailedE
 from gEcon.solvers.steady_state import SteadyStateSolver
 from gEcon.solvers.perturbation import PerturbationSolver
 from gEcon.solvers.gensys import interpret_gensys_output
+from gEcon.classes.progress_bar import ProgressBar
 
 import numpy as np
 import sympy as sp
 import pandas as pd
 
 from scipy import linalg, stats
+from numba import njit
 
 from warnings import warn
 from functools import partial
@@ -201,13 +203,12 @@ class gEconModel:
     def _process_steady_state_results(self, verbose=True) -> None:
         self.steady_state_dict, self.calib_param_dict = self.f_ss(self.free_param_dict)
         self.steady_state_system = self.steady_state_solver.steady_state_system
-        
+
         self.residuals = np.array(self.f_ss_resid(**self.steady_state_dict,
                                                   **self.free_param_dict,
                                                   **self.calib_param_dict))
 
         self.steady_state_solved = np.allclose(self.residuals, 0)
-
 
         if verbose:
             if self.steady_state_solved:
@@ -249,6 +250,7 @@ class gEconModel:
         model_is_linear
         tol
         verbose
+        on_failure
 
         Returns
         -------
@@ -262,8 +264,6 @@ class gEconModel:
 
         if self.build_perturbation_matrices is None:
             self._perturbation_setup(not_loglin_variable, order, model_is_linear, verbose)
-
-        # A, B, C, D = [F.doit().subs(loglin_sub_dict).subs(self.param_dict).subs(shock_sub_dict) for F in Fs]
 
         A, B, C, D = self.build_perturbation_matrices(**param_dict, **steady_state_dict)
 
@@ -401,8 +401,83 @@ class gEconModel:
         if verbose:
             print(f'Model solution has {n_g_one} eigenvalues greater than one in modulus and {n_forward} '
                   f'forward-looking variables.'
-                  f'\nBlanchard-Kahn condition is{" NOT" if n_forward > n_g_one else ""} satisfied.' )
+                  f'\nBlanchard-Kahn condition is{" NOT" if n_forward > n_g_one else ""} satisfied.')
         return eig
+
+    def compute_stationary_covariance_matrix(self, tol=1e-8, max_iter=10_000):
+        """
+        Parameters
+        ----------
+        tol: float
+            Termination criterion for computing the stationary covariance matrix
+        max_iter: int
+            Max number of iterations
+
+        Returns
+        -------
+        sigma: DataFrame
+
+        Compute the stationary covariance matrix of the solved system via fixed-point iteration. By construction, any
+        linearized DSGE model will have a fixed covariance matrix. In principal, a closed form solution is available
+        (we could solve a discrete Lyapunov equation) but this works fine.
+        """
+        if not self.perturbation_solved:
+            raise PerturbationSolutionNotFoundException()
+
+        C = pd.concat([self.Q, self.S])
+        A = pd.concat([self.P, self.R])
+
+        # A needs to  be square; add "jumpers" to the columns with all zeros
+        A.columns = A.index[:A.shape[1]]
+        A[A.index[A.shape[1]:]] = 0
+
+        # Remove the time indices from A
+        no_time_idx = ['_'.join(x.split('_')[:-1]) for x in A.columns]
+        A.columns = no_time_idx
+        A.index = no_time_idx
+
+        sigma = _compute_stationary_covariance_matrix(A.values, C.values, tol=tol, max_iter=max_iter)
+
+        # TODO: Why do I need to divide by 100 here?
+        return pd.DataFrame(sigma / 100, index=A.index, columns=A.index)
+
+    def compute_autocorrelation_matrix(self, n_lags=10, tol=1e-8, max_iter=10_000):
+        """
+        Parameters
+        ----------
+        n_lags: int
+            Number of lags over which to compute the autocorrelation
+        tol: float
+            Termination criterion for computing the stationary covariance matrix
+        max_iter: int
+            Max number of iterations when computing the stationary covaraince matrix
+
+        Returns
+        -------
+        acorr_mat: DataFrame
+
+        Computes autocorrelations for each model variable using the stationary covariance matrix. See doc string for
+        compute_stationary_covariance_matrix for more information.
+        """
+        if not self.perturbation_solved:
+            raise PerturbationSolutionNotFoundException()
+
+        C = pd.concat([self.Q, self.S])
+        A = pd.concat([self.P, self.R])
+
+        # A needs to  be square; add "jumpers" to the columns with all zeros
+        A.columns = A.index[:A.shape[1]]
+        A[A.index[A.shape[1]:]] = 0
+
+        # Remove the time indices from A
+        no_time_idx = ['_'.join(x.split('_')[:-1]) for x in A.columns]
+        A.columns = no_time_idx
+        A.index = no_time_idx
+
+        sigma = _compute_stationary_covariance_matrix(A.values, C.values, tol=tol, max_iter=max_iter)
+        acorr_mat = _compute_autocorrelation_matrix(A.values, sigma, n_lags=n_lags)
+
+        return pd.DataFrame(acorr_mat, index=A.index, columns=np.arange(n_lags))
 
     def sample_param_dict_from_prior(self, n_samples=1, seed=None):
         n_params = len(self.param_priors)
@@ -456,7 +531,8 @@ class gEconModel:
     def simulate(self, simulation_length: int = 40,
                  n_simulations: int = 100,
                  shock_dict: Optional[Dict[str, float]] = None,
-                 shock_cov_matrix: Optional[ArrayLike] = None):
+                 shock_cov_matrix: Optional[ArrayLike] = None,
+                 show_progress_bar: bool = False):
 
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
@@ -494,10 +570,16 @@ class gEconModel:
         if epsilons.ndim == 2:
             epsilons = epsilons[:, :, None]
 
+        progress_bar = ProgressBar(T-1, verb='Sampling')
+
         for t in range(1, T):
+            progress_bar.start()
             stochastic = np.einsum('ij,sj', S_prime.values, epsilons[:, t - 1, :])
             deterministic = R_prime.values @ data[:, t - 1, :]
             data[:, t, :] = (deterministic + stochastic)
+
+            if show_progress_bar:
+                progress_bar.stop()
 
         var_names = [x.replace('_t', '') for x in S_prime.index]
         index = pd.MultiIndex.from_product([var_names,
@@ -651,3 +733,25 @@ class gEconModel:
                                                       sort_dictionary])
 
         del raw_blocks[ss_block_names[0]]
+
+
+@njit
+def _compute_stationary_covariance_matrix(A, C, tol=1e-9, max_iter=10_000):
+    sigma = np.eye(A.shape[0])
+    for _ in range(max_iter):
+        new_sigma = A @ sigma @ A.T + C @ C.T
+        if ((sigma - new_sigma) ** 2).mean() < tol:
+            return sigma
+        else:
+            sigma = new_sigma
+
+@njit
+def _compute_autocorrelation_matrix(A, sigma, n_lags=5):
+    acov = np.zeros((A.shape[0], n_lags))
+    acov_factor = np.eye(A.shape[0])
+    for i in range(n_lags):
+        cov = acov_factor @ sigma
+        acov[:, i] = np.diag(cov) / np.diag(sigma)
+        acov_factor = A @ acov_factor
+
+    return acov
