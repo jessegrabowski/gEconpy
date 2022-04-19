@@ -1,6 +1,6 @@
 options
 {
-	output LaTeX = FALSE;
+
 };
 
 block HOUSEHOLD

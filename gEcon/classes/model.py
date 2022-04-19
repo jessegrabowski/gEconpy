@@ -124,13 +124,14 @@ class gEconModel:
 
     def build_report(self):
         """
-        :return: None
-
-        Write a disagostic message after building the model. Note that successfully building the model does not
+        Write a diagnostic message after building the model. Note that successfully building the model does not
         guarantee that the model is correctly specified. For example, it is possible to build a model with more
         equations than parameters. This message will warn the user in this case.
-        """
 
+        Returns
+        -------
+        None
+        """
         eq_str = "equation" if self.n_equations == 1 else "equations"
         var_str = "variable" if self.n_variables == 1 else "variables"
         shock_str = "shock" if self.n_shocks == 1 else "shocks"
@@ -146,11 +147,11 @@ class gEconModel:
         report += f'\t{self.n_equations} {eq_str}\n'
         report += f'\t{self.n_variables} {var_str}\n'
         report += f'\t{self.n_shocks} stochastic {shock_str}\n'
-        report += f'\t\t {len(shock_priors)} / {self.n_shocks} {"have" if len(shock_priors) > 1 else "has"}' \
+        report += f'\t\t {len(shock_priors)} / {self.n_shocks} {"have" if len(shock_priors) == 1 else "has"}' \
                   f' a defined prior. \n'
 
         report += f'\t{n_params} {par_str}\n'
-        report += f'\t\t {len(param_priors)} / {n_params} {"have" if len(param_priors) > 1 else "has"} ' \
+        report += f'\t\t {len(param_priors)} / {n_params} {"have" if len(param_priors) == 1 else "has"} ' \
                   f'a defined prior. \n'
         report += f'\t{self.n_calibrating_equations} calibrating {cal_eq_str}\n'
         report += f'\t{self.n_params_to_calibrate} {par_str} to calibrate\n '
@@ -171,6 +172,9 @@ class gEconModel:
                      param_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
                      use_jac: Optional[bool] = True) -> None:
         """
+        Solves for a function f(params) that computes steady state values and calibrated parameter values given
+        parameter values, stores results, and verifies that the residuals of the solution are zero.
+
         Parameters
         ----------
         verbose: bool
@@ -187,9 +191,6 @@ class gEconModel:
         Returns
         -------
         None
-
-        Solves for a function f(params) that computes steady state values and calibrated parameter values given
-        parameter values, stores results, and verifies that the residuals of the solution are zero.
         """
         if not self.steady_state_solved:
             self.f_ss = self.steady_state_solver.solve_steady_state(optimizer_kwargs=optimizer_kwargs,
@@ -243,20 +244,29 @@ class gEconModel:
                     verbose: bool = True,
                     on_failure='error') -> None:
         """
+        Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
+        package by Grzegorz Klima, Karol Podemski, and Kaja Retkiewicz-Wijtiwiak., http://gecon.r-forge.r-project.org/.
+
         Parameters
         ----------
-        not_loglin_variable
-        order
-        model_is_linear
-        tol
-        verbose
-        on_failure
+        not_loglin_variable: List of strings
+            Variables to not log linearize when solving the model. Variables with steady state values close to zero
+            will be automatically selected to not log linearize.
+        order: int
+            Order of taylor expansion to use to solve the model. Currently only 1st order approximation is supported.
+        model_is_linear: bool
+            Flag indicating whether a model has already been linearized by the user.
+        tol: float
+            Desired level of floating point accuracy in the solution
+        verbose: bool
+            Flag indicating whether to print solver results to the terminal
+        on_failure: str, one of ['error', 'ignore']
+            Instructions on what to do if Gensys fails to find a linearized policy matrix. "Error" will raise an error,
+            while "ignore" will return None. "ignore" is useful when repeatedly solving the model, e.g. when sampling.
 
         Returns
         -------
-
-        Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
-        package by Grzegorz Klima, Karol Podemski, and Kaja Retkiewicz-Wijtiwiak., http://gecon.r-forge.r-project.org/.
+        None
         """
 
         param_dict = merge_dictionaries(self.free_param_dict, self.calib_param_dict)
@@ -424,12 +434,13 @@ class gEconModel:
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
 
-        C = pd.concat([self.Q, self.S])
-        A = pd.concat([self.P, self.R])
+        C = pd.concat([self.Q, self.S]).copy()
+        A = pd.concat([self.P, self.R]).copy()
 
         # A needs to  be square; add "jumpers" to the columns with all zeros
         A.columns = A.index[:A.shape[1]]
-        A[A.index[A.shape[1]:]] = 0
+        missing_cols = pd.DataFrame(0, columns=A.index[A.shape[1]:], index=A.index)
+        A = pd.concat([A, missing_cols], axis=1).copy()
 
         # Remove the time indices from A
         no_time_idx = ['_'.join(x.split('_')[:-1]) for x in A.columns]
@@ -462,12 +473,13 @@ class gEconModel:
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
 
-        C = pd.concat([self.Q, self.S])
-        A = pd.concat([self.P, self.R])
+        C = pd.concat([self.Q, self.S]).copy()
+        A = pd.concat([self.P, self.R]).copy()
 
         # A needs to  be square; add "jumpers" to the columns with all zeros
         A.columns = A.index[:A.shape[1]]
-        A[A.index[A.shape[1]:]] = 0
+        missing_cols = pd.DataFrame(0, columns=A.index[A.shape[1]:], index=A.index)
+        A = pd.concat([A, missing_cols], axis=1).copy()
 
         # Remove the time indices from A
         no_time_idx = ['_'.join(x.split('_')[:-1]) for x in A.columns]
@@ -500,7 +512,8 @@ class gEconModel:
 
         S_prime = pd.concat([self.Q, self.S])
         R_prime = pd.concat([self.P, self.R])
-        R_prime[self.R.index.str.replace('_t', '_t-1')] = 0
+        missing_cols = pd.DataFrame(0, columns=R_prime.index[R_prime.shape[1]:], index=R_prime.index)
+        R_prime = pd.concat([R_prime, missing_cols], axis=1).copy()
 
         T = simulation_length
 
@@ -515,12 +528,13 @@ class gEconModel:
                 deterministic = R_prime.values @ data[:, t - 1, i]
                 data[:, t, i] = (deterministic + stochastic)
 
-        var_names = [x.replace('_t', '') for x in S_prime.index]
-        shock_names = [x.replace('_t', '') for x in S_prime.columns]
+        var_names = ['_'.join(x.split('_')[:-1]) for x in S_prime.index]
+        shock_names = ['_'.join(x.split('_')[:-1]) for x in S_prime.columns]
         index = pd.MultiIndex.from_product([var_names,
                                             np.arange(T),
                                             shock_names],
                                            names=['Variables', 'Time', 'Shocks'])
+
         df = (pd.DataFrame(data.ravel(), index=index, columns=['Values'])
               .unstack([1, 2])
               .droplevel(axis=1, level=0)
@@ -669,7 +683,7 @@ class gEconModel:
             if len(self.params_to_calibrate) == 0:
                 self.params_to_calibrate = block.params_to_calibrate
             else:
-                self.params_to_calibrate.append(block.params_to_calibrate)
+                self.params_to_calibrate.extend(block.params_to_calibrate)
 
             if block.calibrating_equations is None:
                 continue
@@ -677,7 +691,7 @@ class gEconModel:
             if len(self.calibrating_equations) == 0:
                 self.calibrating_equations = block.calibrating_equations
             else:
-                self.calibrating_equations.append(block.calibrating_equations)
+                self.calibrating_equations.extend(block.calibrating_equations)
 
         self.n_calibrating_equations = len(self.calibrating_equations)
         self.n_params_to_calibrate = len(self.params_to_calibrate)

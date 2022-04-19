@@ -219,6 +219,9 @@ def plot_eigenvalues(model, figsize=None, dpi=None):
 def plot_covariance_matrix(data, vars_to_plot=None, cbarlabel='Covariance', figsize=(8,8),
                            dpi=100, cbar_kw=None, cmap='YlGn', annotation_fontsize=8):
 
+    if vars_to_plot is None:
+        vars_to_plot = data.columns
+
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     im, cbar = plot_heatmap(data.loc[vars_to_plot, vars_to_plot],
                             ax=ax, cbar_kw=cbar_kw, cmap=cmap, cbarlabel=cbarlabel)

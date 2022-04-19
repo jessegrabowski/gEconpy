@@ -42,12 +42,9 @@ class SteadyStateSolver:
     def build_steady_state_system(self):
         self.steady_state_system = []
 
-        ss_sub_dict = {}
-        for variable in self.variables:
-            ss_sub_dict[variable] = variable.to_ss()
-            ss_sub_dict[variable.step_backward()] = variable.to_ss()
-            ss_sub_dict[variable.step_forward()] = variable.to_ss()
-
+        all_atoms = [x for eq in self.system_equations for x in eq.atoms() if is_variable(x)]
+        all_variables = set(all_atoms) - set(self.shocks)
+        ss_sub_dict = {variable: variable.to_ss() for variable in set(all_variables)}
         unique_ss_variables = list(set(list(ss_sub_dict.values())))
 
         steady_state_dict = sequential(dict(zip(unique_ss_variables, [None] * self.n_variables)),
@@ -192,11 +189,10 @@ class SteadyStateSolver:
                                                              calib_with_user_solutions,
                                                              [safe_string_to_sympy(x) for x in params_and_variables])
 
-        # Case 1: All equations were solved for by the heuristic solver
-        if solved_mask.sum() == n_to_calibrate:
+        # Case 1: We found something! Refine the solution.
+        if solved_mask.sum() > 0:
             # If the heuristic solver worked, we got solutions for variables that will allow us to go back and solve for
             # the calibrating parameters.
-            # TODO: Are there cases when this isn't true?
 
             sub_dict = merge_dictionaries(free_param_dict, calib_solutions)
             more_solutions, solved_mask = self.heuristic_solver(sub_dict,
@@ -216,8 +212,11 @@ class SteadyStateSolver:
                                          [sympy_number_values_to_floats, sympy_keys_to_strings, sort_dictionary])
             f_calib = lambda *args, **kwargs: calib_solutions
 
-        # Case 2: Need to use an optimizer
+        # Case 2: Found nothing, try to use an optimizer
         else:
+            # Here we check how many equations are remaining to solve after accounting for the user's SS info.
+            # We're looking for the case when all information is given EXCEPT the calibrating parameters.
+            # If there is more than that, we handle it in the final pass.
             calib_remaining_to_solve = list(set(unknown_variables) - set(symbolic_solutions.keys()))
             calib_n_eqs = len(calib_remaining_to_solve)
             if calib_n_eqs > len(calibrating_equations):
@@ -390,9 +389,9 @@ class SteadyStateSolver:
         def combined_function(param_dict):
             ss_out = {}
 
-            calib_dict = f_calib(param_dict)
-            var_dict = f_provided(param_dict, calib_dict)
-            final_dict = final_f(param_dict)
+            calib_dict = f_calib(param_dict).copy()
+            var_dict = f_provided(param_dict, calib_dict).copy()
+            final_dict = final_f(param_dict).copy()
 
             for param in calib_params:
                 if param in final_dict.keys():

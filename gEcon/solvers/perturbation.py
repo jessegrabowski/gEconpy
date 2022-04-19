@@ -66,11 +66,11 @@ class PerturbationSolver:
         Pi = Pi[eqs_and_leads_idx, :][:, lead_var_idx]
 
         # Is this necessary?
-        g0 = -np.ascontiguousarray(Gamma_0).astype(np.float64)  # NOTE THE IMPORTANT MINUS SIGN LURKING
-        g1 = np.ascontiguousarray(Gamma_1).astype(np.float64)
+        g0 = -np.ascontiguousarray(Gamma_0) # NOTE THE IMPORTANT MINUS SIGN LURKING
+        g1 = np.ascontiguousarray(Gamma_1)
         c = np.ascontiguousarray(np.zeros(shape=(n_vars + n_leads, 1)))
-        psi = np.ascontiguousarray(Psi).astype(np.float64)
-        pi = np.ascontiguousarray(Pi).astype(np.float64)
+        psi = np.ascontiguousarray(Psi)
+        pi = np.ascontiguousarray(Pi)
 
         G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
         if verbose:
@@ -110,7 +110,7 @@ class PerturbationSolver:
         R = PP[~state_var_mask, :][:, state_var_idx]
         S = QQ[~state_var_mask, :][:, shock_idx]
 
-        A_prime = np.array(A).astype(np.float64)[:, state_var_mask]
+        A_prime = A[:, state_var_mask]
         R_prime = PP[:, state_var_mask]
         S_prime = QQ[:, shock_idx]
 
@@ -123,15 +123,11 @@ class PerturbationSolver:
 
     @staticmethod
     def residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime):
-        B_np = np.array(B).astype(np.float64)
-        C_np = np.array(C).astype(np.float64)
-        D_np = np.array(D).astype(np.float64)
+        norm_deterministic = linalg.norm(A_prime + B @ R_prime +
+                                         C @ R_prime @ P)
 
-        norm_deterministic = linalg.norm(A_prime + B_np @ R_prime +
-                                         C_np @ R_prime @ P)
-
-        norm_stochastic = linalg.norm(B_np @ S_prime +
-                                      C_np @ R_prime @ Q + D_np)
+        norm_stochastic = linalg.norm(B @ S_prime +
+                                      C @ R_prime @ Q + D)
 
         return norm_deterministic, norm_stochastic
 
