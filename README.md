@@ -168,20 +168,20 @@ Finally, you **do not** have to provide the complete steady state system! You ca
 ## Solving the model
 
 Once a GCN file is written, using gEcon to do analysis is easy, as this code block shows:
-```
+```python
 file_path = 'GCN Files/RBC_basic.gcn'
 model = gEconModel(file_path, verbose=True)
 ```
 
 When the model is loaded, you will get a message about the number of equations and variables, as well as some other basic model descriptions. You can then solve for the stead state:
-```
+```python
 model.steady_state()
 >>> Steady state found! Sum of squared residuals is 2.9196536232567403e-19
 ```
 
 And get the linearized state space representation
 
-```
+```python
 model.solve_model()
 >>>Solution found, sum of squared residuals:  7.075155451456433e-30
 >>>Norm of deterministic part: 0.000000000
@@ -196,7 +196,7 @@ To see how to do simulations, IRFs, and compute moments, see the example noteboo
 
 Since Dynare is still the gold standard in DSGE modeling, and this is a wacky open source package written by a literally who?, gEcon.py has the ability to automatically convert a solved model into a Dynare mod file. This is done as follows:
 
-```
+```python
 from gEcon.shared.dynare_convert import make_mod_file
 print(make_mod_file(model))
 ```
