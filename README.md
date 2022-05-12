@@ -10,6 +10,18 @@ gEcon.py uses the GCN file originally created for the gEcon package. gEcon GCN f
 
 gEcon.py is still in an unfinished alpha state, but I encourage anyone interested in DSGE modeling to give it a try and and report any bugs you might find.
 
+## To Do List:
+1. Bayesian and ML Estimation
+2. Local identification tests
+3. Improve symbolic simplification routines
+4. Re-write entire back-end using Aesara, integrate with PyMC and allow NUTS sampling
+5. Higher order linear approximations
+6. Re-write and robustify steady-state solver
+7. More robust GCN parser with clearer error messages
+8. More diagnostic tools for debugging GCN file code
+
+If you want to help with the project, please don't hesitate to reach out!
+
 # Representing a DSGE Model
 Like the R package gEcon, gEcon.py uses .GCN files to represent a DSGE model. A GCN file is divided into blocks, each of which represents an optimization problem. Here is one block from the example Real Business Cycle (RBC) model included in the package.
 
