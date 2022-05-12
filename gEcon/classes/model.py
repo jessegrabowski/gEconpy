@@ -88,8 +88,8 @@ class gEconModel:
 
         # Perturbation solution information
         self.perturbation_solved: bool = False
-        self.T = None
-        self.R = None
+        self.T: pd.DataFrame = None
+        self.R: pd.DataFrame = None
         # self.P: pd.DataFrame = None
         # self.Q: pd.DataFrame = None
         # self.R: pd.DataFrame = None
@@ -493,23 +493,12 @@ class gEconModel:
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
 
-        C = pd.concat([self.Q, self.S]).copy()
-        A = pd.concat([self.P, self.R]).copy()
+        T, R = self.T, self.R
 
-        # A needs to  be square; add "jumpers" to the columns with all zeros
-        A.columns = A.index[:A.shape[1]]
-        missing_cols = pd.DataFrame(0, columns=A.index[A.shape[1]:], index=A.index)
-        A = pd.concat([A, missing_cols], axis=1).copy()
+        # TODO: Should this be R @ Q @ R.T ?
+        sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ R.values.T)
 
-        # Remove the time indices from A
-        no_time_idx = ['_'.join(x.split('_')[:-1]) for x in A.columns]
-        A.columns = no_time_idx
-        A.index = no_time_idx
-
-        sigma = linalg.solve_discrete_lyapunov(A.values, C.values @ C.values.T)
-
-        # TODO: Why do I need to divide by 100 here?
-        return pd.DataFrame(sigma / 100, index=A.index, columns=A.index)
+        return pd.DataFrame(sigma / 100, index=T.index, columns=T.index)
 
     def compute_autocorrelation_matrix(self, n_lags=10, tol=1e-8, max_iter=10_000):
         """
@@ -532,23 +521,12 @@ class gEconModel:
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
 
-        C = pd.concat([self.Q, self.S]).copy()
-        A = pd.concat([self.P, self.R]).copy()
+        T, R = self.T, self.R
 
-        # A needs to  be square; add "jumpers" to the columns with all zeros
-        A.columns = A.index[:A.shape[1]]
-        missing_cols = pd.DataFrame(0, columns=A.index[A.shape[1]:], index=A.index)
-        A = pd.concat([A, missing_cols], axis=1).copy()
+        Sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ R.values.T)
+        acorr_mat = _compute_autocorrelation_matrix(T.values, Sigma, n_lags=n_lags)
 
-        # Remove the time indices from A
-        no_time_idx = ['_'.join(x.split('_')[:-1]) for x in A.columns]
-        A.columns = no_time_idx
-        A.index = no_time_idx
-
-        sigma = linalg.solve_discrete_lyapunov(A.values, C.values @ C.values.T)
-        acorr_mat = _compute_autocorrelation_matrix(A.values, sigma, n_lags=n_lags)
-
-        return pd.DataFrame(acorr_mat, index=A.index, columns=np.arange(n_lags))
+        return pd.DataFrame(acorr_mat, index=T.index, columns=np.arange(n_lags))
 
     def sample_param_dict_from_prior(self, n_samples=1, seed=None):
         n_params = len(self.param_priors)
@@ -569,29 +547,24 @@ class gEconModel:
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
 
-        S_prime = pd.concat([self.Q, self.S])
-        R_prime = pd.concat([self.P, self.R])
-        missing_cols = pd.DataFrame(0, columns=R_prime.index[R_prime.shape[1]:], index=R_prime.index)
-        R_prime = pd.concat([R_prime, missing_cols], axis=1).copy()
+        T, R = self.T, self.R
 
-        T = simulation_length
+        timesteps = simulation_length
 
-        data = np.zeros((self.n_variables, T, self.n_shocks))
+        data = np.zeros((self.n_variables, timesteps, self.n_shocks))
 
         for i in range(self.n_shocks):
-            shock_path = np.zeros((self.n_shocks, T))
+            shock_path = np.zeros((self.n_shocks, timesteps))
             shock_path[i, 0] = shock_size
 
-            for t in range(1, T):
-                stochastic = S_prime.values @ shock_path[:, t - 1]
-                deterministic = R_prime.values @ data[:, t - 1, i]
+            for t in range(1, timesteps):
+                stochastic = R.values @ shock_path[:, t - 1]
+                deterministic = T.values @ data[:, t - 1, i]
                 data[:, t, i] = (deterministic + stochastic)
 
-        var_names = ['_'.join(x.split('_')[:-1]) for x in S_prime.index]
-        shock_names = ['_'.join(x.split('_')[:-1]) for x in S_prime.columns]
-        index = pd.MultiIndex.from_product([var_names,
-                                            np.arange(T),
-                                            shock_names],
+        index = pd.MultiIndex.from_product([R.index,
+                                            np.arange(timesteps),
+                                            R.columns],
                                            names=['Variables', 'Time', 'Shocks'])
 
         df = (pd.DataFrame(data.ravel(), index=index, columns=['Values'])
@@ -610,53 +583,50 @@ class gEconModel:
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
 
-        S_prime = pd.concat([self.Q, self.S])
-        R_prime = pd.concat([self.P, self.R])
-        R_prime[self.R.index.str.replace('_t', '_t-1')] = 0
+        T, R = self.T, self.R
+        timesteps = simulation_length
 
-        T = simulation_length
-        n_shocks = S_prime.shape[1]
+        n_shocks = R.shape[1]
 
         if shock_cov_matrix is not None:
             assert shock_cov_matrix.shape == (
                 n_shocks, n_shocks), f'The shock covariance matrix should have shape {n_shocks} x {n_shocks}'
             d = stats.multivariate_normal(mean=np.zeros(n_shocks), cov=shock_cov_matrix)
-            epsilons = np.r_[[d.rvs(T) for _ in range(n_simulations)]]
+            epsilons = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
 
         elif shock_dict is not None:
-            epsilons = np.zeros((n_simulations, T, n_shocks))
+            epsilons = np.zeros((n_simulations, timesteps, n_shocks))
             for i, shock in enumerate(self.shocks):
                 if shock.base_name in shock_dict.keys():
                     d = stats.norm(loc=0, scale=shock_dict[shock.base_name])
-                    epsilons[:, :, i] = np.r_[[d.rvs(T) for _ in range(n_simulations)]]
+                    epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
 
         elif all([shock.base_name in self.shock_priors.keys() for shock in self.shocks]):
-            epsilons = np.zeros((n_simulations, T, n_shocks))
+            epsilons = np.zeros((n_simulations, timesteps, n_shocks))
             for i, d in enumerate(self.shock_priors.values()):
-                epsilons[:, :, i] = np.r_[[d.rvs(T) for _ in range(n_simulations)]]
+                epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
 
         else:
             raise ValueError('To run a simulation, supply either a full covariance matrix, a dictionary of shocks and'
                              'standard deviations, or specify priors on the shocks in your GCN file.')
 
-        data = np.zeros((self.n_variables, T, n_simulations))
+        data = np.zeros((self.n_variables, timesteps, n_simulations))
         if epsilons.ndim == 2:
             epsilons = epsilons[:, :, None]
 
-        progress_bar = ProgressBar(T - 1, verb='Sampling')
+        progress_bar = ProgressBar(timesteps - 1, verb='Sampling')
 
-        for t in range(1, T):
+        for t in range(1, timesteps):
             progress_bar.start()
-            stochastic = np.einsum('ij,sj', S_prime.values, epsilons[:, t - 1, :])
-            deterministic = R_prime.values @ data[:, t - 1, :]
+            stochastic = np.einsum('ij,sj', R.values, epsilons[:, t - 1, :])
+            deterministic = T.values @ data[:, t - 1, :]
             data[:, t, :] = (deterministic + stochastic)
 
             if show_progress_bar:
                 progress_bar.stop()
 
-        var_names = [x.replace('_t', '') for x in S_prime.index]
-        index = pd.MultiIndex.from_product([var_names,
-                                            np.arange(T),
+        index = pd.MultiIndex.from_product([R.index,
+                                            np.arange(timesteps),
                                             np.arange(n_simulations)],
                                            names=['Variables', 'Time', 'Simulation'])
         df = pd.DataFrame(data.ravel(), index=index, columns=['Values']).unstack([1, 2]).droplevel(axis=1, level=0)
