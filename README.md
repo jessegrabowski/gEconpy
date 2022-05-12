@@ -53,7 +53,7 @@ block HOUSEHOLD
 ## Basic Basics
 A .GCN file uses an easy-to-read syntax. Whitespace is not meaningful - lines are terminated with a ";", so long equations can be split into multiple lines for readability. There are no reserved keywords* to avoid -- feel free to write beta instead of betta!
 
-Model variables are written with a name followed by square brackets, as in `U[]`. The square brackets give the time index the variable enters with. Following Dynare conventions, capital stock `K[-1]` enters with a lag, while all other variables enter in the present. Expectations are denoted by wrapping variables with `E[]`, as in `E[U[1]]` for expected utility at t+1. So I lied, there are a couple reserved keywords (hence the asterisk).
+Model variables are written with a name followed by square brackets, as in `U[]`. The square brackets give the time index the variable enters with. Following Dynare conventions, capital stock `K[-1]` enters with a lag, while all other variables enter in the present. Expectations are denoted by wrapping variables with `E[]`, as in `E[U[1]]` for expected utility at t+1. So I lied, there are a couple reserved keywords (hence the asterisk). Finally, you can refer directly to steady-state values as `K[ss]`. 
 
 Parameters are written exactly as variables, except they have no square brackets `[]`. 
 
