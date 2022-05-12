@@ -19,7 +19,7 @@ block HOUSEHOLD
 	definitions
 	{
 		u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) - 
-          L[] ^ (1 + sigma_L) / (1 + sigma_L);
+		      L[] ^ (1 + sigma_L) / (1 + sigma_L);
 	};
 
 	controls
@@ -40,11 +40,11 @@ block HOUSEHOLD
 
 	calibration
 	{
-    # Fixed parameters
+		# Fixed parameters
 		beta  = 0.99;
 		delta = 0.02;
     
-    # Parameters to estimate
+		# Parameters to estimate
 		sigma_C ~ N(loc=1.5, scale=0.1, lower=1.0) = 1.5;
 		sigma_L ~ N(loc=2.0, scale=0.1, lower=1.0) = 2.0;
 	};
