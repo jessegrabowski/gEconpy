@@ -101,7 +101,7 @@ block FIRM
 
     calibration
     {
-		    L[ss] / K[ss] = 0.36 -> alpha;
+	L[ss] / K[ss] = 0.36 -> alpha;
     };
 };
 ```
