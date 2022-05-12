@@ -636,5 +636,5 @@ class SteadyStateSolver:
                 solved_mask[eq_to_var_dict[key]] = False
 
         solution_dict = sequential(solution_dict, [sympy_keys_to_strings,
-                                                   lambda x: {key: float(value) for key, value in x.items()}])
+                                                   sympy_number_values_to_floats])
         return solution_dict, solved_mask

@@ -73,10 +73,10 @@ class ModelClassTestsOne(unittest.TestCase):
 
             self.assertAlmostEqual(self.model.steady_state_dict[key.safe_name], expected_result, places=1)
 
-    def test_solve_model(self):
+    def test_solve_model_gensys(self):
         self.model.steady_state(verbose=False)
         self.assertEqual(self.model.steady_state_solved, True)
-        self.model.solve_model(verbose=False)
+        self.model.solve_model(verbose=False, solver='gensys')
 
         # Values from R gEcon solution
         P = np.array([[0.950, 0.0000],
@@ -85,37 +85,92 @@ class ModelClassTestsOne(unittest.TestCase):
         Q = np.array([[1.000],
                       [0.2852917]])
 
-        R = np.array([[-0.80973441, -0.273514035],
-                      [-0.80973441, -0.273514035],
-                      [0.70641931, 0.162459910],
+        # TODO: Bug? When the SS value is negative, the sign of the S and R matrix entries are flipped relative to
+        #   those of gEcon (row 4 -- Utility). This code flips the sign on my values to make the comparison.
+        #   Check Dynare.
+        R = np.array([[0.70641931, 0.162459910],
                       [13.55135517, -4.415155354],
                       [0.42838971, -0.152667442],
-                      [0.06008706, 0.009473984],
-                      [1.36634369, -0.072720705]])
+                      [-0.06008706, -0.009473984],
+                      [1.36634369, -0.072720705],
+                      [-0.80973441, -0.273514035],
+                      [-0.80973441, -0.273514035]])
 
-        S = np.array([[-0.85235201],
-                      [-0.85235201],
-                      [0.74359928],
+        S = np.array([[0.74359928],
                       [14.26458439],
                       [0.45093654],
-                      [0.06324954],
-                      [1.43825652]])
+                      [-0.06324954],
+                      [1.43825652],
+                      [-0.85235201],
+                      [-0.85235201]])
 
-        # TODO: Bug? When the SS value is negative, the sign of the S and R matrix entries are flipped relative to
-        #   those of gEcon. This code flips the sign on my values to make the comparison. -- Check IRFs, Check Dynare.
         ss_df = pd.Series(string_keys_to_sympy(self.model.steady_state_dict))
         ss_df.index = list(map(lambda x: x.exit_ss().name, ss_df.index))
-        ss_df = ss_df.reindex(self.model.S.index)
-        neg_ss_mask = ss_df < 0
+        # ss_df = ss_df.reindex(self.model.S.index)
+        # neg_ss_mask = ss_df < 0
 
-        for answer, result in zip([P, Q, R, S], [self.model.P, self.model.Q, self.model.R, self.model.S]):
-            index_7 = ['lambda_t', 'q_t', 'C_t', 'I_t', 'L_t', 'U_t', 'Y_t']
+        A, _, _, _ = self.model.build_perturbation_matrices(**self.model.free_param_dict,
+                                                            **self.model.calib_param_dict,
+                                                            **self.model.steady_state_dict)
+        _, variables, _ = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-            if result.shape[0] == 7:
-                result = result.loc[index_7, :]
-                result.loc[neg_ss_mask, :] = result.loc[neg_ss_mask, :] * -1
+        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(A,
+                                                                                           self.model.T.values,
+                                                                                           self.model.R.values,
+                                                                                           variables,
+                                                                                           1e-7)
+        model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
 
-            self.assertEqual(np.allclose(answer, result.values), True)
+        self.assertEqual(np.allclose(model_P, P), True)
+        self.assertEqual(np.allclose(model_Q, Q), True)
+        self.assertEqual(np.allclose(model_R, R), True)
+        self.assertEqual(np.allclose(model_S, S), True)
+
+    def test_solve_model_cycle_reduction(self):
+        self.model.steady_state(verbose=False)
+        self.assertEqual(self.model.steady_state_solved, True)
+        self.model.solve_model(verbose=False, solver='cycle_reduction')
+
+        # Values from R gEcon solution
+        P = np.array([[0.950, 0.0000],
+                      [0.2710273, 0.8916969]])
+
+        Q = np.array([[1.000],
+                      [0.2852917]])
+
+        # TODO: Check dynare outputs for sign flip
+        R = np.array([[0.70641931, 0.162459910],
+                      [13.55135517, -4.415155354],
+                      [0.42838971, -0.152667442],
+                      [-0.06008706, -0.009473984],
+                      [1.36634369, -0.072720705],
+                      [-0.80973441, -0.273514035],
+                      [-0.80973441, -0.273514035]])
+
+        S = np.array([[0.74359928],
+                      [14.26458439],
+                      [0.45093654],
+                      [-0.06324954],
+                      [1.43825652],
+                      [-0.85235201],
+                      [-0.85235201]])
+
+        A, _, _, _ = self.model.build_perturbation_matrices(**self.model.free_param_dict,
+                                                            **self.model.calib_param_dict,
+                                                            **self.model.steady_state_dict)
+        _, variables, _ = self.model.perturbation_solver.make_all_variable_time_combinations()
+
+        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(A,
+                                                                                           self.model.T.values,
+                                                                                           self.model.R.values,
+                                                                                           variables,
+                                                                                           1e-7)
+        model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
+
+        self.assertEqual(np.allclose(model_P, P), True)
+        self.assertEqual(np.allclose(model_Q, Q), True)
+        self.assertEqual(np.allclose(model_R, R), True)
+        self.assertEqual(np.allclose(model_S, S), True)
 
 
 class ModelClassTestsTwo(unittest.TestCase):
@@ -192,10 +247,10 @@ class ModelClassTestsTwo(unittest.TestCase):
                 else answer_dict[key]
             self.assertAlmostEqual(value, expected_result, places=8)
 
-    def test_solve_model(self):
+    def test_solve_model_gensys(self):
         self.model.steady_state(verbose=False)
         self.assertEqual(self.model.steady_state_solved, True)
-        self.model.solve_model(verbose=False)
+        self.model.solve_model(verbose=False, solver='gensys')
 
         P = np.array([[0.95000000, 0.0000000],
                       [0.08887552, 0.9614003]])
@@ -203,42 +258,98 @@ class ModelClassTestsTwo(unittest.TestCase):
         Q = np.array([[1.00000000],
                       [0.09355318]])
 
-        R = np.array([[-0.6875042, -0.7962522],
-                      [-0.6875042, -0.7962522],
-                      [1.0422284, -0.8067914],
-                      [0.9003386, 0.4344261],
-                      [0.3437521, 0.3981261],
+        # TODO: Investigate sign flip on row 5, 6 (TC, U)
+        R = np.array([[0.3437521, 0.3981261],
                       [3.5550207, -0.5439888],
                       [0.1418896, -0.2412174],
                       [0.0000000, 0.0000000],
-                      [-1.0422283, -0.1932087],
-                      [0.2127497, 0.1270917],
-                      [1.0422282, 0.1932087]])
+                      [1.0422283, 0.1932087],
+                      [-0.2127497, -0.1270917],
+                      [1.0422282, 0.1932087],
+                      [-0.6875042, -0.7962522],
+                      [-0.6875042, -0.7962522],
+                      [1.0422284, -0.8067914],
+                      [0.9003386, 0.4344261]])
 
-        S = np.array([[-0.7236886],
-                      [-0.7236886],
-                      [1.0970825],
-                      [0.9477249],
-                      [0.3618443],
+        S = np.array([[0.3618443],
                       [3.7421271],
                       [0.1493575],
                       [0.0000000],
-                      [-1.0970824],
-                      [0.2239471],
-                      [1.0970823]])
+                      [1.0970824],
+                      [-0.2239471],
+                      [1.0970823],
+                      [-0.7236886],
+                      [-0.7236886],
+                      [1.0970825],
+                      [0.9477249], ])
 
-        index_11 = ['lambda_t', 'q_t', 'r_t', 'w_t', 'C_t', 'I_t', 'L_t', 'P_t', 'TC_t', 'U_t', 'Y_t']
-        sympy_results = string_keys_to_sympy(self.model.steady_state_dict)
-        ss_df = pd.Series(sympy_results)
-        ss_df.index = list(map(lambda x: x.exit_ss().name, ss_df.index))
-        ss_df = ss_df.reindex(self.model.S.index)
-        neg_ss_mask = ss_df < 0
+        A, _, _, _ = self.model.build_perturbation_matrices(**self.model.free_param_dict,
+                                                            **self.model.steady_state_dict)
+        _, variables, _ = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-        for answer, result in zip([P, Q, R, S], [self.model.P, self.model.Q, self.model.R, self.model.S]):
-            if result.shape[0] == 11:
-                result = result.loc[index_11, :]
-                result.loc[neg_ss_mask, :] = result.loc[neg_ss_mask, :] * -1
-            self.assertEqual(np.allclose(answer, result.values), True)
+        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(A,
+                                                                                           self.model.T.values,
+                                                                                           self.model.R.values,
+                                                                                           variables,
+                                                                                           1e-7)
+        model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
+
+        self.assertEqual(np.allclose(model_P, P), True)
+        self.assertEqual(np.allclose(model_Q, Q), True)
+        self.assertEqual(np.allclose(model_R, R), True)
+        self.assertEqual(np.allclose(model_S, S), True)
+
+    def test_solve_model_cycle_reduction(self):
+        self.model.steady_state(verbose=False)
+        self.assertEqual(self.model.steady_state_solved, True)
+        self.model.solve_model(verbose=False, solver='cycle_reduction')
+
+        P = np.array([[0.95000000, 0.0000000],
+                      [0.08887552, 0.9614003]])
+
+        Q = np.array([[1.00000000],
+                      [0.09355318]])
+
+        # TODO: Investigate sign flip on row 5, 6 (TC, U)
+        R = np.array([[0.3437521, 0.3981261],
+                      [3.5550207, -0.5439888],
+                      [0.1418896, -0.2412174],
+                      [0.0000000, 0.0000000],
+                      [1.0422283, 0.1932087],
+                      [-0.2127497, -0.1270917],
+                      [1.0422282, 0.1932087],
+                      [-0.6875042, -0.7962522],
+                      [-0.6875042, -0.7962522],
+                      [1.0422284, -0.8067914],
+                      [0.9003386, 0.4344261]])
+
+        S = np.array([[0.3618443],
+                      [3.7421271],
+                      [0.1493575],
+                      [0.0000000],
+                      [1.0970824],
+                      [-0.2239471],
+                      [1.0970823],
+                      [-0.7236886],
+                      [-0.7236886],
+                      [1.0970825],
+                      [0.9477249], ])
+
+        A, _, _, _ = self.model.build_perturbation_matrices(**self.model.free_param_dict,
+                                                            **self.model.steady_state_dict)
+        _, variables, _ = self.model.perturbation_solver.make_all_variable_time_combinations()
+
+        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(A,
+                                                                                           self.model.T.values,
+                                                                                           self.model.R.values,
+                                                                                           variables,
+                                                                                           1e-7)
+        model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
+
+        self.assertEqual(np.allclose(model_P, P), True)
+        self.assertEqual(np.allclose(model_Q, Q), True)
+        self.assertEqual(np.allclose(model_R, R), True)
+        self.assertEqual(np.allclose(model_S, S), True)
 
 
 class ModelClassTestsThree(unittest.TestCase):
@@ -270,7 +381,8 @@ class ModelClassTestsThree(unittest.TestCase):
                                                                                                  'phi_pi',
                                                                                                  'rho_pi_dot'])
 
-        param_dict = {'delta': 0.025, 'beta': 0.99, 'sigma_C': 2, 'sigma_L': 1.5, 'gamma_I': 10, 'phi_H': 0.5, 'psi_w': 0.782,
+        param_dict = {'delta': 0.025, 'beta': 0.99, 'sigma_C': 2, 'sigma_L': 1.5, 'gamma_I': 10, 'phi_H': 0.5,
+                      'psi_w': 0.782,
                       'eta_w': 0.75, 'alpha': 0.35, 'rho_technology': 0.95, 'rho_preference': 0.95, 'psi_p': 0.6,
                       'eta_p': 0.75, 'gamma_R': 0.9, 'gamma_pi': 1.5, 'gamma_Y': 0.05, 'rho_pi_dot': 0.924}
 
@@ -387,10 +499,22 @@ class ModelClassTestsThree(unittest.TestCase):
                 else answer_dict[key]
             self.assertAlmostEqual(value, expected_result, places=8)
 
+    def test_solvers_agree(self):
+        self.model.steady_state(verbose=False)
+        self.model.solve_model(solver='gensys', verbose=False)
+        Tg, Rg = self.model.T, self.model.R
+
+        self.model.solve_model(solver='cycle_reduction', verbose=False)
+        Tc, Rc = self.model.T, self.model.R
+
+        self.assertTrue(np.allclose(Tg.values, Tc.values))
+        self.assertTrue(np.allclose(Rc.values, Rg.values))
+
+
     # def test_solve_model(self):
     #     self.model.steady_state(verbose=False)
 
-    #     self.model.solve_model(verbose=False)
+    #     self.model.solve_model(verbose=False, solver='gensys')
     #
     #     P = np.array([[0.92400000, 0.00000000, 0.000000000, 0.000000000, 0.000000000, 0.0000000000, 0.0000000000,
     #                    0.000000000, 0.00000000, 0.0000000000],
@@ -500,6 +624,7 @@ class ModelWithSteadyStateTest(unittest.TestCase):
         # self.model.param_dict['beta'] = 0.95
         # self.model.steady_state()
         # self.model.print_steady_state()
+
 
 if __name__ == '__main__':
     unittest.main()

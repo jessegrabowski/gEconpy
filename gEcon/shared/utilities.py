@@ -197,7 +197,7 @@ def sort_dictionary(d):
     return result
 
 
-SAFE_STRING_TO_INDEX_DICT = dict(ss='ss', tp1=1, tm1=1, t=0)
+SAFE_STRING_TO_INDEX_DICT = dict(ss='ss', tp1=1, tm1=-1, t=0)
 
 
 def safe_string_to_sympy(s):

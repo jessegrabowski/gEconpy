@@ -5,6 +5,7 @@ from gEcon.shared.utilities import string_keys_to_sympy, eq_to_ss
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from gEcon.exceptions.exceptions import VariableNotFoundException, SteadyStateNotSolvedError, GensysFailedException
 from gEcon.solvers.gensys import gensys
+from gEcon.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
 
 from warnings import warn
 import numpy as np
@@ -37,11 +38,7 @@ class PerturbationSolver:
     @staticmethod
     def solve_policy_function_with_gensys(A: ArrayLike, B: ArrayLike, C: ArrayLike, D: ArrayLike,
                                           tol: float = 1e-8,
-                                          verbose: bool = True) -> Tuple[Optional[ArrayLike], Optional[ArrayLike],
-                                                                         Optional[ArrayLike], Optional[ArrayLike],
-                                                                         Optional[ArrayLike], Optional[ArrayLike],
-                                                                         Optional[ArrayLike], List[int],
-                                                                         Optional[ArrayLike]]:
+                                          verbose: bool = True) -> Tuple:
         n_eq, n_vars = A.shape
         _, n_shocks = D.shape
 
@@ -51,10 +48,10 @@ class PerturbationSolver:
         n_leads = len(lead_var_idx)
 
         Gamma_0 = np.vstack([np.hstack([B, C]),
-                            np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
+                             np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
 
         Gamma_1 = np.vstack([np.hstack([A, np.zeros((n_eq, n_eq))]),
-                            np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])])
+                             np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])])
 
         Pi = np.vstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])
 
@@ -66,7 +63,7 @@ class PerturbationSolver:
         Pi = Pi[eqs_and_leads_idx, :][:, lead_var_idx]
 
         # Is this necessary?
-        g0 = -np.ascontiguousarray(Gamma_0) # NOTE THE IMPORTANT MINUS SIGN LURKING
+        g0 = -np.ascontiguousarray(Gamma_0)  # NOTE THE IMPORTANT MINUS SIGN LURKING
         g1 = np.ascontiguousarray(Gamma_1)
         c = np.ascontiguousarray(np.zeros(shape=(n_vars + n_leads, 1)))
         psi = np.ascontiguousarray(Psi)
@@ -78,30 +75,84 @@ class PerturbationSolver:
 
         return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
 
-    def extract_policy_matrices(self, A, G_1, impact, variables, tol):
+    @staticmethod
+    def solve_policy_function_with_cycle_reduction(A: ArrayLike,
+                                                   B: ArrayLike,
+                                                   C: ArrayLike,
+                                                   D: ArrayLike,
+                                                   max_iter: int = 1000,
+                                                   tol: float = 1e-8,
+                                                   verbose: bool = True) -> Tuple[ArrayLike, ArrayLike, str, float]:
+        """
+        Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
+        obtain the first-order linear approxiate policy matrices T and R.
+
+        Parameters
+        ----------
+        A: Arraylike
+            Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
+            values that are known when decision making: those with t-1 subscripts.
+        B: ArrayLike
+            Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+            are observed when decision making: those with t subscripts.
+        C: ArrayLike
+            Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+            enter in expectation when decision making: those with t+1 subscripts.
+        D: ArrayLike
+            Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
+        max_iter: int, default: 1000
+            Maximum number of iterations to perform before giving up.
+        tol: float, default: 1e-7
+            Floating point tolerance used to detect algorithmic convergence
+        verbose: bool, default: True
+            If true, prints the sum of squared residuals that result when the system is computed used the solution.
+
+        Returns
+        -------
+        T: ArrayLike
+            Transition matrix T in state space jargon. Gives the effect of variable values at time t on the
+            values of the variables at time t+1.
+        R: ArrayLike
+            Selection matrix R in state space jargon. Gives the effect of exogenous shocks at the t on the values of
+            variables at time t+1.
+        result: str
+            String describing result of the cycle reduction algorithm
+        log_norm: float
+            Log L1 matrix norm of the first matrix (A2 -> A1 -> A0) that did not converge.
+        """
+
+        # Sympy gives back integers in the case of x/dx = 1, which can screw up the dtypes when passing to numba if
+        # a Jacobian matrix is all constants (i.e. dF/d_shocks) -- cast everything to float64 here to avoid
+        # a numba warning.
+        T, R = None, None
+
+        A, B, C, D = A.astype('float64'), B.astype('float64'), C.astype('float64'), D.astype('float64')
+
+        T, result, log_norm = cycle_reduction(A, B, C, max_iter, tol, verbose)
+
+        if T is not None:
+            R = solve_shock_matrix(B, C, D, T)
+
+        return T, R, result, log_norm
+
+    def statespace_to_gEcon_representation(self, A, T, R, variables, tol):
         n_vars = len(variables)
 
-        g = G_1[:n_vars, :n_vars]
-        state_var_idx = np.where(np.abs(g[np.argmax(np.abs(g), axis=0), np.arange(n_vars)]) >= tol)[0]
+        state_var_idx = np.where(np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol)[0]
         state_var_mask = np.isin(np.arange(n_vars), state_var_idx)
 
         n_shocks = self.n_shocks
         shock_idx = np.arange(n_shocks)
 
-        variables = np.atleast_1d(variables).squeeze()
+        # variables = np.atleast_1d(variables).squeeze()
 
-        state_vars = variables[state_var_mask]
-        L1_state_vars = np.array([x.step_backward() for x in state_vars])
-        jumpers = np.atleast_1d(variables)[~state_var_mask]
+        # state_vars = variables[state_var_mask]
+        # L1_state_vars = np.array([x.step_backward() for x in state_vars])
+        # jumpers = np.atleast_1d(variables)[~state_var_mask]
 
-        state_vars = [x.name for x in state_vars]
-        L1_state_vars = [x.name for x in L1_state_vars]
-        jumpers = [x.name for x in jumpers]
-        shocks = [x.name for x in sorted(self.shocks, key=lambda x: x.base_name)]
-
-        PP = g.copy()
+        PP = T.copy()
         PP[np.where(np.abs(PP) < tol)] = 0
-        QQ = impact.copy()
+        QQ = R.copy()
         QQ = QQ[:n_vars, :]
         QQ[np.where(np.abs(QQ) < tol)] = 0
 
@@ -113,11 +164,6 @@ class PerturbationSolver:
         A_prime = A[:, state_var_mask]
         R_prime = PP[:, state_var_mask]
         S_prime = QQ[:, shock_idx]
-
-        P = pd.DataFrame(P, index=state_vars, columns=L1_state_vars)
-        Q = pd.DataFrame(Q, index=state_vars, columns=shocks)
-        R = pd.DataFrame(R, index=jumpers, columns=L1_state_vars)
-        S = pd.DataFrame(S, index=jumpers, columns=shocks)
 
         return P, Q, R, S, A_prime, R_prime, S_prime
 

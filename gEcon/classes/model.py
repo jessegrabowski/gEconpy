@@ -9,9 +9,11 @@ from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from gEcon.parser.constants import STEADY_STATE_NAMES
 from gEcon.exceptions.exceptions import SteadyStateNotSolvedError, GensysFailedException, VariableNotFoundException, \
     MultipleSteadyStateBlocksException, PerturbationSolutionNotFoundException
+
 from gEcon.solvers.steady_state import SteadyStateSolver
 from gEcon.solvers.perturbation import PerturbationSolver
-from gEcon.solvers.gensys import interpret_gensys_output
+
+from gEcon.solvers.gensys import interpret_gensys_output, qzdiv
 from gEcon.classes.progress_bar import ProgressBar
 
 import numpy as np
@@ -36,10 +38,13 @@ class gEconModel:
     """
 
     def __init__(self, model_filepath: str, verbose: bool = True) -> None:
-        '''
-        :param model_filepath: str, a string path to a GCN file
-        :param verbose: bool, default = True, if true, prints a short diagnostic message after parsing the GCN file.
-        '''
+        """
+
+        Parameters
+        ----------
+        model_filepath
+        verbose
+        """
 
         self.model_filepath: str = model_filepath
 
@@ -83,10 +88,12 @@ class gEconModel:
 
         # Perturbation solution information
         self.perturbation_solved: bool = False
-        self.P: pd.DataFrame = None
-        self.Q: pd.DataFrame = None
-        self.R: pd.DataFrame = None
-        self.S: pd.DataFrame = None
+        self.T = None
+        self.R = None
+        # self.P: pd.DataFrame = None
+        # self.Q: pd.DataFrame = None
+        # self.R: pd.DataFrame = None
+        # self.S: pd.DataFrame = None
 
         self.build(verbose=verbose)
 
@@ -237,10 +244,12 @@ class gEconModel:
                 print(f'{key:{max_var_name}}{value:>10.3f}')
 
     def solve_model(self,
+                    solver='cycle_reduction',
                     not_loglin_variable: Optional[List[str]] = None,
                     order: int = 1,
                     model_is_linear: bool = False,
                     tol: float = 1e-8,
+                    max_iter: int = 1000,
                     verbose: bool = True,
                     on_failure='error') -> None:
         """
@@ -249,19 +258,24 @@ class gEconModel:
 
         Parameters
         ----------
-        not_loglin_variable: List of strings
+        solver: str, default: 'cycle_reduction'
+            Name of the algorithm to solve the linear solution. Currently "cycle_reduction" and "gensys" are supported.
+            Following Dynare, cycle_reduction is the default, but note that gEcon uses gensys.
+        not_loglin_variable: List, default: None
             Variables to not log linearize when solving the model. Variables with steady state values close to zero
             will be automatically selected to not log linearize.
-        order: int
+        order: int, default: 1
             Order of taylor expansion to use to solve the model. Currently only 1st order approximation is supported.
-        model_is_linear: bool
+        model_is_linear: bool, default: False
             Flag indicating whether a model has already been linearized by the user.
-        tol: float
+        tol: float, default 1e-8
             Desired level of floating point accuracy in the solution
-        verbose: bool
+        max_iter: int, default: 1000
+            Maximum number of cycle_reduction iterations. Not used if solver is 'gensys'.
+        verbose: bool, default: True
             Flag indicating whether to print solver results to the terminal
-        on_failure: str, one of ['error', 'ignore']
-            Instructions on what to do if Gensys fails to find a linearized policy matrix. "Error" will raise an error,
+        on_failure: str, one of ['error', 'ignore'], default: 'error'
+            Instructions on what to do if the algorithm to find a linearized policy matrix. "Error" will raise an error,
             while "ignore" will return None. "ignore" is useful when repeatedly solving the model, e.g. when sampling.
 
         Returns
@@ -276,42 +290,55 @@ class gEconModel:
             self._perturbation_setup(not_loglin_variable, order, model_is_linear, verbose)
 
         A, B, C, D = self.build_perturbation_matrices(**param_dict, **steady_state_dict)
-
-        gensys_results = self.perturbation_solver.solve_policy_function_with_gensys(A, B, C, D, tol, verbose)
-        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
-
-        if G_1 is None:
-            if on_failure == 'error':
-                raise GensysFailedException(eu)
-            elif on_failure == 'ignore':
-                if verbose:
-                    print(interpret_gensys_output(eu))
-                self.P = None
-                self.Q = None
-                self.R = None
-                self.S = None
-
-                self.perturbation_solved = False
-
-                return
-
         _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
 
-        policy_matrices = self.perturbation_solver.extract_policy_matrices(A, G_1, impact, variables, tol)
-        P, Q, R, S, A_prime, R_prime, S_prime = policy_matrices
+        if solver == 'gensys':
+            gensys_results = self.perturbation_solver.solve_policy_function_with_gensys(A, B, C, D, tol, verbose)
+            G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
 
-        resid_norms = self.perturbation_solver.residual_norms(B, C, D, Q.values, P.values, A_prime, R_prime,
-                                                              S_prime)
+            if G_1 is None:
+                if on_failure == 'error':
+                    raise GensysFailedException(eu)
+                elif on_failure == 'ignore':
+                    if verbose:
+                        print(interpret_gensys_output(eu))
+                    self.P = None
+                    self.Q = None
+                    self.R = None
+                    self.S = None
+
+                    self.perturbation_solved = False
+
+                    return
+
+            T = G_1[:self.n_variables, :][:, :self.n_variables]
+            R = impact[:self.n_variables, :]
+
+        elif solver == 'cycle_reduction':
+            T, R, result, log_norm = self.perturbation_solver.solve_policy_function_with_cycle_reduction(A, B, C, D,
+                                                                                                         max_iter,
+                                                                                                         tol,
+                                                                                                         verbose)
+            if T is None:
+                if on_failure == 'errror':
+                    raise GensysFailedException(result)
+        else:
+            raise NotImplementedError('Only "cycle_reduction" and "gensys" are valid values for solver')
+
+        gEcon_matrices = self.perturbation_solver.statespace_to_gEcon_representation(A, T, R, variables, tol)
+        P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
+
+        resid_norms = self.perturbation_solver.residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
         norm_deterministic, norm_stochastic = resid_norms
 
         if verbose:
             print(f'Norm of deterministic part: {norm_deterministic:0.9f}')
             print(f'Norm of stochastic part:    {norm_deterministic:0.9f}')
 
-        self.P = P
-        self.Q = Q
-        self.R = R
-        self.S = S
+        self.T = pd.DataFrame(T, index=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
+                              columns=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)])
+        self.R = pd.DataFrame(R, index=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
+                              columns=[x.base_name for x in sorted(self.shocks, key=lambda x: x.base_name)])
 
         self.perturbation_solved = True
 
@@ -379,6 +406,24 @@ class gEconModel:
                            free_param_dict: Optional[Dict[str, float]] = None,
                            verbose: bool = True,
                            tol=1e-8) -> Optional[ArrayLike]:
+        """
+        Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
+        unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
+        this test suggests timing problems in the definition of the model.
+
+        Parameters
+        ----------
+        free_param_dict: dict, optional
+            A dictionary of parameter values. If None, the current stored values are used.
+        verbose: bool, default: True
+            Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
+        tol: float, 1e-8
+            Convergence tolerance for the gensys solver
+
+        Returns
+        -------
+
+        """
         if self.build_perturbation_matrices is None:
             raise PerturbationSolutionNotFoundException()
 
@@ -391,12 +436,26 @@ class gEconModel:
 
         A, B, C, D = self.build_perturbation_matrices(**ss_dict, **free_param_dict, **calib_dict)
         n_forward = (C.sum(axis=0) > 0).sum().astype(int)
+        n_eq, n_vars = A.shape
 
-        gensys_results = self.perturbation_solver.solve_policy_function_with_gensys(A, B, C, D, tol, verbose=False)
-        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
-        eps = np.spacing(1)
+        # TODO: Compute system eigenvalues -- avoids calling the whole Gensys routine, but there is code duplication
+        #   building Gamma_0 and Gamma_1
+        lead_var_idx = np.where(np.sum(np.abs(C), axis=0) > tol)[0]
 
-        eigenval = gev[:, 1] / (gev[:, 0] + eps)
+        eqs_and_leads_idx = np.r_[np.arange(n_vars), lead_var_idx + n_vars].tolist()
+
+        Gamma_0 = np.vstack([np.hstack([B, C]),
+                             np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
+
+        Gamma_1 = np.vstack([np.hstack([A, np.zeros((n_eq, n_eq))]),
+                             np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])])
+        Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
+        Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
+
+        A, B, Q, Z = qzdiv(1.01, *linalg.qz(-Gamma_0, Gamma_1, 'complex'))
+        gev = np.c_[np.diagonal(A), np.diagonal(B)]
+
+        eigenval = gev[:, 1] / (gev[:, 0] + tol)
         pos_idx = np.where(np.abs(eigenval) > 0)
         eig = np.zeros(((np.abs(eigenval) > 0).sum(), 3))
         eig[:, 0] = np.abs(eigenval)[pos_idx]
@@ -447,7 +506,7 @@ class gEconModel:
         A.columns = no_time_idx
         A.index = no_time_idx
 
-        sigma = _compute_stationary_covariance_matrix(A.values, C.values, tol=tol, max_iter=max_iter)
+        sigma = linalg.solve_discrete_lyapunov(A.values, C.values @ C.values.T)
 
         # TODO: Why do I need to divide by 100 here?
         return pd.DataFrame(sigma / 100, index=A.index, columns=A.index)
@@ -486,7 +545,7 @@ class gEconModel:
         A.columns = no_time_idx
         A.index = no_time_idx
 
-        sigma = _compute_stationary_covariance_matrix(A.values, C.values, tol=tol, max_iter=max_iter)
+        sigma = linalg.solve_discrete_lyapunov(A.values, C.values @ C.values.T)
         acorr_mat = _compute_autocorrelation_matrix(A.values, sigma, n_lags=n_lags)
 
         return pd.DataFrame(acorr_mat, index=A.index, columns=np.arange(n_lags))
@@ -584,7 +643,7 @@ class gEconModel:
         if epsilons.ndim == 2:
             epsilons = epsilons[:, :, None]
 
-        progress_bar = ProgressBar(T-1, verb='Sampling')
+        progress_bar = ProgressBar(T - 1, verb='Sampling')
 
         for t in range(1, T):
             progress_bar.start()
@@ -749,15 +808,15 @@ class gEconModel:
         del raw_blocks[ss_block_names[0]]
 
 
-@njit
-def _compute_stationary_covariance_matrix(A, C, tol=1e-9, max_iter=10_000):
-    sigma = np.eye(A.shape[0])
-    for _ in range(max_iter):
-        new_sigma = A @ sigma @ A.T + C @ C.T
-        if ((sigma - new_sigma) ** 2).mean() < tol:
-            return sigma
-        else:
-            sigma = new_sigma
+# @njit
+# def _compute_stationary_covariance_matrix(A, C, tol=1e-9, max_iter=10_000):
+#     sigma = np.eye(A.shape[0])
+#     for _ in range(max_iter):
+#         new_sigma = A @ sigma @ A.T + C @ C.T
+#         if ((sigma - new_sigma) ** 2).mean() < tol:
+#             return sigma
+#         else:
+#             sigma = new_sigma
 
 @njit
 def _compute_autocorrelation_matrix(A, sigma, n_lags=5):
