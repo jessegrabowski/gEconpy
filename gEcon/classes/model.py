@@ -122,7 +122,6 @@ class gEconModel:
         self._get_all_block_parameters()
         self._get_all_block_params_to_calibrate()
         self._get_variables_and_shocks()
-
         self._build_prior_dict(prior_dict)
         # self._validate_steady_state_block()
 
@@ -287,7 +286,7 @@ class gEconModel:
         steady_state_dict = self.steady_state_dict
 
         if self.build_perturbation_matrices is None:
-            self._perturbation_setup(not_loglin_variable, order, model_is_linear, verbose)
+            self._perturbation_setup(not_loglin_variable, order, model_is_linear, verbose, bool)
 
         A, B, C, D = self.build_perturbation_matrices(**param_dict, **steady_state_dict)
         _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
@@ -342,7 +341,7 @@ class gEconModel:
 
         self.perturbation_solved = True
 
-    def _perturbation_setup(self, not_loglin_variable, order, model_is_linear, verbose):
+    def _perturbation_setup(self, not_loglin_variable, order, model_is_linear, verbose, return_F_matrices=False):
         free_param_dict = self.free_param_dict.copy()
 
         parameters = list(free_param_dict.keys())
@@ -398,9 +397,11 @@ class gEconModel:
         else:
             Fs = self.perturbation_solver.log_linearize_model()
 
-        self.build_perturbation_matrices = sp.lambdify(params_and_variables,
-                                                       [F.subs(string_keys_to_sympy(loglin_sub_dict)).subs(
-                                                           shock_ss_dict) for F in Fs])
+        Fs_subbed = [F.subs(string_keys_to_sympy(loglin_sub_dict)).subs(shock_ss_dict) for F in Fs]
+        self.build_perturbation_matrices = sp.lambdify(params_and_variables, Fs_subbed)
+
+        if return_F_matrices:
+            return Fs_subbed
 
     def check_bk_condition(self,
                            free_param_dict: Optional[Dict[str, float]] = None,
@@ -473,22 +474,15 @@ class gEconModel:
                   f'\nBlanchard-Kahn condition is{" NOT" if n_forward > n_g_one else ""} satisfied.')
         return eig
 
-    def compute_stationary_covariance_matrix(self, tol=1e-8, max_iter=10_000):
+    def compute_stationary_covariance_matrix(self):
         """
-        Parameters
-        ----------
-        tol: float
-            Termination criterion for computing the stationary covariance matrix
-        max_iter: int
-            Max number of iterations
+        Compute the stationary covariance matrix of the solved system via fixed-point iteration. By construction, any
+        linearized DSGE model will have a fixed covariance matrix. In principal, a closed form solution is available
+        (we could solve a discrete Lyapunov equation) but this works fine.
 
         Returns
         -------
         sigma: DataFrame
-
-        Compute the stationary covariance matrix of the solved system via fixed-point iteration. By construction, any
-        linearized DSGE model will have a fixed covariance matrix. In principal, a closed form solution is available
-        (we could solve a discrete Lyapunov equation) but this works fine.
         """
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
@@ -500,23 +494,19 @@ class gEconModel:
 
         return pd.DataFrame(sigma / 100, index=T.index, columns=T.index)
 
-    def compute_autocorrelation_matrix(self, n_lags=10, tol=1e-8, max_iter=10_000):
+    def compute_autocorrelation_matrix(self, n_lags=10):
         """
+        Computes autocorrelations for each model variable using the stationary covariance matrix. See doc string for
+        compute_stationary_covariance_matrix for more information.
+
         Parameters
         ----------
         n_lags: int
             Number of lags over which to compute the autocorrelation
-        tol: float
-            Termination criterion for computing the stationary covariance matrix
-        max_iter: int
-            Max number of iterations when computing the stationary covaraince matrix
 
         Returns
         -------
         acorr_mat: DataFrame
-
-        Computes autocorrelations for each model variable using the stationary covariance matrix. See doc string for
-        compute_stationary_covariance_matrix for more information.
         """
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
@@ -742,6 +732,9 @@ class gEconModel:
                 if variable.set_t(0) not in self.variables and variable not in all_shocks:
                     self.variables.append(variable.set_t(0))
         self.n_variables = len(self.variables)
+
+        self.variables = sorted(self.variables, key=lambda x: x.name)
+        self.shocks = sorted(self.shocks, key=lambda x: x.name)
 
     def _get_steady_state_equations(self, raw_blocks: Dict[str, List[str]]):
         block_names = raw_blocks.keys()
