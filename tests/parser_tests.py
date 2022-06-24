@@ -349,6 +349,35 @@ class ParserTestCases(unittest.TestCase):
         self.assertEqual(d.logpdf(point_dict),
                          mu_epsilon.logpdf(0.1) + sigma_epsilon.logpdf(1) + norm(loc=0.1, scale=1).logpdf(1))
 
+    def test_shock_block_with_multiple_distributions(self):
+        test_file = '''block TEST_BLOCK
+                        {
+                            shocks
+                            {
+                                epsilon_1[] ~ Normal(mu=0, sd=sigma_1);
+                                epsilon_2[] ~ Normal(mu=0, sd=sigma_2);
+                            };
+                            calibration
+                            {
+                                sigma_1 ~ Invgamma(a=0.1, b=0.2) = 0.1;
+                                sigma_2 ~ Invgamma(a=0.1, b=0.2) = 0.2;
+                            };
+                        };
+                        '''
+
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+
+        self.assertEqual(len(prior_dict), 4)
+        self.assertEqual(list(prior_dict.keys()), ['epsilon_1[]', 'epsilon_2[]', 'sigma_1', 'sigma_2'])
+        dists = ['Normal(mu=0, sd=sigma_1)', 'Normal(mu=0, sd=sigma_2)',
+                 'Invgamma(a=0.1, b=0.2)', 'Invgamma(a=0.1, b=0.2)']
+
+        for value, d in zip(prior_dict.values(), dists):
+            self.assertEqual(value, d)
+
+
+
+
 
 if __name__ == '__main__':
     unittest.main()

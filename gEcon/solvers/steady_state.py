@@ -385,6 +385,7 @@ class SteadyStateSolver:
             values.
         """
         calib_params = [x.name for x in self.params_to_calibrate]
+        ss_vars = [x.to_ss().name for x in self.variables]
 
         def combined_function(param_dict):
             ss_out = {}
@@ -398,7 +399,12 @@ class SteadyStateSolver:
                     calib_dict[param] = final_dict[param]
                     del final_dict[param]
 
-            ss_out.update(var_dict)
+            var_dict_final = {}
+            for key in var_dict:
+                if key in ss_vars:
+                    var_dict_final[key] = var_dict[key]
+
+            ss_out.update(var_dict_final)
             ss_out.update(final_dict)
 
             return sort_dictionary(ss_out), sort_dictionary(calib_dict)
@@ -637,4 +643,5 @@ class SteadyStateSolver:
 
         solution_dict = sequential(solution_dict, [sympy_keys_to_strings,
                                                    sympy_number_values_to_floats])
+
         return solution_dict, solved_mask

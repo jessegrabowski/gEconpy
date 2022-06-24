@@ -100,7 +100,8 @@ def extract_distributions(text: str) -> Tuple[str, Dict[str, str]]:
 
             output.append(line)
 
-    output = '\n'.join(output)
+    output = '\n'.join(output).strip()
+
     return output, prior_dict
 
 

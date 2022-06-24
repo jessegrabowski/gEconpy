@@ -1,7 +1,8 @@
 import re
 
 from gEcon.exceptions.exceptions import MultipleParameterDefinitionException, InvalidDistributionException, \
-    RepeatedParameterException, IgnoredCloseMatchWarning, UnusedParameterWarning, InvalidParameterException, DistributionOverDefinedException, InsufficientDegreesOfFreedomException
+    RepeatedParameterException, IgnoredCloseMatchWarning, UnusedParameterWarning, InvalidParameterException, \
+    DistributionOverDefinedException, InsufficientDegreesOfFreedomException
 
 from .validation import find_typos_and_guesses
 from gEcon.shared.utilities import is_number
@@ -10,14 +11,20 @@ import numpy as np
 from scipy.stats._distn_infrastructure import rv_frozen
 from scipy.stats import rv_continuous, beta, halfnorm, gamma, invgamma, norm, uniform, truncnorm
 from scipy import optimize
+import pymc as pm
+
 from typing import Dict, Tuple, List, Optional, Callable, Any
 from functools import reduce, partial
 from abc import ABC, abstractmethod
 from warnings import warn
 
 CANON_NAMES = ['normal', 'truncnorm', 'halfnormal', 'gamma', 'inv_gamma', 'uniform', 'beta']
-NAME_TO_DIST_FUNC = dict(zip(CANON_NAMES,
-                             [norm, truncnorm, halfnorm, gamma, invgamma, uniform, beta]))
+NAME_TO_DIST_SCIPY_FUNC = dict(zip(CANON_NAMES,
+                                   [norm, truncnorm, halfnorm, gamma, invgamma, uniform, beta]))
+
+NAME_TO_DIST_PYMC_FUNC = dict(zip(CANON_NAMES,
+                                  [pm.Normal, pm.TruncatedNormal, pm.HalfNormal, pm.Gamma, pm.InverseGamma,
+                                   pm.Uniform, pm.Beta]))
 
 NORMAL_ALIASES = ['norm', 'normal', 'n']
 TRUNCNORM_ALIASES = ['truncnorm']
@@ -111,6 +118,7 @@ class CompositeDistribution:
             samples[idx] = self.d(**sample_params).rvs()
 
         return samples
+
 
 class BaseDistributionParser(ABC):
 
@@ -281,18 +289,42 @@ class NormalDistributionParser(BaseDistributionParser):
                          n_params=2,
                          all_valid_parameters=NORMAL_LOC_ALIASES + NORMAL_SCALE_ALIASES + MOMENTS)
 
-    def build_distribution(self, param_dict: Dict[str, str]) -> rv_continuous:
+    def build_distribution(self, param_dict: Dict[str, str], package='scipy', model=None) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
+
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
-        parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
 
-        parameters = list(parsed_param_dict.keys())
-        if self.lower_bound_param_name not in parameters and self.upper_bound_param_name not in parameters:
-            return norm(**parsed_param_dict)
+        if package == 'scipy':
+            parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
+            parameters = list(parsed_param_dict.keys())
 
-        else:
-            return truncnorm(**parsed_param_dict)
+            if self.lower_bound_param_name not in parameters and self.upper_bound_param_name not in parameters:
+                return norm(**parsed_param_dict)
+            else:
+                return truncnorm(**parsed_param_dict)
+
+        elif package == 'pymc':
+            if model is None:
+                raise ValueError('A PyMC model object needs to be provided when package is "pymc')
+
+            # For pymc distributions, don't do anything fancy, just pass the parameters along and let it
+            # handle the rest.
+            parameters = list(parsed_param_dict.keys())
+            with model:
+                if self._has_std_constraint():
+                    parsed_param_dict['scale'] = self.std_constraint
+                if self._has_mean_constraint():
+                    parsed_param_dict['loc'] = self.mean_constraint
+
+                if self.lower_bound_param_name not in parameters and self.upper_bound_param_name not in parameters:
+                    pm.Normal(self.variable_name, mu=parsed_param_dict['loc'], sigma=parsed_param_dict['scale'])
+                else:
+                    pm.TruncatedNormal(self.variable_name,
+                                       mu=parsed_param_dict['loc'],
+                                       sigma=parsed_param_dict['scale'],
+                                       lower=parsed_param_dict.get('a'),
+                                       upper=parsed_param_dict.get('b'))
 
     def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
         parsed_param_dict = {}
@@ -441,13 +473,26 @@ class HalfNormalDistributionParser(BaseDistributionParser):
                          n_params=2,
                          all_valid_parameters=NORMAL_SCALE_ALIASES + MOMENTS + ['loc'])
 
-    def build_distribution(self, param_dict: Dict[str, str]) -> rv_continuous:
+    def build_distribution(self, param_dict: Dict[str, str], package='scipy', model=None) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
-        parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
 
-        return halfnorm(**parsed_param_dict)
+        if package == 'scipy':
+            parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
+
+            return halfnorm(**parsed_param_dict)
+
+        elif package == 'pymc':
+            if model is None:
+                raise ValueError('A pymc model object must be provided when package = "pymc')
+
+            with model:
+                if parsed_param_dict.get('loc') is not None:
+                    d = pm.HalfNormal(f'raw_{self.variable_name}', sigma=parsed_param_dict['scale'])
+                    pm.Deterministic(self.variable_name, d + parsed_param_dict['loc'])
+                else:
+                    pm.HalfNormal(f'{self.variable_name}', sigma=parsed_param_dict['scale'])
 
     def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
         parsed_param_dict = {}
@@ -507,13 +552,20 @@ class UniformDistributionParser(BaseDistributionParser):
                          n_params=2,
                          all_valid_parameters=['loc', 'scale'] + LOWER_BOUND_ALIASES + UPPER_BOUND_ALIASES + MOMENTS)
 
-    def build_distribution(self, param_dict: Dict[str, str]) -> rv_continuous:
+    def build_distribution(self, param_dict: Dict[str, str], package='scipy', model=None) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
-        parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
 
-        return uniform(**parsed_param_dict)
+        if package == 'scipy':
+            parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
+
+            return uniform(**parsed_param_dict)
+        elif package == 'pymc':
+            if model is None:
+                raise ValueError('A pymc model object must be provided when package is "pymc"')
+            with model:
+                pm.Uniform(self.variable_name, lower=parsed_param_dict['a'], upper=parsed_param_dict['b'])
 
     def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
         parse_loc_parameter = partial(self._parse_parameter,
@@ -608,13 +660,23 @@ class InverseGammaDistributionParser(BaseDistributionParser):
                          n_params=3,
                          all_valid_parameters=INV_GAMMA_SHAPE_ALIASES + INV_GAMMA_SCALE_ALIASES + ['loc'])
 
-    def build_distribution(self, param_dict: Dict[str, str]) -> rv_continuous:
+    def build_distribution(self, param_dict: Dict[str, str], package='scipy', model=None) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
-        parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
 
-        return invgamma(**parsed_param_dict)
+        if package == 'scipy':
+            parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
+            return invgamma(**parsed_param_dict)
+
+        elif package == 'pymc':
+            if model is None:
+                raise ValueError('A pymc model object must be provided when package is "pymc"')
+            with model:
+                if self._has_mean_constraint() and self._has_std_constraint():
+                    pm.InverseGamma(self.variable_name, mu=self.mean_constraint, sigma=self.std_constraint)
+                else:
+                    pm.InverseGamma(self.variable_name, alpha=parsed_param_dict['a'], beta=parsed_param_dict['scale'])
 
     def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
         parse_loc_parameter = partial(self._parse_parameter,
@@ -703,13 +765,23 @@ class BetaDistributionParser(BaseDistributionParser):
         self.shape_param_name_1 = 'a'
         self.shape_param_name_2 = 'b'
 
-    def build_distribution(self, param_dict: Dict[str, str]) -> rv_continuous:
+    def build_distribution(self, param_dict: Dict[str, str], package='scipy', model=None) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
-        parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
 
-        return beta(**parsed_param_dict)
+        if package == 'scipy':
+            parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
+            return beta(**parsed_param_dict)
+
+        elif package == 'pymc':
+            if model is None:
+                raise ValueError('A pymc model object must be provided when package is "pymc"')
+            with model:
+                if self._has_mean_constraint() and self._has_std_constraint():
+                    pm.Beta(self.variable_name, mu=self.mean_constraint, sigma=self.std_constraint)
+                else:
+                    pm.Beta(self.variable_name, alpha=parsed_param_dict['a'], beta=parsed_param_dict['b'])
 
     def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
 
@@ -823,13 +895,24 @@ class GammaDistributionParser(BaseDistributionParser):
                          n_params=3,
                          all_valid_parameters=GAMMA_SHAPE_ALIASES + GAMMA_SCALE_ALIASES + MOMENTS + ['loc'])
 
-    def build_distribution(self, param_dict: Dict[str, str]) -> rv_continuous:
+    def build_distribution(self, param_dict: Dict[str, str], package='scipy', model=None) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
-        parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
 
-        return gamma(**parsed_param_dict)
+        if package == 'scipy':
+            parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
+            return gamma(**parsed_param_dict)
+
+        elif package == 'pymc':
+            if model is None:
+                raise ValueError('A pymc model object must be provided when package is "pymc"')
+            with model:
+                # TODO: Allow user to pass mu-sigma parameterization here.
+                if self._has_mean_constraint() and self._has_std_constraint():
+                    pm.Gamma(self.variable_name, alpha=self.mean_constraint, beta=self.std_constraint)
+                else:
+                    pm.Gamma(self.variable_name, alpha=parsed_param_dict['a'], beta=parsed_param_dict['scale'])
 
     def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
         parse_loc_parameter = partial(self._parse_parameter,
@@ -959,7 +1042,7 @@ def preprocess_distribution_string(variable_name: str, d_string: str) -> Tuple[s
     dist_name_pattern = '(\w+)'
     not_last_arg_pattern = f'(\w+ ?={general_pattern}, ?)'
     last_arg_pattern = f'(\w+ ?={general_pattern})'
-    valid_pattern = f'{dist_name_pattern}\({not_last_arg_pattern}*?{last_arg_pattern}\)$'
+    valid_pattern = f'{dist_name_pattern}\({not_last_arg_pattern}*?{last_arg_pattern}\),?$'
 
     # TODO: sort out where the typo is and tell the user.
     if re.search(valid_pattern, d_string) is None:
@@ -971,6 +1054,7 @@ def preprocess_distribution_string(variable_name: str, d_string: str) -> Tuple[s
         raise InvalidDistributionException(variable_name, d_string)
 
     params = [x.strip() for x in params_string.replace(')', '').split(',')]
+    params = [x for x in params if len(x) > 0]
 
     param_dict = {}
     for param in params:
@@ -1014,7 +1098,8 @@ def preprocess_prior_dict(raw_prior_dict: Dict[str, str]) -> Tuple[List[str], Li
 def distribution_factory(variable_name: str,
                          d_name: str,
                          param_dict: Dict[str, str],
-                         package: str = 'scipy') -> rv_continuous:
+                         package: str = 'scipy',
+                         model=None) -> rv_continuous | pm.Model:
     """
     Parameters
     ----------
@@ -1031,12 +1116,13 @@ def distribution_factory(variable_name: str,
     -------
     d: rv_frozen
         a scipy distribution object object
-
-    TODO: Add options to get back pymc3 distributions
     """
 
-    if package != 'scipy':
+    if package not in ['scipy', 'pymc']:
         raise NotImplementedError
+
+    if package == 'pymc' and model is None:
+        raise ValueError('A pymc model object must be provided when package is "pymc"')
 
     parser = None
 
@@ -1062,7 +1148,7 @@ def distribution_factory(variable_name: str,
         print(d_name)
         raise ValueError('How did you even get here?')
 
-    d = parser.build_distribution(param_dict)
+    d = parser.build_distribution(param_dict, package=package, model=model)
     return d
 
 
@@ -1112,7 +1198,24 @@ def split_out_composite_distributions(variable_names: List[str],
     return basic_distributions, composite_distributions
 
 
-def composite_distribution_factory(variable_name, d_name, param_dict, package='scipy') -> CompositeDistribution:
+def fetch_rv_params(param_dict, model):
+    return_dict = {}
+    for k, v in param_dict.items():
+        if isinstance(v, (float, int)):
+            return_dict[k] = v
+        elif isinstance(v, str):
+            return_dict[k] = model[v]
+        else:
+            raise ValueError(f'Found an illegal key:value pair in prior param dict, {k}:{v}')
+
+    return return_dict
+
+
+def composite_distribution_factory(variable_name,
+                                   d_name,
+                                   param_dict,
+                                   package='scipy',
+                                   model=None) -> CompositeDistribution | None:
     """
     Parameters
     ----------
@@ -1124,12 +1227,14 @@ def composite_distribution_factory(variable_name, d_name, param_dict, package='s
         Dictionary of parameter name, parameter value pairs. Parameter values should be either scipy rv_frozen objects
         or strings that can be converted to floats.
     package: str
-        Which package to use to create the distributions. Currently just "scipy".
+        Which package to use to create the distributions. Currently "scipy" or "pymc".
+    model: optional, pm.Model object
+        If package is PyMC, provide a PyMC model object to attach random variables to.
 
     Returns
     -------
     d: CompositeDistribution
-         A wrapper around a set of scipy distributions with three methods: .rvs(), .pdf(), and .logpdf().
+         A wrapper around a set of scipy distributions with three methods: .rvs(), .pdf(), and .logpdf()
 
     TODO: This function is a huge mess of if-else statements. All of this should maybe be put into the parser classes
         to take advantage of all the parameter checking that happens there. Consider this temporary.
@@ -1140,12 +1245,21 @@ def composite_distribution_factory(variable_name, d_name, param_dict, package='s
     TODO: It might be possible to do moment matching in some limited sense. Currently the initial value for the
         parameter distributions is thrown away, could use this value to moment match? Maybe not worth it.
     """
+
     def tau_to_scale(key, value):
         if key in {'tau', 'precision'}:
             return 1 / value
         return value
 
-    base_d = NAME_TO_DIST_FUNC[d_name]
+    if package == 'scipy':
+        base_d = NAME_TO_DIST_SCIPY_FUNC[d_name]
+    elif package == 'pymc':
+        if model is None:
+            raise ValueError('A pymc model object must be provided when package is "pymc"')
+        base_d = NAME_TO_DIST_PYMC_FUNC[d_name]
+    else:
+        raise NotImplementedError('Only package = "scipy" or package = "pymc" is supported.')
+
     param_dict = param_values_to_floats(param_dict)
 
     # validate parameters by simple rename, error on more complicated setups (no moment constraints!)
@@ -1153,7 +1267,7 @@ def composite_distribution_factory(variable_name, d_name, param_dict, package='s
         has_upper_bound = any([x in set(param_dict.keys()) for x in UPPER_BOUND_ALIASES])
         has_lower_bound = any([x in set(param_dict.keys()) for x in LOWER_BOUND_ALIASES])
 
-        if has_upper_bound or has_lower_bound:
+        if (has_upper_bound or has_lower_bound) and package == 'scipy':
             warn('Moment conditions are not supported for compound distributions, and parameters "mean" and "std" will'
                  'be interpreted as "loc" and "scale". Since you have passed boundaries, the first and second moments'
                  'of the truncated normal distribution will not coincide with the loc and scale parameters.',
@@ -1183,13 +1297,22 @@ def composite_distribution_factory(variable_name, d_name, param_dict, package='s
                                                            variable_name,
                                                            d_name)
 
-        if has_lower_bound or has_lower_bound:
-            loc, scale = param_dict['loc'], param_dict['scale']
-            param_dict['a'] = -np.inf if not has_lower_bound else (param_dict['a'] - loc) / scale
-            param_dict['b'] = np.inf if not has_upper_bound else (param_dict['b'] - loc) / scale
-            d_name = 'truncnorm'
+        if package == 'pymc':
+            param_dict = fetch_rv_params(param_dict, model)
+            if not has_lower_bound and not has_upper_bound:
+                with model:
+                    pm.Normal(variable_name,
+                              mu=param_dict['loc'],
+                              sigma=param_dict['scale'])
+            else:
+                with model:
+                    pm.TruncatedNormal(variable_name,
+                                       mu=param_dict['loc'],
+                                       sigma=param_dict['scale'],
+                                       lower=param_dict.get('a'),
+                                       upper=param_dict.get('b'))
 
-    elif d_name == 'halfnormal':
+    elif d_name == 'halfnormal' and package == 'scipy':
         if any([x in set(param_dict.keys()) for x in MEAN_ALIASES]):
             warn('Moment conditions are not supported for compound distributions. If you pass a random variable as a '
                  'parameter value, do not pass in mean or std.',
@@ -1201,8 +1324,18 @@ def composite_distribution_factory(variable_name, d_name, param_dict, package='s
                                                            variable_name,
                                                            d_name,
                                                            transformation=tau_to_scale)
+
+        if package == 'pymc':
+            param_dict = fetch_rv_params(param_dict, model)
+            if param_dict.get('loc') is not None:
+                with model:
+                    d = pm.HalfNormal(f'raw_{variable_name}', sigma=param_dict['scale'])
+                    pm.Deterministic(variable_name, d + param_dict['loc'])
+            else:
+                pm.HalfNormal(variable_name, sigma=param_dict['scale'])
+
     elif d_name == 'inv_gamma':
-        if any([x in set(param_dict.keys()) for x in MOMENTS]):
+        if any([x in set(param_dict.keys()) for x in MOMENTS]) and package == 'scipy':
             warn('Moment conditions are not supported for compound distributions. If you pass a random variable as a '
                  'parameter value, do not pass in mean or std.',
                  IgnoredCloseMatchWarning)
@@ -1218,9 +1351,13 @@ def composite_distribution_factory(variable_name, d_name, param_dict, package='s
                                                            'scale',
                                                            variable_name,
                                                            d_name)
+        if package == 'pymc':
+            param_dict = fetch_rv_params(param_dict, model)
+            with model:
+                pm.InverseGamma(variable_name, alpha=param_dict['a'], beta=param_dict['scale'])
 
     elif d_name == 'beta':
-        if any([x in set(param_dict.keys()) for x in MOMENTS]):
+        if any([x in set(param_dict.keys()) for x in MOMENTS]) and package == 'scipy':
             warn('Moment conditions are not supported for compound distributions. If you pass a random variable as a '
                  'parameter value, do not pass in mean or std. These conditions will be ignored, and this may cause an'
                  'an error to be raised when instantiating the distribution.',
@@ -1237,9 +1374,13 @@ def composite_distribution_factory(variable_name, d_name, param_dict, package='s
                                                                'b',
                                                                variable_name,
                                                                d_name)
+        if package == 'pymc':
+            param_dict = fetch_rv_params(param_dict, model)
+            with model:
+                pm.Beta(variable_name, alpha=param_dict['a'], beta=param_dict['b'])
 
     elif d_name == 'gamma':
-        if any([x in set(param_dict.keys()) for x in MOMENTS]):
+        if any([x in set(param_dict.keys()) for x in MOMENTS]) and package == 'scipy':
             warn('Moment conditions are not supported for compound distributions. If you pass a random variable as a '
                  'parameter value, do not pass in mean or std. These conditions will be ignored, and this may cause an'
                  'an error to be raised when instantiating the distribution.',
@@ -1256,10 +1397,14 @@ def composite_distribution_factory(variable_name, d_name, param_dict, package='s
                                                                'b',
                                                                variable_name,
                                                                d_name)
+        if package == 'pymc':
+            param_dict = fetch_rv_params(param_dict, model)
+            with model:
+                pm.Gamma(variable_name, alpha=param_dict['a'], beta=param_dict['scale'])
 
-    d = CompositeDistribution(base_d, **param_dict)
-
-    return d
+    if package == 'scipy':
+        d = CompositeDistribution(base_d, **param_dict)
+        return d
 
 
 def create_prior_distribution_dictionary(raw_prior_dict: Dict[str, str]) -> Dict[str, Any]:
@@ -1287,3 +1432,27 @@ def create_prior_distribution_dictionary(raw_prior_dict: Dict[str, str]) -> Dict
             del prior_dict[rv]
 
     return prior_dict
+
+
+def build_pymc_model(raw_prior_dict: Dict[str, str], model: pm.Model = None) -> pm.Model:
+    variable_names, d_names, param_dicts = preprocess_prior_dict(raw_prior_dict)
+    basic_distributions, compound_distributions = split_out_composite_distributions(variable_names,
+                                                                                    d_names,
+                                                                                    param_dicts)
+    if model is None:
+        model = pm.Model()
+
+    for variable_name, (d_name, param_dict) in basic_distributions.items():
+        # Skip the shock processes, they will be assumed normal in the kalman filter
+        if '[]' not in variable_name:
+            distribution_factory(variable_name=variable_name,
+                                 d_name=d_name,
+                                 param_dict=param_dict,
+                                 package='pymc',
+                                 model=model)
+
+    for variable_name, (d_name, param_dict) in compound_distributions.items():
+        if '[]' not in variable_name:
+            composite_distribution_factory(variable_name, d_name, param_dict, package='pymc', model=model)
+
+    return model

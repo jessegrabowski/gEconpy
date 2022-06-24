@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 
-from gEcon.sampling.prior_utilities import prior_steady_state_check
+from gEcon.sampling.prior_utilities import prior_solvability_check
 from gEcon.classes.progress_bar import ProgressBar
 
 from itertools import combinations_with_replacement
@@ -47,10 +47,10 @@ def _plot_single_variable(data, ax, ci=None, cmap=None, fill_color='tab:blue'):
         data.mean(axis=1).plot(ax=ax, legend=False, cmap=cmap)
         ci_bounds.plot(ax=ax, ls='--', lw=0.5, color='k', legend=False)
         ax.fill_between(ci_bounds.index,
-                          y1=ci_bounds.iloc[:, 0],
-                          y2=ci_bounds.iloc[:, 1],
-                          color=fill_color,
-                          alpha=0.25)
+                        y1=ci_bounds.iloc[:, 0],
+                        y2=ci_bounds.iloc[:, 1],
+                        color=fill_color,
+                        alpha=0.25)
 
 
 def plot_simulation(simulation, vars_to_plot=None, ci=None, n_cols=None, cmap=None, fill_color=None,
@@ -114,18 +114,32 @@ def plot_irf(irf, vars_to_plot=None, shocks_to_plot=None, n_cols=None,
     return fig
 
 
-def plot_prior_steady_state_solvability(model, n_samples=1_000, seed=None, param_subset=None):
-    data = prior_steady_state_check(model, n_samples, seed)
-    data = data.loc[:, ~(data == data.loc[0, :]).all(axis=0)].copy()
-    params = data.columns[:-1]
-    n_params = len(params) if param_subset is None else len(param_subset)
+def plot_prior_solvability(data, n_samples=1_000, seed=None, plotting_subset=None):
+    plot_data = data.copy()
+    failure_step = plot_data['failure_step'].copy()
+    plot_data.drop(columns=['failure_step'], inplace=True)
 
-    fig, axes = plt.subplots(n_params, n_params, figsize=(8, 8), dpi=100)
+    color_dict = {
+        'steady_state': 'tab:red',
+        'perturbation': 'tab:orange',
+        'blanchard-kahn': 'tab:green',
+        'deterministic_norm': 'tab:purple',
+        'stochastic_norm': 'tab:pink'
+    }
 
-    if param_subset is None:
+    constant_cols = plot_data.var() < 1e-18
+
+    plot_data = plot_data.loc[:, ~constant_cols].copy()
+    params = plot_data.columns
+    n_params = len(params) if plotting_subset is None else len(plotting_subset)
+
+    plot_data['success'] = failure_step.isna()
+    fig, axes = plt.subplots(n_params, n_params, figsize=(16, 16), dpi=100)
+
+    if plotting_subset is None:
         param_pairs = list(combinations_with_replacement(params, 2))
     else:
-        param_pairs = list(combinations_with_replacement(data.columns[param_subset], 2))
+        param_pairs = list(combinations_with_replacement(plotting_subset, 2))
 
     plot_grid = np.arange(1, n_params ** 2 + 1).reshape((n_params, n_params))
     plot_grid[np.tril_indices(n_params, k=-1)] = 0
@@ -141,38 +155,43 @@ def plot_prior_steady_state_solvability(model, n_samples=1_000, seed=None, param
         axis = axes[row][col]
         if param_1 == param_2:
 
-            X_sorted = data[param_1].sort_values()
-            X_success = X_sorted[data['success']]
-            X_failure = X_sorted[~data['success']]
+            X_sorted = plot_data[param_1].sort_values()
+            X_success = X_sorted[plot_data['success']]
+            X_failure = X_sorted[~plot_data['success']]
 
-            success_grid = np.linspace(X_success.min() * 0.9, X_success.max() * 1.1, 100)
-            failure_grid = np.linspace(X_failure.min() * 0.9, X_failure.max() * 1.1, 100)
+            n_success = X_success.shape[0]
+            n_failure = X_failure.shape[0]
 
-            d_success = stats.kde.gaussian_kde(X_success)
-            d_failure = stats.kde.gaussian_kde(X_failure)
+            if n_success > 0:
+                success_grid = np.linspace(X_success.min() * 0.9, X_success.max() * 1.1, 100)
+                d_success = stats.gaussian_kde(X_success)
+                axis.plot(success_grid, d_success.pdf(success_grid), color='tab:blue')
+                axis.fill_between(x=success_grid,
+                                  y1=d_success.pdf(success_grid),
+                                  y2=0, color='tab:blue', alpha=0.25)
 
-            axis.plot(success_grid, d_success.pdf(success_grid), color='tab:blue')
-            axis.plot(failure_grid, d_failure.pdf(failure_grid), color='tab:red')
-            xmin, xmax = axis.get_xlim()
-            axis.fill_between(x=success_grid,
-                              y1=d_success.pdf(success_grid),
-                              y2=0, color='tab:blue', alpha=0.25)
-
-            axis.fill_between(x=failure_grid,
-                              y1=d_failure.pdf(failure_grid),
-                              y2=0, color='tab:red', alpha=0.25)
+            if n_failure > 0:
+                failure_grid = np.linspace(X_failure.min() * 0.9, X_failure.max() * 1.1, 100)
+                d_failure = stats.gaussian_kde(X_failure)
+                axis.plot(failure_grid, d_failure.pdf(failure_grid), color='tab:red')
+                axis.fill_between(x=failure_grid,
+                                  y1=d_failure.pdf(failure_grid),
+                                  y2=0, color='tab:red', alpha=0.25)
 
         else:
-            axis.scatter(data.loc[data.success, param_1],
-                         data.loc[data.success, param_2],
+            axis.scatter(plot_data.loc[plot_data.success, param_1],
+                         plot_data.loc[plot_data.success, param_2],
                          c='tab:blue',
                          s=10,
-                         label='Steady State Successful')
-            axis.scatter(data.loc[~data.success, param_1],
-                         data.loc[~data.success, param_2],
-                         c='tab:red',
-                         s=10,
-                         label='Steady State Failed')
+                         label='Model Successfully Fit')
+            why_failed = failure_step[~plot_data.success]
+            for reason in why_failed.unique():
+                reason_mask = why_failed == reason
+                axis.scatter(plot_data.loc[~plot_data.success, param_1][reason_mask],
+                             plot_data.loc[~plot_data.success, param_2][reason_mask],
+                             c=color_dict[reason],
+                             s=10,
+                             label=f'{reason.title()} Failed')
 
         if col == 0:
             axis.set_ylabel(param_2)
@@ -188,7 +207,7 @@ def plot_prior_steady_state_solvability(model, n_samples=1_000, seed=None, param
                       ncol=2,
                       fontsize=8,
                       frameon=False)
-    fig.suptitle('Steady State Solution Found by Parameter Values', y=0.95)
+    fig.suptitle('Model Solution Results by Parameter Values', y=0.95)
     return fig
 
 
@@ -216,9 +235,8 @@ def plot_eigenvalues(model, figsize=None, dpi=None):
     return fig
 
 
-def plot_covariance_matrix(data, vars_to_plot=None, cbarlabel='Covariance', figsize=(8,8),
+def plot_covariance_matrix(data, vars_to_plot=None, cbarlabel='Covariance', figsize=(8, 8),
                            dpi=100, cbar_kw=None, cmap='YlGn', annotation_fontsize=8):
-
     if vars_to_plot is None:
         vars_to_plot = data.columns
 
@@ -235,7 +253,7 @@ def plot_heatmap(data: pd.DataFrame,
                  ax: Optional[Any] = None,
                  cbar_kw: Optional[dict] = None,
                  cbarlabel: Optional[str] = "",
-                            **kwargs):
+                 **kwargs):
     """
     Create a heatmap from a pandas dataframe.
 
@@ -280,8 +298,8 @@ def plot_heatmap(data: pd.DataFrame,
     # Turn spines off and create white grid.
     ax.spines[:].set_visible(False)
 
-    ax.set_xticks(np.arange(data.shape[1]+1)-.5, minor=True)
-    ax.set_yticks(np.arange(data.shape[0]+1)-.5, minor=True)
+    ax.set_xticks(np.arange(data.shape[1] + 1) - .5, minor=True)
+    ax.set_yticks(np.arange(data.shape[0] + 1) - .5, minor=True)
     ax.grid(which="minor", color="w", linestyle='-', linewidth=3)
     ax.tick_params(which="minor", bottom=False, left=False)
 
@@ -325,7 +343,7 @@ def annotate_heatmap(im,
     if threshold is not None:
         threshold = im.norm(threshold)
     else:
-        threshold = im.norm(data.max())/2.
+        threshold = im.norm(data.max()) / 2.
 
     # Set default alignment to center, but allow it to be
     # overwritten by textkw.
@@ -349,8 +367,7 @@ def annotate_heatmap(im,
     return texts
 
 
-def plot_acf(acorr_matrix, vars_to_plot=None, figsize=(14,4), dpi=100, n_cols=4):
-
+def plot_acf(acorr_matrix, vars_to_plot=None, figsize=(14, 4), dpi=100, n_cols=4):
     if vars_to_plot is None:
         vars_to_plot = acorr_matrix.index
 

@@ -177,7 +177,7 @@ class PerturbationSolver:
 
         return norm_deterministic, norm_stochastic
 
-    def log_linearize_model(self) -> List[sp.Matrix]:
+    def log_linearize_model(self, not_loglin_variables=None) -> List[sp.Matrix]:
         """
         :return: List, a list of Sympy matrices comprised of parameters and steady-state values, see docstring.
 
@@ -206,16 +206,19 @@ class PerturbationSolver:
 
             # If the user selects a variable to not be log linearized, we need to set the value in T to be one, but
             # still replace all SS values in A, B, C, D as usual. These dummies facilitate that.
-            T = sp.diag(*[TimeAwareSymbol(x.base_name + '_T', 'ss') for x in var_group])
+            # T = sp.diag(*[TimeAwareSymbol(x.base_name + '_T', 'ss') for x in var_group])
 
             for eq in self.system_equations:
                 F_row = []
                 for var in var_group:
                     dydx = sp.powsimp(eq_to_ss(eq.diff(var)))
+                    dydx *= 1.0 if var.base_name in not_loglin_variables else var.to_ss()
                     F_row.append(dydx)
+
                 F.append(F_row)
             F = sp.Matrix(F)
-            Fs.append(sp.MatMul(F, T, evaluate=False))
+            # Fs.append(sp.MatMul(F, T, evaluate=False))
+            Fs.append(F)
 
         return Fs
 

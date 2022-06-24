@@ -6,7 +6,7 @@ options
 
 tryreduce
 {
-
+	U[], TC[];
 };
 
 block HOUSEHOLD
@@ -29,7 +29,7 @@ block HOUSEHOLD
 	constraints
 	{
 		C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
-		K[] = (1 - delta) * K[-1] + I[] : q[];
+		K[] = (1 - delta) * K[-1] + I[];
 	};
 
 	calibration

@@ -214,13 +214,14 @@ class Block:
         if not self._validate_key(block_dict, key):
             return
 
-        raw_list = block_dict[key][0]
+        raw_list = [item for l in block_dict[key] for item in l]
         output = []
         for variable in raw_list:
             variable = parse_equations.single_symbol_to_sympy(variable)
             output.append(variable)
 
         return output
+
 
     def _get_variable_list(self) -> None:
         """

@@ -34,7 +34,10 @@ class MissingParameterValueException(ValueError):
     def __init__(self, parameter_name):
         message = f'The prior distribution associated with parameter {parameter_name} does not appear to have an ' \
                   f'initial value. Please declare an initial value for all parameters following the syntax: ' \
-                  f'parameter ~ d(a=, b=, ...) = initial_value;'
+                  f'parameter ~ d(a=, b=, ...) = initial_value;. If this is an exogenous shock, make sure it has '\
+                  f'square brackets [] to indicate it is a variable and not a parameter.'
+
+        super().__init__(message)
 
 
 class InvalidComponentNameException(ValueError):

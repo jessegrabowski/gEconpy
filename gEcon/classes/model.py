@@ -1,10 +1,12 @@
 from gEcon.parser import gEcon_parser, file_loaders
-from gEcon.parser.parse_distributions import create_prior_distribution_dictionary
+from gEcon.parser.parse_distributions import create_prior_distribution_dictionary, build_pymc_model
 from gEcon.parser.parse_equations import single_symbol_to_sympy
 from gEcon.classes.block import Block
 from gEcon.shared.utilities import unpack_keys_and_values, is_variable, sort_dictionary, \
     sympy_keys_to_strings, sympy_number_values_to_floats, sequential, string_keys_to_sympy, \
-    merge_dictionaries
+    merge_dictionaries, expand_subs_for_all_times, substitute_all_equations
+from gEcon.shared.dynare_convert import make_all_var_time_combos
+
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from gEcon.parser.constants import STEADY_STATE_NAMES
 from gEcon.exceptions.exceptions import SteadyStateNotSolvedError, GensysFailedException, VariableNotFoundException, \
@@ -19,6 +21,9 @@ from gEcon.classes.progress_bar import ProgressBar
 import numpy as np
 import sympy as sp
 import pandas as pd
+import pymc as pm
+import aesara
+import aesara.tensor as at
 
 from scipy import linalg, stats
 from numba import njit
@@ -33,17 +38,16 @@ VariableType = Union[sp.Symbol, TimeAwareSymbol]
 
 
 class gEconModel:
-    """
-    Class to build, debug, and solve a DSGE model from a GCN file.
-    """
 
-    def __init__(self, model_filepath: str, verbose: bool = True) -> None:
+    def __init__(self, model_filepath: str, verbose: bool = True, build_pymc = False) -> None:
         """
+        Class to build, debug, and solve a DSGE model from a GCN file.
 
         Parameters
         ----------
         model_filepath
         verbose
+        build_pymc
         """
 
         self.model_filepath: str = model_filepath
@@ -67,6 +71,8 @@ class gEconModel:
 
         self.param_priors: Dict[str, Any] = {}
         self.shock_priors: Dict[str, Any] = {}
+
+        self.pymc_model: pm.Model = None
 
         self.n_variables: int = 0
         self.n_shocks: int = 0
@@ -95,24 +101,36 @@ class gEconModel:
         # self.R: pd.DataFrame = None
         # self.S: pd.DataFrame = None
 
-        self.build(verbose=verbose)
+        self.build(verbose=verbose, build_pymc=build_pymc)
 
         # Assign Solvers
         self.steady_state_solver = SteadyStateSolver(self)
         self.perturbation_solver = PerturbationSolver(self)
 
-    def build(self, verbose: bool = True) -> None:
+    def build(self, verbose: bool = True, build_pymc=False) -> None:
         """
-        :param verbose: bool, default: True. If true, print a short diagnostic message after successfully
-                building the model.
-        :return: None
-
         Main parsing function for the model. Build loads the GCN file, decomposes it into blocks, solves optimization
         problems contained in each block, then extracts parameters, equations, calibrating equations, calibrated
         parameters, and exogenous shocks into their respective class attributes.
 
+        Priors declared in the GCN file are converted into scipy distribution objects and stored in two dictionaries:
+        self.param_priors and self.shock_priors. In addition, the user can request a PyMC model object be built. If
+        you plan to do Bayesian estimation, build the PyMC model.
+
         Gathering block information is done for convenience. For diagnostic purposes the block structure is retained
         as well.
+
+        Parameters
+        ----------
+        verbose: bool, default: True
+            When true, prints a build report describing the model structure and warning the user if the number of
+            variables does not match the number of equations.
+        build_pymc_model: bool, default: False
+            If true, builds a PyMC model of random variables declared in the GCN and stores it in self.pymc_model.
+
+        Returns
+        -------
+
         """
         raw_model = file_loaders.load_gcn(self.model_filepath)
         parsed_model, prior_dict = gEcon_parser.preprocess_gcn(raw_model)
@@ -122,13 +140,15 @@ class gEconModel:
         self._get_all_block_parameters()
         self._get_all_block_params_to_calibrate()
         self._get_variables_and_shocks()
-        self._build_prior_dict(prior_dict)
-        # self._validate_steady_state_block()
+        self._build_prior_dict(prior_dict, build_pymc)
+
+        reduced_vars = self._try_reduce()
+        singletons = self._simplify_singletons()
 
         if verbose:
-            self.build_report()
+            self.build_report(reduced_vars, singletons)
 
-    def build_report(self):
+    def build_report(self, reduced_vars, singletons):
         """
         Write a diagnostic message after building the model. Note that successfully building the model does not
         guarantee that the model is correctly specified. For example, it is possible to build a model with more
@@ -138,6 +158,9 @@ class gEconModel:
         -------
         None
         """
+        if len(singletons) == 0:
+            singletons = None
+
         eq_str = "equation" if self.n_equations == 1 else "equations"
         var_str = "variable" if self.n_variables == 1 else "variables"
         shock_str = "shock" if self.n_shocks == 1 else "shocks"
@@ -152,6 +175,15 @@ class gEconModel:
         report = 'Model Building Complete.\nFound:\n'
         report += f'\t{self.n_equations} {eq_str}\n'
         report += f'\t{self.n_variables} {var_str}\n'
+
+        if reduced_vars:
+            report += f'\tThe following variables were eliminated at user request:\n'
+            report += f'\t\t' + ','.join(reduced_vars) + '\n'
+
+        if singletons:
+            report += f'\tThe following "variables" were defined as constants and have been substituted away:\n'
+            report += f'\t\t' + ','.join(singletons) + '\n'
+
         report += f'\t{self.n_shocks} stochastic {shock_str}\n'
         report += f'\t\t {len(shock_priors)} / {self.n_shocks} {"have" if len(shock_priors) == 1 else "has"}' \
                   f' a defined prior. \n'
@@ -341,7 +373,13 @@ class gEconModel:
 
         self.perturbation_solved = True
 
-    def _perturbation_setup(self, not_loglin_variable, order, model_is_linear, verbose, return_F_matrices=False):
+    def _perturbation_setup(self, not_loglin_variables=None,
+                            order=1,
+                            model_is_linear=False,
+                            verbose=True,
+                            return_F_matrices=False,
+                            tol=1e-8):
+
         free_param_dict = self.free_param_dict.copy()
 
         parameters = list(free_param_dict.keys())
@@ -356,28 +394,27 @@ class gEconModel:
         valid_names = [x.base_name for x in variables_and_shocks]
 
         steady_state_dict = self.steady_state_dict.copy()
-        loglin_sub_dict = {}
 
         # We need shocks to be zero in A, B, C, D but 1 in T; can abuse the T_dummies to accomplish that.
-        if not_loglin_variable is None:
-            not_loglin_variable = [x.base_name for x in shocks]
+        if not_loglin_variables is None:
+            not_loglin_variables = []
+
+        not_loglin_variables += [x.base_name for x in shocks]
 
         # Validate that all user-supplied variables are in the model
-        for variable in not_loglin_variable:
+        for variable in not_loglin_variables:
             if variable not in valid_names:
                 raise VariableNotFoundException(variable)
 
-        # Set non-loglin variables (plus all shocks) to 1 in T
+        # Variables that are zero at the SS can't be log-linearized, check for these here.
         close_to_zero_warnings = []
         for variable in variables_and_shocks:
-            T_dummy = TimeAwareSymbol(variable.base_name + '_T', 'ss')
-            if variable.base_name in not_loglin_variable:
-                loglin_sub_dict[T_dummy.name] = 1
-            elif abs(steady_state_dict[variable.to_ss().name]) < 1e-4:
-                loglin_sub_dict[T_dummy.name] = 1
+            if variable.base_name in not_loglin_variables:
+                continue
+
+            if abs(steady_state_dict[variable.to_ss().name]) < tol:
+                not_loglin_variables.append(variable.base_name)
                 close_to_zero_warnings.append(variable)
-            else:
-                loglin_sub_dict[T_dummy.name] = steady_state_dict[variable.to_ss().name]
 
         if len(close_to_zero_warnings) > 0 and verbose:
             warn('The following variables have steady state values close to zero and will not be log linearized: ' +
@@ -395,9 +432,9 @@ class gEconModel:
             Fs = self.perturbation_solver.convert_linear_system_to_matrices()
 
         else:
-            Fs = self.perturbation_solver.log_linearize_model()
+            Fs = self.perturbation_solver.log_linearize_model(not_loglin_variables=not_loglin_variables)
 
-        Fs_subbed = [F.subs(string_keys_to_sympy(loglin_sub_dict)).subs(shock_ss_dict) for F in Fs]
+        Fs_subbed = [F.subs(shock_ss_dict) for F in Fs]
         self.build_perturbation_matrices = sp.lambdify(params_and_variables, Fs_subbed)
 
         if return_F_matrices:
@@ -405,7 +442,9 @@ class gEconModel:
 
     def check_bk_condition(self,
                            free_param_dict: Optional[Dict[str, float]] = None,
+                           system_matrices: Optional[List[ArrayLike]] = None,
                            verbose: bool = True,
+                           return_value: Optional[str] = 'df',
                            tol=1e-8) -> Optional[ArrayLike]:
         """
         Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
@@ -418,6 +457,10 @@ class gEconModel:
             A dictionary of parameter values. If None, the current stored values are used.
         verbose: bool, default: True
             Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
+        return_value: string, default: 'eigenvalues'
+            Controls what is returned by the function. Valid values are 'df', 'flag', and None.
+            If df, a dataframe containing eigenvalues is returned. If 'bool', a boolean indicating whether the BK
+            condition is satisfied. If None, nothing is returned.
         tol: float, 1e-8
             Convergence tolerance for the gensys solver
 
@@ -435,7 +478,10 @@ class gEconModel:
             ss_dict = self.steady_state_dict
             calib_dict = self.calib_param_dict
 
-        A, B, C, D = self.build_perturbation_matrices(**ss_dict, **free_param_dict, **calib_dict)
+        if system_matrices is not None:
+            A, B, C, D = system_matrices
+        else:
+            A, B, C, D = self.build_perturbation_matrices(**ss_dict, **free_param_dict, **calib_dict)
         n_forward = (C.sum(axis=0) > 0).sum().astype(int)
         n_eq, n_vars = A.shape
 
@@ -453,7 +499,12 @@ class gEconModel:
         Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
         Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
 
-        A, B, Q, Z = qzdiv(1.01, *linalg.qz(-Gamma_0, Gamma_1, 'complex'))
+        # A, B, Q, Z = qzdiv(1.01, *linalg.qz(-Gamma_0, Gamma_1, 'complex'))
+
+        # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
+        # have sign flip relative to qzdiv -- does it matter?
+        A, B, alpha, beta, Q, Z = linalg.ordqz(-Gamma_0, Gamma_1, sort='ouc', output='complex')
+
         gev = np.c_[np.diagonal(A), np.diagonal(B)]
 
         eigenval = gev[:, 1] / (gev[:, 0] + tol)
@@ -467,12 +518,19 @@ class gEconModel:
         eig = pd.DataFrame(eig[sorted_idx, :], columns=['Modulus', 'Real', 'Imaginary'])
 
         n_g_one = (eig['Modulus'] > 1).sum()
-
+        condition_not_satisfied = n_forward > n_g_one
         if verbose:
             print(f'Model solution has {n_g_one} eigenvalues greater than one in modulus and {n_forward} '
                   f'forward-looking variables.'
-                  f'\nBlanchard-Kahn condition is{" NOT" if n_forward > n_g_one else ""} satisfied.')
-        return eig
+                  f'\nBlanchard-Kahn condition is{" NOT" if condition_not_satisfied else ""} satisfied.')
+
+        if return_value is None:
+            return
+
+        if return_value == 'df':
+            return eig
+        elif return_value == 'bool':
+            return ~condition_not_satisfied
 
     def compute_stationary_covariance_matrix(self):
         """
@@ -518,7 +576,7 @@ class gEconModel:
 
         return pd.DataFrame(acorr_mat, index=T.index, columns=np.arange(n_lags))
 
-    def sample_param_dict_from_prior(self, n_samples=1, seed=None):
+    def sample_param_dict_from_prior(self, n_samples=1, seed=None, param_subset=None):
         n_params = len(self.param_priors)
         if seed is not None:
             seed_sequence = np.random.SeedSequence(seed)
@@ -528,7 +586,12 @@ class gEconModel:
             streams = [None] * n_params
 
         new_param_dict = self.free_param_dict.copy()
-        for i, (key, d) in enumerate(self.param_priors.items()):
+        if param_subset is None:
+            priors_to_sample = self.param_priors
+        else:
+            priors_to_sample = {k: v for k, v in self.param_priors.items() if k in param_subset}
+
+        for i, (key, d) in enumerate(priors_to_sample.items()):
             new_param_dict[key] = d.rvs(size=n_samples, random_state=streams[i])
 
         return new_param_dict
@@ -623,14 +686,14 @@ class gEconModel:
 
         return df
 
-    def _build_prior_dict(self, prior_dict: Dict[str, str], package='scipy') -> None:
+    def _build_prior_dict(self, prior_dict: Dict[str, str], build_pymc: bool) -> None:
         """
         Parameters
         ----------
         prior_dict: dict
             Dictionary of variable_name: distribution_string pairs, prepared by the parse_gcn function.
-        package: str
-            Which backend to put the distributions into. Just scipy for now, but PyMC support is high on the to-do list.
+        build_pymc: str
+            If True, build a PyMC model with declared random variables.
 
         Returns
         -------
@@ -641,9 +704,12 @@ class gEconModel:
         """
 
         priors = create_prior_distribution_dictionary(prior_dict)
+        if build_pymc:
+            self.pymc_model = build_pymc_model(prior_dict)
+
         hyper_parameters = set(prior_dict.keys()) - set(priors.keys())
 
-        # Clean up the hyper parameters (e.g. shock stds) from the model, they aren't needed anymore
+        # Clean up the hyper-parameters (e.g. shock stds) from the model, they aren't needed anymore
         for parameter in hyper_parameters:
             del self.free_param_dict[parameter]
 
@@ -769,6 +835,81 @@ class gEconModel:
                                                       sort_dictionary])
 
         del raw_blocks[ss_block_names[0]]
+
+    def _try_reduce(self):
+        if self.try_reduce_vars is None:
+            return
+
+        self.try_reduce_vars = [single_symbol_to_sympy(x) for x in self.try_reduce_vars]
+
+        variables = self.variables
+        n_variables = self.n_variables
+
+        occurrence_matrix = np.zeros((n_variables, n_variables))
+        reduced_system = []
+
+        for i, eq in enumerate(self.system_equations):
+            for j, var in enumerate(self.variables):
+                if any([x in eq.atoms() for x in make_all_var_time_combos([var])]):
+                    occurrence_matrix[i, j] += 1
+
+        # Columns with a sum of 1 are variables that appear only in a single equations; these equations can be deleted
+        # without consequence w.r.t solving the system.
+
+        isolated_variables = np.array(variables)[occurrence_matrix.sum(axis=0) == 1]
+        to_remove = set(isolated_variables).intersection(set(self.try_reduce_vars))
+
+        for eq in self.system_equations:
+            if not any([var in eq.atoms() for var in to_remove]):
+                reduced_system.append(eq)
+
+        self.system_equations = reduced_system
+        self.n_equations = len(self.system_equations)
+
+        self.variables = set(atom.set_t(0) for eq in reduced_system for atom in eq.atoms() if is_variable(atom))
+        self.variables -= set(self.shocks)
+        self.variables = sorted(list(self.variables), key=lambda x: x.name)
+        self.n_variables = len(self.variables)
+
+        if self.n_equations != self.n_variables:
+            raise ValueError
+
+        eliminated_vars = [var.name for var in variables if var not in self.variables]
+
+        return eliminated_vars
+
+    def _simplify_singletons(self):
+        system = self.system_equations
+
+        variables = self.variables
+        reduce_dict = {}
+
+        for eq in system:
+            if len(eq.atoms()) < 4:
+                var = [x for x in eq.atoms() if is_variable(x)]
+                if len(var) > 1:
+                    continue
+                var = var[0]
+                sub_dict = expand_subs_for_all_times(sp.solve(eq, var, dict=True)[0])
+                reduce_dict.update(sub_dict)
+
+        reduced_system = substitute_all_equations(system, reduce_dict)
+        reduced_system = [eq for eq in reduced_system if eq != 0]
+
+        self.system_equations = reduced_system
+        self.n_equations = len(reduced_system)
+
+        self.variables = set(atom.set_t(0) for eq in reduced_system for atom in eq.atoms() if is_variable(atom))
+        self.variables -= set(self.shocks)
+        self.variables = sorted(list(self.variables), key=lambda x: x.name)
+        self.n_variables = len(self.variables)
+
+        if self.n_equations != self.n_variables:
+            raise ValueError
+
+        eliminated_vars = [var.name for var in variables if var not in self.variables]
+
+        return eliminated_vars
 
 
 # @njit

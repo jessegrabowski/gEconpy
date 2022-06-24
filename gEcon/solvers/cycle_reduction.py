@@ -63,8 +63,11 @@ def cycle_reduction(A0: ArrayLike,
     idx_0 = np.arange(n)
     idx_1 = idx_0 + n
 
+    # Pre-allocate this so it doesn't have to be repeatedly created
+    EYE = np.eye(A1.shape[0])
+
     for i in range(max_iter):
-        tmp = np.vstack((A0, A2)) @ np.linalg.inv(A1) @ np.hstack((A0, A2))
+        tmp = np.vstack((A0, A2)) @ np.linalg.solve(A1, EYE) @ np.hstack((A0, A2))
 
         A1 = A1 - tmp[idx_0, :][:, idx_1] - tmp[idx_1, :][:, idx_0]
         A0 = -tmp[idx_0, :][:, idx_0]
@@ -124,4 +127,5 @@ def solve_shock_matrix(B, C, D, G_1):
         system variables at time t+1.
 
     """
-    return -np.linalg.inv(C @ G_1 + B) @ D
+
+    return -np.linalg.solve(C @ G_1 + B, np.eye(C.shape[0])) @ D

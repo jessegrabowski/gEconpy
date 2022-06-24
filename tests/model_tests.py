@@ -17,7 +17,7 @@ class ModelClassTestsOne(unittest.TestCase):
         self.assertEqual(self.model.options, {'output logfile': False, 'output LaTeX': False})
 
     def test_reduce_vars_saved(self):
-        self.assertEqual(self.model.try_reduce_vars, ['C[]'])
+        self.assertEqual(self.model.try_reduce_vars, [TimeAwareSymbol('C', 0)])
 
     def test_model_file_loading(self):
         block_names = ['HOUSEHOLD']
@@ -262,7 +262,6 @@ class ModelClassTestsTwo(unittest.TestCase):
         R = np.array([[0.3437521, 0.3981261],
                       [3.5550207, -0.5439888],
                       [0.1418896, -0.2412174],
-                      [0.0000000, 0.0000000],
                       [1.0422283, 0.1932087],
                       [-0.2127497, -0.1270917],
                       [1.0422282, 0.1932087],
@@ -274,7 +273,6 @@ class ModelClassTestsTwo(unittest.TestCase):
         S = np.array([[0.3618443],
                       [3.7421271],
                       [0.1493575],
-                      [0.0000000],
                       [1.0970824],
                       [-0.2239471],
                       [1.0970823],
@@ -314,7 +312,6 @@ class ModelClassTestsTwo(unittest.TestCase):
         R = np.array([[0.3437521, 0.3981261],
                       [3.5550207, -0.5439888],
                       [0.1418896, -0.2412174],
-                      [0.0000000, 0.0000000],
                       [1.0422283, 0.1932087],
                       [-0.2127497, -0.1270917],
                       [1.0422282, 0.1932087],
@@ -326,7 +323,6 @@ class ModelClassTestsTwo(unittest.TestCase):
         S = np.array([[0.3618443],
                       [3.7421271],
                       [0.1493575],
-                      [0.0000000],
                       [1.0970824],
                       [-0.2239471],
                       [1.0970823],
@@ -363,7 +359,7 @@ class ModelClassTestsThree(unittest.TestCase):
                          {'output logfile': True, 'output LaTeX': True, 'output LaTeX landscape': True})
 
     def test_reduce_vars_saved(self):
-        self.assertEqual(self.model.try_reduce_vars, ['Div[]', 'TC[]'])
+        self.assertEqual(self.model.try_reduce_vars, [TimeAwareSymbol('Div', 0), TimeAwareSymbol('TC', 0)])
 
     def test_model_file_loading(self):
         block_names = ['HOUSEHOLD', 'WAGE_SETTING', 'WAGE_EVOLUTION', 'PREFERENCE_SHOCKS', 'FIRM', 'TECHNOLOGY_SHOCKS',
@@ -607,17 +603,17 @@ class ModelClassTestsThree(unittest.TestCase):
     #         self.assertEqual(np.allclose(answer, result.values), True)
 
 
-class ModelWithSteadyStateTest(unittest.TestCase):
-
-    def setUp(self):
-        file_path = 'Test GCNs/One_Block_Simple_1_w_Steady_State.gcn'
-        self.model = gEconModel(file_path, verbose=False)
-
-    def test_steady_state_block(self):
-        pass
-
-    def test_f_params_to_ss(self):
-        pass
+# class ModelWithSteadyStateTest(unittest.TestCase):
+#
+#     def setUp(self):
+#         file_path = 'Test GCNs/One_Block_Simple_1_w_Steady_State.gcn'
+#         self.model = gEconModel(file_path, verbose=False)
+#
+#     def test_steady_state_block(self):
+#         pass
+#
+#     def test_f_params_to_ss(self):
+#         pass
         # self.model.steady_state()
         # self.model.print_steady_state()
         #

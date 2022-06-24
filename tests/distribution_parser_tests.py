@@ -1,7 +1,5 @@
 import unittest
 
-from scipy.stats import norm, invgamma
-
 from gEcon.exceptions.exceptions import InvalidDistributionException, DistributionParsingError, \
     MissingParameterValueException, RepeatedParameterException
 from gEcon.parser.gEcon_parser import preprocess_gcn
@@ -174,6 +172,7 @@ class BasicParerFunctionalityTests(unittest.TestCase):
         self.assertEqual(d.rv_params['scale'].mean(), 1 / (20 - 1))
         self.assertEqual(d.rv_params['scale'].var(), 1 ** 2 / (20 - 1) ** 2 / (20 - 2))
 
+
 class TestDistributionFactory(unittest.TestCase):
 
     def test_parse_distributions(self):
@@ -205,9 +204,6 @@ class TestDistributionFactory(unittest.TestCase):
             d = distribution_factory(variable_name=variable_name, d_name=d_name, param_dict=param_dict)
             self.assertAlmostEqual(d.mean(), means[i], places=3)
             self.assertAlmostEqual(d.std(), stds[i], places=3)
-
-
-
 
 
 if __name__ == '__main__':

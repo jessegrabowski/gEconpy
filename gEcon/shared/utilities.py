@@ -254,7 +254,6 @@ def merge_dictionaries(*dicts):
 
 
 def merge_functions(funcs, *args, **kwargs):
-
     def combined_function(*args, **kwargs):
         output = {}
 
@@ -294,3 +293,14 @@ def is_log_transform_candidate(eq):
 def log_transform_exp_shock(eq):
     out = (-sp.log(-eq.args[0]) + sp.log(eq.args[1])).simplify(inverse=True)
     return out
+
+
+def expand_sub_dict_for_all_times(sub_dict):
+    result = {}
+    for k, v in sub_dict.items():
+        result[k] = v
+        result[step_equation_forward(k)] = step_equation_forward(v)
+        result[step_equation_backward(k)] = step_equation_backward(v)
+        result[eq_to_ss(k)] = eq_to_ss(v)
+
+    return result
