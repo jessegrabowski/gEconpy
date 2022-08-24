@@ -1443,7 +1443,8 @@ def build_pymc_model(raw_prior_dict: Dict[str, str], model: pm.Model = None) -> 
         model = pm.Model()
 
     for variable_name, (d_name, param_dict) in basic_distributions.items():
-        # Skip the shock processes, they will be assumed normal in the kalman filter
+        # TODO: Currently I am skipping the shock processes because they will be assumed normal in the kalman filter.
+        #   There's no way this is correct in general.
         if '[]' not in variable_name:
             distribution_factory(variable_name=variable_name,
                                  d_name=d_name,

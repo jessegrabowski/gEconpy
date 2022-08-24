@@ -389,7 +389,7 @@ class Block:
 
         # Return 1 if there is no continuation value
         if all([x.time_index in [0, -1] for x in variables]):
-            return 1
+            return 1.0
 
         else:
             continuation_value = [x for x in variables if x.time_index == 1]

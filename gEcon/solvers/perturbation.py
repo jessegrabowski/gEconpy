@@ -126,7 +126,7 @@ class PerturbationSolver:
         # a numba warning.
         T, R = None, None
 
-        A, B, C, D = A.astype('float64'), B.astype('float64'), C.astype('float64'), D.astype('float64')
+        # A, B, C, D = A.astype('float64'), B.astype('float64'), C.astype('float64'), D.astype('float64')
 
         T, result, log_norm = cycle_reduction(A, B, C, max_iter, tol, verbose)
 
@@ -213,6 +213,11 @@ class PerturbationSolver:
                 for var in var_group:
                     dydx = sp.powsimp(eq_to_ss(eq.diff(var)))
                     dydx *= 1.0 if var.base_name in not_loglin_variables else var.to_ss()
+                    atoms = dydx.atoms()
+                    if len(atoms) == 1:
+                        x = list(atoms)[0]
+                        if isinstance(x, sp.core.numbers.Number) and x != 0:
+                            dydx = sp.Float(x)
                     F_row.append(dydx)
 
                 F.append(F_row)

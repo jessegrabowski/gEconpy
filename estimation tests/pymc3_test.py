@@ -15,7 +15,7 @@ dill.settings['recurse'] = True
 theano.config.floatX = 'float64'
 
 
-file_path = '../../GCN Files/RBC_steady_state.gcn'
+file_path = '../GCN Files/RBC_steady_state.gcn'
 model = gEconModel(file_path, verbose=False)
 model.steady_state(verbose=False)
 model.solve_model(verbose=False)
