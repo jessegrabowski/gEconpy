@@ -29,7 +29,7 @@ def prepare_gridspec_figure(n_cols, n_plots):
     if has_remainder:
         last_row = slice((n_rows - 1) * 2, n_rows * 2)
         left_pad = int(n_cols - remainder)
-        for j in range(n_cols):
+        for j in range(remainder):
             col_slice = slice(left_pad + j * 2, left_pad + (j + 1) * 2)
             plot_locs.append((last_row, col_slice))
 
@@ -390,3 +390,72 @@ def plot_acf(acorr_matrix, vars_to_plot=None, figsize=(14, 4), dpi=100, n_cols=4
 
     fig.tight_layout()
     return fig
+
+
+def plot_corner(idata,
+                var_names=None,
+                figsize=(14, 14),
+                dpi=144,
+                hist_bins=200,
+                rug_bins=50,
+                rug_levels=6,
+                show_marginal_modes=True):
+
+    if not hasattr(idata, 'posterior'):
+        raise ValueError('Argument idata should be an arviz idata object with a posterior group')
+    var_names = var_names or list(idata.posterior.data_vars)
+    k_params = len(var_names)
+
+    fig, ax = plt.subplots(k_params, k_params, figsize=figsize, dpi=dpi)
+
+    for i, axis in enumerate(fig.axes):
+        row = i // k_params
+        col = i % k_params
+
+        if col <= row:
+            if col == row:
+                v = var_names[col]
+                axis.hist(idata.posterior[v].values.ravel(), bins=hist_bins, histtype='step', density=True)
+                axis.set_title(v)
+            else:
+                x = var_names[col]
+                y = var_names[row]
+
+                data_x = idata.posterior[x].values.ravel()
+                data_y = idata.posterior[y].values.ravel()
+
+                # x_hist, edges = np.histogram(data_x, bins=hist_bins)
+                # x_mode = edges[np.argmax(x_hist)]
+                #
+                # y_hist, edges = np.histogram(data_y, bins=hist_bins)
+                # y_mode = edges[np.argmax(y_hist)]
+
+                H, y_edges, x_edges = np.histogram2d(data_y, data_x, bins=rug_bins)
+
+                ymax_idx, xmax_idx = np.where(H == H.max())
+                x_mode = x_edges[xmax_idx]
+                y_mode = y_edges[ymax_idx]
+
+                axis.contourf(x_edges[1:], y_edges[1:], H, cmap='Blues', levels=rug_levels)
+
+                if show_marginal_modes:
+                    axis.axvline(x_mode, ls='--', lw=0.5, color='k')
+                    axis.axhline(y_mode, ls='--', lw=0.5, color='k')
+
+                    axis.scatter(x_mode, y_mode, color='k', marker='s', s=20)
+
+                if col == 0:
+                    axis.set_ylabel(y)
+                else:
+                    axis.set_yticklabels([])
+
+                if row != (k_params - 1):
+                    axis.set_xticklabels([])
+                else:
+                    axis.set_xlabel(x)
+
+        else:
+            axis.set_visible(False)
+
+    fig.tight_layout()
+    plt.show()

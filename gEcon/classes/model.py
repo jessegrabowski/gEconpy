@@ -15,21 +15,25 @@ from gEcon.exceptions.exceptions import SteadyStateNotSolvedError, GensysFailedE
 from gEcon.solvers.steady_state import SteadyStateSolver
 from gEcon.solvers.perturbation import PerturbationSolver
 
-from gEcon.solvers.gensys import interpret_gensys_output, qzdiv
+from gEcon.solvers.gensys import interpret_gensys_output
 from gEcon.classes.progress_bar import ProgressBar
+
+from gEcon.estimation.estimation_utilities import extract_sparse_data_from_model
+from gEcon.estimation.estimate import extract_prior_dict, evaluate_logp, build_Z_matrix
+
+import emcee
 
 import numpy as np
 import sympy as sp
 import pandas as pd
 import pymc as pm
-import aesara
-import aesara.tensor as at
+import arviz as az
+import xarray as xr
 
 from scipy import linalg, stats
 from numba import njit
 
 from warnings import warn
-from functools import partial
 
 from numpy.typing import ArrayLike
 from typing import List, Dict, Optional, Union, Callable, Any, Tuple
@@ -39,7 +43,7 @@ VariableType = Union[sp.Symbol, TimeAwareSymbol]
 
 class gEconModel:
 
-    def __init__(self, model_filepath: str, verbose: bool = True, build_pymc = False) -> None:
+    def __init__(self, model_filepath: str, verbose: bool = True, build_pymc=False) -> None:
         """
         Class to build, debug, and solve a DSGE model from a GCN file.
 
@@ -575,6 +579,111 @@ class gEconModel:
         acorr_mat = _compute_autocorrelation_matrix(T.values, Sigma, n_lags=n_lags)
 
         return pd.DataFrame(acorr_mat, index=T.index, columns=np.arange(n_lags))
+
+    def fit(self, data, filter_type='standard', draws=5000, n_walkers=36, moves=None, x0=None, verbose=True,
+            return_inferencedata=True, burn_in=None, thin=None,
+            skip_initial_state_check = False, **sampler_kwargs):
+        """
+        Estimate model parameters via Bayesian inference. Parameter likelihood is computed using the Kalman filter.
+        Posterior distributions are estimated using Markov Chain Monte Carlo (MCMC), specifically the Affine-Invariant
+        Ensemble Sampler algorithm of [1].
+
+        A "traditional" Random Walk Metropolis can be achieved using the moves argument, but by default this function
+        will use a mix of two Differential Evolution (DE) proposal algorithms that have been shown to work well on
+        weakly multi-modal problems. DSGE estimation can be multi-modal in the sense that regions of the posterior
+        space are separated by the constraints on the ability to solve the perturbation problem.
+
+        This function will start all MCMC chains around random draws from the prior distribution. This is in contrast
+        to Dynare and gEcon.estimate, which start MCMC chains around the Maximum Likelihood estimate for parameter
+        values.
+
+        Parameters
+        ----------
+        data: dataframe
+            A pandas dataframe of observed values, with column names corresponding to DSGE model states names.
+        filter_type: string, default: "standard"
+            Select a kalman filter implementation to use. Currently "standard" and "univariate" are supported. Try
+            univariate if you run into errors inverting the P matrix during filtering.
+        draws: integer
+            Number of draws from each MCMC chain, or "walker" in the jargon of emcee.
+        n_walkers: integer
+            The number of "walkers", which roughly correspond to chains in other MCMC packages. Note that one needs
+            many more walkers than chains; [1] recommends as many as possible.
+        cores: integer
+            The number of processing cores, which is passed to Multiprocessing.Pool to do parallel inference. To
+            maintain detailed balance, the pool of walkers must be split, resulting in n_walkers / cores sub-ensembles.
+            Be sure to raise the number of walkers to compensate.
+        moves: List of emcee.moves objects
+            Moves tell emcee how to generate MCMC proposals. See the emcee docs for details.
+        x0: array
+            An (n_walkers, k_parameters) array of initial values. Emcee will check the condition number of the matrix
+            to ensure all walkers begin in different regions of the parameter space. If MLE estimates are used, they
+            should be jittered to start walkers in a ball around the desired initial point.
+        return_inferencedata: bool, default: True
+            If true, return an Arviz InferenceData object containing posterior samples. If False, the fitted Emcee
+            sampler is returned.
+        burn_in: int, optional
+            Number of initial samples to discard from all chains. This is ignored if return_inferencedata is False.
+        thin: int, optional
+            Return only every n-th sample from each chain. This is done to reduce storage requirements in highly
+            autocorrelated chains by discarding redundant information. Ignored if return_inferencedata is False.
+
+        Returns
+        -------
+        sampler, emcee.Sampler object
+            An emcee.Sampler object with the estimated posterior over model parameters, as well as other diagnotic
+            information.
+
+        References
+        -------
+        ..[1] Foreman-Mackey, Daniel, et al. “Emcee: The MCMC Hammer.” Publications of the Astronomical Society of the
+              Pacific, vol. 125, no. 925, Mar. 2013, pp. 306–12. arXiv.org, https://doi.org/10.1086/670067.
+        """
+        observed_vars = data.columns.tolist()
+        model_var_names = [x.base_name for x in self.variables]
+        if not all([x in model_var_names for x in observed_vars]):
+            orphans = [x for x in observed_vars if x not in model_var_names]
+            raise ValueError(f'Columns of data must correspond to states of the DSGE model. Found the following columns'
+                             f'with no associated model state: {", ".join(orphans)}')
+
+        sparse_data = extract_sparse_data_from_model(self)
+        prior_dict = extract_prior_dict(self)
+
+        moves = moves or [(emcee.moves.DEMove(), 0.6), (emcee.moves.DESnookerMove(), 0.4)]
+
+        shock_names = [x.base_name for x in self.shocks]
+
+        k_params = len(prior_dict)
+        Z = build_Z_matrix(observed_vars, model_var_names)
+
+        args = [data, sparse_data, Z, prior_dict, shock_names, observed_vars, filter_type]
+
+        x0 = x0 or np.stack([x.rvs(n_walkers) for x in prior_dict.values()]).T
+        param_names = list(prior_dict.keys())
+
+        sampler = emcee.EnsembleSampler(n_walkers, k_params, evaluate_logp,
+                                        args=args,
+                                        moves=moves,
+                                        parameter_names=param_names,
+                                        **sampler_kwargs)
+
+        _ = sampler.run_mcmc(x0, draws, progress=verbose, skip_initial_state_check=skip_initial_state_check)
+
+        if return_inferencedata:
+            sampler_stats = xr.Dataset(data_vars=dict(
+                acceptance_fraction=(['chain'], sampler.acceptance_fraction),
+                autocorrelation_time=(['parameters'], sampler.get_autocorr_time(discard=burn_in or 0))),
+                coords=dict(
+                    chain=np.arange(n_walkers),
+                    parameters=param_names
+                ))
+
+            idata = az.from_emcee(sampler, var_names=param_names, blob_names=["log_likelihood"])
+            idata['sample_stats'].update(sampler_stats)
+
+            return idata.sel(draw=slice(burn_in, None, thin))
+
+        return sampler
 
     def sample_param_dict_from_prior(self, n_samples=1, seed=None, param_subset=None):
         n_params = len(self.param_priors)

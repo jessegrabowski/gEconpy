@@ -1048,13 +1048,22 @@ def preprocess_distribution_string(variable_name: str, d_string: str) -> Tuple[s
     if re.search(valid_pattern, d_string) is None:
         raise InvalidDistributionException(variable_name, d_string)
 
-    d_name, params_string = d_string.lower().split('(')
+    d_name, params_string = d_string.split('(')
+    d_name = d_name.lower()
 
     if d_name not in name_to_canon_dict.keys():
         raise InvalidDistributionException(variable_name, d_string)
 
     params = [x.strip() for x in params_string.replace(')', '').split(',')]
     params = [x for x in params if len(x) > 0]
+
+    new_params = []
+    for p in params:
+        chunks = p.split('=')
+        new_p = '='.join([chunks[0].lower(), chunks[1]])
+        new_params.append(new_p)
+
+    params = new_params
 
     param_dict = {}
     for param in params:
@@ -1412,7 +1421,6 @@ def create_prior_distribution_dictionary(raw_prior_dict: Dict[str, str]) -> Dict
     basic_distributions, compound_distributions = split_out_composite_distributions(variable_names,
                                                                                     d_names,
                                                                                     param_dicts)
-
     prior_dict = {}
 
     for variable_name, (d_name, param_dict) in basic_distributions.items():
