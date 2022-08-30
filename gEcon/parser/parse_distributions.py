@@ -13,7 +13,7 @@ from scipy.stats import rv_continuous, beta, halfnorm, gamma, invgamma, norm, un
 from scipy import optimize
 import pymc as pm
 
-from typing import Dict, Tuple, List, Optional, Callable, Any
+from typing import Dict, Tuple, List, Optional, Callable, Any, Union
 from functools import reduce, partial
 from abc import ABC, abstractmethod
 from warnings import warn
@@ -1108,7 +1108,7 @@ def distribution_factory(variable_name: str,
                          d_name: str,
                          param_dict: Dict[str, str],
                          package: str = 'scipy',
-                         model=None) -> rv_continuous | pm.Model:
+                         model=None) -> Union[rv_continuous, pm.Model]:
     """
     Parameters
     ----------
@@ -1224,7 +1224,7 @@ def composite_distribution_factory(variable_name,
                                    d_name,
                                    param_dict,
                                    package='scipy',
-                                   model=None) -> CompositeDistribution | None:
+                                   model=None) -> Union[CompositeDistribution, None]:
     """
     Parameters
     ----------
