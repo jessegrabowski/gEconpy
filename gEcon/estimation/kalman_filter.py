@@ -1,14 +1,16 @@
 import numpy as np
 from numpy.typing import ArrayLike
-from numba import njit
+from numba import njit, jit
 from scipy import linalg
 from gEcon.numba_linalg.overloads import *
+
 from typing import List, Tuple
 
 MVN_CONST = np.log(2.0 * np.pi)
+EPS = 1e-12
 
 
-@njit
+@njit('float64[:, ::1](boolean[::1])')
 def build_mask_matrix(nan_mask: ArrayLike) -> ArrayLike:
     """
     The Kalman Filter can "natively" handle missing values by treating observed states as un-observed states for
@@ -39,14 +41,14 @@ def build_mask_matrix(nan_mask: ArrayLike) -> ArrayLike:
 
 
 @njit
-def _kalman_filter(data: ArrayLike,
-                   a0: ArrayLike,
-                   P0: ArrayLike,
-                   T: ArrayLike,
-                   Z: ArrayLike,
-                   R: ArrayLike,
-                   H: ArrayLike,
-                   Q: ArrayLike) -> Tuple:
+def standard_kalman_filter(data: ArrayLike,
+                           T: ArrayLike,
+                           Z: ArrayLike,
+                           R: ArrayLike,
+                           H: ArrayLike,
+                           Q: ArrayLike,
+                           a0: ArrayLike,
+                           P0: ArrayLike) -> Tuple:
     """
 
     Parameters
@@ -79,10 +81,12 @@ def _kalman_filter(data: ArrayLike,
     predicted_cov = np.zeros((n_steps + 1, k_states, k_states))
     log_likelihood = np.zeros(n_steps)
 
+    a0, P0 = make_initial_conditions(T, R, Q, a0, P0)
+
     a = a0
     P = P0
 
-    predicted_states[0] = a[:, 0]
+    predicted_states[0] = a
     predicted_cov[0] = P
 
     for i in range(n_steps):
@@ -118,7 +122,8 @@ def kalman_step(y, a, P, T, Z, R, H, Q):
     return a_filtered, a_hat, P_filtered, P_hat, ll
 
 
-@njit
+@njit('Tuple((float64[:, ::1], float64[:, ::1], float64[::1]))(float64[:, ::1], float64[:, ::1], float64[:, ::1], '
+      'float64[:, ::1], float64[:, ::1])')
 def filter_step(y, Z, H, a, P):
     v = y - Z @ a
 
@@ -127,7 +132,7 @@ def filter_step(y, Z, H, a, P):
 
     # Special case for if everything is missing. Abort before failing to invert F
     if np.all(Z == 0):
-        a_filtered = a
+        a_filtered = np.atleast_2d(a).reshape((-1, 1))
         P_filtered = P
         ll = np.zeros(v.shape[0])
 
@@ -151,7 +156,6 @@ def filter_step(y, Z, H, a, P):
     return a_filtered, P_filtered, ll
 
 
-
 @njit
 def predict(a, P, T, R, Q):
     a_hat = T @ a
@@ -163,25 +167,14 @@ def predict(a, P, T, R, Q):
 
 
 @njit
-def kalman_filter(data, T, Z, R, H, Q, a0=None, P0=None):
-
-    a0 = a0 or np.zeros((T.shape[0], 1))
-    P0 = P0 or linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
-
-    filter_results = _kalman_filter(data, a0, P0, T, Z, R, H, Q)
-
-    return filter_results
-
-@njit
-def _univariate_kalman_filter(data: ArrayLike,
-                              a0: ArrayLike,
-                              P0: ArrayLike,
-                              T: ArrayLike,
-                              Z: ArrayLike,
-                              R: ArrayLike,
-                              H: ArrayLike,
-                              Q: ArrayLike) -> Tuple:
-
+def univariate_kalman_filter(data: ArrayLike,
+                             T: ArrayLike,
+                             Z: ArrayLike,
+                             R: ArrayLike,
+                             H: ArrayLike,
+                             Q: ArrayLike,
+                             a0: ArrayLike,
+                             P0: ArrayLike) -> Tuple:
     n_steps, k_obs = data.shape
     k_states, k_posdef = R.shape
 
@@ -190,6 +183,8 @@ def _univariate_kalman_filter(data: ArrayLike,
     filtered_cov = np.zeros((n_steps, k_states, k_states))
     predicted_cov = np.zeros((n_steps + 1, k_states, k_states))
     log_likelihood = np.zeros(n_steps)
+
+    a0, P0 = make_initial_conditions(T, R, Q, a0, P0)
 
     a = a0
     P = P0
@@ -211,6 +206,7 @@ def _univariate_kalman_filter(data: ArrayLike,
 
     return filtered_states, predicted_states, filtered_cov, predicted_cov, log_likelihood
 
+
 @njit
 def univariate_kalman_step(y, a, P, T, Z, R, H, Q):
     y = y.reshape(-1, 1)
@@ -227,6 +223,7 @@ def univariate_kalman_step(y, a, P, T, Z, R, H, Q):
     a_hat, P_hat = predict(a=a_filtered, P=P_filtered, T=T, R=R, Q=Q)
 
     return a_filtered, a_hat, P_filtered, P_hat, ll
+
 
 @njit
 def univariate_filter_step(y_masked, Z_masked, H_masked, a, P):
@@ -245,10 +242,11 @@ def univariate_filter_step(y_masked, Z_masked, H_masked, a, P):
                                                            a_filtered, P_filtered)
         ll_row[i] = ll[0]
 
-    ll = -0.5 * ((ll_row > 0).sum() * MVN_CONST + ll_row.sum())
+    ll = -0.5 * ((ll_row != 0).sum() * MVN_CONST + ll_row.sum())
     P_filtered = 0.5 * (P_filtered + P_filtered.T)
 
     return a_filtered, P_filtered, ll
+
 
 @njit
 def univariate_inner_step(y, Z_row, sigma_H, a, P):
@@ -258,7 +256,7 @@ def univariate_inner_step(y, Z_row, sigma_H, a, P):
     PZT = P @ Z_row.T
     F = Z_row @ PZT + sigma_H
 
-    if F < 1e-8:
+    if F < EPS:
         a_filtered = a
         P_filtered = P
         ll = np.zeros(v.shape[0])
@@ -273,10 +271,25 @@ def univariate_inner_step(y, Z_row, sigma_H, a, P):
 
 
 @njit
-def univariate_kalman_filter(data, T, Z, R, H, Q, a0=None, P0=None):
-    a0 = a0 or np.zeros((T.shape[0], 1))
-    P0 = P0 or linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
+def make_initial_conditions(T, R, Q, a0, P0):
+    if a0 is None:
+        a0 = np.zeros((T.shape[0], 1))
+    else:
+        a0 = np.atleast_2d(a0).reshape(-1, 1)
+    if P0 is None:
+        P0 = linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
 
-    filter_results = _univariate_kalman_filter(data, a0, P0, T, Z, R, H, Q)
+    return a0, P0
+
+
+@njit
+def kalman_filter(data, T, Z, R, H, Q, a0=None, P0=None, filter_type='standard'):
+    if filter_type not in ['standard', 'univariate']:
+        raise NotImplementedError('Only "standard" and "univariate" kalman filters are implemented')
+
+    if filter_type == 'univariate':
+        filter_results = univariate_kalman_filter(data, T, Z, R, H, Q, a0, P0)
+    else:
+        filter_results = standard_kalman_filter(data, T, Z, R, H, Q, a0, P0)
 
     return filter_results

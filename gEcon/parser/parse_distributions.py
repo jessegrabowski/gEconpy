@@ -67,10 +67,11 @@ class CompositeDistribution:
         self.rv_params = {param: value for param, value in parameters.items() if isinstance(value, rv_frozen)}
         self.d = partial(dist, **defined_params)
 
-    def rvs(self, n=1):
-        sample_params = {param: value.rvs(n) for param, value in self.rv_params.items()}
+    def rvs(self, size=None, random_state=None):
+        sample_params = {param: value.rvs(size=size, random_state=random_state) \
+                         for param, value in self.rv_params.items()}
         d = self.d(**sample_params)
-        return d.rvs()
+        return d.rvs(random_state=random_state)
 
     def _unpack_pdf_dict(self, point_dict):
         param_dict = {param: value for param, value in point_dict.items() if param in self.rv_params.keys()}

@@ -60,21 +60,21 @@ class TimeAwareSymbol(sp.Symbol):
         return ((self.base_name, self.time_index,), self.assumptions0)
 
     def step_forward(self):
-        obj = TimeAwareSymbol(self.base_name, self.time_index + 1)
+        obj = TimeAwareSymbol(self.base_name, self.time_index + 1, **self.assumptions0)
         return obj
 
     def step_backward(self):
-        obj = TimeAwareSymbol(self.base_name, self.time_index - 1)
+        obj = TimeAwareSymbol(self.base_name, self.time_index - 1, **self.assumptions0)
         return obj
 
     def to_ss(self):
-        obj = TimeAwareSymbol(self.base_name, 'ss')
+        obj = TimeAwareSymbol(self.base_name, 'ss', **self.assumptions0)
         return obj
 
     def exit_ss(self):
-        obj = TimeAwareSymbol(self.base_name, 0)
+        obj = TimeAwareSymbol(self.base_name, 0, **self.assumptions0)
         return obj
 
     def set_t(self, t):
-        obj = TimeAwareSymbol(self.base_name, t)
+        obj = TimeAwareSymbol(self.base_name, t, **self.assumptions0)
         return obj

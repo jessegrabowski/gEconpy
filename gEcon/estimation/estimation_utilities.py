@@ -6,7 +6,7 @@ from scipy import linalg
 from typing import List, Optional
 
 from gEcon.numba_linalg.overloads import *
-from gEcon.shared.utilities import string_keys_to_sympy
+from gEcon.shared.utilities import string_keys_to_sympy, sympy_keys_to_strings
 
 
 @njit
@@ -25,7 +25,6 @@ def extract_sparse_data_from_model(model, vars_to_estimate: Optional[List] = Non
     calib_dict = model.calib_param_dict
 
     not_estimated_dict = {k: param_dict[k] for k in param_dict.keys() if k not in vars_to_estimate}
-
 
     names = ['A', 'B', 'C', 'D']
     A, B, C, D = [x.tolist() for x in model._perturbation_setup(return_F_matrices=True)]
@@ -150,5 +149,6 @@ def extract_prior_dict(model):
 
     prior_dict.update(model.param_priors)
     prior_dict.update({k:model.shock_priors[k].rv_params['scale'] for k in model.shock_priors.keys()})
+    prior_dict.update(model.observation_noise_priors)
 
     return prior_dict

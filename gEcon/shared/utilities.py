@@ -197,6 +197,15 @@ def sort_dictionary(d):
     return result
 
 
+def sort_sympy_dict(d):
+    result = {}
+    sorted_keys = sorted(list(d.keys()), key=lambda x: x.base_name if isinstance(x, TimeAwareSymbol) else x.name)
+    for key in sorted_keys:
+        result[key] = d[key]
+
+    return result
+
+
 SAFE_STRING_TO_INDEX_DICT = dict(ss='ss', tp1=1, tm1=-1, t=0)
 
 

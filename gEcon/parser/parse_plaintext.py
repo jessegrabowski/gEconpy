@@ -176,5 +176,7 @@ def delete_block(text: str, block_name: str) -> str:
 
     if block_name not in text:
         return text
+    elif block_name == 'assumptions':
+        return re.sub(block_name + ' {.*?}; };', '', text).strip()
     else:
         return re.sub(block_name + ' {.*?};', '', text).strip()

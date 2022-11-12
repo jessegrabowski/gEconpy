@@ -6,8 +6,8 @@ from numpy.typing import ArrayLike
 from gEcon.numba_linalg.overloads import *
 from gEcon.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
 from gEcon.estimation.estimation_utilities import build_system_matrices, check_finite_matrix, check_bk_condition, \
-        split_random_variables, extract_prior_dict
-from gEcon.estimation.kalman_filter import kalman_filter, univariate_kalman_filter
+    split_random_variables, extract_prior_dict
+from gEcon.estimation.kalman_filter import kalman_filter
 
 from typing import Optional, List, Tuple
 
@@ -108,32 +108,50 @@ def evaluate_prior_logp(all_param_dict, prior_dict):
     ll = 0
 
     for k, v in all_param_dict.items():
-        ll += prior_dict[k].logpdf(v)
+        ll += prior_dict[k].logpdf(v).sum()
 
     return ll
 
 
-def evaluate_logp(all_param_dict, df, sparse_datas, Z, priors, shock_names, observed_vars, filter_type='standard'):
+def split_param_dict(all_param_dict):
+    param_dict = {}
+    a0_dict = {}
+    P0_dict = {}
 
-    if filter_type not in ['standard', 'univariate']:
-        raise NotImplementedError('Only "standard" and "univariate" kalman filters are implemented')
+    initial_names = [x for x in all_param_dict.keys() if x.endswith('__initial')]
+    initial_cov_names = [x for x in all_param_dict.keys() if x.endswith('__initial_cov')]
 
+    for k, v in all_param_dict.items():
+        if k in initial_names:
+            a0_dict[k] = v
+        elif k in initial_cov_names:
+            P0_dict[k] = v
+        else:
+            param_dict[k] = v
+
+    return param_dict, a0_dict, P0_dict
+
+
+def evaluate_logp(all_param_dict, df, sparse_datas, Z, priors, shock_names, observed_vars,
+                  filter_type='standard'):
     ll = evaluate_prior_logp(all_param_dict, priors)
+    param_dict, a0_dict, P0_dict = split_param_dict(all_param_dict)
 
     if not np.isfinite(ll):
         return -np.inf, np.zeros(df.shape[0])
 
-    param_dict, shock_dict, obs_dict = split_random_variables(all_param_dict, shock_names, observed_vars)
+    param_dict, shock_dict, obs_dict = split_random_variables(param_dict, shock_names, observed_vars)
     T, R, success = build_and_solve(param_dict, sparse_datas)
 
     if not success:
         return -np.inf, np.zeros(df.shape[0])
 
+    a0 = np.array(list(a0_dict.values())) if len(a0_dict) > 0 else None
+    P0 = np.eye(len(P0_dict)) * np.array(list(P0_dict.keys())) if len(P0_dict) > 0 else None
+
     Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, obs_dict)
-    if filter_type == 'standard':
-        *_, ll_obs = kalman_filter(df.values, T, Z, R, H, Q)
-    elif filter_type == 'univariate':
-        *_, ll_obs = univariate_kalman_filter(df.values, T, Z, R, H, Q)
+
+    *_, ll_obs = kalman_filter(df.values, T, Z, R, H, Q, a0, P0, filter_type=filter_type)
     ll += ll_obs.sum()
 
     return ll, ll_obs

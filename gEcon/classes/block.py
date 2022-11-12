@@ -1,7 +1,9 @@
+from collections import defaultdict
+
 from gEcon.parser import parse_equations
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from gEcon.shared.utilities import diff_through_time, unpack_keys_and_values, set_equality_equals_zero, \
-    expand_subs_for_all_times,is_log_transform_candidate, log_transform_exp_shock
+    expand_subs_for_all_times
 from gEcon.exceptions.exceptions import BlockNotInitializedException, DynamicCalibratingEquationException, \
     OptimizationProblemNotDefinedException, MultipleObjectiveFunctionsException, ControlVariableNotFoundException
 from gEcon.shared.typing import VariableType
@@ -64,6 +66,7 @@ class Block:
 
     def __init__(self, name: str,
                  block_dict: Dict[str, str],
+                 assumptions: Optional[Dict[str, dict]] = None,
                  solution_hints: Optional[Dict[str, str]] = None,
                  allow_incomplete_initialization: bool = False) -> None:
         """
@@ -98,11 +101,13 @@ class Block:
 
         self.system_equations: List[sp.Add] = []
         self.multipliers: Dict[int, TimeAwareSymbol] = {}
+        self.eliminated_variables: List[sp.Symbol] = []
 
         self.n_equations = 0
         self.initialized = False
 
-        self.initialize_from_dictionary(block_dict)
+        assumptions = defaultdict(dict) if not assumptions else assumptions
+        self.initialize_from_dictionary(block_dict, assumptions)
         self._get_variable_list()
         self._get_param_dict_and_calibrating_equations()
 
@@ -110,20 +115,21 @@ class Block:
         return f'{self.name} Block of {self.n_equations} equations, initialized: {self.initialized}, ' \
                f'solved: {self.system_equations is not None}'
 
-    def initialize_from_dictionary(self, block_dict: dict) -> None:
+    def initialize_from_dictionary(self, block_dict: dict, assumptions: dict) -> None:
         """
         :param block_dict: dict, dictionary of component:List[equations] key-value pairs created by
                            gEcon_parser.parsed_block_to_dict.
         :return: None
         """
-        self.controls = self._parse_variable_list(block_dict, 'controls')
-        self.shocks = self._parse_variable_list(block_dict, 'shocks')
 
-        self.definitions = self._parse_equation_list(block_dict, 'definitions')
-        self.objective = self._parse_equation_list(block_dict, 'objective')
-        self.constraints = self._parse_equation_list(block_dict, 'constraints')
-        self.identities = self._parse_equation_list(block_dict, 'identities')
-        self.calibration = self._parse_equation_list(block_dict, 'calibration')
+        self.controls = self._parse_variable_list(block_dict, 'controls', assumptions)
+        self.shocks = self._parse_variable_list(block_dict, 'shocks', assumptions)
+
+        self.definitions = self._parse_equation_list(block_dict, 'definitions', assumptions)
+        self.objective = self._parse_equation_list(block_dict, 'objective', assumptions)
+        self.constraints = self._parse_equation_list(block_dict, 'constraints', assumptions)
+        self.identities = self._parse_equation_list(block_dict, 'identities', assumptions)
+        self.calibration = self._parse_equation_list(block_dict, 'calibration', assumptions)
 
         self.initialized = self._validate_initialization()
 
@@ -172,8 +178,9 @@ class Block:
 
         return key in block_dict and hasattr(self, key) and block_dict[key] is not None
 
-    def _extract_lagrange_multipliers(self, equations: List[List[str]]) -> Tuple[List[List[str]],
-                                                                                 List[Union[TimeAwareSymbol, None]]]:
+    def _extract_lagrange_multipliers(self, equations: List[List[str]],
+                                            assumptions: dict) -> Tuple[List[List[str]],
+                                                                        List[Union[TimeAwareSymbol, None]]]:
         """
         :param equations: list, a List of Lists of strings, each list representing a model equation. Created by the
                           gEcon_parser.parsed_block_to_dict function.
@@ -190,7 +197,7 @@ class Block:
             if ':' in eq:
                 colon_idx = eq.index(':')
                 multiplier = eq[-1]
-                multiplier = parse_equations.single_symbol_to_sympy(multiplier)
+                multiplier = parse_equations.single_symbol_to_sympy(multiplier, assumptions)
                 eq = eq[:colon_idx].copy()
 
                 result.append(eq)
@@ -201,7 +208,7 @@ class Block:
 
         return result, multipliers
 
-    def _parse_variable_list(self, block_dict: dict, key: str) -> Optional[List[sp.Symbol]]:
+    def _parse_variable_list(self, block_dict: dict, key: str, assumptions: dict = None) -> Optional[List[sp.Symbol]]:
         """
         :param block_dict: list, a List of Lists of strings, each list representing a model equation. Created by the
                           gEcon_parser.parsed_block_to_dict function.
@@ -217,11 +224,10 @@ class Block:
         raw_list = [item for l in block_dict[key] for item in l]
         output = []
         for variable in raw_list:
-            variable = parse_equations.single_symbol_to_sympy(variable)
+            variable = parse_equations.single_symbol_to_sympy(variable, assumptions)
             output.append(variable)
 
         return output
-
 
     def _get_variable_list(self) -> None:
         """
@@ -266,7 +272,9 @@ class Block:
 
         return equation_numbers
 
-    def _parse_equation_list(self, block_dict: dict, key: str) -> Optional[Dict[int, sp.Eq]]:
+    def _parse_equation_list(self, block_dict: dict,
+                             key: str,
+                             assumptions: List[Dict[str, str]] = None) -> Optional[Dict[int, sp.Eq]]:
         """
         :param block_dict: list, a List of Lists of strings, each list representing a model equation. Created by the
                           gEcon_parser.parsed_block_to_dict function.
@@ -276,10 +284,12 @@ class Block:
         if not self._validate_key(block_dict, key):
             return
 
-        equations = block_dict[key]
-        equations, lagrange_multipliers = self._extract_lagrange_multipliers(equations)
+        assumptions = assumptions or defaultdict(dict)
 
-        equations = parse_equations.build_sympy_equations(equations)
+        equations = block_dict[key]
+        equations, lagrange_multipliers = self._extract_lagrange_multipliers(equations, assumptions)
+
+        equations = parse_equations.build_sympy_equations(equations, assumptions)
         equation_numbers = self._get_and_record_equation_numbers(equations)
 
         equations = dict(zip(equation_numbers, equations))
@@ -419,6 +429,7 @@ class Block:
         # Strictly heuristic simplification: look for an equation of the form x = y and use it to substitute away
         # the generated multipliers.
 
+        eliminated_variables = []
         for x in generated_multipliers:
             candidates = [eq for eq in simplified_system if x in eq.atoms()]
             for eq in candidates:
@@ -426,35 +437,14 @@ class Block:
                 if len(eq.atoms()) <= 3:
                     sub_dict = sp.solve(eq, x, dict=True)[0]
                     sub_dict = expand_subs_for_all_times(sub_dict)
+                    eliminated_variables.extend(list(sub_dict.keys()))
                     simplified_system = [eq.subs(sub_dict) for eq in simplified_system]
                     break
 
         simplified_system = [eq for eq in simplified_system if eq != 0]
 
         self.system_equations = simplified_system
-
-    def try_to_rewrite_exponential_shocks(self) -> None:
-        """
-
-        Returns
-        -------
-        None
-
-        Sympy cannot handle functions of the form X[t] = exp(a * log(X[t-1]) + Z[t]), which unfortunately is a common way to
-        write the exogenous shock equations in DSGE models. This function tries to detect this type of equation, and
-        transforms it to log(X[t]) = a * log(X[t-1]) + Z[t], which is equivalent but solvable by Sympy.
-        """
-
-        system = self.system_equations.copy()
-        transformed_system = []
-        for eq in system:
-            if is_log_transform_candidate(eq):
-                new_eq = log_transform_exp_shock(eq)
-                transformed_system.append(new_eq)
-            else:
-                transformed_system.append(eq)
-
-        self.system_equations = transformed_system
+        self.eliminated_variables = eliminated_variables
 
     def solve_optimization(self, try_simplify: bool = True) -> None:
         """
@@ -498,7 +488,6 @@ class Block:
                 self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
 
         if self.controls is None and self.objective is None:
-            self.try_to_rewrite_exponential_shocks()
             return
 
         # Solve Lagrangian
@@ -526,5 +515,3 @@ class Block:
 
         if try_simplify:
             self.simplify_system_equations()
-
-        self.try_to_rewrite_exponential_shocks()

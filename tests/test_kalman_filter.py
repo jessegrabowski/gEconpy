@@ -129,6 +129,19 @@ class UnivariateKalmanFilterTest(unittest.TestCase):
         # initialization.
         self.assertTrue(np.allclose(expected[1:], ll_obs[1:]))
 
+class TestModelEstimation(unittest.TestCase):
+    def setUp(self):
+        file_path = 'Test GCNs/One_Block_Simple_1_w_Steady_State.gcn'
+        self.model = gEconModel(file_path, verbose=False)
+        self.model.steady_state(verbose=False)
+        self.model.solve_model(verbose=False)
+
+        self.data = self.model.simulate(simulation_length=100, n_simulations=1).xs(axis=1, level=1, key=0).T
+
+
+    def filter_random_sample(self):
+        pass
+
 
 if __name__ == '__main__':
     unittest.main()

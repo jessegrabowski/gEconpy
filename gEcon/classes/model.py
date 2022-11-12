@@ -1,10 +1,12 @@
+from collections import defaultdict
+
 from gEcon.parser import gEcon_parser, file_loaders
 from gEcon.parser.parse_distributions import create_prior_distribution_dictionary, build_pymc_model
 from gEcon.parser.parse_equations import single_symbol_to_sympy
 from gEcon.classes.block import Block
 from gEcon.shared.utilities import unpack_keys_and_values, is_variable, sort_dictionary, \
     sympy_keys_to_strings, sympy_number_values_to_floats, sequential, string_keys_to_sympy, \
-    merge_dictionaries, expand_subs_for_all_times, substitute_all_equations
+    merge_dictionaries, expand_subs_for_all_times, substitute_all_equations, sort_sympy_dict
 from gEcon.shared.dynare_convert import make_all_var_time_combos
 
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
@@ -43,7 +45,11 @@ VariableType = Union[sp.Symbol, TimeAwareSymbol]
 
 class gEconModel:
 
-    def __init__(self, model_filepath: str, verbose: bool = True, build_pymc=False) -> None:
+    def __init__(self, model_filepath: str, verbose: bool = True,
+                 build_pymc=False,
+                 simplify_blocks=True,
+                 simplify_constants=True,
+                 simplify_tryreduce=True) -> None:
         """
         Class to build, debug, and solve a DSGE model from a GCN file.
 
@@ -65,6 +71,7 @@ class gEconModel:
 
         # Model components
         self.variables: List[TimeAwareSymbol] = []
+        self.assumptions: Dict[str, dict] = defaultdict(dict)
         self.shocks: List[TimeAwareSymbol] = []
         self.system_equations: List[sp.Add] = []
         self.calibrating_equations: List[sp.Add] = []
@@ -75,6 +82,7 @@ class gEconModel:
 
         self.param_priors: Dict[str, Any] = {}
         self.shock_priors: Dict[str, Any] = {}
+        self.observation_noise_priors: Dict[str, Any] = {}
 
         self.pymc_model: pm.Model = None
 
@@ -105,13 +113,20 @@ class gEconModel:
         # self.R: pd.DataFrame = None
         # self.S: pd.DataFrame = None
 
-        self.build(verbose=verbose, build_pymc=build_pymc)
+        self.build(verbose=verbose, build_pymc=build_pymc,
+                   simplify_blocks=simplify_blocks,
+                   simplify_constants=simplify_constants,
+                   simplify_tryreduce=simplify_tryreduce)
 
         # Assign Solvers
         self.steady_state_solver = SteadyStateSolver(self)
         self.perturbation_solver = PerturbationSolver(self)
 
-    def build(self, verbose: bool = True, build_pymc=False) -> None:
+    def build(self, verbose: bool,
+              build_pymc: bool,
+              simplify_blocks: bool,
+              simplify_constants: bool,
+              simplify_tryreduce: bool) -> None:
         """
         Main parsing function for the model. Build loads the GCN file, decomposes it into blocks, solves optimization
         problems contained in each block, then extracts parameters, equations, calibrating equations, calibrated
@@ -139,15 +154,20 @@ class gEconModel:
         raw_model = file_loaders.load_gcn(self.model_filepath)
         parsed_model, prior_dict = gEcon_parser.preprocess_gcn(raw_model)
 
-        self._build_model_blocks(parsed_model)
+        self._build_model_blocks(parsed_model, simplify_blocks)
         self._get_all_block_equations()
         self._get_all_block_parameters()
         self._get_all_block_params_to_calibrate()
         self._get_variables_and_shocks()
         self._build_prior_dict(prior_dict, build_pymc)
 
-        reduced_vars = self._try_reduce()
-        singletons = self._simplify_singletons()
+        reduced_vars = None
+        singletons = None
+
+        if simplify_tryreduce:
+            reduced_vars = self._try_reduce()
+        if simplify_constants:
+            singletons = self._simplify_singletons()
 
         if verbose:
             self.build_report(reduced_vars, singletons)
@@ -162,7 +182,7 @@ class gEconModel:
         -------
         None
         """
-        if len(singletons) == 0:
+        if singletons and len(singletons) == 0:
             singletons = None
 
         eq_str = "equation" if self.n_equations == 1 else "equations"
@@ -580,9 +600,16 @@ class gEconModel:
 
         return pd.DataFrame(acorr_mat, index=T.index, columns=np.arange(n_lags))
 
-    def fit(self, data, filter_type='standard', draws=5000, n_walkers=36, moves=None, x0=None, verbose=True,
+    def fit(self, data,
+            estimate_a0=False,
+            estimate_P0=False,
+            a0_prior=None,
+            P0_prior=None,
+            filter_type='univariate',
+            draws=5000, n_walkers=36,
+            moves=None, emcee_x0=None, verbose=True,
             return_inferencedata=True, burn_in=None, thin=None,
-            skip_initial_state_check = False, **sampler_kwargs):
+            skip_initial_state_check=False, **sampler_kwargs):
         """
         Estimate model parameters via Bayesian inference. Parameter likelihood is computed using the Kalman filter.
         Posterior distributions are estimated using Markov Chain Monte Carlo (MCMC), specifically the Affine-Invariant
@@ -601,6 +628,22 @@ class gEconModel:
         ----------
         data: dataframe
             A pandas dataframe of observed values, with column names corresponding to DSGE model states names.
+        estimate_a0: bool, default: False
+            Whether to estimate the initial values of the DSGE process. If False, x0 will be deterministically set to
+            a vector of zeros, corresponding to the steady state. If True, you must provide a
+        estimate_P0: bool, default: False
+            Whether to estimate the intial covariance matrix of the DSGE process. If False, P0 will be set to the
+            Kalman Filter steady state value by solving the associated discrete Lyapunov equation.
+        a0_prior: dict, optional
+            A dictionary with (variable name, scipy distribution) key-value pairs. If a key "initial_vector" is found,
+            all other keys will be ignored, and the single distribution over all initial states will be used. Otherwise,
+            n_states independent distributions should be included in the dictionary.
+            If estimate_a0 is False, this will be ignored.
+        P0_prior: dict, optional
+            A dictionary with (variable name, scipy distribution) key-value pairs. If a key "initial_covariance" is
+            found, all other keys will be ignored, and this distribution will be taken as over the entire covariance
+            matrix. Otherwise, n_states independent distributions are expected, and are used to construct a diagonal
+            initial covariance matrix.
         filter_type: string, default: "standard"
             Select a kalman filter implementation to use. Currently "standard" and "univariate" are supported. Try
             univariate if you run into errors inverting the P matrix during filtering.
@@ -615,7 +658,7 @@ class gEconModel:
             Be sure to raise the number of walkers to compensate.
         moves: List of emcee.moves objects
             Moves tell emcee how to generate MCMC proposals. See the emcee docs for details.
-        x0: array
+        emcee_x0: array
             An (n_walkers, k_parameters) array of initial values. Emcee will check the condition number of the matrix
             to ensure all walkers begin in different regions of the parameter space. If MLE estimates are used, they
             should be jittered to start walkers in a ball around the desired initial point.
@@ -649,6 +692,19 @@ class gEconModel:
         sparse_data = extract_sparse_data_from_model(self)
         prior_dict = extract_prior_dict(self)
 
+        if estimate_a0 is False:
+            a0 = None
+        else:
+            if a0_prior is None:
+                raise ValueError('If estimate_a0 is True, you must provide a dictionary of prior distributions for'
+                                 'the initial values of all individual states')
+            if not all([var in a0_prior.keys() for var in model_var_names]):
+                missing_keys = set(model_var_names) - set(list(a0_prior.keys()))
+                raise ValueError('You must provide one key for each state in the model. '
+                                 f'No keys found for: {", ".join(missing_keys)}')
+            for var in model_var_names:
+                prior_dict[f'{var}__initial'] = a0_prior[var]
+
         moves = moves or [(emcee.moves.DEMove(), 0.6), (emcee.moves.DESnookerMove(), 0.4)]
 
         shock_names = [x.base_name for x in self.shocks]
@@ -658,7 +714,11 @@ class gEconModel:
 
         args = [data, sparse_data, Z, prior_dict, shock_names, observed_vars, filter_type]
 
-        x0 = x0 or np.stack([x.rvs(n_walkers) for x in prior_dict.values()]).T
+        if emcee_x0:
+            x0 = emcee_x0
+        else:
+            x0 = np.stack([x.rvs(n_walkers) for x in prior_dict.values()]).T
+
         param_names = list(prior_dict.keys())
 
         sampler = emcee.EnsembleSampler(n_walkers, k_params, evaluate_logp,
@@ -672,7 +732,7 @@ class gEconModel:
         if return_inferencedata:
             sampler_stats = xr.Dataset(data_vars=dict(
                 acceptance_fraction=(['chain'], sampler.acceptance_fraction),
-                autocorrelation_time=(['parameters'], sampler.get_autocorr_time(discard=burn_in or 0))),
+                autocorrelation_time=(['parameters'], sampler.get_autocorr_time(discard=burn_in or 0, quiet=True))),
                 coords=dict(
                     chain=np.arange(n_walkers),
                     parameters=param_names
@@ -685,21 +745,36 @@ class gEconModel:
 
         return sampler
 
-    def sample_param_dict_from_prior(self, n_samples=1, seed=None, param_subset=None):
-        n_params = len(self.param_priors)
+    def sample_param_dict_from_prior(self,
+                                     n_samples=1,
+                                     seed=None,
+                                     param_subset=None,
+                                     sample_shock_sigma=False):
+
+        if sample_shock_sigma:
+            shock_priors = {k: v.rv_params['scale'] for k, v in self.shock_priors.items()}
+        else:
+            shock_priors = self.shock_priors
+
+        all_priors = merge_dictionaries(self.param_priors,
+                                        shock_priors,
+                                        self.observation_noise_priors)
+
+        if param_subset is None:
+            n_variables = len(all_priors)
+            priors_to_sample = all_priors
+        else:
+            n_variables = len(param_subset)
+            priors_to_sample = {k: v for k, v in all_priors.items() if k in param_subset}
+
         if seed is not None:
             seed_sequence = np.random.SeedSequence(seed)
-            child_seeds = seed_sequence.spawn(n_params)
+            child_seeds = seed_sequence.spawn(n_variables)
             streams = [np.random.default_rng(s) for s in child_seeds]
         else:
-            streams = [None] * n_params
+            streams = [None] * n_variables
 
-        new_param_dict = self.free_param_dict.copy()
-        if param_subset is None:
-            priors_to_sample = self.param_priors
-        else:
-            priors_to_sample = {k: v for k, v in self.param_priors.items() if k in param_subset}
-
+        new_param_dict = {}
         for i, (key, d) in enumerate(priors_to_sample.items()):
             new_param_dict[key] = d.rvs(size=n_samples, random_state=streams[i])
 
@@ -825,7 +900,7 @@ class gEconModel:
         param_priors = {}
         shock_priors = {}
         for key, value in priors.items():
-            sympy_key = single_symbol_to_sympy(key)
+            sympy_key = single_symbol_to_sympy(key, assumptions=self.assumptions)
             if isinstance(sympy_key, TimeAwareSymbol):
                 shock_priors[sympy_key.base_name] = value
             else:
@@ -834,21 +909,23 @@ class gEconModel:
         self.param_priors = param_priors
         self.shock_priors = shock_priors
 
-    def _build_model_blocks(self, parsed_model):
+    def _build_model_blocks(self, parsed_model, simplify_blocks: bool):
         raw_blocks = gEcon_parser.split_gcn_into_block_dictionary(parsed_model)
 
         self.options = raw_blocks['options']
         self.try_reduce_vars = raw_blocks['tryreduce']
+        self.assumptions = raw_blocks['assumptions']
 
         del raw_blocks['options']
         del raw_blocks['tryreduce']
+        del raw_blocks['assumptions']
 
         self._get_steady_state_equations(raw_blocks)
 
         for block_name, block_content in raw_blocks.items():
             block_dict = gEcon_parser.parsed_block_to_dict(block_content)
-            block = Block(name=block_name, block_dict=block_dict)
-            block.solve_optimization()
+            block = Block(name=block_name, block_dict=block_dict, assumptions=self.assumptions)
+            block.solve_optimization(try_simplify=simplify_blocks)
 
             self.blocks[block.name] = block
 
@@ -923,7 +1000,7 @@ class gEconModel:
 
         block_content = raw_blocks[ss_block_names[0]]
         block_dict = gEcon_parser.parsed_block_to_dict(block_content)
-        block = Block(name='steady_state', block_dict=block_dict)
+        block = Block(name='steady_state', block_dict=block_dict, assumptions=self.assumptions)
 
         sub_dict = dict()
         steady_state_dict = dict()
@@ -949,7 +1026,7 @@ class gEconModel:
         if self.try_reduce_vars is None:
             return
 
-        self.try_reduce_vars = [single_symbol_to_sympy(x) for x in self.try_reduce_vars]
+        self.try_reduce_vars = [single_symbol_to_sympy(x, self.assumptions) for x in self.try_reduce_vars]
 
         variables = self.variables
         n_variables = self.n_variables

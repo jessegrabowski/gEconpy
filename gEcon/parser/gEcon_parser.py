@@ -2,14 +2,65 @@ import pyparsing
 import re
 from typing import Optional, Dict, List, Tuple
 from collections import defaultdict
-import sympy as sp
 
-from gEcon.parser.constants import SPECIAL_BLOCK_NAMES
+from gEcon.parser.constants import SPECIAL_BLOCK_NAMES, SYMPY_ASSUMPTIONS
 from gEcon.parser.parse_plaintext import remove_comments, remove_newlines_and_tabs, add_spaces_around_operators, \
     remove_extra_spaces, delete_block, extract_distributions
 from gEcon.parser.validation import block_is_empty, validate_key
 from gEcon.parser.parse_equations import rebuild_eqs_from_parser_output
 from gEcon.exceptions.exceptions import GCNSyntaxError
+
+
+def block_to_clean_list(block):
+    block = re.sub('[{};]', '', block)
+    block = remove_extra_spaces(block).strip()
+    block = [x.replace(',', '').strip() for x in block.split()]
+
+    return block
+
+
+def extract_assumption_sub_blocks(block):
+    sub_blocks = {}
+    assumption_idxs = {}
+
+    for assumption in SYMPY_ASSUMPTIONS:
+        if assumption in block:
+            assumption_idxs[assumption] = block.index(assumption)
+
+    used_assumptions = list(assumption_idxs.keys())
+    if len(used_assumptions) == 0:
+        return sub_blocks
+
+    sorted_assumptions = sorted(used_assumptions, key=assumption_idxs.get)
+    start_idx = 0
+
+    for i in range(1, len(sorted_assumptions)):
+        curr_assumption = sorted_assumptions[i-1]
+        next_assumption = sorted_assumptions[i]
+        end_idx = assumption_idxs[next_assumption]
+
+        block_slice = slice(start_idx + 1, end_idx)
+        sub_blocks[curr_assumption] = block[block_slice]
+
+        start_idx = end_idx
+
+    curr_assumption = sorted_assumptions[i]
+    block_slice = slice(start_idx + 1, None)
+
+    sub_blocks[curr_assumption] = block[block_slice]
+
+    return sub_blocks
+
+
+def create_assumption_kwargs(assumption_dicts):
+    assumption_kwargs = defaultdict(dict)
+
+    for assumption, variable_list in assumption_dicts.items():
+        for var in variable_list:
+            base_var = re.sub('\[\]', '', var)
+            assumption_kwargs[base_var][assumption] = True
+
+    return assumption_kwargs
 
 
 def preprocess_gcn(gcn_raw: str) -> Tuple[str, Dict[str, str]]:
@@ -44,7 +95,7 @@ def parse_options_flags(options: str) -> Optional[Dict[str, bool]]:
     options = [line.strip() for line in options.split(';') if len(line.strip()) > 0]
 
     if len(options) == 0:
-        return
+        return result
 
     for option in options:
         flag, value = option.split('=')
@@ -72,24 +123,29 @@ def extract_special_block(text: str, block_name: str) -> Dict[str, List[str]]:
         A dictionary with the name as the key and the contents of the block as the values. The contents are split into
         a list of strings, with each item in the list as a single line from the GCN file. Empty lines are discarded.
     """
-    result = {block_name: None}
+    result = {block_name: defaultdict(dict) if block_name == 'assumptions' else None}
 
     if block_name not in text:
         return result
 
-    block = re.search(block_name + ' {.*?};', text)[0]
+    block = re.search(block_name + ' {.*?' + '};', text)[0]
     block = block.replace(block_name, '')
 
     if block_is_empty(block):
-        block = None
+        return result
 
     elif block_name == 'options':
         block = parse_options_flags(block)
 
     elif block_name == 'tryreduce':
-        block = re.sub('[{};]', '', block)
-        block = remove_extra_spaces(block).strip()
-        block = [x.strip() for x in block.split(',')]
+        block = block_to_clean_list(block)
+
+    elif block_name == 'assumptions':
+        block = re.search(block_name + ' {.*?' + '}; };', text)[0]
+        block = block.replace(block_name, '')
+        block = block_to_clean_list(block)
+        block = extract_assumption_sub_blocks(block)
+        block = create_assumption_kwargs(block)
 
     result[block_name] = block
 
@@ -159,3 +215,6 @@ def parsed_block_to_dict(block: str) -> Dict[str, List[List[str]]]:
             block_dict[current_key].extend(equations_list)
 
     return block_dict
+
+def make_assumption_dict(raw_blocks: dict[str, str]) -> dict[str, str]:
+    pass

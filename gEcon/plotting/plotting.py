@@ -8,10 +8,16 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 
+from matplotlib.ticker import FormatStrFormatter, ScalarFormatter
 from gEcon.sampling.prior_utilities import prior_solvability_check
 from gEcon.classes.progress_bar import ProgressBar
 
 from itertools import combinations_with_replacement
+
+
+class ScalarFormatterForceFormat(ScalarFormatter):
+    def _set_format(self, vmin, vmax):  # Override function that finds format to use.
+        self.format = "%1.1f"  # Give format here
 
 
 def prepare_gridspec_figure(n_cols, n_plots):
@@ -399,8 +405,8 @@ def plot_corner(idata,
                 hist_bins=200,
                 rug_bins=50,
                 rug_levels=6,
+                fontsize=8,
                 show_marginal_modes=True):
-
     if not hasattr(idata, 'posterior'):
         raise ValueError('Argument idata should be an arviz idata object with a posterior group')
     var_names = var_names or list(idata.posterior.data_vars)
@@ -412,11 +418,22 @@ def plot_corner(idata,
         row = i // k_params
         col = i % k_params
 
+        axis.ticklabel_format(axis='both', style='sci')
+        axis.yaxis.major.formatter.set_powerlimits((-2, 2))
+        axis.yaxis.offsetText.set_fontsize(fontsize)
+        axis.xaxis.major.formatter.set_powerlimits((-2, 2))
+        axis.xaxis.offsetText.set_fontsize(fontsize)
         if col <= row:
             if col == row:
                 v = var_names[col]
                 axis.hist(idata.posterior[v].values.ravel(), bins=hist_bins, histtype='step', density=True)
-                axis.set_title(v)
+                axis.set_yticklabels([])
+                axis.set_title(v, fontsize=fontsize)
+                axis.tick_params(axis='both', left=False, bottom=row == (k_params - 1), labelsize=fontsize)
+                if row != (k_params - 1):
+                    axis.set_xticklabels([])
+                    axis.tick_params(axis='x', which='both', bottom=False)
+
             else:
                 x = var_names[col]
                 y = var_names[row]
@@ -435,27 +452,82 @@ def plot_corner(idata,
                 ymax_idx, xmax_idx = np.where(H == H.max())
                 x_mode = x_edges[xmax_idx]
                 y_mode = y_edges[ymax_idx]
+                if len(x_mode) > 1:
+                    x_mode = x_mode[0]
+                if len(y_mode) > 1:
+                    y_mode = y_mode[0]
 
                 axis.contourf(x_edges[1:], y_edges[1:], H, cmap='Blues', levels=rug_levels)
 
                 if show_marginal_modes:
                     axis.axvline(x_mode, ls='--', lw=0.5, color='k')
                     axis.axhline(y_mode, ls='--', lw=0.5, color='k')
-
                     axis.scatter(x_mode, y_mode, color='k', marker='s', s=20)
 
                 if col == 0:
-                    axis.set_ylabel(y)
+                    axis.set_ylabel(y, fontsize=fontsize)
                 else:
                     axis.set_yticklabels([])
+                    axis.tick_params(axis='y', which='both', left=False)
 
                 if row != (k_params - 1):
                     axis.set_xticklabels([])
+                    axis.tick_params(axis='x', which='both', bottom=False)
                 else:
-                    axis.set_xlabel(x)
+                    axis.set_xlabel(x, fontsize=fontsize)
 
+                axis.tick_params(axis='both', which='both', labelsize=fontsize)
         else:
+            axis.set(xticks=[], yticks=[], xlabel='', ylabel='')
             axis.set_visible(False)
 
-    fig.tight_layout()
+    fig.tight_layout(h_pad=0.1, w_pad=0.5)
     plt.show()
+
+
+def plot_kalman_filter(idata, data, kalman_output='predicted', n_cols=None, vars_to_plot=None,
+                       fig=None, figsize=(14, 6), dpi=144, cmap=None):
+    if kalman_output.lower() not in ['filtered', 'predicted', 'smoothed']:
+        raise ValueError(f'kalman_output must be one of "filtered", "predicted", "smoothed". Found {kalman_output}.')
+    kalman_output = kalman_output.capitalize()
+
+    if fig is None:
+        fig = plt.figure(figsize=figsize, dpi=dpi)
+
+    if vars_to_plot is None:
+        vars_to_plot = idata.coords['variable'].values
+
+    n_plots = len(vars_to_plot)
+    n_cols = min(4, n_plots) if n_cols is None else n_cols
+
+    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
+    time_idx = idata.coords['time']
+    time_slice = slice(None, None, None) if kalman_output.lower() == 'predicted' else slice(1, None, None)
+
+    for idx, variable in enumerate(vars_to_plot):
+        axis = fig.add_subplot(gs[plot_locs[idx]])
+
+        mu = idata[f'{kalman_output}_State'].dropna(dim='time').sel(variable=variable)
+
+        q05, q50, q95 = mu.quantile([0.05, 0.5, 0.95], dim='sample')
+
+        sigma = idata[f'{kalman_output}_Cov'].dropna(dim='time').sel(variable=variable, variable2=variable)
+
+        top_ci = mu + 1.98 * np.sqrt(sigma + 1e-6)
+        bot_ci = mu - 1.98 * np.sqrt(sigma + 1e-6)
+
+        axis.plot(time_idx[time_slice], q50.values, color='tab:red')
+        axis.fill_between(time_idx[time_slice], q05, q95, color='tab:blue', alpha=1)
+        axis.fill_between(time_idx[time_slice],
+                          top_ci.max(dim=['sample']),
+                          bot_ci.min(dim=['sample']),
+                          color='0.5',
+                          alpha=0.5)
+
+        if variable in data.columns:
+            data[variable].plot(ax=axis, color='k', ls='--', lw=2)
+
+        axis.set(title=variable, xlabel=None, ylabel='% Deviation from SS')
+        axis.tick_params(axis='x', rotation=45)
+
+    fig.tight_layout()

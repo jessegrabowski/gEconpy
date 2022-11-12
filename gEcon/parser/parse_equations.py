@@ -1,8 +1,9 @@
+from collections import defaultdict
 from typing import List
 import re
 import sympy as sp
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
-from gEcon.parser.constants import CALIBRATING_EQ_TOKEN, LOCAL_DICT
+from gEcon.parser.constants import CALIBRATING_EQ_TOKEN, LOCAL_DICT, TIME_INDEX_DICT
 
 
 def rebuild_eqs_from_parser_output(parser_output: List[str]) -> List[List[str]]:
@@ -55,7 +56,7 @@ def token_classifier(token: str) -> str:
     Tokens are easy to classify based on simple heuristics. Note that E[], the expectation operator, needs to be
     checked before variables, since it will be classified as a variable otherwise.
     """
-    if token == 'E[]' or token in '+-*/^=()[]':
+    if token in ['E[]', 'log', 'exp'] or token in '+-*/^=()[]':
         return 'operator'
     if '[' in token and ']' in token:
         return 'variable'
@@ -111,7 +112,7 @@ def remove_timing_information(token: str) -> str:
     """
 
     token = re.sub('\[.*?\]', '', token)
-    return token
+    return token.strip()
 
 
 def convert_to_python_operator(token: str) -> str:
@@ -203,7 +204,7 @@ def convert_symbols_to_time_symbols(eq: sp.Eq) -> sp.Eq:
     return eq.subs(sub_dict)
 
 
-def single_symbol_to_sympy(variable: str) -> TimeAwareSymbol:
+def single_symbol_to_sympy(variable: str, assumptions: dict = None) -> TimeAwareSymbol:
     """
     :param variable: str, a gEcon variable or parameter
     :return: TimeAwareSymbol, the same variable
@@ -212,8 +213,10 @@ def single_symbol_to_sympy(variable: str) -> TimeAwareSymbol:
     parameter (no []), it returns a standard Sympy symbol instead.
     """
 
+    assumptions = defaultdict(dict) if assumptions is None else assumptions
+
     if '[' not in variable and ']' not in variable:
-        return sp.Symbol(variable)
+        return sp.Symbol(variable, **assumptions[variable])
 
     variable_name, time_part = variable.split('[')
     time_part = time_part.replace(']', '')
@@ -221,10 +224,10 @@ def single_symbol_to_sympy(variable: str) -> TimeAwareSymbol:
         return TimeAwareSymbol(variable_name, 0).to_ss()
     else:
         time_index = int(time_part) if time_part != '' else 0
-        return TimeAwareSymbol(variable_name, time_index)
+        return TimeAwareSymbol(variable_name, time_index, **assumptions[variable_name])
 
 
-def build_sympy_equations(eqs: List[List[str]]) -> List[sp.Eq]:
+def build_sympy_equations(eqs: List[List[str]], assumptions: dict[str] = None) -> List[sp.Eq]:
     """
     :param eqs: List[List[str]], a list of list of equation tokens associated with a model
     :return: List[sp.Eq], a list of SymPy equations
@@ -235,10 +238,15 @@ def build_sympy_equations(eqs: List[List[str]]) -> List[sp.Eq]:
 
     TODO: Improve error handling before parse_expr is called
     """
+
+    if assumptions is None:
+        assumptions = defaultdict(dict)
+
     eqs_processed = []
     for eq in eqs:
         eq_str = ''
         calibrating_parameter = None
+        sub_dict = LOCAL_DICT.copy()
 
         if CALIBRATING_EQ_TOKEN in eq:
             arrow_idx = eq.index(CALIBRATING_EQ_TOKEN)
@@ -250,8 +258,15 @@ def build_sympy_equations(eqs: List[List[str]]) -> List[sp.Eq]:
             token = token.strip()
             if token_type == 'variable':
                 time_index = extract_time_index(token)
-                token = remove_timing_information(token)
-                token = token + '_' + time_index
+                token_base = remove_timing_information(token)
+                token = token_base + '_' + time_index
+
+                symbol = TimeAwareSymbol(token_base, TIME_INDEX_DICT[time_index], **assumptions[token_base])
+                sub_dict[token] = symbol
+
+            elif token_type == 'parameter':
+                symbol = sp.Symbol(token, **assumptions[token])
+                sub_dict[token] = symbol
 
             elif token_type == 'operator':
                 token = convert_to_python_operator(token)
@@ -259,7 +274,7 @@ def build_sympy_equations(eqs: List[List[str]]) -> List[sp.Eq]:
             eq_str += token
 
         try:
-            eq_sympy = sp.parse_expr(eq_str, evaluate=False, local_dict=LOCAL_DICT)
+            eq_sympy = sp.parse_expr(eq_str, evaluate=False, local_dict=sub_dict)
         except Exception as e:
             print(f'Error encountered while parsing {eq_str}')
             print(e)
@@ -270,8 +285,8 @@ def build_sympy_equations(eqs: List[List[str]]) -> List[sp.Eq]:
             param = sp.Symbol(calibrating_parameter)
             eq_sympy = sp.Eq(param, eq_sympy.lhs - eq_sympy.rhs)
 
-        eq_sympy = rename_time_indexes(eq_sympy)
-        eq_sympy = convert_symbols_to_time_symbols(eq_sympy)
+        # eq_sympy = rename_time_indexes(eq_sympy)
+        # eq_sympy = convert_symbols_to_time_symbols(eq_sympy)
 
         eqs_processed.append(eq_sympy)
 

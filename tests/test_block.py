@@ -93,7 +93,7 @@ class BlockTestCases(unittest.TestCase):
         answer = beta * U + utility - lamb * mkt_clearing - q * law_motion_K - lamb_H_1 * production
 
         L = self.block._build_lagrangian()
-        self.assertEqual(L, answer)
+        self.assertEqual((L - answer).simplify(), 0)
 
     def test_Household_FOC(self):
         self.block.solve_optimization(try_simplify=False)
@@ -158,7 +158,7 @@ class BlockTestCases(unittest.TestCase):
         prod = Y - A * K ** alpha * L ** (1 - alpha)
         L = tc - P * prod
 
-        self.assertEqual(block._build_lagrangian(), L)
+        self.assertEqual((block._build_lagrangian() - L).simplify(), 0)
 
     def test_firm_FOC(self):
         test_file = file_loaders.load_gcn('Test GCNs/Two_Block_RBC_1.gcn')
@@ -205,14 +205,15 @@ class BlockTestCases(unittest.TestCase):
         self.assertEqual(all([key in self.block.param_dict.keys() for key in answer.keys()]), True)
 
         for key in self.block.param_dict:
-            self.assertEqual(answer[key], self.block.param_dict[key])
+            self.assertEqual((answer[key] - self.block.param_dict[key]).simplify(), 0)
 
         assert (self.block.params_to_calibrate == [alpha])
 
         calibrating_eqs = [alpha - L / K + 0.36]
 
         for i, eq in enumerate(calibrating_eqs):
-            self.assertEqual(eq, self.block.params_to_calibrate[i] - self.block.calibrating_equations[i])
+            self.assertEqual(eq.simplify(),
+                             (self.block.params_to_calibrate[i] - self.block.calibrating_equations[i]).simplify())
 
 
 if __name__ == '__main__':

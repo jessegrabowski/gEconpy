@@ -24,6 +24,7 @@ CALIBRATING_EQ_TOKEN = '->'
 class SPECIAL_BLOCK_NAMES(Enum, metaclass=IterEnum):
     OPTIONS = 'OPTIONS'
     TRYREDUCE = 'TRYREDUCE'
+    ASSUMPTIONS = 'ASSUMPTIONS'
 
 
 class STEADY_STATE_NAMES(Enum, metaclass=IterEnum):
@@ -41,3 +42,11 @@ class BLOCK_COMPONENTS(Enum, metaclass=IterEnum):
     IDENTITIES = 'IDENTITIES'
     SHOCKS = 'SHOCKS'
     CALIBRATION = 'CALIBRATION'
+
+
+TIME_INDEX_DICT = {'ss':'ss', 't':0, 'tL1':-1, 't1':1}
+
+SYMPY_ASSUMPTIONS = ['finite', 'infinite', 'even', 'odd', 'prime', 'composite', 'positive', 'negative',
+                     'zero', 'nonzero', 'nonpositive', 'nonnegative', 'integer', 'rational', 'irrational',
+                     'real', 'extended real', 'hermitian', 'complex', 'imaginary', 'antihermitian',
+                     'algebraic', 'transcendental']

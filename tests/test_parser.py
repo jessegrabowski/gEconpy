@@ -1,4 +1,6 @@
 import unittest
+from collections import defaultdict
+
 from gEcon.parser import gEcon_parser, parse_plaintext, parse_equations, file_loaders
 import pyparsing
 import sympy as sp
@@ -175,10 +177,11 @@ class ParserTestCases(unittest.TestCase):
 
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
 
-        self.assertEqual(list(block_dict.keys()), ['options', 'tryreduce', 'HOUSEHOLD'])
+        self.assertEqual(list(block_dict.keys()), ['options', 'tryreduce', 'assumptions', 'HOUSEHOLD'])
 
         self.assertIs(block_dict['options'], None)
         self.assertIs(block_dict['tryreduce'], None)
+        self.assertTrue(isinstance(block_dict['assumptions'], defaultdict))
 
         self.assertEqual(block_dict['HOUSEHOLD'].strip(), expected_result)
 
@@ -320,6 +323,19 @@ class ParserTestCases(unittest.TestCase):
             self.assertEqual(result.base_name, expected_results[0])
             self.assertEqual(result.time_index, expected_results[1])
 
+    def test_extract_assumption_blocks(self):
+        test_file = '''strictly_positive
+                        {
+                            C[], K[], L[], A[], lambda[], w[], r[], mc[], 
+                            beta, delta, sigma_C, sigma_L, alpha;
+                        };
+                    '''
+
+        parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
+
+        results = gEcon_parser.extract_special_block(parser_output, 'strictly_positive')
+        self.assertTrue(list(results.keys()), ['strictly_positive'])
+
     def test_parse_equations_to_sympy(self):
         test_eq = '{definitions { u[] = log ( C[] ) + log ( L[] ) ; }; objective { U[] = u[] + beta * E[] [ U[1] ] ; };'
         test_eq += 'calibration { L[ss] / K[ss] = 0.36 -> alpha ; }; };'
@@ -333,7 +349,10 @@ class ParserTestCases(unittest.TestCase):
 
         for i, (component, equations) in enumerate(block_dict.items()):
             block_dict[component] = parse_equations.build_sympy_equations(equations)
-            self.assertEqual(block_dict[component][0], answers[i])
+            eq1 = block_dict[component][0]
+            eq2 = answers[i]
+
+            self.assertEqual(((eq1.lhs - eq1.rhs) - (eq2.lhs - eq2.rhs)).simplify(), 0)
 
     def test_composite_distribution(self):
         sigma_epsilon = invgamma(a=20)
@@ -374,7 +393,6 @@ class ParserTestCases(unittest.TestCase):
 
         for value, d in zip(prior_dict.values(), dists):
             self.assertEqual(value, d)
-
 
 
 
