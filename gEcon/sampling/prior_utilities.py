@@ -272,10 +272,13 @@ def kalman_filter_from_posterior(model, data, posterior, n_samples=1000, filter_
             model.solve_model(verbose=False, on_failure='raise')
 
             T, R = model.T.values, model.R.values
+            T = np.ascontiguousarray(T)
+            R = np.ascontiguousarray(R)
             Z = build_Z_matrix(observed_vars, model_var_names)
             Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, noise_dict)
 
-            filter_results = kalman_filter(data.values, T, Z, R, H, Q, a0=None, P0=None, filter_type=filter_type)
+            filter_results = kalman_filter(np.ascontiguousarray(data.values),
+                                           T, Z, R, H, Q, a0=None, P0=None, filter_type=filter_type)
             filtered_states, _, filtered_covariances, *_ = filter_results
 
             smoother_results = kalman_smoother(T, R, Q, filtered_states, filtered_covariances)

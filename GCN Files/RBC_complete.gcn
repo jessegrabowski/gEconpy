@@ -68,8 +68,8 @@ block HOUSEHOLD
 		beta  = 0.99;
 		delta = 0.02;
 
-		sigma_C ~ N(loc=1.25, scale=0.1, lower=1.0) = 1.5;
-		sigma_L ~ N(loc=1.25, scale=0.1, lower=1.0) = 2.0;
+		sigma_C ~ N(loc=2.0, scale=2.0, lower=1.0) = 1.5;
+		sigma_L ~ N(loc=2.0, scale=2.0, lower=1.0) = 2.0;
 	};
 };
 
@@ -117,6 +117,6 @@ block TECHNOLOGY_SHOCKS
     calibration
     {
 		rho_A ~ Beta(mean=0.95, sd=0.04) = 0.95;
-		sigma_epsilon_A ~ Gamma(alpha=1, beta=0.1) = 0.01;
+		sigma_epsilon_A ~ Gamma(alpha=2, beta=0.1) = 0.05;
     };
 };

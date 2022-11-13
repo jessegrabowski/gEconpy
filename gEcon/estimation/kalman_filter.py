@@ -81,8 +81,6 @@ def standard_kalman_filter(data: ArrayLike,
     predicted_cov = np.zeros((n_steps + 1, k_states, k_states))
     log_likelihood = np.zeros(n_steps)
 
-    a0, P0 = make_initial_conditions(T, R, Q, a0, P0)
-
     a = a0
     P = P0
 
@@ -184,8 +182,6 @@ def univariate_kalman_filter(data: ArrayLike,
     predicted_cov = np.zeros((n_steps + 1, k_states, k_states))
     log_likelihood = np.zeros(n_steps)
 
-    a0, P0 = make_initial_conditions(T, R, Q, a0, P0)
-
     a = a0
     P = P0
 
@@ -270,12 +266,11 @@ def univariate_inner_step(y, Z_row, sigma_H, a, P):
     return a_filtered, P_filtered, ll.ravel()
 
 
-@njit
+@njit('Tuple((float64[:, ::1], float64[:, ::1]))(float64[:, ::1], float64[:, ::1], float64[:, ::1], '
+      'optional(float64[:, ::1]), optional(float64[:, ::1]))')
 def make_initial_conditions(T, R, Q, a0, P0):
     if a0 is None:
         a0 = np.zeros((T.shape[0], 1))
-    else:
-        a0 = np.atleast_2d(a0).reshape(-1, 1)
     if P0 is None:
         P0 = linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
 
@@ -286,6 +281,8 @@ def make_initial_conditions(T, R, Q, a0, P0):
 def kalman_filter(data, T, Z, R, H, Q, a0=None, P0=None, filter_type='standard'):
     if filter_type not in ['standard', 'univariate']:
         raise NotImplementedError('Only "standard" and "univariate" kalman filters are implemented')
+
+    a0, P0 = make_initial_conditions(T, R, Q, a0, P0)
 
     if filter_type == 'univariate':
         filter_results = univariate_kalman_filter(data, T, Z, R, H, Q, a0, P0)
