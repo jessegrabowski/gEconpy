@@ -4,7 +4,7 @@ from numpy.typing import ArrayLike
 from typing import Tuple, Optional
 
 
-@njit
+@njit(cache=True)
 def cycle_reduction(A0: ArrayLike,
                     A1: ArrayLike,
                     A2: ArrayLike,
@@ -101,7 +101,7 @@ def cycle_reduction(A0: ArrayLike,
     return X, result, log_norm
 
 
-@njit
+@njit(cache=True)
 def solve_shock_matrix(B, C, D, G_1):
     """
     Given the partial solution to the linear approximate policy function G_1, solve for the remaining component of the

@@ -313,3 +313,11 @@ def expand_sub_dict_for_all_times(sub_dict):
         result[eq_to_ss(k)] = eq_to_ss(v)
 
     return result
+
+
+def make_all_var_time_combos(var_list):
+    result = []
+    for x in var_list:
+        result.extend([x.set_t(-1), x.set_t(0), x.set_t(1), x.set_t('ss')])
+
+    return result

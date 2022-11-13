@@ -7,7 +7,7 @@ from gEcon.classes.block import Block
 from gEcon.shared.utilities import unpack_keys_and_values, is_variable, sort_dictionary, \
     sympy_keys_to_strings, sympy_number_values_to_floats, sequential, string_keys_to_sympy, \
     merge_dictionaries, expand_subs_for_all_times, substitute_all_equations, sort_sympy_dict
-from gEcon.shared.dynare_convert import make_all_var_time_combos
+from gEcon.shared.utilities import make_all_var_time_combos
 
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
 from gEcon.parser.constants import STEADY_STATE_NAMES
@@ -1112,7 +1112,7 @@ class gEconModel:
 #         else:
 #             sigma = new_sigma
 
-@njit
+@njit(cache=True)
 def _compute_autocorrelation_matrix(A, sigma, n_lags=5):
     acov = np.zeros((A.shape[0], n_lags))
     acov_factor = np.eye(A.shape[0])

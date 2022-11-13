@@ -1,5 +1,5 @@
 from gEcon.classes.time_aware_symbol import TimeAwareSymbol
-from gEcon.shared.utilities import string_keys_to_sympy
+from gEcon.shared.utilities import string_keys_to_sympy, make_all_var_time_combos
 
 from sympy.abc import greeks
 import sympy as sp
@@ -56,14 +56,6 @@ def make_var_to_matlab_sub_dict(var_list, clash_prefix='a'):
         sub_dict[var] = var_name
 
     return sub_dict
-
-
-def make_all_var_time_combos(var_list):
-    result = []
-    for x in var_list:
-        result.extend([x.set_t(-1), x.set_t(0), x.set_t(1), x.set_t('ss')])
-
-    return result
 
 
 def convert_var_timings_to_matlab(var_list):

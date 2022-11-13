@@ -5,7 +5,7 @@ from numba import njit
 from scipy import linalg
 from typing import List, Optional
 
-from gEcon.numba_linalg.overloads import *
+# from gEcon.numba_linalg.overloads import *
 from gEcon.shared.utilities import string_keys_to_sympy, sympy_keys_to_strings
 
 

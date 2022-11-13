@@ -1,5 +1,5 @@
 from numba.core import types, cgutils
-from numba.extending import overload, register_jitable
+from numba.extending import overload
 from numba.np.linalg import ensure_lapack, _check_finite_matrix, _copy_to_fortran_order, \
     _handle_err_maybe_convergence_problem
 
@@ -36,20 +36,20 @@ def solve_triangular_impl(A, B, trans=0, lower=False, unit_diagonal=False):
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
 
-        if isinstance(trans, str):
-            if trans not in ['N', 'C', 'T']:
-                raise ValueError('Parameter "trans" should be one of N, C, T or 0, 1, 2')
-            transval = ord(trans)
+        # if isinstance(trans, str):
+        # if trans not in ['N', 'C', 'T']:
+        #     raise ValueError('Parameter "trans" should be one of N, C, T or 0, 1, 2')
+        # transval = ord(trans)
 
+        # else:
+        if trans not in [0, 1, 2]:
+            raise ValueError('Parameter "trans" should be one of N, C, T or 0, 1, 2')
+        if trans == 0:
+            transval = ord('N')
+        elif trans == 1:
+            transval = ord('T')
         else:
-            if trans not in [0, 1, 2]:
-                raise ValueError('Parameter "trans" should be one of N, C, T or 0, 1, 2')
-            if trans == 0:
-                transval = ord('N')
-            elif trans == 1:
-                transval = ord('T')
-            else:
-                transval = ord('C')
+            transval = ord('C')
 
         UPLO = val_to_int_ptr(ord('L') if lower else ord('U'))
         TRANS = val_to_int_ptr(transval)

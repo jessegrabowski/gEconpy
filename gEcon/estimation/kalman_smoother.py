@@ -1,6 +1,6 @@
 import numpy as np
 from numba import njit
-from gEcon.numba_linalg.overloads import *
+# from gEcon.numba_linalg.overloads import *
 
 
 @njit
