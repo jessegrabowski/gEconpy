@@ -713,6 +713,7 @@ class gEconModel:
         Z = build_Z_matrix(observed_vars, model_var_names)
 
         args = [data, sparse_data, Z, prior_dict, shock_names, observed_vars, filter_type]
+        arg_names = ['observed_data', 'sparse_data', 'Z', 'prior_dict', 'shock_names', 'observed_vars', 'filter_type']
 
         if emcee_x0:
             x0 = emcee_x0
@@ -738,8 +739,11 @@ class gEconModel:
                     parameters=param_names
                 ))
 
-            idata = az.from_emcee(sampler, var_names=param_names, blob_names=["log_likelihood"])
+            idata = az.from_emcee(sampler, var_names=param_names, blob_names=["log_likelihood"], arg_names=arg_names)
+
             idata['sample_stats'].update(sampler_stats)
+            idata.observed_data = idata.observed_data.drop(['sparse_data', 'prior_dict'])
+            idata.observed_data = idata.observed_data.drop_dims(['sparse_data_dim_0', 'sparse_data_dim_1', 'prior_dict_dim_0'])
 
             return idata.sel(draw=slice(burn_in, None, thin))
 

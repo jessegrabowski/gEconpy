@@ -512,9 +512,10 @@ def plot_kalman_filter(idata, data, kalman_output='predicted', n_cols=None, vars
         q05, q50, q95 = mu.quantile([0.05, 0.5, 0.95], dim='sample')
 
         sigma = idata[f'{kalman_output}_Cov'].dropna(dim='time').sel(variable=variable, variable2=variable)
+        s05, s95 = sigma.quantile([0.05, 0.95], dim='sample')
 
-        top_ci = mu + 1.98 * np.sqrt(sigma + 1e-6)
-        bot_ci = mu - 1.98 * np.sqrt(sigma + 1e-6)
+        top_ci = mu + 1.98 * np.sqrt(s05 + 1e-6)
+        bot_ci = mu - 1.98 * np.sqrt(s95 + 1e-6)
 
         axis.plot(time_idx[time_slice], q50.values, color='tab:red')
         axis.fill_between(time_idx[time_slice], q05, q95, color='tab:blue', alpha=1)

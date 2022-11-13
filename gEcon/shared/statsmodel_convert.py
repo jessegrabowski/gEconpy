@@ -60,9 +60,16 @@ def compile_to_statsmodels(model):
                                             initial_state_cov=P0,
                                             **kwargs)
 
-            self.ssm['design'][np.arange(k_observed),
-                               np.argwhere(
-                                   np.array([x.base_name in data.columns for x in model.variables])).ravel()] = 1
+            model_names = [x.base_name for x in model.variables]
+            missing_vars = [x for x in data.columns if x not in model_names]
+            if any(missing_vars):
+                msg = 'Data contains the following columns not associated with variables in the model:'
+                msg += ', '.join(missing_vars)
+                raise ValueError(msg)
+
+            Z_idx = [model_names.index(x) for x in data.columns if x in model_names]
+
+            self.ssm['design'][np.arange(k_observed), Z_idx] = 1
             self.ssm['state_cov'] = np.eye(k_posdef) * 0.1
             self.ssm['obs_cov'] = np.zeros((k_observed, k_observed))
 
@@ -166,6 +173,15 @@ def compile_to_statsmodels(model):
             for name in param_names:
                 start_params.append(self.start_dict[name])
             return np.array(start_params)
+
+        def unpack_statespace(self):
+            T = np.ascontiguousarray(self.ssm['transition'])
+            Z = np.ascontiguousarray(self.ssm['design'])
+            R = np.ascontiguousarray(self.ssm['selection'])
+            H = np.ascontiguousarray(self.ssm['obs_cov'])
+            Q = np.ascontiguousarray(self.ssm['state_cov'])
+
+            return T, Z, R, H, Q
 
         def transform_params(self, real_line_params):
             '''
@@ -343,7 +359,7 @@ def compile_to_statsmodels(model):
                 ll_obs = self.ssm.loglikeobs(complex_step=complex_step, **kwargs)
                 if self.fit_MAP:
                     for name, param in zip(self.external_param_names, params):
-                        ll_obs += max(-1e6, self.prior_dict[name].logpdf(param))
+                        ll_obs += max(-1e6, self.prior_dict[name].logpdf(param)) / self.nobs
                 return ll_obs
 
             else:

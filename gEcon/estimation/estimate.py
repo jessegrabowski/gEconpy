@@ -146,7 +146,7 @@ def evaluate_logp(all_param_dict, df, sparse_datas, Z, priors, shock_names, obse
     if not success:
         return -np.inf, np.zeros(df.shape[0])
 
-    a0 = np.array(list(a0_dict.values())) if len(a0_dict) > 0 else None
+    a0 = np.array(list(a0_dict.values()))[:, None] if len(a0_dict) > 0 else None
     P0 = np.eye(len(P0_dict)) * np.array(list(P0_dict.keys())) if len(P0_dict) > 0 else None
 
     Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, obs_dict)
