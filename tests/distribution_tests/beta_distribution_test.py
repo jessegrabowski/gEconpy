@@ -2,9 +2,9 @@ import unittest
 import numpy as np
 from scipy.stats import beta
 
-from gEcon.exceptions.exceptions import MultipleParameterDefinitionException, InvalidParameterException, \
+from gEconpy.exceptions.exceptions import MultipleParameterDefinitionException, InvalidParameterException, \
     IgnoredCloseMatchWarning, UnusedParameterWarning
-from gEcon.parser.parse_distributions import BetaDistributionParser, BETA_SHAPE_ALIASES_1, \
+from gEconpy.parser.parse_distributions import BetaDistributionParser, BETA_SHAPE_ALIASES_1, \
     BETA_SHAPE_ALIASES_2
 
 from functools import partial

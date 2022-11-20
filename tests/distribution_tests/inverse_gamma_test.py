@@ -2,9 +2,9 @@ import unittest
 import numpy as np
 from scipy.stats import invgamma
 
-from gEcon.exceptions.exceptions import MultipleParameterDefinitionException, \
+from gEconpy.exceptions.exceptions import MultipleParameterDefinitionException, \
     IgnoredCloseMatchWarning, UnusedParameterWarning
-from gEcon.parser.parse_distributions import InverseGammaDistributionParser, INV_GAMMA_SCALE_ALIASES, \
+from gEconpy.parser.parse_distributions import InverseGammaDistributionParser, INV_GAMMA_SCALE_ALIASES, \
     INV_GAMMA_SHAPE_ALIASES
 
 from functools import partial

@@ -1,9 +1,9 @@
 import unittest
-from gEcon.classes.block import Block
-from gEcon.shared.utilities import unpack_keys_and_values, set_equality_equals_zero
+from gEconpy.classes.block import Block
+from gEconpy.shared.utilities import unpack_keys_and_values, set_equality_equals_zero
 
-from gEcon.parser import file_loaders, gEcon_parser, constants
-from gEcon.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.parser import file_loaders, gEcon_parser, constants
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 
 import sympy as sp
 import numpy as np

@@ -1,6 +1,6 @@
 import unittest
-from gEcon.classes.model import gEconModel
-from gEcon.solvers.steady_state import SteadyStateSolver
+from gEconpy.classes.model import gEconModel
+from gEconpy.solvers.steady_state import SteadyStateSolver
 import sympy as sp
 import numpy as np
 from sympy.abc import x,y,z,a,b,c

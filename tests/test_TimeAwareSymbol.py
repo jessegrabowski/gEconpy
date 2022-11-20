@@ -1,6 +1,6 @@
 import unittest
-from gEcon.classes.time_aware_symbol import TimeAwareSymbol
-from shared.utilities import step_equation_forward, step_equation_backward, diff_through_time
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.shared.utilities import step_equation_forward, step_equation_backward, diff_through_time
 import sympy as sp
 
 

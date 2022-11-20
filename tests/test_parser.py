@@ -1,12 +1,12 @@
 import unittest
 from collections import defaultdict
 
-from gEcon.parser import gEcon_parser, parse_plaintext, parse_equations, file_loaders
+from gEconpy.parser import gEcon_parser, parse_plaintext, parse_equations, file_loaders
 import pyparsing
 import sympy as sp
 
-from gEcon.classes.time_aware_symbol import TimeAwareSymbol
-from gEcon.parser.parse_distributions import CompositeDistribution
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.parser.parse_distributions import CompositeDistribution
 
 from scipy.stats import norm, invgamma
 

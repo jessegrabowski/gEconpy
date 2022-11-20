@@ -1,9 +1,9 @@
 import unittest
 from scipy.stats import halfnorm
 
-from gEcon.exceptions.exceptions import MultipleParameterDefinitionException, \
+from gEconpy.exceptions.exceptions import MultipleParameterDefinitionException, \
     IgnoredCloseMatchWarning, UnusedParameterWarning
-from gEcon.parser.parse_distributions import HalfNormalDistributionParser, NORMAL_SCALE_ALIASES
+from gEconpy.parser.parse_distributions import HalfNormalDistributionParser, NORMAL_SCALE_ALIASES
 
 from functools import partial
 

@@ -2,9 +2,9 @@ import unittest
 import numpy as np
 from scipy.stats import truncnorm
 
-from gEcon.exceptions.exceptions import MultipleParameterDefinitionException, \
+from gEconpy.exceptions.exceptions import MultipleParameterDefinitionException, \
     IgnoredCloseMatchWarning, UnusedParameterWarning
-from gEcon.parser.parse_distributions import NormalDistributionParser, NORMAL_LOC_ALIASES, NORMAL_SCALE_ALIASES, \
+from gEconpy.parser.parse_distributions import NormalDistributionParser, NORMAL_LOC_ALIASES, NORMAL_SCALE_ALIASES, \
     LOWER_BOUND_ALIASES, UPPER_BOUND_ALIASES
 
 from functools import partial

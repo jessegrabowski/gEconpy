@@ -1,7 +1,7 @@
 import unittest
-from gEcon.classes.model import gEconModel
-from gEcon.classes.time_aware_symbol import TimeAwareSymbol
-from gEcon.shared.utilities import string_keys_to_sympy
+from gEconpy.classes.model import gEconModel
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.shared.utilities import string_keys_to_sympy
 import sympy as sp
 import numpy as np
 import pandas as pd

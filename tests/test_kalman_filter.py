@@ -1,8 +1,8 @@
 import unittest
-from gEcon.classes.model import gEconModel
-from gEcon.estimation.estimation_utilities import extract_sparse_data_from_model, build_system_matrices, \
+from gEconpy.classes.model import gEconModel
+from gEconpy.estimation.estimation_utilities import extract_sparse_data_from_model, build_system_matrices, \
     check_bk_condition
-from gEcon.estimation.kalman_filter import kalman_filter, univariate_kalman_filter
+from gEconpy.estimation.kalman_filter import kalman_filter, univariate_kalman_filter
 import numpy as np
 
 

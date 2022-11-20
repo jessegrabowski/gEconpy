@@ -1,7 +1,7 @@
 import unittest
-from gEcon.estimation.estimate import build_and_solve, build_Q_and_H
-from gEcon.estimation.estimation_utilities import extract_sparse_data_from_model
-from gEcon.classes.model import gEconModel
+from gEconpy.estimation.estimate import build_and_solve, build_Q_and_H
+from gEconpy.estimation.estimation_utilities import extract_sparse_data_from_model
+from gEconpy.classes.model import gEconModel
 
 import numpy as np
 

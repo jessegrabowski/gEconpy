@@ -1,9 +1,9 @@
 import unittest
 
-from gEcon.exceptions.exceptions import InvalidDistributionException, DistributionParsingError, \
+from gEconpy.exceptions.exceptions import InvalidDistributionException, DistributionParsingError, \
     MissingParameterValueException, RepeatedParameterException
-from gEcon.parser.gEcon_parser import preprocess_gcn
-from gEcon.parser.parse_distributions import preprocess_distribution_string, distribution_factory, \
+from gEconpy.parser.gEcon_parser import preprocess_gcn
+from gEconpy.parser.parse_distributions import preprocess_distribution_string, distribution_factory, \
     create_prior_distribution_dictionary
 
 
