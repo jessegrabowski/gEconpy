@@ -216,5 +216,5 @@ def parsed_block_to_dict(block: str) -> Dict[str, List[List[str]]]:
 
     return block_dict
 
-def make_assumption_dict(raw_blocks: dict[str, str]) -> dict[str, str]:
+def make_assumption_dict(raw_blocks: Dict[str, str]) -> Dict[str, str]:
     pass
