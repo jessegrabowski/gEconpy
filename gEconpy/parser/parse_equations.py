@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import List
+from typing import List, Dict, Optional
 import re
 import sympy as sp
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -204,7 +204,7 @@ def convert_symbols_to_time_symbols(eq: sp.Eq) -> sp.Eq:
     return eq.subs(sub_dict)
 
 
-def single_symbol_to_sympy(variable: str, assumptions: dict = None) -> TimeAwareSymbol:
+def single_symbol_to_sympy(variable: str, assumptions: Optional[Dict]) -> TimeAwareSymbol:
     """
     :param variable: str, a gEcon variable or parameter
     :return: TimeAwareSymbol, the same variable
@@ -227,7 +227,7 @@ def single_symbol_to_sympy(variable: str, assumptions: dict = None) -> TimeAware
         return TimeAwareSymbol(variable_name, time_index, **assumptions[variable_name])
 
 
-def build_sympy_equations(eqs: List[List[str]], assumptions: dict[str] = None) -> List[sp.Eq]:
+def build_sympy_equations(eqs: List[List[str]], assumptions: Optional[Dict]) -> List[sp.Eq]:
     """
     :param eqs: List[List[str]], a list of list of equation tokens associated with a model
     :return: List[sp.Eq], a list of SymPy equations

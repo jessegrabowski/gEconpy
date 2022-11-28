@@ -1,17 +1,17 @@
-# gEcon.py
+# gEconpy
 A collection of tools for working with DSGE models in python, inspired by the fantastic R package gEcon, http://gecon.r-forge.r-project.org/.
 
-Like gEcon, gEcon.py solves first order conditions automatically, helping the researcher avoid math errors while facilitating rapid prototyping of models. By working in the optimization problem space rather than the FoC space, modifications to the model are much simpler. Adding an additional term to the utility function, for example, requires modifying only 2-3 lines of code, whereas in FoC space it may require re-solving the entire model by hand.
+Like gEcon, gEconpy solves first order conditions automatically, helping the researcher avoid math errors while facilitating rapid prototyping of models. By working in the optimization problem space rather than the FoC space, modifications to the model are much simpler. Adding an additional term to the utility function, for example, requires modifying only 2-3 lines of code, whereas in FoC space it may require re-solving the entire model by hand.
 
-gEcon.py uses the GCN file originally created for the gEcon package. gEcon GCN files are fully compatable with gEcon.py, and includes all the great features of GCN files, including:
+gEconpy uses the GCN file originally created for the gEcon package. gEcon GCN files are fully compatable with gEconpy, and includes all the great features of GCN files, including:
 * Automatically solve first order conditions
 * Users can include steady-state values in equations without explictly solving for them by hand first!
 * Users can declare "calibrated parameters", requesting a parameter value be found to induce a specific steady-state relationship
 
-gEcon.py is still in an unfinished alpha state, but I encourage anyone interested in DSGE modeling to give it a try and and report any bugs you might find.
+gEconpy is still in an unfinished alpha state, but I encourage anyone interested in DSGE modeling to give it a try and and report any bugs you might find.
 
 ## To Do List:
-1. Bayesian and ML Estimation
+~~1. Bayesian and ML Estimation~~
 2. Local identification tests
 3. Improve symbolic simplification routines
 4. Re-write entire back-end using Aesara, integrate with PyMC and allow NUTS sampling
@@ -23,7 +23,7 @@ gEcon.py is still in an unfinished alpha state, but I encourage anyone intereste
 If you want to help with the project, please don't hesitate to reach out!
 
 # Representing a DSGE Model
-Like the R package gEcon, gEcon.py uses .GCN files to represent a DSGE model. A GCN file is divided into blocks, each of which represents an optimization problem. Here is one block from the example Real Business Cycle (RBC) model included in the package.
+Like the R package gEcon, gEconpy uses .GCN files to represent a DSGE model. A GCN file is divided into blocks, each of which represents an optimization problem. Here is one block from the example Real Business Cycle (RBC) model included in the package.
 
 ```
 block HOUSEHOLD
@@ -117,7 +117,7 @@ block FIRM
     };
 };
 ```
-The `alpha` parameter is set so that in the steady state, the ratio of labor to capital is 0.36. On the back end, gEcon.py will use an optimizer to find a value of `alpha` that satsifies the user's condition. Note that calibrated parameters cannot have prior distributions! 
+The `alpha` parameter is set so that in the steady state, the ratio of labor to capital is 0.36. On the back end, gEconpy will use an optimizer to find a value of `alpha` that satsifies the user's condition. Note that calibrated parameters cannot have prior distributions! 
 
 ## Lagrange Multipliers and First Order Conditions
 As mentioned, all constraints will automatically have a Lagrange multiplier assigned to them. The user name these multipliers himself by putting a colon ":" after an equation, followed by the Lagrange multipler name. From the code above:
@@ -206,7 +206,7 @@ To see how to do simulations, IRFs, and compute moments, see the example noteboo
 
 ## Dynare Code Generation
 
-Since Dynare is still the gold standard in DSGE modeling, and this is a wacky open source package written by a literally who?, gEcon.py has the ability to automatically convert a solved model into a Dynare mod file. This is done as follows:
+Since Dynare is still the gold standard in DSGE modeling, and this is a wacky open source package written by a literally who?, gEconpy has the ability to automatically convert a solved model into a Dynare mod file. This is done as follows:
 
 ```python
 from gEconpy.shared.dynare_convert import make_mod_file

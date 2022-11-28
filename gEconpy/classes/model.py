@@ -1062,7 +1062,8 @@ class gEconModel:
         self.n_variables = len(self.variables)
 
         if self.n_equations != self.n_variables:
-            raise ValueError
+            warn('Reduction was requested but not possible because the system is not well defined.')
+            return
 
         eliminated_vars = [var.name for var in variables if var not in self.variables]
 
@@ -1095,7 +1096,8 @@ class gEconModel:
         self.n_variables = len(self.variables)
 
         if self.n_equations != self.n_variables:
-            raise ValueError
+            warn('Simplification was requested but not possible because the system is not well defined.')
+            return
 
         eliminated_vars = [var.name for var in variables if var not in self.variables]
 

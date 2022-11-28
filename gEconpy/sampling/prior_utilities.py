@@ -113,8 +113,8 @@ def simulate_trajectories_from_prior(model, n_samples=1000, n_simulations=100, s
 
     progress_bar = ProgressBar(n_samples, 'Sampling')
     for param_dict in param_dicts.values():
-        free_param_dict, shock_dict, obs_dict = split_random_variables(param_dict, shock_names, model_var_names)
-        model.free_param_dict.update(free_param_dict)
+        # free_param_dict, shock_dict, obs_dict = split_random_variables(param_dict, shock_names, model_var_names)
+        model.free_param_dict.update(param_dict)
         progress_bar.start()
 
         try:
@@ -155,7 +155,7 @@ def kalman_filter_from_prior(model, data, n_samples, filter_type='univariate'):
     while i < n_samples:
         try:
             param_dict = param_dicts[i]
-            param_dict, shock_dict, obs_dict = split_random_variables(param_dict, shock_names, observed_vars)
+            # param_dict, shock_dict, obs_dict = split_random_variables(param_dict, shock_names, observed_vars)
             model.free_param_dict.update(param_dict)
 
             progress_bar.start()
