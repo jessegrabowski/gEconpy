@@ -1,16 +1,19 @@
-from numba import njit
+from typing import Optional, Tuple
+
 import numpy as np
+from numba import njit
 from numpy.typing import ArrayLike
-from typing import Tuple, Optional
 
 
 @njit(cache=True)
-def cycle_reduction(A0: ArrayLike,
-                    A1: ArrayLike,
-                    A2: ArrayLike,
-                    max_iter: int = 1000,
-                    tol: float = 1e-7,
-                    verbose: bool = True) -> Tuple[Optional[ArrayLike], str, float]:
+def cycle_reduction(
+    A0: ArrayLike,
+    A1: ArrayLike,
+    A2: ArrayLike,
+    max_iter: int = 1000,
+    tol: float = 1e-7,
+    verbose: bool = True,
+) -> Tuple[Optional[ArrayLike], str, float]:
 
     """
     Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1].
@@ -48,7 +51,7 @@ def cycle_reduction(A0: ArrayLike,
     ..[2]
 
     """
-    result = 'Optimization successful'
+    result = "Optimization successful"
     log_norm = 0
     X = None
 
@@ -84,10 +87,10 @@ def cycle_reduction(A0: ArrayLike,
         elif np.isnan(A0_L1_norm) or i == (max_iter - 1):
             # If we fail, figure out how far we got
             if A0_L1_norm < tol:
-                result = 'Iteration on matrix A0 and A1 converged towards a solution, but A2 did not.'
+                result = "Iteration on matrix A0 and A1 converged towards a solution, but A2 did not."
                 log_norm = np.log(np.linalg.norm(A2, 1))
             else:
-                result = 'Iteration on all matrices failed to converged'
+                result = "Iteration on all matrices failed to converged"
                 log_norm = np.log(np.linalg.norm(A1, 1))
 
             return X, result, log_norm
@@ -96,7 +99,7 @@ def cycle_reduction(A0: ArrayLike,
 
     if verbose:
         res = A0_initial + A1_initial @ X + A2_initial @ X @ X
-        print('Solution found, sum of squared residuals: ', (res ** 2).sum())
+        print("Solution found, sum of squared residuals: ", (res**2).sum())
 
     return X, result, log_norm
 

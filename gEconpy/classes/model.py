@@ -6,7 +6,6 @@ import arviz as az
 import emcee
 import numpy as np
 import pandas as pd
-import pymc as pm
 import sympy as sp
 import xarray as xr
 from numba import njit
@@ -16,12 +15,11 @@ from scipy import linalg, stats
 from gEconpy.classes.block import Block
 from gEconpy.classes.progress_bar import ProgressBar
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.estimation.estimate import (
-    build_Z_matrix,
-    evaluate_logp,
+from gEconpy.estimation.estimate import build_Z_matrix, evaluate_logp
+from gEconpy.estimation.estimation_utilities import (
     extract_prior_dict,
+    extract_sparse_data_from_model,
 )
-from gEconpy.estimation.estimation_utilities import extract_sparse_data_from_model
 from gEconpy.exceptions.exceptions import (
     GensysFailedException,
     MultipleSteadyStateBlocksException,
@@ -31,10 +29,7 @@ from gEconpy.exceptions.exceptions import (
 )
 from gEconpy.parser import file_loaders, gEcon_parser
 from gEconpy.parser.constants import STEADY_STATE_NAMES
-from gEconpy.parser.parse_distributions import (
-    build_pymc_model,
-    create_prior_distribution_dictionary,
-)
+from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary
 from gEconpy.parser.parse_equations import single_symbol_to_sympy
 from gEconpy.shared.utilities import (
     expand_subs_for_all_times,
@@ -60,7 +55,6 @@ class gEconModel:
         self,
         model_filepath: str,
         verbose: bool = True,
-        build_pymc=False,
         simplify_blocks=True,
         simplify_constants=True,
         simplify_tryreduce=True,
@@ -74,8 +68,6 @@ class gEconModel:
             Filepath to the GCN file
         verbose : bool, optional
             Flag for verbose output, by default True
-        build_pymc : bool, optional
-            Flag to build a PyMC model, by default False
         simplify_blocks : bool, optional
             Flag to simplify blocks, by default True
         simplify_constants : bool, optional
@@ -107,8 +99,6 @@ class gEconModel:
         self.shock_priors: Dict[str, Any] = {}
         self.observation_noise_priors: Dict[str, Any] = {}
 
-        self.pymc_model: pm.Model = None
-
         self.n_variables: int = 0
         self.n_shocks: int = 0
         self.n_equations: int = 0
@@ -138,7 +128,6 @@ class gEconModel:
 
         self.build(
             verbose=verbose,
-            build_pymc=build_pymc,
             simplify_blocks=simplify_blocks,
             simplify_constants=simplify_constants,
             simplify_tryreduce=simplify_tryreduce,
@@ -151,7 +140,6 @@ class gEconModel:
     def build(
         self,
         verbose: bool,
-        build_pymc: bool,
         simplify_blocks: bool,
         simplify_constants: bool,
         simplify_tryreduce: bool,
@@ -162,8 +150,7 @@ class gEconModel:
         parameters, and exogenous shocks into their respective class attributes.
 
         Priors declared in the GCN file are converted into scipy distribution objects and stored in two dictionaries:
-        self.param_priors and self.shock_priors. In addition, the user can request a PyMC model object be built. If
-        you plan to do Bayesian estimation, build the PyMC model.
+        self.param_priors and self.shock_priors.
 
         Gathering block information is done for convenience. For diagnostic purposes the block structure is retained
         as well.
@@ -173,8 +160,6 @@ class gEconModel:
         verbose : bool, optional
             When True, print a build report describing the model structure and warning the user if the number of
             variables does not match the number of equations.
-        build_pymc : bool, optional
-            If True, build a PyMC model of random variables declared in the GCN and store it in `self.pymc_model`.
         simplify_blocks : bool, optional
             If True, simplify equations in the model blocks.
         simplify_constants : bool, optional
@@ -195,7 +180,7 @@ class gEconModel:
         self._get_all_block_parameters()
         self._get_all_block_params_to_calibrate()
         self._get_variables_and_shocks()
-        self._build_prior_dict(prior_dict, build_pymc)
+        self._build_prior_dict(prior_dict)
 
         reduced_vars = None
         singletons = None
@@ -1183,14 +1168,12 @@ class gEconModel:
 
         return df
 
-    def _build_prior_dict(self, prior_dict: Dict[str, str], build_pymc: bool) -> None:
+    def _build_prior_dict(self, prior_dict: Dict[str, str]) -> None:
         """
         Parameters
         ----------
         prior_dict: dict
             Dictionary of variable_name: distribution_string pairs, prepared by the parse_gcn function.
-        build_pymc: str
-            If True, build a PyMC model with declared random variables.
 
         Returns
         -------
@@ -1201,9 +1184,6 @@ class gEconModel:
         """
 
         priors = create_prior_distribution_dictionary(prior_dict)
-        if build_pymc:
-            self.pymc_model = build_pymc_model(prior_dict)
-
         hyper_parameters = set(prior_dict.keys()) - set(priors.keys())
 
         # Clean up the hyper-parameters (e.g. shock stds) from the model, they aren't needed anymore

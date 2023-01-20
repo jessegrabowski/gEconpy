@@ -1,30 +1,28 @@
-from typing import Optional, List, Tuple
-from numpy.typing import ArrayLike
+from typing import List, Tuple
 
-from gEconpy.shared.utilities import string_keys_to_sympy, eq_to_ss
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.exceptions.exceptions import VariableNotFoundException, SteadyStateNotSolvedError, GensysFailedException
-from gEconpy.solvers.gensys import gensys
-from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
-
-from warnings import warn
 import numpy as np
 import sympy as sp
+from numpy.typing import ArrayLike
 from scipy import linalg
-import pandas as pd
+
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.shared.utilities import eq_to_ss
+from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
+from gEconpy.solvers.gensys import gensys
 
 
 def print_gensys_results(eu):
     if eu[0] == 1 and eu[1] == 1:
-        print('Gensys found a unique solution.\n'
-              'Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S')
+        print(
+            "Gensys found a unique solution.\n"
+            "Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S"
+        )
 
     else:
         print(eu)
 
 
 class PerturbationSolver:
-
     def __init__(self, model):
         self.steady_state_dict = model.steady_state_dict
         self.steady_state_solved = model.steady_state_solved
@@ -36,9 +34,14 @@ class PerturbationSolver:
         self.n_shocks = model.n_shocks
 
     @staticmethod
-    def solve_policy_function_with_gensys(A: ArrayLike, B: ArrayLike, C: ArrayLike, D: ArrayLike,
-                                          tol: float = 1e-8,
-                                          verbose: bool = True) -> Tuple:
+    def solve_policy_function_with_gensys(
+        A: ArrayLike,
+        B: ArrayLike,
+        C: ArrayLike,
+        D: ArrayLike,
+        tol: float = 1e-8,
+        verbose: bool = True,
+    ) -> Tuple:
         n_eq, n_vars = A.shape
         _, n_shocks = D.shape
 
@@ -47,11 +50,16 @@ class PerturbationSolver:
 
         n_leads = len(lead_var_idx)
 
-        Gamma_0 = np.vstack([np.hstack([B, C]),
-                             np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
+        Gamma_0 = np.vstack(
+            [np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])]
+        )
 
-        Gamma_1 = np.vstack([np.hstack([A, np.zeros((n_eq, n_eq))]),
-                             np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])])
+        Gamma_1 = np.vstack(
+            [
+                np.hstack([A, np.zeros((n_eq, n_eq))]),
+                np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)]),
+            ]
+        )
 
         Pi = np.vstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])
 
@@ -69,20 +77,24 @@ class PerturbationSolver:
         psi = np.ascontiguousarray(Psi)
         pi = np.ascontiguousarray(Pi)
 
-        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
+        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(
+            g0, g1, c, psi, pi
+        )
         if verbose:
             print_gensys_results(eu)
 
         return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
 
     @staticmethod
-    def solve_policy_function_with_cycle_reduction(A: ArrayLike,
-                                                   B: ArrayLike,
-                                                   C: ArrayLike,
-                                                   D: ArrayLike,
-                                                   max_iter: int = 1000,
-                                                   tol: float = 1e-8,
-                                                   verbose: bool = True) -> Tuple[ArrayLike, ArrayLike, str, float]:
+    def solve_policy_function_with_cycle_reduction(
+        A: ArrayLike,
+        B: ArrayLike,
+        C: ArrayLike,
+        D: ArrayLike,
+        max_iter: int = 1000,
+        tol: float = 1e-8,
+        verbose: bool = True,
+    ) -> Tuple[ArrayLike, ArrayLike, str, float]:
         """
         Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
         obtain the first-order linear approxiate policy matrices T and R.
@@ -91,13 +103,13 @@ class PerturbationSolver:
         ----------
         A: Arraylike
             Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
-            values that are known when decision making: those with t-1 subscripts.
+            values that are known when decision-making: those with t-1 subscripts.
         B: ArrayLike
             Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-            are observed when decision making: those with t subscripts.
+            are observed when decision-making: those with t subscripts.
         C: ArrayLike
             Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-            enter in expectation when decision making: those with t+1 subscripts.
+            enter in expectation when decision-making: those with t+1 subscripts.
         D: ArrayLike
             Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
         max_iter: int, default: 1000
@@ -138,7 +150,9 @@ class PerturbationSolver:
     def statespace_to_gEcon_representation(self, A, T, R, variables, tol):
         n_vars = len(variables)
 
-        state_var_idx = np.where(np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol)[0]
+        state_var_idx = np.where(
+            np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol
+        )[0]
         state_var_mask = np.isin(np.arange(n_vars), state_var_idx)
 
         n_shocks = self.n_shocks
@@ -169,11 +183,9 @@ class PerturbationSolver:
 
     @staticmethod
     def residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime):
-        norm_deterministic = linalg.norm(A_prime + B @ R_prime +
-                                         C @ R_prime @ P)
+        norm_deterministic = linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P)
 
-        norm_stochastic = linalg.norm(B @ S_prime +
-                                      C @ R_prime @ Q + D)
+        norm_stochastic = linalg.norm(B @ S_prime + C @ R_prime @ Q + D)
 
         return norm_deterministic, norm_stochastic
 
@@ -212,7 +224,9 @@ class PerturbationSolver:
                 F_row = []
                 for var in var_group:
                     dydx = sp.powsimp(eq_to_ss(eq.diff(var)))
-                    dydx *= 1.0 if var.base_name in not_loglin_variables else var.to_ss()
+                    dydx *= (
+                        1.0 if var.base_name in not_loglin_variables else var.to_ss()
+                    )
                     atoms = dydx.atoms()
                     if len(atoms) == 1:
                         x = list(atoms)[0]
@@ -247,8 +261,14 @@ class PerturbationSolver:
         shocks = self.shocks
         model = self.system_equations
 
-        for var_group, name in zip([lags, now, leads, shocks], ['lags', 'now', 'leads', 'shocks']):
-            F = sp.zeros(len(var_group)) if name != 'shocks' else sp.zeros(rows=len(model), cols=len(var_group))
+        for var_group, name in zip(
+            [lags, now, leads, shocks], ["lags", "now", "leads", "shocks"]
+        ):
+            F = (
+                sp.zeros(len(var_group))
+                if name != "shocks"
+                else sp.zeros(rows=len(model), cols=len(var_group))
+            )
             for i, var in enumerate(var_group):
                 for j, eq in enumerate(model):
                     args = eq.expand().args
@@ -259,9 +279,9 @@ class PerturbationSolver:
 
         return Fs
 
-    def make_all_variable_time_combinations(self) -> Tuple[List[TimeAwareSymbol],
-                                                           List[TimeAwareSymbol],
-                                                           List[TimeAwareSymbol]]:
+    def make_all_variable_time_combinations(
+        self,
+    ) -> Tuple[List[TimeAwareSymbol], List[TimeAwareSymbol], List[TimeAwareSymbol]]:
         """
         :return: Tuple of three lists, containing all model variables at time steps t-1, t, and t+1, respectively.
         """

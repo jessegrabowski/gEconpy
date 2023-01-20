@@ -1,4 +1,4 @@
-from numba.core import types, cgutils
+from numba.core import cgutils, types
 from numba.extending import intrinsic
 
 

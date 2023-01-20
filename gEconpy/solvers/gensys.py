@@ -1,14 +1,13 @@
+from typing import Optional, Tuple
+
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy import linalg
-from typing import Tuple, Optional, List
 
 
-def qzdiv(stake: float,
-          A: ArrayLike,
-          B: ArrayLike,
-          Q: ArrayLike,
-          Z: ArrayLike) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+def qzdiv(
+    stake: float, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
+) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
     """
     Christopher Sim's qzdiv http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
     :param stake: float, largest positive value for which an eigenvalue is considered stable
@@ -59,11 +58,9 @@ def qzdiv(stake: float,
     return A, B, Q, Z
 
 
-def qzswitch(i: int,
-             A: ArrayLike,
-             B: ArrayLike,
-             Q: ArrayLike,
-             Z: ArrayLike) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+def qzswitch(
+    i: int, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
+) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
     """
     Christopher Sim's qzswitch,
     :param i: int, index of matrix diagonal to switch
@@ -139,7 +136,9 @@ def qzswitch(i: int,
     return A, B, Q, Z
 
 
-def determine_n_unstable(A: ArrayLike, B: ArrayLike, div: float, realsmall: float) -> Tuple[float, int, bool]:
+def determine_n_unstable(
+    A: ArrayLike, B: ArrayLike, div: float, realsmall: float
+) -> Tuple[float, int, bool]:
     """
     :param A: array, upper-triangular matrix, output of QZ decomposition
     :param B: array, upper-triangular matrix, output of QZ decomposition
@@ -165,14 +164,16 @@ def determine_n_unstable(A: ArrayLike, B: ArrayLike, div: float, realsmall: floa
                 divhat = abs(B[i, i] / A[i, i])
                 if (1 + realsmall < divhat) and divhat <= div:
                     div = 0.5 * (1 + divhat)
-        n_unstable += (abs(B[i, i]) > div * abs(A[i, i]))
+        n_unstable += abs(B[i, i]) > div * abs(A[i, i])
 
         zxz = (abs(A[i, i]) < realsmall) & (abs(B[i, i]) < realsmall)
 
     return div, n_unstable, zxz
 
 
-def split_matrix_on_eigen_stability(A: ArrayLike, n_unstable: int) -> Tuple[ArrayLike, ArrayLike]:
+def split_matrix_on_eigen_stability(
+    A: ArrayLike, n_unstable: int
+) -> Tuple[ArrayLike, ArrayLike]:
     """
     :param A: Arrayline, array to split
     :param n_unstable: int, number of unstable roots in the
@@ -218,13 +219,15 @@ def build_u_v_d(eta: ArrayLike, realsmall: float):
     return u_eta, v_eta, d_eta, big_ev
 
 
-def gensys(g0: ArrayLike,
-           g1: ArrayLike,
-           c: ArrayLike,
-           psi: ArrayLike,
-           pi: ArrayLike,
-           div: Optional[float] = None,
-           tol: Optional[float] = 1e-8) -> Tuple:
+def gensys(
+    g0: ArrayLike,
+    g1: ArrayLike,
+    c: ArrayLike,
+    psi: ArrayLike,
+    pi: ArrayLike,
+    div: Optional[float] = None,
+    tol: Optional[float] = 1e-8,
+) -> Tuple:
     """
     Christopher Sim's gensys, http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
 
@@ -291,7 +294,7 @@ def gensys(g0: ArrayLike,
     eu = [0, 0, 0]
 
     n, _ = g1.shape
-    A, B, Q, Z = linalg.qz(g0, g1, 'complex')
+    A, B, Q, Z = linalg.qz(g0, g1, "complex")
     Q = Q.conj().T  # q is transposed relative to matlab, see scipy docs
 
     div, n_unstable, zxz = determine_n_unstable(A, B, div, tol)
@@ -349,24 +352,25 @@ def gensys(g0: ArrayLike,
     if unique:
         eu[1] = 1
 
-    inner_term = (u_eta @ linalg.solve(d_eta, v_eta.conj().T) @
-                  v_eta_1 @ d_eta_1 @ u_eta_1.conj().T)
+    inner_term = (
+        u_eta
+        @ linalg.solve(d_eta, v_eta.conj().T)
+        @ v_eta_1
+        @ d_eta_1
+        @ u_eta_1.conj().T
+    )
 
     T_mat = np.c_[np.eye(n_stable), -inner_term.conj().T]
-    G_0 = np.r_[T_mat @ A,
-                np.c_[np.zeros((n_unstable, n_stable)),
-                      np.eye(n_unstable)]]
+    G_0 = np.r_[T_mat @ A, np.c_[np.zeros((n_unstable, n_stable)), np.eye(n_unstable)]]
 
-    G_1 = np.r_[T_mat @ B,
-                np.zeros((n_unstable, n))]
+    G_1 = np.r_[T_mat @ B, np.zeros((n_unstable, n))]
 
     G_0_inv = linalg.inv(G_0)
     G_1 = G_0_inv @ G_1
 
     idx = slice(n_stable, n)
 
-    C = np.r_[T_mat @ Q @ c,
-              linalg.solve(A[idx, idx] - B[idx, idx], Q2) @ c]
+    C = np.r_[T_mat @ Q @ c, linalg.solve(A[idx, idx] - B[idx, idx], Q2) @ c]
 
     impact = G_0_inv @ np.r_[T_mat @ Q @ psi, np.zeros((n_unstable, psi.shape[1]))]
 
@@ -374,27 +378,32 @@ def gensys(g0: ArrayLike,
     f_wt = -linalg.solve(B[idx, idx], Q2) @ psi
     y_wt = G_0_inv[:, idx]
 
-    loose = G_0_inv @ np.r_[
-        eta_wt_1 @ (np.eye(n_eta) - v_eta @ v_eta.conj().T),
-        np.zeros((n_unstable, n_eta))
-    ]
+    loose = (
+        G_0_inv
+        @ np.r_[
+            eta_wt_1 @ (np.eye(n_eta) - v_eta @ v_eta.conj().T),
+            np.zeros((n_unstable, n_eta)),
+        ]
+    )
 
     G_1 = (Z @ G_1 @ Z.conj().T).real
     C = (Z @ C).real
     impact = (Z @ impact).real
     loose = (Z @ loose).real
-    y_wt = (Z @ y_wt)
+    y_wt = Z @ y_wt
 
     return G_1, C, impact, f_mat, f_wt, y_wt, gev, eu, loose
 
 
 def interpret_gensys_output(eu):
-    message = ''
+    message = ""
     if eu[0] == -2 and eu[1] == -2:
         message = "Coincident zeros.  Indeterminacy and/or nonexistence."
     elif eu[0] == -1:
-        message = f"System is indeterminate. There are {eu[2]} loose endogenous variables."
+        message = (
+            f"System is indeterminate. There are {eu[2]} loose endogenous variables."
+        )
     elif eu[1] == -1:
-        message = f'Solution exists, but it is not unique -- sunspots.'
+        message = f"Solution exists, but it is not unique -- sunspots."
 
     return message

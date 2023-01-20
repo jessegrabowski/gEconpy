@@ -1,7 +1,7 @@
 from abc import ABC
+
 import numpy as np
 import sympy as sp
-
 from scipy.special import expit
 
 
@@ -10,7 +10,6 @@ def softplus(x):
 
 
 class Transformer(ABC):
-
     def constrain(self, x):
         raise NotImplementedError
 
@@ -25,7 +24,6 @@ class Transformer(ABC):
 
 
 class IdentityTransformer(Transformer):
-
     def constrain(self, x):
         return x
 
@@ -40,12 +38,11 @@ class IdentityTransformer(Transformer):
 
 
 class PositiveTransformer(Transformer):
-
     def constrain(self, x):
-        return x ** 2
+        return x**2
 
     def unconstrain(self, x):
-        return x ** 0.5
+        return x**0.5
 
     def jac_det(self, x):
         return 2 * x
@@ -55,7 +52,6 @@ class PositiveTransformer(Transformer):
 
 
 class IntervalTransformer(Transformer):
-
     def __init__(self, low=0, high=1, slope=1):
         self.low = low
         self.high = high
@@ -79,4 +75,3 @@ class IntervalTransformer(Transformer):
 
     def sp_jac_def(self, x):
         return (self.high - self.low) * sp.exp(-x) / (1 + sp.exp(-x)) ** 2
-

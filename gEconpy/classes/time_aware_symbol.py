@@ -1,11 +1,12 @@
+from typing import Union
+
 import sympy as sp
 from sympy.core.cache import cacheit
-from typing import Union
-import re
+
 
 class TimeAwareSymbol(sp.Symbol):
 
-    __slots__ = ('time_index', 'base_name', '__dict__')
+    __slots__ = ("time_index", "base_name", "__dict__")
     time_index: Union[int, str]
     base_name: str
 
@@ -24,18 +25,18 @@ class TimeAwareSymbol(sp.Symbol):
         obj.time_index = time_index
         obj.base_name = name
         obj.name = obj._create_name_from_time_index()
-        obj.safe_name = obj.name.replace('+', 'p').replace('-', 'm')
+        obj.safe_name = obj.name.replace("+", "p").replace("-", "m")
         return obj
 
     def _determine_operator(self):
-        if self.time_index == 'ss':
-            return ''
+        if self.time_index == "ss":
+            return ""
         if self.time_index > 0:
-            operator = '+'
+            operator = "+"
         elif self.time_index < 0:
-            operator = '-'
+            operator = "-"
         else:
-            operator = ''
+            operator = ""
         return operator
 
     def _create_name_from_time_index(self):
@@ -44,12 +45,12 @@ class TimeAwareSymbol(sp.Symbol):
         idx = self.time_index
         idx = idx if isinstance(idx, str) else str(abs(idx))
 
-        if idx == 'ss':
-            time_name = r'%s_%s' % (name, idx)
-        elif idx == '0':
-            time_name = r'%s_t' % name
+        if idx == "ss":
+            time_name = rf"{name}_{idx}"
+        elif idx == "0":
+            time_name = r"%s_t" % name
         else:
-            time_name = r'%s_t%s%s' % (name, operator, idx)
+            time_name = rf"{name}_t{operator}{idx}"
 
         return time_name
 
@@ -57,7 +58,13 @@ class TimeAwareSymbol(sp.Symbol):
         return super()._hashable_content() + (self.time_index,)
 
     def __getnewargs_ex__(self):
-        return ((self.base_name, self.time_index,), self.assumptions0)
+        return (
+            (
+                self.base_name,
+                self.time_index,
+            ),
+            self.assumptions0,
+        )
 
     def step_forward(self):
         obj = TimeAwareSymbol(self.base_name, self.time_index + 1, **self.assumptions0)
@@ -68,7 +75,7 @@ class TimeAwareSymbol(sp.Symbol):
         return obj
 
     def to_ss(self):
-        obj = TimeAwareSymbol(self.base_name, 'ss', **self.assumptions0)
+        obj = TimeAwareSymbol(self.base_name, "ss", **self.assumptions0)
         return obj
 
     def exit_ss(self):

@@ -12,8 +12,6 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import ScalarFormatter
 from scipy import stats
 
-from gEconpy import gEconModel
-
 
 class ScalarFormatterForceFormat(ScalarFormatter):
     """
@@ -413,9 +411,7 @@ def plot_prior_solvability(
     return fig
 
 
-def plot_eigenvalues(
-    model: gEconModel, figsize: Tuple[float, float] = None, dpi: int = None
-):
+def plot_eigenvalues(model: Any, figsize: Tuple[float, float] = None, dpi: int = None):
     """
     Plot the eigenvalues of the model solution, along with a unit circle. Eigenvalues with modulus greater than 1 are
     shown in red, while those with modulus less than 1 are shown in blue. Eigenvalues greater than 10 in modulus

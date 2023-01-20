@@ -1,24 +1,34 @@
-from numba.core import types, cgutils
-from numba.extending import overload
-from numba.np.linalg import ensure_lapack, _check_finite_matrix, _copy_to_fortran_order, \
-    _handle_err_maybe_convergence_problem
-
-import scipy
 import numpy as np
+import scipy
+from numba.core import types
+from numba.extending import overload
+from numba.np.linalg import (
+    _check_finite_matrix,
+    _copy_to_fortran_order,
+    _handle_err_maybe_convergence_problem,
+    ensure_lapack,
+)
 from scipy import linalg
 
-from gEconpy.numba_linalg.utilities import _check_scipy_linalg_matrix, _get_underlying_float, _ouc, _iuc, _lhp, _rhp, \
-    direct_lyapunov_solution
-from gEconpy.numba_linalg.intrinsics import val_to_int_ptr, int_ptr_to_val
+from gEconpy.numba_linalg.intrinsics import int_ptr_to_val, val_to_int_ptr
 from gEconpy.numba_linalg.LAPACK import _LAPACK
+from gEconpy.numba_linalg.utilities import (
+    _check_scipy_linalg_matrix,
+    _get_underlying_float,
+    _iuc,
+    _lhp,
+    _ouc,
+    _rhp,
+    direct_lyapunov_solution,
+)
 
 
 @overload(scipy.linalg.solve_triangular)
 def solve_triangular_impl(A, B, trans=0, lower=False, unit_diagonal=False):
     ensure_lapack()
 
-    _check_scipy_linalg_matrix(A, 'solve_triangular')
-    _check_scipy_linalg_matrix(B, 'solve_triangular')
+    _check_scipy_linalg_matrix(A, "solve_triangular")
+    _check_scipy_linalg_matrix(B, "solve_triangular")
 
     dtype = A.dtype
     w_type = _get_underlying_float(dtype)
@@ -45,22 +55,33 @@ def solve_triangular_impl(A, B, trans=0, lower=False, unit_diagonal=False):
         if trans not in [0, 1, 2]:
             raise ValueError('Parameter "trans" should be one of N, C, T or 0, 1, 2')
         if trans == 0:
-            transval = ord('N')
+            transval = ord("N")
         elif trans == 1:
-            transval = ord('T')
+            transval = ord("T")
         else:
-            transval = ord('C')
+            transval = ord("C")
 
-        UPLO = val_to_int_ptr(ord('L') if lower else ord('U'))
+        UPLO = val_to_int_ptr(ord("L") if lower else ord("U"))
         TRANS = val_to_int_ptr(transval)
-        DIAG = val_to_int_ptr(ord('U') if unit_diagonal else ord('N'))
+        DIAG = val_to_int_ptr(ord("U") if unit_diagonal else ord("N"))
         N = val_to_int_ptr(_N)
         NRHS = val_to_int_ptr(B.shape[1])
         LDA = val_to_int_ptr(_N)
         LDB = val_to_int_ptr(_N)
         INFO = val_to_int_ptr(0)
 
-        numba_trtrs(UPLO, TRANS, DIAG, N, NRHS, A_copy.view(w_type).ctypes, LDA, B_copy.view(w_type).ctypes, LDB, INFO)
+        numba_trtrs(
+            UPLO,
+            TRANS,
+            DIAG,
+            N,
+            NRHS,
+            A_copy.view(w_type).ctypes,
+            LDA,
+            B_copy.view(w_type).ctypes,
+            LDB,
+            INFO,
+        )
 
         return B_copy
 
@@ -91,8 +112,8 @@ def schur_impl(A, output):
         _check_finite_matrix(A)
         A_copy = _copy_to_fortran_order(A)
 
-        JOBVS = val_to_int_ptr(ord('V'))
-        SORT = val_to_int_ptr(ord('N'))
+        JOBVS = val_to_int_ptr(ord("V"))
+        SORT = val_to_int_ptr(ord("N"))
         SELECT = val_to_int_ptr(0.0)
 
         N = val_to_int_ptr(_N)
@@ -109,15 +130,45 @@ def schur_impl(A, output):
         INFO = val_to_int_ptr(1)
 
         # workspace query
-        numba_rgees(JOBVS, SORT, SELECT, N, A_copy.ctypes, LDA, SDIM, WR.ctypes, WI.ctypes, VS.ctypes, LDVS,
-                    WORK.ctypes, LWORK, BWORK, INFO)
+        numba_rgees(
+            JOBVS,
+            SORT,
+            SELECT,
+            N,
+            A_copy.ctypes,
+            LDA,
+            SDIM,
+            WR.ctypes,
+            WI.ctypes,
+            VS.ctypes,
+            LDVS,
+            WORK.ctypes,
+            LWORK,
+            BWORK,
+            INFO,
+        )
         WS_SIZE = np.int32(WORK[0].real)
         LWORK = val_to_int_ptr(WS_SIZE)
         WORK = np.empty(WS_SIZE, dtype=dtype)
 
         # Actual work
-        numba_rgees(JOBVS, SORT, SELECT, N, A_copy.ctypes, LDA, SDIM, WR.ctypes, WI.ctypes, VS.ctypes, LDVS,
-                    WORK.ctypes, LWORK, BWORK, INFO)
+        numba_rgees(
+            JOBVS,
+            SORT,
+            SELECT,
+            N,
+            A_copy.ctypes,
+            LDA,
+            SDIM,
+            WR.ctypes,
+            WI.ctypes,
+            VS.ctypes,
+            LDVS,
+            WORK.ctypes,
+            LWORK,
+            BWORK,
+            INFO,
+        )
 
         # if np.any(WI) and output == 'complex':
         #     raise ValueError("schur() argument must not cause a domain change.")
@@ -138,8 +189,8 @@ def schur_impl(A, output):
         _check_finite_matrix(A)
         A_copy = _copy_to_fortran_order(A)
 
-        JOBVS = val_to_int_ptr(ord('V'))
-        SORT = val_to_int_ptr(ord('N'))
+        JOBVS = val_to_int_ptr(ord("V"))
+        SORT = val_to_int_ptr(ord("N"))
         SELECT = val_to_int_ptr(0.0)
 
         N = val_to_int_ptr(_N)
@@ -156,16 +207,46 @@ def schur_impl(A, output):
         INFO = val_to_int_ptr(1)
 
         # workspace query
-        numba_cgees(JOBVS, SORT, SELECT, N, A_copy.view(w_type).ctypes, LDA, SDIM, W.view(w_type).ctypes,
-                    VS.view(w_type).ctypes, LDVS, WORK.view(w_type).ctypes, LWORK, RWORK.ctypes, BWORK, INFO)
+        numba_cgees(
+            JOBVS,
+            SORT,
+            SELECT,
+            N,
+            A_copy.view(w_type).ctypes,
+            LDA,
+            SDIM,
+            W.view(w_type).ctypes,
+            VS.view(w_type).ctypes,
+            LDVS,
+            WORK.view(w_type).ctypes,
+            LWORK,
+            RWORK.ctypes,
+            BWORK,
+            INFO,
+        )
 
         WS_SIZE = np.int32(WORK[0].real)
         LWORK = val_to_int_ptr(WS_SIZE)
         WORK = np.empty(WS_SIZE, dtype=dtype)
 
         # Actual work
-        numba_cgees(JOBVS, SORT, SELECT, N, A_copy.view(w_type).ctypes, LDA, SDIM, W.view(w_type).ctypes,
-                    VS.view(w_type).ctypes, LDVS, WORK.view(w_type).ctypes, LWORK, RWORK.ctypes, BWORK, INFO)
+        numba_cgees(
+            JOBVS,
+            SORT,
+            SELECT,
+            N,
+            A_copy.view(w_type).ctypes,
+            LDA,
+            SDIM,
+            W.view(w_type).ctypes,
+            VS.view(w_type).ctypes,
+            LDVS,
+            WORK.view(w_type).ctypes,
+            LWORK,
+            RWORK.ctypes,
+            BWORK,
+            INFO,
+        )
 
         _handle_err_maybe_convergence_problem(int_ptr_to_val(INFO))
 
@@ -179,7 +260,6 @@ def schur_impl(A, output):
 
 def full_return_qz(A, B, output):
     pass
-
 
 
 @overload(full_return_qz)
@@ -212,9 +292,9 @@ def full_return_qz_impl(A, B, output):
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
 
-        JOBVSL = val_to_int_ptr(ord('V'))
-        JOBVSR = val_to_int_ptr(ord('V'))
-        SORT = val_to_int_ptr(ord('N'))
+        JOBVSL = val_to_int_ptr(ord("V"))
+        JOBVSR = val_to_int_ptr(ord("V"))
+        SORT = val_to_int_ptr(ord("N"))
         SELCTG = val_to_int_ptr(1)
 
         N = val_to_int_ptr(_N)
@@ -239,18 +319,58 @@ def full_return_qz_impl(A, B, output):
         INFO = val_to_int_ptr(1)
 
         # workspace query
-        numba_rgges(JOBVSL, JOBVSR, SORT, SELCTG, N, A_copy.ctypes, LDA, B_copy.ctypes, LDB,
-                    SDIM, ALPHAR.ctypes, ALPHAI.ctypes, BETA.ctypes, VSL.ctypes, LDVSL,
-                    VSR.ctypes, LDVSR, WORK.ctypes, LWORK, BWORK, INFO)
+        numba_rgges(
+            JOBVSL,
+            JOBVSR,
+            SORT,
+            SELCTG,
+            N,
+            A_copy.ctypes,
+            LDA,
+            B_copy.ctypes,
+            LDB,
+            SDIM,
+            ALPHAR.ctypes,
+            ALPHAI.ctypes,
+            BETA.ctypes,
+            VSL.ctypes,
+            LDVSL,
+            VSR.ctypes,
+            LDVSR,
+            WORK.ctypes,
+            LWORK,
+            BWORK,
+            INFO,
+        )
 
         WS_SIZE = np.int32(WORK[0].real)
         LWORK = val_to_int_ptr(WS_SIZE)
         WORK = np.empty(WS_SIZE, dtype=dtype)
 
         # Actual work
-        numba_rgges(JOBVSL, JOBVSR, SORT, SELCTG, N, A_copy.ctypes, LDA, B_copy.ctypes, LDB,
-                    SDIM, ALPHAR.ctypes, ALPHAI.ctypes, BETA.ctypes, VSL.ctypes, LDVSL,
-                    VSR.ctypes, LDVSR, WORK.ctypes, LWORK, BWORK, INFO)
+        numba_rgges(
+            JOBVSL,
+            JOBVSR,
+            SORT,
+            SELCTG,
+            N,
+            A_copy.ctypes,
+            LDA,
+            B_copy.ctypes,
+            LDB,
+            SDIM,
+            ALPHAR.ctypes,
+            ALPHAI.ctypes,
+            BETA.ctypes,
+            VSL.ctypes,
+            LDVSL,
+            VSR.ctypes,
+            LDVSR,
+            WORK.ctypes,
+            LWORK,
+            BWORK,
+            INFO,
+        )
 
         _handle_err_maybe_convergence_problem(int_ptr_to_val(INFO))
         ALPHA = ALPHAR + ALPHAI * 1j
@@ -275,9 +395,9 @@ def full_return_qz_impl(A, B, output):
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
 
-        JOBVSL = val_to_int_ptr(ord('V'))
-        JOBVSR = val_to_int_ptr(ord('V'))
-        SORT = val_to_int_ptr(ord('N'))
+        JOBVSL = val_to_int_ptr(ord("V"))
+        JOBVSR = val_to_int_ptr(ord("V"))
+        SORT = val_to_int_ptr(ord("N"))
         SELCTG = val_to_int_ptr(1)
 
         N = val_to_int_ptr(_N)
@@ -299,18 +419,58 @@ def full_return_qz_impl(A, B, output):
         INFO = val_to_int_ptr(1)
 
         # workspace query
-        numba_cgges(JOBVSL, JOBVSR, SORT, SELCTG, N, A_copy.view(w_type).ctypes, LDA, B_copy.view(w_type).ctypes, LDB,
-                    SDIM, ALPHA.view(w_type).ctypes, BETA.view(w_type).ctypes, VSL.view(w_type).ctypes,
-                    LDVSL, VSR.view(w_type).ctypes, LDVSR, WORK.view(w_type).ctypes, LWORK, RWORK.ctypes, BWORK, INFO)
+        numba_cgges(
+            JOBVSL,
+            JOBVSR,
+            SORT,
+            SELCTG,
+            N,
+            A_copy.view(w_type).ctypes,
+            LDA,
+            B_copy.view(w_type).ctypes,
+            LDB,
+            SDIM,
+            ALPHA.view(w_type).ctypes,
+            BETA.view(w_type).ctypes,
+            VSL.view(w_type).ctypes,
+            LDVSL,
+            VSR.view(w_type).ctypes,
+            LDVSR,
+            WORK.view(w_type).ctypes,
+            LWORK,
+            RWORK.ctypes,
+            BWORK,
+            INFO,
+        )
 
         WS_SIZE = np.int32(WORK[0].real)
         LWORK = val_to_int_ptr(WS_SIZE)
         WORK = np.empty(WS_SIZE, dtype=dtype)
 
         # Actual work
-        numba_cgges(JOBVSL, JOBVSR, SORT, SELCTG, N, A_copy.view(w_type).ctypes, LDA, B_copy.view(w_type).ctypes, LDB,
-                    SDIM, ALPHA.view(w_type).ctypes, BETA.view(w_type).ctypes, VSL.view(w_type).ctypes,
-                    LDVSL, VSR.view(w_type).ctypes, LDVSR, WORK.view(w_type).ctypes, LWORK, RWORK.ctypes, BWORK, INFO)
+        numba_cgges(
+            JOBVSL,
+            JOBVSR,
+            SORT,
+            SELCTG,
+            N,
+            A_copy.view(w_type).ctypes,
+            LDA,
+            B_copy.view(w_type).ctypes,
+            LDB,
+            SDIM,
+            ALPHA.view(w_type).ctypes,
+            BETA.view(w_type).ctypes,
+            VSL.view(w_type).ctypes,
+            LDVSL,
+            VSR.view(w_type).ctypes,
+            LDVSR,
+            WORK.view(w_type).ctypes,
+            LWORK,
+            RWORK.ctypes,
+            BWORK,
+            INFO,
+        )
 
         _handle_err_maybe_convergence_problem(int_ptr_to_val(INFO))
 
@@ -370,21 +530,23 @@ def ordqz_impl(A, B, sort, output):
         _check_finite_matrix(A)
         _check_finite_matrix(B)
 
-        if sort not in ['lhp', 'rhp', 'iuc', 'ouc']:
-            raise ValueError('Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"')
+        if sort not in ["lhp", "rhp", "iuc", "ouc"]:
+            raise ValueError(
+                'Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"'
+            )
 
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
 
         AA, BB, ALPHA, BETA, Q, Z = full_return_qz(A_copy, B_copy, output)
 
-        if sort == 'lhp':
+        if sort == "lhp":
             SELECT = _lhp(ALPHA, BETA)
-        elif sort == 'rhp':
+        elif sort == "rhp":
             SELECT = _rhp(ALPHA, BETA)
-        elif sort == 'iuc':
+        elif sort == "iuc":
             SELECT = _iuc(ALPHA, BETA)
-        elif sort == 'ouc':
+        elif sort == "ouc":
             SELECT = _ouc(ALPHA, BETA)
 
         IJOB = val_to_int_ptr(0)
@@ -410,9 +572,33 @@ def ordqz_impl(A, B, sort, output):
         INFO = val_to_int_ptr(1)
 
         # workspace query
-        numba_rtgsen(IJOB, WANTQ, WANTZ, SELECT.ctypes, N, AA.ctypes, LDA, BB.ctypes, LDB, ALPHAR.ctypes,
-                     ALPHAI.ctypes, BETA.ctypes, Q.ctypes, LDQ, Z.ctypes, LDZ, M, PL.ctypes,
-                     PR.ctypes, DIF.ctypes, WORK.ctypes, LWORK, IWORK.ctypes, LIWORK, INFO)
+        numba_rtgsen(
+            IJOB,
+            WANTQ,
+            WANTZ,
+            SELECT.ctypes,
+            N,
+            AA.ctypes,
+            LDA,
+            BB.ctypes,
+            LDB,
+            ALPHAR.ctypes,
+            ALPHAI.ctypes,
+            BETA.ctypes,
+            Q.ctypes,
+            LDQ,
+            Z.ctypes,
+            LDZ,
+            M,
+            PL.ctypes,
+            PR.ctypes,
+            DIF.ctypes,
+            WORK.ctypes,
+            LWORK,
+            IWORK.ctypes,
+            LIWORK,
+            INFO,
+        )
 
         WS_SIZE = np.int32(WORK[0].real)
         IW_SIZE = np.int32(IWORK[0].real)
@@ -421,9 +607,33 @@ def ordqz_impl(A, B, sort, output):
         WORK = np.empty(WS_SIZE, dtype=dtype)
         IWORK = np.empty(IW_SIZE, dtype=np.int32)
 
-        numba_rtgsen(IJOB, WANTQ, WANTZ, SELECT.ctypes, N, AA.ctypes, LDA, BB.ctypes, LDB, ALPHAR.ctypes,
-                     ALPHAI.ctypes, BETA.ctypes, Q.ctypes, LDQ, Z.ctypes, LDZ, M, PL.ctypes,
-                     PR.ctypes, DIF.ctypes, WORK.ctypes, LWORK, IWORK.ctypes, LIWORK, INFO)
+        numba_rtgsen(
+            IJOB,
+            WANTQ,
+            WANTZ,
+            SELECT.ctypes,
+            N,
+            AA.ctypes,
+            LDA,
+            BB.ctypes,
+            LDB,
+            ALPHAR.ctypes,
+            ALPHAI.ctypes,
+            BETA.ctypes,
+            Q.ctypes,
+            LDQ,
+            Z.ctypes,
+            LDZ,
+            M,
+            PL.ctypes,
+            PR.ctypes,
+            DIF.ctypes,
+            WORK.ctypes,
+            LWORK,
+            IWORK.ctypes,
+            LIWORK,
+            INFO,
+        )
 
         # if np.any(ALPHAI) and output == 'complex':
         #     raise ValueError("ordqz() argument must not cause a domain change.")
@@ -441,21 +651,23 @@ def ordqz_impl(A, B, sort, output):
         _check_finite_matrix(A)
         _check_finite_matrix(B)
 
-        if sort not in ['lhp', 'rhp', 'iuc', 'ouc']:
-            raise ValueError('Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"')
+        if sort not in ["lhp", "rhp", "iuc", "ouc"]:
+            raise ValueError(
+                'Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"'
+            )
 
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
 
         AA, BB, ALPHA, BETA, Q, Z = full_return_qz(A_copy, B_copy, output)
 
-        if sort == 'lhp':
+        if sort == "lhp":
             SELECT = _lhp(ALPHA, BETA)
-        elif sort == 'rhp':
+        elif sort == "rhp":
             SELECT = _rhp(ALPHA, BETA)
-        elif sort == 'iuc':
+        elif sort == "iuc":
             SELECT = _iuc(ALPHA, BETA)
-        elif sort == 'ouc':
+        elif sort == "ouc":
             SELECT = _ouc(ALPHA, BETA)
 
         IJOB = val_to_int_ptr(0)
@@ -478,10 +690,32 @@ def ordqz_impl(A, B, sort, output):
         INFO = val_to_int_ptr(1)
 
         # workspace query
-        numba_ctgsen(IJOB, WANTQ, WANTZ, SELECT.ctypes, N, AA.view(w_type).ctypes, LDA, BB.view(w_type).ctypes, LDB,
-                     ALPHA.view(w_type).ctypes, BETA.view(w_type).ctypes, Q.view(w_type).ctypes, LDQ,
-                     Z.view(w_type).ctypes, LDZ, M, PL.ctypes, PR.ctypes, DIF.ctypes,
-                     WORK.view(w_type).ctypes, LWORK, IWORK.ctypes, LIWORK, INFO)
+        numba_ctgsen(
+            IJOB,
+            WANTQ,
+            WANTZ,
+            SELECT.ctypes,
+            N,
+            AA.view(w_type).ctypes,
+            LDA,
+            BB.view(w_type).ctypes,
+            LDB,
+            ALPHA.view(w_type).ctypes,
+            BETA.view(w_type).ctypes,
+            Q.view(w_type).ctypes,
+            LDQ,
+            Z.view(w_type).ctypes,
+            LDZ,
+            M,
+            PL.ctypes,
+            PR.ctypes,
+            DIF.ctypes,
+            WORK.view(w_type).ctypes,
+            LWORK,
+            IWORK.ctypes,
+            LIWORK,
+            INFO,
+        )
 
         WS_SIZE = np.int32(WORK[0].real)
         IW_SIZE = np.int32(IWORK[0].real)
@@ -490,10 +724,32 @@ def ordqz_impl(A, B, sort, output):
         WORK = np.empty(WS_SIZE, dtype=dtype)
         IWORK = np.empty(IW_SIZE, dtype=np.int32)
 
-        numba_ctgsen(IJOB, WANTQ, WANTZ, SELECT.ctypes, N, AA.view(w_type).ctypes, LDA, BB.view(w_type).ctypes,
-                     LDB, ALPHA.view(w_type).ctypes, BETA.view(w_type).ctypes, Q.view(w_type).ctypes, LDQ,
-                     Z.view(w_type).ctypes, LDZ, M, PL.ctypes, PR.ctypes, DIF.ctypes, WORK.view(w_type).ctypes,
-                     LWORK, IWORK.ctypes, LIWORK, INFO)
+        numba_ctgsen(
+            IJOB,
+            WANTQ,
+            WANTZ,
+            SELECT.ctypes,
+            N,
+            AA.view(w_type).ctypes,
+            LDA,
+            BB.view(w_type).ctypes,
+            LDB,
+            ALPHA.view(w_type).ctypes,
+            BETA.view(w_type).ctypes,
+            Q.view(w_type).ctypes,
+            LDQ,
+            Z.view(w_type).ctypes,
+            LDZ,
+            M,
+            PL.ctypes,
+            PR.ctypes,
+            DIF.ctypes,
+            WORK.view(w_type).ctypes,
+            LWORK,
+            IWORK.ctypes,
+            LIWORK,
+            INFO,
+        )
 
         _handle_err_maybe_convergence_problem(int_ptr_to_val(INFO))
 
@@ -522,7 +778,7 @@ def solve_continuous_lyapunov_impl(A, Q):
         _NQ = np.int32(Q.shape[-1])
 
         if _N != _NQ:
-            raise linalg.LinAlgError('Matrices A and Q must have the same shape')
+            raise linalg.LinAlgError("Matrices A and Q must have the same shape")
 
         if _M != _N:
             raise linalg.LinAlgError("Last 2 dimensions of A must be square")
@@ -532,9 +788,9 @@ def solve_continuous_lyapunov_impl(A, Q):
         _check_finite_matrix(A)
         _check_finite_matrix(Q)
 
-        is_complex = (np.iscomplexobj(A) | np.iscomplexobj(Q))
-        dtype_letter = 'C' if is_complex else 'T'
-        output = 'complex' if is_complex else 'real'
+        is_complex = np.iscomplexobj(A) | np.iscomplexobj(Q)
+        dtype_letter = "C" if is_complex else "T"
+        output = "complex" if is_complex else "real"
 
         A_copy = _copy_to_fortran_order(A)
         Q_copy = _copy_to_fortran_order(Q)
@@ -544,7 +800,7 @@ def solve_continuous_lyapunov_impl(A, Q):
         # Construct f = u'*q*u
         F = U.conj().T.dot(Q_copy.dot(U))
 
-        TRANA = val_to_int_ptr(ord('N'))
+        TRANA = val_to_int_ptr(ord("N"))
         TRANB = val_to_int_ptr(ord(dtype_letter))
         ISGN = val_to_int_ptr(1)
 
@@ -562,11 +818,21 @@ def solve_continuous_lyapunov_impl(A, Q):
         SCALE = np.array(1.0, dtype=w_type)
         INFO = val_to_int_ptr(1)
 
-        numba_xtrsyl(TRANA, TRANB, ISGN, M, N,
-                     AA.view(w_type).ctypes, LDA,
-                     B.view(w_type).ctypes, LDB,
-                     C.view(w_type).ctypes, LDC,
-                     SCALE.ctypes, INFO)
+        numba_xtrsyl(
+            TRANA,
+            TRANB,
+            ISGN,
+            M,
+            N,
+            AA.view(w_type).ctypes,
+            LDA,
+            B.view(w_type).ctypes,
+            LDB,
+            C.view(w_type).ctypes,
+            LDC,
+            SCALE.ctypes,
+            INFO,
+        )
 
         C *= SCALE
         _handle_err_maybe_convergence_problem(int_ptr_to_val(INFO))
@@ -578,7 +844,7 @@ def solve_continuous_lyapunov_impl(A, Q):
 
 
 @overload(scipy.linalg.solve_discrete_lyapunov)
-def solve_discrete_lyapunov_impl(A, Q, method='auto'):
+def solve_discrete_lyapunov_impl(A, Q, method="auto"):
     ensure_lapack()
 
     _check_scipy_linalg_matrix(A, "solve_continuous_lyapunov")
@@ -587,19 +853,19 @@ def solve_discrete_lyapunov_impl(A, Q, method='auto'):
     dtype = A.dtype
     w_type = _get_underlying_float(dtype)
 
-    def impl(A, Q, method='auto'):
+    def impl(A, Q, method="auto"):
         _M, _N = np.int32(A.shape)
 
-        if method == 'auto':
+        if method == "auto":
             if _M < 10:
-                method = 'direct'
+                method = "direct"
             else:
-                method = 'bilinear'
+                method = "bilinear"
 
-        if method == 'direct':
+        if method == "direct":
             X = direct_lyapunov_solution(A, Q)
 
-        if method == 'bilinear':
+        if method == "bilinear":
             eye = np.eye(_M)
             AH = A.conj().transpose()
             AHI_inv = np.linalg.inv(AH + eye)

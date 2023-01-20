@@ -1,15 +1,19 @@
 import unittest
-from gEconpy.classes.model import gEconModel
-from gEconpy.estimation.estimation_utilities import extract_sparse_data_from_model, build_system_matrices, \
-    check_bk_condition
-from gEconpy.estimation.kalman_filter import kalman_filter, univariate_kalman_filter
+
 import numpy as np
+
+from gEconpy.classes.model import gEconModel
+from gEconpy.estimation.estimation_utilities import (
+    build_system_matrices,
+    check_bk_condition,
+    extract_sparse_data_from_model,
+)
+from gEconpy.estimation.kalman_filter import kalman_filter, univariate_kalman_filter
 
 
 class BasicFunctionalityTests(unittest.TestCase):
-
     def setUp(self):
-        file_path = 'Test GCNs/One_Block_Simple_1_w_Steady_State.gcn'
+        file_path = "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
         self.model = gEconModel(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
@@ -17,12 +21,18 @@ class BasicFunctionalityTests(unittest.TestCase):
     def test_extract_system_matrics(self):
         param_dict = self.model.free_param_dict
 
-        sparse_data = extract_sparse_data_from_model(self.model, vars_to_estimate=['theta'])
-        A, B, C, D = build_system_matrices(param_dict, sparse_data, vars_to_estimate=['theta'])
+        sparse_data = extract_sparse_data_from_model(
+            self.model, vars_to_estimate=["theta"]
+        )
+        A, B, C, D = build_system_matrices(
+            param_dict, sparse_data, vars_to_estimate=["theta"]
+        )
 
-        system = self.model.build_perturbation_matrices(**self.model.free_param_dict,
-                                                        **self.model.steady_state_dict,
-                                                        **self.model.calib_param_dict)
+        system = self.model.build_perturbation_matrices(
+            **self.model.free_param_dict,
+            **self.model.steady_state_dict,
+            **self.model.calib_param_dict
+        )
 
         self.assertTrue(np.allclose(A, system[0]))
         self.assertTrue(np.allclose(B, system[1]))
@@ -33,14 +43,25 @@ class BasicFunctionalityTests(unittest.TestCase):
 
 
 class KalmanFilterTest(unittest.TestCase):
-
     def test_likelihood(self):
         # Test against an AR(1) model with rho=0.8
         # Expected value comes from statsmodels
 
-        expected = np.array([-1.42976416, -1.41893853, -1.63893853, -1.89893853, -2.19893853,
-                             -2.53893853, -2.91893853, -3.33893853, -3.79893853, -4.29893853])
-        data = np.arange(10, dtype='float64')[:, None]
+        expected = np.array(
+            [
+                -1.42976416,
+                -1.41893853,
+                -1.63893853,
+                -1.89893853,
+                -2.19893853,
+                -2.53893853,
+                -2.91893853,
+                -3.33893853,
+                -3.79893853,
+                -4.29893853,
+            ]
+        )
+        data = np.arange(10, dtype="float64")[:, None]
 
         a0 = np.array([[0.0]])
         P0 = np.array([[1000000.0]])
@@ -60,10 +81,22 @@ class KalmanFilterTest(unittest.TestCase):
         # Test against an AR(1) model with rho=0.8
         # Expected value comes from statsmodels
 
-        expected = np.array([-1.42976416, -1.41893853, -1.63893853, -1.89893853, -2.19893853,
-                             0.,          -4.77409153, -3.33893853, -3.79893853, -4.29893853])
+        expected = np.array(
+            [
+                -1.42976416,
+                -1.41893853,
+                -1.63893853,
+                -1.89893853,
+                -2.19893853,
+                0.0,
+                -4.77409153,
+                -3.33893853,
+                -3.79893853,
+                -4.29893853,
+            ]
+        )
 
-        data = np.arange(10, dtype='float64')[:, None]
+        data = np.arange(10, dtype="float64")[:, None]
         data[5] = np.nan
 
         a0 = np.array([[0.0]])
@@ -82,14 +115,25 @@ class KalmanFilterTest(unittest.TestCase):
 
 
 class UnivariateKalmanFilterTest(unittest.TestCase):
-
     def test_likelihood(self):
         # Test against an AR(1) model with rho=0.8
         # Expected value comes from statsmodels
 
-        expected = np.array([-1.42976416, -1.41893853, -1.63893853, -1.89893853, -2.19893853,
-                             -2.53893853, -2.91893853, -3.33893853, -3.79893853, -4.29893853])
-        data = np.arange(10, dtype='float64')[:, None]
+        expected = np.array(
+            [
+                -1.42976416,
+                -1.41893853,
+                -1.63893853,
+                -1.89893853,
+                -2.19893853,
+                -2.53893853,
+                -2.91893853,
+                -3.33893853,
+                -3.79893853,
+                -4.29893853,
+            ]
+        )
+        data = np.arange(10, dtype="float64")[:, None]
 
         a0 = np.array([[0.0]])
         P0 = np.array([[1000000.0]])
@@ -109,10 +153,22 @@ class UnivariateKalmanFilterTest(unittest.TestCase):
         # Test against an AR(1) model with rho=0.8
         # Expected value comes from statsmodels
 
-        expected = np.array([-1.42976416, -1.41893853, -1.63893853, -1.89893853, -2.19893853,
-                             0.,          -4.77409153, -3.33893853, -3.79893853, -4.29893853])
+        expected = np.array(
+            [
+                -1.42976416,
+                -1.41893853,
+                -1.63893853,
+                -1.89893853,
+                -2.19893853,
+                0.0,
+                -4.77409153,
+                -3.33893853,
+                -3.79893853,
+                -4.29893853,
+            ]
+        )
 
-        data = np.arange(10, dtype='float64')[:, None]
+        data = np.arange(10, dtype="float64")[:, None]
         data[5] = np.nan
 
         a0 = np.array([[0.0]])
@@ -129,19 +185,23 @@ class UnivariateKalmanFilterTest(unittest.TestCase):
         # initialization.
         self.assertTrue(np.allclose(expected[1:], ll_obs[1:]))
 
+
 class TestModelEstimation(unittest.TestCase):
     def setUp(self):
-        file_path = 'Test GCNs/One_Block_Simple_1_w_Steady_State.gcn'
+        file_path = "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
         self.model = gEconModel(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 
-        self.data = self.model.simulate(simulation_length=100, n_simulations=1).xs(axis=1, level=1, key=0).T
-
+        self.data = (
+            self.model.simulate(simulation_length=100, n_simulations=1)
+            .xs(axis=1, level=1, key=0)
+            .T
+        )
 
     def filter_random_sample(self):
         pass
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,6 @@
 from typing import Callable, Dict, List, Optional, Tuple
 
+import numba as nb  # pylint: disable=unused-import
 import numpy as np
 import sympy as sp
 from numba import njit
