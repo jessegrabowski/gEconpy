@@ -1,5 +1,6 @@
 import numpy as np
 from numba import njit
+
 # from gEconpy.numba_linalg.overloads import *
 
 
@@ -26,7 +27,7 @@ def kalman_smoother(T, R, Q, filtered_states, filtered_covariances):
     smoothed_states[-1] = a_smooth
     smoothed_covariances[-1] = P_smooth
 
-    for t in range(n_steps-1, -1, -1):
+    for t in range(n_steps - 1, -1, -1):
         a = filtered_states[t]
         P = filtered_covariances[t]
         a_smooth, P_smooth = smoother_step(a, P, a_smooth, P_smooth, T, R, Q)
@@ -35,6 +36,7 @@ def kalman_smoother(T, R, Q, filtered_states, filtered_covariances):
         smoothed_covariances[t] = P_smooth
 
     return smoothed_states, smoothed_covariances
+
 
 @njit
 def smoother_step(a, P, a_smooth, P_smooth, T, R, Q):

@@ -1,24 +1,95 @@
-from gEconpy.classes.transformers import IdentityTransformer, PositiveTransformer
+from typing import Callable, Dict, Optional
+
 import numpy as np
+import pandas as pd
 from statsmodels.tsa.statespace.kalman_filter import INVERT_UNIVARIATE, SOLVE_LU
-from statsmodels.tsa.statespace.mlemodel import _handle_args, MLEModel
+from statsmodels.tsa.statespace.mlemodel import MLEModel, _handle_args
+
+from gEconpy.classes.transformers import IdentityTransformer, PositiveTransformer
 
 
 def compile_to_statsmodels(model):
+    """
+    Compile a gEconModel object into a Statsmodels MLEModel object.
+
+    Statsmodels includes a full suite of tools for solving and fitting linear state space
+    models via Maximum Likelihood. This function takes a solved gEconpy model object
+    and uses it to implement a `statsmodels.tsa.statespace` state space model.
+
+    Parameters
+    ----------
+    model : gEconModel
+        A gEconModel object to be compiled into a Statsmodels MLEModel object.
+
+    Returns
+    -------
+    MLEModel
+        A Statsmodels MLEModel object compiled from the gEconModel object.
+
+    """
+
     class DSGEModel(MLEModel):
+        def __init__(
+            self,
+            data: pd.DataFrame,
+            initialization: str,
+            param_start_dict: Dict[str, float],
+            shock_start_dict: Dict[str, float],
+            noise_start_dict: Optional[Dict[str, float]] = None,
+            param_transforms: Optional[Dict[str, Callable]] = None,
+            shock_transforms: Optional[Dict[str, Callable]] = None,
+            noise_transforms: Optional[Dict[str, Callable]] = None,
+            x0: Optional[np.ndarray] = None,
+            P0: Optional[np.ndarray] = None,
+            fit_MAP: bool = False,
+            **kwargs,
+        ):
+            """
+            Create a DSGEModel object for maximum-likelihood estimation, subclassed from
+            `statsmodels.tsa.statespace.MLEModel`.
 
-        def __init__(self, data, initialization,
-                     param_start_dict,
-                     shock_start_dict,
-                     noise_start_dict=None,
-                     param_transforms=None,
-                     shock_transforms=None,
-                     noise_transforms=None,
-                     x0=None,
-                     P0=None,
-                     fit_MAP=False,
-                     **kwargs):
-
+            Parameters
+            ----------
+            model: A DSGE model object
+                The model object to be used to create the DSGEModel
+            data: pd.DataFrame
+                A pandas DataFrame containing the data to be used for estimation
+            initialization: string
+                The type of Kalman filter initialization to use.  One of 'approximate_diffuse',
+                'stationary', 'known', 'fixed', 'diffuse' or 'none'
+            param_start_dict: dict
+                A dictionary of parameter starting values, where keys are parameter names
+                and values are floats. Parameters not included this dictionary will not be
+                estimated when `.fit()`. is called.
+            shock_start_dict: dict
+                A dictionary of shock variance starting values, where keys are shock names and values
+                are floats. All shocks not include in this dictionary will be dropped from the model
+                when `.fit()` is called.
+            noise_start_dict: dict, optional
+                A dictionary of observation noise starting values, where keys are observed state names
+                and values are floats. Default is zero for all observed variables.
+            param_transforms: dict, optional
+                A dictionary of functions to transform parameters before they are passed to the likelihood
+                function.  Keys are parameter names, values are functions. Default is the identity
+                function for all parameters.
+            shock_transforms: dict, optional
+                A dictionary of functions to transform shock variance terms before they are passed to
+                the likelihood function.  Keys are shock names, values are functions. Default is
+                the square function for all variances.
+            noise_transforms: dict, optional
+                A dictionary of functions to transform observation noise variances before they are
+                 passed to the likelihood function.  Keys are noise state names, values are
+                  functions. Default is the square function for all variannces.
+            x0: array_like, optional
+                A 1-d array of starting values for the state vector
+            P0: array_like, optional
+                A 2-d array of starting values for the state covariance matrix
+            fit_MAP: bool, optional
+                If True, fit the model in maximum a posteriori (MAP) sense rather than maximum
+                likelihood sense.  Defaults to False.
+            kwargs:
+                Additional arguments to pass to the MLEModel constructor
+            """
             k_states = model.n_variables
             k_observed = data.shape[1]
             k_posdef = model.n_shocks
@@ -37,7 +108,9 @@ def compile_to_statsmodels(model):
             noise_priors = self.model.observation_noise_priors.copy()
 
             self.prior_dict = param_priors.copy()
-            self.prior_dict.update({k:d.rv_params['scale'] for k, d in shock_priors.items()})
+            self.prior_dict.update(
+                {k: d.rv_params["scale"] for k, d in shock_priors.items()}
+            )
             self.prior_dict.update(noise_priors)
 
             n_shocks = len(self.shock_names)
@@ -50,111 +123,187 @@ def compile_to_statsmodels(model):
             self.start_dict.update(shock_start_dict)
             self.start_dict.update(noise_start_dict)
 
-            self._validate_start_dict(param_start_dict, shock_start_dict, noise_start_dict)
-            self._build_transform_dict(param_transforms, shock_transforms, noise_transforms)
+            self._validate_start_dict(
+                param_start_dict, shock_start_dict, noise_start_dict
+            )
+            self._build_transform_dict(
+                param_transforms, shock_transforms, noise_transforms
+            )
             self._validate_priors(param_priors, shock_priors, noise_priors)
 
-            super(DSGEModel, self).__init__(endog=data, k_states=k_states, k_posdef=k_posdef,
-                                            initialization=initialization,
-                                            constant=x0,
-                                            initial_state_cov=P0,
-                                            **kwargs)
+            super().__init__(
+                endog=data,
+                k_states=k_states,
+                k_posdef=k_posdef,
+                initialization=initialization,
+                constant=x0,
+                initial_state_cov=P0,
+                **kwargs,
+            )
 
             model_names = [x.base_name for x in model.variables]
             missing_vars = [x for x in data.columns if x not in model_names]
             if any(missing_vars):
-                msg = 'Data contains the following columns not associated with variables in the model:'
-                msg += ', '.join(missing_vars)
+                msg = "Data contains the following columns not associated with variables in the model:"
+                msg += ", ".join(missing_vars)
                 raise ValueError(msg)
 
             Z_idx = [model_names.index(x) for x in data.columns if x in model_names]
 
-            self.ssm['design'][np.arange(k_observed), Z_idx] = 1
-            self.ssm['state_cov'] = np.eye(k_posdef) * 0.1
-            self.ssm['obs_cov'] = np.zeros((k_observed, k_observed))
+            self.ssm["design"][np.arange(k_observed), Z_idx] = 1
+            self.ssm["state_cov"] = np.eye(k_posdef) * 0.1
+            self.ssm["obs_cov"] = np.zeros((k_observed, k_observed))
 
-            self.state_cov_idxs = (np.arange(n_shocks, dtype='int'), np.arange(n_shocks, dtype='int'))
+            self.state_cov_idxs = (
+                np.arange(n_shocks, dtype="int"),
+                np.arange(n_shocks, dtype="int"),
+            )
             self.obs_cov_idxs = np.where(np.isin(data.columns, self.noisy_states))
 
-        def _validate_start_dict(self, param_start_dict, shock_start_dict, noise_start_dict):
-            missing_vars = [x for x in self.params_to_estimate if x not in param_start_dict.keys()]
-            missing_shocks = [x for x in self.shocks_to_estimate if x not in shock_start_dict.keys()]
-            missing_noise = [x for x in self.noisy_states if x not in noise_start_dict.keys()]
-            msg = 'The following {} to be estimated were not assigned a starting value: '
+        def _validate_start_dict(
+            self,
+            param_start_dict: Dict[str, float],
+            shock_start_dict: Dict[str, float],
+            noise_start_dict: Dict[str, float],
+        ) -> None:
+            """
+            Validate that all the parameters, shocks, and observation noises that are supposed to be
+             estimated have starting values, and that any starting values provided correspond to
+             parameters, shocks, or observation noises that exist in the model or data.
+
+            Parameters
+            ----------
+            param_start_dict: Dict[str, float]
+                A dictionary of starting values for parameters that are to be estimated.
+            shock_start_dict: Dict[str, float]
+                A dictionary of starting values for shocks that are to be estimated.
+            noise_start_dict: Dict[str, float]
+                A dictionary of starting values for observation noises that are to be estimated.
+            """
+            missing_vars = [
+                x for x in self.params_to_estimate if x not in param_start_dict.keys()
+            ]
+            missing_shocks = [
+                x for x in self.shocks_to_estimate if x not in shock_start_dict.keys()
+            ]
+            missing_noise = [
+                x for x in self.noisy_states if x not in noise_start_dict.keys()
+            ]
+            msg = (
+                "The following {} to be estimated were not assigned a starting value: "
+            )
 
             if any(missing_vars):
-                raise ValueError(msg.format('parameters') + ', '.join(missing_vars))
+                raise ValueError(msg.format("parameters") + ", ".join(missing_vars))
 
             if any(missing_shocks):
-                raise ValueError(msg.format('shocks') + ', '.join(missing_shocks))
+                raise ValueError(msg.format("shocks") + ", ".join(missing_shocks))
 
             if any(missing_noise):
-                raise ValueError(msg.format('observation noises') + ', '.join(missing_noise))
+                raise ValueError(
+                    msg.format("observation noises") + ", ".join(missing_noise)
+                )
 
-            extra_vars = [x for x in param_start_dict.keys() if x not in self.model.free_param_dict.keys()]
-            extra_shocks = [x for x in shock_start_dict.keys() if x not in [x.base_name for x in self.model.shocks]]
-            extra_noise = [x for x in noise_start_dict.keys() if x not in self.data.columns]
+            extra_vars = [
+                x
+                for x in param_start_dict.keys()
+                if x not in self.model.free_param_dict.keys()
+            ]
+            extra_shocks = [
+                x
+                for x in shock_start_dict.keys()
+                if x not in [x.base_name for x in self.model.shocks]
+            ]
+            extra_noise = [
+                x for x in noise_start_dict.keys() if x not in self.data.columns
+            ]
 
-            msg = 'The following {} were given starting values, but did not appear in the {}: '
+            msg = "The following {} were given starting values, but did not appear in the {}: "
             if any(extra_vars):
-                raise ValueError(msg.format('parameters', 'model definition') + ', '.join(extra_vars))
+                raise ValueError(
+                    msg.format("parameters", "model definition") + ", ".join(extra_vars)
+                )
 
             if any(extra_shocks):
-                raise ValueError(msg.format('shocks', 'model definition') + ', '.join(missing_shocks))
+                raise ValueError(
+                    msg.format("shocks", "model definition") + ", ".join(missing_shocks)
+                )
 
             if any(extra_noise):
-                raise ValueError(msg.format('observation noises', 'data') + ', '.join(missing_noise))
+                raise ValueError(
+                    msg.format("observation noises", "data") + ", ".join(missing_noise)
+                )
 
-        def _build_transform_dict(self, param_transforms, shock_transforms, noise_transforms):
+        def _build_transform_dict(
+            self, param_transforms, shock_transforms, noise_transforms
+        ):
             self.transform_dict = {}
             for param in self.params_to_estimate:
                 if param in param_transforms.keys():
                     self.transform_dict[param] = param_transforms[param]
                 else:
-                    print(f'Parameter {param} was not assigned a transformation, assigning IdentityTransform')
+                    print(
+                        f"Parameter {param} was not assigned a transformation, assigning IdentityTransform"
+                    )
                     self.transform_dict[param] = IdentityTransformer()
 
             if shock_transforms is None:
-                self.transform_dict.update({k: PositiveTransformer() for k in self.shocks_to_estimate})
+                self.transform_dict.update(
+                    {k: PositiveTransformer() for k in self.shocks_to_estimate}
+                )
             else:
                 for shock in self.shocks_to_estimate:
                     if shock in shock_transforms.keys():
                         self.transform_dict[shock] = shock_transforms[shock]
                     else:
-                        print(f'Shock {shock} was not assigned a transformation, assigning IdentityTransform')
+                        print(
+                            f"Shock {shock} was not assigned a transformation, assigning IdentityTransform"
+                        )
                         self.transform_dict[shock] = IdentityTransformer()
 
             if noise_transforms is None:
-                self.transform_dict.update({k: PositiveTransformer() for k in self.noisy_states})
+                self.transform_dict.update(
+                    {k: PositiveTransformer() for k in self.noisy_states}
+                )
             else:
                 for noise in self.noisy_states:
                     if noise in noise_transforms.keys():
                         self.transform_dict[noise] = noise_transforms[noise]
                     else:
-                        print(f'Noise for state {noise} was not assigned a transformation, assigning IdentityTransform')
+                        print(
+                            f"Noise for state {noise} was not assigned a transformation, assigning IdentityTransform"
+                        )
                         self.transform_dict[noise] = IdentityTransformer()
 
         def _validate_priors(self, param_priors, shock_priors, noise_priors):
             if not self.fit_MAP:
                 return
 
-            missing_vars = [x for x in self.params_to_estimate if x not in param_priors.keys()]
-            missing_shocks = [x for x in self.shocks_to_estimate if x not in shock_priors.keys()]
-            missing_noise = [x for x in self.noisy_states if x not in noise_priors.keys()]
-            msg = 'The following {} to be estimated were not assigned a prior: '
+            missing_vars = [
+                x for x in self.params_to_estimate if x not in param_priors.keys()
+            ]
+            missing_shocks = [
+                x for x in self.shocks_to_estimate if x not in shock_priors.keys()
+            ]
+            missing_noise = [
+                x for x in self.noisy_states if x not in noise_priors.keys()
+            ]
+            msg = "The following {} to be estimated were not assigned a prior: "
             if any(missing_vars):
-                raise ValueError(msg.format('parameters') + ', '.join(missing_vars))
+                raise ValueError(msg.format("parameters") + ", ".join(missing_vars))
 
             if any(missing_shocks):
-                raise ValueError(msg.format('shocks') + ', '.join(missing_shocks))
+                raise ValueError(msg.format("shocks") + ", ".join(missing_shocks))
 
             if any(missing_noise):
-                raise ValueError(msg.format('observation noises') + ', '.join(missing_noise))
+                raise ValueError(
+                    msg.format("observation noises") + ", ".join(missing_noise)
+                )
 
         @property
         def param_names(self):
-            shock_names = [f'sigma2.{x}' for x in self.shocks_to_estimate]
-            noise_names = [f'sigma2.{x}' for x in self.noisy_states]
+            shock_names = [f"sigma2.{x}" for x in self.shocks_to_estimate]
+            noise_names = [f"sigma2.{x}" for x in self.noisy_states]
             return self.params_to_estimate + shock_names + noise_names
 
         @property
@@ -175,35 +324,39 @@ def compile_to_statsmodels(model):
             return np.array(start_params)
 
         def unpack_statespace(self):
-            T = np.ascontiguousarray(self.ssm['transition'])
-            Z = np.ascontiguousarray(self.ssm['design'])
-            R = np.ascontiguousarray(self.ssm['selection'])
-            H = np.ascontiguousarray(self.ssm['obs_cov'])
-            Q = np.ascontiguousarray(self.ssm['state_cov'])
+            T = np.ascontiguousarray(self.ssm["transition"])
+            Z = np.ascontiguousarray(self.ssm["design"])
+            R = np.ascontiguousarray(self.ssm["selection"])
+            H = np.ascontiguousarray(self.ssm["obs_cov"])
+            Q = np.ascontiguousarray(self.ssm["state_cov"])
 
             return T, Z, R, H, Q
 
         def transform_params(self, real_line_params):
-            '''
+            """
             Take in optimizer values on R and map them into parameter space.
 
             Example: variances must be positive, so apply x ** 2.
-            '''
+            """
             param_space_params = np.zeros_like(real_line_params)
-            for i, (name, param) in enumerate(zip(self.external_param_names, real_line_params)):
+            for i, (name, param) in enumerate(
+                zip(self.external_param_names, real_line_params)
+            ):
                 param_space_params[i] = self.transform_dict[name].constrain(param)
 
             return param_space_params
 
         def untransform_params(self, param_space_params):
-            '''
+            """
             Take in parameters living in the parameter space and apply an "inverse transform"
             to put them back to where the optimizer's last guess was.
 
             Example: We applied x ** 2 to ensure x is positive, apply x ** (1 / 2).
-            '''
+            """
             real_line_params = np.zeros_like(param_space_params)
-            for i, (name, param) in enumerate(zip(self.external_param_names, param_space_params)):
+            for i, (name, param) in enumerate(
+                zip(self.external_param_names, param_space_params)
+            ):
                 real_line_params[i] = self.transform_dict[name].unconstrain(param)
 
             return real_line_params
@@ -225,10 +378,14 @@ def compile_to_statsmodels(model):
                 else:
                     observation_noise_params.append(param)
 
-            return param_update_dict, np.array(shock_params), np.array(observation_noise_params)
+            return (
+                param_update_dict,
+                np.array(shock_params),
+                np.array(observation_noise_params),
+            )
 
         def update(self, params, **kwargs):
-            params = super(DSGEModel, self).update(params, **kwargs)
+            params = super().update(params, **kwargs)
 
             update_dict, shock_params, obs_params = self.make_param_update_dict(params)
             # original_params = model.free_param_dict.copy()
@@ -241,16 +398,18 @@ def compile_to_statsmodels(model):
             except np.linalg.LinAlgError:
                 pert_success = False
 
-            condition_satisfied = model.check_bk_condition(verbose=False, return_value='bool')
+            condition_satisfied = model.check_bk_condition(
+                verbose=False, return_value="bool"
+            )
 
-            self.ssm['transition'] = self.model.T.values
-            self.ssm['selection'] = self.model.R.values
+            self.ssm["transition"] = self.model.T.values
+            self.ssm["selection"] = self.model.R.values
 
             cov_idx = self.state_cov_idxs
-            self.ssm['state_cov', cov_idx, cov_idx] = shock_params
+            self.ssm["state_cov", cov_idx, cov_idx] = shock_params
 
             obs_idx = self.obs_cov_idxs
-            self.ssm['obs_cov', obs_idx, obs_idx] = obs_params
+            self.ssm["obs_cov", obs_idx, obs_idx] = obs_params
 
             return pert_success & condition_satisfied
 
@@ -288,15 +447,22 @@ def compile_to_statsmodels(model):
             transformed, includes_fixed, complex_step, kwargs = _handle_args(
                 MLEModel._loglike_param_names,
                 MLEModel._loglike_param_defaults,
-                *args, **kwargs)
+                *args,
+                **kwargs,
+            )
 
-            params = self.handle_params(params, transformed=transformed,
-                                        includes_fixed=includes_fixed)
-            success = self.update(params, transformed=transformed, includes_fixed=includes_fixed,
-                                  complex_step=complex_step)
+            params = self.handle_params(
+                params, transformed=transformed, includes_fixed=includes_fixed
+            )
+            success = self.update(
+                params,
+                transformed=transformed,
+                includes_fixed=includes_fixed,
+                complex_step=complex_step,
+            )
 
             if complex_step:
-                kwargs['inversion_method'] = INVERT_UNIVARIATE | SOLVE_LU
+                kwargs["inversion_method"] = INVERT_UNIVARIATE | SOLVE_LU
 
             if success:
                 loglike = self.ssm.loglike(complex_step=complex_step, **kwargs)
@@ -313,8 +479,14 @@ def compile_to_statsmodels(model):
             # automatically in the base model `fit` method
             return loglike
 
-        def loglikeobs(self, params, transformed=True, includes_fixed=False,
-                       complex_step=False, **kwargs):
+        def loglikeobs(
+            self,
+            params,
+            transformed=True,
+            includes_fixed=False,
+            complex_step=False,
+            **kwargs,
+        ):
             """
             Loglikelihood evaluation
 
@@ -344,33 +516,55 @@ def compile_to_statsmodels(model):
                Statistical Algorithms for Models in State Space Using SsfPack 2.2.
                Econometrics Journal 2 (1): 107-60. doi:10.1111/1368-423X.00023.
             """
-            params = self.handle_params(params, transformed=transformed,
-                                        includes_fixed=includes_fixed)
+            params = self.handle_params(
+                params, transformed=transformed, includes_fixed=includes_fixed
+            )
 
             # If we're using complex-step differentiation, then we cannot use
             # Cholesky factorization
             if complex_step:
-                kwargs['inversion_method'] = INVERT_UNIVARIATE | SOLVE_LU
+                kwargs["inversion_method"] = INVERT_UNIVARIATE | SOLVE_LU
 
-            success = self.update(params, transformed=transformed, includes_fixed=includes_fixed,
-                                  complex_step=complex_step)
+            success = self.update(
+                params,
+                transformed=transformed,
+                includes_fixed=includes_fixed,
+                complex_step=complex_step,
+            )
 
             if success:
                 ll_obs = self.ssm.loglikeobs(complex_step=complex_step, **kwargs)
                 if self.fit_MAP:
                     for name, param in zip(self.external_param_names, params):
-                        ll_obs += max(-1e6, self.prior_dict[name].logpdf(param)) / self.nobs
+                        ll_obs += (
+                            max(-1e6, self.prior_dict[name].logpdf(param)) / self.nobs
+                        )
                 return ll_obs
 
             else:
                 # Large negative likelihood for all observations if the parameters are invalid
                 return np.full(self.endog.shape[0], -1e6)
 
-        def fit(self, start_params=None, transformed=True, includes_fixed=False,
-                cov_type=None, cov_kwds=None, method='lbfgs', maxiter=50,
-                full_output=1, disp=5, callback=None, return_params=False,
-                optim_score=None, optim_complex_step=None, optim_hessian=None,
-                flags=None, low_memory=False, **kwargs):
+        def fit(
+            self,
+            start_params=None,
+            transformed=True,
+            includes_fixed=False,
+            cov_type=None,
+            cov_kwds=None,
+            method="lbfgs",
+            maxiter=50,
+            full_output=1,
+            disp=5,
+            callback=None,
+            return_params=False,
+            optim_score=None,
+            optim_complex_step=None,
+            optim_hessian=None,
+            flags=None,
+            low_memory=False,
+            **kwargs,
+        ):
             """
             Fits the model by maximum likelihood via Kalman filter.
 
@@ -493,13 +687,29 @@ def compile_to_statsmodels(model):
 
             # Disable complex step approximations by default
             optim_complex_step = optim_complex_step or False
-            cov_kwds = cov_kwds or {'approx_complex_step': False, 'approx_centered': True}
+            cov_kwds = cov_kwds or {
+                "approx_complex_step": False,
+                "approx_centered": True,
+            }
 
-            return super().fit(start_params=start_params, transformed=transformed, includes_fixed=includes_fixed,
-                               cov_type=cov_type, cov_kwds=cov_kwds, method=method, maxiter=maxiter,
-                               full_output=full_output, disp=disp, callback=callback, return_params=return_params,
-                               optim_score=optim_score, optim_complex_step=optim_complex_step,
-                               optim_hessian=optim_hessian,
-                               flags=flags, low_memory=low_memory, **kwargs)
+            return super().fit(
+                start_params=start_params,
+                transformed=transformed,
+                includes_fixed=includes_fixed,
+                cov_type=cov_type,
+                cov_kwds=cov_kwds,
+                method=method,
+                maxiter=maxiter,
+                full_output=full_output,
+                disp=disp,
+                callback=callback,
+                return_params=return_params,
+                optim_score=optim_score,
+                optim_complex_step=optim_complex_step,
+                optim_hessian=optim_hessian,
+                flags=flags,
+                low_memory=low_memory,
+                **kwargs,
+            )
 
     return DSGEModel

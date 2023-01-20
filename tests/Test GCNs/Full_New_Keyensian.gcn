@@ -10,6 +10,19 @@ tryreduce
 	Div[], TC[];
 };
 
+assumptions
+{
+	negative
+	{
+		TC[];
+	};
+
+	positive
+	{
+		delta, beta, sigma_C, sigma_L, gamma_I, phi_H;
+	};
+};
+
 
 block HOUSEHOLD
 {

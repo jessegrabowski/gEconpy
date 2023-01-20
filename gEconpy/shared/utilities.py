@@ -1,8 +1,11 @@
-import sympy as sp
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from enum import EnumMeta
-from typing import Dict, Union, Any, List, Callable
+from collections import defaultdict
 from copy import copy
+from enum import EnumMeta
+from typing import Any, Callable, Dict, List, Union
+
+import sympy as sp
+
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 
 VariableType = Union[TimeAwareSymbol, sp.Symbol]
 
@@ -13,7 +16,7 @@ class IterEnum(EnumMeta):
         super().__init__(*args, **kwargs)
 
     def __contains__(self, item):
-        return item in set(v.value for v in self.__members__.values())
+        return item in {v.value for v in self.__members__.values()}
 
     def __len__(self):
         return len(self.__members__)
@@ -46,8 +49,10 @@ def eq_to_ss(eq):
 def expand_subs_for_all_times(sub_dict: Dict[TimeAwareSymbol, TimeAwareSymbol]):
     result = {}
     for lhs, rhs in sub_dict.items():
-        for t in [-1, 0, 1, 'ss']:
-            result[lhs.set_t(t)] = rhs.set_t(t) if isinstance(rhs, TimeAwareSymbol) else rhs
+        for t in [-1, 0, 1, "ss"]:
+            result[lhs.set_t(t)] = (
+                rhs.set_t(t) if isinstance(rhs, TimeAwareSymbol) else rhs
+            )
 
     return result
 
@@ -56,8 +61,8 @@ def step_equation_forward(eq):
     to_step = []
 
     for variable in set(eq.atoms()):
-        if hasattr(variable, 'step_forward'):
-            if variable.time_index != 'ss':
+        if hasattr(variable, "step_forward"):
+            if variable.time_index != "ss":
                 to_step.append(variable)
 
     for variable in sorted(to_step, key=lambda x: x.time_index, reverse=True):
@@ -70,7 +75,7 @@ def step_equation_backward(eq):
     to_step = []
 
     for variable in set(eq.atoms()):
-        if hasattr(variable, 'step_forward'):
+        if hasattr(variable, "step_forward"):
             to_step.append(variable)
 
     for variable in sorted(to_step, key=lambda x: x.time_index, reverse=False):
@@ -103,7 +108,11 @@ def substitute_all_equations(eqs, *sub_dicts):
     else:
         result = {}
         for key in eqs:
-            result[key] = eqs[key] if isinstance(eqs[key], (int, float)) else eqs[key].subs(sub_dict)
+            result[key] = (
+                eqs[key]
+                if isinstance(eqs[key], (int, float))
+                else eqs[key].subs(sub_dict)
+            )
         return result
 
 
@@ -126,7 +135,7 @@ def is_number(x: str):
     A small extension to the .isnumeric() string built-in method, to allow float values with "." to pass.
     """
 
-    return all([c in set('0123456789.') for c in x])
+    return all([c in set("0123456789.") for c in x])
 
 
 def sequential(x: Any, funcs: List[Callable]) -> Any:
@@ -199,25 +208,30 @@ def sort_dictionary(d):
 
 def sort_sympy_dict(d):
     result = {}
-    sorted_keys = sorted(list(d.keys()), key=lambda x: x.base_name if isinstance(x, TimeAwareSymbol) else x.name)
+    sorted_keys = sorted(
+        list(d.keys()),
+        key=lambda x: x.base_name if isinstance(x, TimeAwareSymbol) else x.name,
+    )
     for key in sorted_keys:
         result[key] = d[key]
 
     return result
 
 
-SAFE_STRING_TO_INDEX_DICT = dict(ss='ss', tp1=1, tm1=-1, t=0)
+SAFE_STRING_TO_INDEX_DICT = dict(ss="ss", tp1=1, tm1=-1, t=0)
 
 
-def safe_string_to_sympy(s):
+def safe_string_to_sympy(s, assumptions=None):
     if isinstance(s, sp.Symbol):
         return s
 
-    *name, time_index_str = s.split('_')
+    assumptions = assumptions or {}
+
+    *name, time_index_str = s.split("_")
     if time_index_str not in [str(x) for x in SAFE_STRING_TO_INDEX_DICT.keys()]:
         name.append(time_index_str)
-        return sp.Symbol('_'.join(name))
-    name = '_'.join(name)
+        return sp.Symbol("_".join(name), **assumptions)
+    name = "_".join(name)
     time_index = SAFE_STRING_TO_INDEX_DICT[time_index_str]
     symbol = TimeAwareSymbol(name, time_index)
 
@@ -231,17 +245,18 @@ def select_keys(d, keys):
     return result
 
 
-def string_keys_to_sympy(d):
+def string_keys_to_sympy(d, assumptions=None):
     result = {}
+    assumptions = assumptions or defaultdict(lambda: {})
     for key, value in d.items():
         if isinstance(key, sp.Symbol):
             result[key] = value
             continue
 
-        if '_' not in key:
-            result[sp.Symbol(key)] = value
+        if "_" not in key:
+            result[sp.Symbol(key, **assumptions[key])] = value
             continue
-        new_key = safe_string_to_sympy(key)
+        new_key = safe_string_to_sympy(key, assumptions[key])
         result[new_key] = value
 
     return result
@@ -318,6 +333,6 @@ def expand_sub_dict_for_all_times(sub_dict):
 def make_all_var_time_combos(var_list):
     result = []
     for x in var_list:
-        result.extend([x.set_t(-1), x.set_t(0), x.set_t(1), x.set_t('ss')])
+        result.extend([x.set_t(-1), x.set_t(0), x.set_t(1), x.set_t("ss")])
 
     return result

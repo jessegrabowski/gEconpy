@@ -9,6 +9,14 @@ tryreduce
 	U[], TC[];
 };
 
+assumptions
+{
+	imaginary
+	{
+		r[];
+	};
+};
+
 block HOUSEHOLD
 {
 	definitions

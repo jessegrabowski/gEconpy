@@ -1,11 +1,18 @@
-
-def load_gcn(gcn_path: str):
+def load_gcn(gcn_path: str) -> str:
     """
-    :param gcn_path: str, file path to model file (GCN file)
-    :return: str, raw-text of the model file
-
     Loads a model file as raw text.
+
+    Parameters
+    ----------
+    gcn_path : str
+        File path to model file (GCN file).
+
+    Returns
+    -------
+    str
+        Raw-text of the model file.
     """
-    with open(gcn_path, 'r', encoding='utf-8') as file:
+
+    with open(gcn_path, encoding="utf-8") as file:
         gcn_raw = file.read()
     return gcn_raw

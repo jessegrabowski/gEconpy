@@ -1,65 +1,88 @@
 from collections import defaultdict
-
-from gEconpy.parser import gEcon_parser, file_loaders
-from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary, build_pymc_model
-from gEconpy.parser.parse_equations import single_symbol_to_sympy
-from gEconpy.classes.block import Block
-from gEconpy.shared.utilities import unpack_keys_and_values, is_variable, sort_dictionary, \
-    sympy_keys_to_strings, sympy_number_values_to_floats, sequential, string_keys_to_sympy, \
-    merge_dictionaries, expand_subs_for_all_times, substitute_all_equations, sort_sympy_dict
-from gEconpy.shared.utilities import make_all_var_time_combos
-
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.parser.constants import STEADY_STATE_NAMES
-from gEconpy.exceptions.exceptions import SteadyStateNotSolvedError, GensysFailedException, VariableNotFoundException, \
-    MultipleSteadyStateBlocksException, PerturbationSolutionNotFoundException
-
-from gEconpy.solvers.steady_state import SteadyStateSolver
-from gEconpy.solvers.perturbation import PerturbationSolver
-
-from gEconpy.solvers.gensys import interpret_gensys_output
-from gEconpy.classes.progress_bar import ProgressBar
-
-from gEconpy.estimation.estimation_utilities import extract_sparse_data_from_model
-from gEconpy.estimation.estimate import extract_prior_dict, evaluate_logp, build_Z_matrix
-
-import emcee
-
-import numpy as np
-import sympy as sp
-import pandas as pd
-import pymc as pm
-import arviz as az
-import xarray as xr
-
-from scipy import linalg, stats
-from numba import njit
-
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from warnings import warn
 
+import arviz as az
+import emcee
+import numpy as np
+import pandas as pd
+import pymc as pm
+import sympy as sp
+import xarray as xr
+from numba import njit
 from numpy.typing import ArrayLike
-from typing import List, Dict, Optional, Union, Callable, Any, Tuple
+from scipy import linalg, stats
+
+from gEconpy.classes.block import Block
+from gEconpy.classes.progress_bar import ProgressBar
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.estimation.estimate import (
+    build_Z_matrix,
+    evaluate_logp,
+    extract_prior_dict,
+)
+from gEconpy.estimation.estimation_utilities import extract_sparse_data_from_model
+from gEconpy.exceptions.exceptions import (
+    GensysFailedException,
+    MultipleSteadyStateBlocksException,
+    PerturbationSolutionNotFoundException,
+    SteadyStateNotSolvedError,
+    VariableNotFoundException,
+)
+from gEconpy.parser import file_loaders, gEcon_parser
+from gEconpy.parser.constants import STEADY_STATE_NAMES
+from gEconpy.parser.parse_distributions import (
+    build_pymc_model,
+    create_prior_distribution_dictionary,
+)
+from gEconpy.parser.parse_equations import single_symbol_to_sympy
+from gEconpy.shared.utilities import (
+    expand_subs_for_all_times,
+    is_variable,
+    make_all_var_time_combos,
+    merge_dictionaries,
+    sequential,
+    sort_dictionary,
+    substitute_all_equations,
+    sympy_keys_to_strings,
+    sympy_number_values_to_floats,
+    unpack_keys_and_values,
+)
+from gEconpy.solvers.gensys import interpret_gensys_output
+from gEconpy.solvers.perturbation import PerturbationSolver
+from gEconpy.solvers.steady_state import SteadyStateSolver
 
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
 
 
 class gEconModel:
-
-    def __init__(self, model_filepath: str, verbose: bool = True,
-                 build_pymc=False,
-                 simplify_blocks=True,
-                 simplify_constants=True,
-                 simplify_tryreduce=True) -> None:
+    def __init__(
+        self,
+        model_filepath: str,
+        verbose: bool = True,
+        build_pymc=False,
+        simplify_blocks=True,
+        simplify_constants=True,
+        simplify_tryreduce=True,
+    ) -> None:
         """
-        Class to build, debug, and solve a DSGE model from a GCN file.
+        Initialize a DSGE model object from a GCN file.
 
         Parameters
         ----------
-        model_filepath
-        verbose
-        build_pymc
+        model_filepath : str
+            Filepath to the GCN file
+        verbose : bool, optional
+            Flag for verbose output, by default True
+        build_pymc : bool, optional
+            Flag to build a PyMC model, by default False
+        simplify_blocks : bool, optional
+            Flag to simplify blocks, by default True
+        simplify_constants : bool, optional
+            Flag to simplify constants, by default True
+        simplify_tryreduce : bool, optional
+            Flag to simplify using `try_reduce_vars`, by default True
         """
-
         self.model_filepath: str = model_filepath
 
         # Model metadata
@@ -113,20 +136,26 @@ class gEconModel:
         # self.R: pd.DataFrame = None
         # self.S: pd.DataFrame = None
 
-        self.build(verbose=verbose, build_pymc=build_pymc,
-                   simplify_blocks=simplify_blocks,
-                   simplify_constants=simplify_constants,
-                   simplify_tryreduce=simplify_tryreduce)
+        self.build(
+            verbose=verbose,
+            build_pymc=build_pymc,
+            simplify_blocks=simplify_blocks,
+            simplify_constants=simplify_constants,
+            simplify_tryreduce=simplify_tryreduce,
+        )
 
         # Assign Solvers
         self.steady_state_solver = SteadyStateSolver(self)
         self.perturbation_solver = PerturbationSolver(self)
 
-    def build(self, verbose: bool,
-              build_pymc: bool,
-              simplify_blocks: bool,
-              simplify_constants: bool,
-              simplify_tryreduce: bool) -> None:
+    def build(
+        self,
+        verbose: bool,
+        build_pymc: bool,
+        simplify_blocks: bool,
+        simplify_constants: bool,
+        simplify_tryreduce: bool,
+    ) -> None:
         """
         Main parsing function for the model. Build loads the GCN file, decomposes it into blocks, solves optimization
         problems contained in each block, then extracts parameters, equations, calibrating equations, calibrated
@@ -141,16 +170,23 @@ class gEconModel:
 
         Parameters
         ----------
-        verbose: bool, default: True
-            When true, prints a build report describing the model structure and warning the user if the number of
+        verbose : bool, optional
+            When True, print a build report describing the model structure and warning the user if the number of
             variables does not match the number of equations.
-        build_pymc_model: bool, default: False
-            If true, builds a PyMC model of random variables declared in the GCN and stores it in self.pymc_model.
+        build_pymc : bool, optional
+            If True, build a PyMC model of random variables declared in the GCN and store it in `self.pymc_model`.
+        simplify_blocks : bool, optional
+            If True, simplify equations in the model blocks.
+        simplify_constants : bool, optional
+            If True, simplify constants in the model equations.
+        simplify_tryreduce : bool, optional
+            If True, try to reduce the number of variables in the model by eliminating unnecessary equations.
 
         Returns
         -------
-
+        None
         """
+
         raw_model = file_loaders.load_gcn(self.model_filepath)
         parsed_model, prior_dict = gEcon_parser.preprocess_gcn(raw_model)
 
@@ -196,43 +232,51 @@ class gEconModel:
         param_priors = self.param_priors.keys()
         shock_priors = self.shock_priors.keys()
 
-        report = 'Model Building Complete.\nFound:\n'
-        report += f'\t{self.n_equations} {eq_str}\n'
-        report += f'\t{self.n_variables} {var_str}\n'
+        report = "Model Building Complete.\nFound:\n"
+        report += f"\t{self.n_equations} {eq_str}\n"
+        report += f"\t{self.n_variables} {var_str}\n"
 
         if reduced_vars:
-            report += f'\tThe following variables were eliminated at user request:\n'
-            report += f'\t\t' + ','.join(reduced_vars) + '\n'
+            report += f"\tThe following variables were eliminated at user request:\n"
+            report += f"\t\t" + ",".join(reduced_vars) + "\n"
 
         if singletons:
             report += f'\tThe following "variables" were defined as constants and have been substituted away:\n'
-            report += f'\t\t' + ','.join(singletons) + '\n'
+            report += f"\t\t" + ",".join(singletons) + "\n"
 
-        report += f'\t{self.n_shocks} stochastic {shock_str}\n'
-        report += f'\t\t {len(shock_priors)} / {self.n_shocks} {"have" if len(shock_priors) == 1 else "has"}' \
-                  f' a defined prior. \n'
+        report += f"\t{self.n_shocks} stochastic {shock_str}\n"
+        report += (
+            f'\t\t {len(shock_priors)} / {self.n_shocks} {"have" if len(shock_priors) == 1 else "has"}'
+            f" a defined prior. \n"
+        )
 
-        report += f'\t{n_params} {par_str}\n'
-        report += f'\t\t {len(param_priors)} / {n_params} {"have" if len(param_priors) == 1 else "has"} ' \
-                  f'a defined prior. \n'
-        report += f'\t{self.n_calibrating_equations} calibrating {cal_eq_str}\n'
-        report += f'\t{self.n_params_to_calibrate} {par_str} to calibrate\n '
+        report += f"\t{n_params} {par_str}\n"
+        report += (
+            f'\t\t {len(param_priors)} / {n_params} {"have" if len(param_priors) == 1 else "has"} '
+            f"a defined prior. \n"
+        )
+        report += f"\t{self.n_calibrating_equations} calibrating {cal_eq_str}\n"
+        report += f"\t{self.n_params_to_calibrate} {par_str} to calibrate\n "
 
         if self.n_equations == self.n_variables:
-            report += 'Model appears well defined and ready to proceed to solving.\n'
+            report += "Model appears well defined and ready to proceed to solving.\n"
             print(report)
         else:
             print(report)
-            message = f'The model does not appear correctly specified, there are {self.n_equations} {eq_str} but ' \
-                      f'{self.n_variables} {var_str}. It will not be possible to solve this model. Please check the ' \
-                      f'specification using available diagnostic tools, and check the GCN file for typos.'
+            message = (
+                f"The model does not appear correctly specified, there are {self.n_equations} {eq_str} but "
+                f"{self.n_variables} {var_str}. It will not be possible to solve this model. Please check the "
+                f"specification using available diagnostic tools, and check the GCN file for typos."
+            )
             warn(message)
 
-    def steady_state(self,
-                     verbose: Optional[bool] = True,
-                     optimizer_kwargs: Optional[Dict[str, Any]] = None,
-                     param_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
-                     use_jac: Optional[bool] = True) -> None:
+    def steady_state(
+        self,
+        verbose: Optional[bool] = True,
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        param_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
+        use_jac: Optional[bool] = True,
+    ) -> None:
         """
         Solves for a function f(params) that computes steady state values and calibrated parameter values given
         parameter values, stores results, and verifies that the residuals of the solution are zero.
@@ -255,58 +299,103 @@ class gEconModel:
         None
         """
         if not self.steady_state_solved:
-            self.f_ss = self.steady_state_solver.solve_steady_state(optimizer_kwargs=optimizer_kwargs,
-                                                                    param_bounds=param_bounds,
-                                                                    use_jac=use_jac)
+            self.f_ss = self.steady_state_solver.solve_steady_state(
+                optimizer_kwargs=optimizer_kwargs,
+                param_bounds=param_bounds,
+                use_jac=use_jac,
+            )
 
             self.f_ss_resid = self.steady_state_solver.f_ss_resid
 
         self._process_steady_state_results(verbose)
 
     def _process_steady_state_results(self, verbose=True) -> None:
+        """Process results from steady state solver.
+
+        This function sets the steady state dictionary, calibrated parameter dictionary, and residuals attribute
+        based on the results of the steady state solver. It also sets the `steady_state_solved` attribute to
+        indicate whether the steady state was successfully found. If `verbose` is True, it prints a message
+        indicating whether the steady state was found and the sum of squared residuals.
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            If True, print a message indicating whether the steady state was found and the sum of squared residuals.
+            Default is True.
+
+        Returns
+        -------
+        None
+        """
+
         self.steady_state_dict, self.calib_param_dict = self.f_ss(self.free_param_dict)
         self.steady_state_system = self.steady_state_solver.steady_state_system
 
-        self.residuals = np.array(self.f_ss_resid(**self.steady_state_dict,
-                                                  **self.free_param_dict,
-                                                  **self.calib_param_dict))
+        self.residuals = np.array(
+            self.f_ss_resid(
+                **self.steady_state_dict,
+                **self.free_param_dict,
+                **self.calib_param_dict,
+            )
+        )
 
         self.steady_state_solved = np.allclose(self.residuals, 0)
 
         if verbose:
             if self.steady_state_solved:
-                print(f'Steady state found! Sum of squared residuals is {(self.residuals ** 2).sum()}')
+                print(
+                    f"Steady state found! Sum of squared residuals is {(self.residuals ** 2).sum()}"
+                )
             else:
-                print(f'Steady state NOT found. Sum of squared residuals is {(self.residuals ** 2).sum()}')
+                print(
+                    f"Steady state NOT found. Sum of squared residuals is {(self.residuals ** 2).sum()}"
+                )
 
     def print_steady_state(self):
+        """
+        Prints the steady state values for the model's variables and calibrated parameters.
+
+        Prints an error message if a valid steady state has not yet been found.
+        """
         if self.steady_state_dict is None:
-            print('Run the steady_state method to find a steady state before calling this method.')
+            print(
+                "Run the steady_state method to find a steady state before calling this method."
+            )
             return
 
         if not self.steady_state_solved:
-            print('Values come from the latest solver iteration but are NOT a valid steady state.')
+            print(
+                "Values come from the latest solver iteration but are NOT a valid steady state."
+            )
 
-        max_var_name = max([len(x) for x in
-                            list(self.steady_state_dict.keys()) + list(self.calib_param_dict.keys())]) + 5
+        max_var_name = (
+            max(
+                len(x)
+                for x in list(self.steady_state_dict.keys())
+                + list(self.calib_param_dict.keys())
+            )
+            + 5
+        )
         for key, value in self.steady_state_dict.items():
-            print(f'{key:{max_var_name}}{value:>10.3f}')
+            print(f"{key:{max_var_name}}{value:>10.3f}")
 
         if len(self.params_to_calibrate) > 0:
-            print('\n')
-            print('In addition, the following parameter values were calibrated:')
+            print("\n")
+            print("In addition, the following parameter values were calibrated:")
             for key, value in self.calib_param_dict.items():
-                print(f'{key:{max_var_name}}{value:>10.3f}')
+                print(f"{key:{max_var_name}}{value:>10.3f}")
 
-    def solve_model(self,
-                    solver='cycle_reduction',
-                    not_loglin_variable: Optional[List[str]] = None,
-                    order: int = 1,
-                    model_is_linear: bool = False,
-                    tol: float = 1e-8,
-                    max_iter: int = 1000,
-                    verbose: bool = True,
-                    on_failure='error') -> None:
+    def solve_model(
+        self,
+        solver="cycle_reduction",
+        not_loglin_variable: Optional[List[str]] = None,
+        order: int = 1,
+        model_is_linear: bool = False,
+        tol: float = 1e-8,
+        max_iter: int = 1000,
+        verbose: bool = True,
+        on_failure="error",
+    ) -> None:
         """
         Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
         package by Grzegorz Klima, Karol Podemski, and Kaja Retkiewicz-Wijtiwiak., http://gecon.r-forge.r-project.org/.
@@ -342,19 +431,23 @@ class gEconModel:
         steady_state_dict = self.steady_state_dict
 
         if self.build_perturbation_matrices is None:
-            self._perturbation_setup(not_loglin_variable, order, model_is_linear, verbose, bool)
+            self._perturbation_setup(
+                not_loglin_variable, order, model_is_linear, verbose, bool
+            )
 
         A, B, C, D = self.build_perturbation_matrices(**param_dict, **steady_state_dict)
         _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
 
-        if solver == 'gensys':
-            gensys_results = self.perturbation_solver.solve_policy_function_with_gensys(A, B, C, D, tol, verbose)
+        if solver == "gensys":
+            gensys_results = self.perturbation_solver.solve_policy_function_with_gensys(
+                A, B, C, D, tol, verbose
+            )
             G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
 
             if G_1 is None:
-                if on_failure == 'error':
+                if on_failure == "error":
                     raise GensysFailedException(eu)
-                elif on_failure == 'ignore':
+                elif on_failure == "ignore":
                     if verbose:
                         print(interpret_gensys_output(eu))
                     self.P = None
@@ -366,43 +459,97 @@ class gEconModel:
 
                     return
 
-            T = G_1[:self.n_variables, :][:, :self.n_variables]
-            R = impact[:self.n_variables, :]
+            T = G_1[: self.n_variables, :][:, : self.n_variables]
+            R = impact[: self.n_variables, :]
 
-        elif solver == 'cycle_reduction':
-            T, R, result, log_norm = self.perturbation_solver.solve_policy_function_with_cycle_reduction(A, B, C, D,
-                                                                                                         max_iter,
-                                                                                                         tol,
-                                                                                                         verbose)
+        elif solver == "cycle_reduction":
+            (
+                T,
+                R,
+                result,
+                log_norm,
+            ) = self.perturbation_solver.solve_policy_function_with_cycle_reduction(
+                A, B, C, D, max_iter, tol, verbose
+            )
             if T is None:
-                if on_failure == 'errror':
+                if on_failure == "errror":
                     raise GensysFailedException(result)
         else:
-            raise NotImplementedError('Only "cycle_reduction" and "gensys" are valid values for solver')
+            raise NotImplementedError(
+                'Only "cycle_reduction" and "gensys" are valid values for solver'
+            )
 
-        gEcon_matrices = self.perturbation_solver.statespace_to_gEcon_representation(A, T, R, variables, tol)
+        gEcon_matrices = self.perturbation_solver.statespace_to_gEcon_representation(
+            A, T, R, variables, tol
+        )
         P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
 
-        resid_norms = self.perturbation_solver.residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
+        resid_norms = self.perturbation_solver.residual_norms(
+            B, C, D, Q, P, A_prime, R_prime, S_prime
+        )
         norm_deterministic, norm_stochastic = resid_norms
 
         if verbose:
-            print(f'Norm of deterministic part: {norm_deterministic:0.9f}')
-            print(f'Norm of stochastic part:    {norm_deterministic:0.9f}')
+            print(f"Norm of deterministic part: {norm_deterministic:0.9f}")
+            print(f"Norm of stochastic part:    {norm_deterministic:0.9f}")
 
-        self.T = pd.DataFrame(T, index=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
-                              columns=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)])
-        self.R = pd.DataFrame(R, index=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
-                              columns=[x.base_name for x in sorted(self.shocks, key=lambda x: x.base_name)])
+        self.T = pd.DataFrame(
+            T,
+            index=[
+                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
+            ],
+            columns=[
+                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
+            ],
+        )
+        self.R = pd.DataFrame(
+            R,
+            index=[
+                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
+            ],
+            columns=[
+                x.base_name for x in sorted(self.shocks, key=lambda x: x.base_name)
+            ],
+        )
 
         self.perturbation_solved = True
 
-    def _perturbation_setup(self, not_loglin_variables=None,
-                            order=1,
-                            model_is_linear=False,
-                            verbose=True,
-                            return_F_matrices=False,
-                            tol=1e-8):
+    def _perturbation_setup(
+        self,
+        not_loglin_variables=None,
+        order=1,
+        model_is_linear=False,
+        verbose=True,
+        return_F_matrices=False,
+        tol=1e-8,
+    ):
+        """
+        This function is used to set up the perturbation matrices needed to simulate the model. It linearizes the model
+        around the steady state and constructs matrices A, B, C, and D needed to solve the system.
+
+        Parameters
+        ----------
+        not_loglin_variables: list of str
+            List of variables that should not be log-linearized. This is useful when a variable has a zero or negative
+             steady state value and cannot be log-linearized.
+        order: int
+            The order of the approximation. Currently only order 1 is implemented.
+        model_is_linear: bool
+            If True, assumes that the model is already linearized in the GCN file and directly
+             returns the matrices A, B, C, D.
+        verbose: bool
+            If True, prints warning messages.
+        return_F_matrices: bool
+            If True, returns the matrices A, B, C, D.
+        tol: float
+            The tolerance used to determine if a steady state value is close to zero.
+
+        Returns
+        -------
+        None or list of sympy matrices
+            If return_F_matrices is True, returns the F matrices. Otherwise, does not return anything.
+
+        """
 
         free_param_dict = self.free_param_dict.copy()
 
@@ -441,8 +588,10 @@ class gEconModel:
                 close_to_zero_warnings.append(variable)
 
         if len(close_to_zero_warnings) > 0 and verbose:
-            warn('The following variables have steady state values close to zero and will not be log linearized: ' +
-                 ', '.join(x.base_name for x in close_to_zero_warnings))
+            warn(
+                "The following variables have steady state values close to zero and will not be log linearized: "
+                + ", ".join(x.base_name for x in close_to_zero_warnings)
+            )
 
         if order != 1:
             raise NotImplementedError
@@ -451,12 +600,16 @@ class gEconModel:
             raise SteadyStateNotSolvedError()
 
         if model_is_linear:
-            warn('Model will be solved as though ALL system equations have already been linearized in the GCN file. No'
-                 'checks are performed to ensure this is indeed the case. Proceed with caution.')
+            warn(
+                "Model will be solved as though ALL system equations have already been linearized in the GCN file. No"
+                "checks are performed to ensure this is indeed the case. Proceed with caution."
+            )
             Fs = self.perturbation_solver.convert_linear_system_to_matrices()
 
         else:
-            Fs = self.perturbation_solver.log_linearize_model(not_loglin_variables=not_loglin_variables)
+            Fs = self.perturbation_solver.log_linearize_model(
+                not_loglin_variables=not_loglin_variables
+            )
 
         Fs_subbed = [F.subs(shock_ss_dict) for F in Fs]
         self.build_perturbation_matrices = sp.lambdify(params_and_variables, Fs_subbed)
@@ -464,12 +617,14 @@ class gEconModel:
         if return_F_matrices:
             return Fs_subbed
 
-    def check_bk_condition(self,
-                           free_param_dict: Optional[Dict[str, float]] = None,
-                           system_matrices: Optional[List[ArrayLike]] = None,
-                           verbose: bool = True,
-                           return_value: Optional[str] = 'df',
-                           tol=1e-8) -> Optional[ArrayLike]:
+    def check_bk_condition(
+        self,
+        free_param_dict: Optional[Dict[str, float]] = None,
+        system_matrices: Optional[List[ArrayLike]] = None,
+        verbose: bool = True,
+        return_value: Optional[str] = "df",
+        tol=1e-8,
+    ) -> Optional[ArrayLike]:
         """
         Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
         unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
@@ -505,7 +660,9 @@ class gEconModel:
         if system_matrices is not None:
             A, B, C, D = system_matrices
         else:
-            A, B, C, D = self.build_perturbation_matrices(**ss_dict, **free_param_dict, **calib_dict)
+            A, B, C, D = self.build_perturbation_matrices(
+                **ss_dict, **free_param_dict, **calib_dict
+            )
         n_forward = (C.sum(axis=0) > 0).sum().astype(int)
         n_eq, n_vars = A.shape
 
@@ -515,11 +672,16 @@ class gEconModel:
 
         eqs_and_leads_idx = np.r_[np.arange(n_vars), lead_var_idx + n_vars].tolist()
 
-        Gamma_0 = np.vstack([np.hstack([B, C]),
-                             np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
+        Gamma_0 = np.vstack(
+            [np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])]
+        )
 
-        Gamma_1 = np.vstack([np.hstack([A, np.zeros((n_eq, n_eq))]),
-                             np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])])
+        Gamma_1 = np.vstack(
+            [
+                np.hstack([A, np.zeros((n_eq, n_eq))]),
+                np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)]),
+            ]
+        )
         Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
         Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
 
@@ -527,7 +689,9 @@ class gEconModel:
 
         # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
         # have sign flip relative to qzdiv -- does it matter?
-        A, B, alpha, beta, Q, Z = linalg.ordqz(-Gamma_0, Gamma_1, sort='ouc', output='complex')
+        A, B, alpha, beta, Q, Z = linalg.ordqz(
+            -Gamma_0, Gamma_1, sort="ouc", output="complex"
+        )
 
         gev = np.c_[np.diagonal(A), np.diagonal(B)]
 
@@ -539,27 +703,29 @@ class gEconModel:
         eig[:, 2] = np.imag(eigenval)[pos_idx]
 
         sorted_idx = np.argsort(eig[:, 0])
-        eig = pd.DataFrame(eig[sorted_idx, :], columns=['Modulus', 'Real', 'Imaginary'])
+        eig = pd.DataFrame(eig[sorted_idx, :], columns=["Modulus", "Real", "Imaginary"])
 
-        n_g_one = (eig['Modulus'] > 1).sum()
+        n_g_one = (eig["Modulus"] > 1).sum()
         condition_not_satisfied = n_forward > n_g_one
         if verbose:
-            print(f'Model solution has {n_g_one} eigenvalues greater than one in modulus and {n_forward} '
-                  f'forward-looking variables.'
-                  f'\nBlanchard-Kahn condition is{" NOT" if condition_not_satisfied else ""} satisfied.')
+            print(
+                f"Model solution has {n_g_one} eigenvalues greater than one in modulus and {n_forward} "
+                f"forward-looking variables."
+                f'\nBlanchard-Kahn condition is{" NOT" if condition_not_satisfied else ""} satisfied.'
+            )
 
         if return_value is None:
             return
 
-        if return_value == 'df':
+        if return_value == "df":
             return eig
-        elif return_value == 'bool':
+        elif return_value == "bool":
             return ~condition_not_satisfied
 
     def compute_stationary_covariance_matrix(self):
         """
         Compute the stationary covariance matrix of the solved system via fixed-point iteration. By construction, any
-        linearized DSGE model will have a fixed covariance matrix. In principal, a closed form solution is available
+        linearized DSGE model will have a fixed covariance matrix. In principle, a closed form solution is available
         (we could solve a discrete Lyapunov equation) but this works fine.
 
         Returns
@@ -600,16 +766,25 @@ class gEconModel:
 
         return pd.DataFrame(acorr_mat, index=T.index, columns=np.arange(n_lags))
 
-    def fit(self, data,
-            estimate_a0=False,
-            estimate_P0=False,
-            a0_prior=None,
-            P0_prior=None,
-            filter_type='univariate',
-            draws=5000, n_walkers=36,
-            moves=None, emcee_x0=None, verbose=True,
-            return_inferencedata=True, burn_in=None, thin=None,
-            skip_initial_state_check=False, **sampler_kwargs):
+    def fit(
+        self,
+        data,
+        estimate_a0=False,
+        estimate_P0=False,
+        a0_prior=None,
+        P0_prior=None,
+        filter_type="univariate",
+        draws=5000,
+        n_walkers=36,
+        moves=None,
+        emcee_x0=None,
+        verbose=True,
+        return_inferencedata=True,
+        burn_in=None,
+        thin=None,
+        skip_initial_state_check=False,
+        **sampler_kwargs,
+    ):
         """
         Estimate model parameters via Bayesian inference. Parameter likelihood is computed using the Kalman filter.
         Posterior distributions are estimated using Markov Chain Monte Carlo (MCMC), specifically the Affine-Invariant
@@ -686,8 +861,10 @@ class gEconModel:
         model_var_names = [x.base_name for x in self.variables]
         if not all([x in model_var_names for x in observed_vars]):
             orphans = [x for x in observed_vars if x not in model_var_names]
-            raise ValueError(f'Columns of data must correspond to states of the DSGE model. Found the following columns'
-                             f'with no associated model state: {", ".join(orphans)}')
+            raise ValueError(
+                f"Columns of data must correspond to states of the DSGE model. Found the following columns"
+                f'with no associated model state: {", ".join(orphans)}'
+            )
 
         sparse_data = extract_sparse_data_from_model(self)
         prior_dict = extract_prior_dict(self)
@@ -696,24 +873,47 @@ class gEconModel:
             a0 = None
         else:
             if a0_prior is None:
-                raise ValueError('If estimate_a0 is True, you must provide a dictionary of prior distributions for'
-                                 'the initial values of all individual states')
+                raise ValueError(
+                    "If estimate_a0 is True, you must provide a dictionary of prior distributions for"
+                    "the initial values of all individual states"
+                )
             if not all([var in a0_prior.keys() for var in model_var_names]):
                 missing_keys = set(model_var_names) - set(list(a0_prior.keys()))
-                raise ValueError('You must provide one key for each state in the model. '
-                                 f'No keys found for: {", ".join(missing_keys)}')
+                raise ValueError(
+                    "You must provide one key for each state in the model. "
+                    f'No keys found for: {", ".join(missing_keys)}'
+                )
             for var in model_var_names:
-                prior_dict[f'{var}__initial'] = a0_prior[var]
+                prior_dict[f"{var}__initial"] = a0_prior[var]
 
-        moves = moves or [(emcee.moves.DEMove(), 0.6), (emcee.moves.DESnookerMove(), 0.4)]
+        moves = moves or [
+            (emcee.moves.DEMove(), 0.6),
+            (emcee.moves.DESnookerMove(), 0.4),
+        ]
 
         shock_names = [x.base_name for x in self.shocks]
 
         k_params = len(prior_dict)
         Z = build_Z_matrix(observed_vars, model_var_names)
 
-        args = [data, sparse_data, Z, prior_dict, shock_names, observed_vars, filter_type]
-        arg_names = ['observed_data', 'sparse_data', 'Z', 'prior_dict', 'shock_names', 'observed_vars', 'filter_type']
+        args = [
+            data,
+            sparse_data,
+            Z,
+            prior_dict,
+            shock_names,
+            observed_vars,
+            filter_type,
+        ]
+        arg_names = [
+            "observed_data",
+            "sparse_data",
+            "Z",
+            "prior_dict",
+            "shock_names",
+            "observed_vars",
+            "filter_type",
+        ]
 
         if emcee_x0:
             x0 = emcee_x0
@@ -722,54 +922,97 @@ class gEconModel:
 
         param_names = list(prior_dict.keys())
 
-        sampler = emcee.EnsembleSampler(n_walkers, k_params, evaluate_logp,
-                                        args=args,
-                                        moves=moves,
-                                        parameter_names=param_names,
-                                        **sampler_kwargs)
+        sampler = emcee.EnsembleSampler(
+            n_walkers,
+            k_params,
+            evaluate_logp,
+            args=args,
+            moves=moves,
+            parameter_names=param_names,
+            **sampler_kwargs,
+        )
 
-        _ = sampler.run_mcmc(x0, draws, progress=verbose, skip_initial_state_check=skip_initial_state_check)
+        _ = sampler.run_mcmc(
+            x0,
+            draws,
+            progress=verbose,
+            skip_initial_state_check=skip_initial_state_check,
+        )
 
         if return_inferencedata:
-            sampler_stats = xr.Dataset(data_vars=dict(
-                acceptance_fraction=(['chain'], sampler.acceptance_fraction),
-                autocorrelation_time=(['parameters'], sampler.get_autocorr_time(discard=burn_in or 0, quiet=True))),
-                coords=dict(
-                    chain=np.arange(n_walkers),
-                    parameters=param_names
-                ))
+            sampler_stats = xr.Dataset(
+                data_vars=dict(
+                    acceptance_fraction=(["chain"], sampler.acceptance_fraction),
+                    autocorrelation_time=(
+                        ["parameters"],
+                        sampler.get_autocorr_time(discard=burn_in or 0, quiet=True),
+                    ),
+                ),
+                coords=dict(chain=np.arange(n_walkers), parameters=param_names),
+            )
 
-            idata = az.from_emcee(sampler, var_names=param_names, blob_names=["log_likelihood"], arg_names=arg_names)
+            idata = az.from_emcee(
+                sampler,
+                var_names=param_names,
+                blob_names=["log_likelihood"],
+                arg_names=arg_names,
+            )
 
-            idata['sample_stats'].update(sampler_stats)
-            idata.observed_data = idata.observed_data.drop(['sparse_data', 'prior_dict'])
-            idata.observed_data = idata.observed_data.drop_dims(['sparse_data_dim_0', 'sparse_data_dim_1', 'prior_dict_dim_0'])
+            idata["sample_stats"].update(sampler_stats)
+            idata.observed_data = idata.observed_data.drop(
+                ["sparse_data", "prior_dict"]
+            )
+            idata.observed_data = idata.observed_data.drop_dims(
+                ["sparse_data_dim_0", "sparse_data_dim_1", "prior_dict_dim_0"]
+            )
 
             return idata.sel(draw=slice(burn_in, None, thin))
 
         return sampler
 
-    def sample_param_dict_from_prior(self,
-                                     n_samples=1,
-                                     seed=None,
-                                     param_subset=None,
-                                     sample_shock_sigma=False):
+    def sample_param_dict_from_prior(
+        self, n_samples=1, seed=None, param_subset=None, sample_shock_sigma=False
+    ):
+
+        """
+        Sample parameters from the parameter prior distributions.
+
+        Parameters
+        ----------
+        n_samples: int, default: 1
+            Number of samples to draw from the prior distributions.
+        seed: int, default: None
+            Seed for the random number generator.
+        param_subset: list, default: None
+            List of parameter names to sample. If None, all parameters are sampled.
+        sample_shock_sigma: bool, default: False
+            If True, also sample the shock standard deviations.
+
+        Returns
+        -------
+        new_param_dict: dict
+            Dictionary of sampled parameters.
+        """
 
         if sample_shock_sigma:
-            shock_priors = {k: v.rv_params['scale'] for k, v in self.shock_priors.items()}
+            shock_priors = {
+                k: v.rv_params["scale"] for k, v in self.shock_priors.items()
+            }
         else:
             shock_priors = self.shock_priors
 
-        all_priors = merge_dictionaries(self.param_priors,
-                                        shock_priors,
-                                        self.observation_noise_priors)
+        all_priors = merge_dictionaries(
+            self.param_priors, shock_priors, self.observation_noise_priors
+        )
 
         if param_subset is None:
             n_variables = len(all_priors)
             priors_to_sample = all_priors
         else:
             n_variables = len(param_subset)
-            priors_to_sample = {k: v for k, v in all_priors.items() if k in param_subset}
+            priors_to_sample = {
+                k: v for k, v in all_priors.items() if k in param_subset
+            }
 
         if seed is not None:
             seed_sequence = np.random.SeedSequence(seed)
@@ -784,7 +1027,32 @@ class gEconModel:
 
         return new_param_dict
 
-    def impulse_response_function(self, simulation_length: int = 40, shock_size: float = 1.0):
+    def impulse_response_function(
+        self, simulation_length: int = 40, shock_size: float = 1.0
+    ):
+        """
+        Compute the impulse response functions of the model.
+
+        Parameters
+        ----------
+        simulation_length : int, optional
+            The number of periods to compute the IRFs over. The default is 40.
+        shock_size : float, optional
+            The size of the shock. The default is 1.0.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The IRFs for each variable in the model. The DataFrame has a multi-index
+            with the variable names as the first level and the timestep as the second.
+            The columns are the shocks.
+
+        Raises
+        ------
+        PerturbationSolutionNotFoundException
+            If a perturbation solution has not been found.
+        """
+
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
 
@@ -801,25 +1069,52 @@ class gEconModel:
             for t in range(1, timesteps):
                 stochastic = R.values @ shock_path[:, t - 1]
                 deterministic = T.values @ data[:, t - 1, i]
-                data[:, t, i] = (deterministic + stochastic)
+                data[:, t, i] = deterministic + stochastic
 
-        index = pd.MultiIndex.from_product([R.index,
-                                            np.arange(timesteps),
-                                            R.columns],
-                                           names=['Variables', 'Time', 'Shocks'])
+        index = pd.MultiIndex.from_product(
+            [R.index, np.arange(timesteps), R.columns],
+            names=["Variables", "Time", "Shocks"],
+        )
 
-        df = (pd.DataFrame(data.ravel(), index=index, columns=['Values'])
-              .unstack([1, 2])
-              .droplevel(axis=1, level=0)
-              .sort_index(axis=1))
+        df = (
+            pd.DataFrame(data.ravel(), index=index, columns=["Values"])
+            .unstack([1, 2])
+            .droplevel(axis=1, level=0)
+            .sort_index(axis=1)
+        )
 
         return df
 
-    def simulate(self, simulation_length: int = 40,
-                 n_simulations: int = 100,
-                 shock_dict: Optional[Dict[str, float]] = None,
-                 shock_cov_matrix: Optional[ArrayLike] = None,
-                 show_progress_bar: bool = False):
+    def simulate(
+        self,
+        simulation_length: int = 40,
+        n_simulations: int = 100,
+        shock_dict: Optional[Dict[str, float]] = None,
+        shock_cov_matrix: Optional[ArrayLike] = None,
+        show_progress_bar: bool = False,
+    ):
+
+        """
+        Simulate the model over a certain number of time periods.
+
+        Parameters
+        ----------
+        simulation_length : int, optional(default=40)
+            The number of time periods to simulate.
+        n_simulations : int, optional(default=100)
+            The number of simulations to run.
+        shock_dict : dict, optional(default=None)
+            Dictionary of shocks to use.
+        shock_cov_matrix : arraylike, optional(default=None)
+            Covariance matrix of shocks to use.
+        show_progress_bar : bool, optional(default=False)
+            Whether to show a progress bar for the simulation.
+
+        Returns
+        -------
+        df : pandas.DataFrame
+            The simulated data.
+        """
 
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
@@ -831,7 +1126,9 @@ class gEconModel:
 
         if shock_cov_matrix is not None:
             assert shock_cov_matrix.shape == (
-                n_shocks, n_shocks), f'The shock covariance matrix should have shape {n_shocks} x {n_shocks}'
+                n_shocks,
+                n_shocks,
+            ), f"The shock covariance matrix should have shape {n_shocks} x {n_shocks}"
             d = stats.multivariate_normal(mean=np.zeros(n_shocks), cov=shock_cov_matrix)
             epsilons = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
 
@@ -840,37 +1137,49 @@ class gEconModel:
             for i, shock in enumerate(self.shocks):
                 if shock.base_name in shock_dict.keys():
                     d = stats.norm(loc=0, scale=shock_dict[shock.base_name])
-                    epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
+                    epsilons[:, :, i] = np.r_[
+                        [d.rvs(timesteps) for _ in range(n_simulations)]
+                    ]
 
-        elif all([shock.base_name in self.shock_priors.keys() for shock in self.shocks]):
+        elif all(
+            [shock.base_name in self.shock_priors.keys() for shock in self.shocks]
+        ):
             epsilons = np.zeros((n_simulations, timesteps, n_shocks))
             for i, d in enumerate(self.shock_priors.values()):
-                epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
+                epsilons[:, :, i] = np.r_[
+                    [d.rvs(timesteps) for _ in range(n_simulations)]
+                ]
 
         else:
-            raise ValueError('To run a simulation, supply either a full covariance matrix, a dictionary of shocks and'
-                             'standard deviations, or specify priors on the shocks in your GCN file.')
+            raise ValueError(
+                "To run a simulation, supply either a full covariance matrix, a dictionary of shocks and"
+                "standard deviations, or specify priors on the shocks in your GCN file."
+            )
 
         data = np.zeros((self.n_variables, timesteps, n_simulations))
         if epsilons.ndim == 2:
             epsilons = epsilons[:, :, None]
 
-        progress_bar = ProgressBar(timesteps - 1, verb='Sampling')
+        progress_bar = ProgressBar(timesteps - 1, verb="Sampling")
 
         for t in range(1, timesteps):
             progress_bar.start()
-            stochastic = np.einsum('ij,sj', R.values, epsilons[:, t - 1, :])
+            stochastic = np.einsum("ij,sj", R.values, epsilons[:, t - 1, :])
             deterministic = T.values @ data[:, t - 1, :]
-            data[:, t, :] = (deterministic + stochastic)
+            data[:, t, :] = deterministic + stochastic
 
             if show_progress_bar:
                 progress_bar.stop()
 
-        index = pd.MultiIndex.from_product([R.index,
-                                            np.arange(timesteps),
-                                            np.arange(n_simulations)],
-                                           names=['Variables', 'Time', 'Simulation'])
-        df = pd.DataFrame(data.ravel(), index=index, columns=['Values']).unstack([1, 2]).droplevel(axis=1, level=0)
+        index = pd.MultiIndex.from_product(
+            [R.index, np.arange(timesteps), np.arange(n_simulations)],
+            names=["Variables", "Time", "Simulation"],
+        )
+        df = (
+            pd.DataFrame(data.ravel(), index=index, columns=["Values"])
+            .unstack([1, 2])
+            .droplevel(axis=1, level=0)
+        )
 
         return df
 
@@ -914,21 +1223,34 @@ class gEconModel:
         self.shock_priors = shock_priors
 
     def _build_model_blocks(self, parsed_model, simplify_blocks: bool):
+        """
+        Builds blocks of the gEconpy model using strings parsed from the GCN file.
+
+        Parameters
+        ----------
+        parsed_model : str
+            The GCN model as a string.
+        simplify_blocks : bool
+            Whether to try to simplify equations or not.
+        """
+
         raw_blocks = gEcon_parser.split_gcn_into_block_dictionary(parsed_model)
 
-        self.options = raw_blocks['options']
-        self.try_reduce_vars = raw_blocks['tryreduce']
-        self.assumptions = raw_blocks['assumptions']
+        self.options = raw_blocks["options"]
+        self.try_reduce_vars = raw_blocks["tryreduce"]
+        self.assumptions = raw_blocks["assumptions"]
 
-        del raw_blocks['options']
-        del raw_blocks['tryreduce']
-        del raw_blocks['assumptions']
+        del raw_blocks["options"]
+        del raw_blocks["tryreduce"]
+        del raw_blocks["assumptions"]
 
         self._get_steady_state_equations(raw_blocks)
 
         for block_name, block_content in raw_blocks.items():
             block_dict = gEcon_parser.parsed_block_to_dict(block_content)
-            block = Block(name=block_name, block_dict=block_dict, assumptions=self.assumptions)
+            block = Block(
+                name=block_name, block_dict=block_dict, assumptions=self.assumptions
+            )
             block.solve_optimization(try_simplify=simplify_blocks)
 
             self.blocks[block.name] = block
@@ -936,20 +1258,50 @@ class gEconModel:
         self.n_blocks = len(self.blocks)
 
     def _get_all_block_equations(self) -> None:
+        """
+        Extract all equations from the blocks in the model.
+
+        Parameters
+        ----------
+        self : `Model`
+            The model object whose block system equations will be extracted.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Updates the `system_equations` attribute of `self` with the extracted equations.
+        Also updates the `n_equations` attribute of `self` with the number of extracted equations.
+        """
+
         _, blocks = unpack_keys_and_values(self.blocks)
         for block in blocks:
             self.system_equations.extend(block.system_equations)
         self.n_equations = len(self.system_equations)
 
     def _get_all_block_parameters(self) -> None:
+        """
+        Extract all parameters from all blocks and store them in the model's free_param_dict attribute. The
+        `free_param_dict` attribute is updated in place.
+        """
+
         _, blocks = unpack_keys_and_values(self.blocks)
         for block in blocks:
             self.free_param_dict.update(block.param_dict)
 
-        self.free_param_dict = sequential(self.free_param_dict,
-                                          [sympy_keys_to_strings, sympy_number_values_to_floats, sort_dictionary])
+        self.free_param_dict = sequential(
+            self.free_param_dict,
+            [sympy_keys_to_strings, sympy_number_values_to_floats, sort_dictionary],
+        )
 
     def _get_all_block_params_to_calibrate(self) -> None:
+        """
+        Retrieve the list of parameters to calibrate and the list of
+        equations used to calibrate the parameters from each block of
+        the model.
+        """
         _, blocks = unpack_keys_and_values(self.blocks)
         for block in blocks:
             if block.params_to_calibrate is None:
@@ -972,6 +1324,13 @@ class gEconModel:
         self.n_params_to_calibrate = len(self.params_to_calibrate)
 
     def _get_variables_and_shocks(self) -> None:
+        """
+        Collect all variables and shocks from the blocks and set their counts.
+
+        This method is called after the blocks have been processed. It collects all the shocks and variables from the
+        blocks, sorts them, and sets the n_shocks and n_variables properties.
+        """
+
         all_shocks = []
         _, blocks = unpack_keys_and_values(self.blocks)
 
@@ -985,7 +1344,10 @@ class gEconModel:
             atoms = eq.atoms()
             variables = [x for x in atoms if is_variable(x)]
             for variable in variables:
-                if variable.set_t(0) not in self.variables and variable not in all_shocks:
+                if (
+                    variable.set_t(0) not in self.variables
+                    and variable not in all_shocks
+                ):
                     self.variables.append(variable.set_t(0))
         self.n_variables = len(self.variables)
 
@@ -993,6 +1355,21 @@ class gEconModel:
         self.shocks = sorted(self.shocks, key=lambda x: x.name)
 
     def _get_steady_state_equations(self, raw_blocks: Dict[str, List[str]]):
+        """
+        Extract user-provided steady state equations from the `raw_blocks` dictionary and store the resulting
+        relationships in self.steady_state_relationships.
+
+        Parameters
+        ----------
+        raw_blocks : dict
+            Dictionary of block names and block contents extracted from a gEcon model.
+
+        Raises
+        ------
+        MultipleSteadyStateBlocksException
+            If there is more than one block in `raw_blocks` with a name from `STEADY_STATE_NAMES`.
+        """
+
         block_names = raw_blocks.keys()
         ss_block_names = [name for name in block_names if name in STEADY_STATE_NAMES]
         n_ss_blocks = len(ss_block_names)
@@ -1004,7 +1381,9 @@ class gEconModel:
 
         block_content = raw_blocks[ss_block_names[0]]
         block_dict = gEcon_parser.parsed_block_to_dict(block_content)
-        block = Block(name='steady_state', block_dict=block_dict, assumptions=self.assumptions)
+        block = Block(
+            name="steady_state", block_dict=block_dict, assumptions=self.assumptions
+        )
 
         sub_dict = dict()
         steady_state_dict = dict()
@@ -1020,17 +1399,31 @@ class gEconModel:
                 steady_state_dict[eq.lhs] = subbed_rhs
                 sub_dict[eq.lhs] = subbed_rhs
 
-        self.steady_state_relationships = sequential(steady_state_dict,
-                                                     [sympy_keys_to_strings, sympy_number_values_to_floats,
-                                                      sort_dictionary])
+        self.steady_state_relationships = sequential(
+            steady_state_dict,
+            [sympy_keys_to_strings, sympy_number_values_to_floats, sort_dictionary],
+        )
 
         del raw_blocks[ss_block_names[0]]
 
     def _try_reduce(self):
+        """
+        Attempt to reduce the number of equations in the system by removing equations requested in the `tryreduce`
+        block of the GCN file. Equations are considered safe to remove if they are "self-contained" that is, if
+        no other variables depend on their values.
+
+        Returns
+        -------
+        list
+            The names of the variables that were removed. If reduction was not possible, None is returned.
+        """
+
         if self.try_reduce_vars is None:
             return
 
-        self.try_reduce_vars = [single_symbol_to_sympy(x, self.assumptions) for x in self.try_reduce_vars]
+        self.try_reduce_vars = [
+            single_symbol_to_sympy(x, self.assumptions) for x in self.try_reduce_vars
+        ]
 
         variables = self.variables
         n_variables = self.n_variables
@@ -1056,13 +1449,20 @@ class gEconModel:
         self.system_equations = reduced_system
         self.n_equations = len(self.system_equations)
 
-        self.variables = set(atom.set_t(0) for eq in reduced_system for atom in eq.atoms() if is_variable(atom))
+        self.variables = {
+            atom.set_t(0)
+            for eq in reduced_system
+            for atom in eq.atoms()
+            if is_variable(atom)
+        }
         self.variables -= set(self.shocks)
         self.variables = sorted(list(self.variables), key=lambda x: x.name)
         self.n_variables = len(self.variables)
 
         if self.n_equations != self.n_variables:
-            warn('Reduction was requested but not possible because the system is not well defined.')
+            warn(
+                "Reduction was requested but not possible because the system is not well defined."
+            )
             return
 
         eliminated_vars = [var.name for var in variables if var not in self.variables]
@@ -1070,6 +1470,20 @@ class gEconModel:
         return eliminated_vars
 
     def _simplify_singletons(self):
+        """
+        Simplify the system by removing variables that are deterministically defined as a known value. Common examples
+        include P[] = 1, setting the price level of the economy as the numeraire, or B[] = 0, putting the bond market
+        in net-zero supply.
+
+        In these cases, the variable can be replaced by the deterministic value after all FoC
+        have been computed.
+
+        Returns
+        -------
+        eliminated_vars : List[str]
+            The names of the variables that were removed.
+        """
+
         system = self.system_equations
 
         variables = self.variables
@@ -1090,13 +1504,20 @@ class gEconModel:
         self.system_equations = reduced_system
         self.n_equations = len(reduced_system)
 
-        self.variables = set(atom.set_t(0) for eq in reduced_system for atom in eq.atoms() if is_variable(atom))
+        self.variables = {
+            atom.set_t(0)
+            for eq in reduced_system
+            for atom in eq.atoms()
+            if is_variable(atom)
+        }
         self.variables -= set(self.shocks)
         self.variables = sorted(list(self.variables), key=lambda x: x.name)
         self.n_variables = len(self.variables)
 
         if self.n_equations != self.n_variables:
-            warn('Simplification was requested but not possible because the system is not well defined.')
+            warn(
+                "Simplification was requested but not possible because the system is not well defined."
+            )
             return
 
         eliminated_vars = [var.name for var in variables if var not in self.variables]
@@ -1114,8 +1535,28 @@ class gEconModel:
 #         else:
 #             sigma = new_sigma
 
+
 @njit(cache=True)
 def _compute_autocorrelation_matrix(A, sigma, n_lags=5):
+    """Compute the autocorrelation matrix for the given state-space model.
+
+    Parameters
+    ----------
+    A : ndarray
+        An array of shape (n_endog, n_endog, n_lags) representing the transition matrix of the
+        state-space system.
+    sigma : ndarray
+        An array of shape (n_endog, n_endog) representing the variance-covariance matrix of the errors of
+        the transition equation.
+    n_lags : int, optional
+        The number of lags for which to compute the autocorrelation matrix.
+
+    Returns
+    -------
+    acov : ndarray
+        An array of shape (n_endog, n_lags) representing the autocorrelation matrix of the state-space process.
+    """
+
     acov = np.zeros((A.shape[0], n_lags))
     acov_factor = np.eye(A.shape[0])
     for i in range(n_lags):

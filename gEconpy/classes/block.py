@@ -1,22 +1,46 @@
 from collections import defaultdict
-
-from gEconpy.parser import parse_equations
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.utilities import diff_through_time, unpack_keys_and_values, set_equality_equals_zero, \
-    expand_subs_for_all_times
-from gEconpy.exceptions.exceptions import BlockNotInitializedException, DynamicCalibratingEquationException, \
-    OptimizationProblemNotDefinedException, MultipleObjectiveFunctionsException, ControlVariableNotFoundException
-from gEconpy.shared.typing import VariableType
+from typing import Dict, List, Optional, Tuple, Union
 
 import sympy as sp
-from typing import List, Tuple, Optional, Union, Dict
+
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.exceptions.exceptions import (
+    BlockNotInitializedException,
+    ControlVariableNotFoundException,
+    DynamicCalibratingEquationException,
+    MultipleObjectiveFunctionsException,
+    OptimizationProblemNotDefinedException,
+)
+from gEconpy.parser import parse_equations
+from gEconpy.shared.typing import VariableType
+from gEconpy.shared.utilities import (
+    diff_through_time,
+    expand_subs_for_all_times,
+    set_equality_equals_zero,
+    unpack_keys_and_values,
+)
 
 
 def sort_positive_then_negative(args):
+    """
+    Sort `args` such that the argument containing a negative symbol is returned first.
+
+    Parameters
+    ----------
+    args : list
+        List of sympy expressions
+
+    Returns
+    -------
+    tuple
+        Tuple of sympy expressions, with the element containing a negative symbol returned first.
+        If `args` does not contain exactly 2 elements, or if neither element contains a negative symbol,
+        return None.
+    """
     if len(args) != 2:
         return
 
-    if sum([-1 in arg.atoms() for arg in args]) != 1:
+    if sum(-1 in arg.atoms() for arg in args) != 1:
         return
 
     neg_arg = [arg for arg in args if -1 in arg.atoms()][0]
@@ -64,26 +88,32 @@ class Block:
     TODO: Split components out into their own class/protocol and let them handle their own parsing?
     """
 
-    def __init__(self, name: str,
-                 block_dict: Dict[str, str],
-                 assumptions: Optional[Dict[str, dict]] = None,
-                 solution_hints: Optional[Dict[str, str]] = None,
-                 allow_incomplete_initialization: bool = False) -> None:
+    def __init__(
+        self,
+        name: str,
+        block_dict: Dict[str, str],
+        assumptions: Optional[Dict[str, dict]] = None,
+        solution_hints: Optional[Dict[str, str]] = None,
+        allow_incomplete_initialization: bool = False,
+    ) -> None:
         """
-        :param name: str, the name of the block
-        :param block_dict: dict, dictionary of component:List[equations] key-value pairs created by
-                           gEcon_parser.parsed_block_to_dict.
-        :param solution_hints: dict, if not None, a dictionary of flags that help the solve_optimization method combine
-                               the FoC into the "expected" solution. Currently unused.
+        Initialize a block object
 
-        :param allow_incomplete_initialization: bool, default: False. If True, the block will not raise an exception if
-                an error in the block's implementation is encountered.
-
-        TODO: Implement solution hints as a dictionary of functions with fixed FoC "patterns", such as "CES", "CRRA",
-        and "CD", that will allow the solver_optimization method to return the solved system in the "expected" way.
+        Parameters
+        ----------
+        name: str
+            The name of the block
+        block_dict: Dict[str, str]
+            Dictionary of component:List[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
+        solution_hints: Dict[str, str], optional
+            If not None, a dictionary of flags that help the solve_optimization method combine
+            the FoC into the "expected" solution. Currently unused.
+        allow_incomplete_initialization: bool, optional
+            If True, the block will not raise an exception if an error in the block's implementation is encountered.
         """
+
         self.name = name
-        self.short_name = ''.join(word[0] for word in name.split('_'))
+        self.short_name = "".join(word[0] for word in name.split("_"))
 
         self.definitions: Optional[Dict[int, sp.Add]] = None
         self.controls: Optional[List[TimeAwareSymbol]] = None
@@ -106,55 +136,107 @@ class Block:
         self.n_equations = 0
         self.initialized = False
 
-        assumptions = defaultdict(dict) if not assumptions else assumptions
+        if assumptions is None:
+            assumptions = defaultdict(dict)
+
         self.initialize_from_dictionary(block_dict, assumptions)
         self._get_variable_list()
         self._get_param_dict_and_calibrating_equations()
 
     def __str__(self):
-        return f'{self.name} Block of {self.n_equations} equations, initialized: {self.initialized}, ' \
-               f'solved: {self.system_equations is not None}'
+        return (
+            f"{self.name} Block of {self.n_equations} equations, initialized: {self.initialized}, "
+            f"solved: {self.system_equations is not None}"
+        )
 
     def initialize_from_dictionary(self, block_dict: dict, assumptions: dict) -> None:
         """
-        :param block_dict: dict, dictionary of component:List[equations] key-value pairs created by
-                           gEcon_parser.parsed_block_to_dict.
-        :return: None
+        Initialize the model block with the provided definitions, objective, constraints, identities, and calibration
+        equations. The model block's controls and shocks will also be extracted from the provided block dictionary.
+
+        Parameters
+        ----------
+        block_dict: dict
+            A dictionary of component: list[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict
+        assumptions: dict
+            A dictionary of user-provided Sympy assumptions about variables in the model.
+
+        Returns
+        -------
+        None
         """
 
-        self.controls = self._parse_variable_list(block_dict, 'controls', assumptions)
-        self.shocks = self._parse_variable_list(block_dict, 'shocks', assumptions)
+        self.controls = self._parse_variable_list(block_dict, "controls", assumptions)
+        self.shocks = self._parse_variable_list(block_dict, "shocks", assumptions)
 
-        self.definitions = self._parse_equation_list(block_dict, 'definitions', assumptions)
-        self.objective = self._parse_equation_list(block_dict, 'objective', assumptions)
-        self.constraints = self._parse_equation_list(block_dict, 'constraints', assumptions)
-        self.identities = self._parse_equation_list(block_dict, 'identities', assumptions)
-        self.calibration = self._parse_equation_list(block_dict, 'calibration', assumptions)
+        self.definitions = self._parse_equation_list(
+            block_dict, "definitions", assumptions
+        )
+        self.objective = self._parse_equation_list(block_dict, "objective", assumptions)
+        self.constraints = self._parse_equation_list(
+            block_dict, "constraints", assumptions
+        )
+        self.identities = self._parse_equation_list(
+            block_dict, "identities", assumptions
+        )
+        self.calibration = self._parse_equation_list(
+            block_dict, "calibration", assumptions
+        )
 
         self.initialized = self._validate_initialization()
 
     def _validate_initialization(self) -> bool:
         """
-        :return: bool, indicates whether the block has been successfully initialized.
+        Check whether the block has been successfully initialized.
 
-        At a high level, gEcon allows for two kinds of blocks, those with and those without an optimization problem.
-        To have an optimization problem, we need the controls and objective components to be present. In addition, all
-        control variables need to be represented among the equations in objective, definitions, and
+        At a high level, gEcon allows for two kinds of blocks: those with and those without an optimization problem.
+        To have an optimization problem, the block needs both the `controls` and `objective` components to be present.
+        Additionally, all control variables need to be represented among the equations in `objective`, `definitions`, and
+        `constraints`.
+
+        Parameters
+        ----------
+        self: Block
+            The block to be checked
+
+        Returns
+        -------
+        bool
+            Indicates whether the block has been successfully initialized.
+
+        Raises
+        ------
+        OptimizationProblemNotDefinedException
+            If either the `controls` or `objective` component is missing
+        MultipleObjectiveFunctionsException
+            If there is more than one objective function defined
+        ControlVariableNotFoundException
+            If a control variable is not found in any of the `objective`, `definitions`, or `constraints` equations.
         """
 
         if self.objective is not None and self.controls is None:
-            raise OptimizationProblemNotDefinedException(block_name=self.name, missing='controls')
+            raise OptimizationProblemNotDefinedException(
+                block_name=self.name, missing="controls"
+            )
 
         if self.objective is None and self.controls is not None:
-            raise OptimizationProblemNotDefinedException(block_name=self.name, missing='objective')
+            raise OptimizationProblemNotDefinedException(
+                block_name=self.name, missing="objective"
+            )
 
         if self.objective is not None and len(list(self.objective.values())) > 1:
-            raise MultipleObjectiveFunctionsException(block_name=self.name, eqs=list(self.objective.values()))
+            raise MultipleObjectiveFunctionsException(
+                block_name=self.name, eqs=list(self.objective.values())
+            )
 
         if self.controls is not None:
             for control in self.controls:
                 control_found = False
-                eq_dicts = [x for x in [self.definitions, self.objective, self.constraints] if x is not None]
+                eq_dicts = [
+                    x
+                    for x in [self.definitions, self.objective, self.constraints]
+                    if x is not None
+                ]
                 for eq_dict in eq_dicts:
                     for eq in list(eq_dict.values()):
                         if control in eq.atoms():
@@ -167,37 +249,55 @@ class Block:
 
     def _validate_key(self, block_dict: dict, key: str) -> bool:
         """
-        :param block_dict: dict, dictionary of component:List[equations] key-value pairs created by
-                           gEcon_parser.parsed_block_to_dict.
-        :param key: str, a component name.
-        :return: bool
-
         Check whether a block component is present in the block_dict, and a valid component name. For valid component
         names, see gEcon_parser.BLOCK_COMPONENTS.
-        """
 
+        Parameters
+        ----------
+        block_dict : dict
+            Dictionary of component:List[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
+        key : str
+            A component name.
+
+        Returns
+        -------
+        bool
+        """
         return key in block_dict and hasattr(self, key) and block_dict[key] is not None
 
-    def _extract_lagrange_multipliers(self, equations: List[List[str]],
-                                            assumptions: dict) -> Tuple[List[List[str]],
-                                                                        List[Union[TimeAwareSymbol, None]]]:
+    def _extract_lagrange_multipliers(
+        self, equations: List[List[str]], assumptions: dict
+    ) -> Tuple[List[List[str]], List[Union[TimeAwareSymbol, None]]]:
         """
-        :param equations: list, a List of Lists of strings, each list representing a model equation. Created by the
-                          gEcon_parser.parsed_block_to_dict function.
-        :return: tuple, List of List of strings, and a list of Union[TimeAwareSymbols, None].
-
         gEcon allows the user to name lagrange multipliers in the GCN file. These multiplier variables need to be saved
         and used once the optimization problem is solved. This function removes the ": muliplier[]" from each equation
         and returns them as a list, along with the new equations. A None is placed in the list for each equation
         with no associated multiplier.
+
+        Parameters
+        ----------
+        equations : list
+            A list of lists of strings, each list representing a model equation. Created by the
+            gEcon_parser.parsed_block_to_dict function.
+        assumptions : dict
+            Assumptions for the model.
+
+        Returns
+        -------
+        list
+            List of lists of strings.
+        list
+            List of Union[TimeAwareSymbols, None].
         """
 
         result, multipliers = [], []
         for eq in equations:
-            if ':' in eq:
-                colon_idx = eq.index(':')
+            if ":" in eq:
+                colon_idx = eq.index(":")
                 multiplier = eq[-1]
-                multiplier = parse_equations.single_symbol_to_sympy(multiplier, assumptions)
+                multiplier = parse_equations.single_symbol_to_sympy(
+                    multiplier, assumptions
+                )
                 eq = eq[:colon_idx].copy()
 
                 result.append(eq)
@@ -208,15 +308,27 @@ class Block:
 
         return result, multipliers
 
-    def _parse_variable_list(self, block_dict: dict, key: str, assumptions: dict = None) -> Optional[List[sp.Symbol]]:
+    def _parse_variable_list(
+        self, block_dict: dict, key: str, assumptions: dict = None
+    ) -> Optional[List[sp.Symbol]]:
         """
-        :param block_dict: list, a List of Lists of strings, each list representing a model equation. Created by the
-                          gEcon_parser.parsed_block_to_dict function.
-        :param key: str, a component name.
-        :return: list, a list of variables, represented as Sympy objects, or None if the block does not exist.
-
         Two components -- controls and shocks -- expect a simple list of variables, which is a case the
         gEcon_parser.build_sympy_equations cannot handle.
+
+        Parameters
+        ----------
+        block_dict : list
+            A list of lists of strings, each list representing a model equation. Created by the
+            gEcon_parser.parsed_block_to_dict function.
+        key : str
+            A component name.
+        assumptions : dict, optional
+            Assumptions for the model.
+
+        Returns
+        -------
+        list
+            A list of variables, represented as Sympy objects, or None if the block does not exist.
         """
         if not self._validate_key(block_dict, key):
             return
@@ -238,7 +350,7 @@ class Block:
         sub_dict = {}
         if self.definitions is not None:
             _, definitions = unpack_keys_and_values(self.definitions)
-            sub_dict = {eq.lhs:eq.rhs for eq in definitions}
+            sub_dict = {eq.lhs: eq.rhs for eq in definitions}
 
         if self.objective is not None:
             _, objective = unpack_keys_and_values(self.objective)
@@ -258,13 +370,14 @@ class Block:
                 if variable.to_ss() not in self.variables:
                     self.variables.append(variable.to_ss())
 
-    def _get_and_record_equation_numbers(self, equations: List[sp.Eq]) -> range:
+    def _get_and_record_equation_numbers(self, equations: List[sp.Eq]) -> List[int]:
         """
-        :param equations:  list of Sympy equations representing a block
-        :return: range, a python range object with integers corresponding to these equations
+        Get a list of all unique variables in the Block and store it in the class attribute "variables".
 
-        In addition to numbering the equations, this function also maintains the internal count of how many equations
-        are in the block, to allow consistent numbers across components.
+        Returns
+        -------
+        list
+            A list of equation number indices
         """
         n_equations = len(equations)
         equation_numbers = range(self.n_equations, self.n_equations + n_equations)
@@ -272,14 +385,27 @@ class Block:
 
         return equation_numbers
 
-    def _parse_equation_list(self, block_dict: dict,
-                             key: str,
-                             assumptions: List[Dict[str, str]] = None) -> Optional[Dict[int, sp.Eq]]:
+    def _parse_equation_list(
+        self, block_dict: dict, key: str, assumptions: List[Dict[str, str]] = None
+    ) -> Optional[Dict[int, sp.Eq]]:
         """
-        :param block_dict: list, a List of Lists of strings, each list representing a model equation. Created by the
-                          gEcon_parser.parsed_block_to_dict function.
-        :param key: str, a component name.
-        :return: list, a list of equations, represented as Sympy objects, or None if the block does not exist.
+        Convert a list of equations represented as strings into a dictionary of sympy equations, indexed by their
+        equation number.
+
+        Parameters
+        ----------
+        block_dict : list
+            A list of lists of strings, each list representing a model equation. Created by the
+            gEcon_parser.parsed_block_to_dict function.
+        key : str
+            A component name.
+        assumptions : list, optional
+            A list of dictionaries with assumptions for each equation.
+
+        Returns
+        -------
+        dict
+            A dictionary of sympy equations, indexed by their equation number, or None if the block does not exist.
         """
         if not self._validate_key(block_dict, key):
             return
@@ -287,7 +413,9 @@ class Block:
         assumptions = assumptions or defaultdict(dict)
 
         equations = block_dict[key]
-        equations, lagrange_multipliers = self._extract_lagrange_multipliers(equations, assumptions)
+        equations, lagrange_multipliers = self._extract_lagrange_multipliers(
+            equations, assumptions
+        )
 
         equations = parse_equations.build_sympy_equations(equations, assumptions)
         equation_numbers = self._get_and_record_equation_numbers(equations)
@@ -319,19 +447,32 @@ class Block:
             return
 
         _, equations = unpack_keys_and_values(self.calibration)
+
         for eq in equations:
             atoms = eq.atoms()
 
             # Check if this equation is a normal parameter definition
-            if len(atoms) <= 3 and all([not isinstance(x, TimeAwareSymbol) for x in atoms]):
+            if len(atoms) <= 3 and all(
+                [not isinstance(x, TimeAwareSymbol) for x in atoms]
+            ):
                 param = eq.lhs
                 value = eq.rhs
                 self.param_dict.update({param: value})
 
             # Check if this equation is a valid calibrating equation
-            elif all([isinstance(x, (sp.Number, sp.Symbol, TimeAwareSymbol)) for x in atoms]):
-                if not all([x.time_index == 'ss' for x in atoms if isinstance(x, TimeAwareSymbol)]):
-                    raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
+            elif all(
+                [isinstance(x, (sp.Number, sp.Symbol, TimeAwareSymbol)) for x in atoms]
+            ):
+                if not all(
+                    [
+                        x.time_index == "ss"
+                        for x in atoms
+                        if isinstance(x, TimeAwareSymbol)
+                    ]
+                ):
+                    raise DynamicCalibratingEquationException(
+                        eq=eq, block_name=self.name
+                    )
 
                 if self.params_to_calibrate is None:
                     self.params_to_calibrate = [eq.lhs]
@@ -345,11 +486,16 @@ class Block:
 
     def _build_lagrangian(self) -> sp.Add:
         """
-        :return: sp.Add, a SymPy equation representing the Lagrangian of the optimization problem
+        Split the calibration block into a dictionary of fixed parameters and a list of equations to be used for
+        calibration.
 
-        The lagrangian function is built from the objective function, by recursively subtracting all constraints times
-        the respective lagrange multiplier. If a lagrange multiplier is not specified, then it is assigned one
-        automatically.
+        A parameter is assumed to be an equation with up to three atoms, all of which are of class sp.Symbol or
+        sp.Number. Calibrating equations, on the other hand, are comprised of Symbols, TimeAwareSymbols, and numbers.
+        In this second case, all TimeAwareSymbols must be in the steady state.
+
+        Returns
+        -------
+        None
         """
         objective = list(self.objective.values())[0]
         constraints = self.constraints
@@ -366,30 +512,38 @@ class Block:
             if multipliers[key] is not None:
                 lm = multipliers[key]
             else:
-                lm = TimeAwareSymbol(f'lambda__{self.short_name}_{i}', 0)
+                lm = TimeAwareSymbol(f"lambda__{self.short_name}_{i}", 0)
                 i += 1
 
-            lagrange = lagrange - lm * (constraint.lhs.subs(sub_dict) - constraint.rhs.subs(sub_dict))
+            lagrange = lagrange - lm * (
+                constraint.lhs.subs(sub_dict) - constraint.rhs.subs(sub_dict)
+            )
 
         return lagrange
 
     def _get_discount_factor(self) -> Optional[sp.Symbol]:
         """
-        :return: sp.Symbol, the Bellman equation discount factor
-        Optimization problems that are done over an infinite time horizon, for example that of the household, are
-        represented in the GCN file as Bellman equations of the form:
-        X[] = a[] + b * E[][X[1]];
+        Calculate the discount factor of a Bellman equation.
 
-        Where a[] is the value of the objective function at time t, and E[][X[1]] is the expected continuation value
-        conditioned on the current information set. The parameter 0 < b < 1, then, is a discount factor that ensures
-        the Bellman equation converges to a fixed point. This parameter should be extracted and used by the
-        diff_through_time function to correctly build the lagrange in cases where controls appear inside the
-        continuation value, for example capital stock at time t+1 in the RBC model.
+        A Bellman equation has the form X[] = a[] + b * E[][X[1]], where `a[]` is the value of the objective function at
+        time `t`, and `E[][X[1]]` is the expected continuation value conditioned on the current information set. The
+        parameter `b` (0 < b < 1) is the discount factor that ensures the equation converges to a fixed point. This
+        function extracts `b` from the objective function and returns it as a sympy symbol.
 
-        For single period optimizations, the discount factor should be 1.
+        For single period optimizations, the discount factor is 1.
 
         TODO: This function currently assumes the continuation value is a single variable, it will fail in the case of
         TODO: something like X[] = a[] + b * E[][Y[1] + Z[1]], although i don't know how such a function could arise?
+
+        Returns
+        -------
+        sp.Symbol
+            The discount factor of the Bellman equation.
+
+        Raises
+        ------
+        ValueError
+            If the block has multiple t+1 variables in the Bellman equation.
         """
 
         _, objective = unpack_keys_and_values(self.objective)
@@ -404,27 +558,33 @@ class Block:
         else:
             continuation_value = [x for x in variables if x.time_index == 1]
             if len(continuation_value) > 1:
-                raise ValueError(f'Block {self.name} has multiple t+1 variables in the Bellman equation, this is not'
-                                 f'currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]],'
-                                 f'where a[] is the instantaneous value function at time t, defined in the'
-                                 f'"definitions" component of the block.')
+                raise ValueError(
+                    f"Block {self.name} has multiple t+1 variables in the Bellman equation, this is not"
+                    f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]],"
+                    f"where a[] is the instantaneous value function at time t, defined in the"
+                    f'"definitions" component of the block.'
+                )
             discount_factor = objective.rhs.coeff(continuation_value[0])
             return discount_factor
 
     def simplify_system_equations(self) -> None:
         """
-        :return: None
-        Apply simplifications to the FoCs. For now this is just a heuristic check to eliminate redundant Lagrange
-        multipliers generated by the solver. User-named lagrange multipliers might also be redundant, but they aren't
-        removed, following the example of gEcon.
+        Simplify the system of equations that define the first-order conditions (FoCs) in the model. This function
+        currently applies a heuristic to remove redundant Lagrange multipliers generated by the solver. User-named
+        lagrange multipliers are not removed, following the example of gEcon.
 
         TODO: Add solution patterns for CES, CRRA, and CD functions. Check parameter values to allow CES to collapse
-        TODO: to CD, and CRRA to log-Utility?
+        TODO: to CD, and CRRA to log-utility.
         """
+
         system = self.system_equations
         simplified_system = system.copy()
-        variables = [x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
-        generated_multipliers = list(set([x for x in variables if 'lambda__' in x.base_name]))
+        variables = [
+            x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)
+        ]
+        generated_multipliers = list(
+            {x for x in variables if "lambda__" in x.base_name}
+        )
 
         # Strictly heuristic simplification: look for an equation of the form x = y and use it to substitute away
         # the generated multipliers.
@@ -447,19 +607,30 @@ class Block:
         self.eliminated_variables = eliminated_variables
 
     def solve_optimization(self, try_simplify: bool = True) -> None:
-        """
-        :return: None
-
+        r"""
         Solve the optimization problem implied by the block structure:
            max  Sum_{t=0}^\infty [Objective] subject to [Constraints]
         [Controls]
 
         By setting up the following Lagrangian:
-        $L = Sum_{t=0}^\infty Objective - lagrange_multiplier[1] * constraint[1] - ... - lagrange_multiplier[n] * constraint[n]
+        ..math::
+            L = Sum_{t=0}^\infty Objective - lagrange_multiplier[1] * constraint[1] - ... - lagrange_multiplier[n] * constraint[n]
         And taking the derivative with respect to each control variable in turn.
 
+        Parameters
+        ----------
+        try_simplify : bool
+            Whether to apply simplifications to the FoCs.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
         All first order conditions, along with the constraints and objective are stored in the .system_equations method.
-        No attempt is made to simplify the resulting system.
+        No attempt is made to simplify the resulting system if try_simplify = False.
+
         TODO: Add helper functions to simplify common setups, including CRRA/log-utility (extract Euler equation,
             labor supply curve, etc), and common production functions (CES, CD -- extract demand curves, prices, or
             marginal costs)
@@ -468,8 +639,10 @@ class Block:
                 correct?
         """
         if not self.initialized:
-            raise ValueError(f'Block {self.name} is not initialized, cannot call Block.solve_optimization() '
-                             f'before initialization')
+            raise ValueError(
+                f"Block {self.name} is not initialized, cannot call Block.solve_optimization() "
+                f"before initialization"
+            )
 
         sub_dict = dict()
 
@@ -480,12 +653,16 @@ class Block:
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
             for eq in identities:
-                self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
+                self.system_equations.append(
+                    set_equality_equals_zero(eq.subs(sub_dict))
+                )
 
         if self.constraints is not None:
             _, constraints = unpack_keys_and_values(self.constraints)
             for eq in constraints:
-                self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
+                self.system_equations.append(
+                    set_equality_equals_zero(eq.subs(sub_dict))
+                )
 
         if self.controls is None and self.objective is None:
             return
@@ -505,9 +682,10 @@ class Block:
         # Corner case, if the objective function has a named lagrange multiplier
         # (pointless? but done in some gEcon example GCN files)
         if multipliers[obj_idx] is not None:
-            self.system_equations.append(multipliers[obj_idx] - diff_through_time(lagrange,
-                                                                                  objective.lhs,
-                                                                                  discount_factor))
+            self.system_equations.append(
+                multipliers[obj_idx]
+                - diff_through_time(lagrange, objective.lhs, discount_factor)
+            )
 
         for control in controls:
             foc = diff_through_time(lagrange, control, discount_factor)

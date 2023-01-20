@@ -13,20 +13,20 @@ assumptions
 {
 	positive
 	{
-		C[], K[], L[], A[], lambda[], w[], r[], mc[], 
-		beta, delta, sigma_C, sigma_L, alpha;
+		C[], K[], L[], A[], I[], Y[], lambda[], w[], r[], mc[],
+		beta, delta, sigma_C, sigma_L, alpha, rho_A;
 	};
 
 	negative
 	{
 		TC[];
 	};
-	
+
 	real
 	{
-		C[], K[], L[], A[], lambda[], w[], r[], mc[], 
+		C[], K[], L[], A[], I[], Y[], lambda[], w[], r[], mc[],
 		U[], u[],
-		beta, delta, sigma_C, sigma_L, alpha;
+		beta, delta, sigma_C, sigma_L, alpha, rho_A, epsilon_A;
 	};
 };
 
@@ -52,8 +52,8 @@ block STEADY_STATE
 
 
         # U[ss] = (1 / (1 - beta)) * (C[ss] ^ (1 - sigma_C) / (1 - sigma_C) - L[ss] ^ (1 + sigma_L) / (1 + sigma_L));
-        lambda[ss] = C[ss] ^ (-sigma_C);
-        q[ss] = lambda[ss];
+        # lambda[ss] = C[ss] ^ (-sigma_C);
+        # q[ss] = lambda[ss];
         # TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);
     };
 };
@@ -115,7 +115,8 @@ block FIRM
 
     calibration
     {
-        L[ss] / K[ss] = 0.36 -> alpha;
+        # L[ss] / K[ss] = 0.36 -> alpha;
+	alpha = 0.35;
     };
 };
 
