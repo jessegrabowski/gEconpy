@@ -298,9 +298,7 @@ def convert_symbols_to_time_symbols(eq: sp.Eq) -> sp.Eq:
     return eq.subs(sub_dict)
 
 
-def single_symbol_to_sympy(
-    variable: str, assumptions: Optional[Dict] = None
-) -> TimeAwareSymbol:
+def single_symbol_to_sympy(variable: str, assumptions: Optional[Dict] = None) -> TimeAwareSymbol:
     """
     Convert a single gEcon style variable (e.g. X[], or X[-1]) to a Time-Aware Sympy symbol. If it seems to be a
     parameter (no []), it returns a standard Sympy symbol instead.
@@ -332,9 +330,7 @@ def single_symbol_to_sympy(
         return TimeAwareSymbol(variable_name, time_index, **assumptions[variable_name])
 
 
-def build_sympy_equations(
-    eqs: List[List[str]], assumptions: Optional[Dict] = None
-) -> List[sp.Eq]:
+def build_sympy_equations(eqs: List[List[str]], assumptions: Optional[Dict] = None) -> List[sp.Eq]:
 
     """
     Convert processed list of equation tokens to sympy equations.
@@ -412,9 +408,7 @@ def build_sympy_equations(
 
         eq_sympy = sp.Eq(*eq_sympy)
         if calibrating_parameter is not None:
-            param = sp.Symbol(
-                calibrating_parameter, **assumptions[calibrating_parameter]
-            )
+            param = sp.Symbol(calibrating_parameter, **assumptions[calibrating_parameter])
             eq_sympy = sp.Eq(param, eq_sympy.lhs - eq_sympy.rhs)
 
         # eq_sympy = rename_time_indexes(eq_sympy)

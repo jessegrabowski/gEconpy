@@ -7,14 +7,13 @@ from scipy.stats import invgamma, norm
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.parser import file_loaders, gEcon_parser, parse_equations, parse_plaintext
+from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.parser.parse_distributions import CompositeDistribution
 
 
 class ParserDistributionCases(unittest.TestCase):
     def setUp(self):
-        self.model = file_loaders.load_gcn(
-            "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
-        )
+        self.model = file_loaders.load_gcn("Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
 
     def test_distribution_extraction_simple(self):
         test_str = "alpha ~ Normal(0, 1) = 0.5;"
@@ -197,7 +196,7 @@ class ParserTestCases(unittest.TestCase):
 
         self.assertEqual(
             list(block_dict.keys()),
-            ["options", "tryreduce", "assumptions", "HOUSEHOLD"],
+            ["options", "tryreduce", "assumptions", "STEADY_STATE", "HOUSEHOLD"],
         )
 
         self.assertIs(block_dict["options"], None)
@@ -207,21 +206,17 @@ class ParserTestCases(unittest.TestCase):
         self.assertEqual(block_dict["HOUSEHOLD"].strip(), expected_result)
 
     def test_equation_rebuilding(self):
-        test_eq = "{Y[] = C[] + I[] + G[]; A[] ^ ( ( alpha + 1 ) / alpha ) - B[] / C[] * exp ( L[] ); };"
+        test_eq = (
+            "{Y[] = C[] + I[] + G[]; A[] ^ ( ( alpha + 1 ) / alpha ) - B[] / C[] * exp ( L[] ); };"
+        )
 
         parser_output, _ = gEcon_parser.preprocess_gcn(test_eq)
-        parsed_block = (
-            pyparsing.nestedExpr("{", "};").parseString(parser_output).asList()[0]
-        )
+        parsed_block = pyparsing.nestedExpr("{", "};").parseString(parser_output).asList()[0]
         eqs = gEcon_parser.rebuild_eqs_from_parser_output(parsed_block)
 
         self.assertEqual(len(eqs), 2)
-        self.assertEqual(
-            " ".join(eqs[0]).strip(), test_eq.split(";")[0].replace("{", "").strip()
-        )
-        self.assertEqual(
-            " ".join(eqs[1]).strip(), test_eq.split(";")[1].replace("};", "").strip()
-        )
+        self.assertEqual(" ".join(eqs[0]).strip(), test_eq.split(";")[0].replace("{", "").strip())
+        self.assertEqual(" ".join(eqs[1]).strip(), test_eq.split(";")[1].replace("};", "").strip())
 
     def test_parse_block_to_dict(self):
         test_eq = "{definitions { u[] = log ( C[] ) + log ( L[] ) ; };"
@@ -371,9 +366,7 @@ class ParserTestCases(unittest.TestCase):
             result = [x for x in result.atoms() if isinstance(x, sp.Symbol)][0]
             self.assertEqual(result, expected_result)
 
-        eq_test = sp.Eq(
-            x_t + x_t1 - x_tL1 * x_10t**x_tL10, x_ss - long_name_t / name_with_num
-        )
+        eq_test = sp.Eq(x_t + x_t1 - x_tL1 * x_10t**x_tL10, x_ss - long_name_t / name_with_num)
         eq_answer = sp.Eq(
             answers[0] + answers[1] - answers[2] * answers[3] ** answers[4],
             answers[5] - answers[6] / answers[7],
@@ -441,9 +434,93 @@ class ParserTestCases(unittest.TestCase):
         };
         """
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
+        self.assertRaises(
+            ValueError, gEcon_parser.extract_special_block, parser_output, "assumptions"
+        )
+
+    def test_typo_in_assumptions_gives_suggestion(self):
+        test_file = """assumptions
+        {
+            possitive
+            {
+                L[], M[], P[];
+            };
+        };
+        """
+        parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
+        try:
+            gEcon_parser.extract_special_block(parser_output, "assumptions")
+        except ValueError as e:
+            self.assertEqual(
+                str(e),
+                'Assumption "possitive" is not a valid Sympy assumption. Did you mean "positive"?',
+            )
+
+    def test_default_assumptions_set_if_no_assumption_block(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                identities
+                {
+                    C[] = 1;
+                };
+            };
+        """
+
+        parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
         results = gEcon_parser.extract_special_block(parser_output, "assumptions")
 
-        # self.assertRaises()
+        self.assertEqual(results["assumptions"]["C"], DEFAULT_ASSUMPTIONS)
+
+    def test_defaults_removed_if_conflicting_with_user_spec(self):
+        test_file = """
+            assumptions
+            {
+                imaginary
+                {
+                    C[];
+                };
+            };
+
+            block HOUSEHOLD
+            {
+                identities
+                {
+                    C[] = 1;
+                };
+            };
+        """
+
+        parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
+        results = gEcon_parser.extract_special_block(parser_output, "assumptions")
+
+        self.assertTrue("real" not in results["assumptions"]["C"].keys())
+
+    def test_defaults_given_when_variable_subset_defined(self):
+        test_file = """
+             assumptions
+             {
+                 negative
+                 {
+                     C[];
+                 };
+             };
+
+             block HOUSEHOLD
+             {
+                 identities
+                 {
+                     C[] = 1;
+                     L[] = 1;
+                 };
+             };
+         """
+
+        parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
+        results = gEcon_parser.extract_special_block(parser_output, "assumptions")
+
+        self.assertEqual(results["assumptions"]["C"], {"real": True, "negative": True})
+        self.assertEqual(results["assumptions"]["L"], DEFAULT_ASSUMPTIONS)
 
     def test_parse_equations_to_sympy(self):
         test_eq = "{definitions { u[] = log ( C[] ) + log ( L[] ) ; }; objective { U[] = u[] + beta * E[] [ U[1] ] ; };"
@@ -460,8 +537,7 @@ class ParserTestCases(unittest.TestCase):
             ),
             sp.Eq(
                 sp.Symbol("alpha"),
-                TimeAwareSymbol("L", 0).to_ss() / TimeAwareSymbol("K", 0).to_ss()
-                - 0.36,
+                TimeAwareSymbol("L", 0).to_ss() / TimeAwareSymbol("K", 0).to_ss() - 0.36,
             ),
         ]
 
@@ -487,9 +563,7 @@ class ParserTestCases(unittest.TestCase):
         point_dict = {"loc": 0.1, "scale": 1, "epsilon": 1}
         self.assertEqual(
             d.logpdf(point_dict),
-            mu_epsilon.logpdf(0.1)
-            + sigma_epsilon.logpdf(1)
-            + norm(loc=0.1, scale=1).logpdf(1),
+            mu_epsilon.logpdf(0.1) + sigma_epsilon.logpdf(1) + norm(loc=0.1, scale=1).logpdf(1),
         )
 
     def test_shock_block_with_multiple_distributions(self):

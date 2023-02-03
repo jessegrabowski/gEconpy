@@ -3,12 +3,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 import numba as nb  # pylint: disable=unused-import
 import numpy as np
 import sympy as sp
-from numba import njit
 from scipy import linalg
 from sympy import Expr
-
-# from gEconpy.numba_linalg.overloads import *
-from gEconpy.shared.utilities import string_keys_to_sympy
 
 
 def convert_to_numba_function(expr: Expr, vars: List[str]) -> Callable:
@@ -31,17 +27,19 @@ def convert_to_numba_function(expr: Expr, vars: List[str]) -> Callable:
     -----
     The function returned by this function is pickleable.
     """
-    code = sp.printing.ccode(expr)
-    # The code string will contain a single line, so we add line breaks to make it a valid block of code
-    code = "@nb.njit\ndef f({}):\n{}\n    return {}".format(
-        ",".join(vars), " " * 4, code
-    )
-    # Compile the code and return the resulting function
-    exec(code)
-    return locals()["f"]
+    # code = sp.printing.ccode(expr)
+    # # The code string will contain a single line, so we add line breaks to make it a valid block of code
+    # code = "@nb.njit\ndef f({}):\n{}\n    return {}".format(
+    #     ",".join(vars), " " * 4, code
+    # )
+    # # Compile the code and return the resulting function
+    # exec(code)
+    # return locals()["f"]
+
+    return nb.njit(sp.lambdify(vars, expr))
 
 
-@njit
+# @njit
 def check_finite_matrix(a):
     for v in np.nditer(a):
         if not np.isfinite(v.item()):
@@ -49,9 +47,7 @@ def check_finite_matrix(a):
     return True
 
 
-def extract_sparse_data_from_model(
-    model, vars_to_estimate: Optional[List] = None
-) -> List:
+def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = None) -> List:
     """
     Extract sparse data from a DSGE model.
 
@@ -59,7 +55,7 @@ def extract_sparse_data_from_model(
     ----------
     model : object
         A gEconpy model object.
-    vars_to_estimate : list, optional
+    params_to_estimate : list, optional
         A list of variables to estimate. The default is None, which estimates all variables.
 
     Returns
@@ -68,15 +64,19 @@ def extract_sparse_data_from_model(
         A list of sparse data.
     """
 
-    vars_to_estimate = vars_to_estimate or model.param_priors.keys()
+    params_to_estimate = params_to_estimate or model.param_priors.keys()
+    ss_vars = list(model.steady_state_dict.to_sympy().keys())
 
     param_dict = model.free_param_dict.copy()
-    ss_sub_dict = string_keys_to_sympy(model.steady_state_relationships)
-    calib_dict = model.calib_param_dict
+    ss_sub_dict = model.steady_state_relationships.copy()
+    calib_dict = model.calib_param_dict.copy()
 
-    not_estimated_dict = {
-        k: param_dict[k] for k in param_dict.keys() if k not in vars_to_estimate
-    }
+    requires_numeric_solution = [x for x in ss_vars if x not in ss_sub_dict.to_sympy()]
+
+    not_estimated_dict = param_dict.copy()
+    for k in param_dict.keys():
+        if k not in params_to_estimate:
+            del not_estimated_dict[k]
 
     names = ["A", "B", "C", "D"]
     A, B, C, D = (x.tolist() for x in model._perturbation_setup(return_F_matrices=True))
@@ -93,10 +93,10 @@ def extract_sparse_data_from_model(
                 if value != 0:
                     # Convert the sympy expression into a Numba-compatible function using the above function
                     numba_func = convert_to_numba_function(
-                        value.subs(ss_sub_dict)
-                        .subs(calib_dict)
-                        .subs(not_estimated_dict),
-                        vars_to_estimate,
+                        value.subs(ss_sub_dict.to_sympy())
+                        .subs(calib_dict.to_sympy())
+                        .subs(not_estimated_dict.to_sympy()),
+                        params_to_estimate + requires_numeric_solution,
                     )
                     data.append(numba_func)
                     idxs.append(i)
@@ -108,7 +108,7 @@ def extract_sparse_data_from_model(
     return sparse_datas
 
 
-@njit
+# @njit
 def matrix_from_csr_data(
     data: np.ndarray, indices: np.ndarray, idxptrs: np.ndarray, shape: Tuple[int, int]
 ) -> np.ndarray:
@@ -180,9 +180,9 @@ def build_system_matrices(
 
     result = []
     if vars_to_estimate:
-        params_to_use = {k: v for k, v in param_dict.items() if k in vars_to_estimate}
+        params_to_use = {k: v for k, v in param_dict.to_string().items() if k in vars_to_estimate}
     else:
-        params_to_use = param_dict
+        params_to_use = param_dict.to_string()
 
     for sparse_data in sparse_datas:
         fs, indices, idxptrs, shape = sparse_data
@@ -196,7 +196,7 @@ def build_system_matrices(
     return result
 
 
-@njit
+# @njit
 def compute_eigenvalues(A, B, C, tol=1e-8):
     """
     Given the log-linearized coefficient matrices A, B, and C at times t-1, t, and t+1 respectively, compute the
@@ -226,9 +226,7 @@ def compute_eigenvalues(A, B, C, tol=1e-8):
 
     eqs_and_leads_idx = np.hstack((np.arange(n_vars), lead_var_idx + n_vars))
 
-    Gamma_0 = np.vstack(
-        (np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq)))))
-    )
+    Gamma_0 = np.vstack((np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq))))))
 
     Gamma_1 = np.vstack(
         (
@@ -239,9 +237,7 @@ def compute_eigenvalues(A, B, C, tol=1e-8):
     Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
     Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
 
-    A, B, alpha, beta, Q, Z = linalg.ordqz(
-        -Gamma_0, Gamma_1, sort="ouc", output="complex"
-    )
+    A, B, alpha, beta, Q, Z = linalg.ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
 
     gev = np.vstack((np.diag(A), np.diag(B))).T
 
@@ -257,7 +253,7 @@ def compute_eigenvalues(A, B, C, tol=1e-8):
     return eig[sorted_idx, :]
 
 
-@njit
+# @njit
 def check_bk_condition(A, B, C, tol=1e-8):
     """
     Check the Blanchard-Kahn condition for the DSGE model specified by the log linearized coefficient matrices

@@ -134,13 +134,9 @@ def make_var_to_matlab_sub_dict(
             time_index = var.safe_name.split("_")[-1]
             var_name += f"_{time_index}"
         elif isinstance(var, sp.Symbol):
-            var_name = (
-                var.name if var.name.lower() not in greeks else clash_prefix + var.name
-            )
+            var_name = var.name if var.name.lower() not in greeks else clash_prefix + var.name
         else:
-            raise ValueError(
-                "var_list should contain only strings, symbols, or TimeAwareSymbols"
-            )
+            raise ValueError("var_list should contain only strings, symbols, or TimeAwareSymbols")
 
         sub_dict[var] = var_name
 
@@ -164,16 +160,13 @@ def convert_var_timings_to_matlab(var_list: List[str]) -> List[str]:
         form that can be used in a Dynare mod file (e.g. '(1)', '(-1)', '').
     """
     matlab_var_list = [
-        var.replace("_t+1", "(1)").replace("_t-1", "(-1)").replace("_t", "")
-        for var in var_list
+        var.replace("_t+1", "(1)").replace("_t-1", "(-1)").replace("_t", "") for var in var_list
     ]
 
     return matlab_var_list
 
 
-def write_lines_from_list(
-    l: List[str], file: str, line_start: str = "", line_max: int = 50
-) -> str:
+def write_lines_from_list(l: List[str], file: str, line_start: str = "", line_max: int = 50) -> str:
     """
     This function writes a list of items to a string, inserting line
     breaks at a specified maximum line length.
@@ -245,15 +238,11 @@ def make_mod_file(model) -> str:
     var_to_matlab = make_var_to_matlab_sub_dict(
         make_all_var_time_combos(var_list), clash_prefix="var_"
     )
-    par_to_matlab = make_var_to_matlab_sub_dict(
-        param_dict.keys(), clash_prefix="param_"
-    )
+    par_to_matlab = make_var_to_matlab_sub_dict(param_dict.keys(), clash_prefix="param_")
     shock_to_matlab = make_var_to_matlab_sub_dict(shocks, clash_prefix="exog_")
 
     items_to_hash = (
-        list(var_to_matlab.keys())
-        + list(par_to_matlab.keys())
-        + list(shock_to_matlab.keys())
+        list(var_to_matlab.keys()) + list(par_to_matlab.keys()) + list(shock_to_matlab.keys())
     )
 
     file = ""
@@ -287,9 +276,7 @@ def make_mod_file(model) -> str:
         matlab_subdict = {}
 
         for atom in eq.atoms():
-            if not isinstance(atom, TimeAwareSymbol) and isinstance(
-                atom, sp.core.Symbol
-            ):
+            if not isinstance(atom, TimeAwareSymbol) and isinstance(atom, sp.core.Symbol):
                 if atom in par_to_matlab.keys():
                     matlab_subdict[atom] = sp.Symbol(par_to_matlab[atom])
             elif isinstance(atom, TimeAwareSymbol):

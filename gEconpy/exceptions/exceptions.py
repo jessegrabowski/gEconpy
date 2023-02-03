@@ -216,9 +216,7 @@ class ParameterNotFoundException(ValueError):
             f'"{variable_name}". Valid aliases for {param_name} are: '
         )
         if len(valid_param_names) > 1:
-            message += (
-                ", ".join(valid_param_names[:-1]) + f", and {valid_param_names[-1]}."
-            )
+            message += ", ".join(valid_param_names[:-1]) + f", and {valid_param_names[-1]}."
         else:
             message += f"{valid_param_names[0]}."
 
@@ -243,15 +241,15 @@ class MultipleParameterDefinitionException(ValueError):
 
 class UnusedParameterError(ValueError):
     def __init__(self, d_name: str, param_name: str) -> None:
-        message = f"{d_name} distributions do not have a {param_name}; do not call this parse method."
+        message = (
+            f"{d_name} distributions do not have a {param_name}; do not call this parse method."
+        )
 
         super().__init__(message)
 
 
 class InvalidParameterException(ValueError):
-    def __init__(
-        self, variable_name, d_name, canon_param_name, param_name, constraints
-    ):
+    def __init__(self, variable_name, d_name, canon_param_name, param_name, constraints):
         message = (
             f'The {canon_param_name} of the {d_name.upper()} distribution associated with "{variable_name}" '
             f"(passed as {param_name}) is invalid. It should respect the following constraints: {constraints}."
@@ -280,9 +278,7 @@ class InvalidMeanException(ValueError):
 
 
 class DistributionOverDefinedException(ValueError):
-    def __init__(
-        self, variable_name, d_name, dist_n_params, n_params_passed, n_constraints
-    ):
+    def __init__(self, variable_name, d_name, dist_n_params, n_params_passed, n_constraints):
         message = (
             f"The {d_name} distribution associated wth {variable_name} is over-defined. The distribution has "
             f"{dist_n_params} free parameters, but you passed {n_params_passed} plus {n_constraints} moment "

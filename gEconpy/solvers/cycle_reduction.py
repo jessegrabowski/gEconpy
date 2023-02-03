@@ -87,7 +87,9 @@ def cycle_reduction(
         elif np.isnan(A0_L1_norm) or i == (max_iter - 1):
             # If we fail, figure out how far we got
             if A0_L1_norm < tol:
-                result = "Iteration on matrix A0 and A1 converged towards a solution, but A2 did not."
+                result = (
+                    "Iteration on matrix A0 and A1 converged towards a solution, but A2 did not."
+                )
                 log_norm = np.log(np.linalg.norm(A2, 1))
             else:
                 result = "Iteration on all matrices failed to converged"

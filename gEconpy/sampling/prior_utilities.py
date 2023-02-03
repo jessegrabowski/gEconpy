@@ -14,9 +14,7 @@ def prior_solvability_check(
     model, n_samples, seed=None, param_subset=None, pert_solver="cycle_reduction"
 ):
     data = pd.DataFrame(
-        model.sample_param_dict_from_prior(
-            n_samples, seed, param_subset, sample_shock_sigma=True
-        )
+        model.sample_param_dict_from_prior(n_samples, seed, param_subset, sample_shock_sigma=True)
     )
     progress_bar = ProgressBar(n_samples, verb="Sampling")
 
@@ -38,9 +36,7 @@ def prior_solvability_check(
 
             A, B, C, D = model.build_perturbation_matrices(**param_dict, **ss_dict)
             if pert_solver == "cycle_reduction":
-                solver = (
-                    model.perturbation_solver.solve_policy_function_with_cycle_reduction
-                )
+                solver = model.perturbation_solver.solve_policy_function_with_cycle_reduction
                 T, R, result, log_norm = solver(A, B, C, D, max_iter, tol, verbose)
                 pert_success = log_norm < 1e-8
 
@@ -129,9 +125,7 @@ def simulate_trajectories_from_prior(
     model_var_names = [x.base_name for x in model.variables]
     shock_names = [x.name for x in model.shocks]
 
-    param_dicts = pd.DataFrame(
-        model.sample_param_dict_from_prior(n_samples)
-    ).T.to_dict()
+    param_dicts = pd.DataFrame(model.sample_param_dict_from_prior(n_samples)).T.to_dict()
     i = 0
 
     progress_bar = ProgressBar(n_samples, "Sampling")
@@ -204,9 +198,7 @@ def kalman_filter_from_prior(model, data, n_samples, filter_type="univariate"):
             )
             filtered_states, _, filtered_covariances, *_ = filter_results
 
-            smoother_results = kalman_smoother(
-                T, R, Q, filtered_states, filtered_covariances
-            )
+            smoother_results = kalman_smoother(T, R, Q, filtered_states, filtered_covariances)
             results.append(list(filter_results) + list(smoother_results))
 
             i += 1

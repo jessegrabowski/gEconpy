@@ -55,9 +55,7 @@ class TestHalfNormalDistributionParser(unittest.TestCase):
 
     def test_typo_in_scale_parameter(self):
         param_dict = {"siggma": "2.5"}
-        self.assertWarns(
-            IgnoredCloseMatchWarning, self.parse_scale_parameter, param_dict
-        )
+        self.assertWarns(IgnoredCloseMatchWarning, self.parse_scale_parameter, param_dict)
 
     def test_scale_declared_twice(self):
         param_dict = {"sigma": "0", "tau": "1"}

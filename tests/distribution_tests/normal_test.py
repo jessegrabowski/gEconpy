@@ -76,9 +76,7 @@ class TestNormalDistributionParser(unittest.TestCase):
 
     def test_typo_in_scale_parameter(self):
         param_dict = {"mean": "0", "siggma": "2.5"}
-        self.assertWarns(
-            IgnoredCloseMatchWarning, self.parse_scale_parameter, param_dict
-        )
+        self.assertWarns(IgnoredCloseMatchWarning, self.parse_scale_parameter, param_dict)
 
     def test_scale_declared_twice(self):
         param_dict = {"sigma": "0", "tau": "1"}
@@ -107,15 +105,11 @@ class TestNormalDistributionParser(unittest.TestCase):
 
     def test_bounds_declared_twice(self):
         param_dict = {"loc": 1, "max": 2, "upper_bound": 3}
-        self.assertRaises(
-            MultipleParameterDefinitionException, self.parse_upper_bound, param_dict
-        )
+        self.assertRaises(MultipleParameterDefinitionException, self.parse_upper_bound, param_dict)
 
         param_dict = {"loc": 1, "lower": 2, "lower_bound": 3}
 
-        self.assertRaises(
-            MultipleParameterDefinitionException, self.parse_lower_bound, param_dict
-        )
+        self.assertRaises(MultipleParameterDefinitionException, self.parse_lower_bound, param_dict)
 
     def test_unused_parameter_warning(self):
         parser = self.parser

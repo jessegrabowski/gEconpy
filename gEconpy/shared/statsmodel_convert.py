@@ -108,9 +108,7 @@ def compile_to_statsmodels(model):
             noise_priors = self.model.observation_noise_priors.copy()
 
             self.prior_dict = param_priors.copy()
-            self.prior_dict.update(
-                {k: d.rv_params["scale"] for k, d in shock_priors.items()}
-            )
+            self.prior_dict.update({k: d.rv_params["scale"] for k, d in shock_priors.items()})
             self.prior_dict.update(noise_priors)
 
             n_shocks = len(self.shock_names)
@@ -123,12 +121,8 @@ def compile_to_statsmodels(model):
             self.start_dict.update(shock_start_dict)
             self.start_dict.update(noise_start_dict)
 
-            self._validate_start_dict(
-                param_start_dict, shock_start_dict, noise_start_dict
-            )
-            self._build_transform_dict(
-                param_transforms, shock_transforms, noise_transforms
-            )
+            self._validate_start_dict(param_start_dict, shock_start_dict, noise_start_dict)
+            self._build_transform_dict(param_transforms, shock_transforms, noise_transforms)
             self._validate_priors(param_priors, shock_priors, noise_priors)
 
             super().__init__(
@@ -180,18 +174,12 @@ def compile_to_statsmodels(model):
             noise_start_dict: Dict[str, float]
                 A dictionary of starting values for observation noises that are to be estimated.
             """
-            missing_vars = [
-                x for x in self.params_to_estimate if x not in param_start_dict.keys()
-            ]
+            missing_vars = [x for x in self.params_to_estimate if x not in param_start_dict.keys()]
             missing_shocks = [
                 x for x in self.shocks_to_estimate if x not in shock_start_dict.keys()
             ]
-            missing_noise = [
-                x for x in self.noisy_states if x not in noise_start_dict.keys()
-            ]
-            msg = (
-                "The following {} to be estimated were not assigned a starting value: "
-            )
+            missing_noise = [x for x in self.noisy_states if x not in noise_start_dict.keys()]
+            msg = "The following {} to be estimated were not assigned a starting value: "
 
             if any(missing_vars):
                 raise ValueError(msg.format("parameters") + ", ".join(missing_vars))
@@ -200,23 +188,17 @@ def compile_to_statsmodels(model):
                 raise ValueError(msg.format("shocks") + ", ".join(missing_shocks))
 
             if any(missing_noise):
-                raise ValueError(
-                    msg.format("observation noises") + ", ".join(missing_noise)
-                )
+                raise ValueError(msg.format("observation noises") + ", ".join(missing_noise))
 
             extra_vars = [
-                x
-                for x in param_start_dict.keys()
-                if x not in self.model.free_param_dict.keys()
+                x for x in param_start_dict.keys() if x not in self.model.free_param_dict.keys()
             ]
             extra_shocks = [
                 x
                 for x in shock_start_dict.keys()
                 if x not in [x.base_name for x in self.model.shocks]
             ]
-            extra_noise = [
-                x for x in noise_start_dict.keys() if x not in self.data.columns
-            ]
+            extra_noise = [x for x in noise_start_dict.keys() if x not in self.data.columns]
 
             msg = "The following {} were given starting values, but did not appear in the {}: "
             if any(extra_vars):
@@ -234,9 +216,7 @@ def compile_to_statsmodels(model):
                     msg.format("observation noises", "data") + ", ".join(missing_noise)
                 )
 
-        def _build_transform_dict(
-            self, param_transforms, shock_transforms, noise_transforms
-        ):
+        def _build_transform_dict(self, param_transforms, shock_transforms, noise_transforms):
             self.transform_dict = {}
             for param in self.params_to_estimate:
                 if param in param_transforms.keys():
@@ -262,9 +242,7 @@ def compile_to_statsmodels(model):
                         self.transform_dict[shock] = IdentityTransformer()
 
             if noise_transforms is None:
-                self.transform_dict.update(
-                    {k: PositiveTransformer() for k in self.noisy_states}
-                )
+                self.transform_dict.update({k: PositiveTransformer() for k in self.noisy_states})
             else:
                 for noise in self.noisy_states:
                     if noise in noise_transforms.keys():
@@ -279,15 +257,9 @@ def compile_to_statsmodels(model):
             if not self.fit_MAP:
                 return
 
-            missing_vars = [
-                x for x in self.params_to_estimate if x not in param_priors.keys()
-            ]
-            missing_shocks = [
-                x for x in self.shocks_to_estimate if x not in shock_priors.keys()
-            ]
-            missing_noise = [
-                x for x in self.noisy_states if x not in noise_priors.keys()
-            ]
+            missing_vars = [x for x in self.params_to_estimate if x not in param_priors.keys()]
+            missing_shocks = [x for x in self.shocks_to_estimate if x not in shock_priors.keys()]
+            missing_noise = [x for x in self.noisy_states if x not in noise_priors.keys()]
             msg = "The following {} to be estimated were not assigned a prior: "
             if any(missing_vars):
                 raise ValueError(msg.format("parameters") + ", ".join(missing_vars))
@@ -296,9 +268,7 @@ def compile_to_statsmodels(model):
                 raise ValueError(msg.format("shocks") + ", ".join(missing_shocks))
 
             if any(missing_noise):
-                raise ValueError(
-                    msg.format("observation noises") + ", ".join(missing_noise)
-                )
+                raise ValueError(msg.format("observation noises") + ", ".join(missing_noise))
 
         @property
         def param_names(self):
@@ -339,9 +309,7 @@ def compile_to_statsmodels(model):
             Example: variances must be positive, so apply x ** 2.
             """
             param_space_params = np.zeros_like(real_line_params)
-            for i, (name, param) in enumerate(
-                zip(self.external_param_names, real_line_params)
-            ):
+            for i, (name, param) in enumerate(zip(self.external_param_names, real_line_params)):
                 param_space_params[i] = self.transform_dict[name].constrain(param)
 
             return param_space_params
@@ -354,9 +322,7 @@ def compile_to_statsmodels(model):
             Example: We applied x ** 2 to ensure x is positive, apply x ** (1 / 2).
             """
             real_line_params = np.zeros_like(param_space_params)
-            for i, (name, param) in enumerate(
-                zip(self.external_param_names, param_space_params)
-            ):
+            for i, (name, param) in enumerate(zip(self.external_param_names, param_space_params)):
                 real_line_params[i] = self.transform_dict[name].unconstrain(param)
 
             return real_line_params
@@ -398,9 +364,7 @@ def compile_to_statsmodels(model):
             except np.linalg.LinAlgError:
                 pert_success = False
 
-            condition_satisfied = model.check_bk_condition(
-                verbose=False, return_value="bool"
-            )
+            condition_satisfied = model.check_bk_condition(verbose=False, return_value="bool")
 
             self.ssm["transition"] = self.model.T.values
             self.ssm["selection"] = self.model.R.values
@@ -536,9 +500,7 @@ def compile_to_statsmodels(model):
                 ll_obs = self.ssm.loglikeobs(complex_step=complex_step, **kwargs)
                 if self.fit_MAP:
                     for name, param in zip(self.external_param_names, params):
-                        ll_obs += (
-                            max(-1e6, self.prior_dict[name].logpdf(param)) / self.nobs
-                        )
+                        ll_obs += max(-1e6, self.prior_dict[name].logpdf(param)) / self.nobs
                 return ll_obs
 
             else:

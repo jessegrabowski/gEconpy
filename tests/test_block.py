@@ -82,22 +82,14 @@ class BlockTestCases(unittest.TestCase):
         lamb_H_1 = TimeAwareSymbol("lambda__H_1", 0)
         q = TimeAwareSymbol("q", 0)
 
-        alpha, beta, delta, theta, tau = sp.symbols(
-            ["alpha", "beta", "delta", "theta", "tau"]
-        )
+        alpha, beta, delta, theta, tau = sp.symbols(["alpha", "beta", "delta", "theta", "tau"])
 
         utility = (C**theta * (1 - L) ** (1 - theta)) ** (1 - tau) / (1 - tau)
         mkt_clearing = C + I - Y
         production = Y - A * K**alpha * L ** (1 - alpha)
         law_motion_K = K - (1 - delta) * K.step_backward() - I
 
-        answer = (
-            beta * U
-            + utility
-            - lamb * mkt_clearing
-            - q * law_motion_K
-            - lamb_H_1 * production
-        )
+        answer = beta * U + utility - lamb * mkt_clearing - q * law_motion_K - lamb_H_1 * production
 
         L = self.block._build_lagrangian()
         self.assertEqual((L - answer).simplify(), 0)
@@ -111,12 +103,7 @@ class BlockTestCases(unittest.TestCase):
         objective = set_equality_equals_zero(objective[0].subs(sub_dict))
 
         self.assertEqual(
-            all(
-                [
-                    set_equality_equals_zero(eq) in self.block.system_equations
-                    for eq in identities
-                ]
-            ),
+            all([set_equality_equals_zero(eq) in self.block.system_equations for eq in identities]),
             True,
         )
         self.assertIn(objective, self.block.system_equations)
@@ -162,21 +149,15 @@ class BlockTestCases(unittest.TestCase):
             K.to_ss(),
         ]
 
-        sub_dict = dict(
-            zip(all_variables, np.random.uniform(0, 1, size=len(all_variables)))
-        )
+        sub_dict = dict(zip(all_variables, np.random.uniform(0, 1, size=len(all_variables))))
 
-        dL_dC = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C ** (theta - 1) * (
-            1 - L
-        ) ** (1 - theta) * theta - lamb
+        dL_dC = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C ** (theta - 1) * (1 - L) ** (
+            1 - theta
+        ) * theta - lamb
 
-        dL_dL = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C**theta * (
-            1 - L
-        ) ** (-theta) * (1 - theta) * -1 + lamb_H_1 * (
-            1 - alpha
-        ) * A * K**alpha * L ** (
-            -alpha
-        )
+        dL_dL = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C**theta * (1 - L) ** (
+            -theta
+        ) * (1 - theta) * -1 + lamb_H_1 * (1 - alpha) * A * K**alpha * L ** (-alpha)
         dL_dK = (
             lamb_H_1 * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
             - q
@@ -184,9 +165,7 @@ class BlockTestCases(unittest.TestCase):
         )
         dL_dI = -lamb + q
 
-        subbed_system = [
-            np.float32(eq.subs(sub_dict)) for eq in self.block.system_equations
-        ]
+        subbed_system = [np.float32(eq.subs(sub_dict)) for eq in self.block.system_equations]
 
         for solution in [dL_dC, dL_dL, dL_dK, dL_dI]:
             self.assertIn(np.float32(solution.subs(sub_dict)), subbed_system)
@@ -249,9 +228,7 @@ class BlockTestCases(unittest.TestCase):
             epsilon,
         ]
 
-        sub_dict = dict(
-            zip(all_variables, np.random.uniform(0, 1, size=len(all_variables)))
-        )
+        sub_dict = dict(zip(all_variables, np.random.uniform(0, 1, size=len(all_variables))))
 
         dL_dK = -r + P * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
         dL_dL = -w + P * A * (1 - alpha) * K**alpha * L ** (-alpha)
@@ -272,9 +249,7 @@ class BlockTestCases(unittest.TestCase):
         L = TimeAwareSymbol("L", 0).to_ss()
 
         answer = {theta: 0.357, beta: 0.99, delta: 0.02, tau: 2, rho: 0.95}
-        self.assertEqual(
-            all([key in self.block.param_dict.keys() for key in answer.keys()]), True
-        )
+        self.assertEqual(all([key in self.block.param_dict.keys() for key in answer.keys()]), True)
 
         for key in self.block.param_dict:
             self.assertEqual((answer[key] - self.block.param_dict[key]).simplify(), 0)
@@ -287,8 +262,7 @@ class BlockTestCases(unittest.TestCase):
             self.assertEqual(
                 eq.simplify(),
                 (
-                    self.block.params_to_calibrate[i]
-                    - self.block.calibrating_equations[i]
+                    self.block.params_to_calibrate[i] - self.block.calibrating_equations[i]
                 ).simplify(),
             )
 

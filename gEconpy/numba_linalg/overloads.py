@@ -531,9 +531,7 @@ def ordqz_impl(A, B, sort, output):
         _check_finite_matrix(B)
 
         if sort not in ["lhp", "rhp", "iuc", "ouc"]:
-            raise ValueError(
-                'Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"'
-            )
+            raise ValueError('Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"')
 
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
@@ -652,9 +650,7 @@ def ordqz_impl(A, B, sort, output):
         _check_finite_matrix(B)
 
         if sort not in ["lhp", "rhp", "iuc", "ouc"]:
-            raise ValueError(
-                'Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"'
-            )
+            raise ValueError('Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"')
 
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)

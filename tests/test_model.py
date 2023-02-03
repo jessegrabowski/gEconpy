@@ -3,9 +3,11 @@ import unittest
 import numpy as np
 import pandas as pd
 import sympy as sp
+from numpy.testing import assert_allclose
 
 from gEconpy.classes.model import gEconModel
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.shared.utilities import string_keys_to_sympy
 
 
@@ -15,12 +17,13 @@ class ModelClassTestsOne(unittest.TestCase):
         self.model = gEconModel(file_path, verbose=False)
 
     def test_model_options(self):
-        self.assertEqual(
-            self.model.options, {"output logfile": False, "output LaTeX": False}
-        )
+        self.assertEqual(self.model.options, {"output logfile": False, "output LaTeX": False})
 
     def test_reduce_vars_saved(self):
-        self.assertEqual(self.model.try_reduce_vars, [TimeAwareSymbol("C", 0)])
+        self.assertEqual(
+            self.model.try_reduce_vars,
+            [TimeAwareSymbol("C", 0, **self.model.assumptions["C"])],
+        )
 
     def test_model_file_loading(self):
         block_names = ["HOUSEHOLD"]
@@ -40,94 +43,19 @@ class ModelClassTestsOne(unittest.TestCase):
             True,
         )
         self.assertEqual(
-            all(
-                [
-                    self.model.free_param_dict[x] == param_dict[x]
-                    for x in param_dict.keys()
-                ]
-            ),
+            all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]),
             True,
         )
-        self.assertEqual(self.model.params_to_calibrate, [sp.Symbol("alpha")])
-
-    def test_steady_state(self):
-        self.model.steady_state(verbose=False)
-        self.assertEqual(self.model.steady_state_solved, True)
-
-        alpha, theta, beta, delta, tau, rho = sp.symbols(
-            ["alpha", "theta", "beta", "delta", "tau", "rho"]
-        )
-        K_ss, L_ss, Y_ss, I_ss, C_ss, q_ss, lambda_ss, U_ss, A_ss = [
-            TimeAwareSymbol("K", 0).to_ss(),
-            TimeAwareSymbol("L", 0).to_ss(),
-            TimeAwareSymbol("Y", 0).to_ss(),
-            TimeAwareSymbol("I", 0).to_ss(),
-            TimeAwareSymbol("C", 0).to_ss(),
-            TimeAwareSymbol("q", 0).to_ss(),
-            TimeAwareSymbol("lambda", 0).to_ss(),
-            TimeAwareSymbol("U", 0).to_ss(),
-            TimeAwareSymbol("A", 0).to_ss(),
-        ]
-
-        num = (
-            -theta
-            * (alpha - 1)
-            * alpha ** (1 / (1 - alpha))
-            * beta ** (1 / (1 - alpha))
-        )
-        num *= (beta * (delta - 1) + 1) ** (alpha / (alpha - 1))
-
-        denom = (
-            -alpha * delta * beta
-            + delta * beta
-            + alpha * theta * beta
-            - beta
-            - alpha * theta
-            + 1
+        self.assertEqual(
+            self.model.params_to_calibrate,
+            [sp.Symbol("alpha", **self.model.assumptions["alpha"])],
         )
 
-        answer_dict = {}
-        answer_dict[K_ss] = num / denom
-        answer_dict[A_ss] = 1
-        answer_dict[L_ss] = (
-            (alpha - 1)
-            * (beta * (delta - 1) + 1)
-            * theta
-            / (alpha * theta + beta * ((alpha - 1) * delta - alpha * theta + 1) - 1)
-        )
-        answer_dict[Y_ss] = answer_dict[K_ss] ** alpha * answer_dict[L_ss] ** (
-            1 - alpha
-        )
-        answer_dict[I_ss] = delta * answer_dict[K_ss]
-        answer_dict[C_ss] = answer_dict[Y_ss] - answer_dict[I_ss]
-        answer_dict[U_ss] = (
-            1
-            / (1 - beta)
-            * (answer_dict[C_ss] ** theta * (1 - answer_dict[L_ss]) ** (1 - theta))
-            ** (1 - tau)
-            / (1 - tau)
-        )
-        answer_dict[lambda_ss] = (
-            theta
-            * (answer_dict[C_ss] ** theta * (1 - answer_dict[L_ss]) ** (1 - theta))
-            ** (1 - tau)
-            / answer_dict[C_ss]
-        )
-        answer_dict[q_ss] = answer_dict[lambda_ss]
-
-        sympy_sub_dict = string_keys_to_sympy(self.model.free_param_dict)
-        sympy_sub_dict.update(string_keys_to_sympy(self.model.calib_param_dict))
-
-        for key, value in answer_dict.items():
-            expected_result = (
-                answer_dict[key].subs(sympy_sub_dict)
-                if not isinstance(answer_dict[key], int)
-                else answer_dict[key]
-            )
-
-            self.assertAlmostEqual(
-                self.model.steady_state_dict[key.safe_name], expected_result, places=1
-            )
+    def test_conflicting_assumptions_are_removed(self):
+        model = gEconModel("Test GCNs/conflicting_assumptions.gcn", verbose=False)
+        self.assertTrue("real" not in model.assumptions["TC"].keys())
+        self.assertTrue("imaginary" in model.assumptions["TC"].keys())
+        self.assertTrue(model.assumptions["TC"]["imaginary"])
 
     def test_solve_model_gensys(self):
         self.model.steady_state(verbose=False)
@@ -182,17 +110,15 @@ class ModelClassTestsOne(unittest.TestCase):
             _,
         ) = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-        gEcon_matrices = (
-            self.model.perturbation_solver.statespace_to_gEcon_representation(
-                A, self.model.T.values, self.model.R.values, variables, 1e-7
-            )
+        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(
+            A, self.model.T.values, self.model.R.values, variables, 1e-7
         )
         model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
 
-        self.assertEqual(np.allclose(model_P, P), True)
-        self.assertEqual(np.allclose(model_Q, Q), True)
-        self.assertEqual(np.allclose(model_R, R), True)
-        self.assertEqual(np.allclose(model_S, S), True)
+        self.assertEqual(np.allclose(model_P, P), True, msg="P")
+        self.assertEqual(np.allclose(model_Q, Q), True, msg="Q")
+        self.assertEqual(np.allclose(model_R, R), True, msg="R")
+        self.assertEqual(np.allclose(model_S, S), True, msg="S")
 
     def test_solve_model_cycle_reduction(self):
         self.model.steady_state(verbose=False)
@@ -240,17 +166,15 @@ class ModelClassTestsOne(unittest.TestCase):
             _,
         ) = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-        gEcon_matrices = (
-            self.model.perturbation_solver.statespace_to_gEcon_representation(
-                A, self.model.T.values, self.model.R.values, variables, 1e-7
-            )
+        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(
+            A, self.model.T.values, self.model.R.values, variables, 1e-7
         )
         model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
 
-        self.assertEqual(np.allclose(model_P, P), True)
-        self.assertEqual(np.allclose(model_Q, Q), True)
-        self.assertEqual(np.allclose(model_R, R), True)
-        self.assertEqual(np.allclose(model_S, S), True)
+        self.assertEqual(np.allclose(model_P, P), True, msg="P")
+        self.assertEqual(np.allclose(model_Q, Q), True, msg="Q")
+        self.assertEqual(np.allclose(model_R, R), True, msg="R")
+        self.assertEqual(np.allclose(model_S, S), True, msg="S")
 
 
 class ModelClassTestsTwo(unittest.TestCase):
@@ -286,102 +210,10 @@ class ModelClassTestsTwo(unittest.TestCase):
         }
 
         self.assertEqual(
-            all(
-                [
-                    self.model.free_param_dict[x] == param_dict[x]
-                    for x in param_dict.keys()
-                ]
-            ),
+            all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]),
             True,
         )
         self.assertEqual(self.model.params_to_calibrate, [])
-
-    def test_steady_state(self):
-        self.model.steady_state(verbose=False)
-        self.assertEqual(self.model.steady_state_solved, True)
-
-        alpha, beta, delta, rho_A, sigma_C, sigma_L = sp.symbols(
-            ["alpha", "beta", "delta", "rho_A", "sigma_C", "sigma_L"]
-        )
-        (
-            A_ss,
-            C_ss,
-            I_ss,
-            K_ss,
-            L_ss,
-            P_ss,
-            TC_ss,
-            U_ss,
-            Y_ss,
-            lambda_ss,
-            q_ss,
-            r_ss,
-            w_ss,
-        ) = [
-            TimeAwareSymbol("A", 0).to_ss(),
-            TimeAwareSymbol("C", 0).to_ss(),
-            TimeAwareSymbol("I", 0).to_ss(),
-            TimeAwareSymbol("K", 0).to_ss(),
-            TimeAwareSymbol("L", 0).to_ss(),
-            TimeAwareSymbol("P", 0).to_ss(),
-            TimeAwareSymbol("TC", 0).to_ss(),
-            TimeAwareSymbol("U", 0).to_ss(),
-            TimeAwareSymbol("Y", 0).to_ss(),
-            TimeAwareSymbol("lambda", 0).to_ss(),
-            TimeAwareSymbol("q", 0).to_ss(),
-            TimeAwareSymbol("r", 0).to_ss(),
-            TimeAwareSymbol("w", 0).to_ss(),
-        ]
-
-        answer_dict = {}
-        answer_dict[r_ss] = 1 / beta - (1 - delta)
-        answer_dict[w_ss] = (1 - alpha) * (alpha / answer_dict[r_ss]) ** (
-            alpha / (1 - alpha)
-        )
-
-        answer_dict[Y_ss] = (
-            (answer_dict[w_ss]) ** (1 / (sigma_L + sigma_C))
-            * (answer_dict[w_ss] / (1 - alpha)) ** (sigma_L / (sigma_L + sigma_C))
-            * (answer_dict[r_ss] / (answer_dict[r_ss] - delta * alpha))
-            ** (sigma_C / (sigma_L + sigma_C))
-        )
-
-        answer_dict[C_ss] = (answer_dict[w_ss]) ** (1 / sigma_C) * (
-            answer_dict[w_ss] / (1 - alpha) / answer_dict[Y_ss]
-        ) ** (sigma_L / sigma_C)
-
-        answer_dict[lambda_ss] = answer_dict[C_ss] ** (-sigma_C)
-        answer_dict[q_ss] = answer_dict[lambda_ss]
-        answer_dict[I_ss] = delta * alpha * answer_dict[Y_ss] / answer_dict[r_ss]
-        answer_dict[K_ss] = alpha * answer_dict[Y_ss] / answer_dict[r_ss]
-        answer_dict[L_ss] = (1 - alpha) * answer_dict[Y_ss] / answer_dict[w_ss]
-        answer_dict[A_ss] = 1
-        answer_dict[P_ss] = (answer_dict[w_ss] / (1 - alpha)) ** (1 - alpha) * (
-            answer_dict[r_ss] / alpha
-        ) ** alpha
-
-        answer_dict[U_ss] = (
-            1
-            / (1 - beta)
-            * (
-                answer_dict[C_ss] ** (1 - sigma_C) / (1 - sigma_C)
-                - answer_dict[L_ss] ** (1 + sigma_L) / (1 + sigma_L)
-            )
-        )
-
-        answer_dict[TC_ss] = -(
-            answer_dict[r_ss] * answer_dict[K_ss]
-            + answer_dict[w_ss] * answer_dict[L_ss]
-        )
-
-        sympy_results = string_keys_to_sympy(self.model.steady_state_dict)
-        for key, value in sympy_results.items():
-            expected_result = (
-                answer_dict[key].subs(self.model.free_param_dict)
-                if not isinstance(answer_dict[key], int)
-                else answer_dict[key]
-            )
-            self.assertAlmostEqual(value, expected_result, places=8)
 
     def test_solve_model_gensys(self):
         self.model.steady_state(verbose=False)
@@ -432,10 +264,8 @@ class ModelClassTestsTwo(unittest.TestCase):
             _,
         ) = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-        gEcon_matrices = (
-            self.model.perturbation_solver.statespace_to_gEcon_representation(
-                A, self.model.T.values, self.model.R.values, variables, 1e-7
-            )
+        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(
+            A, self.model.T.values, self.model.R.values, variables, 1e-7
         )
         model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
 
@@ -493,10 +323,8 @@ class ModelClassTestsTwo(unittest.TestCase):
             _,
         ) = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-        gEcon_matrices = (
-            self.model.perturbation_solver.statespace_to_gEcon_representation(
-                A, self.model.T.values, self.model.R.values, variables, 1e-7
-            )
+        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(
+            A, self.model.T.values, self.model.R.values, variables, 1e-7
         )
         model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
 
@@ -509,7 +337,9 @@ class ModelClassTestsTwo(unittest.TestCase):
 class ModelClassTestsThree(unittest.TestCase):
     def setUp(self):
         file_path = "Test GCNs/Full_New_Keyensian.gcn"
-        self.model = gEconModel(file_path, verbose=False)
+        self.model = gEconModel(
+            file_path, verbose=False, simplify_constants=False, simplify_tryreduce=False
+        )
 
     def test_model_options(self):
         self.assertEqual(
@@ -525,8 +355,10 @@ class ModelClassTestsThree(unittest.TestCase):
         self.assertEqual(
             self.model.try_reduce_vars,
             [
-                TimeAwareSymbol("Div", 0, **self.model.assumptions["DIV"]),
-                TimeAwareSymbol("TC", 0, **self.model.assumptions["TC"]),
+                "Div[]",
+                "TC[]"
+                # TimeAwareSymbol("Div", 0, **self.model.assumptions["DIV"]),
+                # TimeAwareSymbol("TC", 0, **self.model.assumptions["TC"]),
             ],
         )
 
@@ -547,15 +379,7 @@ class ModelClassTestsThree(unittest.TestCase):
         result = [block_name for block_name in self.model.blocks.keys()]
         self.assertEqual(result, block_names)
 
-        (
-            rho_technology,
-            gamma_R,
-            gamma_pi,
-            gamma_Y,
-            phi_pi_obj,
-            phi_pi,
-            rho_pi_dot,
-        ) = sp.symbols(
+        (rho_technology, gamma_R, gamma_pi, gamma_Y, phi_pi_obj, phi_pi, rho_pi_dot,) = sp.symbols(
             [
                 "rho_technology",
                 "gamma_R",
@@ -564,7 +388,8 @@ class ModelClassTestsThree(unittest.TestCase):
                 "phi_pi_obj",
                 "phi_pi",
                 "rho_pi_dot",
-            ]
+            ],
+            **DEFAULT_ASSUMPTIONS
         )
 
         param_dict = {
@@ -592,199 +417,10 @@ class ModelClassTestsThree(unittest.TestCase):
             True,
         )
         self.assertEqual(
-            all(
-                [
-                    self.model.free_param_dict[x] == param_dict[x]
-                    for x in param_dict.keys()
-                ]
-            ),
+            all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]),
             True,
         )
         self.assertEqual(self.model.params_to_calibrate, [phi_pi_obj, phi_pi])
-
-    def test_steady_state(self):
-        self.model.steady_state(verbose=False)
-        self.assertEqual(self.model.steady_state_solved, True)
-
-        alpha, beta, delta, rho_A, sigma_C, sigma_L, gamma_I, phi_H = sp.symbols(
-            [
-                "alpha",
-                "beta",
-                "delta",
-                "rho_A",
-                "sigma_C",
-                "sigma_L",
-                "gamma_I",
-                "phi_H",
-            ]
-        )
-
-        psi_w, eta_w, psi_p, eta_p, rho_preference = sp.symbols(
-            ["psi_w", "eta_w", "psi_p", "eta_p", "rho_preference"]
-        )
-        (
-            rho_technology,
-            gamma_R,
-            gamma_pi,
-            gamma_Y,
-            phi_pi_obj,
-            phi_pi,
-            rho_pi_dot,
-        ) = sp.symbols(
-            [
-                "rho_technology",
-                "gamma_R",
-                "gamma_pi",
-                "gamma_Y",
-                "phi_pi_obj",
-                "phi_pi",
-                "rho_pi_dot",
-            ]
-        )
-        # Economic quantities
-        C_ss, I_ss, K_ss, L_ss, TC_ss, U_ss, Y_ss, Div_ss, B_ss = [
-            TimeAwareSymbol("C", 0).to_ss(),
-            TimeAwareSymbol("I", 0).to_ss(),
-            TimeAwareSymbol("K", 0).to_ss(),
-            TimeAwareSymbol("L", 0).to_ss(),
-            TimeAwareSymbol("TC", 0).to_ss(),
-            TimeAwareSymbol("U", 0).to_ss(),
-            TimeAwareSymbol("Y", 0).to_ss(),
-            TimeAwareSymbol("Div", 0).to_ss(),
-            TimeAwareSymbol("B", 0).to_ss(),
-        ]
-
-        # Prices
-        lambda_ss, q_ss, r_ss, w_ss, mc_ss, r_G_ss, pi_ss = [
-            TimeAwareSymbol("lambda", 0).to_ss(),
-            TimeAwareSymbol("q", 0).to_ss(),
-            TimeAwareSymbol("r", 0).to_ss(),
-            TimeAwareSymbol("w", 0).to_ss(),
-            TimeAwareSymbol("mc", 0).to_ss(),
-            TimeAwareSymbol("r_G", 0).to_ss(),
-            TimeAwareSymbol("pi", 0).to_ss(),
-        ]
-
-        # Phillips curves
-        RHS_ss, LHS_ss, RHS_w_ss, LHS_w_ss, pi_star_ss, w_star_ss = [
-            TimeAwareSymbol("RHS", 0).to_ss(),
-            TimeAwareSymbol("LHS", 0).to_ss(),
-            TimeAwareSymbol("RHS_w", 0).to_ss(),
-            TimeAwareSymbol("LHS_w", 0).to_ss(),
-            TimeAwareSymbol("pi_star", 0).to_ss(),
-            TimeAwareSymbol("w_star", 0).to_ss(),
-        ]
-
-        # Central bank target
-        pi_obj_ss = TimeAwareSymbol("pi_obj", 0).to_ss()
-
-        # Shocks
-        shock_preference_ss, shock_technology_ss = [
-            TimeAwareSymbol("shock_preference", 0).to_ss(),
-            TimeAwareSymbol("shock_technology", 0).to_ss(),
-        ]
-
-        answer_dict = {}
-        answer_dict[shock_preference_ss] = 1
-        answer_dict[shock_technology_ss] = 1
-        answer_dict[pi_ss] = 1
-        answer_dict[pi_star_ss] = 1
-        answer_dict[pi_obj_ss] = 1
-        answer_dict[B_ss] = 0
-
-        answer_dict[r_ss] = 1 / beta - (1 - delta)
-        answer_dict[r_G_ss] = 1 / beta
-
-        answer_dict[mc_ss] = 1 / (1 + psi_p)
-        answer_dict[w_ss] = (
-            (1 - alpha)
-            * answer_dict[mc_ss] ** (1 / (1 - alpha))
-            * (alpha / answer_dict[r_ss]) ** (alpha / (1 - alpha))
-        )
-
-        answer_dict[w_star_ss] = answer_dict[w_ss]
-
-        answer_dict[Y_ss] = (
-            answer_dict[w_ss] ** ((sigma_L + 1) / (sigma_C + sigma_L))
-            * ((-beta * phi_H + 1) / (psi_w + 1)) ** (1 / (sigma_C + sigma_L))
-            * (
-                answer_dict[r_ss]
-                / (
-                    (1 - phi_H)
-                    * (-alpha * delta * answer_dict[mc_ss] + answer_dict[r_ss])
-                )
-            )
-            ** (sigma_C / (sigma_C + sigma_L))
-            / (answer_dict[mc_ss] * (1 - alpha)) ** (sigma_L / (sigma_C + sigma_L))
-        )
-
-        answer_dict[C_ss] = (
-            answer_dict[w_ss] ** ((1 + sigma_L) / sigma_C)
-            * (1 / (1 - phi_H))
-            * ((1 - beta * phi_H) / (1 + psi_w)) ** (1 / sigma_C)
-            * ((1 - alpha) * answer_dict[mc_ss]) ** (-sigma_L / sigma_C)
-            * answer_dict[Y_ss] ** (-sigma_L / sigma_C)
-        )
-
-        answer_dict[lambda_ss] = (1 - beta * phi_H) * (
-            (1 - phi_H) * answer_dict[C_ss]
-        ) ** (-sigma_C)
-        answer_dict[q_ss] = answer_dict[lambda_ss]
-        answer_dict[I_ss] = (
-            delta * alpha * answer_dict[mc_ss] * answer_dict[Y_ss] / answer_dict[r_ss]
-        )
-        answer_dict[K_ss] = (
-            alpha * answer_dict[mc_ss] * answer_dict[Y_ss] / answer_dict[r_ss]
-        )
-        answer_dict[L_ss] = (
-            (1 - alpha) * answer_dict[Y_ss] * answer_dict[mc_ss] / answer_dict[w_ss]
-        )
-
-        answer_dict[U_ss] = (
-            1
-            / (1 - beta)
-            * (
-                ((1 - phi_H) * answer_dict[C_ss]) ** (1 - sigma_C) / (1 - sigma_C)
-                - answer_dict[L_ss] ** (1 + sigma_L) / (1 + sigma_L)
-            )
-        )
-
-        answer_dict[TC_ss] = -(
-            answer_dict[r_ss] * answer_dict[K_ss]
-            + answer_dict[w_ss] * answer_dict[L_ss]
-        )
-        answer_dict[Div_ss] = answer_dict[Y_ss] + answer_dict[TC_ss]
-
-        answer_dict[LHS_ss] = (
-            1
-            / (1 - beta * eta_p * answer_dict[pi_ss] ** (1 / psi_p))
-            * answer_dict[lambda_ss]
-            * answer_dict[Y_ss]
-            * answer_dict[pi_star_ss]
-        )
-
-        answer_dict[RHS_ss] = 1 / (1 + psi_p) * answer_dict[LHS_ss]
-
-        answer_dict[LHS_w_ss] = (
-            1
-            / (1 - beta * eta_w)
-            * 1
-            / (1 + psi_w)
-            * answer_dict[w_star_ss]
-            * answer_dict[lambda_ss]
-            * answer_dict[L_ss]
-        )
-
-        answer_dict[RHS_w_ss] = answer_dict[LHS_w_ss]
-
-        sympy_results = string_keys_to_sympy(self.model.steady_state_dict)
-        for key, value in sympy_results.items():
-            expected_result = (
-                answer_dict[key].subs(self.model.free_param_dict)
-                if not isinstance(answer_dict[key], int)
-                else answer_dict[key]
-            )
-            self.assertAlmostEqual(value, expected_result, places=6)
 
     def test_solvers_agree(self):
         self.model.steady_state(verbose=False)

@@ -130,12 +130,8 @@ def find_typos_and_guesses(
     TODO: Tune match_threshold
     """
 
-    best_guess = max(
-        valid_inputs, key=lambda x: elementwise_jaccard_distance(x, user_inputs)
-    )
-    maybe_typo = max(
-        user_inputs, key=lambda x: elementwise_jaccard_distance(x, valid_inputs)
-    )
+    best_guess = max(valid_inputs, key=lambda x: elementwise_jaccard_distance(x, user_inputs))
+    maybe_typo = max(user_inputs, key=lambda x: elementwise_jaccard_distance(x, valid_inputs))
 
     if jaccard_distance(best_guess, maybe_typo) < match_threshold:
         return None, None

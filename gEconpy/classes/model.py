@@ -4,15 +4,16 @@ from warnings import warn
 
 import arviz as az
 import emcee
+import numba as nb
 import numpy as np
 import pandas as pd
 import sympy as sp
 import xarray as xr
-from numba import njit
 from numpy.typing import ArrayLike
 from scipy import linalg, stats
 
 from gEconpy.classes.block import Block
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.progress_bar import ProgressBar
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.estimation.estimate import build_Z_matrix, evaluate_logp
@@ -36,11 +37,7 @@ from gEconpy.shared.utilities import (
     is_variable,
     make_all_var_time_combos,
     merge_dictionaries,
-    sequential,
-    sort_dictionary,
     substitute_all_equations,
-    sympy_keys_to_strings,
-    sympy_number_values_to_floats,
     unpack_keys_and_values,
 )
 from gEconpy.solvers.gensys import interpret_gensys_output
@@ -86,18 +83,19 @@ class gEconModel:
 
         # Model components
         self.variables: List[TimeAwareSymbol] = []
-        self.assumptions: Dict[str, dict] = defaultdict(dict)
+        self.assumptions: Dict[str, dict] = defaultdict(SymbolDictionary)
         self.shocks: List[TimeAwareSymbol] = []
         self.system_equations: List[sp.Add] = []
         self.calibrating_equations: List[sp.Add] = []
         self.params_to_calibrate: List[sp.Symbol] = []
-        self.free_param_dict: Dict[sp.Symbol, float] = {}
-        self.calib_param_dict: Dict[sp.Symbol, float] = {}
-        self.steady_state_relationships: Dict[VariableType, sp.Add] = {}
 
-        self.param_priors: Dict[str, Any] = {}
-        self.shock_priors: Dict[str, Any] = {}
-        self.observation_noise_priors: Dict[str, Any] = {}
+        self.free_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
+        self.calib_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
+        self.steady_state_relationships: SymbolDictionary[VariableType, sp.Add] = SymbolDictionary()
+
+        self.param_priors: SymbolDictionary[str, Any] = SymbolDictionary()
+        self.shock_priors: SymbolDictionary[str, Any] = SymbolDictionary()
+        self.observation_noise_priors: SymbolDictionary[str, Any] = SymbolDictionary()
 
         self.n_variables: int = 0
         self.n_shocks: int = 0
@@ -111,7 +109,7 @@ class gEconModel:
         # Steady state information
         self.steady_state_solved: bool = False
         self.steady_state_system: List[sp.Add] = []
-        self.steady_state_dict: Dict[sp.Symbol, float] = {}
+        self.steady_state_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
         self.residuals: List[float] = []
 
         # Functional representation of the perturbation system
@@ -121,10 +119,10 @@ class gEconModel:
         self.perturbation_solved: bool = False
         self.T: pd.DataFrame = None
         self.R: pd.DataFrame = None
-        # self.P: pd.DataFrame = None
-        # self.Q: pd.DataFrame = None
-        # self.R: pd.DataFrame = None
-        # self.S: pd.DataFrame = None
+        self.P: pd.DataFrame = None
+        self.Q: pd.DataFrame = None
+        self.R: pd.DataFrame = None
+        self.S: pd.DataFrame = None
 
         self.build(
             verbose=verbose,
@@ -258,6 +256,7 @@ class gEconModel:
     def steady_state(
         self,
         verbose: Optional[bool] = True,
+        apply_user_simplifications=True,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
         param_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
         use_jac: Optional[bool] = True,
@@ -270,6 +269,9 @@ class gEconModel:
         ----------
         verbose: bool
             Flag controlling whether to print results of the steady state solver
+        apply_user_simplifications: bool
+            Whether to simplify system equations using the user-defined steady state relationships defined in the GCN
+            before passing the system to the numerical solver.
         optimizer_kwargs: dict
             Dictionary of arguments to be passed to scipy.optimize.root or scipy.optimize.root_scalar, see those
             functions for more details.
@@ -285,12 +287,13 @@ class gEconModel:
         """
         if not self.steady_state_solved:
             self.f_ss = self.steady_state_solver.solve_steady_state(
+                apply_user_simplifications=apply_user_simplifications,
                 optimizer_kwargs=optimizer_kwargs,
                 param_bounds=param_bounds,
                 use_jac=use_jac,
             )
 
-            self.f_ss_resid = self.steady_state_solver.f_ss_resid
+            # self.f_ss_resid = self.steady_state_solver.f_ss_resid
 
         self._process_steady_state_results(verbose)
 
@@ -312,19 +315,23 @@ class gEconModel:
         -------
         None
         """
+        results = self.f_ss(self.free_param_dict)
+        self.steady_state_dict = results["ss_dict"]
+        self.calib_param_dict = results["calib_dict"]
+        self.residuals = results["resids"]
 
-        self.steady_state_dict, self.calib_param_dict = self.f_ss(self.free_param_dict)
+        # self.steady_state_dict, self.calib_param_dict = self.f_ss(self.free_param_dict)
         self.steady_state_system = self.steady_state_solver.steady_state_system
+        #
+        # self.residuals = np.array(
+        #     self.f_ss_resid(
+        #         **self.steady_state_dict,
+        #         **self.free_param_dict,
+        #         **self.calib_param_dict,
+        #     )
+        # )
 
-        self.residuals = np.array(
-            self.f_ss_resid(
-                **self.steady_state_dict,
-                **self.free_param_dict,
-                **self.calib_param_dict,
-            )
-        )
-
-        self.steady_state_solved = np.allclose(self.residuals, 0)
+        self.steady_state_solved = np.allclose(self.residuals, 0) & results["success"]
 
         if verbose:
             if self.steady_state_solved:
@@ -343,21 +350,16 @@ class gEconModel:
         Prints an error message if a valid steady state has not yet been found.
         """
         if self.steady_state_dict is None:
-            print(
-                "Run the steady_state method to find a steady state before calling this method."
-            )
+            print("Run the steady_state method to find a steady state before calling this method.")
             return
 
         if not self.steady_state_solved:
-            print(
-                "Values come from the latest solver iteration but are NOT a valid steady state."
-            )
+            print("Values come from the latest solver iteration but are NOT a valid steady state.")
 
         max_var_name = (
             max(
                 len(x)
-                for x in list(self.steady_state_dict.keys())
-                + list(self.calib_param_dict.keys())
+                for x in list(self.steady_state_dict.keys()) + list(self.calib_param_dict.keys())
             )
             + 5
         )
@@ -412,15 +414,15 @@ class gEconModel:
         None
         """
 
-        param_dict = merge_dictionaries(self.free_param_dict, self.calib_param_dict)
+        param_dict = self.free_param_dict | self.calib_param_dict
         steady_state_dict = self.steady_state_dict
 
         if self.build_perturbation_matrices is None:
-            self._perturbation_setup(
-                not_loglin_variable, order, model_is_linear, verbose, bool
-            )
+            self._perturbation_setup(not_loglin_variable, order, model_is_linear, verbose, bool)
 
-        A, B, C, D = self.build_perturbation_matrices(**param_dict, **steady_state_dict)
+        A, B, C, D = self.build_perturbation_matrices(
+            **param_dict.to_string(), **steady_state_dict.to_string()
+        )
         _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
 
         if solver == "gensys":
@@ -429,7 +431,7 @@ class gEconModel:
             )
             G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
 
-            if G_1 is None:
+            if G_1 is None or (eu[0] != eu[1] != 1):
                 if on_failure == "error":
                     raise GensysFailedException(eu)
                 elif on_failure == "ignore":
@@ -480,21 +482,13 @@ class gEconModel:
 
         self.T = pd.DataFrame(
             T,
-            index=[
-                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
-            ],
-            columns=[
-                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
-            ],
+            index=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
+            columns=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
         )
         self.R = pd.DataFrame(
             R,
-            index=[
-                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
-            ],
-            columns=[
-                x.base_name for x in sorted(self.shocks, key=lambda x: x.base_name)
-            ],
+            index=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
+            columns=[x.base_name for x in sorted(self.shocks, key=lambda x: x.base_name)],
         )
 
         self.perturbation_solved = True
@@ -657,9 +651,7 @@ class gEconModel:
 
         eqs_and_leads_idx = np.r_[np.arange(n_vars), lead_var_idx + n_vars].tolist()
 
-        Gamma_0 = np.vstack(
-            [np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])]
-        )
+        Gamma_0 = np.vstack([np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
 
         Gamma_1 = np.vstack(
             [
@@ -674,9 +666,7 @@ class gEconModel:
 
         # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
         # have sign flip relative to qzdiv -- does it matter?
-        A, B, alpha, beta, Q, Z = linalg.ordqz(
-            -Gamma_0, Gamma_1, sort="ouc", output="complex"
-        )
+        A, B, alpha, beta, Q, Z = linalg.ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
 
         gev = np.c_[np.diagonal(A), np.diagonal(B)]
 
@@ -944,9 +934,7 @@ class gEconModel:
             )
 
             idata["sample_stats"].update(sampler_stats)
-            idata.observed_data = idata.observed_data.drop(
-                ["sparse_data", "prior_dict"]
-            )
+            idata.observed_data = idata.observed_data.drop(["sparse_data", "prior_dict"])
             idata.observed_data = idata.observed_data.drop_dims(
                 ["sparse_data_dim_0", "sparse_data_dim_1", "prior_dict_dim_0"]
             )
@@ -980,9 +968,7 @@ class gEconModel:
         """
 
         if sample_shock_sigma:
-            shock_priors = {
-                k: v.rv_params["scale"] for k, v in self.shock_priors.items()
-            }
+            shock_priors = {k: v.rv_params["scale"] for k, v in self.shock_priors.items()}
         else:
             shock_priors = self.shock_priors
 
@@ -995,9 +981,7 @@ class gEconModel:
             priors_to_sample = all_priors
         else:
             n_variables = len(param_subset)
-            priors_to_sample = {
-                k: v for k, v in all_priors.items() if k in param_subset
-            }
+            priors_to_sample = {k: v for k, v in all_priors.items() if k in param_subset}
 
         if seed is not None:
             seed_sequence = np.random.SeedSequence(seed)
@@ -1012,9 +996,7 @@ class gEconModel:
 
         return new_param_dict
 
-    def impulse_response_function(
-        self, simulation_length: int = 40, shock_size: float = 1.0
-    ):
+    def impulse_response_function(self, simulation_length: int = 40, shock_size: float = 1.0):
         """
         Compute the impulse response functions of the model.
 
@@ -1122,18 +1104,12 @@ class gEconModel:
             for i, shock in enumerate(self.shocks):
                 if shock.base_name in shock_dict.keys():
                     d = stats.norm(loc=0, scale=shock_dict[shock.base_name])
-                    epsilons[:, :, i] = np.r_[
-                        [d.rvs(timesteps) for _ in range(n_simulations)]
-                    ]
+                    epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
 
-        elif all(
-            [shock.base_name in self.shock_priors.keys() for shock in self.shocks]
-        ):
+        elif all([shock.base_name in self.shock_priors.keys() for shock in self.shocks]):
             epsilons = np.zeros((n_simulations, timesteps, n_shocks))
             for i, d in enumerate(self.shock_priors.values()):
-                epsilons[:, :, i] = np.r_[
-                    [d.rvs(timesteps) for _ in range(n_simulations)]
-                ]
+                epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
 
         else:
             raise ValueError(
@@ -1228,9 +1204,7 @@ class gEconModel:
 
         for block_name, block_content in raw_blocks.items():
             block_dict = gEcon_parser.parsed_block_to_dict(block_content)
-            block = Block(
-                name=block_name, block_dict=block_dict, assumptions=self.assumptions
-            )
+            block = Block(name=block_name, block_dict=block_dict, assumptions=self.assumptions)
             block.solve_optimization(try_simplify=simplify_blocks)
 
             self.blocks[block.name] = block
@@ -1271,9 +1245,8 @@ class gEconModel:
         for block in blocks:
             self.free_param_dict.update(block.param_dict)
 
-        self.free_param_dict = sequential(
-            self.free_param_dict,
-            [sympy_keys_to_strings, sympy_number_values_to_floats, sort_dictionary],
+        self.free_param_dict = (
+            SymbolDictionary(self.free_param_dict).sort_keys().to_string().values_to_float()
         )
 
     def _get_all_block_params_to_calibrate(self) -> None:
@@ -1324,10 +1297,7 @@ class gEconModel:
             atoms = eq.atoms()
             variables = [x for x in atoms if is_variable(x)]
             for variable in variables:
-                if (
-                    variable.set_t(0) not in self.variables
-                    and variable not in all_shocks
-                ):
+                if variable.set_t(0) not in self.variables and variable not in all_shocks:
                     self.variables.append(variable.set_t(0))
         self.n_variables = len(self.variables)
 
@@ -1361,16 +1331,14 @@ class gEconModel:
 
         block_content = raw_blocks[ss_block_names[0]]
         block_dict = gEcon_parser.parsed_block_to_dict(block_content)
-        block = Block(
-            name="steady_state", block_dict=block_dict, assumptions=self.assumptions
-        )
+        block = Block(name="steady_state", block_dict=block_dict, assumptions=self.assumptions)
 
-        sub_dict = dict()
-        steady_state_dict = dict()
+        sub_dict = SymbolDictionary()
+        steady_state_dict = SymbolDictionary()
 
         if block.definitions is not None:
             _, definitions = unpack_keys_and_values(block.definitions)
-            sub_dict = {eq.lhs: eq.rhs for eq in definitions}
+            sub_dict = SymbolDictionary({eq.lhs: eq.rhs for eq in definitions})
 
         if block.identities is not None:
             _, identities = unpack_keys_and_values(block.identities)
@@ -1379,9 +1347,8 @@ class gEconModel:
                 steady_state_dict[eq.lhs] = subbed_rhs
                 sub_dict[eq.lhs] = subbed_rhs
 
-        self.steady_state_relationships = sequential(
-            steady_state_dict,
-            [sympy_keys_to_strings, sympy_number_values_to_floats, sort_dictionary],
+        self.steady_state_relationships = (
+            steady_state_dict.sort_keys().to_string().values_to_float()
         )
 
         del raw_blocks[ss_block_names[0]]
@@ -1430,19 +1397,14 @@ class gEconModel:
         self.n_equations = len(self.system_equations)
 
         self.variables = {
-            atom.set_t(0)
-            for eq in reduced_system
-            for atom in eq.atoms()
-            if is_variable(atom)
+            atom.set_t(0) for eq in reduced_system for atom in eq.atoms() if is_variable(atom)
         }
         self.variables -= set(self.shocks)
         self.variables = sorted(list(self.variables), key=lambda x: x.name)
         self.n_variables = len(self.variables)
 
         if self.n_equations != self.n_variables:
-            warn(
-                "Reduction was requested but not possible because the system is not well defined."
-            )
+            warn("Reduction was requested but not possible because the system is not well defined.")
             return
 
         eliminated_vars = [var.name for var in variables if var not in self.variables]
@@ -1472,7 +1434,7 @@ class gEconModel:
         for eq in system:
             if len(eq.atoms()) < 4:
                 var = [x for x in eq.atoms() if is_variable(x)]
-                if len(var) > 1:
+                if len(var) != 1:
                     continue
                 var = var[0]
                 sub_dict = expand_subs_for_all_times(sp.solve(eq, var, dict=True)[0])
@@ -1485,10 +1447,7 @@ class gEconModel:
         self.n_equations = len(reduced_system)
 
         self.variables = {
-            atom.set_t(0)
-            for eq in reduced_system
-            for atom in eq.atoms()
-            if is_variable(atom)
+            atom.set_t(0) for eq in reduced_system for atom in eq.atoms() if is_variable(atom)
         }
         self.variables -= set(self.shocks)
         self.variables = sorted(list(self.variables), key=lambda x: x.name)
@@ -1505,7 +1464,7 @@ class gEconModel:
         return eliminated_vars
 
 
-# @njit
+# #@njit
 # def _compute_stationary_covariance_matrix(A, C, tol=1e-9, max_iter=10_000):
 #     sigma = np.eye(A.shape[0])
 #     for _ in range(max_iter):
@@ -1516,7 +1475,7 @@ class gEconModel:
 #             sigma = new_sigma
 
 
-@njit(cache=True)
+@nb.njit(cache=True)
 def _compute_autocorrelation_matrix(A, sigma, n_lags=5):
     """Compute the autocorrelation matrix for the given state-space model.
 

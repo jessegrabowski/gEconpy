@@ -1,0 +1,15 @@
+assumptions
+{
+    imaginary
+    {
+        TC[];
+    };
+};
+
+block BLOCK
+{
+    identities
+    {
+        TC[] = -1;
+    };
+};
