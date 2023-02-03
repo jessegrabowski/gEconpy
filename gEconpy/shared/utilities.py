@@ -3,6 +3,7 @@ from copy import copy
 from enum import EnumMeta
 from typing import Any, Callable, Dict, List, Union
 
+import numpy as np
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -31,6 +32,78 @@ class IterEnum(EnumMeta):
         except IndexError:
             self.__idx = 0
             raise StopIteration
+
+
+def flatten_list(l, result_list=None):
+    if result_list is None:
+        result_list = []
+
+    if not isinstance(l, list):
+        result_list.append(l)
+        return result_list
+
+    for item in l:
+        if isinstance(item, list):
+            result_list = flatten_list(item, result_list)
+        else:
+            result_list.append(item)
+    return result_list
+
+
+SAFE_STRING_TO_INDEX_DICT = dict(ss="ss", tp1=1, tm1=-1, t=0)
+
+
+def safe_string_to_sympy(s, assumptions=None):
+    if isinstance(s, sp.Symbol):
+        return s
+
+    assumptions = assumptions or defaultdict(lambda: {})
+
+    *name, time_index_str = s.split("_")
+    if time_index_str not in [str(x) for x in SAFE_STRING_TO_INDEX_DICT.keys()]:
+        name.append(time_index_str)
+        name = "_".join(name)
+        return sp.Symbol(name, **assumptions[name])
+
+    name = "_".join(name)
+    time_index = SAFE_STRING_TO_INDEX_DICT[time_index_str]
+    symbol = TimeAwareSymbol(name, time_index, **assumptions[name])
+
+    return symbol
+
+
+def symbol_to_string(symbol: Union[str, VariableType]):
+    if isinstance(symbol, str):
+        return symbol
+    else:
+        return symbol.safe_name if isinstance(symbol, TimeAwareSymbol) else symbol.name
+
+
+def string_keys_to_sympy(d, assumptions=None):
+    result = {}
+    assumptions = assumptions or defaultdict(lambda: {})
+
+    for key, value in d.items():
+        if isinstance(key, sp.Symbol):
+            result[key] = value
+            continue
+
+        if "_" not in key:
+            result[sp.Symbol(key, **assumptions.get(key, {}))] = value
+            continue
+
+        new_key = safe_string_to_sympy(key, assumptions)
+        result[new_key] = value
+
+    return result
+
+
+def sympy_keys_to_strings(d):
+    result = {}
+    for key in d.keys():
+        result[symbol_to_string(key)] = d[key]
+
+    return result
 
 
 def set_equality_equals_zero(eq):
@@ -182,21 +255,6 @@ def float_values_to_sympy_float(d: Dict[VariableType, Any]):
     return d
 
 
-def symbol_to_string(symbol: Union[str, VariableType]):
-    if isinstance(symbol, str):
-        return symbol
-    else:
-        return symbol.safe_name if isinstance(symbol, TimeAwareSymbol) else symbol.name
-
-
-def sympy_keys_to_strings(d):
-    result = {}
-    for key in d.keys():
-        result[symbol_to_string(key)] = d[key]
-
-    return result
-
-
 def sort_dictionary(d):
     result = {}
     sorted_keys = sorted(list(d.keys()))
@@ -218,47 +276,10 @@ def sort_sympy_dict(d):
     return result
 
 
-SAFE_STRING_TO_INDEX_DICT = dict(ss="ss", tp1=1, tm1=-1, t=0)
-
-
-def safe_string_to_sympy(s, assumptions=None):
-    if isinstance(s, sp.Symbol):
-        return s
-
-    assumptions = assumptions or {}
-
-    *name, time_index_str = s.split("_")
-    if time_index_str not in [str(x) for x in SAFE_STRING_TO_INDEX_DICT.keys()]:
-        name.append(time_index_str)
-        return sp.Symbol("_".join(name), **assumptions)
-    name = "_".join(name)
-    time_index = SAFE_STRING_TO_INDEX_DICT[time_index_str]
-    symbol = TimeAwareSymbol(name, time_index)
-
-    return symbol
-
-
 def select_keys(d, keys):
     result = {}
     for key in keys:
         result[key] = d[key]
-    return result
-
-
-def string_keys_to_sympy(d, assumptions=None):
-    result = {}
-    assumptions = assumptions or defaultdict(lambda: {})
-    for key, value in d.items():
-        if isinstance(key, sp.Symbol):
-            result[key] = value
-            continue
-
-        if "_" not in key:
-            result[sp.Symbol(key, **assumptions[key])] = value
-            continue
-        new_key = safe_string_to_sympy(key, assumptions[key])
-        result[new_key] = value
-
     return result
 
 
@@ -336,3 +357,53 @@ def make_all_var_time_combos(var_list):
         result.extend([x.set_t(-1), x.set_t(0), x.set_t(1), x.set_t("ss")])
 
     return result
+
+
+def add_all_variables_to_global_namespace(mod):
+    all_vars = [
+        v for x in mod.variables for v in [x.step_backward(), x, x.step_forward()]
+    ]
+    var_dict = {}
+    for x in all_vars:
+        var_dict[x.safe_name] = x
+
+    for x in list(string_keys_to_sympy(mod.free_param_dict, mod.assumptions).keys()):
+        var_dict[x.name] = x
+
+    return var_dict
+
+
+def test_expr_is_zero(
+    eq: sp.Expr, params_to_test: List[sp.Symbol], n_tests: int = 10, tol: int = 16
+) -> bool:
+    """
+    Test if an expression is equal to zero by plugging in random values for requested symbols and evaluating. Useful
+    for complicated expressions involving exponents, where sympy's equivalence tests can fail.
+
+    Parameters
+    ----------
+    eq: sp.Expr
+        A sympy expression to be tested
+    params_to_test: list of sp.List
+        Variables to be tested
+    n_tests: int, default: 10
+        Number of tests to preform.
+    tol: int, default:16
+        Number of decimal places used to test equivlance to zero.
+
+    Returns
+    -------
+    result: bool
+        True if the expression was equal to zero in all tests, else False
+    """
+
+    n_params = len(params_to_test)
+    for _ in range(n_tests):
+        sub_dict = dict(zip(params_to_test, np.random.uniform(1e-4, 0.99, n_params)))
+        res = eq.evalf(subs=sub_dict, n=tol, chop=True)
+        for a in sp.preorder_traversal(res):
+            if isinstance(a, sp.Float):
+                res = res.subs(a, round(a, tol))
+        if res != 0:
+            return False
+    return True
