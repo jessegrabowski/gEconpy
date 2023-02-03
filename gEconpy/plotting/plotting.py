@@ -345,9 +345,7 @@ def plot_prior_solvability(
             n_failure = X_failure.shape[0]
 
             if n_success > 0:
-                success_grid = np.linspace(
-                    X_success.min() * 0.9, X_success.max() * 1.1, 100
-                )
+                success_grid = np.linspace(X_success.min() * 0.9, X_success.max() * 1.1, 100)
                 d_success = stats.gaussian_kde(X_success)
                 axis.plot(success_grid, d_success.pdf(success_grid), color="tab:blue")
                 axis.fill_between(
@@ -359,9 +357,7 @@ def plot_prior_solvability(
                 )
 
             if n_failure > 0:
-                failure_grid = np.linspace(
-                    X_failure.min() * 0.9, X_failure.max() * 1.1, 100
-                )
+                failure_grid = np.linspace(X_failure.min() * 0.9, X_failure.max() * 1.1, 100)
                 d_failure = stats.gaussian_kde(X_failure)
                 axis.plot(failure_grid, d_failure.pdf(failure_grid), color="tab:red")
                 axis.fill_between(
@@ -736,9 +732,7 @@ def plot_corner(
     """
 
     if not hasattr(idata, "posterior"):
-        raise ValueError(
-            "Argument idata should be an arviz idata object with a posterior group"
-        )
+        raise ValueError("Argument idata should be an arviz idata object with a posterior group")
     var_names = var_names or list(idata.posterior.data_vars)
     k_params = len(var_names)
 
@@ -797,9 +791,7 @@ def plot_corner(
                 if len(y_mode) > 1:
                     y_mode = y_mode[0]
 
-                axis.contourf(
-                    x_edges[1:], y_edges[1:], H, cmap="Blues", levels=rug_levels
-                )
+                axis.contourf(x_edges[1:], y_edges[1:], H, cmap="Blues", levels=rug_levels)
 
                 if show_marginal_modes:
                     axis.axvline(x_mode, ls="--", lw=0.5, color="k")
@@ -888,9 +880,7 @@ def plot_kalman_filter(
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
     time_idx = idata.coords["time"]
     time_slice = (
-        slice(None, None, None)
-        if kalman_output.lower() == "predicted"
-        else slice(1, None, None)
+        slice(None, None, None) if kalman_output.lower() == "predicted" else slice(1, None, None)
     )
 
     for idx, variable in enumerate(vars_to_plot):

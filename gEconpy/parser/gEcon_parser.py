@@ -2,10 +2,15 @@ import re
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
-import pyparsing
+import pyparsing as pp
+from sympy.core.assumptions import _assume_rules
 
 from gEconpy.exceptions.exceptions import GCNSyntaxError
-from gEconpy.parser.constants import SPECIAL_BLOCK_NAMES, SYMPY_ASSUMPTIONS
+from gEconpy.parser.constants import (
+    DEFAULT_ASSUMPTIONS,
+    SPECIAL_BLOCK_NAMES,
+    SYMPY_ASSUMPTIONS,
+)
 from gEconpy.parser.parse_equations import rebuild_eqs_from_parser_output
 from gEconpy.parser.parse_plaintext import (
     add_spaces_around_operators,
@@ -15,7 +20,12 @@ from gEconpy.parser.parse_plaintext import (
     remove_extra_spaces,
     remove_newlines_and_tabs,
 )
-from gEconpy.parser.validation import block_is_empty, validate_key
+from gEconpy.parser.validation import (
+    block_is_empty,
+    find_typos_and_guesses,
+    validate_key,
+)
+from gEconpy.shared.utilities import flatten_list
 
 
 def block_to_clean_list(block: str) -> List[str]:
@@ -40,7 +50,7 @@ def block_to_clean_list(block: str) -> List[str]:
     return block
 
 
-def extract_assumption_sub_blocks(block: List[str]) -> Dict[str, List[str]]:
+def extract_assumption_sub_blocks(block_str) -> Dict[str, List[str]]:
     """
     Extracts the special "Assumptions" block from the GCN file. Saves each user-provided assumption to a dictionary,
     along with all variables associated to that assumption.
@@ -56,42 +66,58 @@ def extract_assumption_sub_blocks(block: List[str]) -> Dict[str, List[str]]:
         A dictionary containing assumptions and variables, with the assumption names as keys and associated variables
         as values.
     """
-    sub_blocks = {}
-    assumption_idxs = {}
+    LBRACE, RBRACE, SEMI, COMMA = map(pp.Suppress, "{};,")
+    BLOCK_END = RBRACE + SEMI
+    header = pp.Keyword("assumptions")
+    VARIABLE = pp.Word(pp.alphas, pp.alphanums + "_" + "[]").set_name("variable")
+    PARAM = pp.Word(pp.alphas, pp.alphanums + "_").set_name("parameter")
+    BLOCK_NAME = pp.Word(pp.alphas, pp.alphanums + "_")
 
-    for assumption in SYMPY_ASSUMPTIONS:
-        if assumption in block:
-            assumption_idxs[assumption] = block.index(assumption)
+    VAR_LIST = pp.delimitedList((VARIABLE | PARAM), delim=",").set_name("var_list")
+    VAR_LINE = pp.Group(VAR_LIST + SEMI).set_name("variable_list")
 
-    used_assumptions = list(assumption_idxs.keys())
-    if len(used_assumptions) == 0:
-        return sub_blocks
+    ANYTHING = pp.Group(pp.Regex("[^{};]+") + SEMI).set_name("generic_line")
 
-    sorted_assumptions = sorted(used_assumptions, key=assumption_idxs.get)
-    start_idx = 0
+    LINE = VAR_LINE | ANYTHING
 
-    for i in range(1, len(sorted_assumptions)):
-        curr_assumption = sorted_assumptions[i - 1]
-        next_assumption = sorted_assumptions[i]
-        end_idx = assumption_idxs[next_assumption]
+    SUBBLOCK = pp.Forward()
+    SUBBLOCK << pp.Dict(
+        pp.Group((BLOCK_NAME + pp.Group(LBRACE + (LINE | SUBBLOCK) + BLOCK_END)) | LINE)
+    )
 
-        block_slice = slice(start_idx + 1, end_idx)
-        sub_blocks[curr_assumption] = block[block_slice]
+    LAYERED_BLOCK = pp.Forward()
+    LAYERED_BLOCK << pp.Dict(
+        pp.Group(header + LBRACE + pp.OneOrMore(LAYERED_BLOCK | SUBBLOCK) + BLOCK_END)
+    )
 
-        start_idx = end_idx
-
-    i = len(sorted_assumptions) - 1
-    curr_assumption = sorted_assumptions[i]
-    block_slice = slice(start_idx + 1, None)
-
-    sub_blocks[curr_assumption] = block[block_slice]
-
-    return sub_blocks
+    return LAYERED_BLOCK.parse_string(block_str).as_dict()["assumptions"]
 
 
-def create_assumption_kwargs(
-    assumption_dicts: Dict[str, List[str]]
-) -> Dict[str, Dict[str, bool]]:
+def validate_assumptions(block_dict: Dict[str, List[str]]) -> None:
+    """
+    Verify that all keys extracted from the assumption block are valid sympy assumptions.
+
+    Parameters
+    ----------
+    block_dict: dict
+        Dictionary of assumption: variable list key-value pairs, extracted from the GCN file by the
+        extract_assumption_sub_block function.
+
+    Returns
+    -------
+    None
+    """
+
+    for assumption in block_dict.keys():
+        if assumption not in SYMPY_ASSUMPTIONS:
+            best_guess, maybe_typo = find_typos_and_guesses([assumption], SYMPY_ASSUMPTIONS)
+            message = f'Assumption "{assumption}" is not a valid Sympy assumption.'
+            if best_guess is not None:
+                message += f' Did you mean "{best_guess}"?'
+            raise ValueError(message)
+
+
+def create_assumption_kwargs(assumption_dicts: Dict[str, List[str]]) -> Dict[str, Dict[str, bool]]:
     """
     Extracts assumption flags from `assumption_dicts` and returns them in a dictionary keyed by variable names.
 
@@ -107,12 +133,33 @@ def create_assumption_kwargs(
         A dictionary of flags and values keyed by variable names.
     """
 
-    assumption_kwargs = defaultdict(lambda: {})
+    assumption_kwargs = defaultdict(lambda: DEFAULT_ASSUMPTIONS.copy())
+    user_assumptions = defaultdict(dict)
 
+    # Maintain two dicts in first pass: one with user values + defaults, and one with just user values
+    # The user assumption dict will be used as the source of truth in the 2nd pass to resolve conflicts with defaults
     for assumption, variable_list in assumption_dicts.items():
-        for var in variable_list:
+        for var in flatten_list(variable_list):
             base_var = re.sub(r"\[\]", "", var)
+            user_assumptions[base_var][assumption] = True
             assumption_kwargs[base_var][assumption] = True
+
+    all_variables = set(flatten_list(list(assumption_dicts.values())))
+
+    for var in all_variables:
+        base_var = re.sub(r"\[\]", "", var)
+
+        # Check default assumptions against the user assumptions
+        for k, v in DEFAULT_ASSUMPTIONS.items():
+            implications = dict(_assume_rules.full_implications[(k, v)])
+            for user_k, user_v in user_assumptions[base_var].items():
+                # Assumptions agree, move along
+                if ((user_k == k) and (user_v == v)) or (user_k not in implications.keys()):
+                    continue
+
+                # Assumptions disagree -- delete the default
+                if implications[user_k] != user_v:
+                    del assumption_kwargs[base_var][k]
 
     return assumption_kwargs
 
@@ -170,13 +217,7 @@ def parse_options_flags(options: str) -> Optional[Dict[str, bool]]:
     for option in options:
         flag, value = option.split("=")
         value = value.replace(";", "").strip()
-        value = (
-            True
-            if value.lower() == "true"
-            else False
-            if value.lower() == "false"
-            else value
-        )
+        value = True if value.lower() == "true" else False if value.lower() == "false" else value
 
         result[flag.strip()] = value
 
@@ -200,7 +241,7 @@ def extract_special_block(text: str, block_name: str) -> Dict[str, List[str]]:
         a list of strings, with each item in the list as a single line from the GCN file. Empty lines are discarded.
     """
     result = {
-        block_name: defaultdict(lambda: defaultdict(lambda: dict))
+        block_name: defaultdict(lambda: DEFAULT_ASSUMPTIONS)
         if block_name == "assumptions"
         else None
     }
@@ -221,10 +262,8 @@ def extract_special_block(text: str, block_name: str) -> Dict[str, List[str]]:
         block = block_to_clean_list(block)
 
     elif block_name == "assumptions":
-        block = re.search(block_name + " {.*?" + "}; };", text)[0]
-        block = block.replace(block_name, "")
-        block = block_to_clean_list(block)
-        block = extract_assumption_sub_blocks(block)
+        block = extract_assumption_sub_blocks(text)
+        validate_assumptions(block)
         block = create_assumption_kwargs(block)
 
     result[block_name] = block
@@ -259,6 +298,9 @@ def split_gcn_into_block_dictionary(text: str) -> Dict[str, str]:
         results.update(result)
         text = delete_block(text, name)
 
+    if "assumptions" not in results:
+        results["assumptions"] = defaultdict(lambda x: DEFAULT_ASSUMPTIONS)
+
     gcn_blocks = [block for block in text.split("block") if len(block) > 0]
     for block in gcn_blocks:
         tokens = block.strip().split()
@@ -289,7 +331,7 @@ def parsed_block_to_dict(block: str) -> Dict[str, List[List[str]]]:
                     "objective" = ["U[]", "=", "u[]", "+", "beta", "*", "E[][U[1]]", ";"])
     """
     block_dict = defaultdict(list)
-    parsed_block = pyparsing.nestedExpr("{", "};").parseString(block).asList()[0]
+    parsed_block = pp.nestedExpr("{", "};").parseString(block).asList()[0]
     current_key = parsed_block[0]
 
     if isinstance(current_key, list):
@@ -307,7 +349,3 @@ def parsed_block_to_dict(block: str) -> Dict[str, List[List[str]]]:
             block_dict[current_key].extend(equations_list)
 
     return block_dict
-
-
-def make_assumption_dict(raw_blocks: Dict[str, str]) -> Dict[str, str]:
-    pass

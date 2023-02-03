@@ -21,12 +21,8 @@ class BasicFunctionalityTests(unittest.TestCase):
     def test_extract_system_matrics(self):
         param_dict = self.model.free_param_dict
 
-        sparse_data = extract_sparse_data_from_model(
-            self.model, vars_to_estimate=["theta"]
-        )
-        A, B, C, D = build_system_matrices(
-            param_dict, sparse_data, vars_to_estimate=["theta"]
-        )
+        sparse_data = extract_sparse_data_from_model(self.model, params_to_estimate=["theta"])
+        A, B, C, D = build_system_matrices(param_dict, sparse_data, vars_to_estimate=["theta"])
 
         system = self.model.build_perturbation_matrices(
             **self.model.free_param_dict,
@@ -194,9 +190,7 @@ class TestModelEstimation(unittest.TestCase):
         self.model.solve_model(verbose=False)
 
         self.data = (
-            self.model.simulate(simulation_length=100, n_simulations=1)
-            .xs(axis=1, level=1, key=0)
-            .T
+            self.model.simulate(simulation_length=100, n_simulations=1).xs(axis=1, level=1, key=0).T
         )
 
     def filter_random_sample(self):

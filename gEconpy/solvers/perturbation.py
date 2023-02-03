@@ -50,9 +50,7 @@ class PerturbationSolver:
 
         n_leads = len(lead_var_idx)
 
-        Gamma_0 = np.vstack(
-            [np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])]
-        )
+        Gamma_0 = np.vstack([np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
 
         Gamma_1 = np.vstack(
             [
@@ -77,9 +75,7 @@ class PerturbationSolver:
         psi = np.ascontiguousarray(Psi)
         pi = np.ascontiguousarray(Pi)
 
-        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(
-            g0, g1, c, psi, pi
-        )
+        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
         if verbose:
             print_gensys_results(eu)
 
@@ -150,9 +146,9 @@ class PerturbationSolver:
     def statespace_to_gEcon_representation(self, A, T, R, variables, tol):
         n_vars = len(variables)
 
-        state_var_idx = np.where(
-            np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol
-        )[0]
+        state_var_idx = np.where(np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol)[
+            0
+        ]
         state_var_mask = np.isin(np.arange(n_vars), state_var_idx)
 
         n_shocks = self.n_shocks
@@ -224,9 +220,7 @@ class PerturbationSolver:
                 F_row = []
                 for var in var_group:
                     dydx = sp.powsimp(eq_to_ss(eq.diff(var)))
-                    dydx *= (
-                        1.0 if var.base_name in not_loglin_variables else var.to_ss()
-                    )
+                    dydx *= 1.0 if var.base_name in not_loglin_variables else var.to_ss()
                     atoms = dydx.atoms()
                     if len(atoms) == 1:
                         x = list(atoms)[0]
@@ -261,9 +255,7 @@ class PerturbationSolver:
         shocks = self.shocks
         model = self.system_equations
 
-        for var_group, name in zip(
-            [lags, now, leads, shocks], ["lags", "now", "leads", "shocks"]
-        ):
+        for var_group, name in zip([lags, now, leads, shocks], ["lags", "now", "leads", "shocks"]):
             F = (
                 sp.zeros(len(var_group))
                 if name != "shocks"

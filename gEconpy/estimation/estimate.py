@@ -11,8 +11,6 @@ from gEconpy.estimation.estimation_utilities import (
     split_random_variables,
 )
 from gEconpy.estimation.kalman_filter import kalman_filter
-
-# from gEconpy.numba_linalg.overloads import *
 from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
 
 
@@ -49,9 +47,7 @@ def build_and_solve(
     TODO: njit this function by figuring out how to get rid of the sympy lambdify functions inside sparse_datas
     """
 
-    res = build_system_matrices(
-        param_dict, sparse_datas, vars_to_estimate=vars_to_estimate
-    )
+    res = build_system_matrices(param_dict, sparse_datas, vars_to_estimate=vars_to_estimate)
     A, B, C, D = res
 
     if not all([check_finite_matrix(x) for x in res]):
@@ -71,9 +67,7 @@ def build_and_solve(
         success = False
         return T, R, success
 
-    success = (
-        (result == "Optimization successful") & (log_norm < 1e-8) & bk_condition_met
-    )
+    success = (result == "Optimization successful") & (log_norm < 1e-8) & bk_condition_met
 
     T = np.ascontiguousarray(T)
     R = np.ascontiguousarray(R)
@@ -97,9 +91,7 @@ def build_Z_matrix(obs_variables: List[str], state_variables: List[str]) -> np.n
         The design matrix Z.
     """
 
-    Z = np.array(
-        [[x == var for x in state_variables] for var in obs_variables], dtype="float64"
-    )
+    Z = np.array([[x == var for x in state_variables] for var in obs_variables], dtype="float64")
     return Z
 
 
@@ -204,9 +196,7 @@ def split_param_dict(
     P0_dict = {}
 
     initial_names = [x for x in all_param_dict.keys() if x.endswith("__initial")]
-    initial_cov_names = [
-        x for x in all_param_dict.keys() if x.endswith("__initial_cov")
-    ]
+    initial_cov_names = [x for x in all_param_dict.keys() if x.endswith("__initial_cov")]
 
     for k, v in all_param_dict.items():
         if k in initial_names:
@@ -272,17 +262,11 @@ def evaluate_logp(
         return -np.inf, np.zeros(df.shape[0])
 
     a0 = np.array(list(a0_dict.values()))[:, None] if len(a0_dict) > 0 else None
-    P0 = (
-        np.eye(len(P0_dict)) * np.array(list(P0_dict.keys()))
-        if len(P0_dict) > 0
-        else None
-    )
+    P0 = np.eye(len(P0_dict)) * np.array(list(P0_dict.keys())) if len(P0_dict) > 0 else None
 
     Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, obs_dict)
 
-    *_, ll_obs = kalman_filter(
-        df.values, T, Z, R, H, Q, a0, P0, filter_type=filter_type
-    )
+    *_, ll_obs = kalman_filter(df.values, T, Z, R, H, Q, a0, P0, filter_type=filter_type)
     ll += ll_obs.sum()
 
     return ll, ll_obs

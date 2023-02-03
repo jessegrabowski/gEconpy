@@ -34,9 +34,7 @@ class BasicParerFunctionalityTests(unittest.TestCase):
     def test_extract_param_dist_simple(self):
         model, prior_dict = preprocess_gcn(self.file)
         self.assertEqual(list(prior_dict.keys()), ["epsilon[]", "alpha"])
-        self.assertEqual(
-            list(prior_dict.values()), ["norm(mu = 0, sd = 1)", "N(mean = 0, sd = 1)"]
-        )
+        self.assertEqual(list(prior_dict.values()), ["norm(mu = 0, sd = 1)", "N(mean = 0, sd = 1)"])
 
     def test_catch_no_initial_value(self):
         no_initial_value = """
@@ -49,9 +47,7 @@ class BasicParerFunctionalityTests(unittest.TestCase):
                 };
         """
 
-        self.assertRaises(
-            MissingParameterValueException, preprocess_gcn, no_initial_value
-        )
+        self.assertRaises(MissingParameterValueException, preprocess_gcn, no_initial_value)
 
     def test_catch_typo_in_param_dist_definition(self):
         squiggle_is_equal = """
@@ -160,9 +156,7 @@ class BasicParerFunctionalityTests(unittest.TestCase):
         dicts = [{"mu": "0", "sd": "1"}, {"mean": "0", "sd": "1"}]
 
         for i, (param_name, distribution_string) in enumerate(prior_dict.items()):
-            dist_name, param_dict = preprocess_distribution_string(
-                param_name, distribution_string
-            )
+            dist_name, param_dict = preprocess_distribution_string(param_name, distribution_string)
 
             self.assertEqual(dist_name, "normal")
             self.assertEqual(param_dict, dicts[i])

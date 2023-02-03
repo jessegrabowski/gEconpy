@@ -9,6 +9,14 @@ tryreduce
     C[];
 };
 
+assumptions
+{
+    positive
+    {
+        Y[], C[], I[], K[], L[], A[], theta, beta, delta, tau, rho, alpha;
+    };
+};
+
 block HOUSEHOLD
 {
 	definitions

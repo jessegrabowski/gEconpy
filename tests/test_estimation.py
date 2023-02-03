@@ -16,10 +16,8 @@ class TestEstimationHelpers(unittest.TestCase):
 
     def test_build_and_solve(self):
         param_dict = self.model.free_param_dict
-        to_estimate = list(self.model.free_param_dict.keys())
-        sparse_data = extract_sparse_data_from_model(
-            self.model, vars_to_estimate=to_estimate
-        )
+        to_estimate = list(param_dict.to_string().keys())
+        sparse_data = extract_sparse_data_from_model(self.model, params_to_estimate=to_estimate)
 
         T, R, success = build_and_solve(param_dict, sparse_data, to_estimate)
 

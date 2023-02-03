@@ -73,3 +73,5 @@ SYMPY_ASSUMPTIONS = [
     "algebraic",
     "transcendental",
 ]
+
+DEFAULT_ASSUMPTIONS = {"real": True}

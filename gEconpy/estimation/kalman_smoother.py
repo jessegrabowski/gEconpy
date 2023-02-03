@@ -1,10 +1,8 @@
+import numba as nb
 import numpy as np
-from numba import njit
-
-# from gEconpy.numba_linalg.overloads import *
 
 
-@njit
+@nb.njit
 def predict(a, P, T, R, Q):
     a_hat = T @ a
 
@@ -14,7 +12,7 @@ def predict(a, P, T, R, Q):
     return a_hat, P_hat
 
 
-@njit
+@nb.njit
 def kalman_smoother(T, R, Q, filtered_states, filtered_covariances):
     n_steps, k_states = filtered_states.shape
 
@@ -38,7 +36,7 @@ def kalman_smoother(T, R, Q, filtered_states, filtered_covariances):
     return smoothed_states, smoothed_covariances
 
 
-@njit
+@nb.njit
 def smoother_step(a, P, a_smooth, P_smooth, T, R, Q):
     a_hat, P_hat = predict(a, P, T, R, Q)
 

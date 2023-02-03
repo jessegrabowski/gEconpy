@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import sympy as sp
 
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
     BlockNotInitializedException,
@@ -124,7 +125,7 @@ class Block:
         self.calibration: Optional[Dict[int, sp.Add]] = None
 
         self.variables: List[TimeAwareSymbol] = []
-        self.param_dict: Dict[str, float] = {}
+        self.param_dict: SymbolDictionary[str, float] = SymbolDictionary()
 
         self.params_to_calibrate: Optional[List[sp.Symbol]] = None
         self.calibrating_equations: Optional[List[sp.Add]] = None
@@ -169,19 +170,11 @@ class Block:
         self.controls = self._parse_variable_list(block_dict, "controls", assumptions)
         self.shocks = self._parse_variable_list(block_dict, "shocks", assumptions)
 
-        self.definitions = self._parse_equation_list(
-            block_dict, "definitions", assumptions
-        )
+        self.definitions = self._parse_equation_list(block_dict, "definitions", assumptions)
         self.objective = self._parse_equation_list(block_dict, "objective", assumptions)
-        self.constraints = self._parse_equation_list(
-            block_dict, "constraints", assumptions
-        )
-        self.identities = self._parse_equation_list(
-            block_dict, "identities", assumptions
-        )
-        self.calibration = self._parse_equation_list(
-            block_dict, "calibration", assumptions
-        )
+        self.constraints = self._parse_equation_list(block_dict, "constraints", assumptions)
+        self.identities = self._parse_equation_list(block_dict, "identities", assumptions)
+        self.calibration = self._parse_equation_list(block_dict, "calibration", assumptions)
 
         self.initialized = self._validate_initialization()
 
@@ -215,14 +208,10 @@ class Block:
         """
 
         if self.objective is not None and self.controls is None:
-            raise OptimizationProblemNotDefinedException(
-                block_name=self.name, missing="controls"
-            )
+            raise OptimizationProblemNotDefinedException(block_name=self.name, missing="controls")
 
         if self.objective is None and self.controls is not None:
-            raise OptimizationProblemNotDefinedException(
-                block_name=self.name, missing="objective"
-            )
+            raise OptimizationProblemNotDefinedException(block_name=self.name, missing="objective")
 
         if self.objective is not None and len(list(self.objective.values())) > 1:
             raise MultipleObjectiveFunctionsException(
@@ -233,9 +222,7 @@ class Block:
             for control in self.controls:
                 control_found = False
                 eq_dicts = [
-                    x
-                    for x in [self.definitions, self.objective, self.constraints]
-                    if x is not None
+                    x for x in [self.definitions, self.objective, self.constraints] if x is not None
                 ]
                 for eq_dict in eq_dicts:
                     for eq in list(eq_dict.values()):
@@ -295,9 +282,7 @@ class Block:
             if ":" in eq:
                 colon_idx = eq.index(":")
                 multiplier = eq[-1]
-                multiplier = parse_equations.single_symbol_to_sympy(
-                    multiplier, assumptions
-                )
+                multiplier = parse_equations.single_symbol_to_sympy(multiplier, assumptions)
                 eq = eq[:colon_idx].copy()
 
                 result.append(eq)
@@ -386,7 +371,7 @@ class Block:
         return equation_numbers
 
     def _parse_equation_list(
-        self, block_dict: dict, key: str, assumptions: List[Dict[str, str]] = None
+        self, block_dict: dict, key: str, assumptions: Dict[str, str]
     ) -> Optional[Dict[int, sp.Eq]]:
         """
         Convert a list of equations represented as strings into a dictionary of sympy equations, indexed by their
@@ -399,8 +384,8 @@ class Block:
             gEcon_parser.parsed_block_to_dict function.
         key : str
             A component name.
-        assumptions : list, optional
-            A list of dictionaries with assumptions for each equation.
+        assumptions : dict
+            A dictionary with assumptions for each variable.
 
         Returns
         -------
@@ -410,12 +395,8 @@ class Block:
         if not self._validate_key(block_dict, key):
             return
 
-        assumptions = assumptions or defaultdict(dict)
-
         equations = block_dict[key]
-        equations, lagrange_multipliers = self._extract_lagrange_multipliers(
-            equations, assumptions
-        )
+        equations, lagrange_multipliers = self._extract_lagrange_multipliers(equations, assumptions)
 
         equations = parse_equations.build_sympy_equations(equations, assumptions)
         equation_numbers = self._get_and_record_equation_numbers(equations)
@@ -452,27 +433,15 @@ class Block:
             atoms = eq.atoms()
 
             # Check if this equation is a normal parameter definition
-            if len(atoms) <= 3 and all(
-                [not isinstance(x, TimeAwareSymbol) for x in atoms]
-            ):
+            if len(atoms) <= 3 and all([not isinstance(x, TimeAwareSymbol) for x in atoms]):
                 param = eq.lhs
                 value = eq.rhs
-                self.param_dict.update({param: value})
+                self.param_dict[param] = value
 
             # Check if this equation is a valid calibrating equation
-            elif all(
-                [isinstance(x, (sp.Number, sp.Symbol, TimeAwareSymbol)) for x in atoms]
-            ):
-                if not all(
-                    [
-                        x.time_index == "ss"
-                        for x in atoms
-                        if isinstance(x, TimeAwareSymbol)
-                    ]
-                ):
-                    raise DynamicCalibratingEquationException(
-                        eq=eq, block_name=self.name
-                    )
+            elif all([isinstance(x, (sp.Number, sp.Symbol, TimeAwareSymbol)) for x in atoms]):
+                if not all([x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)]):
+                    raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
 
                 if self.params_to_calibrate is None:
                     self.params_to_calibrate = [eq.lhs]
@@ -507,6 +476,7 @@ class Block:
             sub_dict = {eq.lhs: eq.rhs for eq in definitions}
 
         i = 1
+
         lagrange = objective.rhs.subs(sub_dict)
         for key, constraint in constraints.items():
             if multipliers[key] is not None:
@@ -579,12 +549,8 @@ class Block:
 
         system = self.system_equations
         simplified_system = system.copy()
-        variables = [
-            x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)
-        ]
-        generated_multipliers = list(
-            {x for x in variables if "lambda__" in x.base_name}
-        )
+        variables = [x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
+        generated_multipliers = list({x for x in variables if "lambda__" in x.base_name})
 
         # Strictly heuristic simplification: look for an equation of the form x = y and use it to substitute away
         # the generated multipliers.
@@ -653,16 +619,12 @@ class Block:
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
             for eq in identities:
-                self.system_equations.append(
-                    set_equality_equals_zero(eq.subs(sub_dict))
-                )
+                self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
 
         if self.constraints is not None:
             _, constraints = unpack_keys_and_values(self.constraints)
             for eq in constraints:
-                self.system_equations.append(
-                    set_equality_equals_zero(eq.subs(sub_dict))
-                )
+                self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
 
         if self.controls is None and self.objective is None:
             return
@@ -683,8 +645,7 @@ class Block:
         # (pointless? but done in some gEcon example GCN files)
         if multipliers[obj_idx] is not None:
             self.system_equations.append(
-                multipliers[obj_idx]
-                - diff_through_time(lagrange, objective.lhs, discount_factor)
+                multipliers[obj_idx] - diff_through_time(lagrange, objective.lhs, discount_factor)
             )
 
         for control in controls:

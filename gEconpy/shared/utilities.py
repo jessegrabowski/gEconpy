@@ -123,9 +123,7 @@ def expand_subs_for_all_times(sub_dict: Dict[TimeAwareSymbol, TimeAwareSymbol]):
     result = {}
     for lhs, rhs in sub_dict.items():
         for t in [-1, 0, 1, "ss"]:
-            result[lhs.set_t(t)] = (
-                rhs.set_t(t) if isinstance(rhs, TimeAwareSymbol) else rhs
-            )
+            result[lhs.set_t(t)] = rhs.set_t(t) if isinstance(rhs, TimeAwareSymbol) else rhs
 
     return result
 
@@ -182,9 +180,7 @@ def substitute_all_equations(eqs, *sub_dicts):
         result = {}
         for key in eqs:
             result[key] = (
-                eqs[key]
-                if isinstance(eqs[key], (int, float))
-                else eqs[key].subs(sub_dict)
+                eqs[key] if isinstance(eqs[key], (int, float)) else eqs[key].subs(sub_dict)
             )
         return result
 
@@ -360,9 +356,7 @@ def make_all_var_time_combos(var_list):
 
 
 def add_all_variables_to_global_namespace(mod):
-    all_vars = [
-        v for x in mod.variables for v in [x.step_backward(), x, x.step_forward()]
-    ]
+    all_vars = [v for x in mod.variables for v in [x.step_backward(), x, x.step_forward()]]
     var_dict = {}
     for x in all_vars:
         var_dict[x.safe_name] = x

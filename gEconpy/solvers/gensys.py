@@ -171,9 +171,7 @@ def determine_n_unstable(
     return div, n_unstable, zxz
 
 
-def split_matrix_on_eigen_stability(
-    A: ArrayLike, n_unstable: int
-) -> Tuple[ArrayLike, ArrayLike]:
+def split_matrix_on_eigen_stability(A: ArrayLike, n_unstable: int) -> Tuple[ArrayLike, ArrayLike]:
     """
     :param A: Arrayline, array to split
     :param n_unstable: int, number of unstable roots in the
@@ -352,13 +350,7 @@ def gensys(
     if unique:
         eu[1] = 1
 
-    inner_term = (
-        u_eta
-        @ linalg.solve(d_eta, v_eta.conj().T)
-        @ v_eta_1
-        @ d_eta_1
-        @ u_eta_1.conj().T
-    )
+    inner_term = u_eta @ linalg.solve(d_eta, v_eta.conj().T) @ v_eta_1 @ d_eta_1 @ u_eta_1.conj().T
 
     T_mat = np.c_[np.eye(n_stable), -inner_term.conj().T]
     G_0 = np.r_[T_mat @ A, np.c_[np.zeros((n_unstable, n_stable)), np.eye(n_unstable)]]
@@ -400,9 +392,7 @@ def interpret_gensys_output(eu):
     if eu[0] == -2 and eu[1] == -2:
         message = "Coincident zeros.  Indeterminacy and/or nonexistence."
     elif eu[0] == -1:
-        message = (
-            f"System is indeterminate. There are {eu[2]} loose endogenous variables."
-        )
+        message = f"System is indeterminate. There are {eu[2]} loose endogenous variables."
     elif eu[1] == -1:
         message = f"Solution exists, but it is not unique -- sunspots."
 
