@@ -12,19 +12,22 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -l {0}
 
     steps:
     - uses: actions/checkout@v3
     - uses: conda-incubator/setup-miniconda@v2
       with:
-          miniforge-variant: Mambaforge
-          miniforge-version: latest
-          mamba-version: "*"
-          activate-environment: geconpy-test
-          channel-priority: strict
-          environment-file: conda_envs/geconpy_test.yml
-          python-version: 3.9
-          use-mamba: true
+        miniforge-variant: Mambaforge
+        miniforge-version: latest
+        mamba-version: "*"
+        activate-environment: geconpy-test
+        channel-priority: strict
+        environment-file: conda_envs/geconpy_test.yml
+        python-version: 3.9
+        use-mamba: true
 
     - name: check solution
       run: |
@@ -32,9 +35,9 @@ jobs:
 
     - name: Install gEconpy
       run: |
-          echo conda env list
-          conda activate geconpy-test
-          python --version
+        echo conda env list
+        conda activate geconpy-test
+        python --version
 
     - name: Run tests
       run: |
