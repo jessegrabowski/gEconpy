@@ -18,7 +18,18 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ["3.9"]
+        test-subset:
+          - |
+            gEconpy/tests/test_parser.py
+
     runs-on: ${{ matrix.os }}
+
+    env:
+      TEST_SUBSET: ${{ matrix.test-subset }}
+
+    defaults:
+      run:
+        shell: bash -l {0}
 
     steps:
     - uses: actions/checkout@v3
@@ -56,4 +67,4 @@ jobs:
 
     - name: Run tests
       run: |
-        python -m unittest discover -s tests/ -t tests/
+        python -m unittest discover -s gEconpy/tests/ -t $TEST_SUBSET
