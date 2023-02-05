@@ -22,7 +22,7 @@ jobs:
         python-version: ["3.9"]
         test-subset:
           - |
-            tests/test_containers.py
+            tests/
 
     runs-on: ${{ matrix.os }}
 
