@@ -26,6 +26,7 @@ jobs:
           use-mamba: true
     - name: Install gEconpy
       run: |
+          conda env list
           conda activate geconpy-test
           python --version
     - name: Run tests
