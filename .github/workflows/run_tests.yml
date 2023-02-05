@@ -65,6 +65,12 @@ jobs:
         use-mamba: true
         use-only-tar-bz2: false # IMPORTANT: This may break caching of conda packages! See https://github.com/conda-incubator/setup-miniconda/issues/267
 
+    - name: Install current branch
+      run: |
+        conda activate geconpy-test
+        pip install -e .
+        python --version
+
     - name: Run tests
       run: |
         python -m unittest discover -s gEconpy/tests/ -t $TEST_SUBSET
