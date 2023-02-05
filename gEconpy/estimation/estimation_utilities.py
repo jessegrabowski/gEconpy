@@ -1,22 +1,29 @@
 from typing import Callable, Dict, List, Optional, Tuple
 
-import numba as nb  # pylint: disable=unused-import
+import numba as nb
 import numpy as np
 import sympy as sp
 from scipy import linalg
-from sympy import Expr
 
 
-def convert_to_numba_function(expr: Expr, vars: List[str]) -> Callable:
+@nb.njit
+def check_finite_matrix(a):
+    for v in np.nditer(a):
+        if not np.isfinite(v.item()):
+            return False
+    return True
+
+
+def numba_lambdify_scalar(inputs, expr, sig):
     """
     Convert a sympy expression into a Numba-compiled function.
 
     Parameters
     ----------
+    inputs : List[str]
+        A list of strings containing the names of the variables in the expression.
     expr : sympy.Expr
         The sympy expression to be converted.
-    vars : List[str]
-        A list of strings containing the names of the variables in the expression.
 
     Returns
     -------
@@ -27,24 +34,14 @@ def convert_to_numba_function(expr: Expr, vars: List[str]) -> Callable:
     -----
     The function returned by this function is pickleable.
     """
-    # code = sp.printing.ccode(expr)
-    # # The code string will contain a single line, so we add line breaks to make it a valid block of code
-    # code = "@nb.njit\ndef f({}):\n{}\n    return {}".format(
-    #     ",".join(vars), " " * 4, code
-    # )
-    # # Compile the code and return the resulting function
-    # exec(code)
-    # return locals()["f"]
-
-    return nb.njit(sp.lambdify(vars, expr))
-
-
-# @njit
-def check_finite_matrix(a):
-    for v in np.nditer(a):
-        if not np.isfinite(v.item()):
-            return False
-    return True
+    code = sp.printing.ccode(expr)
+    # The code string will contain a single line, so we add line breaks to make it a valid block of code
+    code = "@nb.njit('{}')\ndef f({}):\n{}\n    return {}".format(
+        sig, ",".join(inputs), " " * 4, code
+    )
+    # Compile the code and return the resulting function
+    exec(code)
+    return locals()["f"]
 
 
 def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = None) -> List:
@@ -75,15 +72,26 @@ def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = N
 
     not_estimated_dict = param_dict.copy()
     for k in param_dict.keys():
-        if k not in params_to_estimate:
+        if k in params_to_estimate:
             del not_estimated_dict[k]
 
     names = ["A", "B", "C", "D"]
     A, B, C, D = (x.tolist() for x in model._perturbation_setup(return_F_matrices=True))
 
+    inputs = params_to_estimate + requires_numeric_solution
+    # n_inputs = len(inputs)
+
+    # signature_str = f"float64({', '.join(['float64'] * n_inputs)})"
+    # function_sig = nb.types.FunctionType(nb.types.float64(*(nb.types.float64,) * n_inputs))
+    #
+    # sparse_datas = nb.typed.List()
     sparse_datas = []
 
     for name, matrix in zip(names, [A, B, C, D]):
+        # data = nb.typed.List.empty_list(function_sig)
+        # idxs = nb.typed.List()
+        # pointers = nb.typed.List([0])
+
         data = []
         idxs = []
         pointers = [0]
@@ -91,14 +99,15 @@ def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = N
         for row in matrix:
             for i, value in enumerate(row):
                 if value != 0:
-                    # Convert the sympy expression into a Numba-compatible function using the above function
-                    numba_func = convert_to_numba_function(
+                    expr = (
                         value.subs(ss_sub_dict.to_sympy())
                         .subs(calib_dict.to_sympy())
-                        .subs(not_estimated_dict.to_sympy()),
-                        params_to_estimate + requires_numeric_solution,
+                        .subs(not_estimated_dict.to_sympy())
                     )
-                    data.append(numba_func)
+                    # numba_func = numba_lambdify_scalar(inputs, expr, signature_str)
+                    func = sp.lambdify(inputs, expr)
+                    # data.append(numba_func)
+                    data.append(func)
                     idxs.append(i)
             pointers.append(len(idxs))
 
@@ -108,7 +117,7 @@ def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = N
     return sparse_datas
 
 
-# @njit
+# @nb.njit
 def matrix_from_csr_data(
     data: np.ndarray, indices: np.ndarray, idxptrs: np.ndarray, shape: Tuple[int, int]
 ) -> np.ndarray:
@@ -196,7 +205,7 @@ def build_system_matrices(
     return result
 
 
-# @njit
+@nb.njit
 def compute_eigenvalues(A, B, C, tol=1e-8):
     """
     Given the log-linearized coefficient matrices A, B, and C at times t-1, t, and t+1 respectively, compute the
@@ -253,7 +262,7 @@ def compute_eigenvalues(A, B, C, tol=1e-8):
     return eig[sorted_idx, :]
 
 
-# @njit
+@nb.njit
 def check_bk_condition(A, B, C, tol=1e-8):
     """
     Check the Blanchard-Kahn condition for the DSGE model specified by the log linearized coefficient matrices
