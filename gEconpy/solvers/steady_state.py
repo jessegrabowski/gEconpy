@@ -1,6 +1,7 @@
 from functools import wraps
 from itertools import product
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from warnings import catch_warnings, simplefilter
 
 import numpy as np
 import sympy as sp
@@ -210,7 +211,11 @@ class SteadyStateSolver:
         def ss_func(param_dict):
             x0 = np.full(k_vars + k_calib, 0.8)
 
-            optim = optimize.root(f_ss, jac=f_jac_ss, x0=x0, args=(param_dict,), **optimizer_kwargs)
+            with catch_warnings():
+                simplefilter("ignore")
+                optim = optimize.root(
+                    f_ss, jac=f_jac_ss, x0=x0, args=(param_dict,), **optimizer_kwargs
+                )
 
             optim_dict = SymbolDictionary(dict(zip(vars_and_calib_sym, optim.x)))
             success = optim.success
