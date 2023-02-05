@@ -1,19 +1,22 @@
+import os
 import unittest
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import sympy as sp
-from numpy.testing import assert_allclose
 
 from gEconpy.classes.model import gEconModel
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.shared.utilities import string_keys_to_sympy
 
+ROOT = Path(__file__).parent.absolute()
+
 
 class ModelClassTestsOne(unittest.TestCase):
     def setUp(self):
-        file_path = "Test GCNs/One_Block_Simple_2.gcn"
+        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
         self.model = gEconModel(file_path, verbose=False)
 
     def test_model_options(self):
@@ -52,7 +55,9 @@ class ModelClassTestsOne(unittest.TestCase):
         )
 
     def test_conflicting_assumptions_are_removed(self):
-        model = gEconModel("Test GCNs/conflicting_assumptions.gcn", verbose=False)
+        model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/conflicting_assumptions.gcn"), verbose=False
+        )
         self.assertTrue("real" not in model.assumptions["TC"].keys())
         self.assertTrue("imaginary" in model.assumptions["TC"].keys())
         self.assertTrue(model.assumptions["TC"]["imaginary"])
@@ -179,7 +184,7 @@ class ModelClassTestsOne(unittest.TestCase):
 
 class ModelClassTestsTwo(unittest.TestCase):
     def setUp(self):
-        file_path = "Test GCNs/Two_Block_RBC_1.gcn"
+        file_path = os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
         self.model = gEconModel(file_path, verbose=False)
 
     def test_model_options(self):
@@ -336,7 +341,7 @@ class ModelClassTestsTwo(unittest.TestCase):
 
 class ModelClassTestsThree(unittest.TestCase):
     def setUp(self):
-        file_path = "Test GCNs/Full_New_Keyensian.gcn"
+        file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keyensian.gcn")
         self.model = gEconModel(
             file_path, verbose=False, simplify_constants=False, simplify_tryreduce=False
         )
@@ -532,7 +537,7 @@ class ModelClassTestsThree(unittest.TestCase):
 # class ModelWithSteadyStateTest(unittest.TestCase):
 #
 #     def setUp(self):
-#         file_path = 'Test GCNs/One_Block_Simple_1_w_Steady_State.gcn'
+#         file_path = os.path.join(ROOT, 'Test GCNs/One_Block_Simple_1_w_Steady_State.gcn')
 #         self.model = gEconModel(file_path, verbose=False)
 #
 #     def test_steady_state_block(self):

@@ -1,21 +1,29 @@
+import os
 import unittest
+from pathlib import Path
 
 import sympy as sp
 from scipy import optimize
 
 from gEconpy.classes.model import gEconModel
 
+ROOT = Path(__file__).parent.absolute()
+
 
 class SteadyStateModelOne(unittest.TestCase):
     def setUp(self):
-        self.model = gEconModel("Test GCNs/One_Block_Simple_1.gcn", verbose=False)
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
+        )
 
     def test_successfully_solves_ss(self):
         self.model.steady_state(verbose=False, apply_user_simplifications=False)
         self.assertTrue(self.model.steady_state_solved)
 
     def test_solve_ss_with_partial_user_solution(self):
-        self.model = gEconModel("Test GCNs/One_Block_Simple_1.gcn", verbose=False)
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
+        )
         self.model.steady_state(verbose=False, apply_user_simplifications=True)
         self.assertTrue(self.model.steady_state_solved)
 
@@ -43,8 +51,9 @@ class SteadyStateModelOne(unittest.TestCase):
 
 class SteadyStateModelTwo(unittest.TestCase):
     def setUp(self):
-        self.model = gEconModel("Test GCNs/One_Block_Simple_2.gcn", verbose=False)
-        # self.solver = SteadyStateSolver(model)
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn"), verbose=False
+        )
 
     def test_successfully_solves_ss(self):
         self.model.steady_state(verbose=False, apply_user_simplifications=False)
@@ -96,7 +105,7 @@ class SteadyStateModelTwo(unittest.TestCase):
 
 class SteadyStateModelThree(unittest.TestCase):
     def setUp(self):
-        self.model = gEconModel("Test GCNs/Two_Block_RBC_1.gcn", verbose=False)
+        self.model = gEconModel(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"), verbose=False)
         self.model.steady_state(verbose=False)
 
     def test_successfully_solves_ss(self):
@@ -157,7 +166,9 @@ class SteadyStateModelThree(unittest.TestCase):
 
 class SteadyStateModelFour(unittest.TestCase):
     def setUp(self):
-        self.model = gEconModel("Test GCNs/Full_New_Keyensian.gcn", verbose=False)
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/Full_New_Keyensian.gcn"), verbose=False
+        )
         self.model.steady_state(verbose=False)
 
     def test_successfully_solves_ss(self):
@@ -280,7 +291,9 @@ class SteadyStateModelFour(unittest.TestCase):
 
 class SteadyStateWithUserError(unittest.TestCase):
     def setUp(self):
-        self.model = gEconModel("Test GCNs/One_Block_Simple_1_ss_Error.gcn", verbose=False)
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_ss_Error.gcn"), verbose=False
+        )
 
     def test_raises_on_nonzero_resids(self):
         self.assertRaises(ValueError, self.model.steady_state, apply_user_simplifications=True)
@@ -288,21 +301,29 @@ class SteadyStateWithUserError(unittest.TestCase):
 
 class FullyUserDefinedSteadyState(unittest.TestCase):
     def test_ss_solves_from_user_definition(self):
-        model = gEconModel("Test GCNs/One_Block_Simple_1_w_Steady_State.gcn", verbose=False)
+        model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
+        )
         model.steady_state(apply_user_simplifications=True, verbose=False)
         self.assertTrue(model.steady_state_solved)
 
     def test_ss_solves_when_ignoring_user_definition(self):
-        model = gEconModel("Test GCNs/One_Block_Simple_1_w_Steady_State.gcn", verbose=False)
+        model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
+        )
         model.steady_state(apply_user_simplifications=False, verbose=False)
         self.assertTrue(model.steady_state_solved)
 
     def test_solver_matches_user_solution(self):
-        model = gEconModel("Test GCNs/One_Block_Simple_1_w_Steady_State.gcn", verbose=False)
+        model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
+        )
         model.steady_state(apply_user_simplifications=False, verbose=False)
         ss_dict_numeric = model.steady_state_dict.copy()
 
-        model = gEconModel("Test GCNs/One_Block_Simple_1_w_Steady_State.gcn", verbose=False)
+        model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
+        )
         model.steady_state(apply_user_simplifications=True, verbose=False)
         ss_dict_user = model.steady_state_dict.copy()
 

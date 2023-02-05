@@ -1,4 +1,6 @@
+import os
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -6,10 +8,12 @@ from gEconpy.classes.model import gEconModel
 from gEconpy.estimation.estimate import build_and_solve, build_Q_and_H
 from gEconpy.estimation.estimation_utilities import extract_sparse_data_from_model
 
+ROOT = Path(__file__).parent.absolute()
+
 
 class TestEstimationHelpers(unittest.TestCase):
     def setUp(self) -> None:
-        file_path = "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
+        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn")
         self.model = gEconModel(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
