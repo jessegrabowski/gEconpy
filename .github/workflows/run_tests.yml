@@ -8,6 +8,7 @@ on:
 jobs:
   unittest:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
@@ -19,15 +20,22 @@ jobs:
           miniforge-variant: Mambaforge
           miniforge-version: latest
           mamba-version: "*"
-          activate-environment: geconpy_test
+          activate-environment: geconpy-test
           channel-priority: strict
           environment-file: conda_envs/geconpy_test.yml
           python-version: 3.9
           use-mamba: true
+
+    - name: check solution
+      run: |
+        mamba env export
+
     - name: Install gEconpy
       run: |
+          echo conda env list
           conda activate geconpy-test
           python --version
+
     - name: Run tests
       run: |
         conda activate geconpy-test
