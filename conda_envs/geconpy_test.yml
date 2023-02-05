@@ -18,4 +18,5 @@ dependencies:
   - statsmodels
   # Testing dependencies
   - pre-commit
-  - pytest
+  - pytest-cov>=2.5
+  - pytest>=3.0
