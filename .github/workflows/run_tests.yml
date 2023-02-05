@@ -1,6 +1,6 @@
 name: Python Package using Conda
 
-on: 
+on:
   pull_request:
   push:
     branches: [main]
@@ -10,7 +10,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-    runs-on: ${{ os.matrix }}
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v3
