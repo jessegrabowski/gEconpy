@@ -3,11 +3,11 @@ name: run_tests
 on:
   pull_request:
     paths:
-      - ".github/workflows/tests.yml"
+      - ".github/workflows/run_tests.yml"
       - "conda_envs/**"
   push:
     paths:
-      - ".github/workflows/tests.yml"
+      - ".github/workflows/run_tests.yml"
       - "conda_envs/**"
     branches: [main]
 
