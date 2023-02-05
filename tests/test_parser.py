@@ -1,5 +1,7 @@
+import os
 import unittest
 from collections import defaultdict
+from pathlib import Path
 
 import pyparsing
 import sympy as sp
@@ -10,10 +12,14 @@ from gEconpy.parser import file_loaders, gEcon_parser, parse_equations, parse_pl
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.parser.parse_distributions import CompositeDistribution
 
+ROOT = Path(__file__).parent.absolute()
+
 
 class ParserDistributionCases(unittest.TestCase):
     def setUp(self):
-        self.model = file_loaders.load_gcn("Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
+        self.model = file_loaders.load_gcn(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
+        )
 
     def test_distribution_extraction_simple(self):
         test_str = "alpha ~ Normal(0, 1) = 0.5;"
@@ -126,7 +132,7 @@ class ParserTestCases(unittest.TestCase):
         """
 
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
-        with open("Test Answer Strings/test_parse_gcn.txt") as file:
+        with open(os.path.join(ROOT, "Test Answer Strings/test_parse_gcn.txt")) as file:
             expected_result = file.read()
 
         self.assertEqual(parser_output, expected_result)
@@ -180,16 +186,16 @@ class ParserTestCases(unittest.TestCase):
         self.assertEqual(result.strip(), "tryreduce { Div[], TC[] ; };")
 
         result = parse_plaintext.delete_block(parser_output, "tryreduce")
-        with open("Test Answer Strings/test_block_deletion.txt") as file:
+        with open(os.path.join(ROOT, "Test Answer Strings/test_block_deletion.txt")) as file:
             expected_result = file.read()
 
         self.assertEqual(result.strip(), expected_result)
 
     def test_split_gcn_by_blocks(self):
-        test_file = file_loaders.load_gcn("Test GCNs/One_Block_Simple_1.gcn")
+        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"))
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
 
-        with open("Test Answer Strings/test_split_gcn_by_blocks.txt") as file:
+        with open(os.path.join(ROOT, "Test Answer Strings/test_split_gcn_by_blocks.txt")) as file:
             expected_result = file.read()
 
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
@@ -233,7 +239,7 @@ class ParserTestCases(unittest.TestCase):
             [["U[]", "=", "u[]", "+", "beta", "*", "E[]", "[", "U[1]", "]"]],
         )
 
-        test_file = file_loaders.load_gcn("Test GCNs/Two_Block_RBC_1.gcn")
+        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"))
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         household = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])

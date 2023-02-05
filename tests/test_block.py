@@ -1,4 +1,6 @@
+import os
 import unittest
+from pathlib import Path
 
 import numpy as np
 import sympy as sp
@@ -8,10 +10,12 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.parser import constants, file_loaders, gEcon_parser
 from gEconpy.shared.utilities import set_equality_equals_zero, unpack_keys_and_values
 
+ROOT = Path(__file__).parent.absolute()
+
 
 class BlockTestCases(unittest.TestCase):
     def setUp(self):
-        test_file = file_loaders.load_gcn("Test GCNs/One_Block_Simple_2.gcn")
+        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn"))
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
@@ -171,7 +175,7 @@ class BlockTestCases(unittest.TestCase):
             self.assertIn(np.float32(solution.subs(sub_dict)), subbed_system)
 
     def test_firm_block_lagrange_parsing(self):
-        test_file = file_loaders.load_gcn("Test GCNs/Two_Block_RBC_1.gcn")
+        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"))
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
@@ -194,7 +198,7 @@ class BlockTestCases(unittest.TestCase):
         self.assertEqual((block._build_lagrangian() - L).simplify(), 0)
 
     def test_firm_FOC(self):
-        test_file = file_loaders.load_gcn("Test GCNs/Two_Block_RBC_1.gcn")
+        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"))
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         firm_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
