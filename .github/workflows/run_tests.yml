@@ -22,7 +22,7 @@ jobs:
         python-version: ["3.9"]
         test-subset:
           - |
-            gEconpy/tests/test_parser.py
+            tests/test_parser.py
 
     runs-on: ${{ matrix.os }}
 
