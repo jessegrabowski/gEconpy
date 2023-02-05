@@ -14,10 +14,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Conda cache
-      uses: actions/cache@v3
-      with:
-        path: ~/conda_envs/
     - uses: conda-incubator/setup-miniconda@v2
       with:
           miniforge-variant: Mambaforge
@@ -28,7 +24,6 @@ jobs:
           environment-file: conda_envs/geconpy_test.yml
           python-version: 3.9
           use-mamba: true
-          use-only-tar-bz2: false # IMPORTANT: This may break caching of conda packages! See https://github.com/conda-incubator/setup-miniconda/issues/267
     - name: Install gEconpy
       run: |
           conda activate geconpy-test
