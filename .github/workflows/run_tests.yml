@@ -53,15 +53,13 @@ jobs:
         python-version: 3.9
         use-mamba: true
         use-only-tar-bz2: false # IMPORTANT: This may break caching of conda packages! See https://github.com/conda-incubator/setup-miniconda/issues/267
-    - name: Conda info
-      shell: bash -el {0}
-      run: conda info
-    - name: Conda list
-      shell: pwsh
-      run: conda list
-    - name: Environment
-      shell: bash -el {0}
-      run: printenv | sort
+    - run: |
+        conda info
+        conda list
+        conda config --show-sources
+        conda config --show
+        printenv | sort
+
 #    - name: Install gEconpy
 #      run: |
 #        echo conda env list
