@@ -18,3 +18,4 @@ dependencies:
   - statsmodels
   # Testing dependencies
   - pre-commit
+  - pytest
