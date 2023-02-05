@@ -19,14 +19,13 @@ jobs:
           miniforge-variant: Mambaforge
           miniforge-version: latest
           mamba-version: "*"
-          activate-environment: geconpy-test
+          activate-environment: geconpy_test
           channel-priority: strict
           environment-file: conda_envs/geconpy_test.yml
           python-version: 3.9
           use-mamba: true
     - name: Install gEconpy
       run: |
-          conda env list
           conda activate geconpy-test
           python --version
     - name: Run tests
