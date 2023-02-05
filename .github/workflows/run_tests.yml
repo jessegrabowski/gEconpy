@@ -1,8 +1,14 @@
-name: Python Package using Conda
+name: run_tests
 
 on:
   pull_request:
+    paths:
+      - ".github/workflows/tests.yml"
+      - "conda_envs/**"
   push:
+    paths:
+      - ".github/workflows/tests.yml"
+      - "conda_envs/**"
     branches: [main]
 
 jobs:
@@ -10,11 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, mac-latest]
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash -l {0}
 
     steps:
     - uses: actions/checkout@v3
@@ -29,10 +32,6 @@ jobs:
         python-version: 3.9
         use-mamba: true
 
-    - name: check solution
-      run: |
-        mamba env export
-
     - name: Install gEconpy
       run: |
         echo conda env list
@@ -41,5 +40,4 @@ jobs:
 
     - name: Run tests
       run: |
-        conda activate geconpy-test
         python -m unittest discover -s tests/ -t tests/
