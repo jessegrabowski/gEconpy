@@ -194,6 +194,14 @@ class SteadyStateSolver:
         f_ss_resid = sp.lambdify([x.name for x in all_vars_and_calib_sym] + params, all_eqs)
         f_user = sp.lambdify(vars_and_calib_sym + params, list(user_provided.values()))
 
+        optimizer_required = True
+        if n_eq == 0:
+            optimizer_required = False
+
+        if n_eq == 1:
+            # hybr seems to fail on scalar problems; switch default to lm
+            optimizer_kwargs["method"] = "lm"
+
         if n_eq > 0:
             # The ccode printer complains about nested lists; make a flat jacobian and reshape it later
             ss_jac_flat = [eq.diff(x) for eq in eqs_to_solve for x in vars_and_calib_sym]
@@ -204,21 +212,21 @@ class SteadyStateSolver:
                 (n_eq, k_vars + k_calib),
             )
 
-        if n_eq == 1:
-            # hybr seems to fail on scalar problems; switch default to lm
-            optimizer_kwargs["method"] = "lm"
-
         def ss_func(param_dict):
-            x0 = np.full(k_vars + k_calib, 0.8)
+            if optimizer_required:
+                x0 = np.full(k_vars + k_calib, 0.8)
 
-            with catch_warnings():
-                simplefilter("ignore")
-                optim = optimize.root(
-                    f_ss, jac=f_jac_ss, x0=x0, args=(param_dict,), **optimizer_kwargs
-                )
+                with catch_warnings():
+                    simplefilter("ignore")
+                    optim = optimize.root(
+                        f_ss, jac=f_jac_ss, x0=x0, args=(param_dict,), **optimizer_kwargs
+                    )
 
-            optim_dict = SymbolDictionary(dict(zip(vars_and_calib_sym, optim.x)))
-            success = optim.success
+                optim_dict = SymbolDictionary(dict(zip(vars_and_calib_sym, optim.x)))
+                success = optim.success
+            else:
+                optim_dict = SymbolDictionary()
+                success = True
 
             ss_dict = self.steady_state_dict.float_to_values().to_sympy().copy()
             calib_dict = SymbolDictionary(dict(zip(self.params_to_calibrate, [np.inf] * k_calib)))
