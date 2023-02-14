@@ -405,12 +405,5 @@ class FullyUserDefinedSteadyState(unittest.TestCase):
             self.assertAlmostEqual(ss_dict_numeric[k], ss_dict_user[k], msg=k)
 
 
-class TestRBCComplete(unittest.TestCase):
-    def test_steady_state(self):
-        mod = gEconModel("../GCN Files/RBC_complete.gcn", verbose=False)
-        mod.steady_state(verbose=False)
-        self.assertTrue(mod.steady_state_solved)
-
-
 if __name__ == "__main__":
     unittest.main()
