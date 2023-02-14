@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from warnings import warn
 
 import arviz as az
@@ -135,6 +135,20 @@ class gEconModel:
         self.steady_state_solver = SteadyStateSolver(self)
         self.perturbation_solver = PerturbationSolver(self)
 
+        # TODO: Here I copy the assumptions from the model (which should be the only source of truth for assumptions)
+        #  into every SymbolDictionary. This setup is really bad; if these dictionaries go out of sync there could be
+        #  disagreements about what the assumptions for a variable should be.
+
+        for d in [
+            self.free_param_dict,
+            self.calib_param_dict,
+            self.steady_state_relationships,
+            self.param_priors,
+            self.shock_priors,
+            self.observation_noise_priors,
+        ]:
+            d._assumptions.update(self.assumptions)
+
     def build(
         self,
         verbose: bool,
@@ -257,9 +271,11 @@ class gEconModel:
         self,
         verbose: Optional[bool] = True,
         apply_user_simplifications=True,
+        method: Optional[str] = "root",
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
-        param_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
         use_jac: Optional[bool] = True,
+        use_hess: Optional[bool] = True,
+        tol: Optional[float] = 1e-6,
     ) -> None:
         """
         Solves for a function f(params) that computes steady state values and calibrated parameter values given
@@ -268,19 +284,30 @@ class gEconModel:
         Parameters
         ----------
         verbose: bool
-            Flag controlling whether to print results of the steady state solver
+            Flag controlling whether to print results of the steady state solver. Default is True.
         apply_user_simplifications: bool
             Whether to simplify system equations using the user-defined steady state relationships defined in the GCN
-            before passing the system to the numerical solver.
+            before passing the system to the numerical solver. Default is True.
+        method: str
+            One of "root" or "minimize". Indicates which family of solution algorithms should be used to find a
+            numerical steady state: direct root finding or minimization of squared error. Not that "root" is not
+            suitable if the number of inputs is not equal to the number of outputs, for example if user-provided
+            steady state relationships do not result in elimination of model equations. Default is "root".
         optimizer_kwargs: dict
-            Dictionary of arguments to be passed to scipy.optimize.root or scipy.optimize.root_scalar, see those
+            Dictionary of arguments to be passed to scipy.optimize.root or scipy.optimize.minimize, see those
             functions for more details.
-        param_bounds: dict
-            Dictionary of variable/calibrated parameter names and bounds, currently given to the brentq root finding
-            algorithm. If this is None, all bounds will be assigned as (0, 1) if a solver requires bounds.
         use_jac: bool
-            Boolean flag, whether to explicitly compute the jacobian function of the steady state. Helpful for solving
-            complex systems, but potentially slow.
+            Whether to symbolically compute the Jacobian matrix of the steady state system (when method is "root") or
+            the Jacobian vector of the loss function (when method is "minimize"). Strongly recommended. Default is True
+        use_hess: bool
+            Whether to symbolically compute the Hessian matrix of the loss function. Ignored if method is "root".
+            If "False", the default BFGS solver will compute a numerical approximation, so not necessarily required.
+            Still recommended. Default is True.
+        tol: float
+            Numerical tolerance for declaring a steady-state solution valid. Default is 1e-6. Note that this only used
+            by the gEconpy model to decide if a steady state has been found, and is **NOT** passed to the scipy
+            solution algorithms. To adjust solution tolerance for these algorithms, use optimizer_kwargs.
+
         Returns
         -------
         None
@@ -288,16 +315,17 @@ class gEconModel:
         if not self.steady_state_solved:
             self.f_ss = self.steady_state_solver.solve_steady_state(
                 apply_user_simplifications=apply_user_simplifications,
+                method=method,
                 optimizer_kwargs=optimizer_kwargs,
-                param_bounds=param_bounds,
                 use_jac=use_jac,
+                use_hess=use_hess,
             )
 
             # self.f_ss_resid = self.steady_state_solver.f_ss_resid
 
-        self._process_steady_state_results(verbose)
+        self._process_steady_state_results(verbose, tol=tol)
 
-    def _process_steady_state_results(self, verbose=True) -> None:
+    def _process_steady_state_results(self, verbose=True, tol=1e-6) -> None:
         """Process results from steady state solver.
 
         This function sets the steady state dictionary, calibrated parameter dictionary, and residuals attribute
@@ -310,6 +338,8 @@ class gEconModel:
         verbose : bool, optional
             If True, print a message indicating whether the steady state was found and the sum of squared residuals.
             Default is True.
+        tol: float, optional
+            Numerical tolerance for declaring a steady-state solution has been found. Default is 1e-6.
 
         Returns
         -------
@@ -331,7 +361,7 @@ class gEconModel:
         #     )
         # )
 
-        self.steady_state_solved = np.allclose(self.residuals, 0) & results["success"]
+        self.steady_state_solved = np.allclose(self.residuals, 0, atol=tol) & results["success"]
 
         if verbose:
             if self.steady_state_solved:
@@ -1166,8 +1196,8 @@ class gEconModel:
         for parameter in hyper_parameters:
             del self.free_param_dict[parameter]
 
-        param_priors = {}
-        shock_priors = {}
+        param_priors = SymbolDictionary()
+        shock_priors = SymbolDictionary()
         for key, value in priors.items():
             sympy_key = single_symbol_to_sympy(key, assumptions=self.assumptions)
             if isinstance(sympy_key, TimeAwareSymbol):

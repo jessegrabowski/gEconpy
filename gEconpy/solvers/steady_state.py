@@ -97,36 +97,69 @@ class SteadyStateSolver:
             eq_to_ss(eq).subs(self.shock_dict).simplify() for eq in self.system_equations
         ]
 
-    def solve_steady_state(
-        self,
-        apply_user_simplifications=True,
-        param_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
-        optimizer_kwargs: Optional[Dict[str, Any]] = None,
-        use_jac: Optional[bool] = False,
-    ) -> Callable:
+    def _validate_optimizer_kwargs(
+        self, optimizer_kwargs: dict, n_eq: int, method: str, use_jac: bool, use_hess: bool
+    ) -> dict:
         """
+        Validate user-provided keyword arguments to either scipy.optimize.root or scipy.optimize.minimize, and insert
+        good defaults where not provided.
+
+        Note: This function never overwrites user arguments.
 
         Parameters
         ----------
-        apply_user_simplifications: bool
-            If true, substitute all equations using the steady-state equations provided in the steady_state block
-            of the GCN file.
-        param_bounds: dict
-            A dictionary of string, tuple(float, float) pairs, giving bounds for each variable or parameter to be
-            solved for. Only used by certain optimizers; check the scipy docs. Pass it here instead of in
-            optimizer_kwargs to make sure the correct variables have the correct bounds.
         optimizer_kwargs: dict
-            A dictionary of keyword arguments to pass to the scipy optimizer, either root or root_scalar.
+            User-provided arguments for the optimizer
+        n_eq: int
+            Number of remaining steady-state equations after reduction
+        method: str
+            Which family of solution algorithms, minimization or root-finding, to be used.
         use_jac: bool
-            A flag to symbolically compute the Jacobain function of the model before optimization, can help the solver
-            on complex problems.
+            Whether computation of the jacobian has been requested
+        use_hess: bool
+            Whether computation of the hessian has been requested
 
         Returns
         -------
-        f_ss: Callable
-            A function that maps a dictionary of parameters to steady state values for all system variables and
-            calibrated parameters.
+        optimizer_kwargs: dict
+            Keyword arguments for the scipy function, with "reasonable" defaults inserted where not provided
+        """
 
+        optimizer_kwargs = {} if optimizer_kwargs is None else optimizer_kwargs
+        method_given = hasattr(optimizer_kwargs, "method")
+
+        if method == "root" and not method_given:
+            if use_jac:
+                optimizer_kwargs["method"] = "hybr"
+            else:
+                optimizer_kwargs["method"] = "broyden1"
+
+            if n_eq == 1:
+                optimizer_kwargs["method"] = "lm"
+
+        elif method == "minimize" and not method_given:
+            # Set optimizer_kwargs for minimization
+            if use_hess and use_jac:
+                optimizer_kwargs["method"] = "trust-exact"
+            elif use_jac:
+                optimizer_kwargs["method"] = "BFGS"
+            else:
+                optimizer_kwargs["method"] = "Nelder-Mead"
+
+        if not hasattr(optimizer_kwargs, "tol"):
+            optimizer_kwargs["tol"] = 1e-9
+
+        return optimizer_kwargs
+
+    def solve_steady_state(
+        self,
+        apply_user_simplifications=True,
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        method: Optional[str] = "root",
+        use_jac: Optional[bool] = True,
+        use_hess: Optional[bool] = True,
+    ) -> Callable:
+        """
         Solving of the steady state proceeds in three steps: solve calibrating equations (if any), gather user provided
         equations into a function, then solve the remaining equations.
 
@@ -138,8 +171,34 @@ class SteadyStateSolver:
         Note that no checks are done in this function to validate the steady state solution. If a user supplies an
         incorrect steady state, this function will not catch it. It will, however, still fail if an optimizer fails
         to find a solution.
+
+        Parameters
+        ----------
+        apply_user_simplifications: bool
+            If true, substitute all equations using the steady-state equations provided in the steady_state block
+            of the GCN file.
+        optimizer_kwargs: dict
+            A dictionary of keyword arguments to pass to the scipy optimizer, either root or minimize. See the docstring
+            for scipy.optimize.root or scipy.optimize.minimize for more information.
+        method: str, default: "root"
+            Whether to seek the steady state via root finding algorithm or via minimization of squared errors. "root"
+            requires that the number of unknowns be equal to the number of equations; this assumption can be violated
+            if the user provides only a subset of steady-state relationship (and this subset does not result in
+            elimination of model equations via substitution).
+            One of "root" or "minimize".
+        use_jac: bool
+            A flag indicating whether to use the Jacobian of the steady-state system when solving. Can help the
+            solver on complex problems, but symbolic computation may be slow on large problems. Default is True.
+        use_hess: bool
+            A flag indicating whether to use the Hessian of the loss function of the steady-state system when solving.
+            Ignored if method is "root", as these routines do not use Hessian information.
+
+        Returns
+        -------
+        f_ss: Callable
+            A function that maps a dictionary of parameters to steady state values for all system variables and
+            calibrated parameters.
         """
-        optimizer_kwargs = {} if optimizer_kwargs is None else optimizer_kwargs
 
         param_dict = self.free_param_dict.to_sympy()
         params = list(param_dict.to_string().keys())
@@ -190,27 +249,63 @@ class SteadyStateSolver:
         k_calib = len(calib_params)
         n_eq = len(eqs_to_solve)
 
+        if (n_eq != (k_vars + k_calib)) and (n_eq > 0) and (method == "root"):
+            raise ValueError(
+                'method = "root" is only possible when the number of equations (after substitution of '
+                "user-provided steady-state relationships) is equal to the number of (remaining) "
+                f"variables.\nFound {n_eq} equations and {k_vars} variables. This can happen if "
+                f"user-provided steady-state relationships do not result in elimination of model "
+                f"equations after substitution. \nCheck the provided steady state relationships, or "
+                f'use method = "minimize" to attempt to solve via minimization of squared errors.'
+            )
+
         # Get residuals for all equations, regardless of how much simplification was done
         f_ss_resid = sp.lambdify([x.name for x in all_vars_and_calib_sym] + params, all_eqs)
         f_user = sp.lambdify(vars_and_calib_sym + params, list(user_provided.values()))
 
         optimizer_required = True
+        f_jac_ss = None
+        f_hess_ss = None
+
         if n_eq == 0:
             optimizer_required = False
+        if method == "root":
+            if n_eq > 0:
+                # The ccode printer complains about nested lists; make a flat jacobian and reshape it later
+                ss_jac_flat = [eq.diff(x) for eq in eqs_to_solve for x in vars_and_calib_sym]
 
-        if n_eq == 1:
-            # hybr seems to fail on scalar problems; switch default to lm
-            optimizer_kwargs["method"] = "lm"
+                f_ss = sympy_inputs_to_scipy(sp.lambdify(vars_and_calib_str + params, eqs_to_solve))
 
-        if n_eq > 0:
-            # The ccode printer complains about nested lists; make a flat jacobian and reshape it later
-            ss_jac_flat = [eq.diff(x) for eq in eqs_to_solve for x in vars_and_calib_sym]
+                if use_jac:
+                    f_jac_ss = postprocess_jac(
+                        sympy_inputs_to_scipy(
+                            sp.lambdify(vars_and_calib_str + params, ss_jac_flat)
+                        ),
+                        (n_eq, k_vars + k_calib),
+                    )
 
-            f_ss = sympy_inputs_to_scipy(sp.lambdify(vars_and_calib_str + params, eqs_to_solve))
-            f_jac_ss = postprocess_jac(
-                sympy_inputs_to_scipy(sp.lambdify(vars_and_calib_str + params, ss_jac_flat)),
-                (n_eq, k_vars + k_calib),
-            )
+        elif method == "minimize":
+            # For minimization, need to form a loss function (use L2 norm -- better options?).
+            loss = sum([eq**2 for eq in eqs_to_solve])
+            f_loss = sympy_inputs_to_scipy(sp.lambdify(vars_and_calib_str + params, loss))
+            if use_jac:
+                f_jac_ss = sympy_inputs_to_scipy(
+                    sp.lambdify(
+                        vars_and_calib_str + params, [loss.diff(x) for x in vars_and_calib_sym]
+                    )
+                )
+            if use_hess:
+                hess_flat = [
+                    loss.diff(x, y) for x in vars_and_calib_sym for y in vars_and_calib_sym
+                ]
+                f_hess_ss = postprocess_jac(
+                    sympy_inputs_to_scipy(sp.lambdify(vars_and_calib_sym + params, hess_flat)),
+                    (k_vars + k_calib, k_vars + k_calib),
+                )
+
+        optimizer_kwargs = self._validate_optimizer_kwargs(
+            optimizer_kwargs, n_eq, method, use_jac, use_hess
+        )
 
         def ss_func(param_dict):
             if optimizer_required:
@@ -218,9 +313,19 @@ class SteadyStateSolver:
 
                 with catch_warnings():
                     simplefilter("ignore")
-                    optim = optimize.root(
-                        f_ss, jac=f_jac_ss, x0=x0, args=(param_dict,), **optimizer_kwargs
-                    )
+                    if method == "root":
+                        optim = optimize.root(
+                            f_ss, jac=f_jac_ss, x0=x0, args=(param_dict,), **optimizer_kwargs
+                        )
+                    elif method == "minimize":
+                        optim = optimize.minimize(
+                            f_loss,
+                            jac=f_jac_ss,
+                            hess=f_hess_ss,
+                            x0=x0,
+                            args=(param_dict,),
+                            **optimizer_kwargs,
+                        )
 
                 optim_dict = SymbolDictionary(dict(zip(vars_and_calib_sym, optim.x)))
                 success = optim.success
