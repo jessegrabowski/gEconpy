@@ -18,6 +18,7 @@ from scipy.stats import (
 )
 from scipy.stats._distn_infrastructure import rv_frozen
 
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.exceptions.exceptions import (
     DistributionOverDefinedException,
     IgnoredCloseMatchWarning,
@@ -1506,7 +1507,7 @@ def create_prior_distribution_dictionary(raw_prior_dict: Dict[str, str]) -> Dict
     basic_distributions, compound_distributions = split_out_composite_distributions(
         variable_names, d_names, param_dicts
     )
-    prior_dict = {}
+    prior_dict = SymbolDictionary()
 
     for variable_name, (d_name, param_dict) in basic_distributions.items():
         d = distribution_factory(variable_name=variable_name, d_name=d_name, param_dict=param_dict)

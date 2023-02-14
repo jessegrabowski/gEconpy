@@ -16,16 +16,51 @@ class SteadyStateModelOne(unittest.TestCase):
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
         )
 
-    def test_successfully_solves_ss(self):
-        self.model.steady_state(verbose=False, apply_user_simplifications=False)
-        self.assertTrue(self.model.steady_state_solved)
-
     def test_solve_ss_with_partial_user_solution(self):
         self.model = gEconModel(
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
         )
         self.model.steady_state(verbose=False, apply_user_simplifications=True)
         self.assertTrue(self.model.steady_state_solved)
+
+    def test_wrong_user_solutions_raises(self):
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
+        )
+        self.model.steady_state_relationships["A_ss"] = 3.0
+
+        self.assertRaises(ValueError, self.model.steady_state, verbose=False)
+
+    def test_incomplete_ss_relationship_raises_with_root(self):
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
+        )
+        self.model.steady_state_relationships["K_ss"] = 3.0
+        self.assertRaises(ValueError, self.model.steady_state, verbose=False, method="root")
+
+    def test_wrong_and_incomplete_ss_relationship_fails_with_minimize(self):
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
+        )
+        self.model.steady_state_relationships["K_ss"] = 3.0
+        self.model.steady_state(method="minimize", verbose=False)
+
+        self.assertTrue(not self.model.steady_state_solved)
+
+    def test_numerical_solvers_suceed_and_agree(self):
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
+        )
+        self.model.steady_state(method="root", verbose=False)
+        self.assertTrue(self.model.steady_state_solved)
+        ss_root = self.model.steady_state_dict.copy()
+
+        self.model.steady_state(method="minimize", verbose=False)
+        self.assertTrue(self.model.steady_state_solved)
+        ss_minimize = self.model.steady_state_dict.copy()
+
+        for k in ss_root.keys():
+            self.assertAlmostEqual(ss_root[k], ss_minimize[k], places=6, msg=k)
 
     def test_steady_state_matches_analytic(self):
         param_dict = self.model.free_param_dict.to_sympy()
@@ -55,9 +90,20 @@ class SteadyStateModelTwo(unittest.TestCase):
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn"), verbose=False
         )
 
-    def test_successfully_solves_ss(self):
-        self.model.steady_state(verbose=False, apply_user_simplifications=False)
+    def test_numerical_solvers_succeed_and_agree(self):
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn"), verbose=False
+        )
+        self.model.steady_state(method="root", verbose=False)
         self.assertTrue(self.model.steady_state_solved)
+        ss_root = self.model.steady_state_dict.copy()
+
+        self.model.steady_state(method="minimize", verbose=False)
+        self.assertTrue(self.model.steady_state_solved)
+        ss_minimize = self.model.steady_state_dict.copy()
+
+        for k in ss_root.keys():
+            self.assertAlmostEqual(ss_root[k], ss_minimize[k], places=6, msg=k)
 
     def test_steady_state_matches_analytic(self):
         param_dict = self.model.free_param_dict.to_sympy()
@@ -108,8 +154,18 @@ class SteadyStateModelThree(unittest.TestCase):
         self.model = gEconModel(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"), verbose=False)
         self.model.steady_state(verbose=False)
 
-    def test_successfully_solves_ss(self):
+    def test_numerical_solvers_succeed_and_agree(self):
+        self.model = gEconModel(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"), verbose=False)
+        self.model.steady_state(method="root", verbose=False)
         self.assertTrue(self.model.steady_state_solved)
+        ss_root = self.model.steady_state_dict.copy()
+
+        self.model.steady_state(method="minimize", verbose=False)
+        self.assertTrue(self.model.steady_state_solved)
+        ss_minimize = self.model.steady_state_dict.copy()
+
+        for k in ss_root.keys():
+            self.assertAlmostEqual(ss_root[k], ss_minimize[k], places=6, msg=k)
 
     def test_steady_state_matches_analytic(self):
         param_dict = self.model.free_param_dict.to_sympy()
@@ -171,8 +227,20 @@ class SteadyStateModelFour(unittest.TestCase):
         )
         self.model.steady_state(verbose=False)
 
-    def test_successfully_solves_ss(self):
+    def test_numerical_solvers_succeed_and_agree(self):
+        self.model = gEconModel(
+            os.path.join(ROOT, "Test GCNs/Full_New_Keyensian.gcn"), verbose=False
+        )
+        self.model.steady_state(method="root", verbose=False)
         self.assertTrue(self.model.steady_state_solved)
+        ss_root = self.model.steady_state_dict.copy()
+
+        self.model.steady_state(method="minimize", verbose=False)
+        self.assertTrue(self.model.steady_state_solved)
+        ss_minimize = self.model.steady_state_dict.copy()
+
+        for k in ss_root.keys():
+            self.assertAlmostEqual(ss_root[k], ss_minimize[k], places=6, msg=k)
 
     def test_steady_state_matches_analytic(self):
         param_dict = self.model.free_param_dict.to_sympy()
@@ -296,7 +364,9 @@ class SteadyStateWithUserError(unittest.TestCase):
         )
 
     def test_raises_on_nonzero_resids(self):
-        self.assertRaises(ValueError, self.model.steady_state, apply_user_simplifications=True)
+        self.assertRaises(
+            ValueError, self.model.steady_state, apply_user_simplifications=True, verbose=False
+        )
 
 
 class FullyUserDefinedSteadyState(unittest.TestCase):
@@ -304,15 +374,19 @@ class FullyUserDefinedSteadyState(unittest.TestCase):
         model = gEconModel(
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
         )
-        model.steady_state(apply_user_simplifications=True, verbose=False)
-        self.assertTrue(model.steady_state_solved)
+
+        for method in ["root", "minimize"]:
+            model.steady_state(apply_user_simplifications=True, verbose=False, method=method)
+            self.assertTrue(model.steady_state_solved, msg=method)
 
     def test_ss_solves_when_ignoring_user_definition(self):
         model = gEconModel(
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
         )
-        model.steady_state(apply_user_simplifications=False, verbose=False)
-        self.assertTrue(model.steady_state_solved)
+
+        for method in ["root", "minimize"]:
+            model.steady_state(apply_user_simplifications=False, verbose=False, method=method)
+            self.assertTrue(model.steady_state_solved, msg=method)
 
     def test_solver_matches_user_solution(self):
         model = gEconModel(
