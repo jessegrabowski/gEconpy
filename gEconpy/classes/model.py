@@ -1377,6 +1377,9 @@ class gEconModel:
                 steady_state_dict[eq.lhs] = subbed_rhs
                 sub_dict[eq.lhs] = subbed_rhs
 
+        for k, eq in steady_state_dict.items():
+            steady_state_dict[k] = eq.subs(steady_state_dict)
+
         self.steady_state_relationships = (
             steady_state_dict.sort_keys().to_string().values_to_float()
         )
