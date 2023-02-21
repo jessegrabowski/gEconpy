@@ -1,4 +1,5 @@
 import unittest
+from typing import List
 
 import sympy as sp
 
@@ -18,13 +19,17 @@ class TestSymbolDictionary(unittest.TestCase):
     def test_convert_to_string(self):
         d = self.d.to_string()
         self.assertEqual(list(d.keys()), ["C_t", "A_tp1", "r_tm1", "alpha"])
+        self.assertTrue(not d.is_sympy)
 
         self.d.to_string(inplace=True)
         self.assertEqual(list(self.d.keys()), ["C_t", "A_tp1", "r_tm1", "alpha"])
 
+        self.assertTrue(not self.d.is_sympy)
+
     def test_convert_to_sympy(self):
         d = SymbolDictionary(dict(a=2, b=3)).to_sympy()
         self.assertEqual(list(d.keys()), [sp.Symbol("a"), sp.Symbol("b")])
+        self.assertTrue(d.is_sympy)
 
     def test_copy(self):
         d_copy = self.d.copy()
@@ -80,6 +85,29 @@ class TestSymbolDictionary(unittest.TestCase):
 
         d.sort_keys(inplace=True)
         self.assertEqual(list(d.keys()), [self.A, self.C, self.alpha, self.r])
+
+    def test_sequential_updates_from_empty(self):
+        d0 = SymbolDictionary()
+        d1 = SymbolDictionary({"A": 3, "B": 4})
+        d2 = self.d.copy()
+
+        self.assertRaises(ValueError, lambda: d1 | d2)
+
+        def loop_update(ds: List):
+            d0 = ds.pop(0)
+            for d in ds:
+                print(d0.is_sympy == d.is_sympy)
+                d0 = d0 | d
+            return d0
+
+        self.assertRaises(ValueError, loop_update, [d0, d1, d2])
+
+    def test_not_inplace_update_is_not_persistent(self):
+        d = self.d
+        d.to_string()
+
+        self.assertTrue(all([isinstance(x, sp.Symbol) for x in d.keys()]))
+        self.assertTrue(d.is_sympy)
 
 
 if __name__ == "__main__":

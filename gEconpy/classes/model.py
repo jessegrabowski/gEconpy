@@ -321,8 +321,6 @@ class gEconModel:
                 use_hess=use_hess,
             )
 
-            # self.f_ss_resid = self.steady_state_solver.f_ss_resid
-
         self._process_steady_state_results(verbose, tol=tol)
 
     def _process_steady_state_results(self, verbose=True, tol=1e-6) -> None:
@@ -1273,11 +1271,9 @@ class gEconModel:
 
         _, blocks = unpack_keys_and_values(self.blocks)
         for block in blocks:
-            self.free_param_dict.update(block.param_dict)
+            self.free_param_dict = self.free_param_dict | block.param_dict
 
-        self.free_param_dict = (
-            SymbolDictionary(self.free_param_dict).sort_keys().to_string().values_to_float()
-        )
+        self.free_param_dict = self.free_param_dict.sort_keys().to_string().values_to_float()
 
     def _get_all_block_params_to_calibrate(self) -> None:
         """
@@ -1302,6 +1298,8 @@ class gEconModel:
                 self.calibrating_equations = block.calibrating_equations
             else:
                 self.calibrating_equations.extend(block.calibrating_equations)
+
+        self.params_to_calibrate = sorted(self.params_to_calibrate, key=lambda x: x.name)
 
         self.n_calibrating_equations = len(self.calibrating_equations)
         self.n_params_to_calibrate = len(self.params_to_calibrate)
@@ -1329,6 +1327,7 @@ class gEconModel:
             for variable in variables:
                 if variable.set_t(0) not in self.variables and variable not in all_shocks:
                     self.variables.append(variable.set_t(0))
+
         self.n_variables = len(self.variables)
 
         self.variables = sorted(self.variables, key=lambda x: x.name)

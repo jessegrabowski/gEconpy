@@ -390,7 +390,7 @@ def gensys(
 def interpret_gensys_output(eu):
     message = ""
     if eu[0] == -2 and eu[1] == -2:
-        message = "Coincident zeros.  Indeterminacy and/or nonexistence."
+        message = "Coincident zeros.  Indeterminacy and/or nonexistence. Check that your system is correctly defined."
     elif eu[0] == -1:
         message = f"System is indeterminate. There are {eu[2]} loose endogenous variables."
     elif eu[1] == -1:

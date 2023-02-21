@@ -34,12 +34,28 @@ class SymbolDictionary(dict):
     def __or__(self, other):
         if not isinstance(other, dict):
             raise ValueError("__or__ not defined on non-dictionary objects")
+        if not isinstance(other, SymbolDictionary):
+            other = SymbolDictionary(other)
 
         d_copy = self.copy()
-        other = SymbolDictionary(other)
-        if self.is_sympy:
-            other = other.to_sympy()
 
+        # If one dict or the other is empty, only merge assumptions
+        if len(d_copy.keys()) == 0:
+            other_copy = other.copy()
+            other_copy._assumptions.update(self._assumptions)
+            return other_copy
+
+        if len(other.keys()) == 0:
+            d_copy._assumptions.update(other._assumptions)
+            return d_copy
+
+        # If both are populated but of different types, raise an error
+        if other.is_sympy != self.is_sympy:
+            raise ValueError(
+                "Cannot merge string-mode SymbolDictionary with sympy-mode SymbolDictionary"
+            )
+
+        # Full merge
         other_assumptions = getattr(other, "_assumptions", {})
 
         d_copy.update(other)
@@ -81,9 +97,9 @@ class SymbolDictionary(dict):
 
         self.update(d)
         self._assumptions.update(d._assumptions)
+        self.is_sympy = d.is_sympy
 
     def to_sympy(self, inplace=False, new_assumptions=None):
-        self.is_sympy = True
         new_assumptions = new_assumptions or {}
 
         assumptions = self._assumptions.copy()
@@ -147,8 +163,6 @@ class SymbolDictionary(dict):
         copy_dict = self.copy()
         d = SymbolDictionary(sympy_keys_to_strings(copy_dict))
         d._assumptions = copy_dict._assumptions.copy()
-
-        self.is_sympy = False
 
         if inplace:
             self._clean_update(d)

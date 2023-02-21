@@ -36,6 +36,7 @@ class SteadyStateModelOne(unittest.TestCase):
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
         )
         self.model.steady_state_relationships["K_ss"] = 3.0
+
         self.assertRaises(ValueError, self.model.steady_state, verbose=False, method="root")
 
     def test_wrong_and_incomplete_ss_relationship_fails_with_minimize(self):

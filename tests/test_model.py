@@ -425,7 +425,7 @@ class ModelClassTestsThree(unittest.TestCase):
             all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]),
             True,
         )
-        self.assertEqual(self.model.params_to_calibrate, [phi_pi_obj, phi_pi])
+        self.assertEqual(self.model.params_to_calibrate, [phi_pi, phi_pi_obj])
 
     def test_solvers_agree(self):
         self.model.steady_state(verbose=False)

@@ -1,8 +1,8 @@
-from functools import wraps
 from itertools import product
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from warnings import catch_warnings, simplefilter
 
+import numba as nb  # pylint: disable=unused-import
 import numpy as np
 import sympy as sp
 from joblib import Parallel, delayed
@@ -13,50 +13,149 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.shared.typing import VariableType
 from gEconpy.shared.utilities import eq_to_ss, substitute_all_equations
 
-# def convert_to_numba_function(expr: sp.Expr, vars: List[str]) -> Callable:
-#     """
-#     Convert a sympy expression into a Numba-compiled function.
-#
-#     Parameters
-#     ----------
-#     expr : sympy.Expr
-#         The sympy expression to be converted.
-#     vars : List[str]
-#         A list of strings containing the names of the variables in the expression.
-#
-#     Returns
-#     -------
-#     numba.types.function
-#         A Numba-compiled function equivalent to the input expression.
-#
-#     Notes
-#     -----
-#     The function returned by this function is pickleable.
-#     """
-#     code = sp.printing.ccode(expr)
-#     # The code string will contain a single line, so we add line breaks to make it a valid block of code
-#     code = "@nb.njit\ndef f({}):\n{}\n    return np.array({})".format(",".join(vars), " " * 4, code)
-#
-#     # Compile the code and return the resulting function
-#     exec(code)
-#     return locals()["f"]
 
+def numba_lambdify(
+    exog_vars: List[sp.Symbol],
+    expr: Union[List[sp.Expr], sp.Matrix, List[sp.Matrix]],
+    endog_vars: Optional[List[sp.Symbol]] = None,
+    func_signature: Optional[str] = None,
+) -> Callable:
+    """
+    Convert a sympy expression into a Numba-compiled function.  Unlike sp.lambdify, the resulting function can be
+    pickled. In addition, common sub-expressions are gathered using sp.cse and assigned to local variables,
+    giving a (very) modest performance boost. A signature can optionally be provided for numba.njit.
 
-def sympy_inputs_to_scipy(f):
-    @wraps(f)
-    def new_f(x0, *args):
-        d, *_ = args
-        return f(*x0, **d)
+    Finally, the resulting function always returns a numpy array, rather than a list.
 
-    return new_f
+    Parameters
+    ----------
+    exog_vars: list of sympy.Symbol
+        A list of "exogenous" variables. The distinction between "exogenous" and "enodgenous" is
+        useful when passing the resulting function to a scipy.optimize optimizer. In this context, exogenous
+        variables should be the choice varibles used to minimize the function.
+    expr : list of sympy.Expr or sp.Matrix
+        The sympy expression(s) to be converted. Expects a list of expressions (in the case that we're compiling a
+        system to be stacked into a single output vector), a single matrix (which is returned as a single nd-array)
+        or a list of matrices (which are returned as a list of nd-arrays)
+    endog_vars : Optional, list of sympy.Symbol
+        A list of "exogenous" variables, passed as a second argument to the function.
+    func_signature: str
+        A numba function signature, passed to the numba.njit decorator on the generated function.
 
+    Returns
+    -------
+    numba.types.function
+        A Numba-compiled function equivalent to the input expression.
 
-def postprocess_jac(f, shape):
-    @wraps(f)
-    def new_f(*args, **kwargs):
-        return np.array(f(*args, **kwargs)).reshape(shape)
+    Notes
+    -----
+    The function returned by this function is pickleable.
+    """
 
-    return new_f
+    FLOAT_SUBS = {
+        sp.core.numbers.Zero(): sp.Float(0),
+        sp.core.numbers.One(): sp.Float(1),
+        sp.core.numbers.NegativeOne(): sp.Float(-1),
+    }
+
+    if func_signature is None:
+        decorator = "@nb.njit"
+    else:
+        decorator = f"@nb.njit({func_signature})"
+
+    len_checks = []
+    len_checks.append(
+        f'    assert len(exog_inputs) == {len(exog_vars)}, "Expected {len(exog_vars)} exog_inputs"'
+    )
+    if endog_vars is not None:
+        len_checks.append(
+            f'    assert len(endog_inputs) == {len(endog_vars)}, "Expected {len(endog_vars)} exog_inputs"'
+        )
+    len_checks = "\n".join(len_checks)
+
+    # Special case: expr is [[]]. This can occur if no user-defined steady-state values were provided.
+    # It shouldn't happen otherwise.
+    if expr == [[]]:
+        sub_dict = ()
+        code = ""
+        retvals = ["[None]"]
+
+    else:
+        # Need to make the float substitutions so that numba can correctly interpret everything, but we have to handle
+        # several cases:
+        # Case 1: expr is just a single Sympy thing
+        if isinstance(expr, (sp.Matrix, sp.Expr)):
+            expr = expr.subs(FLOAT_SUBS)
+
+        # Case 2: expr is a list. Items in the list are either lists of expressions (systems of equations),
+        # single equations, or matrices.
+        elif isinstance(expr, list):
+            new_expr = []
+            for item in expr:
+                # Case 2a: It's a simple list of sympy things
+                if isinstance(item, (sp.Matrix, sp.Expr)):
+                    new_expr.append(item.subs(FLOAT_SUBS))
+                # Case 2b: It's a system of equations, List[List[sp.Expr]]
+                elif isinstance(item, list):
+                    if all([isinstance(x, (sp.Matrix, sp.Expr)) for x in item]):
+                        new_expr.append([x.subs(FLOAT_SUBS) for x in item])
+                    else:
+                        raise ValueError("Unexpected input type for expr")
+            expr = new_expr
+        else:
+            raise ValueError("Unexpected input type for expr")
+
+        sub_dict, expr = sp.cse(expr)
+
+        # Converting matrices to a list of lists is convenient because NumPyPrinter() won't wrap them in np.array
+        exprs = []
+        for ex in expr:
+            if hasattr(ex, "tolist"):
+                exprs.append(ex.tolist())
+            else:
+                exprs.append(ex)
+
+        codes = []
+        retvals = []
+        for i, expr in enumerate(exprs):
+            code = sp.printing.numpy.NumPyPrinter().doprint(expr)
+            delimiter = "]," if "]," in code else ","
+            code = code.split(delimiter)
+            code = [" " * 8 + eq.strip() for eq in code]
+            code = f"{delimiter}\n".join(code)
+            code = code.replace("numpy.", "np.")
+
+            code_name = f"retval_{i}"
+            retvals.append(code_name)
+            code = f"    {code_name} = np.array(\n{code}\n    )"
+            codes.append(code)
+        code = "\n".join(codes)
+
+    input_signature = "exog_inputs"
+    unpacked_inputs = "\n".join(
+        [f"    {x.name} = exog_inputs[{i}]" for i, x in enumerate(exog_vars)]
+    )
+    if endog_vars is not None:
+        input_signature += ", endog_inputs"
+        exog_unpacked = "\n".join(
+            [f"    {x.name} = endog_inputs[{i}]" for i, x in enumerate(endog_vars)]
+        )
+        unpacked_inputs += "\n" + exog_unpacked
+
+    assignments = "\n".join(
+        [
+            f"    {x} = {sp.printing.numpy.NumPyPrinter().doprint(y).replace('numpy.', 'np.')}"
+            for x, y in sub_dict
+        ]
+    )
+    returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
+    full_code = f"{decorator}\ndef f({input_signature}):\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
+
+    docstring = f"'''Automatically generated code:\n{full_code}'''"
+    code = f"{decorator}\ndef f({input_signature}):\n    {docstring}\n{len_checks}\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
+
+    exec(code)
+    return locals()["f"]
 
 
 class SteadyStateSolver:
@@ -80,10 +179,6 @@ class SteadyStateSolver:
         self.steady_state_system: List[sp.Add] = []
         self.steady_state_dict: SymbolDictionary[str, float] = SymbolDictionary()
         self.steady_state_solved: bool = False
-
-        #         self.f_calib_params: Callable = lambda *args, **kwargs: {}
-        #         self.f_ss_resid: Callable = lambda *args, **kwargs: np.inf
-        #         self.f_ss: Callable = lambda *args, **kwargs: np.inf
 
         self.build_steady_state_system()
 
@@ -200,13 +295,12 @@ class SteadyStateSolver:
             calibrated parameters.
         """
 
-        param_dict = self.free_param_dict.to_sympy()
-        params = list(param_dict.to_string().keys())
+        param_dict = self.free_param_dict.copy().to_sympy()
+        params = list(param_dict.keys())
         calib_params = self.params_to_calibrate
-        user_provided = self.steady_state_relationships.to_sympy().float_to_values()
-
-        ss_eqs = self.steady_state_system
-        calib_eqs = self.calibrating_equations
+        user_provided = self.steady_state_relationships.copy().to_sympy().float_to_values()
+        ss_eqs = self.steady_state_system.copy()
+        calib_eqs = self.calibrating_equations.copy()
         all_eqs = ss_eqs + calib_eqs
 
         all_vars_sym = list(self.steady_state_dict.to_sympy().keys())
@@ -243,7 +337,6 @@ class SteadyStateSolver:
         )
 
         vars_and_calib_sym = vars_sym + calib_params
-        vars_and_calib_str = [x.name for x in vars_and_calib_sym]
 
         k_vars = len(vars_sym)
         k_calib = len(calib_params)
@@ -260,8 +353,12 @@ class SteadyStateSolver:
             )
 
         # Get residuals for all equations, regardless of how much simplification was done
-        f_ss_resid = sp.lambdify([x.name for x in all_vars_and_calib_sym] + params, all_eqs)
-        f_user = sp.lambdify(vars_and_calib_sym + params, list(user_provided.values()))
+        f_ss_resid = numba_lambdify(
+            exog_vars=all_vars_and_calib_sym, endog_vars=params, expr=[all_eqs]
+        )
+        f_user = numba_lambdify(
+            exog_vars=vars_and_calib_sym, endog_vars=params, expr=[list(user_provided.values())]
+        )
 
         optimizer_required = True
         f_jac_ss = None
@@ -269,38 +366,31 @@ class SteadyStateSolver:
 
         if n_eq == 0:
             optimizer_required = False
-        if method == "root":
-            if n_eq > 0:
-                # The ccode printer complains about nested lists; make a flat jacobian and reshape it later
-                ss_jac_flat = [eq.diff(x) for eq in eqs_to_solve for x in vars_and_calib_sym]
 
-                f_ss = sympy_inputs_to_scipy(sp.lambdify(vars_and_calib_str + params, eqs_to_solve))
+        elif method == "root":
+            f_ss = numba_lambdify(
+                exog_vars=vars_and_calib_sym, endog_vars=params, expr=[eqs_to_solve]
+            )
 
-                if use_jac:
-                    f_jac_ss = postprocess_jac(
-                        sympy_inputs_to_scipy(
-                            sp.lambdify(vars_and_calib_str + params, ss_jac_flat)
-                        ),
-                        (n_eq, k_vars + k_calib),
-                    )
+            if use_jac:
+                jac = sp.Matrix([[eq.diff(x) for x in vars_and_calib_sym] for eq in eqs_to_solve])
+                f_jac_ss = numba_lambdify(exog_vars=vars_and_calib_sym, endog_vars=params, expr=jac)
 
         elif method == "minimize":
             # For minimization, need to form a loss function (use L2 norm -- better options?).
             loss = sum([eq**2 for eq in eqs_to_solve])
-            f_loss = sympy_inputs_to_scipy(sp.lambdify(vars_and_calib_str + params, loss))
+            f_loss = numba_lambdify(exog_vars=vars_and_calib_sym, endog_vars=params, expr=[loss])
             if use_jac:
-                f_jac_ss = sympy_inputs_to_scipy(
-                    sp.lambdify(
-                        vars_and_calib_str + params, [loss.diff(x) for x in vars_and_calib_sym]
-                    )
+                jac = [loss.diff(x) for x in vars_and_calib_sym]
+
+                f_jac_ss = numba_lambdify(
+                    exog_vars=vars_and_calib_sym, endog_vars=params, expr=[jac]
                 )
+
             if use_hess:
-                hess_flat = [
-                    loss.diff(x, y) for x in vars_and_calib_sym for y in vars_and_calib_sym
-                ]
-                f_hess_ss = postprocess_jac(
-                    sympy_inputs_to_scipy(sp.lambdify(vars_and_calib_sym + params, hess_flat)),
-                    (k_vars + k_calib, k_vars + k_calib),
+                hess = sp.hessian(loss, vars_and_calib_sym)
+                f_hess_ss = numba_lambdify(
+                    exog_vars=vars_and_calib_sym, endog_vars=params, expr=hess
                 )
 
         optimizer_kwargs = self._validate_optimizer_kwargs(
@@ -308,14 +398,15 @@ class SteadyStateSolver:
         )
 
         def ss_func(param_dict):
+            params = np.array(list(param_dict.values()))
+
             if optimizer_required:
                 x0 = np.full(k_vars + k_calib, 0.8)
-
                 with catch_warnings():
                     simplefilter("ignore")
                     if method == "root":
                         optim = optimize.root(
-                            f_ss, jac=f_jac_ss, x0=x0, args=(param_dict,), **optimizer_kwargs
+                            f_ss, jac=f_jac_ss, x0=x0, args=params, **optimizer_kwargs
                         )
                     elif method == "minimize":
                         optim = optimize.minimize(
@@ -323,7 +414,7 @@ class SteadyStateSolver:
                             jac=f_jac_ss,
                             hess=f_hess_ss,
                             x0=x0,
-                            args=(param_dict,),
+                            args=params,
                             **optimizer_kwargs,
                         )
 
@@ -339,10 +430,11 @@ class SteadyStateSolver:
                 dict(
                     zip(
                         user_provided.keys(),
-                        f_user(**optim_dict.to_string(), **param_dict.to_string()),
+                        f_user(np.array(list(optim_dict.values())), params),
                     )
                 )
             )
+
             for k in all_vars_sym:
                 if k in optim_dict.keys():
                     ss_dict[k] = optim_dict[k]
@@ -370,7 +462,7 @@ class SteadyStateSolver:
                 "ss_dict": ss_dict.to_string(),
                 "calib_dict": calib_dict.to_string(),
                 "resids": np.array(
-                    f_ss_resid(**ss_dict.to_string(), **calib_dict.to_string(), **param_dict)
+                    f_ss_resid(np.array(list(ss_dict.values()) + list(calib_dict.values())), params)
                 ),
                 "success": success,
             }
