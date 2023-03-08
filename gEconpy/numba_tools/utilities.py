@@ -1,8 +1,8 @@
 from typing import Callable, List, Optional, Union
 
+import numba as nb
 import numpy as np
 import sympy as sp
-from numba import njit
 from numba.core import types
 from numba.core.errors import TypingError
 
@@ -35,7 +35,7 @@ def _check_scipy_linalg_matrix(a, func_name):
         raise TypingError(msg, highlighting=False)
 
 
-@njit
+@nb.njit
 def direct_lyapunov_solution(A, B):
     lhs = np.kron(A, A.conj())
     lhs = np.eye(lhs.shape[0]) - lhs
@@ -44,7 +44,7 @@ def direct_lyapunov_solution(A, B):
     return np.reshape(x, B.shape)
 
 
-@njit
+@nb.njit
 def _lhp(alpha, beta):
     out = np.empty(alpha.shape, dtype=np.int32)
     nonzero = beta != 0
@@ -54,7 +54,7 @@ def _lhp(alpha, beta):
     return out
 
 
-@njit
+@nb.njit
 def _rhp(alpha, beta):
     out = np.empty(alpha.shape, dtype=np.int32)
     nonzero = beta != 0
@@ -64,7 +64,7 @@ def _rhp(alpha, beta):
     return out
 
 
-@njit
+@nb.njit
 def _iuc(alpha, beta):
     out = np.empty(alpha.shape, dtype=np.int32)
     nonzero = beta != 0
@@ -75,7 +75,7 @@ def _iuc(alpha, beta):
     return out
 
 
-@njit
+@nb.njit
 def _ouc(alpha, beta):
     """
     Jit-aware version of the function scipy.linalg._decomp_qz._ouc, creates the mask needed for ztgsen to sort

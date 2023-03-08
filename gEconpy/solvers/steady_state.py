@@ -2,7 +2,6 @@ from itertools import product
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from warnings import catch_warnings, simplefilter
 
-import numba as nb  # pylint: disable=unused-import
 import numpy as np
 import sympy as sp
 from joblib import Parallel, delayed
