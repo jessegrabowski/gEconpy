@@ -1,3 +1,4 @@
+import re
 from typing import Callable, List, Optional, Union
 
 import numba as nb
@@ -5,6 +6,10 @@ import numpy as np
 import sympy as sp
 from numba.core import types
 from numba.core.errors import TypingError
+
+# Pattern needs to hit "0," and "0]". but not "x0" or "6.0", and return the
+# close-bracket (if any).
+ZERO_PATTERN = re.compile(r"(?<![\.\w])0([ ,\]])")
 
 
 def _get_underlying_float(dtype):
@@ -143,7 +148,6 @@ def numba_lambdify(
     """
 
     FLOAT_SUBS = {
-        sp.core.numbers.Zero(): sp.Float(0),
         sp.core.numbers.One(): sp.Float(1),
         sp.core.numbers.NegativeOne(): sp.Float(-1),
     }
@@ -214,6 +218,9 @@ def numba_lambdify(
             code = [" " * 8 + eq.strip() for eq in code]
             code = f"{delimiter}\n".join(code)
             code = code.replace("numpy.", "np.")
+
+            # Handle conversion of 0 to 0.0
+            code = re.sub(ZERO_PATTERN, r"0.0\g<1>", code)
 
             code_name = f"retval_{i}"
             retvals.append(code_name)

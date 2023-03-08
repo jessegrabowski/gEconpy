@@ -105,10 +105,12 @@ class ModelClassTestsOne(unittest.TestCase):
         # neg_ss_mask = ss_df < 0
 
         A, _, _, _ = self.model.build_perturbation_matrices(
-            **self.model.free_param_dict,
-            **self.model.calib_param_dict,
-            **self.model.steady_state_dict
+            np.fromiter(
+                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+            ),
+            np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
+
         (
             _,
             variables,
@@ -161,10 +163,12 @@ class ModelClassTestsOne(unittest.TestCase):
         )
 
         A, _, _, _ = self.model.build_perturbation_matrices(
-            **self.model.free_param_dict,
-            **self.model.calib_param_dict,
-            **self.model.steady_state_dict
+            np.fromiter(
+                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+            ),
+            np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
+
         (
             _,
             variables,
@@ -261,8 +265,12 @@ class ModelClassTestsTwo(unittest.TestCase):
         )
 
         A, _, _, _ = self.model.build_perturbation_matrices(
-            **self.model.free_param_dict, **self.model.steady_state_dict
+            np.fromiter(
+                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+            ),
+            np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
+
         (
             _,
             variables,
@@ -320,8 +328,12 @@ class ModelClassTestsTwo(unittest.TestCase):
         )
 
         A, _, _, _ = self.model.build_perturbation_matrices(
-            **self.model.free_param_dict, **self.model.steady_state_dict
+            np.fromiter(
+                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+            ),
+            np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
+
         (
             _,
             variables,

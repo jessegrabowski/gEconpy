@@ -28,6 +28,7 @@ from gEconpy.exceptions.exceptions import (
     SteadyStateNotSolvedError,
     VariableNotFoundException,
 )
+from gEconpy.numba_tools.utilities import numba_lambdify
 from gEconpy.parser import file_loaders, gEcon_parser
 from gEconpy.parser.constants import STEADY_STATE_NAMES
 from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary
@@ -449,7 +450,7 @@ class gEconModel:
             self._perturbation_setup(not_loglin_variable, order, model_is_linear, verbose, bool)
 
         A, B, C, D = self.build_perturbation_matrices(
-            **param_dict.to_string(), **steady_state_dict.to_string()
+            np.array(list(param_dict.values())), np.array(list(steady_state_dict.values()))
         )
         _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
 
@@ -560,11 +561,11 @@ class gEconModel:
 
         free_param_dict = self.free_param_dict.copy()
 
-        parameters = list(free_param_dict.keys())
-        variables = list(self.steady_state_dict.keys())
-        params_to_calibrate = list(self.calib_param_dict.keys())
+        parameters = list(free_param_dict.to_sympy().keys())
+        variables = list(self.steady_state_dict.to_sympy().keys())
+        params_to_calibrate = list(self.calib_param_dict.to_sympy().keys())
 
-        params_and_variables = parameters + params_to_calibrate + variables
+        all_params = parameters + params_to_calibrate
 
         shocks = self.shocks
         shock_ss_dict = dict(zip([x.to_ss() for x in shocks], np.zeros(self.n_shocks)))
@@ -619,7 +620,9 @@ class gEconModel:
             )
 
         Fs_subbed = [F.subs(shock_ss_dict) for F in Fs]
-        self.build_perturbation_matrices = sp.lambdify(params_and_variables, Fs_subbed)
+        self.build_perturbation_matrices = numba_lambdify(
+            exog_vars=all_params, endog_vars=variables, expr=Fs_subbed
+        )
 
         if return_F_matrices:
             return Fs_subbed
