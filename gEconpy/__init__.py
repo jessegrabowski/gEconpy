@@ -1,7 +1,7 @@
 from gEconpy import (
     classes,
     estimation,
-    numba_linalg,
+    numba_tools,
     parser,
     plotting,
     sampling,
@@ -16,7 +16,6 @@ __all__ = [
     "classes",
     "estimation",
     "exceptions",
-    "numba_linalg",
     "parser",
     "plotting",
     "sampling",
