@@ -105,7 +105,7 @@ class SteadyStateSolver:
     def solve_steady_state(
             self,
             apply_user_simplifications: Optional[bool] = True,
-            model_is_linearized: Optional[bool] = True,
+            model_is_linear: Optional[bool] = True,
             optimizer_kwargs: Optional[Dict[str, Any]] = None,
             method: Optional[str] = "root",
             use_jac: Optional[bool] = True,
@@ -129,7 +129,7 @@ class SteadyStateSolver:
         apply_user_simplifications: bool
             If true, substitute all equations using the steady-state equations provided in the steady_state block
             of the GCN file.
-        model_is_linearized: bool
+        model_is_linear: bool
             A flag indicating that the model has already been linearized by the user. In this case, the steady state
             can be obtained simply by forming an augmented matrix and finding its reduced row-echelon form. If True,
             all other arguments to this function have no effect. Default is False.
@@ -168,7 +168,7 @@ class SteadyStateSolver:
         all_vars_and_calib_sym = all_vars_sym + self.params_to_calibrate
 
         # This can be skipped if we're working on a linear model (there should be no user simplifications)
-        if apply_user_simplifications and not model_is_linearized:
+        if apply_user_simplifications and not model_is_linear:
 
             zeros = np.full_like(all_eqs, False)
             simplified_eqs = substitute_all_equations(all_eqs, user_provided)
@@ -219,7 +219,7 @@ class SteadyStateSolver:
             exog_vars=all_vars_and_calib_sym, endog_vars=params, expr=[all_eqs]
         )
 
-        if model_is_linearized:
+        if model_is_linear:
             # If the model is linear, we can quickly solve for the steady state.
             # The purpose of using sp.cse here is to undo the deterministic simplifications. If the system is in
             # steady state, this is made harder.

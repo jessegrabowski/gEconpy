@@ -295,7 +295,7 @@ class gEconModel:
         ----------
         verbose: bool
             Flag controlling whether to print results of the steady state solver. Default is True.
-        model_is_linearized: bool, optional
+        model_is_linear: bool, optional
             If True, the model is assumed to have been linearized by the user. A specialized solving routine is used
             to find the steady state, which is likely all zeros. If True, all other arguments to this function
             have no effect (except verbose). Default is False.
@@ -329,7 +329,7 @@ class gEconModel:
         if not self.steady_state_solved:
             self.f_ss = self.steady_state_solver.solve_steady_state(
                 apply_user_simplifications=apply_user_simplifications,
-                model_is_linearized=model_is_linearized,
+                model_is_linearized=model_is_linear,
                 method=method,
                 optimizer_kwargs=optimizer_kwargs,
                 use_jac=use_jac,
