@@ -1,4 +1,5 @@
 from collections import defaultdict
+from functools import reduce
 from typing import Any, Callable, Dict, List, Optional, Union
 from warnings import warn
 
@@ -89,6 +90,8 @@ class gEconModel:
         self.system_equations: List[sp.Add] = []
         self.calibrating_equations: List[sp.Add] = []
         self.params_to_calibrate: List[sp.Symbol] = []
+        self.deterministic_relationships: List[sp.Add] = []
+        self.deterministic_params: List[sp.Symbol] = []
 
         self.free_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
         self.calib_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
@@ -192,8 +195,11 @@ class gEconModel:
         self._get_all_block_equations()
         self._get_all_block_parameters()
         self._get_all_block_params_to_calibrate()
+        self._get_all_block_deterministic_parameters()
         self._get_variables_and_shocks()
         self._build_prior_dict(prior_dict)
+
+        self._make_deterministic_substitutions()
 
         reduced_vars = None
         singletons = None
@@ -1302,10 +1308,37 @@ class gEconModel:
             else:
                 self.calibrating_equations.extend(block.calibrating_equations)
 
-        self.params_to_calibrate = sorted(self.params_to_calibrate, key=lambda x: x.name)
+        alpha_sort_idx = np.argsort([x.name for x in self.params_to_calibrate])
+        self.params_to_calibrate = [self.params_to_calibrate[i] for i in alpha_sort_idx]
+        self.calibrating_equations = [self.calibrating_equations[i] for i in alpha_sort_idx]
 
         self.n_calibrating_equations = len(self.calibrating_equations)
         self.n_params_to_calibrate = len(self.params_to_calibrate)
+
+    def _get_all_block_deterministic_parameters(self) -> None:
+        _, blocks = unpack_keys_and_values(self.blocks)
+        for block in blocks:
+            if block.deterministic_params is None:
+                continue
+
+            if len(self.deterministic_params) == 0:
+                self.deterministic_params = block.deterministic_params
+            else:
+                self.deterministic_params.extend(block.deterministic_params)
+
+            if block.deterministic_relationships is None:
+                continue
+
+            if len(self.deterministic_relationships) == 0:
+                self.deterministic_relationships = block.deterministic_relationships
+            else:
+                self.deterministic_relationships.extend(block.deterministic_relationships)
+
+        alpha_sort_idx = np.argsort([x.name for x in self.deterministic_params])
+        self.deterministic_params = [self.deterministic_params[i] for i in alpha_sort_idx]
+        self.deterministic_relationships = [
+            self.deterministic_relationships[i] for i in alpha_sort_idx
+        ]
 
     def _get_variables_and_shocks(self) -> None:
         """
@@ -1497,6 +1530,36 @@ class gEconModel:
         eliminated_vars = [var.name for var in variables if var not in self.variables]
 
         return eliminated_vars
+
+    def _make_deterministic_substitutions(self):
+        if self.deterministic_params is None:
+            return
+
+        all_atoms = reduce(
+            lambda left, right: left.union(right), [eq.atoms() for eq in self.system_equations]
+        )
+
+        if not any([det_var in all_atoms for det_var in self.deterministic_params]):
+            return
+
+        det_sub_dict = dict(zip(self.deterministic_params, self.deterministic_relationships))
+        # recursively substitute the dictionary on itself, in case there are any relationships between the relationships
+        for i in range(5):
+            all_atoms = reduce(
+                lambda left, right: left.union(right), [eq.atoms() for eq in det_sub_dict.values()]
+            )
+            if any([det_param in all_atoms for det_param in self.deterministic_params]):
+                det_sub_dict = substitute_all_equations(det_sub_dict, det_sub_dict)
+            else:
+                break
+        if i == 5:
+            raise ValueError(
+                "Could not reduce deterministic relationships to functions of only free parameters after"
+                "five recursive substitutions. Check that there are not circular definitions among the"
+                "deterministic parameters."
+            )
+
+        self.system_equations = [eq.subs(det_sub_dict) for eq in self.system_equations]
 
 
 # #@njit
