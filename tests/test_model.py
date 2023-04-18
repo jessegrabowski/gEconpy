@@ -602,5 +602,22 @@ class ModelClassTestsThree(unittest.TestCase):
     #         self.assertEqual(np.allclose(answer, result.values), True)
 
 
+class TestLinearModel(unittest.TestCase):
+    def setUp(self):
+        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+        self.model = gEconModel(file_path, verbose=False)
+
+    def test_deterministics_are_extracted(self):
+        self.assertEqual(len(self.model.deterministic_params), 7)
+
+    def test_steady_state(self):
+        self.model.steady_state(model_is_linear=True, verbose=False)
+        self.assertTrue(self.model.steady_state_solved)
+        self.assertTrue(np.allclose(np.array(list(self.model.steady_state_dict.values())),
+                                    np.array([0, 0, 0, 0, 0, 0, 0, 0])))
+
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -90,11 +90,13 @@ class gEconModel:
         self.system_equations: List[sp.Add] = []
         self.calibrating_equations: List[sp.Add] = []
         self.params_to_calibrate: List[sp.Symbol] = []
+
         self.deterministic_relationships: List[sp.Add] = []
         self.deterministic_params: List[sp.Symbol] = []
 
         self.free_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
         self.calib_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
+        self.det_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
         self.steady_state_relationships: SymbolDictionary[VariableType, sp.Add] = SymbolDictionary()
 
         self.param_priors: SymbolDictionary[str, Any] = SymbolDictionary()
@@ -277,6 +279,7 @@ class gEconModel:
     def steady_state(
         self,
         verbose: Optional[bool] = True,
+        model_is_linear: Optional[bool] = False,
         apply_user_simplifications=True,
         method: Optional[str] = "root",
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
@@ -292,6 +295,10 @@ class gEconModel:
         ----------
         verbose: bool
             Flag controlling whether to print results of the steady state solver. Default is True.
+        model_is_linearized: bool, optional
+            If True, the model is assumed to have been linearized by the user. A specialized solving routine is used
+            to find the steady state, which is likely all zeros. If True, all other arguments to this function
+            have no effect (except verbose). Default is False.
         apply_user_simplifications: bool
             Whether to simplify system equations using the user-defined steady state relationships defined in the GCN
             before passing the system to the numerical solver. Default is True.
@@ -322,6 +329,7 @@ class gEconModel:
         if not self.steady_state_solved:
             self.f_ss = self.steady_state_solver.solve_steady_state(
                 apply_user_simplifications=apply_user_simplifications,
+                model_is_linearized=model_is_linearized,
                 method=method,
                 optimizer_kwargs=optimizer_kwargs,
                 use_jac=use_jac,
@@ -1543,6 +1551,7 @@ class gEconModel:
             return
 
         det_sub_dict = dict(zip(self.deterministic_params, self.deterministic_relationships))
+
         # recursively substitute the dictionary on itself, in case there are any relationships between the relationships
         for i in range(5):
             all_atoms = reduce(
