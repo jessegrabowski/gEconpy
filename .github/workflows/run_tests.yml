@@ -2,15 +2,7 @@ name: run_tests
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/run_tests.yml"
-      - "conda_envs/**"
-      - "codecov.yml"
   push:
-    paths:
-      - ".github/workflows/run_tests.yml"
-      - "conda_envs/**"
-      - "codecov.yml"
     branches: [main]
 
 jobs:
