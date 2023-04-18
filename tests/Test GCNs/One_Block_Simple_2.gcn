@@ -60,6 +60,9 @@ block HOUSEHOLD
 		tau = 2;
 
 		rho = 0.95;
+
+		Theta = rho * beta + 3;
+		zeta = -log(theta);
 	};
 
 

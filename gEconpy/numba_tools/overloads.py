@@ -10,9 +10,9 @@ from numba.np.linalg import (
 )
 from scipy import linalg
 
-from gEconpy.numba_linalg.intrinsics import int_ptr_to_val, val_to_int_ptr
-from gEconpy.numba_linalg.LAPACK import _LAPACK
-from gEconpy.numba_linalg.utilities import (
+from gEconpy.numba_tools.intrinsics import int_ptr_to_val, val_to_int_ptr
+from gEconpy.numba_tools.LAPACK import _LAPACK
+from gEconpy.numba_tools.utilities import (
     _check_scipy_linalg_matrix,
     _get_underlying_float,
     _iuc,

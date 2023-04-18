@@ -1,4 +1,5 @@
 from collections import defaultdict
+from functools import reduce
 from typing import Any, Callable, Dict, List, Optional, Union
 from warnings import warn
 
@@ -28,6 +29,7 @@ from gEconpy.exceptions.exceptions import (
     SteadyStateNotSolvedError,
     VariableNotFoundException,
 )
+from gEconpy.numba_tools.utilities import numba_lambdify
 from gEconpy.parser import file_loaders, gEcon_parser
 from gEconpy.parser.constants import STEADY_STATE_NAMES
 from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary
@@ -89,8 +91,12 @@ class gEconModel:
         self.calibrating_equations: List[sp.Add] = []
         self.params_to_calibrate: List[sp.Symbol] = []
 
+        self.deterministic_relationships: List[sp.Add] = []
+        self.deterministic_params: List[sp.Symbol] = []
+
         self.free_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
         self.calib_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
+        self.det_param_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
         self.steady_state_relationships: SymbolDictionary[VariableType, sp.Add] = SymbolDictionary()
 
         self.param_priors: SymbolDictionary[str, Any] = SymbolDictionary()
@@ -191,8 +197,11 @@ class gEconModel:
         self._get_all_block_equations()
         self._get_all_block_parameters()
         self._get_all_block_params_to_calibrate()
+        self._get_all_block_deterministic_parameters()
         self._get_variables_and_shocks()
         self._build_prior_dict(prior_dict)
+
+        self._make_deterministic_substitutions()
 
         reduced_vars = None
         singletons = None
@@ -270,6 +279,7 @@ class gEconModel:
     def steady_state(
         self,
         verbose: Optional[bool] = True,
+        model_is_linear: Optional[bool] = False,
         apply_user_simplifications=True,
         method: Optional[str] = "root",
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
@@ -285,6 +295,10 @@ class gEconModel:
         ----------
         verbose: bool
             Flag controlling whether to print results of the steady state solver. Default is True.
+        model_is_linear: bool, optional
+            If True, the model is assumed to have been linearized by the user. A specialized solving routine is used
+            to find the steady state, which is likely all zeros. If True, all other arguments to this function
+            have no effect (except verbose). Default is False.
         apply_user_simplifications: bool
             Whether to simplify system equations using the user-defined steady state relationships defined in the GCN
             before passing the system to the numerical solver. Default is True.
@@ -315,6 +329,7 @@ class gEconModel:
         if not self.steady_state_solved:
             self.f_ss = self.steady_state_solver.solve_steady_state(
                 apply_user_simplifications=apply_user_simplifications,
+                model_is_linear=model_is_linear,
                 method=method,
                 optimizer_kwargs=optimizer_kwargs,
                 use_jac=use_jac,
@@ -348,17 +363,7 @@ class gEconModel:
         self.calib_param_dict = results["calib_dict"]
         self.residuals = results["resids"]
 
-        # self.steady_state_dict, self.calib_param_dict = self.f_ss(self.free_param_dict)
         self.steady_state_system = self.steady_state_solver.steady_state_system
-        #
-        # self.residuals = np.array(
-        #     self.f_ss_resid(
-        #         **self.steady_state_dict,
-        #         **self.free_param_dict,
-        #         **self.calib_param_dict,
-        #     )
-        # )
-
         self.steady_state_solved = np.allclose(self.residuals, 0, atol=tol) & results["success"]
 
         if verbose:
@@ -449,7 +454,7 @@ class gEconModel:
             self._perturbation_setup(not_loglin_variable, order, model_is_linear, verbose, bool)
 
         A, B, C, D = self.build_perturbation_matrices(
-            **param_dict.to_string(), **steady_state_dict.to_string()
+            np.array(list(param_dict.values())), np.array(list(steady_state_dict.values()))
         )
         _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
 
@@ -560,11 +565,11 @@ class gEconModel:
 
         free_param_dict = self.free_param_dict.copy()
 
-        parameters = list(free_param_dict.keys())
-        variables = list(self.steady_state_dict.keys())
-        params_to_calibrate = list(self.calib_param_dict.keys())
+        parameters = list(free_param_dict.to_sympy().keys())
+        variables = list(self.steady_state_dict.to_sympy().keys())
+        params_to_calibrate = list(self.calib_param_dict.to_sympy().keys())
 
-        params_and_variables = parameters + params_to_calibrate + variables
+        all_params = parameters + params_to_calibrate
 
         shocks = self.shocks
         shock_ss_dict = dict(zip([x.to_ss() for x in shocks], np.zeros(self.n_shocks)))
@@ -573,32 +578,33 @@ class gEconModel:
 
         steady_state_dict = self.steady_state_dict.copy()
 
-        # We need shocks to be zero in A, B, C, D but 1 in T; can abuse the T_dummies to accomplish that.
-        if not_loglin_variables is None:
-            not_loglin_variables = []
+        if not model_is_linear:
+            # We need shocks to be zero in A, B, C, D but 1 in T; can abuse the T_dummies to accomplish that.
+            if not_loglin_variables is None:
+                not_loglin_variables = []
 
-        not_loglin_variables += [x.base_name for x in shocks]
+            not_loglin_variables += [x.base_name for x in shocks]
 
-        # Validate that all user-supplied variables are in the model
-        for variable in not_loglin_variables:
-            if variable not in valid_names:
-                raise VariableNotFoundException(variable)
+            # Validate that all user-supplied variables are in the model
+            for variable in not_loglin_variables:
+                if variable not in valid_names:
+                    raise VariableNotFoundException(variable)
 
-        # Variables that are zero at the SS can't be log-linearized, check for these here.
-        close_to_zero_warnings = []
-        for variable in variables_and_shocks:
-            if variable.base_name in not_loglin_variables:
-                continue
+            # Variables that are zero at the SS can't be log-linearized, check for these here.
+            close_to_zero_warnings = []
+            for variable in variables_and_shocks:
+                if variable.base_name in not_loglin_variables:
+                    continue
 
-            if abs(steady_state_dict[variable.to_ss().name]) < tol:
-                not_loglin_variables.append(variable.base_name)
-                close_to_zero_warnings.append(variable)
+                if abs(steady_state_dict[variable.to_ss().name]) < tol:
+                    not_loglin_variables.append(variable.base_name)
+                    close_to_zero_warnings.append(variable)
 
-        if len(close_to_zero_warnings) > 0 and verbose:
-            warn(
-                "The following variables have steady state values close to zero and will not be log linearized: "
-                + ", ".join(x.base_name for x in close_to_zero_warnings)
-            )
+            if len(close_to_zero_warnings) > 0 and verbose:
+                warn(
+                    "The following variables have steady state values close to zero and will not be log linearized: "
+                    + ", ".join(x.base_name for x in close_to_zero_warnings)
+                )
 
         if order != 1:
             raise NotImplementedError
@@ -607,10 +613,6 @@ class gEconModel:
             raise SteadyStateNotSolvedError()
 
         if model_is_linear:
-            warn(
-                "Model will be solved as though ALL system equations have already been linearized in the GCN file. No"
-                "checks are performed to ensure this is indeed the case. Proceed with caution."
-            )
             Fs = self.perturbation_solver.convert_linear_system_to_matrices()
 
         else:
@@ -619,7 +621,9 @@ class gEconModel:
             )
 
         Fs_subbed = [F.subs(shock_ss_dict) for F in Fs]
-        self.build_perturbation_matrices = sp.lambdify(params_and_variables, Fs_subbed)
+        self.build_perturbation_matrices = numba_lambdify(
+            exog_vars=all_params, endog_vars=variables, expr=Fs_subbed
+        )
 
         if return_F_matrices:
             return Fs_subbed
@@ -1299,10 +1303,37 @@ class gEconModel:
             else:
                 self.calibrating_equations.extend(block.calibrating_equations)
 
-        self.params_to_calibrate = sorted(self.params_to_calibrate, key=lambda x: x.name)
+        alpha_sort_idx = np.argsort([x.name for x in self.params_to_calibrate])
+        self.params_to_calibrate = [self.params_to_calibrate[i] for i in alpha_sort_idx]
+        self.calibrating_equations = [self.calibrating_equations[i] for i in alpha_sort_idx]
 
         self.n_calibrating_equations = len(self.calibrating_equations)
         self.n_params_to_calibrate = len(self.params_to_calibrate)
+
+    def _get_all_block_deterministic_parameters(self) -> None:
+        _, blocks = unpack_keys_and_values(self.blocks)
+        for block in blocks:
+            if block.deterministic_params is None:
+                continue
+
+            if len(self.deterministic_params) == 0:
+                self.deterministic_params = block.deterministic_params
+            else:
+                self.deterministic_params.extend(block.deterministic_params)
+
+            if block.deterministic_relationships is None:
+                continue
+
+            if len(self.deterministic_relationships) == 0:
+                self.deterministic_relationships = block.deterministic_relationships
+            else:
+                self.deterministic_relationships.extend(block.deterministic_relationships)
+
+        alpha_sort_idx = np.argsort([x.name for x in self.deterministic_params])
+        self.deterministic_params = [self.deterministic_params[i] for i in alpha_sort_idx]
+        self.deterministic_relationships = [
+            self.deterministic_relationships[i] for i in alpha_sort_idx
+        ]
 
     def _get_variables_and_shocks(self) -> None:
         """
@@ -1494,6 +1525,37 @@ class gEconModel:
         eliminated_vars = [var.name for var in variables if var not in self.variables]
 
         return eliminated_vars
+
+    def _make_deterministic_substitutions(self):
+        if self.deterministic_params is None:
+            return
+
+        all_atoms = reduce(
+            lambda left, right: left.union(right), [eq.atoms() for eq in self.system_equations]
+        )
+
+        if not any([det_var in all_atoms for det_var in self.deterministic_params]):
+            return
+
+        det_sub_dict = dict(zip(self.deterministic_params, self.deterministic_relationships))
+
+        # recursively substitute the dictionary on itself, in case there are any relationships between the relationships
+        for i in range(5):
+            all_atoms = reduce(
+                lambda left, right: left.union(right), [eq.atoms() for eq in det_sub_dict.values()]
+            )
+            if any([det_param in all_atoms for det_param in self.deterministic_params]):
+                det_sub_dict = substitute_all_equations(det_sub_dict, det_sub_dict)
+            else:
+                break
+        if i == 5:
+            raise ValueError(
+                "Could not reduce deterministic relationships to functions of only free parameters after"
+                "five recursive substitutions. Check that there are not circular definitions among the"
+                "deterministic parameters."
+            )
+
+        self.system_equations = [eq.subs(det_sub_dict) for eq in self.system_equations]
 
 
 # #@njit

@@ -2,6 +2,8 @@ from typing import List, Tuple
 
 import numpy as np
 import sympy as sp
+from sympy.solvers.solveset import NonlinearError
+
 from numpy.typing import ArrayLike
 from scipy import linalg
 
@@ -35,12 +37,12 @@ class PerturbationSolver:
 
     @staticmethod
     def solve_policy_function_with_gensys(
-        A: ArrayLike,
-        B: ArrayLike,
-        C: ArrayLike,
-        D: ArrayLike,
-        tol: float = 1e-8,
-        verbose: bool = True,
+            A: ArrayLike,
+            B: ArrayLike,
+            C: ArrayLike,
+            D: ArrayLike,
+            tol: float = 1e-8,
+            verbose: bool = True,
     ) -> Tuple:
         n_eq, n_vars = A.shape
         _, n_shocks = D.shape
@@ -83,13 +85,13 @@ class PerturbationSolver:
 
     @staticmethod
     def solve_policy_function_with_cycle_reduction(
-        A: ArrayLike,
-        B: ArrayLike,
-        C: ArrayLike,
-        D: ArrayLike,
-        max_iter: int = 1000,
-        tol: float = 1e-8,
-        verbose: bool = True,
+            A: ArrayLike,
+            B: ArrayLike,
+            C: ArrayLike,
+            D: ArrayLike,
+            max_iter: int = 1000,
+            tol: float = 1e-8,
+            verbose: bool = True,
     ) -> Tuple[ArrayLike, ArrayLike, str, float]:
         """
         Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
@@ -246,33 +248,29 @@ class PerturbationSolver:
             A @ y_{t-1} + B @ y_t + C @ y_{t+1} + D @ epsilon = 0
 
         This function organizes the model equations and returns matrices A, B, C, and D.
-
-        TODO: Add some checks to ensure that the model is indeed linear so that this can't be erroneously called.
         """
 
-        Fs = []
         lags, now, leads = self.make_all_variable_time_combinations()
         shocks = self.shocks
         model = self.system_equations
+        n = len(lags)
 
-        for var_group, name in zip([lags, now, leads, shocks], ["lags", "now", "leads", "shocks"]):
-            F = (
-                sp.zeros(len(var_group))
-                if name != "shocks"
-                else sp.zeros(rows=len(model), cols=len(var_group))
-            )
-            for i, var in enumerate(var_group):
-                for j, eq in enumerate(model):
-                    args = eq.expand().args
-                    for arg in args:
-                        if var in arg.atoms():
-                            F[j, i] = sp.simplify(arg / var)
-            Fs.append(F)
+        all_y = lags + now + leads + shocks
+
+        try:
+            A, b = sp.linear_eq_to_matrix(model, all_y)
+        except NonlinearError as sympy_msg:
+            raise ValueError(f'Model does not appear to be linear, check your GCN file. Sympy error: {sympy_msg}')
+
+        offsets = np.array([0, n, n, n, 1])
+        slices = [slice(i, i + offset) for i, offset in zip(offsets.cumsum()[:-1], offsets[1:])]
+
+        Fs = [A[:, idx] for idx in slices]
 
         return Fs
 
     def make_all_variable_time_combinations(
-        self,
+            self,
     ) -> Tuple[List[TimeAwareSymbol], List[TimeAwareSymbol], List[TimeAwareSymbol]]:
         """
         :return: Tuple of three lists, containing all model variables at time steps t-1, t, and t+1, respectively.
