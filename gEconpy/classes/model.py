@@ -363,17 +363,7 @@ class gEconModel:
         self.calib_param_dict = results["calib_dict"]
         self.residuals = results["resids"]
 
-        # self.steady_state_dict, self.calib_param_dict = self.f_ss(self.free_param_dict)
         self.steady_state_system = self.steady_state_solver.steady_state_system
-        #
-        # self.residuals = np.array(
-        #     self.f_ss_resid(
-        #         **self.steady_state_dict,
-        #         **self.free_param_dict,
-        #         **self.calib_param_dict,
-        #     )
-        # )
-
         self.steady_state_solved = np.allclose(self.residuals, 0, atol=tol) & results["success"]
 
         if verbose:
@@ -588,32 +578,33 @@ class gEconModel:
 
         steady_state_dict = self.steady_state_dict.copy()
 
-        # We need shocks to be zero in A, B, C, D but 1 in T; can abuse the T_dummies to accomplish that.
-        if not_loglin_variables is None:
-            not_loglin_variables = []
+        if not model_is_linear:
+            # We need shocks to be zero in A, B, C, D but 1 in T; can abuse the T_dummies to accomplish that.
+            if not_loglin_variables is None:
+                not_loglin_variables = []
 
-        not_loglin_variables += [x.base_name for x in shocks]
+            not_loglin_variables += [x.base_name for x in shocks]
 
-        # Validate that all user-supplied variables are in the model
-        for variable in not_loglin_variables:
-            if variable not in valid_names:
-                raise VariableNotFoundException(variable)
+            # Validate that all user-supplied variables are in the model
+            for variable in not_loglin_variables:
+                if variable not in valid_names:
+                    raise VariableNotFoundException(variable)
 
-        # Variables that are zero at the SS can't be log-linearized, check for these here.
-        close_to_zero_warnings = []
-        for variable in variables_and_shocks:
-            if variable.base_name in not_loglin_variables:
-                continue
+            # Variables that are zero at the SS can't be log-linearized, check for these here.
+            close_to_zero_warnings = []
+            for variable in variables_and_shocks:
+                if variable.base_name in not_loglin_variables:
+                    continue
 
-            if abs(steady_state_dict[variable.to_ss().name]) < tol:
-                not_loglin_variables.append(variable.base_name)
-                close_to_zero_warnings.append(variable)
+                if abs(steady_state_dict[variable.to_ss().name]) < tol:
+                    not_loglin_variables.append(variable.base_name)
+                    close_to_zero_warnings.append(variable)
 
-        if len(close_to_zero_warnings) > 0 and verbose:
-            warn(
-                "The following variables have steady state values close to zero and will not be log linearized: "
-                + ", ".join(x.base_name for x in close_to_zero_warnings)
-            )
+            if len(close_to_zero_warnings) > 0 and verbose:
+                warn(
+                    "The following variables have steady state values close to zero and will not be log linearized: "
+                    + ", ".join(x.base_name for x in close_to_zero_warnings)
+                )
 
         if order != 1:
             raise NotImplementedError
