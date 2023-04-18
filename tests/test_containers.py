@@ -96,7 +96,6 @@ class TestSymbolDictionary(unittest.TestCase):
         def loop_update(ds: List):
             d0 = ds.pop(0)
             for d in ds:
-                print(d0.is_sympy == d.is_sympy)
                 d0 = d0 | d
             return d0
 

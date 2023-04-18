@@ -29,9 +29,10 @@ class BasicFunctionalityTests(unittest.TestCase):
         A, B, C, D = build_system_matrices(param_dict, sparse_data, vars_to_estimate=["theta"])
 
         system = self.model.build_perturbation_matrices(
-            **self.model.free_param_dict,
-            **self.model.steady_state_dict,
-            **self.model.calib_param_dict
+            np.fromiter(
+                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+            ),
+            np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
 
         self.assertTrue(np.allclose(A, system[0]))

@@ -132,13 +132,13 @@ def extract_time_index(token: str) -> str:
     Examples
     --------
     >>> extract_time_index("alpha[1]")
-    't1'
+    >>> # Out: 't1'
     >>> extract_time_index("alpha[-1]")
-    'tL1'
+    >>> # Out: 'tL1'
     >>> extract_time_index("alpha[ss]")
-    'ss'
+    >>> # Out: 'ss'
     >>> extract_time_index("alpha")
-    't'
+    >>> # Out: 't'
     """
 
     if has_num_index(token) and "-" not in token:
@@ -345,8 +345,8 @@ def build_sympy_equations(eqs: List[List[str]], assumptions: Optional[Dict] = No
 
     Returns
     -------
-    list of sp.Eq
-        A list of SymPy equations
+    list of tuple, (sp.Eq, bool)
+        A list of SymPy equations, along with a flag indicting whether the equation is a calibrating equation
 
     Notes
     -----
@@ -371,6 +371,7 @@ def build_sympy_equations(eqs: List[List[str]], assumptions: Optional[Dict] = No
         eq_str = ""
         calibrating_parameter = None
         sub_dict = LOCAL_DICT.copy()
+        flags = {"is_calibrating": False}
 
         if CALIBRATING_EQ_TOKEN in eq:
             arrow_idx = eq.index(CALIBRATING_EQ_TOKEN)
@@ -407,13 +408,14 @@ def build_sympy_equations(eqs: List[List[str]], assumptions: Optional[Dict] = No
             raise e
 
         eq_sympy = sp.Eq(*eq_sympy)
-        if calibrating_parameter is not None:
+        flags["is_calibrating"] = calibrating_parameter is not None
+        if flags["is_calibrating"]:
             param = sp.Symbol(calibrating_parameter, **assumptions[calibrating_parameter])
             eq_sympy = sp.Eq(param, eq_sympy.lhs - eq_sympy.rhs)
 
         # eq_sympy = rename_time_indexes(eq_sympy)
         # eq_sympy = convert_symbols_to_time_symbols(eq_sympy)
 
-        eqs_processed.append(eq_sympy)
+        eqs_processed.append((eq_sympy, flags))
 
     return eqs_processed

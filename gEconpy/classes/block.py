@@ -130,9 +130,14 @@ class Block:
         self.params_to_calibrate: Optional[List[sp.Symbol]] = None
         self.calibrating_equations: Optional[List[sp.Add]] = None
 
+        self.deterministic_params: Optional[List[sp.Symbol]] = None
+        self.deterministic_relationships: Optional[List[sp.Add]] = None
+
         self.system_equations: List[sp.Add] = []
         self.multipliers: Dict[int, TimeAwareSymbol] = {}
         self.eliminated_variables: List[sp.Symbol] = []
+
+        self.equation_flags: Dict[int, Dict[str, bool]] = {}
 
         self.n_equations = 0
         self.initialized = False
@@ -398,12 +403,16 @@ class Block:
         equations = block_dict[key]
         equations, lagrange_multipliers = self._extract_lagrange_multipliers(equations, assumptions)
 
-        equations = parse_equations.build_sympy_equations(equations, assumptions)
+        parser_output = parse_equations.build_sympy_equations(equations, assumptions)
+        equations, flags = list(zip(*parser_output))
         equation_numbers = self._get_and_record_equation_numbers(equations)
 
         equations = dict(zip(equation_numbers, equations))
+        flags = dict(zip(equation_numbers, flags))
+
         lagrange_multipliers = dict(zip(equation_numbers, lagrange_multipliers))
         self.multipliers.update(lagrange_multipliers)
+        self.equation_flags.update(flags)
 
         return equations
 
@@ -427,31 +436,60 @@ class Block:
         if self.calibration is None:
             return
 
-        _, equations = unpack_keys_and_values(self.calibration)
+        eq_idxs, equations = unpack_keys_and_values(self.calibration)
 
-        for eq in equations:
+        for idx, eq in zip(eq_idxs, equations):
             atoms = eq.atoms()
 
-            # Check if this equation is a normal parameter definition
-            if len(atoms) <= 3 and all([not isinstance(x, TimeAwareSymbol) for x in atoms]):
+            # Check if this equation is a normal parameter definition. If so, it will be exactly in the form x = y
+            if eq.lhs.is_symbol and eq.rhs.is_number:
                 param = eq.lhs
                 value = eq.rhs
                 self.param_dict[param] = value
 
-            # Check if this equation is a valid calibrating equation
-            elif all([isinstance(x, (sp.Number, sp.Symbol, TimeAwareSymbol)) for x in atoms]):
-                if not all([x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)]):
-                    raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
+            elif self.equation_flags[idx]["is_calibrating"]:
 
-                if self.params_to_calibrate is None:
-                    self.params_to_calibrate = [eq.lhs]
-                else:
-                    self.params_to_calibrate.append(eq.lhs)
+                # Check if this equation is a valid calibrating equation
+                if all([isinstance(x, (sp.Number, sp.Symbol, TimeAwareSymbol)) for x in atoms]):
+                    if not all(
+                        [x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)]
+                    ):
+                        raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
 
-                if self.calibrating_equations is not None:
-                    self.calibrating_equations.append(set_equality_equals_zero(eq.rhs))
+                    if self.params_to_calibrate is None:
+                        self.params_to_calibrate = [eq.lhs]
+                    else:
+                        self.params_to_calibrate.append(eq.lhs)
+
+                    if self.calibrating_equations is None:
+                        self.calibrating_equations = [set_equality_equals_zero(eq.rhs)]
+                    else:
+                        self.calibrating_equations.append(set_equality_equals_zero(eq.rhs))
                 else:
-                    self.calibrating_equations = [set_equality_equals_zero(eq.rhs)]
+                    raise ValueError(
+                        f"Invalid tokens found in calibrating equation: {eq} of block {self.name}"
+                    )
+
+            else:
+                # What is left should only be "deterministic relationships", parameters that are defined as
+                # functions of other parameters that the user wants to keep track of.
+
+                # Check that these are functions of numbers and parameters only
+
+                if any([isinstance(x, TimeAwareSymbol) for x in atoms]):
+                    raise ValueError(
+                        "Parameters defined as functions in the calibration sub-block cannot be functions "
+                        f"of variables. Found:\n\n {eq} in {self.name}"
+                    )
+                if self.deterministic_params is None:
+                    self.deterministic_params = [eq.lhs]
+                else:
+                    self.deterministic_params.append(eq.lhs)
+
+                if self.deterministic_relationships is None:
+                    self.deterministic_relationships = [set_equality_equals_zero(eq.rhs)]
+                else:
+                    self.deterministic_relationships.append(set_equality_equals_zero(eq.rhs))
 
     def _build_lagrangian(self) -> sp.Add:
         """

@@ -550,11 +550,14 @@ class ParserTestCases(unittest.TestCase):
         block_dict = gEcon_parser.parsed_block_to_dict(test_eq)
 
         for i, (component, equations) in enumerate(block_dict.items()):
-            block_dict[component] = parse_equations.build_sympy_equations(equations)
+            block_dict[component], flags = list(
+                zip(*parse_equations.build_sympy_equations(equations))
+            )
             eq1 = block_dict[component][0]
             eq2 = answers[i]
 
             self.assertEqual(((eq1.lhs - eq1.rhs) - (eq2.lhs - eq2.rhs)).simplify(), 0)
+            self.assertTrue(not flags[0]["is_calibrating"] if i < 2 else flags[0]["is_calibrating"])
 
     def test_composite_distribution(self):
         sigma_epsilon = invgamma(a=20)

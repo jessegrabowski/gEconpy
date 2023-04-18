@@ -27,7 +27,7 @@ class BlockTestCases(unittest.TestCase):
             self.assertNotEqual(getattr(self.block, component.lower()), None)
 
     def test_eq_number(self):
-        self.assertEqual(self.block.n_equations, 12)
+        self.assertEqual(self.block.n_equations, 14)
 
     def test_variable_list_parsing(self):
         for variable in self.block.controls:
@@ -269,6 +269,15 @@ class BlockTestCases(unittest.TestCase):
                     self.block.params_to_calibrate[i] - self.block.calibrating_equations[i]
                 ).simplify(),
             )
+
+    def test_deterministic_relationships(self):
+        self.assertEqual(len(self.block.deterministic_relationships), 2)
+        self.assertEqual(len(self.block.deterministic_params), 2)
+
+        self.assertEqual([x.name for x in self.block.deterministic_params], ["Theta", "zeta"])
+        answers = [3 + 0.99 * 0.95, -np.log(0.357)]
+        for eq, answer in zip(self.block.deterministic_relationships, answers):
+            self.assertEqual(eq.subs(self.block.param_dict), answer)
 
 
 if __name__ == "__main__":

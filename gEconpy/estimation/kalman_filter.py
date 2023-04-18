@@ -5,7 +5,7 @@ from numba import njit
 from numpy.typing import ArrayLike
 from scipy import linalg
 
-from gEconpy.numba_linalg.overloads import (  # pylint: disable=unused-import
+from gEconpy.numba_tools.overloads import (  # pylint: disable=unused-import
     solve_discrete_lyapunov_impl,
     solve_triangular_impl,
 )
