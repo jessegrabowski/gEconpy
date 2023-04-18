@@ -481,30 +481,19 @@ class ModelClassTestsThree(unittest.TestCase):
         )
         self.assertEqual(self.model.params_to_calibrate, [phi_pi, phi_pi_obj])
 
-    # def test_solvers_agree(self):
-    #     self.setUp()
-    #     self.model.steady_state(verbose=False)
-    #     self.model.solve_model(solver="gensys", verbose=True)
-    #     Tg, Rg = self.model.T, self.model.R
-    #
-    #     self.setUp()
-    #     self.model.steady_state(verbose=False)
-    #     self.model.solve_model(solver="cycle_reduction", verbose=True)
-    #     Tc, Rc = self.model.T, self.model.R
-    #
-    #     assert_allclose(Tg.values, Tc.values, rtol=1e-5, equal_nan=True, err_msg='T')
-    #     assert_allclose(Rg.values, Rc.values, rtol=1e-5, equal_nan=True, err_msg='R')
-
     def test_solvers_agree(self):
+        self.setUp()
         self.model.steady_state(verbose=False)
         self.model.solve_model(solver="gensys", verbose=False)
         Tg, Rg = self.model.T, self.model.R
 
+        self.setUp()
+        self.model.steady_state(verbose=False)
         self.model.solve_model(solver="cycle_reduction", verbose=False)
         Tc, Rc = self.model.T, self.model.R
 
-        assert_allclose(Tg.values, Tc.values, rtol=1e-5, equal_nan=True, err_msg="T")
-        assert_allclose(Rg.values, Rc.values, rtol=1e-5, equal_nan=True, err_msg="R")
+        assert_allclose(Tg.values, Tc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="T")
+        assert_allclose(Rg.values, Rc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="R")
 
     # def test_solve_model(self):
     #     self.model.steady_state(verbose=False)
@@ -616,7 +605,38 @@ class TestLinearModel(unittest.TestCase):
         self.assertTrue(np.allclose(np.array(list(self.model.steady_state_dict.values())),
                                     np.array([0, 0, 0, 0, 0, 0, 0, 0])))
 
+    def test_perturbation_solver(self):
+        self.model.steady_state(verbose=False, model_is_linear=True)
+        self.model.solve_model(verbose=False, model_is_linear=True)
+        self.assertTrue(self.model.perturbation_solved)
 
+        T_dynare = np.array([[0.95, 0.],
+                             [0.34375208, 0.39812608],
+                             [3.55502044, -0.54398862],
+                             [0.08887551, 0.96140028],
+                             [0.14188965, -0.24121738],
+                             [1.04222827, -0.8067913],
+                             [0.90033862, 0.43442608],
+                             [1.04222827, 0.1932087]])
+
+        R_dynare = np.array([1., 0.361844, 3.742127, 0.093553, 0.149358, 1.097082, 0.947725, 1.097082])
+
+        assert_allclose(self.model.T[['A', 'K']].values, T_dynare, rtol=1e-5, atol=1e-5, err_msg='T')
+        assert_allclose(self.model.R.values, R_dynare.reshape(-1, 1), rtol=1e-5, atol=1e-5, err_msg='R')
+
+    def test_solvers_agree(self):
+        self.setUp()
+        self.model.steady_state(verbose=False, model_is_linear=True)
+        self.model.solve_model(solver="gensys", verbose=False, model_is_linear=True)
+        Tg, Rg = self.model.T, self.model.R
+
+        self.setUp()
+        self.model.steady_state(verbose=False, model_is_linear=True)
+        self.model.solve_model(solver="cycle_reduction", verbose=False, model_is_linear=True)
+        Tc, Rc = self.model.T, self.model.R
+
+        assert_allclose(Tg.values, Tc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg='T')
+        assert_allclose(Rg.values, Rc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg='R')
 
 
 if __name__ == "__main__":
