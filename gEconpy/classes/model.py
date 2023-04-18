@@ -329,7 +329,7 @@ class gEconModel:
         if not self.steady_state_solved:
             self.f_ss = self.steady_state_solver.solve_steady_state(
                 apply_user_simplifications=apply_user_simplifications,
-                model_is_linearized=model_is_linear,
+                model_is_linear=model_is_linear,
                 method=method,
                 optimizer_kwargs=optimizer_kwargs,
                 use_jac=use_jac,
@@ -613,10 +613,6 @@ class gEconModel:
             raise SteadyStateNotSolvedError()
 
         if model_is_linear:
-            warn(
-                "Model will be solved as though ALL system equations have already been linearized in the GCN file. No"
-                "checks are performed to ensure this is indeed the case. Proceed with caution."
-            )
             Fs = self.perturbation_solver.convert_linear_system_to_matrices()
 
         else:
