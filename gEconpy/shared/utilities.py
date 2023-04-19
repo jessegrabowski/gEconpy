@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Union
 
 import numpy as np
 import sympy as sp
+from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 
@@ -240,6 +241,8 @@ def sympy_number_values_to_floats(d: Dict[VariableType, Any]):
     for var, value in d.items():
         if isinstance(value, sp.core.Number):
             d[var] = float(value)
+        elif isinstance(value, ComplexElement):
+            d[var] = complex(value)
     return d
 
 
@@ -247,6 +250,8 @@ def float_values_to_sympy_float(d: Dict[VariableType, Any]):
     for var, value in d.items():
         if isinstance(value, (float, int)):
             d[var] = sp.Float(value)
+        elif isinstance(value, complex):
+            d[var] = sp.CC(value)
 
     return d
 

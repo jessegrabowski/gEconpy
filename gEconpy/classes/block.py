@@ -509,9 +509,9 @@ class Block:
             continuation_value = [x for x in variables if x.time_index == 1]
             if len(continuation_value) > 1:
                 raise ValueError(
-                    f"Block {self.name} has multiple t+1 variables in the Bellman equation, this is not"
-                    f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]],"
-                    f"where a[] is the instantaneous value function at time t, defined in the"
+                    f"Block {self.name} has multiple t+1 variables in the Bellman equation, this is not "
+                    f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]], "
+                    f"where a[] is the instantaneous value function at time t, defined in the "
                     f'"definitions" component of the block.'
                 )
             discount_factor = objective.rhs.coeff(continuation_value[0])

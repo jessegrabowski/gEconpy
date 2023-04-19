@@ -2,9 +2,41 @@ import unittest
 from typing import List
 
 import sympy as sp
+from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+
+
+class TestSymbolDictErrors(unittest.TestCase):
+
+    def test_raises_on_invalid_keys(self):
+        with self.assertRaises(KeyError):
+            # Only string or sp.Symbol keys allowed
+            A = SymbolDictionary({1: 3})
+
+    def test_raises_on_mixed_keys(self):
+        with self.assertRaises(KeyError):
+            # Cannot mix strings and symbols
+            A = SymbolDictionary({'A': 3, sp.Symbol('B'): 2})
+            B = SymbolDictionary({sp.Symbol('B'): 2, 'A' : 3})
+
+    def test_setitem_raises_on_wrong_key_type(self):
+        d = SymbolDictionary({sp.Symbol('A'): 3})
+        with self.assertRaises(KeyError):
+            d['B'] = 4
+
+        d = SymbolDictionary({'A' : 3})
+        with self.assertRaises(KeyError):
+            d[sp.Symbol('B')] = 4
+
+    def test_pipe_merge_errors_with_non_dict_other(self):
+        d = SymbolDictionary({'A': 4})
+        with self.assertRaises(ValueError) as e:
+            s = {1, 2, 3}
+            d | s
+        error_msg = str(e.exception)
+        self.assertEqual(error_msg, "__or__ not defined on non-dictionary objects")
 
 
 class TestSymbolDictionary(unittest.TestCase):
@@ -67,14 +99,32 @@ class TestSymbolDictionary(unittest.TestCase):
         keys = list(d_tp1.keys())
         self.assertEqual(keys, ["C_tp1", "A_tp2", "r_t", "alpha"])
 
+    def test_step_forward_inplace(self):
+        d2 = self.d.copy()
+        d2.step_forward(inplace=True)
+        keys = list(d2.to_string().keys())
+        self.assertEqual(keys, ["C_tp1", "A_tp2", "r_t", "alpha"])
+
     def test_step_backward(self):
         d_tm1 = self.d.step_backward().to_string()
 
         keys = list(d_tm1.keys())
         self.assertEqual(keys, ["C_tm1", "A_t", "r_tm2", "alpha"])
 
+    def test_step_backward_inplace(self):
+        d2 = self.d.copy()
+        d2.step_backward(inplace=True)
+        keys = list(d2.to_string().keys())
+        self.assertEqual(keys, ["C_tm1", "A_t", "r_tm2", "alpha"])
+
     def test_to_steady_state(self):
         d = self.d.to_ss().to_string()
+        self.assertEqual(list(d.keys()), ["C_ss", "A_ss", "r_ss", "alpha"])
+
+    def test_to_steady_state_inplace(self):
+        d2 = self.d.copy()
+        d2.to_ss(inplace=True)
+        keys = list(d2.to_string().keys())
         self.assertEqual(list(d.keys()), ["C_ss", "A_ss", "r_ss", "alpha"])
 
     def test_sort_dictionary(self):
@@ -100,6 +150,27 @@ class TestSymbolDictionary(unittest.TestCase):
             return d0
 
         self.assertRaises(ValueError, loop_update, [d0, d1, d2])
+
+    def test_convert_values(self):
+        d = self.d.copy()
+        d_sp = d.float_to_values()
+        values = list(d_sp.values())
+        self.assertTrue(all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values]))
+
+        d_np = d_sp.values_to_float()
+        values = list(d_np.values())
+        self.assertTrue(all([isinstance(x, (int, float, complex)) for x in values]))
+
+    def test_convert_values_inplace(self):
+        d = self.d.copy()
+        d.float_to_values(inplace=True)
+        values = list(d.values())
+        self.assertTrue(all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values]))
+
+        d = d.values_to_float()
+        values = list(d.values())
+        self.assertTrue(all([isinstance(x, (int, float, complex)) for x in values]))
+
 
     def test_not_inplace_update_is_not_persistent(self):
         d = self.d

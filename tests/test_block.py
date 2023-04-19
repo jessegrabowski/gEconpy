@@ -182,7 +182,12 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             {
                 objective
                 {
-                    U[] = u[] + beta * E[][U[1] + X[1]];
+                    U[] = u[] + X[] + beta * E[][U[1] + X[1]];
+                };
+                
+                controls
+                {
+                    X[];
                 };
             };
             """
@@ -190,14 +195,16 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+        block = Block('HOUSEHOLD', block_dict)
 
         with self.assertRaises(ValueError) as error:
-            Block('HOUSEHOLD', block_dict)
-            self.assertEqual(error,
-                             f"Block HOUSEHOLD has multiple t+1 variables in the Bellman equation, this is not"
-                             f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]],"
-                             f"where a[] is the instantaneous value function at time t, defined in the"
-                             f'"definitions" component of the block.')
+            block.solve_optimization()
+        error_msg = error.exception
+        self.assertEqual(str(error_msg),
+                         f"Block HOUSEHOLD has multiple t+1 variables in the Bellman equation, this is not "
+                         f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]], "
+                         f"where a[] is the instantaneous value function at time t, defined in the "
+                         f'"definitions" component of the block.')
 
     def test_lagrange_multiplier_in_objective(self):
         test_file = \
