@@ -404,7 +404,10 @@ class Block:
         equations, lagrange_multipliers = self._extract_lagrange_multipliers(equations, assumptions)
 
         parser_output = parse_equations.build_sympy_equations(equations, assumptions)
-        equations, flags = list(zip(*parser_output))
+        if len(parser_output) > 0:
+            equations, flags = list(zip(*parser_output))
+        else:
+            equations, flags = [], {}
         equation_numbers = self._get_and_record_equation_numbers(equations)
 
         equations = dict(zip(equation_numbers, equations))

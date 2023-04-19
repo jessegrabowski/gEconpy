@@ -662,18 +662,20 @@ class gEconModel:
             raise PerturbationSolutionNotFoundException()
 
         if free_param_dict is not None:
-            ss_dict, calib_dict = self.f_ss(free_param_dict)
-        else:
-            free_param_dict = self.free_param_dict
-            ss_dict = self.steady_state_dict
-            calib_dict = self.calib_param_dict
+            results = self.f_ss(self.free_param_dict)
+            self.steady_state_dict = results["ss_dict"]
+            self.calib_param_dict = results["calib_dict"]
+
+        param_dict = self.free_param_dict | self.calib_param_dict
+        steady_state_dict = self.steady_state_dict
 
         if system_matrices is not None:
             A, B, C, D = system_matrices
         else:
             A, B, C, D = self.build_perturbation_matrices(
-                **ss_dict, **free_param_dict, **calib_dict
+                np.array(list(param_dict.values())), np.array(list(steady_state_dict.values()))
             )
+
         n_forward = (C.sum(axis=0) > 0).sum().astype(int)
         n_eq, n_vars = A.shape
 

@@ -127,11 +127,11 @@ def simulate_trajectories_from_prior(
 
     param_dicts = pd.DataFrame(model.sample_param_dict_from_prior(n_samples)).T.to_dict()
     i = 0
-
+    print(param_dicts)
     progress_bar = ProgressBar(n_samples, "Sampling")
     for param_dict in param_dicts.values():
-        # free_param_dict, shock_dict, obs_dict = split_random_variables(param_dict, shock_names, model_var_names)
-        model.free_param_dict.update(param_dict)
+        free_param_dict, shock_dict, obs_dict = split_random_variables(param_dict, shock_names, model_var_names)
+        model.free_param_dict.update(free_param_dict)
         progress_bar.start()
 
         try:
@@ -141,6 +141,7 @@ def simulate_trajectories_from_prior(
             data = model.simulate(
                 simulation_length=simulation_length,
                 n_simulations=n_simulations,
+                shock_dict=shock_dict,
                 show_progress_bar=False,
             )
             simulaton_ids = np.arange(n_simulations).astype(int)

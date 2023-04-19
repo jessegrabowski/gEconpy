@@ -228,12 +228,11 @@ def make_mod_file(model) -> str:
     ..[1] Adjemian, Stéphane, et al. "Dynare: Reference manual, version 4." (2011).
     """
 
-    var_list = model.variables
-    param_dict = model.free_param_dict
-    param_dict.update(model.calib_param_dict)
+    var_list = model.variables.copy()
+    param_dict = model.free_param_dict | model.calib_param_dict
 
     shocks = model.shocks
-    ss_value_dict = model.steady_state_dict
+    ss_value_dict = model.steady_state_dict.copy()
 
     var_to_matlab = make_var_to_matlab_sub_dict(
         make_all_var_time_combos(var_list), clash_prefix="var_"
@@ -257,7 +256,7 @@ def make_mod_file(model) -> str:
         line_start="varexo",
     )
     file += "\n"
-    file = write_lines_from_list(par_to_matlab.values(), file, line_start="parameters")
+    file = write_lines_from_list(list(par_to_matlab.values()), file, line_start="parameters")
     file += "\n"
 
     for model_param in sorted(param_dict.keys()):
@@ -333,7 +332,7 @@ def make_mod_file(model) -> str:
     file += "end;\n\n"
 
     file += "initval;\n"
-    for var, val in string_keys_to_sympy(ss_value_dict).items():
+    for var, val in ss_value_dict.to_sympy().items():
         matlab_var = var_to_matlab[var].replace("_ss", "")
         file += f"{matlab_var} = {val:0.4f};\n"
 

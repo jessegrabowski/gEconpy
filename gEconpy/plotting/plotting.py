@@ -228,6 +228,9 @@ def plot_irf(
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
     fig = plt.figure(figsize=figsize, dpi=dpi)
 
+    if shocks_to_plot is None:
+        shocks_to_plot = irf.columns.get_level_values(1).unique()
+
     for idx, variable in enumerate(vars_to_plot):
         axis = fig.add_subplot(gs[plot_locs[idx]])
 
