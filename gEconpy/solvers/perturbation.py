@@ -13,17 +13,6 @@ from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
 from gEconpy.solvers.gensys import gensys
 
 
-def print_gensys_results(eu):
-    if eu[0] == 1 and eu[1] == 1:
-        print(
-            "Gensys found a unique solution.\n"
-            "Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S"
-        )
-
-    else:
-        print(eu)
-
-
 class PerturbationSolver:
     def __init__(self, model):
         self.steady_state_dict = model.steady_state_dict
@@ -78,8 +67,6 @@ class PerturbationSolver:
         pi = np.ascontiguousarray(Pi)
 
         G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
-        if verbose:
-            print_gensys_results(eu)
 
         return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
 

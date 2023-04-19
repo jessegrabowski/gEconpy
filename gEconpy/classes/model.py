@@ -467,6 +467,9 @@ class gEconModel:
         None
         """
 
+        if on_failure not in ['error', 'ignore']:
+            raise ValueError(f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}')
+
         param_dict = self.free_param_dict | self.calib_param_dict
         steady_state_dict = self.steady_state_dict
 
@@ -484,12 +487,15 @@ class gEconModel:
             )
             G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
 
-            if G_1 is None or (eu[0] != eu[1] != 1):
+            success = all([x == 1 for x in eu[:2]])
+
+            if not success:
                 if on_failure == "error":
                     raise GensysFailedException(eu)
                 elif on_failure == "ignore":
                     if verbose:
-                        print(interpret_gensys_output(eu))
+                        message = interpret_gensys_output(eu)
+                        print(message)
                     self.P = None
                     self.Q = None
                     self.R = None
@@ -498,6 +504,11 @@ class gEconModel:
                     self.perturbation_solved = False
 
                     return
+
+            if verbose:
+                message = interpret_gensys_output(eu)
+                print(message)
+                print("Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S")
 
             T = G_1[: self.n_variables, :][:, : self.n_variables]
             R = impact[: self.n_variables, :]
@@ -512,7 +523,7 @@ class gEconModel:
                 A, B, C, D, max_iter, tol, verbose
             )
             if T is None:
-                if on_failure == "errror":
+                if on_failure == "error":
                     raise GensysFailedException(result)
         else:
             raise NotImplementedError(

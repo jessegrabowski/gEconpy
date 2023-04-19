@@ -13,6 +13,7 @@ from numpy.testing import assert_allclose
 
 from gEconpy.classes.model import gEconModel
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.exceptions.exceptions import GensysFailedException
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.shared.utilities import string_keys_to_sympy
 
@@ -77,6 +78,54 @@ class ModelErrorTests(unittest.TestCase):
                 warning_msg = str(w.message)
                 self.assertIn(warning_msg, expected_warnings)
 
+    def test_invalid_solver_raises(self):
+        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
+        model = gEconModel(file_path, verbose=False)
+        model.steady_state(verbose=False)
+
+        with self.assertRaises(NotImplementedError):
+            model.solve_model(solver='invalid_solver')
+
+    def test_bad_failure_argument_raises(self):
+        file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
+        model = gEconModel(file_path, verbose=False)
+        model.steady_state(verbose=False, model_is_linear=True)
+
+        with self.assertRaises(ValueError):
+            model.solve_model(solver='gensys', on_failure='raise', model_is_linear=True)
+
+    def test_gensys_fails_to_solve(self):
+        file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
+        model = gEconModel(file_path, verbose=False)
+        model.steady_state(verbose=False, model_is_linear=True)
+
+        with self.assertRaises(GensysFailedException):
+            model.solve_model(solver='gensys', on_failure='error', model_is_linear=True, verbose=False)
+
+    @mock.patch('builtins.print')
+    def test_outputs_after_gensys_failure(self, mock_print):
+        file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
+        model = gEconModel(file_path, verbose=False)
+        model.steady_state(verbose=False, model_is_linear=True)
+        model.solve_model(solver='gensys', on_failure='ignore', model_is_linear=True, verbose=True)
+
+        gensys_message = mock_print.call_args.args[0]
+        self.assertEqual(gensys_message, 'Solution exists, but is not unique.')
+
+        P, Q, R, S = model.P, model.Q, model.R, model.S
+        for X, name in zip([P, Q, R, S], ['P', 'Q', 'R', 'S']):
+            self.assertIsNone(X, msg=name)
+
+    @mock.patch('builtins.print')
+    def test_outputs_after_pert_success(self, mock_print):
+        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+        model = gEconModel(file_path, verbose=False)
+        model.steady_state(verbose=False, model_is_linear=True)
+        model.solve_model(solver='gensys', verbose=True, model_is_linear=True)
+
+        # TODO: Can i get more print calls without having to parse through call_args_list?
+        result_messages = mock_print.call_args.args[0]
+        self.assertEqual(result_messages, 'Norm of stochastic part:    0.000000000')
 
 class ModelClassTestsOne(unittest.TestCase):
     def setUp(self):
