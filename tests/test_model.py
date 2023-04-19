@@ -94,6 +94,15 @@ class ModelErrorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             model.solve_model(solver='gensys', on_failure='raise', model_is_linear=True)
 
+    def test_bad_argument_to_bk_condition_raises(self):
+        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
+        model = gEconModel(file_path, verbose=False)
+        model.steady_state(verbose=False)
+        model.solve_model(verbose=False)
+
+        with self.assertRaises(ValueError):
+            model.check_bk_condition(return_value='invalid_argument')
+
     def test_gensys_fails_to_solve(self):
         file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
         model = gEconModel(file_path, verbose=False)
@@ -126,6 +135,7 @@ class ModelErrorTests(unittest.TestCase):
         # TODO: Can i get more print calls without having to parse through call_args_list?
         result_messages = mock_print.call_args.args[0]
         self.assertEqual(result_messages, 'Norm of stochastic part:    0.000000000')
+
 
 class ModelClassTestsOne(unittest.TestCase):
     def setUp(self):
@@ -350,6 +360,15 @@ class ModelClassTestsOne(unittest.TestCase):
         assert_allclose(
             Rg.round(5).values, Rc.round(5).values, rtol=1e-5, equal_nan=True, err_msg="R"
         )
+
+    def test_blanchard_kahn_conditions(self):
+        self.model.steady_state(verbose=False)
+        self.model.solve_model(verbose=False)
+        bk_cond = self.model.check_bk_condition(return_value='bool', verbose=True)
+        self.assertTrue(bk_cond)
+
+        bk_df = self.model.check_bk_condition(return_value='df')
+        self.assertTrue(isinstance(bk_df, pd.DataFrame))
 
 
 class ModelClassTestsTwo(unittest.TestCase):

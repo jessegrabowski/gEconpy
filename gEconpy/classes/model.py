@@ -663,7 +663,7 @@ class gEconModel:
             self,
             free_param_dict: Optional[Dict[str, float]] = None,
             system_matrices: Optional[List[ArrayLike]] = None,
-            verbose: bool = True,
+            verbose: Optional[bool] = True,
             return_value: Optional[str] = "df",
             tol=1e-8,
     ) -> Optional[ArrayLike]:
@@ -676,10 +676,13 @@ class gEconModel:
         ----------
         free_param_dict: dict, optional
             A dictionary of parameter values. If None, the current stored values are used.
+        system_matrices: list, optional
+            A list of matrices A, B, C, D to be used to compute the bk_condition. If none, the current
+            stored values are used.
         verbose: bool, default: True
             Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
-        return_value: string, default: 'eigenvalues'
-            Controls what is returned by the function. Valid values are 'df', 'flag', and None.
+        return_value: string, default: 'df'
+            Controls what is returned by the function. Valid values are 'df', 'bool', and 'none'.
             If df, a dataframe containing eigenvalues is returned. If 'bool', a boolean indicating whether the BK
             condition is satisfied. If None, nothing is returned.
         tol: float, 1e-8
@@ -691,6 +694,9 @@ class gEconModel:
         """
         if self.build_perturbation_matrices is None:
             raise PerturbationSolutionNotFoundException()
+
+        if return_value not in ['df', 'bool', 'none']:
+            raise ValueError(f'return_value must be one of "df", "bool", or "none". Found {return_value} ')
 
         if free_param_dict is not None:
             results = self.f_ss(self.free_param_dict)
@@ -754,9 +760,8 @@ class gEconModel:
                 f'\nBlanchard-Kahn condition is{" NOT" if condition_not_satisfied else ""} satisfied.'
             )
 
-        if return_value is None:
+        if return_value == 'none':
             return
-
         if return_value == "df":
             return eig
         elif return_value == "bool":
