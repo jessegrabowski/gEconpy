@@ -5,7 +5,6 @@ from warnings import warn
 
 import arviz as az
 import emcee
-import numba as nb
 import numpy as np
 import pandas as pd
 import sympy as sp
@@ -40,7 +39,7 @@ from gEconpy.shared.utilities import (
     make_all_var_time_combos,
     merge_dictionaries,
     substitute_all_equations,
-    unpack_keys_and_values,
+    unpack_keys_and_values, build_Q_matrix, compute_autocorrelation_matrix,
 )
 from gEconpy.solvers.gensys import interpret_gensys_output
 from gEconpy.solvers.perturbation import PerturbationSolver
@@ -767,11 +766,21 @@ class gEconModel:
         elif return_value == "bool":
             return ~condition_not_satisfied
 
-    def compute_stationary_covariance_matrix(self):
+    def compute_stationary_covariance_matrix(self,
+                                             shock_dict: Optional[Dict[str, float]] = None,
+                                             shock_cov_matrix: Optional[ArrayLike] = None):
         """
-        Compute the stationary covariance matrix of the solved system via fixed-point iteration. By construction, any
-        linearized DSGE model will have a fixed covariance matrix. In principle, a closed form solution is available
-        (we could solve a discrete Lyapunov equation) but this works fine.
+        Compute the stationary covariance matrix of the solved system by solving the associated discrete lyapunov
+        equation. In order to construct the shock covariance matrix, exactly one or zero of shock_dict or
+        shock_cov_matrix should be provided. If neither is provided, the prior means on the shocks will be used. If no
+        information about a shock is available, the standard deviation will be set to 0.01.
+
+        Parameters
+        -------
+        shock_dict, dict of str: float, optional
+            A dictionary of shock sizes to be used to compute the stationary covariance matrix.
+        shock_cov_matrix: array, optional
+            An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
 
         Returns
         -------
@@ -780,20 +789,40 @@ class gEconModel:
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
 
+        if shock_dict is None and shock_cov_matrix is None and len(self.shock_priors) < self.n_shocks:
+            unknown_shocks_list = [shock.base_name for shock in self.shocks if shock not in self.shock_priors.to_sympy()]
+            unknown_shocks = ', '.join(unknown_shocks_list)
+            warn(f'No standard deviation provided for shocks {unknown_shocks}. Using default of std = 0.01. Explicity'
+                 f'pass variance information for these shocks or set their priors to silence this warning.')
+
+        Q = build_Q_matrix(model_shocks=[x.base_name for x in self.shocks],
+                           shock_dict=shock_dict,
+                           shock_cov_matrix=shock_cov_matrix,
+                           shock_priors=self.shock_priors)
+
         T, R = self.T, self.R
+        sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ Q @ R.values.T)
 
-        # TODO: Should this be R @ Q @ R.T ?
-        sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ R.values.T)
+        return pd.DataFrame(sigma, index=T.index, columns=T.index)
 
-        return pd.DataFrame(sigma / 100, index=T.index, columns=T.index)
-
-    def compute_autocorrelation_matrix(self, n_lags=10):
+    def compute_autocorrelation_matrix(self,
+                                       shock_dict: Optional[Dict[str, float]] = None,
+                                       shock_cov_matrix: Optional[ArrayLike] = None,
+                                       n_lags=10):
         """
         Computes autocorrelations for each model variable using the stationary covariance matrix. See doc string for
         compute_stationary_covariance_matrix for more information.
 
+        In order to construct the shock covariance matrix, exactly one or zero of shock_dict or
+        shock_cov_matrix should be provided. If neither is provided, the prior means on the shocks will be used. If no
+        information about a shock is available, the standard deviation will be set to 0.01.
+
         Parameters
         ----------
+        shock_dict, dict of str: float, optional
+            A dictionary of shock sizes to be used to compute the stationary covariance matrix.
+        shock_cov_matrix: array, optional
+            An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
         n_lags: int
             Number of lags over which to compute the autocorrelation
 
@@ -806,8 +835,8 @@ class gEconModel:
 
         T, R = self.T, self.R
 
-        Sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ R.values.T)
-        acorr_mat = _compute_autocorrelation_matrix(T.values, Sigma, n_lags=n_lags)
+        Sigma = self.compute_stationary_covariance_matrix(shock_dict=shock_dict, shock_cov_matrix=shock_cov_matrix)
+        acorr_mat = compute_autocorrelation_matrix(T.values, Sigma.values, n_lags=n_lags)
 
         return pd.DataFrame(acorr_mat, index=T.index, columns=np.arange(n_lags))
 
@@ -1606,32 +1635,3 @@ class gEconModel:
 #             sigma = new_sigma
 
 
-@nb.njit(cache=True)
-def _compute_autocorrelation_matrix(A, sigma, n_lags=5):
-    """Compute the autocorrelation matrix for the given state-space model.
-
-    Parameters
-    ----------
-    A : ndarray
-        An array of shape (n_endog, n_endog, n_lags) representing the transition matrix of the
-        state-space system.
-    sigma : ndarray
-        An array of shape (n_endog, n_endog) representing the variance-covariance matrix of the errors of
-        the transition equation.
-    n_lags : int, optional
-        The number of lags for which to compute the autocorrelation matrix.
-
-    Returns
-    -------
-    acov : ndarray
-        An array of shape (n_endog, n_lags) representing the autocorrelation matrix of the state-space process.
-    """
-
-    acov = np.zeros((A.shape[0], n_lags))
-    acov_factor = np.eye(A.shape[0])
-    for i in range(n_lags):
-        cov = acov_factor @ sigma
-        acov[:, i] = np.diag(cov) / np.diag(sigma)
-        acov_factor = A @ acov_factor
-
-    return acov

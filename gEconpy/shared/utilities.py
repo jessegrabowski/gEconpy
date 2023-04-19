@@ -1,10 +1,12 @@
 from collections import defaultdict
 from copy import copy
 from enum import EnumMeta
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Union, Optional
 
 import numpy as np
 import sympy as sp
+import numba as nb
+
 from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -406,3 +408,109 @@ def test_expr_is_zero(
         if res != 0:
             return False
     return True
+
+
+def build_Q_matrix(model_shocks: List[str],
+                   shock_dict: Optional[dict[str, float]] = None,
+                   shock_cov_matrix: Optional[np.array] = None,
+                   shock_priors: Optional[dict[str, Any]] = None,
+                   default_value: Optional[float] = 0.01) -> np.array:
+    """
+    Take different options for user input and reconcile them into a covariance matrix. Exactly one or zero of shock_dict
+    or shock_cov_matrix should be provided. Then, proceed according to the following logic:
+
+    - If `shock_cov_matrix` is provided, it is Q. Return it.
+    - If `shock_dict` is provided, insert these into a diagonal matrix at locations according to `model_shocks`.
+
+    For values missing from `shock_dict`, or if neither `shock_dict` nor `shock_cov_matrix` are provided:
+
+    - Fill missing values using the mean of the prior defined in `shock_priors`
+    - If no prior is set, fill the value with `default_value`.
+
+    Note that the only way to get off-diagonal elements is to explicitly pass the entire covariance matrix.
+
+    Parameters
+    ----------
+    model_shocks: list of str
+        List of model shock names, used to infer positions in the covariance matrix
+    shock_dict: dict of str, float
+        Dictionary of shock names and standard deviations to be used to build Q
+    shock_cov_matrix: ndarray
+        The shock covariance matrix. If provided, check that it is positive semi-definite, then return it.
+    shock_priors: dict of str, frozendist
+        Dictionary of model priors over shocks
+    default_value: float
+        A default value of fall back on if no other information is available about a shock's standard deviation
+
+    Raises
+    ---------
+    LinalgError
+        If the provided Q is not positive semi-definite
+    ValueError
+        If both model_shocks and shock_dict are provided
+
+    Returns
+    -------
+    Q: ndarray
+        Shock variance-covariance matrix
+    """
+    n = len(model_shocks)
+    if shock_dict is not None and shock_cov_matrix is not None:
+        raise ValueError("Both shock_dict and shock_cov_matrix cannot be provided.")
+
+    if shock_dict is None:
+        shock_dict = {}
+
+    if shock_cov_matrix is not None:
+        if not all([x == n for x in shock_cov_matrix.shape]):
+            raise ValueError(f'Provided covariance matrix has shape {shock_cov_matrix.shape}, expected ({n}, {n})')
+        try:
+            L = np.linalg.cholesky(shock_cov_matrix)
+            return shock_cov_matrix
+        except np.linalg.LinAlgError:
+            raise np.linalg.LinAlgError("The provided Q is not positive semi-definite.")
+
+    Q = np.eye(len(model_shocks)) * default_value
+
+    if shock_dict is not None:
+        for i, shock in enumerate(model_shocks):
+            if shock in shock_dict:
+                Q[i, i] = shock_dict[shock]
+
+    if shock_priors is not None:
+        for i, shock in enumerate(model_shocks):
+            if shock not in shock_dict and shock in shock_priors:
+                Q[i, i] = shock_priors[shock].rv_params['scale'].mean()
+
+    return Q
+
+
+@nb.njit(cache=True)
+def compute_autocorrelation_matrix(A, sigma, n_lags=5):
+    """Compute the autocorrelation matrix for the given state-space model.
+
+    Parameters
+    ----------
+    A : ndarray
+        An array of shape (n_endog, n_endog, n_lags) representing the transition matrix of the
+        state-space system.
+    sigma : ndarray
+        An array of shape (n_endog, n_endog) representing the variance-covariance matrix of the errors of
+        the transition equation.
+    n_lags : int, optional
+        The number of lags for which to compute the autocorrelation matrix.
+
+    Returns
+    -------
+    acov : ndarray
+        An array of shape (n_endog, n_lags) representing the autocorrelation matrix of the state-space process.
+    """
+
+    acov = np.zeros((A.shape[0], n_lags))
+    acov_factor = np.eye(A.shape[0])
+    for i in range(n_lags):
+        cov = acov_factor @ sigma
+        acov[:, i] = np.diag(cov) / np.diag(sigma)
+        acov_factor = A @ acov_factor
+
+    return acov

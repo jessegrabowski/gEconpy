@@ -136,6 +136,15 @@ class ModelErrorTests(unittest.TestCase):
         result_messages = mock_print.call_args.args[0]
         self.assertEqual(result_messages, 'Norm of stochastic part:    0.000000000')
 
+    def test_compute_stationary_covariance_warns_if_using_default(self):
+        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+        model = gEconModel(file_path, verbose=False)
+        model.steady_state(verbose=False, model_is_linear=True)
+        model.solve_model(solver='gensys', verbose=False, model_is_linear=True)
+
+        with self.assertWarns(UserWarning):
+            Sigma = model.compute_stationary_covariance_matrix()
+
 
 class ModelClassTestsOne(unittest.TestCase):
     def setUp(self):
@@ -369,6 +378,27 @@ class ModelClassTestsOne(unittest.TestCase):
 
         bk_df = self.model.check_bk_condition(return_value='df')
         self.assertTrue(isinstance(bk_df, pd.DataFrame))
+
+    def test_compute_autocorrelation_matrix(self):
+        self.model.steady_state(verbose=False)
+        self.model.solve_model(verbose=False)
+
+        n_lags = 10
+        acorr_df = self.model.compute_autocorrelation_matrix(shock_dict={'epsilon_A':0.01},
+                                                             n_lags=n_lags)
+
+        self.assertTrue(isinstance(acorr_df, pd.DataFrame))
+        self.assertEqual(acorr_df.shape[0], self.model.n_variables)
+        self.assertEqual(acorr_df.shape[1], n_lags)
+
+    def test_compute_stationary_covariance(self):
+        self.model.steady_state(verbose=False)
+        self.model.solve_model(verbose=False)
+
+        Sigma = self.model.compute_stationary_covariance_matrix(shock_dict={'epsilon_A':0.01})
+        self.assertTrue(isinstance(Sigma, pd.DataFrame))
+        self.assertTrue(all([x == self.model.n_variables for x in Sigma.shape]))
+
 
 
 class ModelClassTestsTwo(unittest.TestCase):
