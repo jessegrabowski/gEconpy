@@ -167,7 +167,7 @@ class TestSymbolDictionary(unittest.TestCase):
         values = list(d.values())
         self.assertTrue(all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values]))
 
-        d = d.values_to_float()
+        d.values_to_float(inplace=True)
         values = list(d.values())
         self.assertTrue(all([isinstance(x, (int, float, complex)) for x in values]))
 
