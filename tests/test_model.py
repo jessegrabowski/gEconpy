@@ -11,6 +11,7 @@ import pandas as pd
 import sympy as sp
 from numpy.testing import assert_allclose
 
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.model import gEconModel
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import GensysFailedException
@@ -847,6 +848,49 @@ class TestModelSimulationTools(unittest.TestCase):
         self.assertTrue(len(shock_dict) == len(self.model.shocks))
 
         self.assertTrue(len(obs_dict) == 0)
+
+    def test_irf(self):
+        simulation_length = 40
+        irf = self.model.impulse_response_function(simulation_length=simulation_length, shock_size=0.1)
+
+        self.assertTrue(isinstance(irf, pd.DataFrame))
+        self.assertTrue(irf.shape[0] == self.model.n_variables)
+        self.assertTrue(irf.shape[1] == self.model.n_shocks * simulation_length)
+
+    def test_simulate_warns_on_defaults(self):
+        simulation_length = 40
+        n_simulations = 1
+
+        # Overwrite the priors to get the warning
+        self.model.hyper_priors = SymbolDictionary()
+        self.model.shock_priors = SymbolDictionary()
+        with self.assertWarns(UserWarning):
+            data = self.model.simulate(simulation_length=simulation_length,
+                                       n_simulations=n_simulations)
+
+    def test_simulate_from_covariance_matrix(self):
+        simulation_length = 40
+        n_simulations = 1
+        Q = np.array([[0.01]])
+        data = self.model.simulate(simulation_length=simulation_length,
+                                   n_simulations=n_simulations,
+                                   shock_cov_matrix=Q)
+
+        self.assertTrue(isinstance(data, pd.DataFrame))
+        self.assertTrue(data.shape[0] == self.model.n_variables)
+        self.assertTrue(data.shape[1] == simulation_length * n_simulations)
+
+    def test_simulate_from_shock_dict(self):
+        simulation_length = 40
+        n_simulations = 1
+        shock_dict = {'epsilon_A':0.1}
+        data = self.model.simulate(simulation_length=simulation_length,
+                                   n_simulations=n_simulations,
+                                   shock_dict=shock_dict)
+
+        self.assertTrue(isinstance(data, pd.DataFrame))
+        self.assertTrue(data.shape[0] == self.model.n_variables)
+        self.assertTrue(data.shape[1] == simulation_length * n_simulations)
 
 
 if __name__ == "__main__":

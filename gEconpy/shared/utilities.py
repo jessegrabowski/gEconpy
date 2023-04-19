@@ -314,7 +314,7 @@ def test_expr_is_zero(
 def build_Q_matrix(model_shocks: List[str],
                    shock_dict: Optional[dict[str, float]] = None,
                    shock_cov_matrix: Optional[np.array] = None,
-                   shock_priors: Optional[dict[str, Any]] = None,
+                   shock_std_priors: Optional[dict[str, Any]] = None,
                    default_value: Optional[float] = 0.01) -> np.array:
     """
     Take different options for user input and reconcile them into a covariance matrix. Exactly one or zero of shock_dict
@@ -338,8 +338,8 @@ def build_Q_matrix(model_shocks: List[str],
         Dictionary of shock names and standard deviations to be used to build Q
     shock_cov_matrix: ndarray
         The shock covariance matrix. If provided, check that it is positive semi-definite, then return it.
-    shock_priors: dict of str, frozendist
-        Dictionary of model priors over shocks
+    shock_std_priors: dict of str, frozendist
+        Dictionary of model priors over shock standard deviations
     default_value: float
         A default value of fall back on if no other information is available about a shock's standard deviation
 
@@ -378,10 +378,10 @@ def build_Q_matrix(model_shocks: List[str],
             if shock in shock_dict:
                 Q[i, i] = shock_dict[shock]
 
-    if shock_priors is not None:
+    if shock_std_priors is not None:
         for i, shock in enumerate(model_shocks):
-            if shock not in shock_dict and shock in shock_priors:
-                Q[i, i] = shock_priors[shock].rv_params['scale'].mean()
+            if shock not in shock_dict and shock in shock_std_priors:
+                Q[i, i] = shock_std_priors[shock].mean()
 
     return Q
 

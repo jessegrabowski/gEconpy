@@ -14,16 +14,16 @@ ROOT = Path(__file__).parent.absolute()
 class TestBuildQMatrix(unittest.TestCase):
     def setUp(self):
         self.shocks = ['epsilon_A', 'epsilon_B', 'epsilon_C']
-        self.shock_priors = {'epsilon_A': CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1)),
-                             'epsilon_B': CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1)),
-                             'epsilon_C': CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1))}
+        self.shock_std_priors = {'epsilon_A': stats.gamma(2, 1),
+                                 'epsilon_B': stats.gamma(2, 1),
+                                 'epsilon_C': stats.gamma(2, 1)}
 
     def test_passing_both_args_raises(self):
         with self.assertRaises(ValueError):
             build_Q_matrix(model_shocks=self.shocks,
                            shock_dict={'epsilon_A': 3},
                            shock_cov_matrix=np.eye(3),
-                           shock_priors=self.shock_priors)
+                           shock_std_priors=self.shock_std_priors)
 
     def test_not_positive_semidef_raises(self):
         cov_mat = np.random.normal(size=(3, 3))
@@ -39,7 +39,7 @@ class TestBuildQMatrix(unittest.TestCase):
 
     def test_build_from_dictionary(self):
         Q = build_Q_matrix(model_shocks=self.shocks,
-                           shock_priors=None,
+                           shock_std_priors=None,
                            shock_dict={'epsilon_A': 3})
 
         expected_Q = np.array([[3, 0, 0],
@@ -50,21 +50,21 @@ class TestBuildQMatrix(unittest.TestCase):
 
     def test_build_from_priors(self):
         Q = build_Q_matrix(model_shocks=self.shocks,
-                           shock_priors=self.shock_priors)
+                           shock_std_priors=self.shock_std_priors)
         expected_Q = np.eye(3)
-        for i, shock_d in enumerate(self.shock_priors.values()):
-            expected_Q[i, i] = shock_d.rv_params['scale'].mean()
+        for i, shock_d in enumerate(self.shock_std_priors.values()):
+            expected_Q[i, i] = shock_d.mean()
 
         self.assertTrue(np.allclose(Q, expected_Q))
 
     def test_build_from_mixed(self):
         Q = build_Q_matrix(model_shocks=self.shocks,
-                           shock_priors=self.shock_priors,
+                           shock_std_priors=self.shock_std_priors,
                            shock_dict={'epsilon_B': 100})
 
         expected_Q = np.eye(3)
-        for i, shock_d in enumerate(self.shock_priors.values()):
-            expected_Q[i, i] = shock_d.rv_params['scale'].mean()
+        for i, shock_d in enumerate(self.shock_std_priors.values()):
+            expected_Q[i, i] = shock_d.mean()
 
         expected_Q[1, 1] = 100
         self.assertTrue(np.allclose(Q, expected_Q))
@@ -85,9 +85,10 @@ class TestExtractShockStd(unittest.TestCase):
 
     def setUp(self):
         self.shocks = ['epsilon_A', 'epsilon_B', 'epsilon_C']
-        self.shock_priors = {'epsilon_A': CompositeDistribution(stats.norm, loc=stats.norm(0, 1), scale=stats.gamma(2, 1)),
-                             'epsilon_B': CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1)),
-                             'epsilon_C': CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1))}
+        self.shock_priors = {
+            'epsilon_A': CompositeDistribution(stats.norm, loc=stats.norm(0, 1), scale=stats.gamma(2, 1)),
+            'epsilon_B': CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1)),
+            'epsilon_C': CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1))}
         self.hyper_priors = {'sigma_A': ('epsilon_A', 'scale', stats.gamma(2, 1)),
                              'mu_A': ('epsilon_A', 'loc', stats.norm(0, 1)),
                              'sigma_B': ('epsilon_B', 'scale', stats.gamma(2, 1)),

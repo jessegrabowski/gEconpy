@@ -790,8 +790,9 @@ class gEconModel:
         """
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
+        shock_std_priors = get_shock_std_priors_from_hyperpriors(self.shocks, self.hyper_priors, out_keys='parent')
 
-        if shock_dict is None and shock_cov_matrix is None and len(self.shock_priors) < self.n_shocks:
+        if shock_dict is None and shock_cov_matrix is None and len(shock_std_priors) < self.n_shocks:
             unknown_shocks_list = [shock.base_name for shock in self.shocks if shock not in self.shock_priors.to_sympy()]
             unknown_shocks = ', '.join(unknown_shocks_list)
             warn(f'No standard deviation provided for shocks {unknown_shocks}. Using default of std = 0.01. Explicity'
@@ -800,7 +801,7 @@ class gEconModel:
         Q = build_Q_matrix(model_shocks=[x.base_name for x in self.shocks],
                            shock_dict=shock_dict,
                            shock_cov_matrix=shock_cov_matrix,
-                           shock_priors=self.shock_priors)
+                           shock_std_priors=shock_std_priors)
 
         T, R = self.T, self.R
         sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ Q @ R.values.T)
@@ -1185,32 +1186,21 @@ class gEconModel:
         timesteps = simulation_length
 
         n_shocks = R.shape[1]
+        shock_std_priors = get_shock_std_priors_from_hyperpriors(self.shocks, self.hyper_priors, out_keys='parent')
 
-        if shock_cov_matrix is not None:
-            assert shock_cov_matrix.shape == (
-                n_shocks,
-                n_shocks,
-            ), f"The shock covariance matrix should have shape {n_shocks} x {n_shocks}"
-            d = stats.multivariate_normal(mean=np.zeros(n_shocks), cov=shock_cov_matrix)
-            epsilons = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
+        if shock_dict is None and shock_cov_matrix is None and len(shock_std_priors) < self.n_shocks:
+            unknown_shocks_list = [shock.base_name for shock in self.shocks if shock not in self.shock_priors.to_sympy()]
+            unknown_shocks = ', '.join(unknown_shocks_list)
+            warn(f'No standard deviation provided for shocks {unknown_shocks}. Using default of std = 0.01. Explicity'
+                 f'pass variance information for these shocks or set their priors to silence this warning.')
 
-        elif shock_dict is not None:
-            epsilons = np.zeros((n_simulations, timesteps, n_shocks))
-            for i, shock in enumerate(self.shocks):
-                if shock.base_name in shock_dict.keys():
-                    d = stats.norm(loc=0, scale=shock_dict[shock.base_name])
-                    epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
+        Q = build_Q_matrix(model_shocks=[x.base_name for x in self.shocks],
+                           shock_dict=shock_dict,
+                           shock_cov_matrix=shock_cov_matrix,
+                           shock_std_priors=shock_std_priors)
 
-        elif all([shock.base_name in self.shock_priors.keys() for shock in self.shocks]):
-            epsilons = np.zeros((n_simulations, timesteps, n_shocks))
-            for i, d in enumerate(self.shock_priors.values()):
-                epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
-
-        else:
-            raise ValueError(
-                "To run a simulation, supply either a full covariance matrix, a dictionary of shocks and"
-                "standard deviations, or specify priors on the shocks in your GCN file."
-            )
+        d_epsilon = stats.multivariate_normal(mean=np.zeros(n_shocks), cov=Q)
+        epsilons = np.r_[[d_epsilon.rvs(timesteps) for _ in range(n_simulations)]]
 
         data = np.zeros((self.n_variables, timesteps, n_simulations))
         if epsilons.ndim == 2:
