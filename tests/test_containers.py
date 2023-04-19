@@ -125,7 +125,7 @@ class TestSymbolDictionary(unittest.TestCase):
         d2 = self.d.copy()
         d2.to_ss(inplace=True)
         keys = list(d2.to_string().keys())
-        self.assertEqual(list(d.keys()), ["C_ss", "A_ss", "r_ss", "alpha"])
+        self.assertEqual(keys, ["C_ss", "A_ss", "r_ss", "alpha"])
 
     def test_sort_dictionary(self):
         d = self.d.copy()
@@ -170,7 +170,6 @@ class TestSymbolDictionary(unittest.TestCase):
         d = d.values_to_float()
         values = list(d.values())
         self.assertTrue(all([isinstance(x, (int, float, complex)) for x in values]))
-
 
     def test_not_inplace_update_is_not_persistent(self):
         d = self.d
