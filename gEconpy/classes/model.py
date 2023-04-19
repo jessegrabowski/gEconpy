@@ -51,12 +51,12 @@ VariableType = Union[sp.Symbol, TimeAwareSymbol]
 
 class gEconModel:
     def __init__(
-        self,
-        model_filepath: str,
-        verbose: bool = True,
-        simplify_blocks=True,
-        simplify_constants=True,
-        simplify_tryreduce=True,
+            self,
+            model_filepath: str,
+            verbose: bool = True,
+            simplify_blocks=True,
+            simplify_constants=True,
+            simplify_tryreduce=True,
     ) -> None:
         """
         Initialize a DSGE model object from a GCN file.
@@ -156,11 +156,11 @@ class gEconModel:
             d._assumptions.update(self.assumptions)
 
     def build(
-        self,
-        verbose: bool,
-        simplify_blocks: bool,
-        simplify_constants: bool,
-        simplify_tryreduce: bool,
+            self,
+            verbose: bool,
+            simplify_blocks: bool,
+            simplify_constants: bool,
+            simplify_tryreduce: bool,
     ) -> None:
         """
         Main parsing function for the model. Build loads the GCN file, decomposes it into blocks, solves optimization
@@ -211,19 +211,33 @@ class gEconModel:
         if simplify_constants:
             singletons = self._simplify_singletons()
 
-        if verbose:
-            self.build_report(reduced_vars, singletons)
+        self.build_report(reduced_vars, singletons, verbose=verbose)
 
-    def build_report(self, reduced_vars, singletons):
+    def build_report(self, reduced_vars: List[str],
+                     singletons: List[str],
+                     verbose: bool = True) -> None:
         """
         Write a diagnostic message after building the model. Note that successfully building the model does not
         guarantee that the model is correctly specified. For example, it is possible to build a model with more
         equations than parameters. This message will warn the user in this case.
 
+        Parameters
+        -------
+        reduced_vars: list
+            A list of variables reduced by the `try_reduce` method. Used to print the names of eliminated variables.
+
+        singletons: list
+            A list of "singleton" variables -- those defined as time-invariant constants. Used ot print the sames of
+            eliminated variables.
+
+        verbose: bool
+            Flag to print the build report to the terminal. Default is True. Regardless of the flag, the function will
+            always issue a warning to the user if the system is not fully defined.
         Returns
         -------
         None
         """
+
         if singletons and len(singletons) == 0:
             singletons = None
 
@@ -231,7 +245,8 @@ class gEconModel:
         var_str = "variable" if self.n_variables == 1 else "variables"
         shock_str = "shock" if self.n_shocks == 1 else "shocks"
         cal_eq_str = "equation" if self.n_calibrating_equations == 1 else "equations"
-        par_str = "parameter" if self.n_params_to_calibrate == 1 else "parameters"
+        free_par_str = 'parameter' if len(self.free_param_dict) == 1 else 'parameters'
+        calib_par_str = "parameter" if self.n_params_to_calibrate == 1 else "parameters"
 
         n_params = len(self.free_param_dict) + len(self.calib_param_dict)
 
@@ -256,19 +271,17 @@ class gEconModel:
             f" a defined prior. \n"
         )
 
-        report += f"\t{n_params} {par_str}\n"
+        report += f"\t{n_params} {free_par_str}\n"
         report += (
             f'\t\t {len(param_priors)} / {n_params} {"have" if len(param_priors) == 1 else "has"} '
             f"a defined prior. \n"
         )
         report += f"\t{self.n_calibrating_equations} calibrating {cal_eq_str}\n"
-        report += f"\t{self.n_params_to_calibrate} {par_str} to calibrate\n "
+        report += f"\t{self.n_params_to_calibrate} {calib_par_str} to calibrate\n "
 
         if self.n_equations == self.n_variables:
             report += "Model appears well defined and ready to proceed to solving.\n"
-            print(report)
         else:
-            print(report)
             message = (
                 f"The model does not appear correctly specified, there are {self.n_equations} {eq_str} but "
                 f"{self.n_variables} {var_str}. It will not be possible to solve this model. Please check the "
@@ -276,16 +289,19 @@ class gEconModel:
             )
             warn(message)
 
+        if verbose:
+            print(report)
+
     def steady_state(
-        self,
-        verbose: Optional[bool] = True,
-        model_is_linear: Optional[bool] = False,
-        apply_user_simplifications=True,
-        method: Optional[str] = "root",
-        optimizer_kwargs: Optional[Dict[str, Any]] = None,
-        use_jac: Optional[bool] = True,
-        use_hess: Optional[bool] = True,
-        tol: Optional[float] = 1e-6,
+            self,
+            verbose: Optional[bool] = True,
+            model_is_linear: Optional[bool] = False,
+            apply_user_simplifications=True,
+            method: Optional[str] = "root",
+            optimizer_kwargs: Optional[Dict[str, Any]] = None,
+            use_jac: Optional[bool] = True,
+            use_hess: Optional[bool] = True,
+            tol: Optional[float] = 1e-6,
     ) -> None:
         """
         Solves for a function f(params) that computes steady state values and calibrated parameter values given
@@ -382,39 +398,43 @@ class gEconModel:
 
         Prints an error message if a valid steady state has not yet been found.
         """
-        if self.steady_state_dict is None:
+        if len(self.steady_state_dict) == 0:
             print("Run the steady_state method to find a steady state before calling this method.")
             return
 
+        output = []
         if not self.steady_state_solved:
-            print("Values come from the latest solver iteration but are NOT a valid steady state.")
+            output.append("Values come from the latest solver iteration but are NOT a valid steady state.")
 
         max_var_name = (
-            max(
-                len(x)
-                for x in list(self.steady_state_dict.keys()) + list(self.calib_param_dict.keys())
-            )
-            + 5
+                max(
+                    len(x)
+                    for x in list(self.steady_state_dict.keys()) + list(self.calib_param_dict.keys())
+                )
+                + 5
         )
+
         for key, value in self.steady_state_dict.items():
-            print(f"{key:{max_var_name}}{value:>10.3f}")
+            output.append(f"{key:{max_var_name}}{value:>10.3f}")
 
         if len(self.params_to_calibrate) > 0:
-            print("\n")
-            print("In addition, the following parameter values were calibrated:")
+            output.append("\n")
+            output.append("In addition, the following parameter values were calibrated:")
             for key, value in self.calib_param_dict.items():
-                print(f"{key:{max_var_name}}{value:>10.3f}")
+                output.append(f"{key:{max_var_name}}{value:>10.3f}")
+
+        print('\n'.join(output))
 
     def solve_model(
-        self,
-        solver="cycle_reduction",
-        not_loglin_variable: Optional[List[str]] = None,
-        order: int = 1,
-        model_is_linear: bool = False,
-        tol: float = 1e-8,
-        max_iter: int = 1000,
-        verbose: bool = True,
-        on_failure="error",
+            self,
+            solver="cycle_reduction",
+            not_loglin_variable: Optional[List[str]] = None,
+            order: int = 1,
+            model_is_linear: bool = False,
+            tol: float = 1e-8,
+            max_iter: int = 1000,
+            verbose: bool = True,
+            on_failure="error",
     ) -> None:
         """
         Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
@@ -527,13 +547,13 @@ class gEconModel:
         self.perturbation_solved = True
 
     def _perturbation_setup(
-        self,
-        not_loglin_variables=None,
-        order=1,
-        model_is_linear=False,
-        verbose=True,
-        return_F_matrices=False,
-        tol=1e-8,
+            self,
+            not_loglin_variables=None,
+            order=1,
+            model_is_linear=False,
+            verbose=True,
+            return_F_matrices=False,
+            tol=1e-8,
     ):
         """
         This function is used to set up the perturbation matrices needed to simulate the model. It linearizes the model
@@ -629,12 +649,12 @@ class gEconModel:
             return Fs_subbed
 
     def check_bk_condition(
-        self,
-        free_param_dict: Optional[Dict[str, float]] = None,
-        system_matrices: Optional[List[ArrayLike]] = None,
-        verbose: bool = True,
-        return_value: Optional[str] = "df",
-        tol=1e-8,
+            self,
+            free_param_dict: Optional[Dict[str, float]] = None,
+            system_matrices: Optional[List[ArrayLike]] = None,
+            verbose: bool = True,
+            return_value: Optional[str] = "df",
+            tol=1e-8,
     ) -> Optional[ArrayLike]:
         """
         Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
@@ -776,23 +796,23 @@ class gEconModel:
         return pd.DataFrame(acorr_mat, index=T.index, columns=np.arange(n_lags))
 
     def fit(
-        self,
-        data,
-        estimate_a0=False,
-        estimate_P0=False,
-        a0_prior=None,
-        P0_prior=None,
-        filter_type="univariate",
-        draws=5000,
-        n_walkers=36,
-        moves=None,
-        emcee_x0=None,
-        verbose=True,
-        return_inferencedata=True,
-        burn_in=None,
-        thin=None,
-        skip_initial_state_check=False,
-        **sampler_kwargs,
+            self,
+            data,
+            estimate_a0=False,
+            estimate_P0=False,
+            a0_prior=None,
+            P0_prior=None,
+            filter_type="univariate",
+            draws=5000,
+            n_walkers=36,
+            moves=None,
+            emcee_x0=None,
+            verbose=True,
+            return_inferencedata=True,
+            burn_in=None,
+            thin=None,
+            skip_initial_state_check=False,
+            **sampler_kwargs,
     ):
         """
         Estimate model parameters via Bayesian inference. Parameter likelihood is computed using the Kalman filter.
@@ -978,7 +998,7 @@ class gEconModel:
         return sampler
 
     def sample_param_dict_from_prior(
-        self, n_samples=1, seed=None, param_subset=None, sample_shock_sigma=False
+            self, n_samples=1, seed=None, param_subset=None, sample_shock_sigma=False
     ):
 
         """
@@ -1087,12 +1107,12 @@ class gEconModel:
         return df
 
     def simulate(
-        self,
-        simulation_length: int = 40,
-        n_simulations: int = 100,
-        shock_dict: Optional[Dict[str, float]] = None,
-        shock_cov_matrix: Optional[ArrayLike] = None,
-        show_progress_bar: bool = False,
+            self,
+            simulation_length: int = 40,
+            n_simulations: int = 100,
+            shock_dict: Optional[Dict[str, float]] = None,
+            shock_cov_matrix: Optional[ArrayLike] = None,
+            show_progress_bar: bool = False,
     ):
 
         """
@@ -1429,6 +1449,9 @@ class gEconModel:
         list
             The names of the variables that were removed. If reduction was not possible, None is returned.
         """
+        if self.n_equations != self.n_variables:
+            warn("Simplification via try_reduce was requested but not possible because the system is not well defined.")
+            return
 
         if self.try_reduce_vars is None:
             return
@@ -1468,10 +1491,6 @@ class gEconModel:
         self.variables = sorted(list(self.variables), key=lambda x: x.name)
         self.n_variables = len(self.variables)
 
-        if self.n_equations != self.n_variables:
-            warn("Reduction was requested but not possible because the system is not well defined.")
-            return
-
         eliminated_vars = [var.name for var in variables if var not in self.variables]
 
         return eliminated_vars
@@ -1490,6 +1509,12 @@ class gEconModel:
         eliminated_vars : List[str]
             The names of the variables that were removed.
         """
+
+        if self.n_equations != self.n_variables:
+            warn(
+                "Removal of constant variables was requested but not possible because the system is not well defined."
+            )
+            return
 
         system = self.system_equations
 
@@ -1517,12 +1542,6 @@ class gEconModel:
         self.variables -= set(self.shocks)
         self.variables = sorted(list(self.variables), key=lambda x: x.name)
         self.n_variables = len(self.variables)
-
-        if self.n_equations != self.n_variables:
-            warn(
-                "Simplification was requested but not possible because the system is not well defined."
-            )
-            return
 
         eliminated_vars = [var.name for var in variables if var not in self.variables]
 

@@ -1,5 +1,9 @@
 import os
+import re
+
 import unittest
+from unittest import mock
+
 from pathlib import Path
 
 import numpy as np
@@ -15,10 +19,98 @@ from gEconpy.shared.utilities import string_keys_to_sympy
 ROOT = Path(__file__).parent.absolute()
 
 
+class ModelErrorTests(unittest.TestCase):
+
+    def setUp(self):
+        self.GCN_file = \
+            '''
+            block HOUSEHOLD
+            {
+                definitions
+                {
+                    u[] = log(C[]);
+                };
+    
+                objective
+                {
+                    U[] = u[] + beta * E[][U[1]];
+                };
+    
+                controls
+                {
+                    C[], K[];
+                };
+    
+                constraints
+                {
+                    Y[] = K[-1] ^ alpha;
+                    C[] = r[] * K[-1];
+                    K[] = (1 - delta) * K[-1];
+                    X[] = Y[] + C[];
+                    Z[] = 3;
+                };
+    
+                calibration
+                {
+                    alpha = 0.33;
+                    beta = 0.99;
+                };
+            };
+            '''
+
+    def test_build_warns_if_model_not_defined(self):
+        expected_warnings = [
+            'Simplification via try_reduce was requested but not possible because the system is not well defined.',
+            'Removal of constant variables was requested but not possible because the system is not well defined.',
+            f"The model does not appear correctly specified, there are 8 equations but "
+            f"11 variables. It will not be possible to solve this model. Please check the "
+            f"specification using available diagnostic tools, and check the GCN file for typos."
+        ]
+
+        with unittest.mock.patch('builtins.open',
+                                 new=unittest.mock.mock_open(read_data=self.GCN_file),
+                                 create=True):
+            with self.assertWarns(UserWarning) as warnings:
+                model = gEconModel('', verbose=False, simplify_tryreduce=True, simplify_constants=True)
+
+            for w in warnings.warnings:
+                warning_msg = str(w.message)
+                self.assertIn(warning_msg, expected_warnings)
+
+
 class ModelClassTestsOne(unittest.TestCase):
     def setUp(self):
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
         self.model = gEconModel(file_path, verbose=False)
+
+    @unittest.mock.patch('builtins.print')
+    def test_build_report(self, mock_print):
+        self.model.build_report(reduced_vars=['A'], singletons=['B'], verbose=True)
+
+        expected_output = '''
+            Model Building Complete.
+            Found:
+                9 equations
+                9 variables
+                The following variables were eliminated at user request:
+                    A
+                The following "variables" were defined as constants and have been substituted away:
+                    B
+                1 stochastic shock
+                    0 / 1 has a defined prior. 
+                5 parameters
+                    0 / 5 has a defined prior. 
+                1 calibrating equation
+                1 parameter to calibrate
+                Model appears well defined and ready to proceed to solving.'''
+        report = mock_print.call_args.args[0]
+
+        simple_output = re.sub('[\n\t]', ' ', expected_output)
+        simple_output = re.sub(' +', ' ', simple_output)
+
+        simple_report = re.sub('[\n\t]', ' ', report)
+        simple_report = re.sub(' +', ' ', simple_report)
+        self.assertEqual(simple_output.strip(), simple_report.strip())
 
     def test_model_options(self):
         self.assertEqual(self.model.options, {"output logfile": False, "output LaTeX": False})
@@ -56,9 +148,11 @@ class ModelClassTestsOne(unittest.TestCase):
         )
 
     def test_conflicting_assumptions_are_removed(self):
-        model = gEconModel(
-            os.path.join(ROOT, "Test GCNs/conflicting_assumptions.gcn"), verbose=False
-        )
+        with self.assertWarns(UserWarning):
+            model = gEconModel(
+                os.path.join(ROOT, "Test GCNs/conflicting_assumptions.gcn"), verbose=False
+            )
+
         self.assertTrue("real" not in model.assumptions["TC"].keys())
         self.assertTrue("imaginary" in model.assumptions["TC"].keys())
         self.assertTrue(model.assumptions["TC"]["imaginary"])
