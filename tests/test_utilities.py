@@ -1,11 +1,13 @@
 import unittest
-from gEconpy.shared.utilities import build_Q_matrix, compute_autocorrelation_matrix
+from gEconpy.shared.utilities import build_Q_matrix, compute_autocorrelation_matrix, \
+    get_shock_std_priors_from_hyperpriors
 from gEconpy.parser.parse_distributions import CompositeDistribution
 from scipy import stats
 
 import numpy as np
 
 from pathlib import Path
+
 ROOT = Path(__file__).parent.absolute()
 
 
@@ -19,7 +21,7 @@ class TestBuildQMatrix(unittest.TestCase):
     def test_passing_both_args_raises(self):
         with self.assertRaises(ValueError):
             build_Q_matrix(model_shocks=self.shocks,
-                           shock_dict={'epsilon_A':3},
+                           shock_dict={'epsilon_A': 3},
                            shock_cov_matrix=np.eye(3),
                            shock_priors=self.shock_priors)
 
@@ -30,7 +32,7 @@ class TestBuildQMatrix(unittest.TestCase):
                            shock_cov_matrix=cov_mat)
 
     def test_cov_matrix_bad_shape_raises(self):
-        cov_mat = np.random.normal(size=(3,2))
+        cov_mat = np.random.normal(size=(3, 2))
         with self.assertRaises(ValueError):
             build_Q_matrix(model_shocks=self.shocks,
                            shock_cov_matrix=cov_mat)
@@ -38,11 +40,11 @@ class TestBuildQMatrix(unittest.TestCase):
     def test_build_from_dictionary(self):
         Q = build_Q_matrix(model_shocks=self.shocks,
                            shock_priors=None,
-                           shock_dict={'epsilon_A':3})
+                           shock_dict={'epsilon_A': 3})
 
-        expected_Q = np.array([[3, 0,   0  ],
-                               [0, 0.01, 0  ],
-                               [0, 0,   0.01]])
+        expected_Q = np.array([[3, 0, 0],
+                               [0, 0.01, 0],
+                               [0, 0, 0.01]])
 
         self.assertTrue(np.allclose(Q, expected_Q))
 
@@ -58,7 +60,7 @@ class TestBuildQMatrix(unittest.TestCase):
     def test_build_from_mixed(self):
         Q = build_Q_matrix(model_shocks=self.shocks,
                            shock_priors=self.shock_priors,
-                           shock_dict={'epsilon_B':100})
+                           shock_dict={'epsilon_B': 100})
 
         expected_Q = np.eye(3)
         for i, shock_d in enumerate(self.shock_priors.values()):
@@ -66,6 +68,7 @@ class TestBuildQMatrix(unittest.TestCase):
 
         expected_Q[1, 1] = 100
         self.assertTrue(np.allclose(Q, expected_Q))
+
 
 class TestComputeAutocorrelation(unittest.TestCase):
 
@@ -77,6 +80,33 @@ class TestComputeAutocorrelation(unittest.TestCase):
         acorr = compute_autocorrelation_matrix(A, Q, n_lags=10)
         self.assertEqual(acorr.shape, (5, 10))
 
+
+class TestExtractShockStd(unittest.TestCase):
+
+    def setUp(self):
+        self.shocks = ['epsilon_A', 'epsilon_B', 'epsilon_C']
+        self.shock_priors = {'epsilon_A': CompositeDistribution(stats.norm, loc=stats.norm(0, 1), scale=stats.gamma(2, 1)),
+                             'epsilon_B': CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1)),
+                             'epsilon_C': CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1))}
+        self.hyper_priors = {'sigma_A': ('epsilon_A', 'scale', stats.gamma(2, 1)),
+                             'mu_A': ('epsilon_A', 'loc', stats.norm(0, 1)),
+                             'sigma_B': ('epsilon_B', 'scale', stats.gamma(2, 1)),
+                             'sigma_C': ('epsilon_C', 'scale', stats.gamma(2, 1))}
+
+    def test_raises_on_invalid_out_keys(self):
+        with self.assertRaises(ValueError):
+            get_shock_std_priors_from_hyperpriors(self.shocks, self.hyper_priors, out_keys='invalid_argument')
+
+    def test_extract_with_parent_keys(self):
+        shock_std = get_shock_std_priors_from_hyperpriors(self.shocks, self.hyper_priors, out_keys='parent')
+        self.assertTrue(all([shock in shock_std for shock in self.shocks]))
+        self.assertEqual(len(shock_std), len(self.shocks))
+
+    def test_extract_with_param_keys(self):
+        shock_std = get_shock_std_priors_from_hyperpriors(self.shocks, self.hyper_priors, out_keys='param')
+        self.assertTrue(all([key in shock_std for key in self.hyper_priors.keys() if key != 'mu_A']))
+        self.assertTrue('mu_A' not in shock_std)
+        self.assertEqual(len(shock_std), len(self.shocks))
 
 
 if __name__ == '__main__':

@@ -3,10 +3,8 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import sympy as sp
 
-from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
-    BlockNotInitializedException,
     ControlVariableNotFoundException,
     DynamicCalibratingEquationException,
     MultipleObjectiveFunctionsException,
@@ -19,6 +17,7 @@ from gEconpy.shared.utilities import (
     set_equality_equals_zero,
     unpack_keys_and_values,
 )
+from gEconpy.classes.containers import SymbolDictionary
 
 
 class Block:

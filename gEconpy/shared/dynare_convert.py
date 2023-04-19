@@ -5,7 +5,7 @@ import sympy as sp
 from sympy.abc import greeks
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.utilities import make_all_var_time_combos, string_keys_to_sympy
+from gEconpy.shared.utilities import make_all_var_time_combos
 
 OPERATORS = list("+-/*^()=")
 

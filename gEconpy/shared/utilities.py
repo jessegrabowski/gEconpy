@@ -1,17 +1,14 @@
 from collections import defaultdict
 from copy import copy
 from enum import EnumMeta
-from typing import Any, Callable, Dict, List, Union, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 import sympy as sp
 import numba as nb
 
-from sympy.polys.domains.mpelements import ComplexElement
-
+from gEconpy.classes.containers import SymbolDictionary, string_keys_to_sympy
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-
-VariableType = Union[TimeAwareSymbol, sp.Symbol]
 
 
 class IterEnum(EnumMeta):
@@ -51,62 +48,6 @@ def flatten_list(l, result_list=None):
         else:
             result_list.append(item)
     return result_list
-
-
-SAFE_STRING_TO_INDEX_DICT = dict(ss="ss", tp1=1, tm1=-1, t=0)
-
-
-def safe_string_to_sympy(s, assumptions=None):
-    if isinstance(s, sp.Symbol):
-        return s
-
-    assumptions = assumptions or defaultdict(lambda: {})
-
-    *name, time_index_str = s.split("_")
-    if time_index_str not in [str(x) for x in SAFE_STRING_TO_INDEX_DICT.keys()]:
-        name.append(time_index_str)
-        name = "_".join(name)
-        return sp.Symbol(name, **assumptions[name])
-
-    name = "_".join(name)
-    time_index = SAFE_STRING_TO_INDEX_DICT[time_index_str]
-    symbol = TimeAwareSymbol(name, time_index, **assumptions[name])
-
-    return symbol
-
-
-def symbol_to_string(symbol: Union[str, VariableType]):
-    if isinstance(symbol, str):
-        return symbol
-    else:
-        return symbol.safe_name if isinstance(symbol, TimeAwareSymbol) else symbol.name
-
-
-def string_keys_to_sympy(d, assumptions=None):
-    result = {}
-    assumptions = assumptions or defaultdict(lambda: {})
-
-    for key, value in d.items():
-        if isinstance(key, sp.Symbol):
-            result[key] = value
-            continue
-
-        if "_" not in key:
-            result[sp.Symbol(key, **assumptions.get(key, {}))] = value
-            continue
-
-        new_key = safe_string_to_sympy(key, assumptions)
-        result[new_key] = value
-
-    return result
-
-
-def sympy_keys_to_strings(d):
-    result = {}
-    for key in d.keys():
-        result[symbol_to_string(key)] = d[key]
-
-    return result
 
 
 def set_equality_equals_zero(eq):
@@ -239,46 +180,6 @@ def unpack_keys_and_values(d):
     return keys, values
 
 
-def sympy_number_values_to_floats(d: Dict[VariableType, Any]):
-    for var, value in d.items():
-        if isinstance(value, sp.core.Number):
-            d[var] = float(value)
-        elif isinstance(value, ComplexElement):
-            d[var] = complex(value)
-    return d
-
-
-def float_values_to_sympy_float(d: Dict[VariableType, Any]):
-    for var, value in d.items():
-        if isinstance(value, (float, int)):
-            d[var] = sp.Float(value)
-        elif isinstance(value, complex):
-            d[var] = sp.CC(value)
-
-    return d
-
-
-def sort_dictionary(d):
-    result = {}
-    sorted_keys = sorted(list(d.keys()))
-    for key in sorted_keys:
-        result[key] = d[key]
-
-    return result
-
-
-def sort_sympy_dict(d):
-    result = {}
-    sorted_keys = sorted(
-        list(d.keys()),
-        key=lambda x: x.base_name if isinstance(x, TimeAwareSymbol) else x.name,
-    )
-    for key in sorted_keys:
-        result[key] = d[key]
-
-    return result
-
-
 def select_keys(d, keys):
     result = {}
     for key in keys:
@@ -375,7 +276,7 @@ def add_all_variables_to_global_namespace(mod):
 
 
 def test_expr_is_zero(
-    eq: sp.Expr, params_to_test: List[sp.Symbol], n_tests: int = 10, tol: int = 16
+        eq: sp.Expr, params_to_test: List[sp.Symbol], n_tests: int = 10, tol: int = 16
 ) -> bool:
     """
     Test if an expression is equal to zero by plugging in random values for requested symbols and evaluating. Useful
@@ -514,3 +415,74 @@ def compute_autocorrelation_matrix(A, sigma, n_lags=5):
         acov_factor = A @ acov_factor
 
     return acov
+
+
+def get_shock_std_priors_from_hyperpriors(shocks, priors, out_keys='parent'):
+    """
+    Extract a single key, value pair from the model hyper_priors.
+
+    Parameters
+    -------
+    shocks: list of sympy Symbols
+        Model shocks
+    priors: dict of key, tuple
+        Model hyper-priors. Key is symbol, values are (parent symbol, parameter type, distribution)
+    out_keys: str
+        One of "param" or "parent". Determines what will be the keys on the returned dictionary. If parent,
+        the key will be the parent symbol. This is useful for putting sigmas in the right place of the
+        covariance matrix. If param, it maintains the parameter name as the key and discards the parent and type
+        information.
+
+    Returns
+    -------
+    shock_std_dict: dict of str, distribution
+        Dictionary of model shock standard deviations
+    """
+
+    if out_keys not in ['parent', 'param']:
+        raise ValueError(f'out_keys must be one of "parent" or "param", found {out_keys}')
+
+    shock_std_dict = SymbolDictionary()
+    for k, (parent, param, d) in priors.items():
+        if parent in shocks and param == 'scale':
+            if out_keys == 'parent':
+                shock_std_dict[parent] = d
+            else:
+                shock_std_dict[k] = d
+
+    return shock_std_dict
+
+
+def split_random_variables(param_dict, shock_names, obs_names):
+    """
+    Split a dictionary of parameters into dictionaries of shocks, observables, and other variables.
+
+    Parameters
+    ----------
+    param_dict : Dict[str, float]
+        A dictionary of parameters and their values.
+    shock_names : List[str]
+        A list of the names of shock variables.
+    obs_names : List[str]
+        A list of the names of observable variables.
+
+    Returns
+    -------
+    Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]
+        A tuple containing three dictionaries: the first has parameters, the second has
+        all shock variances parameters, and the third has observation noise variances.
+    """
+
+    out_param_dict = SymbolDictionary()
+    shock_dict = SymbolDictionary()
+    obs_dict = SymbolDictionary()
+
+    for k, v in param_dict.items():
+        if k in shock_names:
+            shock_dict[k] = v
+        elif k in obs_names:
+            obs_dict[k] = v
+        else:
+            out_param_dict[k] = v
+
+    return out_param_dict, shock_dict, obs_dict

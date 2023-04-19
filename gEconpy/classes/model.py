@@ -31,7 +31,7 @@ from gEconpy.exceptions.exceptions import (
 from gEconpy.numba_tools.utilities import numba_lambdify
 from gEconpy.parser import file_loaders, gEcon_parser
 from gEconpy.parser.constants import STEADY_STATE_NAMES
-from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary
+from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary, CompositeDistribution
 from gEconpy.parser.parse_equations import single_symbol_to_sympy
 from gEconpy.shared.utilities import (
     expand_subs_for_all_times,
@@ -39,7 +39,8 @@ from gEconpy.shared.utilities import (
     make_all_var_time_combos,
     merge_dictionaries,
     substitute_all_equations,
-    unpack_keys_and_values, build_Q_matrix, compute_autocorrelation_matrix,
+    unpack_keys_and_values, build_Q_matrix, compute_autocorrelation_matrix, get_shock_std_priors_from_hyperpriors,
+    split_random_variables,
 )
 from gEconpy.solvers.gensys import interpret_gensys_output
 from gEconpy.solvers.perturbation import PerturbationSolver
@@ -100,6 +101,7 @@ class gEconModel:
 
         self.param_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         self.shock_priors: SymbolDictionary[str, Any] = SymbolDictionary()
+        self.hyper_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         self.observation_noise_priors: SymbolDictionary[str, Any] = SymbolDictionary()
 
         self.n_variables: int = 0
@@ -1042,9 +1044,7 @@ class gEconModel:
 
         return sampler
 
-    def sample_param_dict_from_prior(
-            self, n_samples=1, seed=None, param_subset=None, sample_shock_sigma=False
-    ):
+    def sample_param_dict_from_prior(self, n_samples=1, seed=None, param_subset=None):
 
         """
         Sample parameters from the parameter prior distributions.
@@ -1057,30 +1057,22 @@ class gEconModel:
             Seed for the random number generator.
         param_subset: list, default: None
             List of parameter names to sample. If None, all parameters are sampled.
-        sample_shock_sigma: bool, default: False
-            If True, also sample the shock standard deviations.
 
         Returns
         -------
         new_param_dict: dict
             Dictionary of sampled parameters.
         """
+        shock_std_priors = get_shock_std_priors_from_hyperpriors(self.shocks, self.hyper_priors)
 
-        if sample_shock_sigma:
-            shock_priors = {k: v.rv_params["scale"] for k, v in self.shock_priors.items()}
-        else:
-            shock_priors = self.shock_priors
-
-        all_priors = merge_dictionaries(
-            self.param_priors, shock_priors, self.observation_noise_priors
-        )
+        all_priors = self.param_priors.to_sympy() | shock_std_priors | self.observation_noise_priors.to_sympy()
 
         if param_subset is None:
             n_variables = len(all_priors)
             priors_to_sample = all_priors
         else:
             n_variables = len(param_subset)
-            priors_to_sample = {k: v for k, v in all_priors.items() if k in param_subset}
+            priors_to_sample = SymbolDictionary({k: v for k, v in all_priors.items() if k.name in param_subset})
 
         if seed is not None:
             seed_sequence = np.random.SeedSequence(seed)
@@ -1093,7 +1085,11 @@ class gEconModel:
         for i, (key, d) in enumerate(priors_to_sample.items()):
             new_param_dict[key] = d.rvs(size=n_samples, random_state=streams[i])
 
-        return new_param_dict
+        free_param_dict, shock_dict, obs_dict = split_random_variables(new_param_dict,
+                                                                       self.shocks,
+                                                                       self.variables)
+
+        return free_param_dict, shock_dict, obs_dict
 
     def impulse_response_function(self, simulation_length: int = 40, shock_size: float = 1.0):
         """
@@ -1258,15 +1254,17 @@ class gEconModel:
             with methods .rvs, .pdf, and .logpdf is returned.
         """
 
-        priors = create_prior_distribution_dictionary(prior_dict)
+        priors, hyper_priors = create_prior_distribution_dictionary(prior_dict)
         hyper_parameters = set(prior_dict.keys()) - set(priors.keys())
 
-        # Clean up the hyper-parameters (e.g. shock stds) from the model, they aren't needed anymore
+        # Remove hyperparameters from the free parameters
         for parameter in hyper_parameters:
             del self.free_param_dict[parameter]
 
         param_priors = SymbolDictionary()
         shock_priors = SymbolDictionary()
+        hyper_priors_final = SymbolDictionary()
+
         for key, value in priors.items():
             sympy_key = single_symbol_to_sympy(key, assumptions=self.assumptions)
             if isinstance(sympy_key, TimeAwareSymbol):
@@ -1274,8 +1272,16 @@ class gEconModel:
             else:
                 param_priors[sympy_key.name] = value
 
+        for key, value in hyper_priors.items():
+            parent_rv, param_type, dist = value
+            parent_key = single_symbol_to_sympy(parent_rv, assumptions=self.assumptions)
+            param_key = single_symbol_to_sympy(key, assumptions=self.assumptions)
+
+            hyper_priors_final[param_key] = (parent_key, param_type, dist)
+
         self.param_priors = param_priors
         self.shock_priors = shock_priors
+        self.hyper_priors = hyper_priors_final
 
     def _build_model_blocks(self, parsed_model, simplify_blocks: bool):
         """

@@ -8,9 +8,9 @@ from gEconpy.estimation.estimation_utilities import (
     build_system_matrices,
     check_bk_condition,
     check_finite_matrix,
-    split_random_variables,
 )
 from gEconpy.estimation.kalman_filter import kalman_filter
+from gEconpy.shared.utilities import split_random_variables
 from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
 
 

@@ -173,7 +173,7 @@ class BasicParerFunctionalityTests(unittest.TestCase):
                 };"""
 
         model, raw_prior_dict = preprocess_gcn(compound_distribution)
-        prior_dict = create_prior_distribution_dictionary(raw_prior_dict)
+        prior_dict, _ = create_prior_distribution_dictionary(raw_prior_dict)
 
         d = prior_dict["alpha"]
 
@@ -208,7 +208,7 @@ class BasicParerFunctionalityTests(unittest.TestCase):
                 };"""
 
         model, raw_prior_dict = preprocess_gcn(compound_distribution)
-        prior_dict = create_prior_distribution_dictionary(raw_prior_dict)
+        prior_dict, _ = create_prior_distribution_dictionary(raw_prior_dict)
 
         epsilon_A = prior_dict["epsilon_A[]"]
         epsilon_B = prior_dict["epsilon_B[]"]

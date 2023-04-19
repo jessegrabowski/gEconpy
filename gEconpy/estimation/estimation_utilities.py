@@ -5,6 +5,8 @@ import numpy as np
 import sympy as sp
 from scipy import linalg
 
+from gEconpy.classes.containers import SymbolDictionary
+
 
 @nb.njit
 def check_finite_matrix(a):
@@ -304,41 +306,6 @@ def check_bk_condition(A, B, C, tol=1e-8):
 
     n_g_one = (eig[:, 0] > 1).sum()
     return n_forward <= n_g_one
-
-
-def split_random_variables(param_dict, shock_names, obs_names):
-    """
-    Split a dictionary of parameters into dictionaries of shocks, observables, and other variables.
-
-    Parameters
-    ----------
-    param_dict : Dict[str, float]
-        A dictionary of parameters and their values.
-    shock_names : List[str]
-        A list of the names of shock variables.
-    obs_names : List[str]
-        A list of the names of observable variables.
-
-    Returns
-    -------
-    Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]
-        A tuple containing three dictionaries: the first has parameters, the second has
-        all shock variances parameters, and the third has observation noise variances.
-    """
-
-    out_param_dict = {}
-    shock_dict = {}
-    obs_dict = {}
-
-    for k, v in param_dict.items():
-        if k in shock_names:
-            shock_dict[k] = v
-        elif k in obs_names:
-            obs_dict[k] = v
-        else:
-            out_param_dict[k] = v
-
-    return out_param_dict, shock_dict, obs_dict
 
 
 def extract_prior_dict(model):

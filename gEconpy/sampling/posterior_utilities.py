@@ -4,10 +4,10 @@ import xarray as xr
 
 from gEconpy.classes.progress_bar import ProgressBar
 from gEconpy.estimation.estimate import build_Q_and_H, build_Z_matrix, split_param_dict
-from gEconpy.estimation.estimation_utilities import split_random_variables
 from gEconpy.estimation.kalman_filter import kalman_filter
 from gEconpy.estimation.kalman_smoother import kalman_smoother
 from gEconpy.sampling.prior_utilities import get_initial_time_index
+from gEconpy.shared.utilities import split_random_variables
 
 
 def simulate_trajectories_from_posterior(

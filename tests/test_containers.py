@@ -19,6 +19,8 @@ class TestSymbolDictErrors(unittest.TestCase):
         with self.assertRaises(KeyError):
             # Cannot mix strings and symbols
             A = SymbolDictionary({'A': 3, sp.Symbol('B'): 2})
+
+        with self.assertRaises(KeyError):
             B = SymbolDictionary({sp.Symbol('B'): 2, 'A' : 3})
 
     def test_setitem_raises_on_wrong_key_type(self):

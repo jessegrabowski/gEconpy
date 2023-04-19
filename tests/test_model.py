@@ -137,10 +137,10 @@ class ModelErrorTests(unittest.TestCase):
         self.assertEqual(result_messages, 'Norm of stochastic part:    0.000000000')
 
     def test_compute_stationary_covariance_warns_if_using_default(self):
-        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
         model = gEconModel(file_path, verbose=False)
-        model.steady_state(verbose=False, model_is_linear=True)
-        model.solve_model(solver='gensys', verbose=False, model_is_linear=True)
+        model.steady_state(verbose=False)
+        model.solve_model(solver='gensys', verbose=False)
 
         with self.assertWarns(UserWarning):
             Sigma = model.compute_stationary_covariance_matrix()
@@ -384,7 +384,7 @@ class ModelClassTestsOne(unittest.TestCase):
         self.model.solve_model(verbose=False)
 
         n_lags = 10
-        acorr_df = self.model.compute_autocorrelation_matrix(shock_dict={'epsilon_A':0.01},
+        acorr_df = self.model.compute_autocorrelation_matrix(shock_dict={'epsilon_A': 0.01},
                                                              n_lags=n_lags)
 
         self.assertTrue(isinstance(acorr_df, pd.DataFrame))
@@ -395,10 +395,9 @@ class ModelClassTestsOne(unittest.TestCase):
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 
-        Sigma = self.model.compute_stationary_covariance_matrix(shock_dict={'epsilon_A':0.01})
+        Sigma = self.model.compute_stationary_covariance_matrix(shock_dict={'epsilon_A': 0.01})
         self.assertTrue(isinstance(Sigma, pd.DataFrame))
         self.assertTrue(all([x == self.model.n_variables for x in Sigma.shape]))
-
 
 
 class ModelClassTestsTwo(unittest.TestCase):
@@ -829,6 +828,25 @@ class TestLinearModel(unittest.TestCase):
 
         assert_allclose(Tg.values, Tc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg='T')
         assert_allclose(Rg.values, Rc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg='R')
+
+
+class TestModelSimulationTools(unittest.TestCase):
+    def setUp(self):
+        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+        self.model = gEconModel(file_path, verbose=False)
+        self.model.steady_state(verbose=False, model_is_linear=True)
+        self.model.solve_model(verbose=False, model_is_linear=True)
+
+    def test_sample_param_dicts(self):
+        param_dict, shock_dict, obs_dict = self.model.sample_param_dict_from_prior(n_samples=100)
+
+        self.assertTrue(all([x in param_dict.to_string() for x in self.model.free_param_dict]))
+        self.assertTrue(len(param_dict) == len(self.model.free_param_dict))
+
+        self.assertTrue(all([x in shock_dict for x in self.model.shocks]))
+        self.assertTrue(len(shock_dict) == len(self.model.shocks))
+
+        self.assertTrue(len(obs_dict) == 0)
 
 
 if __name__ == "__main__":
