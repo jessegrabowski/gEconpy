@@ -892,6 +892,24 @@ class TestModelSimulationTools(unittest.TestCase):
         self.assertTrue(data.shape[0] == self.model.n_variables)
         self.assertTrue(data.shape[1] == simulation_length * n_simulations)
 
+    def test_fit_model(self):
+        T = 100
+        n_simulations = 1
+
+        # Draw from shock prior
+        data = self.model.simulate(simulation_length=T, n_simulations=n_simulations)
+
+        # Only Y is observed
+        data = data.droplevel(axis=1, level=1).T[['Y']]
+
+        idata = self.model.fit(
+            data,
+            filter_type="univariate",
+            draws=1,
+            n_walkers=36,
+            return_inferencedata=True,
+            burn_in=1,
+        )
 
 if __name__ == "__main__":
     unittest.main()

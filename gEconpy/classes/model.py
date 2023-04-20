@@ -343,6 +343,10 @@ class gEconModel:
         -------
         None
         """
+
+        if self.options['linear']:
+            model_is_linear = True
+
         if not self.steady_state_solved:
             self.f_ss = self.steady_state_solver.solve_steady_state(
                 apply_user_simplifications=apply_user_simplifications,
@@ -471,6 +475,9 @@ class gEconModel:
         if on_failure not in ['error', 'ignore']:
             raise ValueError(f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}')
 
+        if self.options['linear']:
+            model_is_linear = True
+
         param_dict = self.free_param_dict | self.calib_param_dict
         steady_state_dict = self.steady_state_dict
 
@@ -594,6 +601,9 @@ class gEconModel:
             If return_F_matrices is True, returns the F matrices. Otherwise, does not return anything.
 
         """
+
+        if self.options['linear']:
+            model_is_linear = True
 
         free_param_dict = self.free_param_dict.copy()
 

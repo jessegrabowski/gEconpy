@@ -63,7 +63,8 @@ def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = N
         A list of sparse data.
     """
 
-    params_to_estimate = params_to_estimate or model.param_priors.keys()
+    if params_to_estimate is None:
+        params_to_estimate = list(model.param_priors.keys())
     ss_vars = list(model.steady_state_dict.to_sympy().keys())
 
     param_dict = model.free_param_dict.copy()
