@@ -146,6 +146,15 @@ class ModelErrorTests(unittest.TestCase):
         with self.assertWarns(UserWarning):
             Sigma = model.compute_stationary_covariance_matrix()
 
+    def test_sample_priors_fails_without_priors(self):
+        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+        model = gEconModel(file_path, verbose=False)
+        model.steady_state(verbose=False)
+        model.solve_model(solver='gensys', verbose=False)
+
+        with self.assertRaises(ValueError):
+            model.sample_param_dict_from_prior()
+
 
 class ModelClassTestsOne(unittest.TestCase):
     def setUp(self):

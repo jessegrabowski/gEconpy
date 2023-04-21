@@ -102,6 +102,49 @@ class SteadyStateSolver:
 
         return optimizer_kwargs
 
+    def apply_user_simplifications(self) -> List[sp.Add]:
+        """
+        Check if the system is analytically solvable without resorting to an optimizer. Currently, this is true only
+        if it is a linear model, or if the user has provided the complete steady state.
+
+        Returns
+        -------
+        is_presolved: bool
+        """
+        param_dict = self.free_param_dict.copy().to_sympy()
+        user_provided = self.steady_state_relationships.copy().to_sympy().float_to_values()
+        ss_eqs = self.steady_state_system.copy()
+        calib_eqs = self.calibrating_equations.copy()
+        all_eqs = ss_eqs + calib_eqs
+
+        all_vars_sym = list(self.steady_state_dict.to_sympy().keys())
+        all_vars_and_calib_sym = all_vars_sym + self.params_to_calibrate
+
+        zeros = np.full_like(all_eqs, False)
+        simplified_eqs = substitute_all_equations(all_eqs, user_provided)
+
+        for i, eq in enumerate(simplified_eqs):
+            subbed_eq = eq.subs(param_dict)
+
+            # Janky, but many expressions won't reduce to zero even if they ought to -> test numerically
+            atoms = [x for x in subbed_eq.atoms() if x in all_vars_and_calib_sym]
+            test_values = {x: np.random.uniform(1e-2, 0.99) for x in atoms}
+            eq_is_zero = sp.Abs(subbed_eq.subs(test_values)) < 1e-8
+            zeros[i] = eq_is_zero
+
+            if isinstance(subbed_eq, sp.Float) and not eq_is_zero:
+                raise ValueError(
+                    f"Applying user steady state definitions to equation {i}:\n"
+                    f"\t{all_eqs[i]}\n"
+                    f"resulted in non-zero residuals: {subbed_eq}.\n"
+                    f"Please verify the provided steady state relationships are correct."
+                )
+
+        eqs_to_solve = [eq for i, eq in enumerate(simplified_eqs) if not zeros[i]]
+
+        return eqs_to_solve
+
+
     def solve_steady_state(
             self,
             apply_user_simplifications: Optional[bool] = True,
@@ -169,27 +212,7 @@ class SteadyStateSolver:
 
         # This can be skipped if we're working on a linear model (there should be no user simplifications)
         if apply_user_simplifications and not model_is_linear:
-
-            zeros = np.full_like(all_eqs, False)
-            simplified_eqs = substitute_all_equations(all_eqs, user_provided)
-
-            for i, eq in enumerate(simplified_eqs):
-                subbed_eq = eq.subs(param_dict)
-
-                # Janky, but many expressions won't reduce to zero even if they ought to -> test numerically
-                atoms = [x for x in subbed_eq.atoms() if x in all_vars_and_calib_sym]
-                test_values = {x: np.random.uniform(1e-2, 0.99) for x in atoms}
-                eq_is_zero = sp.Abs(subbed_eq.subs(test_values)) < 1e-8
-                zeros[i] = eq_is_zero
-
-                if isinstance(subbed_eq, sp.Float) and not eq_is_zero:
-                    raise ValueError(
-                        f"Applying user steady state definitions to equation {i}:\n"
-                        f"\t{all_eqs[i]}\n"
-                        f"resulted in non-zero residuals: {subbed_eq}.\n"
-                        f"Please verify the provided steady state relationships are correct."
-                    )
-            eqs_to_solve = [eq for i, eq in enumerate(simplified_eqs) if not zeros[i]]
+            eqs_to_solve = self.apply_user_simplifications()
         else:
             eqs_to_solve = all_eqs
 
@@ -220,23 +243,7 @@ class SteadyStateSolver:
         )
 
         if model_is_linear:
-            # If the model is linear, we can quickly solve for the steady state.
-            # The purpose of using sp.cse here is to undo the deterministic simplifications. If the system is in
-            # steady state, this is made harder.
-            # TODO: Potentially save a "reverse deterministic sub" dict for use here.
-            all_eqs_no_ss = self.system_equations + self.calibrating_equations
-            all_vars_and_calib_sym_no_ss = self.variables + self.params_to_calibrate
-
-            sub_dict, simplified_system = sp.cse(all_eqs_no_ss, ignore=all_vars_and_calib_sym_no_ss)
-
-            shock_subs = {shock.to_ss(): 0 for shock in self.shocks}
-
-            A, b = sp.linear_eq_to_matrix([eq_to_ss(eq).subs(shock_subs) for eq in simplified_system],
-                                          all_vars_and_calib_sym)
-            Ab = sp.Matrix([[A, b]])
-            A_rref, _ = Ab.rref()
-            steady_state_values = A_rref[:, -1].subs(sub_dict * len(sub_dict))
-
+            steady_state_values = self._solve_linear_steady_state()
             f_ss = numba_lambdify(
                 exog_vars=params, expr=steady_state_values
             )
@@ -380,6 +387,58 @@ class SteadyStateSolver:
             }
 
         return ss_func
+
+    def _solve_linear_steady_state(self) -> List[sp.Add]:
+        """
+        If the model is linear, we can quickly solve for the steady state by putting everything into a matrix and
+        getting the reduced row-echelon form.
+
+        # TODO: Potentially save a "reverse deterministic sub" dict for use here.
+
+        Returns
+        -------
+        steady_state_values, list
+            A list of closed-form solutions to the steady-state, one per
+        """
+
+        shock_subs = {shock.to_ss(): 0 for shock in self.shocks}
+
+        all_vars_sym = list(self.steady_state_dict.to_sympy().keys())
+
+        all_vars_and_calib_sym = self.variables + self.params_to_calibrate
+        all_vars_and_calib_sym_ss = all_vars_sym + self.params_to_calibrate
+        all_eqs = self.system_equations + self.calibrating_equations
+
+        # simplifications make the next few steps a lot faster
+        sub_dict, simplified_system = sp.cse(all_eqs, ignore=all_vars_and_calib_sym)
+        A, b = sp.linear_eq_to_matrix([eq_to_ss(eq).subs(shock_subs) for eq in simplified_system],
+                                      all_vars_and_calib_sym_ss)
+        Ab = sp.Matrix([[A, b]])
+        A_rref, _ = Ab.rref()
+
+        # Recursive substitution to undo any simplifications
+        steady_state_values = A_rref[:, -1].subs(sub_dict * len(sub_dict))
+
+        return steady_state_values
+
+    def _steady_state_fast(self, model_is_linear: Optional[bool] = True):
+        param_dict = self.free_param_dict.copy().to_sympy()
+        params = list(param_dict.keys())
+
+        if model_is_linear:
+            steady_state_values = self._solve_linear_steady_state()
+        elif self._system_is_presolved():
+            steady_state_values = self.get_presolved_system()
+        else:
+            raise ValueError('Cannot get a fast steady state solution unless the model is linear or a full closed-form'
+                             'solution is provided')
+
+        f_ss = numba_lambdify(
+            exog_vars=params, expr=steady_state_values
+        )
+
+        pass
+
 
 
 class SymbolicSteadyStateSolver:

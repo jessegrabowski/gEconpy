@@ -15,7 +15,7 @@ from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
 
 
 def build_and_solve(
-    param_dict: dict, sparse_datas: List, vars_to_estimate: Optional[List] = None
+        param_dict: dict, sparse_datas: List, vars_to_estimate: Optional[List] = None
 ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
     """
     A collection of functionality already in the gEcon model object, extracted for speed and memory optimizations
@@ -96,10 +96,10 @@ def build_Z_matrix(obs_variables: List[str], state_variables: List[str]) -> np.n
 
 
 def build_Q_and_H(
-    state_sigmas: Dict[str, float],
-    shock_variables: List[str],
-    obs_variables: List[str],
-    obs_sigmas: Optional[Dict[str, float]] = None,
+        state_sigmas: Dict[str, float],
+        shock_variables: List[str],
+        obs_variables: List[str],
+        obs_sigmas: Optional[Dict[str, float]] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build the Q and H matrices for a state-space system.
@@ -147,7 +147,7 @@ def build_Q_and_H(
 
 
 def evaluate_prior_logp(
-    all_param_dict: Dict[str, float], prior_dict: Dict[str, stats.rv_continuous]
+        all_param_dict: Dict[str, float], prior_dict: Dict[str, stats.rv_continuous]
 ) -> float:
     """
     Evaluate the log probability density function (PDF) of the prior distribution for a given set of parameters.
@@ -173,7 +173,7 @@ def evaluate_prior_logp(
 
 
 def split_param_dict(
-    all_param_dict: Dict[str, float]
+        all_param_dict: Dict[str, float]
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
     """
     Split a dictionary of parameters into three dictionaries based on their keys.
@@ -210,14 +210,14 @@ def split_param_dict(
 
 
 def evaluate_logp(
-    all_param_dict: Dict[str, Any],
-    df: np.ndarray,
-    sparse_datas: np.ndarray,
-    Z: np.ndarray,
-    priors: Dict[str, Any],
-    shock_names: List[str],
-    observed_vars: List[str],
-    filter_type: str = "standard",
+        all_param_dict: Dict[str, Any],
+        df: np.ndarray,
+        sparse_datas: np.ndarray,
+        Z: np.ndarray,
+        priors: Dict[str, Any],
+        shock_names: List[str],
+        observed_vars: List[str],
+        filter_type: str = "standard",
 ) -> Tuple[float, np.ndarray]:
     """
     Evaluate the log likelihood of a log-linearized DSGE model using the Kalman Filter.

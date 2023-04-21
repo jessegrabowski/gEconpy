@@ -77,8 +77,8 @@ class gEconModel:
         self.model_filepath: str = model_filepath
 
         # Model metadata
-        self.options: Optional[Dict[str, bool]] = None
-        self.try_reduce_vars: Optional[List[TimeAwareSymbol]] = None
+        self.options: Dict[str, bool] = {}
+        self.try_reduce_vars: List[TimeAwareSymbol] = []
 
         self.blocks: Dict[str, Block] = {}
         self.n_blocks: int = 0
@@ -677,7 +677,7 @@ class gEconModel:
             verbose: Optional[bool] = True,
             return_value: Optional[str] = "df",
             tol=1e-8,
-    ) -> Optional[ArrayLike]:
+    ) -> Union[bool, pd.DataFrame]:
         """
         Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
         unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
@@ -1055,7 +1055,9 @@ class gEconModel:
 
         return sampler
 
-    def sample_param_dict_from_prior(self, n_samples=1, seed=None, param_subset=None):
+    def sample_param_dict_from_prior(self, n_samples=1,
+                                     seed=None,
+                                     param_subset=None):
 
         """
         Sample parameters from the parameter prior distributions.
@@ -1077,6 +1079,8 @@ class gEconModel:
         shock_std_priors = get_shock_std_priors_from_hyperpriors(self.shocks, self.hyper_priors)
 
         all_priors = self.param_priors.to_sympy() | shock_std_priors | self.observation_noise_priors.to_sympy()
+        if len(all_priors) == 0:
+            raise ValueError('No model priors found, cannot sample.')
 
         if param_subset is None:
             n_variables = len(all_priors)
@@ -1100,9 +1104,11 @@ class gEconModel:
                                                                        self.shocks,
                                                                        self.variables)
 
-        return free_param_dict, shock_dict, obs_dict
+        return free_param_dict.to_string(), shock_dict.to_string(), obs_dict.to_string()
 
-    def impulse_response_function(self, simulation_length: int = 40, shock_size: float = 1.0):
+    def impulse_response_function(self,
+                                  simulation_length: int = 40,
+                                  shock_size: float = 1.0):
         """
         Compute the impulse response functions of the model.
 
@@ -1297,7 +1303,8 @@ class gEconModel:
 
         raw_blocks = gEcon_parser.split_gcn_into_block_dictionary(parsed_model)
 
-        self.options = raw_blocks["options"]
+        if raw_blocks['options'] is not None:
+            self.options = raw_blocks["options"]
         self.try_reduce_vars = raw_blocks["tryreduce"]
         self.assumptions = raw_blocks["assumptions"]
 

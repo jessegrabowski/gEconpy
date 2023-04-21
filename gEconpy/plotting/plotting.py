@@ -53,7 +53,7 @@ def prepare_gridspec_figure(n_cols: int, n_plots: int) -> Tuple[GridSpec, List]:
 
     remainder = n_plots % n_cols
     has_remainder = remainder > 0
-    n_rows = n_plots // n_cols + 1
+    n_rows = n_plots // n_cols + int(has_remainder)
 
     gs = GridSpec(2 * n_rows, 2 * n_cols)
     plot_locs = []
@@ -161,6 +161,8 @@ def plot_simulation(
     fig = plt.figure(figsize=figsize, dpi=dpi)
 
     for idx, variable in enumerate(vars_to_plot):
+        if variable not in simulation.index:
+            raise ValueError(f'{variable} not found among model variables.')
         axis = fig.add_subplot(gs[plot_locs[idx]])
 
         _plot_single_variable(
@@ -222,14 +224,34 @@ def plot_irf(
         The figure object.
     """
 
+    if vars_to_plot is None:
+        vars_to_plot = irf.index.values.tolist()
+
+    else:
+        for var in vars_to_plot:
+            if var not in irf.index:
+                raise ValueError(f'{var} not found among simulated impulse responses.')
+
+    if not isinstance(vars_to_plot, list):
+        raise ValueError(f'Expected list for parameter vars_to_plot, got {vars_to_plot} of type {type(vars_to_plot)}')
+
+    shock_list = irf.columns.get_level_values(1).unique().tolist()
+    if shocks_to_plot is None:
+        shocks_to_plot = shock_list
+    else:
+        for shock in shocks_to_plot:
+            if shock not in shock_list:
+                raise ValueError(f'{shock} not found among shocks used in impulse response data.')
+
+    if not isinstance(shocks_to_plot, list):
+        raise ValueError(f'Expected list for parameter shocks_to_plot, got {shocks_to_plot} '
+                         f'of type {type(shocks_to_plot)}')
+
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
 
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
     fig = plt.figure(figsize=figsize, dpi=dpi)
-
-    if shocks_to_plot is None:
-        shocks_to_plot = irf.columns.get_level_values(1).unique()
 
     for idx, variable in enumerate(vars_to_plot):
         axis = fig.add_subplot(gs[plot_locs[idx]])
@@ -262,9 +284,7 @@ def plot_irf(
 
 def plot_prior_solvability(
     data: pd.DataFrame,
-    n_samples: int = 1_000,
-    seed: Optional[int] = None,
-    plotting_subset: Optional[List[str]] = None,
+    params_to_plot: Optional[List[str]] = None,
 ):
     """
     Plot the results of sampling from the prior distributions of a GCN and attempting to fit a DSGE model.
@@ -281,7 +301,7 @@ def plot_prior_solvability(
         The number of samples to draw from the prior distributions.
     seed : int, optional
         The seed to use for the random number generator.
-    plotting_subset : List[str], optional
+    params_to_plot : List[str], optional
         A list of parameter names to include in the plots. If not provided, all parameters will be plotted.
 
     Returns
@@ -316,15 +336,20 @@ def plot_prior_solvability(
 
     plot_data = plot_data.loc[:, ~constant_cols].copy()
     params = plot_data.columns
-    n_params = len(params) if plotting_subset is None else len(plotting_subset)
+    n_params = len(params) if params_to_plot is None else len(params_to_plot)
 
     plot_data["success"] = failure_step.isna()
     fig, axes = plt.subplots(n_params, n_params, figsize=(16, 16), dpi=100)
 
-    if plotting_subset is None:
+    if params_to_plot is not None:
+        for param in params_to_plot:
+            if param not in params:
+                raise ValueError(f'Cannot plot parameter "{param}", it was not found in the provided data.')
+
+    if params_to_plot is None:
         param_pairs = list(combinations_with_replacement(params, 2))
     else:
-        param_pairs = list(combinations_with_replacement(plotting_subset, 2))
+        param_pairs = list(combinations_with_replacement(params_to_plot, 2))
 
     plot_grid = np.arange(1, n_params**2 + 1).reshape((n_params, n_params))
     plot_grid[np.tril_indices(n_params, k=-1)] = 0
@@ -407,6 +432,7 @@ def plot_prior_solvability(
         frameon=False,
     )
     fig.suptitle("Model Solution Results by Parameter Values", y=0.95)
+
     return fig
 
 

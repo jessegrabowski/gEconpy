@@ -1,3 +1,5 @@
+from functools import reduce
+
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -13,16 +15,21 @@ from gEconpy.shared.utilities import split_random_variables
 def prior_solvability_check(
     model, n_samples, seed=None, param_subset=None, pert_solver="cycle_reduction"
 ):
-    data = pd.DataFrame(
-        model.sample_param_dict_from_prior(n_samples, seed, param_subset, sample_shock_sigma=True)
-    )
+    # Discard the noise priors here, we don't need them
+    param_dicts, *_ = model.sample_param_dict_from_prior(n_samples, seed, param_subset)
+
+    data = pd.DataFrame(param_dicts)
     progress_bar = ProgressBar(n_samples, verb="Sampling")
 
     def check_solvable(param_dict):
         try:
-            ss_dict, calib_dict = model.f_ss(param_dict)
-            resids = model.f_ss_resid(**ss_dict, **calib_dict, **param_dict)
-            ss_success = (np.array(resids) ** 2).sum() < 1e-8
+            results = model.f_ss(param_dict)
+
+            ss_dict = results['ss_dict']
+            calib_dict = results['calib_dict']
+            ss_success = results['success']
+            param_dict = param_dict | calib_dict
+
         except ValueError:
             return "steady_state"
 
@@ -34,7 +41,9 @@ def prior_solvability_check(
             tol = 1e-18
             verbose = False
 
-            A, B, C, D = model.build_perturbation_matrices(**param_dict, **ss_dict)
+            exog, endog = np.array(list(param_dict.values())), np.array(list(ss_dict.values()))
+            A, B, C, D = model.build_perturbation_matrices(exog, endog)
+
             if pert_solver == "cycle_reduction":
                 solver = model.perturbation_solver.solve_policy_function_with_cycle_reduction
                 T, R, result, log_norm = solver(A, B, C, D, max_iter, tol, verbose)
@@ -90,9 +99,11 @@ def prior_solvability_check(
     results = []
 
     # TODO: How to parallelize this? The problem is the huge model object causes massive overhead.
+    free_params = model.free_param_dict.copy()
     for param_dict in param_dicts:
         progress_bar.start()
-        result = check_solvable(param_dict)
+        free_params.update(param_dict)
+        result = check_solvable(free_params)
         results.append(result)
         progress_bar.stop()
 
