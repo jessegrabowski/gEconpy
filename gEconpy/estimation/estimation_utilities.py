@@ -5,8 +5,6 @@ import numpy as np
 import sympy as sp
 from scipy import linalg
 
-from gEconpy.classes.containers import SymbolDictionary
-
 
 @nb.njit
 def check_finite_matrix(a):

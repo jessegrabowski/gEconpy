@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import sympy as sp
 
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
     ControlVariableNotFoundException,
@@ -17,7 +18,6 @@ from gEconpy.shared.utilities import (
     set_equality_equals_zero,
     unpack_keys_and_values,
 )
-from gEconpy.classes.containers import SymbolDictionary
 
 
 class Block:
@@ -396,9 +396,7 @@ class Block:
             elif self.equation_flags[idx]["is_calibrating"]:
 
                 # Check if this equation is a valid calibrating equation
-                if not all(
-                    [x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)]
-                ):
+                if not all([x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)]):
                     raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
 
                 if self.params_to_calibrate is None:

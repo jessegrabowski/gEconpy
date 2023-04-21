@@ -1,5 +1,3 @@
-from functools import reduce
-
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -25,9 +23,9 @@ def prior_solvability_check(
         try:
             results = model.f_ss(param_dict)
 
-            ss_dict = results['ss_dict']
-            calib_dict = results['calib_dict']
-            ss_success = results['success']
+            ss_dict = results["ss_dict"]
+            calib_dict = results["calib_dict"]
+            ss_success = results["success"]
             param_dict = param_dict | calib_dict
 
         except ValueError:
@@ -130,47 +128,52 @@ def get_initial_time_index(df):
 
 
 def simulate_trajectories_from_prior(
-    model, n_samples=1000, n_simulations=100, simulation_length=40
+    model, n_samples=1000, n_simulations=100, simulation_length=40, seed=None, param_subset=None
 ):
     simulations = []
     model_var_names = [x.base_name for x in model.variables]
     shock_names = [x.name for x in model.shocks]
 
-    param_dicts = pd.DataFrame(model.sample_param_dict_from_prior(n_samples)).T.to_dict()
+    free_param_dicts, shock_dicts, _ = model.sample_param_dict_from_prior(
+        n_samples, seed, param_subset
+    )
+    free_param_dicts = pd.DataFrame(free_param_dicts).T.to_dict()
+    shock_dicts = pd.DataFrame(shock_dicts).T.to_dict()
+
     i = 0
-    print(param_dicts)
     progress_bar = ProgressBar(n_samples, "Sampling")
-    for param_dict in param_dicts.values():
-        free_param_dict, shock_dict, obs_dict = split_random_variables(param_dict, shock_names, model_var_names)
-        model.free_param_dict.update(free_param_dict)
+    free_params = model.free_param_dict.copy()
+    for param_dict, shock_dict in zip(free_param_dicts.values(), shock_dicts.values()):
         progress_bar.start()
+        free_params.update(param_dict)
 
-        try:
-            model.steady_state(verbose=False)
-            model.solve_model(verbose=False, on_failure="ignore")
+        # try:
+        model.steady_state(verbose=False)
+        model.solve_model(verbose=False, on_failure="ignore")
 
-            data = model.simulate(
-                simulation_length=simulation_length,
-                n_simulations=n_simulations,
-                shock_dict=shock_dict,
-                show_progress_bar=False,
-            )
-            simulaton_ids = np.arange(n_simulations).astype(int)
+        data = model.simulate(
+            simulation_length=simulation_length,
+            n_simulations=n_simulations,
+            shock_dict=shock_dict,
+            show_progress_bar=False,
+        )
 
-            data = data.rename(
-                axis=1,
-                level=1,
-                mapper=dict(zip(simulaton_ids, simulaton_ids + (n_simulations * i))),
-            )
+        simulaton_ids = np.arange(n_simulations).astype(int)
 
-            simulations.append(data)
-            i += 1
+        data = data.rename(
+            axis=1,
+            level=1,
+            mapper=dict(zip(simulaton_ids, simulaton_ids + (n_simulations * i))),
+        )
 
-        except ValueError:
-            continue
+        simulations.append(data)
+        i += 1
 
-        finally:
-            progress_bar.stop()
+        # except ValueError:
+        #     continue
+
+        # finally:
+        progress_bar.stop()
 
     simulations = pd.concat(simulations, axis=1)
     return simulations

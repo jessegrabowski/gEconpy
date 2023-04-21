@@ -162,7 +162,7 @@ def plot_simulation(
 
     for idx, variable in enumerate(vars_to_plot):
         if variable not in simulation.index:
-            raise ValueError(f'{variable} not found among model variables.')
+            raise ValueError(f"{variable} not found among model variables.")
         axis = fig.add_subplot(gs[plot_locs[idx]])
 
         _plot_single_variable(
@@ -230,10 +230,12 @@ def plot_irf(
     else:
         for var in vars_to_plot:
             if var not in irf.index:
-                raise ValueError(f'{var} not found among simulated impulse responses.')
+                raise ValueError(f"{var} not found among simulated impulse responses.")
 
     if not isinstance(vars_to_plot, list):
-        raise ValueError(f'Expected list for parameter vars_to_plot, got {vars_to_plot} of type {type(vars_to_plot)}')
+        raise ValueError(
+            f"Expected list for parameter vars_to_plot, got {vars_to_plot} of type {type(vars_to_plot)}"
+        )
 
     shock_list = irf.columns.get_level_values(1).unique().tolist()
     if shocks_to_plot is None:
@@ -241,11 +243,13 @@ def plot_irf(
     else:
         for shock in shocks_to_plot:
             if shock not in shock_list:
-                raise ValueError(f'{shock} not found among shocks used in impulse response data.')
+                raise ValueError(f"{shock} not found among shocks used in impulse response data.")
 
     if not isinstance(shocks_to_plot, list):
-        raise ValueError(f'Expected list for parameter shocks_to_plot, got {shocks_to_plot} '
-                         f'of type {type(shocks_to_plot)}')
+        raise ValueError(
+            f"Expected list for parameter shocks_to_plot, got {shocks_to_plot} "
+            f"of type {type(shocks_to_plot)}"
+        )
 
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
@@ -344,7 +348,9 @@ def plot_prior_solvability(
     if params_to_plot is not None:
         for param in params_to_plot:
             if param not in params:
-                raise ValueError(f'Cannot plot parameter "{param}", it was not found in the provided data.')
+                raise ValueError(
+                    f'Cannot plot parameter "{param}", it was not found in the provided data.'
+                )
 
     if params_to_plot is None:
         param_pairs = list(combinations_with_replacement(params, 2))

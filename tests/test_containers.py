@@ -9,7 +9,6 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 
 
 class TestSymbolDictErrors(unittest.TestCase):
-
     def test_raises_on_invalid_keys(self):
         with self.assertRaises(KeyError):
             # Only string or sp.Symbol keys allowed
@@ -18,22 +17,22 @@ class TestSymbolDictErrors(unittest.TestCase):
     def test_raises_on_mixed_keys(self):
         with self.assertRaises(KeyError):
             # Cannot mix strings and symbols
-            A = SymbolDictionary({'A': 3, sp.Symbol('B'): 2})
+            A = SymbolDictionary({"A": 3, sp.Symbol("B"): 2})
 
         with self.assertRaises(KeyError):
-            B = SymbolDictionary({sp.Symbol('B'): 2, 'A' : 3})
+            B = SymbolDictionary({sp.Symbol("B"): 2, "A": 3})
 
     def test_setitem_raises_on_wrong_key_type(self):
-        d = SymbolDictionary({sp.Symbol('A'): 3})
+        d = SymbolDictionary({sp.Symbol("A"): 3})
         with self.assertRaises(KeyError):
-            d['B'] = 4
+            d["B"] = 4
 
-        d = SymbolDictionary({'A' : 3})
+        d = SymbolDictionary({"A": 3})
         with self.assertRaises(KeyError):
-            d[sp.Symbol('B')] = 4
+            d[sp.Symbol("B")] = 4
 
     def test_pipe_merge_errors_with_non_dict_other(self):
-        d = SymbolDictionary({'A': 4})
+        d = SymbolDictionary({"A": 4})
         with self.assertRaises(ValueError) as e:
             s = {1, 2, 3}
             d | s

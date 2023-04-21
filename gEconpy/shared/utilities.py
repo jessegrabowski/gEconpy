@@ -1,11 +1,10 @@
-from collections import defaultdict
 from copy import copy
 from enum import EnumMeta
 from typing import Any, Callable, Dict, List, Optional
 
+import numba as nb
 import numpy as np
 import sympy as sp
-import numba as nb
 
 from gEconpy.classes.containers import SymbolDictionary, string_keys_to_sympy
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -276,7 +275,7 @@ def add_all_variables_to_global_namespace(mod):
 
 
 def test_expr_is_zero(
-        eq: sp.Expr, params_to_test: List[sp.Symbol], n_tests: int = 10, tol: int = 16
+    eq: sp.Expr, params_to_test: List[sp.Symbol], n_tests: int = 10, tol: int = 16
 ) -> bool:
     """
     Test if an expression is equal to zero by plugging in random values for requested symbols and evaluating. Useful
@@ -311,11 +310,13 @@ def test_expr_is_zero(
     return True
 
 
-def build_Q_matrix(model_shocks: List[str],
-                   shock_dict: Optional[dict[str, float]] = None,
-                   shock_cov_matrix: Optional[np.array] = None,
-                   shock_std_priors: Optional[dict[str, Any]] = None,
-                   default_value: Optional[float] = 0.01) -> np.array:
+def build_Q_matrix(
+    model_shocks: List[str],
+    shock_dict: Optional[dict[str, float]] = None,
+    shock_cov_matrix: Optional[np.array] = None,
+    shock_std_priors: Optional[dict[str, Any]] = None,
+    default_value: Optional[float] = 0.01,
+) -> np.array:
     """
     Take different options for user input and reconcile them into a covariance matrix. Exactly one or zero of shock_dict
     or shock_cov_matrix should be provided. Then, proceed according to the following logic:
@@ -364,7 +365,9 @@ def build_Q_matrix(model_shocks: List[str],
 
     if shock_cov_matrix is not None:
         if not all([x == n for x in shock_cov_matrix.shape]):
-            raise ValueError(f'Provided covariance matrix has shape {shock_cov_matrix.shape}, expected ({n}, {n})')
+            raise ValueError(
+                f"Provided covariance matrix has shape {shock_cov_matrix.shape}, expected ({n}, {n})"
+            )
         try:
             L = np.linalg.cholesky(shock_cov_matrix)
             return shock_cov_matrix
@@ -417,7 +420,7 @@ def compute_autocorrelation_matrix(A, sigma, n_lags=5):
     return acov
 
 
-def get_shock_std_priors_from_hyperpriors(shocks, priors, out_keys='parent'):
+def get_shock_std_priors_from_hyperpriors(shocks, priors, out_keys="parent"):
     """
     Extract a single key, value pair from the model hyper_priors.
 
@@ -439,13 +442,13 @@ def get_shock_std_priors_from_hyperpriors(shocks, priors, out_keys='parent'):
         Dictionary of model shock standard deviations
     """
 
-    if out_keys not in ['parent', 'param']:
+    if out_keys not in ["parent", "param"]:
         raise ValueError(f'out_keys must be one of "parent" or "param", found {out_keys}')
 
     shock_std_dict = SymbolDictionary()
     for k, (parent, param, d) in priors.items():
-        if parent in shocks and param == 'scale':
-            if out_keys == 'parent':
+        if parent in shocks and param in ["scale", "sd"]:
+            if out_keys == "parent":
                 shock_std_dict[parent] = d
             else:
                 shock_std_dict[k] = d

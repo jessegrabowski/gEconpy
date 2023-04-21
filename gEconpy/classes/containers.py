@@ -1,11 +1,10 @@
 from collections import defaultdict
-from typing import Dict, Any, Union
+from typing import Any, Dict, Union
 
 import sympy as sp
 from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.typing import VariableType
 
 SAFE_STRING_TO_INDEX_DICT = dict(ss="ss", tp1=1, tm1=-1, t=0)
 
@@ -29,7 +28,7 @@ def safe_string_to_sympy(s, assumptions=None):
     return symbol
 
 
-def symbol_to_string(symbol: Union[str, VariableType]):
+def symbol_to_string(symbol: Union[str, sp.Symbol]):
     if isinstance(symbol, str):
         return symbol
     else:
@@ -63,7 +62,7 @@ def sympy_keys_to_strings(d):
     return result
 
 
-def sympy_number_values_to_floats(d: Dict[VariableType, Any]):
+def sympy_number_values_to_floats(d: Dict[sp.Symbol, Any]):
     for var, value in d.items():
         if isinstance(value, sp.core.Number):
             d[var] = float(value)
@@ -72,7 +71,7 @@ def sympy_number_values_to_floats(d: Dict[VariableType, Any]):
     return d
 
 
-def float_values_to_sympy_float(d: Dict[VariableType, Any]):
+def float_values_to_sympy_float(d: Dict[sp.Symbol, Any]):
     for var, value in d.items():
         if isinstance(value, (float, int)):
             d[var] = sp.Float(value)

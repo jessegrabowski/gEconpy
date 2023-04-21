@@ -11,7 +11,7 @@ gEconpy uses the GCN file originally created for the gEcon package. gEcon GCN fi
 gEconpy is still in an unfinished alpha state, but I encourage anyone interested in DSGE modeling to give it a try and and report any bugs you might find.
 
 ## Contributing:
-Contributions from anyone are welcome, regardless of previous experience. Please check the Issues tab for open issues, or to create a new issue. 
+Contributions from anyone are welcome, regardless of previous experience. Please check the Issues tab for open issues, or to create a new issue.
 
 # Representing a DSGE Model
 Like the R package gEcon, gEconpy uses .GCN files to represent a DSGE model. A GCN file is divided into blocks, each of which represents an optimization problem. Here is one block from the example Real Business Cycle (RBC) model included in the package.

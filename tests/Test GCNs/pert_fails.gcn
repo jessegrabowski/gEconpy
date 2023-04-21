@@ -4,35 +4,35 @@ block SYSTEM_EQUATIONS
 	{
 		#1. Labor supply
 		W[] = sigma * C[] + phi * L[];
-		
+
 		#2. Euler Equation
 		sigma / beta * (E[][C[1]] - C[]) = R_ss * E[][R[1]];
-		
+
 		#3. Law of motion of capital -- Timings have been changed to cause Gensys to fail
 		K[] = (1 - delta) * K[] + delta * I[];
-		
+
 		#4. Production Function -- Timings have been changed to cause Gensys to fail
 		Y[] = A[] + alpha * E[][K[1]] + (1 - alpha) * L[];
-		
+
 		#5. Demand for capital
 		R[] = Y[] - K[-1];
-		
+
 		#6. Demand for labor
 		W[] = Y[] - L[];
-		
+
 		#7. Equlibrium Condition
 		Y_ss * Y[] = C_ss * C[] + I_ss * I[];
-		
+
 		#8. Productivity Shock
 		A[] = rho_A * A[-1] + epsilon_A[];
-		
+
 	};
-	
+
 	shocks
 	{
 		epsilon_A[];
 	};
-	
+
 	calibration
 	{
 		sigma = 2;
@@ -41,7 +41,7 @@ block SYSTEM_EQUATIONS
 		beta = 0.985;
 		delta = 0.025;
 		rho_A = 0.95;
-		
+
 		#P_ss = 1;
 		R_ss = (1 / beta - (1 - delta));
 		W_ss = (1 - alpha) ^ (1 / (1 - alpha)) * (alpha / R_ss) ^ (alpha / (1 - alpha));
@@ -50,7 +50,7 @@ block SYSTEM_EQUATIONS
 		K_ss = alpha * Y_ss / R_ss;
 		I_ss = delta * K_ss;
 		C_ss = Y_ss - I_ss;
-		L_ss = (1 - alpha) * Y_ss / W_ss;	
+		L_ss = (1 - alpha) * Y_ss / W_ss;
 	};
 
 };

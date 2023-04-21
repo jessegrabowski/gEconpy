@@ -1,9 +1,8 @@
 import os
 import re
 import unittest
-from unittest import mock
-
 from pathlib import Path
+from unittest import mock
 
 import sympy as sp
 from scipy import optimize
@@ -28,52 +27,55 @@ class SteadyStateModelOne(unittest.TestCase):
 
         self.assertRaises(ValueError, self.model.steady_state, verbose=True)
 
-    @mock.patch('builtins.print')
+    @mock.patch("builtins.print")
     def test_print_steady_state_report_before_solving(self, mock_print):
         self.model.print_steady_state()
         ss_report = mock_print.call_args.args[0]
-        self.assertEqual(ss_report, "Run the steady_state method to find a steady state before calling this method.")
+        self.assertEqual(
+            ss_report,
+            "Run the steady_state method to find a steady state before calling this method.",
+        )
 
-    @mock.patch('builtins.print')
+    @mock.patch("builtins.print")
     def test_print_steady_state_report_solver_successful(self, mock_print):
         self.model.steady_state(verbose=False)
         self.model.print_steady_state()
 
-        expected_output = '''A_ss               1.000
+        expected_output = """A_ss               1.000
                              C_ss               4.119
                              K_ss              74.553
                              U_ss             101.458
-                             lambda_ss          0.120'''
+                             lambda_ss          0.120"""
 
-        expected_output = re.sub('[\t\n]', ' ', expected_output)
-        expected_output = re.sub(' +', ' ', expected_output)
+        expected_output = re.sub("[\t\n]", " ", expected_output)
+        expected_output = re.sub(" +", " ", expected_output)
 
         ss_report = mock_print.call_args.args[0]
-        ss_report = re.sub('[\t\n]', ' ', ss_report)
-        ss_report = re.sub(' +', ' ', ss_report)
+        ss_report = re.sub("[\t\n]", " ", ss_report)
+        ss_report = re.sub(" +", " ", ss_report)
 
         self.assertEqual(ss_report, expected_output)
 
-    @mock.patch('builtins.print')
+    @mock.patch("builtins.print")
     def test_print_steady_state_report_solver_fails(self, mock_print):
         self.model.steady_state(verbose=False)
 
         # Spoof a failed solving attempt
         self.model.steady_state_solved = False
         self.model.print_steady_state()
-        expected_output = '''Values come from the latest solver iteration but are NOT a valid steady state.
+        expected_output = """Values come from the latest solver iteration but are NOT a valid steady state.
                              A_ss               1.000
                              C_ss               4.119
                              K_ss              74.553
                              U_ss             101.458
-                             lambda_ss          0.120'''
+                             lambda_ss          0.120"""
 
-        expected_output = re.sub('[\t\n]', ' ', expected_output)
-        expected_output = re.sub(' +', ' ', expected_output)
+        expected_output = re.sub("[\t\n]", " ", expected_output)
+        expected_output = re.sub(" +", " ", expected_output)
 
         ss_report = mock_print.call_args.args[0]
-        ss_report = re.sub('[\t\n]', ' ', ss_report)
-        ss_report = re.sub(' +', ' ', ss_report)
+        ss_report = re.sub("[\t\n]", " ", ss_report)
+        ss_report = re.sub(" +", " ", ss_report)
 
         self.assertEqual(ss_report, expected_output)
 

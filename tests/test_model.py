@@ -1,10 +1,8 @@
 import os
 import re
-
 import unittest
-from unittest import mock
-
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -22,27 +20,25 @@ ROOT = Path(__file__).parent.absolute()
 
 
 class ModelErrorTests(unittest.TestCase):
-
     def setUp(self):
-        self.GCN_file = \
-            '''
+        self.GCN_file = """
             block HOUSEHOLD
             {
                 definitions
                 {
                     u[] = log(C[]);
                 };
-    
+
                 objective
                 {
                     U[] = u[] + beta * E[][U[1]];
                 };
-    
+
                 controls
                 {
                     C[], K[];
                 };
-    
+
                 constraints
                 {
                     Y[] = K[-1] ^ alpha;
@@ -51,29 +47,31 @@ class ModelErrorTests(unittest.TestCase):
                     X[] = Y[] + C[];
                     Z[] = 3;
                 };
-    
+
                 calibration
                 {
                     alpha = 0.33;
                     beta = 0.99;
                 };
             };
-            '''
+            """
 
     def test_build_warns_if_model_not_defined(self):
         expected_warnings = [
-            'Simplification via try_reduce was requested but not possible because the system is not well defined.',
-            'Removal of constant variables was requested but not possible because the system is not well defined.',
+            "Simplification via try_reduce was requested but not possible because the system is not well defined.",
+            "Removal of constant variables was requested but not possible because the system is not well defined.",
             f"The model does not appear correctly specified, there are 8 equations but "
             f"11 variables. It will not be possible to solve this model. Please check the "
-            f"specification using available diagnostic tools, and check the GCN file for typos."
+            f"specification using available diagnostic tools, and check the GCN file for typos.",
         ]
 
-        with unittest.mock.patch('builtins.open',
-                                 new=unittest.mock.mock_open(read_data=self.GCN_file),
-                                 create=True):
+        with unittest.mock.patch(
+            "builtins.open", new=unittest.mock.mock_open(read_data=self.GCN_file), create=True
+        ):
             with self.assertWarns(UserWarning) as warnings:
-                model = gEconModel('', verbose=False, simplify_tryreduce=True, simplify_constants=True)
+                model = gEconModel(
+                    "", verbose=False, simplify_tryreduce=True, simplify_constants=True
+                )
 
             for w in warnings.warnings:
                 warning_msg = str(w.message)
@@ -85,7 +83,7 @@ class ModelErrorTests(unittest.TestCase):
         model.steady_state(verbose=False)
 
         with self.assertRaises(NotImplementedError):
-            model.solve_model(solver='invalid_solver')
+            model.solve_model(solver="invalid_solver")
 
     def test_bad_failure_argument_raises(self):
         file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
@@ -93,7 +91,7 @@ class ModelErrorTests(unittest.TestCase):
         model.steady_state(verbose=False, model_is_linear=True)
 
         with self.assertRaises(ValueError):
-            model.solve_model(solver='gensys', on_failure='raise', model_is_linear=True)
+            model.solve_model(solver="gensys", on_failure="raise", model_is_linear=True)
 
     def test_bad_argument_to_bk_condition_raises(self):
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
@@ -102,7 +100,7 @@ class ModelErrorTests(unittest.TestCase):
         model.solve_model(verbose=False)
 
         with self.assertRaises(ValueError):
-            model.check_bk_condition(return_value='invalid_argument')
+            model.check_bk_condition(return_value="invalid_argument")
 
     def test_gensys_fails_to_solve(self):
         file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
@@ -110,38 +108,40 @@ class ModelErrorTests(unittest.TestCase):
         model.steady_state(verbose=False, model_is_linear=True)
 
         with self.assertRaises(GensysFailedException):
-            model.solve_model(solver='gensys', on_failure='error', model_is_linear=True, verbose=False)
+            model.solve_model(
+                solver="gensys", on_failure="error", model_is_linear=True, verbose=False
+            )
 
-    @mock.patch('builtins.print')
+    @mock.patch("builtins.print")
     def test_outputs_after_gensys_failure(self, mock_print):
         file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
         model = gEconModel(file_path, verbose=False)
         model.steady_state(verbose=False, model_is_linear=True)
-        model.solve_model(solver='gensys', on_failure='ignore', model_is_linear=True, verbose=True)
+        model.solve_model(solver="gensys", on_failure="ignore", model_is_linear=True, verbose=True)
 
         gensys_message = mock_print.call_args.args[0]
-        self.assertEqual(gensys_message, 'Solution exists, but is not unique.')
+        self.assertEqual(gensys_message, "Solution exists, but is not unique.")
 
         P, Q, R, S = model.P, model.Q, model.R, model.S
-        for X, name in zip([P, Q, R, S], ['P', 'Q', 'R', 'S']):
+        for X, name in zip([P, Q, R, S], ["P", "Q", "R", "S"]):
             self.assertIsNone(X, msg=name)
 
-    @mock.patch('builtins.print')
+    @mock.patch("builtins.print")
     def test_outputs_after_pert_success(self, mock_print):
         file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
         model = gEconModel(file_path, verbose=False)
         model.steady_state(verbose=False, model_is_linear=True)
-        model.solve_model(solver='gensys', verbose=True, model_is_linear=True)
+        model.solve_model(solver="gensys", verbose=True, model_is_linear=True)
 
         # TODO: Can i get more print calls without having to parse through call_args_list?
         result_messages = mock_print.call_args.args[0]
-        self.assertEqual(result_messages, 'Norm of stochastic part:    0.000000000')
+        self.assertEqual(result_messages, "Norm of stochastic part:    0.000000000")
 
     def test_compute_stationary_covariance_warns_if_using_default(self):
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
         model = gEconModel(file_path, verbose=False)
         model.steady_state(verbose=False)
-        model.solve_model(solver='gensys', verbose=False)
+        model.solve_model(solver="gensys", verbose=False)
 
         with self.assertWarns(UserWarning):
             Sigma = model.compute_stationary_covariance_matrix()
@@ -150,7 +150,7 @@ class ModelErrorTests(unittest.TestCase):
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
         model = gEconModel(file_path, verbose=False)
         model.steady_state(verbose=False)
-        model.solve_model(solver='gensys', verbose=False)
+        model.solve_model(solver="gensys", verbose=False)
 
         with self.assertRaises(ValueError):
             model.sample_param_dict_from_prior()
@@ -161,11 +161,11 @@ class ModelClassTestsOne(unittest.TestCase):
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
         self.model = gEconModel(file_path, verbose=False)
 
-    @unittest.mock.patch('builtins.print')
+    @unittest.mock.patch("builtins.print")
     def test_build_report(self, mock_print):
-        self.model.build_report(reduced_vars=['A'], singletons=['B'], verbose=True)
+        self.model.build_report(reduced_vars=["A"], singletons=["B"], verbose=True)
 
-        expected_output = '''
+        expected_output = """
             Model Building Complete.
             Found:
                 9 equations
@@ -175,19 +175,19 @@ class ModelClassTestsOne(unittest.TestCase):
                 The following "variables" were defined as constants and have been substituted away:
                     B
                 1 stochastic shock
-                    0 / 1 has a defined prior. 
+                    0 / 1 has a defined prior.
                 5 parameters
-                    0 / 5 has a defined prior. 
+                    0 / 5 has a defined prior.
                 1 calibrating equation
                 1 parameter to calibrate
-                Model appears well defined and ready to proceed to solving.'''
+                Model appears well defined and ready to proceed to solving."""
         report = mock_print.call_args.args[0]
 
-        simple_output = re.sub('[\n\t]', ' ', expected_output)
-        simple_output = re.sub(' +', ' ', simple_output)
+        simple_output = re.sub("[\n\t]", " ", expected_output)
+        simple_output = re.sub(" +", " ", simple_output)
 
-        simple_report = re.sub('[\n\t]', ' ', report)
-        simple_report = re.sub(' +', ' ', simple_report)
+        simple_report = re.sub("[\n\t]", " ", report)
+        simple_report = re.sub(" +", " ", simple_report)
         self.assertEqual(simple_output.strip(), simple_report.strip())
 
     def test_model_options(self):
@@ -383,10 +383,10 @@ class ModelClassTestsOne(unittest.TestCase):
     def test_blanchard_kahn_conditions(self):
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
-        bk_cond = self.model.check_bk_condition(return_value='bool', verbose=True)
+        bk_cond = self.model.check_bk_condition(return_value="bool", verbose=True)
         self.assertTrue(bk_cond)
 
-        bk_df = self.model.check_bk_condition(return_value='df')
+        bk_df = self.model.check_bk_condition(return_value="df")
         self.assertTrue(isinstance(bk_df, pd.DataFrame))
 
     def test_compute_autocorrelation_matrix(self):
@@ -394,8 +394,9 @@ class ModelClassTestsOne(unittest.TestCase):
         self.model.solve_model(verbose=False)
 
         n_lags = 10
-        acorr_df = self.model.compute_autocorrelation_matrix(shock_dict={'epsilon_A': 0.01},
-                                                             n_lags=n_lags)
+        acorr_df = self.model.compute_autocorrelation_matrix(
+            shock_dict={"epsilon_A": 0.01}, n_lags=n_lags
+        )
 
         self.assertTrue(isinstance(acorr_df, pd.DataFrame))
         self.assertEqual(acorr_df.shape[0], self.model.n_variables)
@@ -405,7 +406,7 @@ class ModelClassTestsOne(unittest.TestCase):
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 
-        Sigma = self.model.compute_stationary_covariance_matrix(shock_dict={'epsilon_A': 0.01})
+        Sigma = self.model.compute_stationary_covariance_matrix(shock_dict={"epsilon_A": 0.01})
         self.assertTrue(isinstance(Sigma, pd.DataFrame))
         self.assertTrue(all([x == self.model.n_variables for x in Sigma.shape]))
 
@@ -649,7 +650,7 @@ class ModelClassTestsThree(unittest.TestCase):
                 "phi_pi",
                 "rho_pi_dot",
             ],
-            **DEFAULT_ASSUMPTIONS
+            **DEFAULT_ASSUMPTIONS,
         )
 
         param_dict = {
@@ -803,27 +804,41 @@ class TestLinearModel(unittest.TestCase):
     def test_steady_state(self):
         self.model.steady_state(model_is_linear=True, verbose=False)
         self.assertTrue(self.model.steady_state_solved)
-        self.assertTrue(np.allclose(np.array(list(self.model.steady_state_dict.values())),
-                                    np.array([0, 0, 0, 0, 0, 0, 0, 0])))
+        self.assertTrue(
+            np.allclose(
+                np.array(list(self.model.steady_state_dict.values())),
+                np.array([0, 0, 0, 0, 0, 0, 0, 0]),
+            )
+        )
 
     def test_perturbation_solver(self):
         self.model.steady_state(verbose=False, model_is_linear=True)
         self.model.solve_model(verbose=False, model_is_linear=True)
         self.assertTrue(self.model.perturbation_solved)
 
-        T_dynare = np.array([[0.95, 0.],
-                             [0.34375208, 0.39812608],
-                             [3.55502044, -0.54398862],
-                             [0.08887551, 0.96140028],
-                             [0.14188965, -0.24121738],
-                             [1.04222827, -0.8067913],
-                             [0.90033862, 0.43442608],
-                             [1.04222827, 0.1932087]])
+        T_dynare = np.array(
+            [
+                [0.95, 0.0],
+                [0.34375208, 0.39812608],
+                [3.55502044, -0.54398862],
+                [0.08887551, 0.96140028],
+                [0.14188965, -0.24121738],
+                [1.04222827, -0.8067913],
+                [0.90033862, 0.43442608],
+                [1.04222827, 0.1932087],
+            ]
+        )
 
-        R_dynare = np.array([1., 0.361844, 3.742127, 0.093553, 0.149358, 1.097082, 0.947725, 1.097082])
+        R_dynare = np.array(
+            [1.0, 0.361844, 3.742127, 0.093553, 0.149358, 1.097082, 0.947725, 1.097082]
+        )
 
-        assert_allclose(self.model.T[['A', 'K']].values, T_dynare, rtol=1e-5, atol=1e-5, err_msg='T')
-        assert_allclose(self.model.R.values, R_dynare.reshape(-1, 1), rtol=1e-5, atol=1e-5, err_msg='R')
+        assert_allclose(
+            self.model.T[["A", "K"]].values, T_dynare, rtol=1e-5, atol=1e-5, err_msg="T"
+        )
+        assert_allclose(
+            self.model.R.values, R_dynare.reshape(-1, 1), rtol=1e-5, atol=1e-5, err_msg="R"
+        )
 
     def test_solvers_agree(self):
         self.setUp()
@@ -836,8 +851,8 @@ class TestLinearModel(unittest.TestCase):
         self.model.solve_model(solver="cycle_reduction", verbose=False, model_is_linear=True)
         Tc, Rc = self.model.T, self.model.R
 
-        assert_allclose(Tg.values, Tc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg='T')
-        assert_allclose(Rg.values, Rc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg='R')
+        assert_allclose(Tg.values, Tc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="T")
+        assert_allclose(Rg.values, Rc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="R")
 
 
 class TestModelSimulationTools(unittest.TestCase):
@@ -860,7 +875,9 @@ class TestModelSimulationTools(unittest.TestCase):
 
     def test_irf(self):
         simulation_length = 40
-        irf = self.model.impulse_response_function(simulation_length=simulation_length, shock_size=0.1)
+        irf = self.model.impulse_response_function(
+            simulation_length=simulation_length, shock_size=0.1
+        )
 
         self.assertTrue(isinstance(irf, pd.DataFrame))
         self.assertTrue(irf.shape[0] == self.model.n_variables)
@@ -874,16 +891,17 @@ class TestModelSimulationTools(unittest.TestCase):
         self.model.hyper_priors = SymbolDictionary()
         self.model.shock_priors = SymbolDictionary()
         with self.assertWarns(UserWarning):
-            data = self.model.simulate(simulation_length=simulation_length,
-                                       n_simulations=n_simulations)
+            data = self.model.simulate(
+                simulation_length=simulation_length, n_simulations=n_simulations
+            )
 
     def test_simulate_from_covariance_matrix(self):
         simulation_length = 40
         n_simulations = 1
         Q = np.array([[0.01]])
-        data = self.model.simulate(simulation_length=simulation_length,
-                                   n_simulations=n_simulations,
-                                   shock_cov_matrix=Q)
+        data = self.model.simulate(
+            simulation_length=simulation_length, n_simulations=n_simulations, shock_cov_matrix=Q
+        )
 
         self.assertTrue(isinstance(data, pd.DataFrame))
         self.assertTrue(data.shape[0] == self.model.n_variables)
@@ -892,10 +910,10 @@ class TestModelSimulationTools(unittest.TestCase):
     def test_simulate_from_shock_dict(self):
         simulation_length = 40
         n_simulations = 1
-        shock_dict = {'epsilon_A':0.1}
-        data = self.model.simulate(simulation_length=simulation_length,
-                                   n_simulations=n_simulations,
-                                   shock_dict=shock_dict)
+        shock_dict = {"epsilon_A": 0.1}
+        data = self.model.simulate(
+            simulation_length=simulation_length, n_simulations=n_simulations, shock_dict=shock_dict
+        )
 
         self.assertTrue(isinstance(data, pd.DataFrame))
         self.assertTrue(data.shape[0] == self.model.n_variables)
@@ -919,6 +937,7 @@ class TestModelSimulationTools(unittest.TestCase):
     #         return_inferencedata=True,
     #         burn_in=1,
     #     )
+
 
 if __name__ == "__main__":
     unittest.main()
