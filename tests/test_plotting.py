@@ -36,7 +36,8 @@ class TestPlotSimulation(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.model = gEconModel(os.path.join(ROOT, 'test GCNs/RBC_Linearized.gcn'), verbose=False)
+        file_path = os.path.join(ROOT, 'Test GCNs/RBC_Linearized.gcn')
+        cls.model = gEconModel(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
         cls.data = cls.model.simulate(simulation_length=100, n_simulations=1)
@@ -75,7 +76,8 @@ class TestIRFPlot(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.model = gEconModel(os.path.join(ROOT, 'test GCNs/Full_New_Keyensian.gcn'), verbose=False)
+        file_path = os.path.join(ROOT, 'Test GCNs/Full_New_Keyensian.gcn')
+        cls.model = gEconModel(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
         cls.irf = cls.model.impulse_response_function(simulation_length=100, shock_size=0.1)
@@ -123,7 +125,8 @@ class TestIRFPlot(unittest.TestCase):
 class TestPriorSolvabilityPlot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.model = gEconModel(os.path.join(ROOT, 'test GCNs/One_Block_Simple_1_w_Distributions.gcn'), verbose=False)
+        file_path = os.path.join(ROOT, 'Test GCNs/One_Block_Simple_1_w_Distributions.gcn')
+        cls.model = gEconModel(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
         cls.data = prior_solvability_check(cls.model, n_samples=1_000)
@@ -166,7 +169,8 @@ class TestPlotEigenvalues(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.model = gEconModel(os.path.join(ROOT, 'test GCNs/One_Block_Simple_1.gcn'), verbose=False)
+        file_path = os.path.join(ROOT, 'Test GCNs/One_Block_Simple_1.gcn')
+        cls.model = gEconModel(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
 
@@ -191,16 +195,15 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.model = gEconModel(os.path.join(ROOT, 'test GCNs/One_Block_Simple_1.gcn'), verbose=False)
+        file_path = os.path.join(ROOT, 'Test GCNs/One_Block_Simple_1.gcn')
+        cls.model = gEconModel(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
         cls.cov_matrix = cls.model.compute_stationary_covariance_matrix(shock_cov_matrix=np.eye(1) * 0.01)
 
     def test_plot_with_defaults(self):
         fig = plot_covariance_matrix(self.cov_matrix)
-
-
-
+        self.assertIsNotNone(fig)
 
 
 if __name__ == '__main__':
