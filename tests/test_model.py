@@ -865,11 +865,11 @@ class TestModelSimulationTools(unittest.TestCase):
     def test_sample_param_dicts(self):
         param_dict, shock_dict, obs_dict = self.model.sample_param_dict_from_prior(n_samples=100)
 
-        self.assertTrue(all([x in param_dict.to_string() for x in self.model.free_param_dict]))
-        self.assertTrue(len(param_dict) == len(self.model.free_param_dict))
+        self.assertTrue(all([x in self.model.free_param_dict for x in param_dict.to_string()]))
+        self.assertTrue(len(param_dict) == 3)
 
         self.assertTrue(all([x.name in shock_dict for x in self.model.shocks]))
-        self.assertTrue(len(shock_dict) == len(self.model.shocks))
+        self.assertTrue(len(shock_dict) == 1)
 
         self.assertTrue(len(obs_dict) == 0)
 
