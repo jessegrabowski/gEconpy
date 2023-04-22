@@ -13,6 +13,7 @@ from gEconpy.plotting import (
     plot_simulation,
     prepare_gridspec_figure,
 )
+from gEconpy.plotting.plotting import plot_acf, plot_corner, plot_heatmap
 from gEconpy.sampling import prior_solvability_check
 
 ROOT = Path(__file__).parent.absolute()
@@ -214,6 +215,73 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
 
     def test_plot_with_defaults(self):
         fig = plot_covariance_matrix(self.cov_matrix)
+        self.assertIsNotNone(fig)
+
+    def test_plot_heatmap_with_defaults(self):
+        fig = plot_heatmap(self.cov_matrix)
+        self.assertIsNotNone(fig)
+
+    def test_annotation_kwargs(self):
+        fig = plot_covariance_matrix(
+            self.cov_matrix, annotation_kwargs={"threshold": 0.5, "fontsize": 5}
+        )
+        self.assertIsNotNone(fig)
+
+    def test_heatmap_kwargs(self):
+        fig = plot_covariance_matrix(
+            self.cov_matrix, heatmap_kwargs={"interpolation": "antialiased"}
+        )
+        self.assertIsNotNone(fig)
+
+
+class TestPlotACF(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+        cls.model = gEconModel(file_path, verbose=False)
+        cls.model.steady_state(verbose=False)
+        cls.model.solve_model(verbose=False)
+        cls.acf = cls.model.compute_autocorrelation_matrix(shock_cov_matrix=np.eye(1) * 0.01)
+
+    def test_plot_with_defaults(self):
+        fig = plot_acf(self.acf)
+        self.assertEqual(len(fig.axes), self.model.n_variables)
+
+    def test_plot_with_subset(self):
+        fig = plot_acf(self.acf, vars_to_plot=["C", "K", "A"])
+        self.assertEqual(len(fig.axes), 3)
+
+    def test_invalid_var_raises(self):
+        with self.assertRaises(ValueError) as error:
+            fig = plot_acf(self.acf, vars_to_plot=["K", "C", "Invalid"])
+        msg = str(error.exception)
+        self.assertEqual(
+            msg, "Can not plot variable Invalid, it was not found in the provided covariance matrix"
+        )
+
+
+class TestPlotCorner(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
+        cls.model = gEconModel(file_path, verbose=False)
+        cls.model.steady_state(verbose=False)
+        cls.model.solve_model(verbose=False)
+
+        data = cls.model.simulate(simulation_length=100, n_simulations=1)
+        data = data.droplevel(axis=1, level=1).T[["C"]]
+
+        cls.idata = cls.model.fit(
+            data,
+            filter_type="univariate",
+            draws=100,
+            n_walkers=36,
+            return_inferencedata=True,
+            burn_in=100,
+        )
+
+    def test_plot_with_defaults(self):
+        fig = plot_corner(self.idata)
         self.assertIsNotNone(fig)
 
 

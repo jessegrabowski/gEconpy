@@ -857,10 +857,10 @@ class TestLinearModel(unittest.TestCase):
 
 class TestModelSimulationTools(unittest.TestCase):
     def setUp(self):
-        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
         self.model = gEconModel(file_path, verbose=False)
-        self.model.steady_state(verbose=False, model_is_linear=True)
-        self.model.solve_model(verbose=False, model_is_linear=True)
+        self.model.steady_state(verbose=False)
+        self.model.solve_model(verbose=False)
 
     def test_sample_param_dicts(self):
         param_dict, shock_dict, obs_dict = self.model.sample_param_dict_from_prior(n_samples=100)
@@ -919,24 +919,27 @@ class TestModelSimulationTools(unittest.TestCase):
         self.assertTrue(data.shape[0] == self.model.n_variables)
         self.assertTrue(data.shape[1] == simulation_length * n_simulations)
 
-    # def test_fit_model(self):
-    #     T = 100
-    #     n_simulations = 1
-    #
-    #     # Draw from shock prior
-    #     data = self.model.simulate(simulation_length=T, n_simulations=n_simulations)
-    #
-    #     # Only Y is observed
-    #     data = data.droplevel(axis=1, level=1).T[['Y']]
-    #
-    #     idata = self.model.fit(
-    #         data,
-    #         filter_type="univariate",
-    #         draws=1,
-    #         n_walkers=36,
-    #         return_inferencedata=True,
-    #         burn_in=1,
-    #     )
+    def test_fit_model(self):
+        T = 100
+        n_simulations = 1
+
+        # Draw from shock prior
+        data = self.model.simulate(simulation_length=T, n_simulations=n_simulations)
+
+        # Only Y is observed
+        data = data.droplevel(axis=1, level=1).T[["C"]]
+
+        idata = self.model.fit(
+            data,
+            filter_type="univariate",
+            draws=25,
+            n_walkers=36,
+            return_inferencedata=True,
+            burn_in=25,
+            verbose=False,
+        )
+
+        self.assertIsNotNone(idata)
 
 
 if __name__ == "__main__":

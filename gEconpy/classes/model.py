@@ -1,7 +1,7 @@
 from collections import defaultdict
 from functools import reduce
 from typing import Any, Callable, Dict, List, Optional, Union
-from warnings import warn
+from warnings import catch_warnings, simplefilter, warn
 
 import arviz as az
 import emcee
@@ -16,11 +16,8 @@ from gEconpy.classes.block import Block
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.progress_bar import ProgressBar
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.estimation.estimate import build_Z_matrix, evaluate_logp
-from gEconpy.estimation.estimation_utilities import (
-    extract_prior_dict,
-    extract_sparse_data_from_model,
-)
+from gEconpy.estimation.estimate import build_Z_matrix, evaluate_logp2
+from gEconpy.estimation.estimation_utilities import extract_prior_dict
 from gEconpy.exceptions.exceptions import (
     GensysFailedException,
     MultipleSteadyStateBlocksException,
@@ -976,6 +973,10 @@ class gEconModel:
         """
         observed_vars = data.columns.tolist()
         model_var_names = [x.base_name for x in self.variables]
+
+        if burn_in is None:
+            burn_in = 0
+
         if not all([x in model_var_names for x in observed_vars]):
             orphans = [x for x in observed_vars if x not in model_var_names]
             raise ValueError(
@@ -983,7 +984,7 @@ class gEconModel:
                 f'with no associated model state: {", ".join(orphans)}'
             )
 
-        sparse_data = extract_sparse_data_from_model(self)
+        # sparse_data = extract_sparse_data_from_model(self)
         prior_dict = extract_prior_dict(self)
 
         if estimate_a0 is False:
@@ -1014,17 +1015,22 @@ class gEconModel:
         Z = build_Z_matrix(observed_vars, model_var_names)
 
         args = [
-            data,
-            sparse_data,
+            data.values,
+            self.f_ss,
+            self.build_perturbation_matrices,
+            self.free_param_dict,
             Z,
             prior_dict,
             shock_names,
             observed_vars,
             filter_type,
         ]
+
         arg_names = [
             "observed_data",
-            "sparse_data",
+            "f_ss",
+            "f_pert",
+            "free_params",
             "Z",
             "prior_dict",
             "shock_names",
@@ -1042,19 +1048,21 @@ class gEconModel:
         sampler = emcee.EnsembleSampler(
             n_walkers,
             k_params,
-            evaluate_logp,
+            evaluate_logp2,
             args=args,
             moves=moves,
             parameter_names=param_names,
             **sampler_kwargs,
         )
 
-        _ = sampler.run_mcmc(
-            x0,
-            draws,
-            progress=verbose,
-            skip_initial_state_check=skip_initial_state_check,
-        )
+        with catch_warnings():
+            simplefilter("ignore")
+            _ = sampler.run_mcmc(
+                x0,
+                draws + burn_in,
+                progress=verbose,
+                skip_initial_state_check=skip_initial_state_check,
+            )
 
         if return_inferencedata:
             sampler_stats = xr.Dataset(
@@ -1076,10 +1084,10 @@ class gEconModel:
             )
 
             idata["sample_stats"].update(sampler_stats)
-            idata.observed_data = idata.observed_data.drop(["sparse_data", "prior_dict"])
-            idata.observed_data = idata.observed_data.drop_dims(
-                ["sparse_data_dim_0", "sparse_data_dim_1", "prior_dict_dim_0"]
-            )
+            idata.observed_data = idata.observed_data.drop_vars(["prior_dict"])
+            # idata.observed_data = idata.observed_data.drop_dims(
+            #     ["sparse_data_dim_0", "sparse_data_dim_1", "prior_dict_dim_0"]
+            # )
 
             return idata.sel(draw=slice(burn_in, None, thin))
 

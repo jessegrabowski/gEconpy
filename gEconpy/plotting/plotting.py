@@ -492,11 +492,12 @@ def plot_covariance_matrix(
     data: pd.DataFrame,
     vars_to_plot: Optional[List[str]] = None,
     cbarlabel: str = "Covariance",
-    figsize: Tuple[float, float] = (8, 8),
+    figsize: Tuple[float, float] = (4, 4),
     dpi: int = 100,
     cbar_kw: Optional[Dict] = None,
     cmap: str = "YlGn",
-    annotation_fontsize: int = 8,
+    heatmap_kwargs: Optional[Dict] = None,
+    annotation_kwargs: Optional[Dict] = None,
 ) -> plt.Figure:
     """
     Plots a heatmap of the covariance matrix of the input data.
@@ -519,9 +520,10 @@ def plot_covariance_matrix(
         A dictionary of keyword arguments to pass to the colorbar.
     cmap : str, optional
         The color map to use for the heatmap.
-    annotation_fontsize : int, optional
-        The font size for the annotation in the heatmap cells.
-
+    heatmap_kwargs : dict, optional
+        Keyword arguments forwarded to plt.imshow
+    annotation_kwargs: dict, optional
+        Keyword arguments forwarded to gEconpy.plotting.annotate_heatmap
     Returns
     -------
     matplotlib.figure.Figure
@@ -531,6 +533,12 @@ def plot_covariance_matrix(
     if vars_to_plot is None:
         vars_to_plot = data.columns
 
+    if heatmap_kwargs is None:
+        heatmap_kwargs = {}
+
+    if annotation_kwargs is None:
+        annotation_kwargs = {}
+
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     im, cbar = plot_heatmap(
         data.loc[vars_to_plot, vars_to_plot],
@@ -538,8 +546,9 @@ def plot_covariance_matrix(
         cbar_kw=cbar_kw,
         cmap=cmap,
         cbarlabel=cbarlabel,
+        **heatmap_kwargs,
     )
-    annotate_heatmap(im, valfmt="{x:.2f}", fontsize=annotation_fontsize)
+    annotate_heatmap(im, valfmt="{x:.2f}", **annotation_kwargs)
 
     fig.tight_layout()
     return fig
@@ -573,8 +582,8 @@ def plot_heatmap(
     if not ax:
         ax = plt.gca()
 
-    if not cbar_kw:
-        cbar_kw = {}
+    if cbar_kw is None:
+        cbar_kw = {"shrink": 0.5}
 
     # Plot the heatmap
     im = ax.imshow(data, **kwargs)
@@ -701,6 +710,13 @@ def plot_acf(
 
     if vars_to_plot is None:
         vars_to_plot = acorr_matrix.index
+
+    else:
+        for var in vars_to_plot:
+            if var not in acorr_matrix.index:
+                raise ValueError(
+                    f"Can not plot variable {var}, it was not found in the provided covariance matrix"
+                )
 
     n_plots = len(vars_to_plot)
     n_cols = min(n_cols, n_plots)
@@ -851,7 +867,7 @@ def plot_corner(
             axis.set_visible(False)
 
     fig.tight_layout(h_pad=0.1, w_pad=0.5)
-    plt.show()
+    return fig
 
 
 def plot_kalman_filter(
