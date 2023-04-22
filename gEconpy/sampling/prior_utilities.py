@@ -112,19 +112,24 @@ def prior_solvability_check(
 
 def get_initial_time_index(df):
     t0 = df.index[0]
-    freq = df.index.inferred_freq
-    base_freq = freq.split("-")[0]
 
-    if "Q" in base_freq:
-        offset = pd.DateOffset(months=3)
-    elif "M" in base_freq:
-        offset = pd.DateOffset(months=1)
-    elif "A" in base_freq:
-        offset = pd.DateOffset(years=1)
+    if isinstance(df.index, pd.DatetimeIndex):
+        freq = df.index.inferred_freq
+        base_freq = freq.split("-")[0]
+
+        if "Q" in base_freq:
+            offset = pd.DateOffset(months=3)
+        elif "M" in base_freq:
+            offset = pd.DateOffset(months=1)
+        elif "A" in base_freq:
+            offset = pd.DateOffset(years=1)
+        else:
+            raise NotImplementedError("Data isn't one of: Quarterly, Monthly, Annual")
+
+        return np.array(t0 - offset, dtype="datetime64")
+
     else:
-        raise NotImplementedError("Data isn't one of: Quarterly, Monthly, Annual")
-
-    return t0 - offset
+        return np.array(t0 - 1)
 
 
 def simulate_trajectories_from_prior(
@@ -230,7 +235,7 @@ def kalman_filter_from_prior(model, data, n_samples, filter_type="univariate"):
     pred_coords = {
         "sample": np.arange(n_samples),
         "time": np.r_[
-            np.array(get_initial_time_index(data), dtype="datetime64"),
+            get_initial_time_index(data),
             data.index.values,
         ],
         "variable": model_var_names,
@@ -246,7 +251,7 @@ def kalman_filter_from_prior(model, data, n_samples, filter_type="univariate"):
     pred_cov_coords = {
         "sample": np.arange(n_samples),
         "time": np.r_[
-            np.array(get_initial_time_index(data), dtype="datetime64"),
+            get_initial_time_index(data),
             data.index.values,
         ],
         "variable": model_var_names,

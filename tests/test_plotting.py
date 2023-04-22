@@ -13,8 +13,13 @@ from gEconpy.plotting import (
     plot_simulation,
     prepare_gridspec_figure,
 )
-from gEconpy.plotting.plotting import plot_acf, plot_corner, plot_heatmap
-from gEconpy.sampling import prior_solvability_check
+from gEconpy.plotting.plotting import (
+    plot_acf,
+    plot_corner,
+    plot_heatmap,
+    plot_kalman_filter,
+)
+from gEconpy.sampling import kalman_filter_from_posterior, prior_solvability_check
 
 ROOT = Path(__file__).parent.absolute()
 
@@ -260,7 +265,7 @@ class TestPlotACF(unittest.TestCase):
         )
 
 
-class TestPlotCorner(unittest.TestCase):
+class TestPostEstimationPlots(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
@@ -268,21 +273,41 @@ class TestPlotCorner(unittest.TestCase):
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
 
-        data = cls.model.simulate(simulation_length=100, n_simulations=1)
-        data = data.droplevel(axis=1, level=1).T[["C"]]
+        cls.data = cls.model.simulate(simulation_length=100, n_simulations=1)
+        cls.data = cls.data.droplevel(axis=1, level=1).T[["C"]]
 
         cls.idata = cls.model.fit(
-            data,
+            cls.data,
             filter_type="univariate",
-            draws=100,
+            draws=50,
             n_walkers=36,
             return_inferencedata=True,
-            burn_in=100,
+            burn_in=50,
+            verbose=False,
         )
 
-    def test_plot_with_defaults(self):
+    def test_plot_corner_with_defaults(self):
         fig = plot_corner(self.idata)
         self.assertIsNotNone(fig)
+
+    def test_plot_kalman_with_defaults(self):
+        posterior = self.idata.posterior.stack(sample=["chain", "draws"])
+        conditional_posterior = kalman_filter_from_posterior(
+            self.model, self.data, posterior, n_samples=10
+        )
+
+        fig = plot_kalman_filter(conditional_posterior, self.data, kalman_output="predicted")
+        self.assertIsNotNone(fig)
+
+        fig = plot_kalman_filter(conditional_posterior, self.data, kalman_output="filtered")
+        self.assertIsNotNone(fig)
+
+        fig = plot_kalman_filter(conditional_posterior, self.data, kalman_output="smoothed")
+        self.assertIsNotNone(fig)
+
+    def test_plot_kalman_raises_on_invalid_args(self):
+        with self.assertRaises(ValueError):
+            fig = plot_kalman_filter(self.idata, self.data, kalman_output="invalid")
 
 
 if __name__ == "__main__":

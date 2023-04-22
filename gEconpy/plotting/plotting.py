@@ -9,27 +9,7 @@ import xarray as xr
 from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
-from matplotlib.ticker import ScalarFormatter
 from scipy import stats
-
-
-class ScalarFormatterForceFormat(ScalarFormatter):
-    """
-    A ScalarFormatter that forces a specific format for the tick labels.
-    """
-
-    def _set_format(self, vmin, vmax):
-        """
-        Set the format for the tick labels.
-
-        Parameters
-        ----------
-        vmin : float
-            The minimum value of the data.
-        vmax : float
-            The maximum value of the data.
-        """
-        self.format = "%1.1f"
 
 
 def prepare_gridspec_figure(n_cols: int, n_plots: int) -> Tuple[GridSpec, List]:
@@ -784,6 +764,7 @@ def plot_corner(
 
     if not hasattr(idata, "posterior"):
         raise ValueError("Argument idata should be an arviz idata object with a posterior group")
+
     var_names = var_names or list(idata.posterior.data_vars)
     k_params = len(var_names)
 
@@ -966,5 +947,7 @@ def plot_kalman_filter(
 
         axis.set(title=variable, xlabel=None, ylabel="% Deviation from SS")
         axis.tick_params(axis="x", rotation=45)
+        [spine.set_visible(False) for spine in axis.spines.values()]
+        axis.grid(ls="--", lw=0.5)
 
     fig.tight_layout()

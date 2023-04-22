@@ -71,53 +71,48 @@ def kalman_filter_from_posterior(model, data, posterior, n_samples=1000, filter_
     random_idx = np.random.choice(posterior.dims["sample"], replace=False, size=n_samples)
     progress_bar = ProgressBar(n_samples, "Sampling")
     for idx in random_idx:
-        try:
-            all_param_dict = {
-                k: v["data"]
-                for k, v in posterior.sel(sample=posterior.sample[idx])
-                .to_dict()["data_vars"]
-                .items()
-            }
+        all_param_dict = {
+            k: v["data"]
+            for k, v in posterior.sel(sample=posterior.sample[idx]).to_dict()["data_vars"].items()
+        }
 
-            param_dict, a0_dict, P0_dict = split_param_dict(all_param_dict)
-            free_param_dict, shock_dict, noise_dict = split_random_variables(
-                param_dict, shock_names, model_var_names
-            )
+        param_dict, a0_dict, P0_dict = split_param_dict(all_param_dict)
+        free_param_dict, shock_dict, noise_dict = split_random_variables(
+            param_dict, shock_names, model_var_names
+        )
 
-            model.free_param_dict.update(free_param_dict)
-            progress_bar.start()
+        model.free_param_dict.update(free_param_dict)
+        progress_bar.start()
 
-            model.steady_state(verbose=False)
-            model.solve_model(verbose=False, on_failure="raise")
+        model.steady_state(verbose=False)
+        model.solve_model(verbose=False, on_failure="error")
 
-            T, R = model.T.values, model.R.values
-            T = np.ascontiguousarray(T)
-            R = np.ascontiguousarray(R)
-            Z = build_Z_matrix(observed_vars, model_var_names)
-            Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, noise_dict)
+        T, R = model.T.values, model.R.values
+        T = np.ascontiguousarray(T)
+        R = np.ascontiguousarray(R)
+        Z = build_Z_matrix(observed_vars, model_var_names)
+        Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, noise_dict)
 
-            a0 = np.array(list(a0_dict.values()))[:, None] if len(a0_dict) > 0 else None
-            P0 = np.eye(len(P0_dict)) * np.array(list(P0_dict.keys())) if len(P0_dict) > 0 else None
+        a0 = np.array(list(a0_dict.values()))[:, None] if len(a0_dict) > 0 else None
+        P0 = np.eye(len(P0_dict)) * np.array(list(P0_dict.keys())) if len(P0_dict) > 0 else None
 
-            filter_results = kalman_filter(
-                np.ascontiguousarray(data.values),
-                T,
-                Z,
-                R,
-                H,
-                Q,
-                a0=a0,
-                P0=P0,
-                filter_type=filter_type,
-            )
-            filtered_states, _, filtered_covariances, *_ = filter_results
+        filter_results = kalman_filter(
+            np.ascontiguousarray(data.values),
+            T,
+            Z,
+            R,
+            H,
+            Q,
+            a0=a0,
+            P0=P0,
+            filter_type=filter_type,
+        )
+        filtered_states, _, filtered_covariances, *_ = filter_results
 
-            smoother_results = kalman_smoother(T, R, Q, filtered_states, filtered_covariances)
-            results.append(list(filter_results) + list(smoother_results))
+        smoother_results = kalman_smoother(T, R, Q, filtered_states, filtered_covariances)
+        results.append(list(filter_results) + list(smoother_results))
 
-            progress_bar.stop()
-        except ValueError:
-            continue
+        progress_bar.stop()
 
     coords = {
         "sample": np.arange(n_samples),
@@ -128,7 +123,7 @@ def kalman_filter_from_posterior(model, data, posterior, n_samples=1000, filter_
     pred_coords = {
         "sample": np.arange(n_samples),
         "time": np.r_[
-            np.array(get_initial_time_index(data), dtype="datetime64"),
+            get_initial_time_index(data),
             data.index.values,
         ],
         "variable": model_var_names,
@@ -144,7 +139,7 @@ def kalman_filter_from_posterior(model, data, posterior, n_samples=1000, filter_
     pred_cov_coords = {
         "sample": np.arange(n_samples),
         "time": np.r_[
-            np.array(get_initial_time_index(data), dtype="datetime64"),
+            get_initial_time_index(data),
             data.index.values,
         ],
         "variable": model_var_names,
