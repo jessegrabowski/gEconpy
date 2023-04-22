@@ -932,10 +932,10 @@ class TestModelSimulationTools(unittest.TestCase):
         idata = self.model.fit(
             data,
             filter_type="univariate",
-            draws=25,
+            draws=100,
             n_walkers=36,
             return_inferencedata=True,
-            burn_in=25,
+            burn_in=100,
             verbose=False,
         )
 

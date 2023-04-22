@@ -951,3 +951,4 @@ def plot_kalman_filter(
         axis.grid(ls="--", lw=0.5)
 
     fig.tight_layout()
+    return fig

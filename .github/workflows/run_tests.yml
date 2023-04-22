@@ -63,6 +63,7 @@ jobs:
       run: |
         conda activate geconpy-test
         pip install -e .
+        pip install pytest-env
         python --version
 
     - name: Run tests

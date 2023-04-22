@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+from matplotlib import pyplot as plt
 
 from gEconpy.classes.model import gEconModel
 from gEconpy.plotting import (
@@ -291,19 +292,22 @@ class TestPostEstimationPlots(unittest.TestCase):
         self.assertIsNotNone(fig)
 
     def test_plot_kalman_with_defaults(self):
-        posterior = self.idata.posterior.stack(sample=["chain", "draws"])
+        posterior = self.idata.posterior.stack(sample=["chain", "draw"])
         conditional_posterior = kalman_filter_from_posterior(
             self.model, self.data, posterior, n_samples=10
         )
 
         fig = plot_kalman_filter(conditional_posterior, self.data, kalman_output="predicted")
         self.assertIsNotNone(fig)
+        plt.close()
 
         fig = plot_kalman_filter(conditional_posterior, self.data, kalman_output="filtered")
         self.assertIsNotNone(fig)
+        plt.close()
 
         fig = plot_kalman_filter(conditional_posterior, self.data, kalman_output="smoothed")
         self.assertIsNotNone(fig)
+        plt.close()
 
     def test_plot_kalman_raises_on_invalid_args(self):
         with self.assertRaises(ValueError):
