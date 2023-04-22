@@ -313,8 +313,12 @@ def evaluate_logp2(
     if any([np.any(np.isnan(X) | np.isinf(X)) for X in [A, B, C, D]]):
         return -np.inf, np.zeros(data.shape[0])
 
-    T, result, log_norm = cycle_reduction(A, B, C, verbose=False)
-    T = np.ascontiguousarray(T)
+    try:
+        T, result, log_norm = cycle_reduction(A, B, C, verbose=False)
+        T = np.ascontiguousarray(T)
+    except np.linalg.LinAlgError:
+        T, log_norm = None, None
+        result = "Failed"
 
     if result != "Optimization successful":
         return -np.inf, np.zeros(data.shape[0])
