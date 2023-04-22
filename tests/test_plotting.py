@@ -56,11 +56,13 @@ class TestPlotSimulation(unittest.TestCase):
         fig = plot_simulation(self.data)
 
         self.assertEqual(len(fig.axes), self.model.n_variables)
+        plt.close()
 
     def test_plot_simulation_vars_to_plot(self):
         fig = plot_simulation(self.data, vars_to_plot=["Y", "C"])
 
         self.assertEqual(len(fig.axes), 2)
+        plt.close()
 
     def test_var_not_found_raises(self):
         with self.assertRaises(ValueError) as error:
@@ -72,6 +74,7 @@ class TestPlotSimulation(unittest.TestCase):
         fig = plot_simulation(self.data, ci=0.95)
 
         self.assertEqual(len(fig.axes), self.model.n_variables)
+        plt.close()
 
     def test_plot_simulation_aesthetic_params(self):
         fig = plot_simulation(
@@ -82,6 +85,8 @@ class TestPlotSimulation(unittest.TestCase):
         self.assertEqual(fig.get_dpi(), 100)
         self.assertEqual(fig.get_figwidth(), 14)
         self.assertEqual(fig.get_figheight(), 4)
+
+        plt.close()
 
 
 class TestIRFPlot(unittest.TestCase):
@@ -98,6 +103,7 @@ class TestIRFPlot(unittest.TestCase):
 
         self.assertEqual(len(fig.axes), self.model.n_variables)
         self.assertEqual(len(fig.axes[0].get_lines()), self.model.n_shocks)
+        plt.close()
 
     def test_plot_irf_one_shock(self):
         with self.assertRaises(ValueError):
@@ -106,6 +112,7 @@ class TestIRFPlot(unittest.TestCase):
         fig = plot_irf(self.irf, shocks_to_plot=["epsilon_Y"])
         self.assertEqual(len(fig.axes), self.model.n_variables)
         self.assertEqual(len(fig.axes[0].get_lines()), 1)
+        plt.close()
 
     def test_plot_irf_one_variable(self):
         with self.assertRaises(ValueError):
@@ -114,12 +121,14 @@ class TestIRFPlot(unittest.TestCase):
         fig = plot_irf(self.irf, vars_to_plot=["Y"])
         self.assertEqual(len(fig.axes), 1)
         self.assertEqual(len(fig.axes[0].get_lines()), self.model.n_shocks)
+        plt.close()
 
     def test_var_not_found_raises(self):
         with self.assertRaises(ValueError) as error:
             fig = plot_irf(self.irf, vars_to_plot=["Y", "C", "Invalid"])
         error_msg = error.exception
         self.assertEqual(str(error_msg), "Invalid not found among simulated impulse responses.")
+        plt.close()
 
     def test_shock_not_found_raises(self):
         with self.assertRaises(ValueError) as error:
@@ -135,6 +144,7 @@ class TestIRFPlot(unittest.TestCase):
         fig = plot_irf(self.irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y"], legend=True)
         self.assertIsNotNone(fig.axes[0].get_legend())
         self.assertIsNone(fig.axes[1].get_legend())
+        plt.close()
 
 
 class TestPriorSolvabilityPlot(unittest.TestCase):
@@ -158,6 +168,7 @@ class TestPriorSolvabilityPlot(unittest.TestCase):
             self.assertTrue(not fig.axes[idx].get_visible())
         for idx in lower_idxs:
             self.assertTrue(fig.axes[idx].get_visible())
+        plt.close()
 
     def test_plot_with_vars_to_plot(self):
         fig = plot_prior_solvability(self.data, params_to_plot=["alpha", "gamma"])
@@ -171,6 +182,7 @@ class TestPriorSolvabilityPlot(unittest.TestCase):
             self.assertTrue(not fig.axes[idx].get_visible())
         for idx in lower_idxs:
             self.assertTrue(fig.axes[idx].get_visible())
+        plt.close()
 
     def test_raises_if_param_not_found(self):
         with self.assertRaises(ValueError) as error:
@@ -199,6 +211,7 @@ class TestPlotEigenvalues(unittest.TestCase):
 
         n_finite = (data["Modulus"] < 1.5).sum()
         self.assertEqual(n_finite, scatter_points.shape[0])
+        plt.close()
 
     def test_plot_with_aesthetic_params(self):
         fig = plot_eigenvalues(self.model, dpi=144, figsize=(2, 2))
@@ -206,6 +219,7 @@ class TestPlotEigenvalues(unittest.TestCase):
         self.assertEqual(fig.get_figwidth(), 2)
         self.assertEqual(fig.get_figheight(), 2)
         self.assertEqual(fig.dpi, 144)
+        plt.close()
 
 
 class TestPlotCovarianceMatrix(unittest.TestCase):
@@ -222,22 +236,26 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
     def test_plot_with_defaults(self):
         fig = plot_covariance_matrix(self.cov_matrix)
         self.assertIsNotNone(fig)
+        plt.close()
 
     def test_plot_heatmap_with_defaults(self):
         fig = plot_heatmap(self.cov_matrix)
         self.assertIsNotNone(fig)
+        plt.close()
 
     def test_annotation_kwargs(self):
         fig = plot_covariance_matrix(
             self.cov_matrix, annotation_kwargs={"threshold": 0.5, "fontsize": 5}
         )
         self.assertIsNotNone(fig)
+        plt.close()
 
     def test_heatmap_kwargs(self):
         fig = plot_covariance_matrix(
             self.cov_matrix, heatmap_kwargs={"interpolation": "antialiased"}
         )
         self.assertIsNotNone(fig)
+        plt.close()
 
 
 class TestPlotACF(unittest.TestCase):
@@ -252,10 +270,12 @@ class TestPlotACF(unittest.TestCase):
     def test_plot_with_defaults(self):
         fig = plot_acf(self.acf)
         self.assertEqual(len(fig.axes), self.model.n_variables)
+        plt.close()
 
     def test_plot_with_subset(self):
         fig = plot_acf(self.acf, vars_to_plot=["C", "K", "A"])
         self.assertEqual(len(fig.axes), 3)
+        plt.close()
 
     def test_invalid_var_raises(self):
         with self.assertRaises(ValueError) as error:
@@ -290,6 +310,7 @@ class TestPostEstimationPlots(unittest.TestCase):
     def test_plot_corner_with_defaults(self):
         fig = plot_corner(self.idata)
         self.assertIsNotNone(fig)
+        plt.close()
 
     def test_plot_kalman_with_defaults(self):
         posterior = self.idata.posterior.stack(sample=["chain", "draw"])
