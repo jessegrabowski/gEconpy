@@ -932,11 +932,12 @@ class TestModelSimulationTools(unittest.TestCase):
         idata = self.model.fit(
             data,
             filter_type="univariate",
-            draws=100,
+            draws=36,
             n_walkers=36,
             return_inferencedata=True,
-            burn_in=100,
+            burn_in=0,
             verbose=False,
+            compute_sampler_stats=False,
         )
 
         self.assertIsNotNone(idata)

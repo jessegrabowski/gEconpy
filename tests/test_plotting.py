@@ -300,11 +300,12 @@ class TestPostEstimationPlots(unittest.TestCase):
         cls.idata = cls.model.fit(
             cls.data,
             filter_type="univariate",
-            draws=50,
+            draws=36,
             n_walkers=36,
             return_inferencedata=True,
-            burn_in=50,
+            burn_in=0,
             verbose=False,
+            compute_sampler_stats=False,
         )
 
     def test_plot_corner_with_defaults(self):

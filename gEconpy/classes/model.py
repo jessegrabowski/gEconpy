@@ -897,6 +897,7 @@ class gEconModel:
         burn_in=None,
         thin=None,
         skip_initial_state_check=False,
+        compute_sampler_stats=True,
         **sampler_kwargs,
     ):
         """
@@ -1065,17 +1066,6 @@ class gEconModel:
             )
 
         if return_inferencedata:
-            sampler_stats = xr.Dataset(
-                data_vars=dict(
-                    acceptance_fraction=(["chain"], sampler.acceptance_fraction),
-                    autocorrelation_time=(
-                        ["parameters"],
-                        sampler.get_autocorr_time(discard=burn_in or 0, quiet=True),
-                    ),
-                ),
-                coords=dict(chain=np.arange(n_walkers), parameters=param_names),
-            )
-
             idata = az.from_emcee(
                 sampler,
                 var_names=param_names,
@@ -1083,11 +1073,20 @@ class gEconModel:
                 arg_names=arg_names,
             )
 
-            idata["sample_stats"].update(sampler_stats)
+            if compute_sampler_stats:
+                sampler_stats = xr.Dataset(
+                    data_vars=dict(
+                        acceptance_fraction=(["chain"], sampler.acceptance_fraction),
+                        autocorrelation_time=(
+                            ["parameters"],
+                            sampler.get_autocorr_time(discard=burn_in or 0, quiet=True),
+                        ),
+                    ),
+                    coords=dict(chain=np.arange(n_walkers), parameters=param_names),
+                )
+
+                idata["sample_stats"].update(sampler_stats)
             idata.observed_data = idata.observed_data.drop_vars(["prior_dict"])
-            # idata.observed_data = idata.observed_data.drop_dims(
-            #     ["sparse_data_dim_0", "sparse_data_dim_1", "prior_dict_dim_0"]
-            # )
 
             return idata.sel(draw=slice(burn_in, None, thin))
 
