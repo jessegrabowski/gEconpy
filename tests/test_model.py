@@ -309,9 +309,9 @@ class ModelClassTestsOne(unittest.TestCase):
 
     def test_solve_model_cycle_reduction(self):
         self.setUp()
-        self.model.steady_state(verbose=False)
+        self.model.steady_state(verbose=True)
         self.assertEqual(self.model.steady_state_solved, True)
-        self.model.solve_model(verbose=False, solver="cycle_reduction")
+        self.model.solve_model(verbose=True, solver="cycle_reduction")
         self.assertEqual(self.model.perturbation_solved, True)
 
         # Values from R gEcon solution
