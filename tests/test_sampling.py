@@ -34,12 +34,12 @@ class TestPriorSampling(unittest.TestCase):
     def test_sample_solvability_cycle_reduction(self):
         data = prior_solvability_check(self.model, n_samples=100, pert_solver="cycle_reduction")
 
-        self.assertEqual(data.shape[0], 1000)
+        self.assertEqual(data.shape[0], 100)
 
     def test_sample_solvability_gensys(self):
         data = prior_solvability_check(self.model, n_samples=100, pert_solver="gensys")
 
-        self.assertEqual(data.shape[0], 1000)
+        self.assertEqual(data.shape[0], 100)
 
     def test_invalid_solver_raises(self):
         with self.assertRaises(ValueError):

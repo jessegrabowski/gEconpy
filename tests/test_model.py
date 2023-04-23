@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import arviz as az
 import numpy as np
 import pandas as pd
 import sympy as sp
@@ -919,7 +920,7 @@ class TestModelSimulationTools(unittest.TestCase):
         self.assertTrue(data.shape[0] == self.model.n_variables)
         self.assertTrue(data.shape[1] == simulation_length * n_simulations)
 
-    def test_fit_model(self):
+    def test_fit_model_and_sample_posterior_trajectories(self):
         T = 100
         n_simulations = 1
 
@@ -941,6 +942,14 @@ class TestModelSimulationTools(unittest.TestCase):
         )
 
         self.assertIsNotNone(idata)
+
+        # Check posterior sampling. It should be its own test, but I want to minimize expensive model fitting calls
+        posterior = az.extract(idata, "posterior")
+        conditional_posterior = ge.sampling.kalman_filter_from_posterior(
+            self.model, data, posterior, n_samples=10
+        )
+
+        self.assertIsNotNone(conditional_posterior)
 
 
 if __name__ == "__main__":
