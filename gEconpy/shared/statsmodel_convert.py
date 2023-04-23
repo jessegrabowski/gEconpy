@@ -6,6 +6,7 @@ from statsmodels.tsa.statespace.kalman_filter import INVERT_UNIVARIATE, SOLVE_LU
 from statsmodels.tsa.statespace.mlemodel import MLEModel, _handle_args
 
 from gEconpy.classes.transformers import IdentityTransformer, PositiveTransformer
+from gEconpy.exceptions.exceptions import GensysFailedException
 
 
 def compile_to_statsmodels(model) -> MLEModel:
@@ -361,7 +362,7 @@ def compile_to_statsmodels(model) -> MLEModel:
                 self.model.steady_state(verbose=False)
                 self.model.solve_model(verbose=False)
                 pert_success = True
-            except np.linalg.LinAlgError:
+            except (np.linalg.LinAlgError, GensysFailedException):
                 pert_success = False
 
             condition_satisfied = model.check_bk_condition(verbose=False, return_value="bool")
