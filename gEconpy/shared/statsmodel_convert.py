@@ -8,7 +8,7 @@ from statsmodels.tsa.statespace.mlemodel import MLEModel, _handle_args
 from gEconpy.classes.transformers import IdentityTransformer, PositiveTransformer
 
 
-def compile_to_statsmodels(model):
+def compile_to_statsmodels(model) -> MLEModel:
     """
     Compile a gEconModel object into a Statsmodels MLEModel object.
 
