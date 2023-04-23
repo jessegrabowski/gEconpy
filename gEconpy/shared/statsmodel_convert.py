@@ -364,7 +364,10 @@ def compile_to_statsmodels(model) -> MLEModel:
             except Exception:
                 pert_success = False
 
-            condition_satisfied = model.check_bk_condition(verbose=False, return_value="bool")
+            try:
+                condition_satisfied = model.check_bk_condition(verbose=False, return_value="bool")
+            except Exception:
+                condition_satisfied = False
 
             self.ssm["transition"] = self.model.T.values
             self.ssm["selection"] = self.model.R.values
