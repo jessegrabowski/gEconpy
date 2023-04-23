@@ -15,7 +15,10 @@ from gEconpy.classes.model import gEconModel
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import GensysFailedException
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
-from gEconpy.sampling import kalman_filter_from_posterior
+from gEconpy.sampling import (
+    kalman_filter_from_posterior,
+    simulate_trajectories_from_posterior,
+)
 from gEconpy.shared.utilities import string_keys_to_sympy
 
 ROOT = Path(__file__).parent.absolute()
@@ -946,8 +949,8 @@ class TestModelSimulationTools(unittest.TestCase):
 
         # Check posterior sampling. It should be its own test, but I want to minimize expensive model fitting calls
         posterior = az.extract(idata, "posterior")
-        conditional_posterior = kalman_filter_from_posterior(
-            self.model, data, posterior, n_samples=10
+        conditional_posterior = simulate_trajectories_from_posterior(
+            self.model, posterior, n_samples=10, n_simulations=10, simulation_length=10
         )
 
         self.assertIsNotNone(conditional_posterior)
