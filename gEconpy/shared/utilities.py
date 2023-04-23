@@ -179,13 +179,6 @@ def unpack_keys_and_values(d):
     return keys, values
 
 
-def select_keys(d, keys):
-    result = {}
-    for key in keys:
-        result[key] = d[key]
-    return result
-
-
 def reduce_system_via_substitution(system, sub_dict):
     reduced_system = [eq.subs(sub_dict) for eq in system]
     return [eq for eq in reduced_system if eq != 0]
@@ -201,113 +194,12 @@ def merge_dictionaries(*dicts):
     return result
 
 
-def merge_functions(funcs, *args, **kwargs):
-    def combined_function(*args, **kwargs):
-        output = {}
-
-        for f in funcs:
-            output.update(f(*args, **kwargs))
-
-        return output
-
-    return combined_function
-
-
-def find_exp_args(eq):
-    if eq is None:
-        return None
-    comp_tree = list(sp.postorder_traversal(eq))
-    for arg in comp_tree:
-        if arg.func == sp.exp:
-            return arg
-
-
-def find_log_args(eq):
-    if eq is None:
-        return None
-
-    comp_tree = list(sp.postorder_traversal(eq))
-    for arg in comp_tree:
-        if arg.func == sp.Mul:
-            if isinstance(arg.args[0], sp.Symbol) and arg.args[1].func == sp.log:
-                return arg
-
-
-def is_log_transform_candidate(eq):
-    inside_exp = sequential(eq, [find_exp_args, find_log_args])
-    return inside_exp is not None
-
-
-def log_transform_exp_shock(eq):
-    out = (-sp.log(-eq.args[0]) + sp.log(eq.args[1])).simplify(inverse=True)
-    return out
-
-
-def expand_sub_dict_for_all_times(sub_dict):
-    result = {}
-    for k, v in sub_dict.items():
-        result[k] = v
-        result[step_equation_forward(k)] = step_equation_forward(v)
-        result[step_equation_backward(k)] = step_equation_backward(v)
-        result[eq_to_ss(k)] = eq_to_ss(v)
-
-    return result
-
-
 def make_all_var_time_combos(var_list):
     result = []
     for x in var_list:
         result.extend([x.set_t(-1), x.set_t(0), x.set_t(1), x.set_t("ss")])
 
     return result
-
-
-def add_all_variables_to_global_namespace(mod):
-    all_vars = [v for x in mod.variables for v in [x.step_backward(), x, x.step_forward()]]
-    var_dict = {}
-    for x in all_vars:
-        var_dict[x.safe_name] = x
-
-    for x in list(string_keys_to_sympy(mod.free_param_dict, mod.assumptions).keys()):
-        var_dict[x.name] = x
-
-    return var_dict
-
-
-def test_expr_is_zero(
-    eq: sp.Expr, params_to_test: List[sp.Symbol], n_tests: int = 10, tol: int = 16
-) -> bool:
-    """
-    Test if an expression is equal to zero by plugging in random values for requested symbols and evaluating. Useful
-    for complicated expressions involving exponents, where sympy's equivalence tests can fail.
-
-    Parameters
-    ----------
-    eq: sp.Expr
-        A sympy expression to be tested
-    params_to_test: list of sp.List
-        Variables to be tested
-    n_tests: int, default: 10
-        Number of tests to preform.
-    tol: int, default:16
-        Number of decimal places used to test equivlance to zero.
-
-    Returns
-    -------
-    result: bool
-        True if the expression was equal to zero in all tests, else False
-    """
-
-    n_params = len(params_to_test)
-    for _ in range(n_tests):
-        sub_dict = dict(zip(params_to_test, np.random.uniform(1e-4, 0.99, n_params)))
-        res = eq.evalf(subs=sub_dict, n=tol, chop=True)
-        for a in sp.preorder_traversal(res):
-            if isinstance(a, sp.Float):
-                res = res.subs(a, round(a, tol))
-        if res != 0:
-            return False
-    return True
 
 
 def build_Q_matrix(
