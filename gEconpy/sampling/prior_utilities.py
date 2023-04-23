@@ -7,7 +7,6 @@ from gEconpy.classes.progress_bar import ProgressBar
 from gEconpy.estimation.estimate import build_Q_and_H, build_Z_matrix
 from gEconpy.estimation.kalman_filter import kalman_filter
 from gEconpy.estimation.kalman_smoother import kalman_smoother
-from gEconpy.shared.utilities import split_random_variables
 
 
 def prior_solvability_check(
@@ -18,6 +17,11 @@ def prior_solvability_check(
 
     data = pd.DataFrame(param_dicts)
     progress_bar = ProgressBar(n_samples, verb="Sampling")
+
+    if pert_solver not in ["cycle_reduction", "gensys"]:
+        raise ValueError(
+            f'Argument pert_solver must be one of "cycle_reduction" or "gensys", found {pert_solver}'
+        )
 
     def check_solvable(param_dict):
         try:
@@ -55,9 +59,6 @@ def prior_solvability_check(
                 T = G_1[: model.n_variables, :][:, : model.n_variables]
                 R = impact[: model.n_variables, :]
                 pert_success = G_1 is not None
-
-            else:
-                raise NotImplementedError
 
         except (ValueError, LinAlgError):
             return "perturbation"
@@ -133,8 +134,18 @@ def get_initial_time_index(df):
 
 
 def simulate_trajectories_from_prior(
-    model, n_samples=1000, n_simulations=100, simulation_length=40, seed=None, param_subset=None
+    model,
+    n_samples=1000,
+    n_simulations=100,
+    simulation_length=40,
+    seed=None,
+    param_subset=None,
+    pert_kwargs=None,
 ):
+
+    if pert_kwargs is None:
+        pert_kwargs = {}
+
     simulations = []
     model_var_names = [x.base_name for x in model.variables]
     shock_names = [x.name for x in model.shocks]
@@ -152,62 +163,70 @@ def simulate_trajectories_from_prior(
         progress_bar.start()
         free_params.update(param_dict)
 
-        # try:
-        model.steady_state(verbose=False)
-        model.solve_model(verbose=False, on_failure="ignore")
+        try:
+            model.steady_state(verbose=False)
+            model.solve_model(verbose=False, on_failure="ignore", **pert_kwargs)
 
-        data = model.simulate(
-            simulation_length=simulation_length,
-            n_simulations=n_simulations,
-            shock_dict=shock_dict,
-            show_progress_bar=False,
-        )
+            data = model.simulate(
+                simulation_length=simulation_length,
+                n_simulations=n_simulations,
+                shock_dict=shock_dict,
+                show_progress_bar=False,
+            )
 
-        simulaton_ids = np.arange(n_simulations).astype(int)
+            simulaton_ids = np.arange(n_simulations).astype(int)
 
-        data = data.rename(
-            axis=1,
-            level=1,
-            mapper=dict(zip(simulaton_ids, simulaton_ids + (n_simulations * i))),
-        )
+            data = data.rename(
+                axis=1,
+                level=1,
+                mapper=dict(zip(simulaton_ids, simulaton_ids + (n_simulations * i))),
+            )
 
-        simulations.append(data)
-        i += 1
+            simulations.append(data)
+            i += 1
 
-        # except ValueError:
-        #     continue
+        except ValueError:
+            continue
 
-        # finally:
-        progress_bar.stop()
+        finally:
+            progress_bar.stop()
 
     simulations = pd.concat(simulations, axis=1)
     return simulations
 
 
-def kalman_filter_from_prior(model, data, n_samples, filter_type="univariate"):
+def safe_get_idx_as_dict(df, idx):
+    if idx >= df.shape[0]:
+        return {}
+    else:
+        return df.iloc[idx].to_dict()
+
+
+def kalman_filter_from_prior(model, data, n_samples, filter_type="univariate", seed=None):
     observed_vars = data.columns.tolist()
     model_var_names = [x.base_name for x in model.variables]
-    shock_names = [x.base_name for x in model.shocks]
+    shock_names = [x.name for x in model.shocks]
+
+    initial_params = model.free_param_dict.copy()
 
     results = []
-    param_dicts = pd.DataFrame(
-        model.sample_param_dict_from_prior(n_samples, sample_shock_sigma=True)
-    ).T.to_dict()
+    dicts_of_samples = model.sample_param_dict_from_prior(n_samples, seed=seed)
+    param_dicts, shock_dicts, noise_dicts = map(pd.DataFrame, dicts_of_samples)
 
     progress_bar = ProgressBar(n_samples, "Sampling")
     i = 0
 
     while i < n_samples:
         try:
-            param_dict = param_dicts[i]
-            param_dict, shock_dict, obs_dict = split_random_variables(
-                param_dict, shock_names, observed_vars
-            )
-            model.free_param_dict.update(param_dict)
+            param_dict = safe_get_idx_as_dict(param_dicts, i)
+            shock_dict = safe_get_idx_as_dict(shock_dicts, i)
+            obs_dict = safe_get_idx_as_dict(noise_dicts, i)
 
             progress_bar.start()
+            model.free_param_dict.update(param_dict)
+
             model.steady_state(verbose=False)
-            model.solve_model(verbose=False, on_failure="raise")
+            model.solve_model(verbose=False, on_failure="error")
 
             T, R = model.T.values, model.R.values
             Z = build_Z_matrix(observed_vars, model_var_names)
@@ -223,7 +242,7 @@ def kalman_filter_from_prior(model, data, n_samples, filter_type="univariate"):
 
             i += 1
             progress_bar.stop()
-        except ValueError:
+        except (ValueError, np.linalg.LinAlgError):
             continue
 
     coords = {
