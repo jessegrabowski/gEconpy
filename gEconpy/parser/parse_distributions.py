@@ -1507,7 +1507,9 @@ def create_prior_distribution_dictionary(raw_prior_dict: Dict[str, str]) -> Dict
     basic_distributions, compound_distributions = split_out_composite_distributions(
         variable_names, d_names, param_dicts
     )
+
     prior_dict = SymbolDictionary()
+    hyper_prior_dict = SymbolDictionary()
 
     for variable_name, (d_name, param_dict) in basic_distributions.items():
         d = distribution_factory(variable_name=variable_name, d_name=d_name, param_dict=param_dict)
@@ -1518,11 +1520,12 @@ def create_prior_distribution_dictionary(raw_prior_dict: Dict[str, str]) -> Dict
         for param, value in param_dict.items():
             if value in prior_dict.keys():
                 param_dict[param] = prior_dict[value]
-                rvs_used_in_d.append(value)
+                rvs_used_in_d.append((variable_name, param, value))
 
         d = composite_distribution_factory(variable_name, d_name, param_dict)
         prior_dict[variable_name] = d
-        for rv in rvs_used_in_d:
+        for parent_rv, param, rv in rvs_used_in_d:
+            hyper_prior_dict[rv] = (parent_rv, param, prior_dict[rv])
             del prior_dict[rv]
 
-    return prior_dict
+    return prior_dict, hyper_prior_dict

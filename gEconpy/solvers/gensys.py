@@ -395,5 +395,10 @@ def interpret_gensys_output(eu):
         message = f"System is indeterminate. There are {eu[2]} loose endogenous variables."
     elif eu[1] == -1:
         message = f"Solution exists, but it is not unique -- sunspots."
-
+    elif eu[0] == 0 and eu[1] == 0:
+        message = "Solution does not exist."
+    elif eu[0] == 1 and eu[1] == 0:
+        message = "Solution exists, but is not unique."
+    elif eu[0] == 1 and eu[1] == 1:
+        message = "Gensys found a unique solution."
     return message

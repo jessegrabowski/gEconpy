@@ -8,7 +8,7 @@ from statsmodels.tsa.statespace.mlemodel import MLEModel, _handle_args
 from gEconpy.classes.transformers import IdentityTransformer, PositiveTransformer
 
 
-def compile_to_statsmodels(model):
+def compile_to_statsmodels(model) -> MLEModel:
     """
     Compile a gEconModel object into a Statsmodels MLEModel object.
 
@@ -361,10 +361,13 @@ def compile_to_statsmodels(model):
                 self.model.steady_state(verbose=False)
                 self.model.solve_model(verbose=False)
                 pert_success = True
-            except np.linalg.LinAlgError:
+            except Exception:
                 pert_success = False
 
-            condition_satisfied = model.check_bk_condition(verbose=False, return_value="bool")
+            try:
+                condition_satisfied = model.check_bk_condition(verbose=False, return_value="bool")
+            except Exception:
+                condition_satisfied = False
 
             self.ssm["transition"] = self.model.T.values
             self.ssm["selection"] = self.model.R.values

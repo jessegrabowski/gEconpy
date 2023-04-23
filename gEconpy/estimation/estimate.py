@@ -8,9 +8,9 @@ from gEconpy.estimation.estimation_utilities import (
     build_system_matrices,
     check_bk_condition,
     check_finite_matrix,
-    split_random_variables,
 )
 from gEconpy.estimation.kalman_filter import kalman_filter
+from gEconpy.shared.utilities import split_random_variables
 from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
 
 
@@ -256,6 +256,7 @@ def evaluate_logp(
     param_dict, shock_dict, obs_dict = split_random_variables(
         param_dict, shock_names, observed_vars
     )
+
     T, R, success = build_and_solve(param_dict, sparse_datas)
 
     if not success:
@@ -267,6 +268,69 @@ def evaluate_logp(
     Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, obs_dict)
 
     *_, ll_obs = kalman_filter(df.values, T, Z, R, H, Q, a0, P0, filter_type=filter_type)
+    ll += ll_obs.sum()
+
+    return ll, ll_obs
+
+
+def evaluate_logp2(
+    all_param_dict,
+    data,
+    f_ss,
+    f_pert,
+    free_params,
+    Z,
+    priors,
+    shock_names,
+    observed_vars,
+    filter_type="standard",
+):
+    ll = evaluate_prior_logp(all_param_dict, priors)
+    param_dict, a0_dict, P0_dict = split_param_dict(all_param_dict)
+
+    if not np.isfinite(ll):
+        return -np.inf, np.zeros(data.shape[0])
+
+    param_dict, shock_dict, obs_dict = split_random_variables(
+        param_dict, shock_names, observed_vars
+    )
+
+    all_params = free_params.copy()
+    all_params.update(param_dict)
+
+    ss_results = f_ss(all_params)
+    if not ss_results["success"]:
+        return -np.inf, np.zeros(data.shape[0])
+
+    ss_values = ss_results["ss_dict"]
+    calib_dict = ss_results["calib_dict"]
+
+    endog = np.array(list(ss_values.values()))
+    exog = np.array(list((all_params | calib_dict).values()))
+
+    A, B, C, D = f_pert(exog, endog)
+
+    if any([np.any(np.isnan(X) | np.isinf(X)) for X in [A, B, C, D]]):
+        return -np.inf, np.zeros(data.shape[0])
+
+    try:
+        T, result, log_norm = cycle_reduction(A, B, C, verbose=False)
+        T = np.ascontiguousarray(T)
+    except np.linalg.LinAlgError:
+        T, log_norm = None, None
+        result = "Failed"
+
+    if result != "Optimization successful":
+        return -np.inf, np.zeros(data.shape[0])
+
+    R = solve_shock_matrix(B, C, D, T)
+
+    a0 = np.array(list(a0_dict.values()))[:, None] if len(a0_dict) > 0 else None
+    P0 = np.eye(len(P0_dict)) * np.array(list(P0_dict.keys())) if len(P0_dict) > 0 else None
+
+    Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, obs_dict)
+
+    *_, ll_obs = kalman_filter(data, T, Z, R, H, Q, a0, P0, filter_type=filter_type)
     ll += ll_obs.sum()
 
     return ll, ll_obs

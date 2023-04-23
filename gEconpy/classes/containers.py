@@ -1,13 +1,105 @@
+from collections import defaultdict
+from typing import Any, Dict, Union
+
 import sympy as sp
+from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.utilities import (
-    float_values_to_sympy_float,
-    sort_dictionary,
-    string_keys_to_sympy,
-    sympy_keys_to_strings,
-    sympy_number_values_to_floats,
-)
+
+SAFE_STRING_TO_INDEX_DICT = dict(ss="ss", tp1=1, tm1=-1, t=0)
+
+
+def safe_string_to_sympy(s, assumptions=None):
+    if isinstance(s, sp.Symbol):
+        return s
+
+    assumptions = assumptions or defaultdict(lambda: {})
+
+    *name, time_index_str = s.split("_")
+    if time_index_str not in [str(x) for x in SAFE_STRING_TO_INDEX_DICT.keys()]:
+        name.append(time_index_str)
+        name = "_".join(name)
+        return sp.Symbol(name, **assumptions[name])
+
+    name = "_".join(name)
+    time_index = SAFE_STRING_TO_INDEX_DICT[time_index_str]
+    symbol = TimeAwareSymbol(name, time_index, **assumptions[name])
+
+    return symbol
+
+
+def symbol_to_string(symbol: Union[str, sp.Symbol]):
+    if isinstance(symbol, str):
+        return symbol
+    else:
+        return symbol.safe_name if isinstance(symbol, TimeAwareSymbol) else symbol.name
+
+
+def string_keys_to_sympy(d, assumptions=None):
+    result = {}
+    assumptions = assumptions or defaultdict(lambda: {})
+
+    for key, value in d.items():
+        if isinstance(key, sp.Symbol):
+            result[key] = value
+            continue
+
+        if "_" not in key:
+            result[sp.Symbol(key, **assumptions.get(key, {}))] = value
+            continue
+
+        new_key = safe_string_to_sympy(key, assumptions)
+        result[new_key] = value
+
+    return result
+
+
+def sympy_keys_to_strings(d):
+    result = {}
+    for key in d.keys():
+        result[symbol_to_string(key)] = d[key]
+
+    return result
+
+
+def sympy_number_values_to_floats(d: Dict[sp.Symbol, Any]):
+    for var, value in d.items():
+        if isinstance(value, sp.core.Number):
+            d[var] = float(value)
+        elif isinstance(value, ComplexElement):
+            d[var] = complex(value)
+    return d
+
+
+def float_values_to_sympy_float(d: Dict[sp.Symbol, Any]):
+    for var, value in d.items():
+        if isinstance(value, (float, int)):
+            d[var] = sp.Float(value)
+        elif isinstance(value, complex):
+            d[var] = sp.CC(value)
+
+    return d
+
+
+def sort_dictionary(d):
+    result = {}
+    sorted_keys = sorted(list(d.keys()))
+    for key in sorted_keys:
+        result[key] = d[key]
+
+    return result
+
+
+def sort_sympy_dict(d):
+    result = {}
+    sorted_keys = sorted(
+        list(d.keys()),
+        key=lambda x: x.base_name if isinstance(x, TimeAwareSymbol) else x.name,
+    )
+    for key in sorted_keys:
+        result[key] = d[key]
+
+    return result
 
 
 class SymbolDictionary(dict):

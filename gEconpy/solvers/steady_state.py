@@ -10,20 +10,19 @@ from scipy import optimize
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.numba_tools.utilities import numba_lambdify
-from gEconpy.shared.typing import VariableType
 from gEconpy.shared.utilities import eq_to_ss, substitute_all_equations
 
 
 class SteadyStateSolver:
     def __init__(self, model):
 
-        self.variables: List[VariableType] = model.variables
+        self.variables: List[TimeAwareSymbol] = model.variables
         self.shocks: List[sp.Add] = model.shocks
 
         self.n_variables: int = model.n_variables
 
         self.free_param_dict: SymbolDictionary[str, float] = model.free_param_dict
-        self.params_to_calibrate: List[VariableType] = model.params_to_calibrate
+        self.params_to_calibrate: List[sp.Symbol] = model.params_to_calibrate
         self.calibrating_equations: List[sp.Add] = model.calibrating_equations
         self.shock_dict: Optional[SymbolDictionary[str, float]] = None
 
@@ -49,7 +48,7 @@ class SteadyStateSolver:
         ]
 
     def _validate_optimizer_kwargs(
-            self, optimizer_kwargs: dict, n_eq: int, method: str, use_jac: bool, use_hess: bool
+        self, optimizer_kwargs: dict, n_eq: int, method: str, use_jac: bool, use_hess: bool
     ) -> dict:
         """
         Validate user-provided keyword arguments to either scipy.optimize.root or scipy.optimize.minimize, and insert
@@ -102,14 +101,56 @@ class SteadyStateSolver:
 
         return optimizer_kwargs
 
+    def apply_user_simplifications(self) -> List[sp.Add]:
+        """
+        Check if the system is analytically solvable without resorting to an optimizer. Currently, this is true only
+        if it is a linear model, or if the user has provided the complete steady state.
+
+        Returns
+        -------
+        is_presolved: bool
+        """
+        param_dict = self.free_param_dict.copy().to_sympy()
+        user_provided = self.steady_state_relationships.copy().to_sympy().float_to_values()
+        ss_eqs = self.steady_state_system.copy()
+        calib_eqs = self.calibrating_equations.copy()
+        all_eqs = ss_eqs + calib_eqs
+
+        all_vars_sym = list(self.steady_state_dict.to_sympy().keys())
+        all_vars_and_calib_sym = all_vars_sym + self.params_to_calibrate
+
+        zeros = np.full_like(all_eqs, False)
+        simplified_eqs = substitute_all_equations(all_eqs, user_provided)
+
+        for i, eq in enumerate(simplified_eqs):
+            subbed_eq = eq.subs(param_dict)
+
+            # Janky, but many expressions won't reduce to zero even if they ought to -> test numerically
+            atoms = [x for x in subbed_eq.atoms() if x in all_vars_and_calib_sym]
+            test_values = {x: np.random.uniform(1e-2, 0.99) for x in atoms}
+            eq_is_zero = sp.Abs(subbed_eq.subs(test_values)) < 1e-8
+            zeros[i] = eq_is_zero
+
+            if isinstance(subbed_eq, sp.Float) and not eq_is_zero:
+                raise ValueError(
+                    f"Applying user steady state definitions to equation {i}:\n"
+                    f"\t{all_eqs[i]}\n"
+                    f"resulted in non-zero residuals: {subbed_eq}.\n"
+                    f"Please verify the provided steady state relationships are correct."
+                )
+
+        eqs_to_solve = [eq for i, eq in enumerate(simplified_eqs) if not zeros[i]]
+
+        return eqs_to_solve
+
     def solve_steady_state(
-            self,
-            apply_user_simplifications: Optional[bool] = True,
-            model_is_linear: Optional[bool] = True,
-            optimizer_kwargs: Optional[Dict[str, Any]] = None,
-            method: Optional[str] = "root",
-            use_jac: Optional[bool] = True,
-            use_hess: Optional[bool] = True,
+        self,
+        apply_user_simplifications: Optional[bool] = True,
+        model_is_linear: Optional[bool] = True,
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        method: Optional[str] = "root",
+        use_jac: Optional[bool] = True,
+        use_hess: Optional[bool] = True,
     ) -> Callable:
         """
         Solving of the steady state proceeds in three steps: solve calibrating equations (if any), gather user provided
@@ -169,27 +210,7 @@ class SteadyStateSolver:
 
         # This can be skipped if we're working on a linear model (there should be no user simplifications)
         if apply_user_simplifications and not model_is_linear:
-
-            zeros = np.full_like(all_eqs, False)
-            simplified_eqs = substitute_all_equations(all_eqs, user_provided)
-
-            for i, eq in enumerate(simplified_eqs):
-                subbed_eq = eq.subs(param_dict)
-
-                # Janky, but many expressions won't reduce to zero even if they ought to -> test numerically
-                atoms = [x for x in subbed_eq.atoms() if x in all_vars_and_calib_sym]
-                test_values = {x: np.random.uniform(1e-2, 0.99) for x in atoms}
-                eq_is_zero = sp.Abs(subbed_eq.subs(test_values)) < 1e-8
-                zeros[i] = eq_is_zero
-
-                if isinstance(subbed_eq, sp.Float) and not eq_is_zero:
-                    raise ValueError(
-                        f"Applying user steady state definitions to equation {i}:\n"
-                        f"\t{all_eqs[i]}\n"
-                        f"resulted in non-zero residuals: {subbed_eq}.\n"
-                        f"Please verify the provided steady state relationships are correct."
-                    )
-            eqs_to_solve = [eq for i, eq in enumerate(simplified_eqs) if not zeros[i]]
+            eqs_to_solve = self.apply_user_simplifications()
         else:
             eqs_to_solve = all_eqs
 
@@ -220,26 +241,8 @@ class SteadyStateSolver:
         )
 
         if model_is_linear:
-            # If the model is linear, we can quickly solve for the steady state.
-            # The purpose of using sp.cse here is to undo the deterministic simplifications. If the system is in
-            # steady state, this is made harder.
-            # TODO: Potentially save a "reverse deterministic sub" dict for use here.
-            all_eqs_no_ss = self.system_equations + self.calibrating_equations
-            all_vars_and_calib_sym_no_ss = self.variables + self.params_to_calibrate
-
-            sub_dict, simplified_system = sp.cse(all_eqs_no_ss, ignore=all_vars_and_calib_sym_no_ss)
-
-            shock_subs = {shock.to_ss(): 0 for shock in self.shocks}
-
-            A, b = sp.linear_eq_to_matrix([eq_to_ss(eq).subs(shock_subs) for eq in simplified_system],
-                                          all_vars_and_calib_sym)
-            Ab = sp.Matrix([[A, b]])
-            A_rref, _ = Ab.rref()
-            steady_state_values = A_rref[:, -1].subs(sub_dict * len(sub_dict))
-
-            f_ss = numba_lambdify(
-                exog_vars=params, expr=steady_state_values
-            )
+            steady_state_values = self._solve_linear_steady_state()
+            f_ss = numba_lambdify(exog_vars=params, expr=steady_state_values)
 
             def ss_func(param_dict):
                 success = True
@@ -250,7 +253,9 @@ class SteadyStateSolver:
                 result_dict = SymbolDictionary(dict(zip(all_vars_and_calib_sym, ss_values)))
 
                 ss_dict = self.steady_state_dict.float_to_values().to_sympy().copy()
-                calib_dict = SymbolDictionary(dict(zip(self.params_to_calibrate, [np.inf] * k_calib)))
+                calib_dict = SymbolDictionary(
+                    dict(zip(self.params_to_calibrate, [np.inf] * k_calib))
+                )
 
                 for k in ss_dict.keys():
                     ss_dict[k] = result_dict[k]
@@ -261,7 +266,9 @@ class SteadyStateSolver:
                     "ss_dict": ss_dict.to_string(),
                     "calib_dict": calib_dict.to_string(),
                     "resids": np.array(
-                        f_ss_resid(np.array(list(ss_dict.values()) + list(calib_dict.values())), params)
+                        f_ss_resid(
+                            np.array(list(ss_dict.values()) + list(calib_dict.values())), params
+                        )
                     ),
                     "success": success,
                 }
@@ -290,7 +297,7 @@ class SteadyStateSolver:
 
         elif method == "minimize":
             # For minimization, need to form a loss function (use L2 norm -- better options?).
-            loss = sum([eq ** 2 for eq in eqs_to_solve])
+            loss = sum([eq**2 for eq in eqs_to_solve])
             f_loss = numba_lambdify(exog_vars=vars_and_calib_sym, endog_vars=params, expr=[loss])
             if use_jac:
                 jac = [loss.diff(x) for x in vars_and_calib_sym]
@@ -381,6 +388,58 @@ class SteadyStateSolver:
 
         return ss_func
 
+    def _solve_linear_steady_state(self) -> List[sp.Add]:
+        """
+        If the model is linear, we can quickly solve for the steady state by putting everything into a matrix and
+        getting the reduced row-echelon form.
+
+        # TODO: Potentially save a "reverse deterministic sub" dict for use here.
+
+        Returns
+        -------
+        steady_state_values, list
+            A list of closed-form solutions to the steady-state, one per
+        """
+
+        shock_subs = {shock.to_ss(): 0 for shock in self.shocks}
+
+        all_vars_sym = list(self.steady_state_dict.to_sympy().keys())
+
+        all_vars_and_calib_sym = self.variables + self.params_to_calibrate
+        all_vars_and_calib_sym_ss = all_vars_sym + self.params_to_calibrate
+        all_eqs = self.system_equations + self.calibrating_equations
+
+        # simplifications make the next few steps a lot faster
+        sub_dict, simplified_system = sp.cse(all_eqs, ignore=all_vars_and_calib_sym)
+        A, b = sp.linear_eq_to_matrix(
+            [eq_to_ss(eq).subs(shock_subs) for eq in simplified_system], all_vars_and_calib_sym_ss
+        )
+        Ab = sp.Matrix([[A, b]])
+        A_rref, _ = Ab.rref()
+
+        # Recursive substitution to undo any simplifications
+        steady_state_values = A_rref[:, -1].subs(sub_dict * len(sub_dict))
+
+        return steady_state_values
+
+    def _steady_state_fast(self, model_is_linear: Optional[bool] = True):
+        param_dict = self.free_param_dict.copy().to_sympy()
+        params = list(param_dict.keys())
+
+        if model_is_linear:
+            steady_state_values = self._solve_linear_steady_state()
+        elif self._system_is_presolved():
+            steady_state_values = self.get_presolved_system()
+        else:
+            raise ValueError(
+                "Cannot get a fast steady state solution unless the model is linear or a full closed-form"
+                "solution is provided"
+            )
+
+        f_ss = numba_lambdify(exog_vars=params, expr=steady_state_values)
+
+        pass
+
 
 class SymbolicSteadyStateSolver:
     def __init__(self):
@@ -388,12 +447,12 @@ class SymbolicSteadyStateSolver:
 
     @staticmethod
     def score_eq(
-            eq: sp.Expr,
-            var_list: List[sp.Symbol],
-            state_vars: List[sp.Symbol],
-            var_penalty_factor: float = 25,
-            state_var_penalty_factor: float = 5,
-            length_penalty_factor: float = 1,
+        eq: sp.Expr,
+        var_list: List[sp.Symbol],
+        state_vars: List[sp.Symbol],
+        var_penalty_factor: float = 25,
+        state_var_penalty_factor: float = 5,
+        length_penalty_factor: float = 1,
     ) -> float:
 
         """
@@ -437,7 +496,7 @@ class SymbolicSteadyStateSolver:
         # ensures that equations that have only state variables will be chosen more often.
         var_penalty = len([x for x in eq.atoms() if x in var_list]) * var_penalty_factor
         state_var_penalty = (
-                len([x for x in eq.atoms() if x in state_vars]) * state_var_penalty_factor
+            len([x for x in eq.atoms() if x in state_vars]) * state_var_penalty_factor
         )
 
         # Prefer shorter equations
@@ -520,14 +579,14 @@ class SymbolicSteadyStateSolver:
         return result
 
     def get_candidates(
-            self,
-            system: List[sp.Expr],
-            variables: List[sp.Symbol],
-            state_variables: List[sp.Symbol],
-            var_penalty_factor: float = 25,
-            state_var_penalty_factor: float = 5,
-            length_penalty_factor: float = 1,
-            cores: int = -1,
+        self,
+        system: List[sp.Expr],
+        variables: List[sp.Symbol],
+        state_variables: List[sp.Symbol],
+        var_penalty_factor: float = 25,
+        state_var_penalty_factor: float = 5,
+        length_penalty_factor: float = 1,
+        cores: int = -1,
     ) -> Dict[sp.Symbol, Tuple[sp.Expr, float]]:
         """
         Attempt to solve every equation in the system for every variable. Scores the results using the score_eq
@@ -594,14 +653,14 @@ class SymbolicSteadyStateSolver:
         return res
 
     def solve_symbolic_steady_state(
-            self,
-            mod,
-            top_k=3,
-            var_penalty_factor=25,
-            state_var_penalty_factor=5,
-            length_penalty_factor=1,
-            cores=-1,
-            zero_tol=12,
+        self,
+        mod,
+        top_k=3,
+        var_penalty_factor=25,
+        state_var_penalty_factor=5,
+        length_penalty_factor=1,
+        cores=-1,
+        zero_tol=12,
     ):
 
         ss_vars = [x.to_ss() for x in mod.variables]
@@ -665,6 +724,7 @@ class SymbolicSteadyStateSolver:
 
         return [sub_dict.update(d) for d in final_solutions]
 
+
 # from functools import partial
 # from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 # from warnings import catch_warnings, simplefilter
@@ -676,7 +736,7 @@ class SymbolicSteadyStateSolver:
 #
 # from gEconpy.classes.containers import SymbolDictionary
 #
-# from gEconpy.shared.typing import VariableType
+# from gEconpy.shared.typing import sp.Symbol
 # from gEconpy.shared.utilities import (
 #     float_values_to_sympy_float,
 #     is_variable,
@@ -696,13 +756,13 @@ class SymbolicSteadyStateSolver:
 # class SteadyStateSolver:
 #     def __init__(self, model):
 #
-#         self.variables: List[VariableType] = model.variables
+#         self.variables: List[sp.Symbol] = model.variables
 #         self.shocks: List[sp.Add] = model.shocks
 #
 #         self.n_variables: int = model.n_variables
 #
 #         self.free_param_dict: SymbolDictionary[str, float] = model.free_param_dict
-#         self.params_to_calibrate: List[VariableType] = model.params_to_calibrate
+#         self.params_to_calibrate: List[sp.Symbol] = model.params_to_calibrate
 #         self.calibrating_equations: List[sp.Add] = model.calibrating_equations
 #         self.system_equations: List[sp.Add] = model.system_equations
 #         self.steady_state_relationships: SymbolDictionary[
@@ -1236,8 +1296,8 @@ class SymbolicSteadyStateSolver:
 #
 #     @staticmethod
 #     def _build_jacobian(
-#         diff_variables: List[Union[str, VariableType]],
-#         additional_inputs: List[Union[str, VariableType]],
+#         diff_variables: List[Union[str, sp.Symbol]],
+#         additional_inputs: List[Union[str, sp.Symbol]],
 #         equations: List[sp.Add],
 #     ) -> Callable:
 #         """

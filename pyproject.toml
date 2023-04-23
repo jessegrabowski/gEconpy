@@ -1,6 +1,10 @@
 [tool.pytest.ini_options]
 minversion = "6.0"
 xfail_strict=true
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning"]
+env = ["NUMBA_DISABLE_JIT = 1"]
 
 [tool.isort]
 profile = 'black'

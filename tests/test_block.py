@@ -7,10 +7,226 @@ import sympy as sp
 
 from gEconpy.classes.block import Block
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.exceptions.exceptions import (
+    ControlVariableNotFoundException,
+    DynamicCalibratingEquationException,
+    MultipleObjectiveFunctionsException,
+    OptimizationProblemNotDefinedException,
+)
 from gEconpy.parser import constants, file_loaders, gEcon_parser
 from gEconpy.shared.utilities import set_equality_equals_zero, unpack_keys_and_values
 
 ROOT = Path(__file__).parent.absolute()
+
+
+class IncompleteBlockDefinitionTests(unittest.TestCase):
+    def test_raises_if_controls_missing(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                objective
+                {
+                    U[] = u[] + beta * E[][U[1]];
+                };
+            };
+            """
+
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+
+        self.assertRaises(OptimizationProblemNotDefinedException, Block, "HOUSEHOLD", block_dict)
+
+    def test_raises_if_objective_missing(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                controls
+                {
+                    K[], I[], C[], L[];
+                };
+            };
+            """
+
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+
+        self.assertRaises(OptimizationProblemNotDefinedException, Block, "HOUSEHOLD", block_dict)
+
+    def test_raises_if_multiple_objective(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                objective
+                {
+                    U[] = u[] + beta * E[][U[1]];
+                    C[] = a[] + b[];
+                };
+                controls
+                {
+                    K[], I[], C[], L[];
+                };
+            };
+            """
+
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+
+        self.assertRaises(MultipleObjectiveFunctionsException, Block, "HOUSEHOLD", block_dict)
+
+    def test_raises_if_controls_not_found(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                objective
+                {
+                    U[] = u[] + beta * E[][U[1]];
+                };
+                controls
+                {
+                    Z[];
+                };
+            };
+            """
+
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+
+        self.assertRaises(ControlVariableNotFoundException, Block, "HOUSEHOLD", block_dict)
+
+    def test_block_parser_handles_empty_block(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                definitions
+                {
+
+                };
+                identities
+                {
+                    Y[] = C[] + I[];
+                };
+            };
+            """
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+
+        block = Block("HOUSEHOLD", block_dict)
+        self.assertTrue(len(block.definitions) == 0)
+
+    def test_non_ss_var_in_calibration_raises(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                calibration
+                {
+                    Y[ss] / K[] = 0.33 -> alpha;
+                };
+            };
+            """
+
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+
+        self.assertRaises(DynamicCalibratingEquationException, Block, "HOUSEHOLD", block_dict)
+
+    def test_function_of_variables_in_calibration_raises(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                calibration
+                {
+                    beta = 0.99;
+                    alpha = beta * Y[];
+                };
+            };
+            """
+
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+
+        self.assertRaises(ValueError, Block, "HOUSEHOLD", block_dict)
+
+    def test_multiple_leads_in_objective_raises(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                objective
+                {
+                    U[] = u[] + X[] + beta * E[][U[1] + X[1]];
+                };
+
+                controls
+                {
+                    X[];
+                };
+            };
+            """
+
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+        block = Block("HOUSEHOLD", block_dict)
+
+        with self.assertRaises(ValueError) as error:
+            block.solve_optimization()
+        error_msg = error.exception
+        self.assertEqual(
+            str(error_msg),
+            f"Block HOUSEHOLD has multiple t+1 variables in the Bellman equation, this is not "
+            f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]], "
+            f"where a[] is the instantaneous value function at time t, defined in the "
+            f'"definitions" component of the block.',
+        )
+
+    def test_lagrange_multiplier_in_objective(self):
+        test_file = """
+            block HOUSEHOLD
+            {
+                definitions
+                {
+                    u[] = log(C[]);
+                };
+
+                objective
+                {
+                    U[] = u[] + beta * E[][U[1]] : lambda[];
+                };
+
+                controls
+                {
+                    C[], K[];
+                };
+
+                constraints
+                {
+                    Y[] = K[-1] ^ alpha;
+                    K[] = (1 - delta) * K[-1];
+                    C[] = r[] * K[-1];
+                };
+
+                calibration
+                {
+                    alpha = 0.33;
+                    delta = 0.035;
+                    beta = 0.99;
+                };
+            };
+            """
+
+        parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+        block = Block("HOUSEHOLD", block_dict)
+
+        with self.assertRaises(NotImplementedError):
+            block.solve_optimization()
 
 
 class BlockTestCases(unittest.TestCase):
@@ -21,6 +237,16 @@ class BlockTestCases(unittest.TestCase):
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.block = Block("HOUSEHOLD", block_dict)
+
+    def test_string_repr(self):
+        block_str = str(self.block)
+
+        self.assertEqual(
+            block_str,
+            f"{self.block.name} Block of {self.block.n_equations} equations, initialized: "
+            f"{self.block.initialized}, "
+            f"solved: {self.block.system_equations is not None}",
+        )
 
     def test_attributes_present(self):
         for component in constants.BLOCK_COMPONENTS:

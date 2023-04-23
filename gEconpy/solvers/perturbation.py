@@ -2,26 +2,14 @@ from typing import List, Tuple
 
 import numpy as np
 import sympy as sp
-from sympy.solvers.solveset import NonlinearError
-
 from numpy.typing import ArrayLike
 from scipy import linalg
+from sympy.solvers.solveset import NonlinearError
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.shared.utilities import eq_to_ss
 from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
 from gEconpy.solvers.gensys import gensys
-
-
-def print_gensys_results(eu):
-    if eu[0] == 1 and eu[1] == 1:
-        print(
-            "Gensys found a unique solution.\n"
-            "Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S"
-        )
-
-    else:
-        print(eu)
 
 
 class PerturbationSolver:
@@ -37,12 +25,12 @@ class PerturbationSolver:
 
     @staticmethod
     def solve_policy_function_with_gensys(
-            A: ArrayLike,
-            B: ArrayLike,
-            C: ArrayLike,
-            D: ArrayLike,
-            tol: float = 1e-8,
-            verbose: bool = True,
+        A: ArrayLike,
+        B: ArrayLike,
+        C: ArrayLike,
+        D: ArrayLike,
+        tol: float = 1e-8,
+        verbose: bool = True,
     ) -> Tuple:
         n_eq, n_vars = A.shape
         _, n_shocks = D.shape
@@ -78,20 +66,18 @@ class PerturbationSolver:
         pi = np.ascontiguousarray(Pi)
 
         G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
-        if verbose:
-            print_gensys_results(eu)
 
         return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
 
     @staticmethod
     def solve_policy_function_with_cycle_reduction(
-            A: ArrayLike,
-            B: ArrayLike,
-            C: ArrayLike,
-            D: ArrayLike,
-            max_iter: int = 1000,
-            tol: float = 1e-8,
-            verbose: bool = True,
+        A: ArrayLike,
+        B: ArrayLike,
+        C: ArrayLike,
+        D: ArrayLike,
+        max_iter: int = 1000,
+        tol: float = 1e-8,
+        verbose: bool = True,
     ) -> Tuple[ArrayLike, ArrayLike, str, float]:
         """
         Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
@@ -260,7 +246,9 @@ class PerturbationSolver:
         try:
             A, b = sp.linear_eq_to_matrix(model, all_y)
         except NonlinearError as sympy_msg:
-            raise ValueError(f'Model does not appear to be linear, check your GCN file. Sympy error: {sympy_msg}')
+            raise ValueError(
+                f"Model does not appear to be linear, check your GCN file. Sympy error: {sympy_msg}"
+            )
 
         offsets = np.array([0, n, n, n, 1])
         slices = [slice(i, i + offset) for i, offset in zip(offsets.cumsum()[:-1], offsets[1:])]
@@ -270,7 +258,7 @@ class PerturbationSolver:
         return Fs
 
     def make_all_variable_time_combinations(
-            self,
+        self,
     ) -> Tuple[List[TimeAwareSymbol], List[TimeAwareSymbol], List[TimeAwareSymbol]]:
         """
         :return: Tuple of three lists, containing all model variables at time steps t-1, t, and t+1, respectively.

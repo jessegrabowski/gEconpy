@@ -5,7 +5,7 @@ import sympy as sp
 from sympy.abc import greeks
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.utilities import make_all_var_time_combos, string_keys_to_sympy
+from gEconpy.shared.utilities import make_all_var_time_combos
 
 OPERATORS = list("+-/*^()=")
 
@@ -86,6 +86,10 @@ def substitute_equation_from_dict(eq_str: str, hash_dict: Dict[str, str]) -> str
     str
         The equation string with the variables replaced by their values.
     """
+    # tokens = eq_str.split()
+    # hash_tokens = [hash_dict.get(x) for x in tokens]
+    # return ' '.join(hash_tokens)
+
     for key, value in hash_dict.items():
         eq_str = eq_str.replace(key, value)
     return eq_str
@@ -226,6 +230,13 @@ def make_mod_file(model) -> str:
     References
     ----------
     ..[1] Adjemian, Stéphane, et al. "Dynare: Reference manual, version 4." (2011).
+
+    TODO: This function needs a lot of work, including:
+        - Output deterministics as # declarations
+        - Output priors
+        - Add a flag for linear models
+        - Output user-provided steady state equations
+        - Check that the steady state has been solved
     """
 
     var_list = model.variables.copy()

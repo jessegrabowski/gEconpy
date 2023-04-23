@@ -61,7 +61,8 @@ def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = N
         A list of sparse data.
     """
 
-    params_to_estimate = params_to_estimate or model.param_priors.keys()
+    if params_to_estimate is None:
+        params_to_estimate = list(model.param_priors.keys())
     ss_vars = list(model.steady_state_dict.to_sympy().keys())
 
     param_dict = model.free_param_dict.copy()
@@ -304,41 +305,6 @@ def check_bk_condition(A, B, C, tol=1e-8):
 
     n_g_one = (eig[:, 0] > 1).sum()
     return n_forward <= n_g_one
-
-
-def split_random_variables(param_dict, shock_names, obs_names):
-    """
-    Split a dictionary of parameters into dictionaries of shocks, observables, and other variables.
-
-    Parameters
-    ----------
-    param_dict : Dict[str, float]
-        A dictionary of parameters and their values.
-    shock_names : List[str]
-        A list of the names of shock variables.
-    obs_names : List[str]
-        A list of the names of observable variables.
-
-    Returns
-    -------
-    Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]
-        A tuple containing three dictionaries: the first has parameters, the second has
-        all shock variances parameters, and the third has observation noise variances.
-    """
-
-    out_param_dict = {}
-    shock_dict = {}
-    obs_dict = {}
-
-    for k, v in param_dict.items():
-        if k in shock_names:
-            shock_dict[k] = v
-        elif k in obs_names:
-            obs_dict[k] = v
-        else:
-            out_param_dict[k] = v
-
-    return out_param_dict, shock_dict, obs_dict
 
 
 def extract_prior_dict(model):

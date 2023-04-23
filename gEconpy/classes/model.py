@@ -1,11 +1,10 @@
 from collections import defaultdict
 from functools import reduce
 from typing import Any, Callable, Dict, List, Optional, Union
-from warnings import warn
+from warnings import catch_warnings, simplefilter, warn
 
 import arviz as az
 import emcee
-import numba as nb
 import numpy as np
 import pandas as pd
 import sympy as sp
@@ -17,11 +16,8 @@ from gEconpy.classes.block import Block
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.progress_bar import ProgressBar
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.estimation.estimate import build_Z_matrix, evaluate_logp
-from gEconpy.estimation.estimation_utilities import (
-    extract_prior_dict,
-    extract_sparse_data_from_model,
-)
+from gEconpy.estimation.estimate import build_Z_matrix, evaluate_logp2
+from gEconpy.estimation.estimation_utilities import extract_prior_dict
 from gEconpy.exceptions.exceptions import (
     GensysFailedException,
     MultipleSteadyStateBlocksException,
@@ -35,10 +31,13 @@ from gEconpy.parser.constants import STEADY_STATE_NAMES
 from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary
 from gEconpy.parser.parse_equations import single_symbol_to_sympy
 from gEconpy.shared.utilities import (
+    build_Q_matrix,
+    compute_autocorrelation_matrix,
     expand_subs_for_all_times,
+    get_shock_std_priors_from_hyperpriors,
     is_variable,
     make_all_var_time_combos,
-    merge_dictionaries,
+    split_random_variables,
     substitute_all_equations,
     unpack_keys_and_values,
 )
@@ -77,8 +76,8 @@ class gEconModel:
         self.model_filepath: str = model_filepath
 
         # Model metadata
-        self.options: Optional[Dict[str, bool]] = None
-        self.try_reduce_vars: Optional[List[TimeAwareSymbol]] = None
+        self.options: Dict[str, bool] = {}
+        self.try_reduce_vars: List[TimeAwareSymbol] = []
 
         self.blocks: Dict[str, Block] = {}
         self.n_blocks: int = 0
@@ -101,6 +100,7 @@ class gEconModel:
 
         self.param_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         self.shock_priors: SymbolDictionary[str, Any] = SymbolDictionary()
+        self.hyper_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         self.observation_noise_priors: SymbolDictionary[str, Any] = SymbolDictionary()
 
         self.n_variables: int = 0
@@ -211,19 +211,33 @@ class gEconModel:
         if simplify_constants:
             singletons = self._simplify_singletons()
 
-        if verbose:
-            self.build_report(reduced_vars, singletons)
+        self.build_report(reduced_vars, singletons, verbose=verbose)
 
-    def build_report(self, reduced_vars, singletons):
+    def build_report(
+        self, reduced_vars: List[str], singletons: List[str], verbose: bool = True
+    ) -> None:
         """
         Write a diagnostic message after building the model. Note that successfully building the model does not
         guarantee that the model is correctly specified. For example, it is possible to build a model with more
         equations than parameters. This message will warn the user in this case.
 
+        Parameters
+        -------
+        reduced_vars: list
+            A list of variables reduced by the `try_reduce` method. Used to print the names of eliminated variables.
+
+        singletons: list
+            A list of "singleton" variables -- those defined as time-invariant constants. Used ot print the sames of
+            eliminated variables.
+
+        verbose: bool
+            Flag to print the build report to the terminal. Default is True. Regardless of the flag, the function will
+            always issue a warning to the user if the system is not fully defined.
         Returns
         -------
         None
         """
+
         if singletons and len(singletons) == 0:
             singletons = None
 
@@ -231,7 +245,8 @@ class gEconModel:
         var_str = "variable" if self.n_variables == 1 else "variables"
         shock_str = "shock" if self.n_shocks == 1 else "shocks"
         cal_eq_str = "equation" if self.n_calibrating_equations == 1 else "equations"
-        par_str = "parameter" if self.n_params_to_calibrate == 1 else "parameters"
+        free_par_str = "parameter" if len(self.free_param_dict) == 1 else "parameters"
+        calib_par_str = "parameter" if self.n_params_to_calibrate == 1 else "parameters"
 
         n_params = len(self.free_param_dict) + len(self.calib_param_dict)
 
@@ -256,25 +271,26 @@ class gEconModel:
             f" a defined prior. \n"
         )
 
-        report += f"\t{n_params} {par_str}\n"
+        report += f"\t{n_params} {free_par_str}\n"
         report += (
             f'\t\t {len(param_priors)} / {n_params} {"have" if len(param_priors) == 1 else "has"} '
             f"a defined prior. \n"
         )
         report += f"\t{self.n_calibrating_equations} calibrating {cal_eq_str}\n"
-        report += f"\t{self.n_params_to_calibrate} {par_str} to calibrate\n "
+        report += f"\t{self.n_params_to_calibrate} {calib_par_str} to calibrate\n "
 
         if self.n_equations == self.n_variables:
             report += "Model appears well defined and ready to proceed to solving.\n"
-            print(report)
         else:
-            print(report)
             message = (
                 f"The model does not appear correctly specified, there are {self.n_equations} {eq_str} but "
                 f"{self.n_variables} {var_str}. It will not be possible to solve this model. Please check the "
                 f"specification using available diagnostic tools, and check the GCN file for typos."
             )
             warn(message)
+
+        if verbose:
+            print(report)
 
     def steady_state(
         self,
@@ -326,6 +342,10 @@ class gEconModel:
         -------
         None
         """
+
+        if self.options.get("linear", False):
+            model_is_linear = True
+
         if not self.steady_state_solved:
             self.f_ss = self.steady_state_solver.solve_steady_state(
                 apply_user_simplifications=apply_user_simplifications,
@@ -382,12 +402,15 @@ class gEconModel:
 
         Prints an error message if a valid steady state has not yet been found.
         """
-        if self.steady_state_dict is None:
+        if len(self.steady_state_dict) == 0:
             print("Run the steady_state method to find a steady state before calling this method.")
             return
 
+        output = []
         if not self.steady_state_solved:
-            print("Values come from the latest solver iteration but are NOT a valid steady state.")
+            output.append(
+                "Values come from the latest solver iteration but are NOT a valid steady state."
+            )
 
         max_var_name = (
             max(
@@ -396,14 +419,17 @@ class gEconModel:
             )
             + 5
         )
+
         for key, value in self.steady_state_dict.items():
-            print(f"{key:{max_var_name}}{value:>10.3f}")
+            output.append(f"{key:{max_var_name}}{value:>10.3f}")
 
         if len(self.params_to_calibrate) > 0:
-            print("\n")
-            print("In addition, the following parameter values were calibrated:")
+            output.append("\n")
+            output.append("In addition, the following parameter values were calibrated:")
             for key, value in self.calib_param_dict.items():
-                print(f"{key:{max_var_name}}{value:>10.3f}")
+                output.append(f"{key:{max_var_name}}{value:>10.3f}")
+
+        print("\n".join(output))
 
     def solve_model(
         self,
@@ -447,6 +473,14 @@ class gEconModel:
         None
         """
 
+        if on_failure not in ["error", "ignore"]:
+            raise ValueError(
+                f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}'
+            )
+
+        if self.options.get("linear", False):
+            model_is_linear = True
+
         param_dict = self.free_param_dict | self.calib_param_dict
         steady_state_dict = self.steady_state_dict
 
@@ -464,12 +498,15 @@ class gEconModel:
             )
             G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
 
-            if G_1 is None or (eu[0] != eu[1] != 1):
+            success = all([x == 1 for x in eu[:2]])
+
+            if not success:
                 if on_failure == "error":
                     raise GensysFailedException(eu)
                 elif on_failure == "ignore":
                     if verbose:
-                        print(interpret_gensys_output(eu))
+                        message = interpret_gensys_output(eu)
+                        print(message)
                     self.P = None
                     self.Q = None
                     self.R = None
@@ -478,6 +515,13 @@ class gEconModel:
                     self.perturbation_solved = False
 
                     return
+
+            if verbose:
+                message = interpret_gensys_output(eu)
+                print(message)
+                print(
+                    "Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S"
+                )
 
             T = G_1[: self.n_variables, :][:, : self.n_variables]
             R = impact[: self.n_variables, :]
@@ -492,7 +536,7 @@ class gEconModel:
                 A, B, C, D, max_iter, tol, verbose
             )
             if T is None:
-                if on_failure == "errror":
+                if on_failure == "error":
                     raise GensysFailedException(result)
         else:
             raise NotImplementedError(
@@ -563,6 +607,9 @@ class gEconModel:
 
         """
 
+        if self.options.get("linear", False):
+            model_is_linear = True
+
         free_param_dict = self.free_param_dict.copy()
 
         parameters = list(free_param_dict.to_sympy().keys())
@@ -632,10 +679,10 @@ class gEconModel:
         self,
         free_param_dict: Optional[Dict[str, float]] = None,
         system_matrices: Optional[List[ArrayLike]] = None,
-        verbose: bool = True,
+        verbose: Optional[bool] = True,
         return_value: Optional[str] = "df",
         tol=1e-8,
-    ) -> Optional[ArrayLike]:
+    ) -> Union[bool, pd.DataFrame]:
         """
         Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
         unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
@@ -645,10 +692,13 @@ class gEconModel:
         ----------
         free_param_dict: dict, optional
             A dictionary of parameter values. If None, the current stored values are used.
+        system_matrices: list, optional
+            A list of matrices A, B, C, D to be used to compute the bk_condition. If none, the current
+            stored values are used.
         verbose: bool, default: True
             Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
-        return_value: string, default: 'eigenvalues'
-            Controls what is returned by the function. Valid values are 'df', 'flag', and None.
+        return_value: string, default: 'df'
+            Controls what is returned by the function. Valid values are 'df', 'bool', and 'none'.
             If df, a dataframe containing eigenvalues is returned. If 'bool', a boolean indicating whether the BK
             condition is satisfied. If None, nothing is returned.
         tol: float, 1e-8
@@ -660,6 +710,11 @@ class gEconModel:
         """
         if self.build_perturbation_matrices is None:
             raise PerturbationSolutionNotFoundException()
+
+        if return_value not in ["df", "bool", "none"]:
+            raise ValueError(
+                f'return_value must be one of "df", "bool", or "none". Found {return_value} '
+            )
 
         if free_param_dict is not None:
             results = self.f_ss(self.free_param_dict)
@@ -723,19 +778,30 @@ class gEconModel:
                 f'\nBlanchard-Kahn condition is{" NOT" if condition_not_satisfied else ""} satisfied.'
             )
 
-        if return_value is None:
+        if return_value == "none":
             return
-
         if return_value == "df":
             return eig
         elif return_value == "bool":
             return ~condition_not_satisfied
 
-    def compute_stationary_covariance_matrix(self):
+    def compute_stationary_covariance_matrix(
+        self,
+        shock_dict: Optional[Dict[str, float]] = None,
+        shock_cov_matrix: Optional[ArrayLike] = None,
+    ):
         """
-        Compute the stationary covariance matrix of the solved system via fixed-point iteration. By construction, any
-        linearized DSGE model will have a fixed covariance matrix. In principle, a closed form solution is available
-        (we could solve a discrete Lyapunov equation) but this works fine.
+        Compute the stationary covariance matrix of the solved system by solving the associated discrete lyapunov
+        equation. In order to construct the shock covariance matrix, exactly one or zero of shock_dict or
+        shock_cov_matrix should be provided. If neither is provided, the prior means on the shocks will be used. If no
+        information about a shock is available, the standard deviation will be set to 0.01.
+
+        Parameters
+        -------
+        shock_dict, dict of str: float, optional
+            A dictionary of shock sizes to be used to compute the stationary covariance matrix.
+        shock_cov_matrix: array, optional
+            An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
 
         Returns
         -------
@@ -743,21 +809,58 @@ class gEconModel:
         """
         if not self.perturbation_solved:
             raise PerturbationSolutionNotFoundException()
+        shock_std_priors = get_shock_std_priors_from_hyperpriors(
+            self.shocks, self.hyper_priors, out_keys="parent"
+        )
+
+        if (
+            shock_dict is None
+            and shock_cov_matrix is None
+            and len(shock_std_priors) < self.n_shocks
+        ):
+            unknown_shocks_list = [
+                shock.base_name
+                for shock in self.shocks
+                if shock not in self.shock_priors.to_sympy()
+            ]
+            unknown_shocks = ", ".join(unknown_shocks_list)
+            warn(
+                f"No standard deviation provided for shocks {unknown_shocks}. Using default of std = 0.01. Explicity"
+                f"pass variance information for these shocks or set their priors to silence this warning."
+            )
+
+        Q = build_Q_matrix(
+            model_shocks=[x.base_name for x in self.shocks],
+            shock_dict=shock_dict,
+            shock_cov_matrix=shock_cov_matrix,
+            shock_std_priors=shock_std_priors,
+        )
 
         T, R = self.T, self.R
+        sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ Q @ R.values.T)
 
-        # TODO: Should this be R @ Q @ R.T ?
-        sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ R.values.T)
+        return pd.DataFrame(sigma, index=T.index, columns=T.index)
 
-        return pd.DataFrame(sigma / 100, index=T.index, columns=T.index)
-
-    def compute_autocorrelation_matrix(self, n_lags=10):
+    def compute_autocorrelation_matrix(
+        self,
+        shock_dict: Optional[Dict[str, float]] = None,
+        shock_cov_matrix: Optional[ArrayLike] = None,
+        n_lags=10,
+    ):
         """
         Computes autocorrelations for each model variable using the stationary covariance matrix. See doc string for
         compute_stationary_covariance_matrix for more information.
 
+        In order to construct the shock covariance matrix, exactly one or zero of shock_dict or
+        shock_cov_matrix should be provided. If neither is provided, the prior means on the shocks will be used. If no
+        information about a shock is available, the standard deviation will be set to 0.01.
+
         Parameters
         ----------
+        shock_dict, dict of str: float, optional
+            A dictionary of shock sizes to be used to compute the stationary covariance matrix.
+        shock_cov_matrix: array, optional
+            An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
         n_lags: int
             Number of lags over which to compute the autocorrelation
 
@@ -770,8 +873,10 @@ class gEconModel:
 
         T, R = self.T, self.R
 
-        Sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ R.values.T)
-        acorr_mat = _compute_autocorrelation_matrix(T.values, Sigma, n_lags=n_lags)
+        Sigma = self.compute_stationary_covariance_matrix(
+            shock_dict=shock_dict, shock_cov_matrix=shock_cov_matrix
+        )
+        acorr_mat = compute_autocorrelation_matrix(T.values, Sigma.values, n_lags=n_lags)
 
         return pd.DataFrame(acorr_mat, index=T.index, columns=np.arange(n_lags))
 
@@ -792,6 +897,7 @@ class gEconModel:
         burn_in=None,
         thin=None,
         skip_initial_state_check=False,
+        compute_sampler_stats=True,
         **sampler_kwargs,
     ):
         """
@@ -868,6 +974,10 @@ class gEconModel:
         """
         observed_vars = data.columns.tolist()
         model_var_names = [x.base_name for x in self.variables]
+
+        if burn_in is None:
+            burn_in = 0
+
         if not all([x in model_var_names for x in observed_vars]):
             orphans = [x for x in observed_vars if x not in model_var_names]
             raise ValueError(
@@ -875,7 +985,7 @@ class gEconModel:
                 f'with no associated model state: {", ".join(orphans)}'
             )
 
-        sparse_data = extract_sparse_data_from_model(self)
+        # sparse_data = extract_sparse_data_from_model(self)
         prior_dict = extract_prior_dict(self)
 
         if estimate_a0 is False:
@@ -906,17 +1016,22 @@ class gEconModel:
         Z = build_Z_matrix(observed_vars, model_var_names)
 
         args = [
-            data,
-            sparse_data,
+            data.values,
+            self.f_ss,
+            self.build_perturbation_matrices,
+            self.free_param_dict,
             Z,
             prior_dict,
             shock_names,
             observed_vars,
             filter_type,
         ]
+
         arg_names = [
             "observed_data",
-            "sparse_data",
+            "f_ss",
+            "f_pert",
+            "free_params",
             "Z",
             "prior_dict",
             "shock_names",
@@ -934,32 +1049,23 @@ class gEconModel:
         sampler = emcee.EnsembleSampler(
             n_walkers,
             k_params,
-            evaluate_logp,
+            evaluate_logp2,
             args=args,
             moves=moves,
             parameter_names=param_names,
             **sampler_kwargs,
         )
 
-        _ = sampler.run_mcmc(
-            x0,
-            draws,
-            progress=verbose,
-            skip_initial_state_check=skip_initial_state_check,
-        )
-
-        if return_inferencedata:
-            sampler_stats = xr.Dataset(
-                data_vars=dict(
-                    acceptance_fraction=(["chain"], sampler.acceptance_fraction),
-                    autocorrelation_time=(
-                        ["parameters"],
-                        sampler.get_autocorr_time(discard=burn_in or 0, quiet=True),
-                    ),
-                ),
-                coords=dict(chain=np.arange(n_walkers), parameters=param_names),
+        with catch_warnings():
+            simplefilter("ignore")
+            _ = sampler.run_mcmc(
+                x0,
+                draws + burn_in,
+                progress=verbose,
+                skip_initial_state_check=skip_initial_state_check,
             )
 
+        if return_inferencedata:
             idata = az.from_emcee(
                 sampler,
                 var_names=param_names,
@@ -967,19 +1073,26 @@ class gEconModel:
                 arg_names=arg_names,
             )
 
-            idata["sample_stats"].update(sampler_stats)
-            idata.observed_data = idata.observed_data.drop(["sparse_data", "prior_dict"])
-            idata.observed_data = idata.observed_data.drop_dims(
-                ["sparse_data_dim_0", "sparse_data_dim_1", "prior_dict_dim_0"]
-            )
+            if compute_sampler_stats:
+                sampler_stats = xr.Dataset(
+                    data_vars=dict(
+                        acceptance_fraction=(["chain"], sampler.acceptance_fraction),
+                        autocorrelation_time=(
+                            ["parameters"],
+                            sampler.get_autocorr_time(discard=burn_in or 0, quiet=True),
+                        ),
+                    ),
+                    coords=dict(chain=np.arange(n_walkers), parameters=param_names),
+                )
+
+                idata["sample_stats"].update(sampler_stats)
+            idata.observed_data = idata.observed_data.drop_vars(["prior_dict"])
 
             return idata.sel(draw=slice(burn_in, None, thin))
 
         return sampler
 
-    def sample_param_dict_from_prior(
-        self, n_samples=1, seed=None, param_subset=None, sample_shock_sigma=False
-    ):
+    def sample_param_dict_from_prior(self, n_samples=1, seed=None, param_subset=None):
 
         """
         Sample parameters from the parameter prior distributions.
@@ -992,30 +1105,31 @@ class gEconModel:
             Seed for the random number generator.
         param_subset: list, default: None
             List of parameter names to sample. If None, all parameters are sampled.
-        sample_shock_sigma: bool, default: False
-            If True, also sample the shock standard deviations.
 
         Returns
         -------
         new_param_dict: dict
             Dictionary of sampled parameters.
         """
+        shock_std_priors = get_shock_std_priors_from_hyperpriors(self.shocks, self.hyper_priors)
 
-        if sample_shock_sigma:
-            shock_priors = {k: v.rv_params["scale"] for k, v in self.shock_priors.items()}
-        else:
-            shock_priors = self.shock_priors
-
-        all_priors = merge_dictionaries(
-            self.param_priors, shock_priors, self.observation_noise_priors
+        all_priors = (
+            self.param_priors.to_sympy()
+            | shock_std_priors
+            | self.observation_noise_priors.to_sympy()
         )
+
+        if len(all_priors) == 0:
+            raise ValueError("No model priors found, cannot sample.")
 
         if param_subset is None:
             n_variables = len(all_priors)
             priors_to_sample = all_priors
         else:
             n_variables = len(param_subset)
-            priors_to_sample = {k: v for k, v in all_priors.items() if k in param_subset}
+            priors_to_sample = SymbolDictionary(
+                {k: v for k, v in all_priors.items() if k.name in param_subset}
+            )
 
         if seed is not None:
             seed_sequence = np.random.SeedSequence(seed)
@@ -1028,7 +1142,11 @@ class gEconModel:
         for i, (key, d) in enumerate(priors_to_sample.items()):
             new_param_dict[key] = d.rvs(size=n_samples, random_state=streams[i])
 
-        return new_param_dict
+        free_param_dict, shock_dict, obs_dict = split_random_variables(
+            new_param_dict, self.shocks, self.variables
+        )
+
+        return free_param_dict.to_string(), shock_dict.to_string(), obs_dict.to_string()
 
     def impulse_response_function(self, simulation_length: int = 40, shock_size: float = 1.0):
         """
@@ -1124,32 +1242,35 @@ class gEconModel:
         timesteps = simulation_length
 
         n_shocks = R.shape[1]
+        shock_std_priors = get_shock_std_priors_from_hyperpriors(
+            self.shocks, self.hyper_priors, out_keys="parent"
+        )
 
-        if shock_cov_matrix is not None:
-            assert shock_cov_matrix.shape == (
-                n_shocks,
-                n_shocks,
-            ), f"The shock covariance matrix should have shape {n_shocks} x {n_shocks}"
-            d = stats.multivariate_normal(mean=np.zeros(n_shocks), cov=shock_cov_matrix)
-            epsilons = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
-
-        elif shock_dict is not None:
-            epsilons = np.zeros((n_simulations, timesteps, n_shocks))
-            for i, shock in enumerate(self.shocks):
-                if shock.base_name in shock_dict.keys():
-                    d = stats.norm(loc=0, scale=shock_dict[shock.base_name])
-                    epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
-
-        elif all([shock.base_name in self.shock_priors.keys() for shock in self.shocks]):
-            epsilons = np.zeros((n_simulations, timesteps, n_shocks))
-            for i, d in enumerate(self.shock_priors.values()):
-                epsilons[:, :, i] = np.r_[[d.rvs(timesteps) for _ in range(n_simulations)]]
-
-        else:
-            raise ValueError(
-                "To run a simulation, supply either a full covariance matrix, a dictionary of shocks and"
-                "standard deviations, or specify priors on the shocks in your GCN file."
+        if (
+            shock_dict is None
+            and shock_cov_matrix is None
+            and len(shock_std_priors) < self.n_shocks
+        ):
+            unknown_shocks_list = [
+                shock.base_name
+                for shock in self.shocks
+                if shock not in self.shock_priors.to_sympy()
+            ]
+            unknown_shocks = ", ".join(unknown_shocks_list)
+            warn(
+                f"No standard deviation provided for shocks {unknown_shocks}. Using default of std = 0.01. Explicity"
+                f"pass variance information for these shocks or set their priors to silence this warning."
             )
+
+        Q = build_Q_matrix(
+            model_shocks=[x.base_name for x in self.shocks],
+            shock_dict=shock_dict,
+            shock_cov_matrix=shock_cov_matrix,
+            shock_std_priors=shock_std_priors,
+        )
+
+        d_epsilon = stats.multivariate_normal(mean=np.zeros(n_shocks), cov=Q)
+        epsilons = np.r_[[d_epsilon.rvs(timesteps) for _ in range(n_simulations)]]
 
         data = np.zeros((self.n_variables, timesteps, n_simulations))
         if epsilons.ndim == 2:
@@ -1193,15 +1314,17 @@ class gEconModel:
             with methods .rvs, .pdf, and .logpdf is returned.
         """
 
-        priors = create_prior_distribution_dictionary(prior_dict)
+        priors, hyper_priors = create_prior_distribution_dictionary(prior_dict)
         hyper_parameters = set(prior_dict.keys()) - set(priors.keys())
 
-        # Clean up the hyper-parameters (e.g. shock stds) from the model, they aren't needed anymore
+        # Remove hyperparameters from the free parameters
         for parameter in hyper_parameters:
             del self.free_param_dict[parameter]
 
         param_priors = SymbolDictionary()
         shock_priors = SymbolDictionary()
+        hyper_priors_final = SymbolDictionary()
+
         for key, value in priors.items():
             sympy_key = single_symbol_to_sympy(key, assumptions=self.assumptions)
             if isinstance(sympy_key, TimeAwareSymbol):
@@ -1209,8 +1332,16 @@ class gEconModel:
             else:
                 param_priors[sympy_key.name] = value
 
+        for key, value in hyper_priors.items():
+            parent_rv, param_type, dist = value
+            parent_key = single_symbol_to_sympy(parent_rv, assumptions=self.assumptions)
+            param_key = single_symbol_to_sympy(key, assumptions=self.assumptions)
+
+            hyper_priors_final[param_key] = (parent_key, param_type, dist)
+
         self.param_priors = param_priors
         self.shock_priors = shock_priors
+        self.hyper_priors = hyper_priors_final
 
     def _build_model_blocks(self, parsed_model, simplify_blocks: bool):
         """
@@ -1226,7 +1357,8 @@ class gEconModel:
 
         raw_blocks = gEcon_parser.split_gcn_into_block_dictionary(parsed_model)
 
-        self.options = raw_blocks["options"]
+        if raw_blocks["options"] is not None:
+            self.options = raw_blocks["options"]
         self.try_reduce_vars = raw_blocks["tryreduce"]
         self.assumptions = raw_blocks["assumptions"]
 
@@ -1429,6 +1561,11 @@ class gEconModel:
         list
             The names of the variables that were removed. If reduction was not possible, None is returned.
         """
+        if self.n_equations != self.n_variables:
+            warn(
+                "Simplification via try_reduce was requested but not possible because the system is not well defined."
+            )
+            return
 
         if self.try_reduce_vars is None:
             return
@@ -1468,10 +1605,6 @@ class gEconModel:
         self.variables = sorted(list(self.variables), key=lambda x: x.name)
         self.n_variables = len(self.variables)
 
-        if self.n_equations != self.n_variables:
-            warn("Reduction was requested but not possible because the system is not well defined.")
-            return
-
         eliminated_vars = [var.name for var in variables if var not in self.variables]
 
         return eliminated_vars
@@ -1490,6 +1623,12 @@ class gEconModel:
         eliminated_vars : List[str]
             The names of the variables that were removed.
         """
+
+        if self.n_equations != self.n_variables:
+            warn(
+                "Removal of constant variables was requested but not possible because the system is not well defined."
+            )
+            return
 
         system = self.system_equations
 
@@ -1517,12 +1656,6 @@ class gEconModel:
         self.variables -= set(self.shocks)
         self.variables = sorted(list(self.variables), key=lambda x: x.name)
         self.n_variables = len(self.variables)
-
-        if self.n_equations != self.n_variables:
-            warn(
-                "Simplification was requested but not possible because the system is not well defined."
-            )
-            return
 
         eliminated_vars = [var.name for var in variables if var not in self.variables]
 
@@ -1569,34 +1702,3 @@ class gEconModel:
 #             return sigma
 #         else:
 #             sigma = new_sigma
-
-
-@nb.njit(cache=True)
-def _compute_autocorrelation_matrix(A, sigma, n_lags=5):
-    """Compute the autocorrelation matrix for the given state-space model.
-
-    Parameters
-    ----------
-    A : ndarray
-        An array of shape (n_endog, n_endog, n_lags) representing the transition matrix of the
-        state-space system.
-    sigma : ndarray
-        An array of shape (n_endog, n_endog) representing the variance-covariance matrix of the errors of
-        the transition equation.
-    n_lags : int, optional
-        The number of lags for which to compute the autocorrelation matrix.
-
-    Returns
-    -------
-    acov : ndarray
-        An array of shape (n_endog, n_lags) representing the autocorrelation matrix of the state-space process.
-    """
-
-    acov = np.zeros((A.shape[0], n_lags))
-    acov_factor = np.eye(A.shape[0])
-    for i in range(n_lags):
-        cov = acov_factor @ sigma
-        acov[:, i] = np.diag(cov) / np.diag(sigma)
-        acov_factor = A @ acov_factor
-
-    return acov

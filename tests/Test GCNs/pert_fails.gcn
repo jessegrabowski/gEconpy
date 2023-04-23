@@ -1,8 +1,3 @@
-options
-{
-    linear = True;
-};
-
 block SYSTEM_EQUATIONS
 {
 	identities
@@ -13,11 +8,11 @@ block SYSTEM_EQUATIONS
 		#2. Euler Equation
 		sigma / beta * (E[][C[1]] - C[]) = R_ss * E[][R[1]];
 
-		#3. Law of motion of capital
-		K[] = (1 - delta) * K[-1] + delta * I[];
+		#3. Law of motion of capital -- Timings have been changed to cause Gensys to fail
+		K[] = (1 - delta) * K[] + delta * I[];
 
-		#4. Production Function
-		Y[] = A[] + alpha * K[-1] + (1 - alpha) * L[];
+		#4. Production Function -- Timings have been changed to cause Gensys to fail
+		Y[] = A[] + alpha * E[][K[1]] + (1 - alpha) * L[];
 
 		#5. Demand for capital
 		R[] = Y[] - K[-1];
@@ -35,18 +30,17 @@ block SYSTEM_EQUATIONS
 
 	shocks
 	{
-		epsilon_A[] ~ Normal(loc=0, scale=sigma_A);
+		epsilon_A[];
 	};
 
 	calibration
 	{
-		sigma   ~ Gamma(a=2, scale=0.25, loc=1) = 2;
-		phi     ~ Gamma(a=2, scale=0.25, loc=1) = 1.5;
-		alpha   ~ Beta(a=5, b=9) = 0.35;
-		beta    ~ Beta(a=10, b=1) = 0.985;
-		delta   ~ Beta(a=1, b=10) = 0.025;
-		rho_A   ~ Beta(a=1, b=5) = 0.95;
-		sigma_A ~ Gamma(a=2, scale=0.005) = 0.01;
+		sigma = 2;
+		phi = 1.5;
+		alpha = 0.35;
+		beta = 0.985;
+		delta = 0.025;
+		rho_A = 0.95;
 
 		#P_ss = 1;
 		R_ss = (1 / beta - (1 - delta));

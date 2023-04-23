@@ -6,76 +6,18 @@ import sympy as sp
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
-    BlockNotInitializedException,
     ControlVariableNotFoundException,
     DynamicCalibratingEquationException,
     MultipleObjectiveFunctionsException,
     OptimizationProblemNotDefinedException,
 )
 from gEconpy.parser import parse_equations
-from gEconpy.shared.typing import VariableType
 from gEconpy.shared.utilities import (
     diff_through_time,
     expand_subs_for_all_times,
     set_equality_equals_zero,
     unpack_keys_and_values,
 )
-
-
-def sort_positive_then_negative(args):
-    """
-    Sort `args` such that the argument containing a negative symbol is returned first.
-
-    Parameters
-    ----------
-    args : list
-        List of sympy expressions
-
-    Returns
-    -------
-    tuple
-        Tuple of sympy expressions, with the element containing a negative symbol returned first.
-        If `args` does not contain exactly 2 elements, or if neither element contains a negative symbol,
-        return None.
-    """
-    if len(args) != 2:
-        return
-
-    if sum(-1 in arg.atoms() for arg in args) != 1:
-        return
-
-    neg_arg = [arg for arg in args if -1 in arg.atoms()][0]
-    pos_arg = [arg for arg in args if arg != neg_arg][0]
-
-    return pos_arg, neg_arg
-
-
-def simple_log_exp_solver(eq: sp.Add, x: VariableType) -> Union[float, sp.Add]:
-    """
-    Parameters
-    ----------
-    eq: sp.Add
-        Equation to solve
-    x: VariableType
-        Variable to solve for
-
-    Returns
-    -------
-    solution: float or VariableType
-
-    It is common to write shocks in DSGE model in the form x = exp(a * log(x)), which sympy cannot solve using the
-    sp.solve function. This simple function logs both sides of the the equation to help the solver, which will be
-    enough in the case of the function written above. If it still can't get an answer, it returns None.
-
-    """
-    args = sort_positive_then_negative(eq.args)
-    # log "both sides" and then try to solve
-    equality = sp.log(args[0]) - sp.log(-1 * args[1])
-    try:
-        result = sp.solve(equality, x)
-        return result
-    except NotImplementedError:
-        return None
 
 
 class Block:
@@ -92,7 +34,7 @@ class Block:
     def __init__(
         self,
         name: str,
-        block_dict: Dict[str, str],
+        block_dict: Dict[str, List[List[str]]],
         assumptions: Optional[Dict[str, dict]] = None,
         solution_hints: Optional[Dict[str, str]] = None,
         allow_incomplete_initialization: bool = False,
@@ -421,20 +363,21 @@ class Block:
 
     def _get_param_dict_and_calibrating_equations(self) -> None:
         """
-        :return: None
-
         The calibration block, as implemented in gEcon, mixes together parameters, which are fixed values with a
         user-provided value, with calibrating equations, which are extra conditions added to the steady-state system.
         This function divides these out so that the Model instance can ask for only one or the other.
 
-        These are divided heuristically: a parameter is assumed to be an equation with up to three atoms, all of which
-        are of class sp.Symbol or sp.Number. Calibrating equations, on the other hand, are comprised of Symbols,
-        TimeAwareSymbols, and numbers. All TimeAwareSymbols must be in the steady state, or else a Exception will be
-        raised.
-        """
-        if not self.initialized:
-            raise BlockNotInitializedException(block_name=self.name)
+        These are divided heuristically: a parameter is assumed to be an equation of the form x = y, where x is a
+        Sympy symbol (NOT a TimeAwareSymbol) and y is a Sympy number.
 
+        Calibrating equations are identified by the use of the "->" operator in the GCN file, and are flagged during
+        parsing. All TimeAwareSymbols in calibrating equations must be in the steady state, or else a Exception will be
+        raised.
+
+        Deterministic equations are parameters defined as functions of other parameters. For example, in a linear model,
+        the user will need to define steady state values as model parameters. These parameters are analogous to
+        equations beginning with # in Dynare.
+        """
         # It is possible that an initialized block will not have a calibration component
         if self.calibration is None:
             return
@@ -453,25 +396,18 @@ class Block:
             elif self.equation_flags[idx]["is_calibrating"]:
 
                 # Check if this equation is a valid calibrating equation
-                if all([isinstance(x, (sp.Number, sp.Symbol, TimeAwareSymbol)) for x in atoms]):
-                    if not all(
-                        [x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)]
-                    ):
-                        raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
+                if not all([x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)]):
+                    raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
 
-                    if self.params_to_calibrate is None:
-                        self.params_to_calibrate = [eq.lhs]
-                    else:
-                        self.params_to_calibrate.append(eq.lhs)
-
-                    if self.calibrating_equations is None:
-                        self.calibrating_equations = [set_equality_equals_zero(eq.rhs)]
-                    else:
-                        self.calibrating_equations.append(set_equality_equals_zero(eq.rhs))
+                if self.params_to_calibrate is None:
+                    self.params_to_calibrate = [eq.lhs]
                 else:
-                    raise ValueError(
-                        f"Invalid tokens found in calibrating equation: {eq} of block {self.name}"
-                    )
+                    self.params_to_calibrate.append(eq.lhs)
+
+                if self.calibrating_equations is None:
+                    self.calibrating_equations = [set_equality_equals_zero(eq.rhs)]
+                else:
+                    self.calibrating_equations.append(set_equality_equals_zero(eq.rhs))
 
             else:
                 # What is left should only be "deterministic relationships", parameters that are defined as
@@ -570,9 +506,9 @@ class Block:
             continuation_value = [x for x in variables if x.time_index == 1]
             if len(continuation_value) > 1:
                 raise ValueError(
-                    f"Block {self.name} has multiple t+1 variables in the Bellman equation, this is not"
-                    f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]],"
-                    f"where a[] is the instantaneous value function at time t, defined in the"
+                    f"Block {self.name} has multiple t+1 variables in the Bellman equation, this is not "
+                    f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]], "
+                    f"where a[] is the instantaneous value function at time t, defined in the "
                     f'"definitions" component of the block.'
                 )
             discount_factor = objective.rhs.coeff(continuation_value[0])
@@ -645,12 +581,6 @@ class Block:
         TODO: Automatically solving for un-named lagrange multipliers is currently done by the Model class, is this
                 correct?
         """
-        if not self.initialized:
-            raise ValueError(
-                f"Block {self.name} is not initialized, cannot call Block.solve_optimization() "
-                f"before initialization"
-            )
-
         sub_dict = dict()
 
         if self.definitions is not None:
@@ -685,9 +615,14 @@ class Block:
         # Corner case, if the objective function has a named lagrange multiplier
         # (pointless? but done in some gEcon example GCN files)
         if multipliers[obj_idx] is not None:
-            self.system_equations.append(
-                multipliers[obj_idx] - diff_through_time(lagrange, objective.lhs, discount_factor)
+            raise NotImplementedError(
+                "Lagrange multipliers in the objective block is not currently supported. This may break backwards"
+                "compatibility with some gEcon example GCN files. Re-write the model to directly define the stochastic"
+                "discount factor."
             )
+            # self.system_equations.append(
+            #     multipliers[obj_idx] - diff_through_time(lagrange, objective.lhs, discount_factor)
+            # )
 
         for control in controls:
             foc = diff_through_time(lagrange, control, discount_factor)
