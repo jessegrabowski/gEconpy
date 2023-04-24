@@ -160,6 +160,57 @@ class ModelErrorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             model.sample_param_dict_from_prior()
 
+    def test_missing_parameter_definition_raises(self):
+        GCN_file = """
+                    block HOUSEHOLD
+                    {
+                        definitions
+                        {
+                            u[] = log(C[]);
+                        };
+
+                        objective
+                        {
+                            U[] = u[] + beta * E[][U[1]];
+                        };
+
+                        controls
+                        {
+                            C[], K[], K[-1], Y[];
+                        };
+
+                        constraints
+                        {
+                            Y[] = K[-1] ^ alpha;
+                            Y[] = r[] * K[-1];
+                            K[] = (1 - delta) * K[-1];
+
+                        };
+
+                        calibration
+                        {
+                            K[ss] / Y[ss] = 0.33 -> alpha;
+                            delta = 0.035;
+                        };
+                    };
+                    """
+
+        with unittest.mock.patch(
+            "builtins.open", new=unittest.mock.mock_open(read_data=GCN_file), create=True
+        ):
+            with self.assertRaises(ValueError) as error:
+                model = gEconModel(
+                    "", verbose=False, simplify_tryreduce=False, simplify_constants=False
+                )
+            msg = str(error.exception)
+
+        self.assertEqual(
+            msg,
+            "The following parameters were found among model equations, but were not found among "
+            f"defined defined or calibrated parameters: beta.\n Verify that these "
+            f"parameters have been defined in a calibration block somewhere in your GCN file.",
+        )
+
 
 class ModelClassTestsOne(unittest.TestCase):
     def setUp(self):

@@ -202,6 +202,7 @@ class gEconModel:
         self._build_prior_dict(prior_dict)
 
         self._make_deterministic_substitutions()
+        self._verify_no_orphan_params()
 
         reduced_vars = None
         singletons = None
@@ -1692,13 +1693,22 @@ class gEconModel:
 
         self.system_equations = [eq.subs(det_sub_dict) for eq in self.system_equations]
 
+    def _verify_no_orphan_params(self):
+        all_atoms = reduce(
+            lambda left, right: left.union(right), [eq.atoms() for eq in self.system_equations]
+        )
 
-# #@njit
-# def _compute_stationary_covariance_matrix(A, C, tol=1e-9, max_iter=10_000):
-#     sigma = np.eye(A.shape[0])
-#     for _ in range(max_iter):
-#         new_sigma = A @ sigma @ A.T + C @ C.T
-#         if ((sigma - new_sigma) ** 2).mean() < tol:
-#             return sigma
-#         else:
-#             sigma = new_sigma
+        all_params = [
+            x for x in all_atoms if isinstance(x, sp.Symbol) and not isinstance(x, TimeAwareSymbol)
+        ]
+        orphans = [
+            x.name
+            for x in all_params
+            if (x.name not in self.free_param_dict) and (x not in self.params_to_calibrate)
+        ]
+        if len(orphans) > 0:
+            raise ValueError(
+                "The following parameters were found among model equations, but were not found among "
+                f'defined defined or calibrated parameters: {", ".join(orphans)}.\n Verify that these '
+                f"parameters have been defined in a calibration block somewhere in your GCN file."
+            )
