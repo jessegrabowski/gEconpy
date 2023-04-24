@@ -1007,6 +1007,28 @@ class TestModelSimulationTools(unittest.TestCase):
 
         self.assertIsNotNone(conditional_posterior)
 
+    def test_fit_model_raises_on_stochastic_singularity(self):
+        T = 100
+        n_simulations = 1
+
+        # Draw from shock prior
+        data = self.model.simulate(simulation_length=T, n_simulations=n_simulations)
+
+        # Only Y is observed
+        data = data.droplevel(axis=1, level=1).T[["C", "K"]]
+
+        with self.assertRaises(ValueError):
+            idata = self.model.fit(
+                data,
+                filter_type="univariate",
+                draws=36,
+                n_walkers=36,
+                return_inferencedata=True,
+                burn_in=0,
+                verbose=False,
+                compute_sampler_stats=False,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

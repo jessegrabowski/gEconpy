@@ -974,7 +974,17 @@ class gEconModel:
               Pacific, vol. 125, no. 925, Mar. 2013, pp. 306–12. arXiv.org, https://doi.org/10.1086/670067.
         """
         observed_vars = data.columns.tolist()
+        n_obs = len(observed_vars)
+        n_shocks = self.n_shocks
         model_var_names = [x.base_name for x in self.variables]
+        n_noise_priors = len(self.observation_noise_priors)
+
+        if n_obs > (n_noise_priors + n_shocks):
+            raise ValueError(
+                f"Number of observed parameters in data ({n_obs}) is greater than the number of sources "
+                f"of stochastic variance - shocks ({n_shocks}) and observation noise ({n_noise_priors}). "
+                f"The model cannot be fit due to stochastic singularity."
+            )
 
         if burn_in is None:
             burn_in = 0

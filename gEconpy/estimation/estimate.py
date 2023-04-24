@@ -310,7 +310,7 @@ def evaluate_logp2(
 
     A, B, C, D = f_pert(exog, endog)
 
-    if any([np.any(np.isnan(X) | np.isinf(X)) for X in [A, B, C, D]]):
+    if any([np.any(~np.isfinite(X)) for X in [A, B, C, D]]):
         return -np.inf, np.zeros(data.shape[0])
 
     try:
