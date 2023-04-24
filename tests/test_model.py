@@ -57,6 +57,7 @@ class ModelErrorTests(unittest.TestCase):
                 {
                     alpha = 0.33;
                     beta = 0.99;
+                    delta = 0.035;
                 };
             };
             """
