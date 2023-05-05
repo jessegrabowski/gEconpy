@@ -230,12 +230,18 @@ def numba_lambdify(
 
     input_signature = "exog_inputs"
     unpacked_inputs = "\n".join(
-        [f"    {x.name} = exog_inputs[{i}]" for i, x in enumerate(exog_vars)]
+        [
+            f"    {getattr(x, 'safe_name', x.name)} = exog_inputs[{i}]"
+            for i, x in enumerate(exog_vars)
+        ]
     )
     if endog_vars is not None:
         input_signature += ", endog_inputs"
         exog_unpacked = "\n".join(
-            [f"    {x.name} = endog_inputs[{i}]" for i, x in enumerate(endog_vars)]
+            [
+                f"    {getattr(x, 'safe_name', x.name)} = endog_inputs[{i}]"
+                for i, x in enumerate(endog_vars)
+            ]
         )
         unpacked_inputs += "\n" + exog_unpacked
 

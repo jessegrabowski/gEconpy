@@ -1705,17 +1705,20 @@ class gEconModel:
 
     def _verify_no_orphan_params(self):
         all_atoms = reduce(
-            lambda left, right: left.union(right), [eq.atoms() for eq in self.system_equations]
+            lambda left, right: left.union(right),
+            [eq.atoms() for eq in self.system_equations + self.calibrating_equations],
         )
 
         all_params = [
             x for x in all_atoms if isinstance(x, sp.Symbol) and not isinstance(x, TimeAwareSymbol)
         ]
+
         orphans = [
             x.name
             for x in all_params
             if (x.name not in self.free_param_dict) and (x not in self.params_to_calibrate)
         ]
+
         if len(orphans) > 0:
             raise ValueError(
                 "The following parameters were found among model equations, but were not found among "

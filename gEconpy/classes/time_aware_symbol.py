@@ -18,6 +18,9 @@ class TimeAwareSymbol(sp.Symbol):
     def __getnewargs__(self):
         return self.name, self.time_index
 
+    def _numpycode(self, *args, **kwargs):
+        return self.safe_name
+
     @staticmethod
     @cacheit
     def __xnew__(cls, name, time_index, **assumptions):

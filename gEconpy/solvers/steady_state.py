@@ -76,7 +76,7 @@ class SteadyStateSolver:
         """
 
         optimizer_kwargs = {} if optimizer_kwargs is None else optimizer_kwargs
-        method_given = hasattr(optimizer_kwargs, "method")
+        method_given = "method" in optimizer_kwargs.keys()
 
         if method == "root" and not method_given:
             if use_jac:
@@ -96,7 +96,7 @@ class SteadyStateSolver:
             else:
                 optimizer_kwargs["method"] = "Nelder-Mead"
 
-        if not hasattr(optimizer_kwargs, "tol"):
+        if "tol" not in optimizer_kwargs.keys():
             optimizer_kwargs["tol"] = 1e-9
 
         return optimizer_kwargs
@@ -139,7 +139,19 @@ class SteadyStateSolver:
                     f"Please verify the provided steady state relationships are correct."
                 )
 
-        eqs_to_solve = [eq for i, eq in enumerate(simplified_eqs) if not zeros[i]]
+        try:
+            eqs_to_solve = [eq for i, eq in enumerate(simplified_eqs) if not zeros[i]]
+        except TypeError:
+            msg = "Found the following loose symbols during simplification:\n"
+            # Something didn't reduce, figure out what and show the user
+            for i, eq in enumerate(zeros):
+                loose_symbols = [
+                    x for x in eq.atoms() if isinstance(x, (sp.Symbol, TimeAwareSymbol))
+                ]
+                if len(loose_symbols) > 0:
+                    msg += f"Equation {i}: " + ", ".join([x.name for x in loose_symbols]) + "\n"
+
+            raise ValueError(msg)
 
         return eqs_to_solve
 
@@ -224,12 +236,13 @@ class SteadyStateSolver:
         k_vars = len(vars_sym)
         k_calib = len(calib_params)
         n_eq = len(eqs_to_solve)
+        n_loose = len(vars_and_calib_sym)
 
-        if (n_eq != (k_vars + k_calib)) and (n_eq > 0) and (method == "root"):
+        if (n_eq != n_loose) and (n_eq > 0) and (method == "root"):
             raise ValueError(
                 'method = "root" is only possible when the number of equations (after substitution of '
                 "user-provided steady-state relationships) is equal to the number of (remaining) "
-                f"variables.\nFound {n_eq} equations and {k_vars} variables. This can happen if "
+                f"variables.\nFound {n_eq} equations and {k_vars + k_calib} variables. This can happen if "
                 f"user-provided steady-state relationships do not result in elimination of model "
                 f"equations after substitution. \nCheck the provided steady state relationships, or "
                 f'use method = "minimize" to attempt to solve via minimization of squared errors.'
@@ -320,19 +333,17 @@ class SteadyStateSolver:
             params = np.array(list(param_dict.values()))
 
             if optimizer_required:
-                x0 = np.full(k_vars + k_calib, 0.8)
+                if "x0" not in optimizer_kwargs.keys():
+                    optimizer_kwargs["x0"] = np.full(k_vars + k_calib, 0.8)
                 with catch_warnings():
                     simplefilter("ignore")
                     if method == "root":
-                        optim = optimize.root(
-                            f_ss, jac=f_jac_ss, x0=x0, args=params, **optimizer_kwargs
-                        )
+                        optim = optimize.root(f_ss, jac=f_jac_ss, args=params, **optimizer_kwargs)
                     elif method == "minimize":
                         optim = optimize.minimize(
                             f_loss,
                             jac=f_jac_ss,
                             hess=f_hess_ss,
-                            x0=x0,
                             args=params,
                             **optimizer_kwargs,
                         )
