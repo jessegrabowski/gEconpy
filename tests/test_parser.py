@@ -1,10 +1,11 @@
 import os
 import unittest
-from collections import defaultdict
+
 from pathlib import Path
 
 import pyparsing
 import sympy as sp
+
 from scipy.stats import invgamma, norm
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -152,19 +153,17 @@ class ParserTestCases(unittest.TestCase):
                         """
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
 
-        results = gEcon_parser.extract_special_block(parser_output, "options")
-        results.update(gEcon_parser.extract_special_block(parser_output, "tryreduce"))
+        options = gEcon_parser.extract_special_block(parser_output, "options")
+        tryreduce = gEcon_parser.extract_special_block(parser_output, "tryreduce")
 
-        self.assertEqual(list(results.keys()), ["options", "tryreduce"])
-        self.assertIsInstance(results["options"], dict)
+        self.assertIsInstance(options, dict)
         self.assertEqual(
-            list(results["options"].keys()),
+            list(options.keys()),
             ["output logfile", "output LaTeX", "output LaTeX landscape"],
         )
 
-        self.assertEqual(list(results["options"].values()), [True, True, True])
-
-        self.assertEqual(results["tryreduce"], ["Div[]", "TC[]"])
+        self.assertEqual(list(options.values()), [True, True, True])
+        self.assertEqual(tryreduce, ["Div[]", "TC[]"])
 
     def test_block_deletion(self):
         test_file = """options
@@ -198,16 +197,18 @@ class ParserTestCases(unittest.TestCase):
         with open(os.path.join(ROOT, "Test Answer Strings/test_split_gcn_by_blocks.txt")) as file:
             expected_result = file.read()
 
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
 
         self.assertEqual(
             list(block_dict.keys()),
-            ["options", "tryreduce", "assumptions", "STEADY_STATE", "HOUSEHOLD"],
+            ["STEADY_STATE", "HOUSEHOLD"],
         )
 
-        self.assertIs(block_dict["options"], None)
-        self.assertIs(block_dict["tryreduce"], None)
-        self.assertTrue(isinstance(block_dict["assumptions"], defaultdict))
+        self.assertEqual(options, {})
+        self.assertEqual(tryreduce, [])
+        self.assertTrue(isinstance(assumptions, dict))
 
         self.assertEqual(block_dict["HOUSEHOLD"].strip(), expected_result)
 
@@ -229,6 +230,7 @@ class ParserTestCases(unittest.TestCase):
         test_eq += "objective { U[] = u[] + beta * E[] [ U[1] ] ; }; };"
 
         block_dict = gEcon_parser.parsed_block_to_dict(test_eq)
+
         self.assertEqual(list(block_dict.keys()), ["definitions", "objective"])
         self.assertEqual(
             block_dict["definitions"],
@@ -241,7 +243,7 @@ class ParserTestCases(unittest.TestCase):
 
         test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"))
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, *_ = gEcon_parser.split_gcn_into_dictionaries(parser_output)
         household = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
         firm = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
 
@@ -369,7 +371,7 @@ class ParserTestCases(unittest.TestCase):
 
         for case, expected_result in zip(tests, answers):
             result = parse_equations.rename_time_indexes(case)
-            result = [x for x in result.atoms() if isinstance(x, sp.Symbol)][0]
+            result = next(iter([x for x in result.atoms() if isinstance(x, sp.Symbol)]))
             self.assertEqual(result, expected_result)
 
         eq_test = sp.Eq(x_t + x_t1 - x_tL1 * x_10t**x_tL10, x_ss - long_name_t / name_with_num)
@@ -412,23 +414,26 @@ class ParserTestCases(unittest.TestCase):
 
         for case, expected_results in zip(tests, answers):
             result = parse_equations.convert_symbols_to_time_symbols(case)
-            result = [x for x in result.atoms() if isinstance(x, sp.Symbol)][0]
+            result = next(iter([x for x in result.atoms() if isinstance(x, sp.Symbol)]))
             self.assertIsInstance(result, TimeAwareSymbol)
             self.assertEqual(result.base_name, expected_results[0])
             self.assertEqual(result.time_index, expected_results[1])
 
     def test_extract_assumption_blocks(self):
-        test_file = """positive
+        test_file = """assumptions
                         {
-                            C[], K[], L[], A[], lambda[], w[], r[], mc[],
-                            beta, delta, sigma_C, sigma_L, alpha;
+                            positive
+                            {
+                                C[], K[], L[], A[], lambda[], w[], r[], mc[],
+                                beta, delta, sigma_C, sigma_L, alpha;
+                            };
                         };
                     """
 
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
 
-        results = gEcon_parser.extract_special_block(parser_output, "assumptions")
-        self.assertTrue(list(results.keys()), ["positive"])
+        assumptions = gEcon_parser.extract_special_block(parser_output, "assumptions")
+        self.assertTrue(list(assumptions.keys()), ["positive"])
 
     def test_invalid_assumptions_raise_error(self):
         test_file = """assumptions
@@ -474,9 +479,9 @@ class ParserTestCases(unittest.TestCase):
         """
 
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
-        results = gEcon_parser.extract_special_block(parser_output, "assumptions")
+        assumptions = gEcon_parser.extract_special_block(parser_output, "assumptions")
 
-        self.assertEqual(results["assumptions"]["C"], DEFAULT_ASSUMPTIONS)
+        self.assertEqual(assumptions["C"], DEFAULT_ASSUMPTIONS)
 
     def test_defaults_removed_if_conflicting_with_user_spec(self):
         test_file = """
@@ -498,9 +503,9 @@ class ParserTestCases(unittest.TestCase):
         """
 
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
-        results = gEcon_parser.extract_special_block(parser_output, "assumptions")
+        assumptions = gEcon_parser.extract_special_block(parser_output, "assumptions")
 
-        self.assertTrue("real" not in results["assumptions"]["C"].keys())
+        self.assertTrue("real" not in assumptions["C"].keys())
 
     def test_defaults_given_when_variable_subset_defined(self):
         test_file = """
@@ -525,8 +530,8 @@ class ParserTestCases(unittest.TestCase):
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
         results = gEcon_parser.extract_special_block(parser_output, "assumptions")
 
-        self.assertEqual(results["assumptions"]["C"], {"real": True, "negative": True})
-        self.assertEqual(results["assumptions"]["L"], DEFAULT_ASSUMPTIONS)
+        self.assertEqual(results["C"], {"real": True, "negative": True})
+        self.assertEqual(results["L"], DEFAULT_ASSUMPTIONS)
 
     def test_parse_equations_to_sympy(self):
         test_eq = "{definitions { u[] = log ( C[] ) + log ( L[] ) ; }; objective { U[] = u[] + beta * E[] [ U[1] ] ; };"

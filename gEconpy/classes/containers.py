@@ -1,7 +1,8 @@
 from collections import defaultdict
-from typing import Any, Dict, Union
+from typing import Any, Union
 
 import sympy as sp
+
 from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -62,7 +63,7 @@ def sympy_keys_to_strings(d):
     return result
 
 
-def sympy_number_values_to_floats(d: Dict[sp.Symbol, Any]):
+def sympy_number_values_to_floats(d: dict[sp.Symbol, Any]):
     for var, value in d.items():
         if isinstance(value, sp.core.Number):
             d[var] = float(value)
@@ -71,7 +72,7 @@ def sympy_number_values_to_floats(d: Dict[sp.Symbol, Any]):
     return d
 
 
-def float_values_to_sympy_float(d: Dict[sp.Symbol, Any]):
+def float_values_to_sympy_float(d: dict[sp.Symbol, Any]):
     for var, value in d.items():
         if isinstance(value, (float, int)):
             d[var] = sp.Float(value)

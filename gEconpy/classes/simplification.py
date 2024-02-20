@@ -1,0 +1,116 @@
+from typing import Optional
+from warnings import warn
+
+import numpy as np
+import sympy as sp
+
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.shared.utilities import (
+    expand_subs_for_all_times,
+    is_variable,
+    make_all_var_time_combos,
+    substitute_all_equations,
+)
+
+
+def _check_system_is_square(name: str, n_equations: int, n_variables: int) -> bool:
+    if n_equations != n_variables:
+        warn(
+            f'Simplification via {name} was requested but not possible because the system is not well defined. '
+            f'Found {n_equations} equation{"s" if n_equations > 1 else ""} but {n_variables} variable'
+            f'{"s" if n_variables > 1 else ""}'
+        )
+        return False
+    return True
+
+
+def reduce_variable_list(equations, variables):
+    reduced_variables = {
+        atom.set_t(0)
+        for eq in equations
+        for atom in eq.atoms()
+        if is_variable(atom) and atom.set_t(0) in variables
+    }
+
+    reduced_variables = sorted(list(reduced_variables), key=lambda x: x.name)
+    eliminated_vars = sorted(list(set(variables) - set(reduced_variables)), key=lambda x: x.name)
+
+    return reduced_variables, eliminated_vars
+
+
+def try_reduce(try_reduce_vars, equations, variables):
+    """
+    Attempt to reduce the number of equations in the system by removing equations requested in the `tryreduce`
+    block of the GCN file. Equations are considered safe to remove if they are "self-contained" that is, if
+    no other variables depend on their values.
+
+    Returns
+    -------
+    list
+        The names of the variables that were removed. If reduction was not possible, None is returned.
+    """
+    n_equations = len(equations)
+    n_variables = len(variables)
+    if not _check_system_is_square("try_reduce", n_equations, n_variables):
+        return
+
+    occurrence_matrix = np.zeros((n_variables, n_variables))
+    reduced_equations = []
+
+    for i, eq in enumerate(equations):
+        for j, var in enumerate(variables):
+            if any([x in eq.atoms() for x in make_all_var_time_combos([var])]):
+                occurrence_matrix[i, j] += 1
+
+    # Columns with a sum of 1 are variables that appear only in a single equations; these equations can be deleted
+    # without consequence w.r.t solving the system.
+    isolated_variables = np.array(variables)[occurrence_matrix.sum(axis=0) == 1]
+    to_remove = set(isolated_variables).intersection(set(try_reduce_vars))
+
+    for eq in equations:
+        if not any([var in eq.atoms() for var in to_remove]):
+            reduced_equations.append(eq)
+
+    reduced_variables, eliminated_vars = reduce_variable_list(reduced_equations, variables)
+    return reduced_equations, reduced_variables, eliminated_vars
+
+
+def simplify_singletons(
+    equations: list[sp.Expr], variables: list[TimeAwareSymbol]
+) -> Optional[list[TimeAwareSymbol]]:
+    """
+    Simplify the system by removing variables that are deterministically defined as a known value. Common examples
+    include P[] = 1, setting the price level of the economy as the numeraire, or B[] = 0, putting the bond market
+    in net-zero supply.
+
+    In these cases, the variable can be replaced by the deterministic value after all FoC
+    have been computed.
+
+    Returns
+    -------
+    eliminated_vars : List[str]
+        The names of the variables that were removed.
+    """
+    n_equations = len(equations)
+    n_variables = len(variables)
+
+    if not _check_system_is_square("try_reduce", n_equations, n_variables):
+        return
+
+    reduce_dict = {}
+
+    for eq in equations:
+        if len(eq.atoms()) < 4:
+            var = [x for x in eq.atoms() if is_variable(x)]
+            if len(var) != 1:
+                continue
+            var = var[0]
+            sub_dict = expand_subs_for_all_times(sp.solve(eq, var, dict=True)[0])
+            reduce_dict.update(sub_dict)
+
+    reduced_equations = substitute_all_equations(equations, reduce_dict)
+    reduced_equations = [eq for eq in reduced_equations if eq != 0]
+
+    reduced_variables, eliminated_vars = reduce_variable_list(reduced_equations, variables)
+
+    return reduced_equations, reduced_variables, eliminated_vars

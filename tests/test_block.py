@@ -1,5 +1,6 @@
 import os
 import unittest
+
 from pathlib import Path
 
 import numpy as np
@@ -32,7 +33,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(OptimizationProblemNotDefinedException, Block, "HOUSEHOLD", block_dict)
@@ -49,7 +52,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(OptimizationProblemNotDefinedException, Block, "HOUSEHOLD", block_dict)
@@ -71,7 +76,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(MultipleObjectiveFunctionsException, Block, "HOUSEHOLD", block_dict)
@@ -92,7 +99,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(ControlVariableNotFoundException, Block, "HOUSEHOLD", block_dict)
@@ -112,7 +121,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             };
             """
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         block = Block("HOUSEHOLD", block_dict)
@@ -130,7 +141,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(DynamicCalibratingEquationException, Block, "HOUSEHOLD", block_dict)
@@ -148,7 +161,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(ValueError, Block, "HOUSEHOLD", block_dict)
@@ -170,7 +185,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
         block = Block("HOUSEHOLD", block_dict)
 
@@ -179,10 +196,10 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
         error_msg = error.exception
         self.assertEqual(
             str(error_msg),
-            f"Block HOUSEHOLD has multiple t+1 variables in the Bellman equation, this is not "
-            f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]], "
-            f"where a[] is the instantaneous value function at time t, defined in the "
-            f'"definitions" component of the block.',
+            "Block HOUSEHOLD has multiple t+1 variables in the Bellman equation, this is not "
+            "currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]], "
+            "where a[] is the instantaneous value function at time t, defined in the "
+            '"definitions" component of the block.',
         )
 
     def test_lagrange_multiplier_in_objective(self):
@@ -221,7 +238,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
         block = Block("HOUSEHOLD", block_dict)
 
@@ -233,7 +252,9 @@ class BlockTestCases(unittest.TestCase):
     def setUp(self):
         test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn"))
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.block = Block("HOUSEHOLD", block_dict)
@@ -304,7 +325,7 @@ class BlockTestCases(unittest.TestCase):
         U = TimeAwareSymbol("U", 1)
         Y = TimeAwareSymbol("Y", 0)
         C = TimeAwareSymbol("C", 0)
-        I = TimeAwareSymbol("I", 0)
+        I = TimeAwareSymbol("I", 0)  # noqa: E741
         K = TimeAwareSymbol("K", 0)
         L = TimeAwareSymbol("L", 0)
         A = TimeAwareSymbol("A", 0)
@@ -341,7 +362,7 @@ class BlockTestCases(unittest.TestCase):
         U = TimeAwareSymbol("U", 1)
         Y = TimeAwareSymbol("Y", 0)
         C = TimeAwareSymbol("C", 0)
-        I = TimeAwareSymbol("I", 0)
+        I = TimeAwareSymbol("I", 0)  # noqa: E741
         K = TimeAwareSymbol("K", 0)
         L = TimeAwareSymbol("L", 0)
         A = TimeAwareSymbol("A", 0)
@@ -385,9 +406,9 @@ class BlockTestCases(unittest.TestCase):
             1 - theta
         ) * theta - lamb
 
-        dL_dL = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C**theta * (1 - L) ** (
-            -theta
-        ) * (1 - theta) * -1 + lamb_H_1 * (1 - alpha) * A * K**alpha * L ** (-alpha)
+        dL_dL = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C**theta * (1 - L) ** (-theta) * (
+            1 - theta
+        ) * -1 + lamb_H_1 * (1 - alpha) * A * K**alpha * L ** (-alpha)
         dL_dK = (
             lamb_H_1 * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
             - q
@@ -403,7 +424,9 @@ class BlockTestCases(unittest.TestCase):
     def test_firm_block_lagrange_parsing(self):
         test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"))
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
 
         block = Block("FIRM", block_dict)
@@ -426,7 +449,9 @@ class BlockTestCases(unittest.TestCase):
     def test_firm_FOC(self):
         test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"))
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         firm_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
 
         firm_block = Block("FIRM", firm_dict)
@@ -469,7 +494,6 @@ class BlockTestCases(unittest.TestCase):
             self.assertIn(solution.subs(sub_dict), subbed_system)
 
     def test_get_param_dict_and_calibrating_equations(self):
-
         self.block.solve_optimization(try_simplify=False)
 
         alpha, theta, beta, delta, tau, rho = sp.symbols(
@@ -504,6 +528,14 @@ class BlockTestCases(unittest.TestCase):
         answers = [3 + 0.99 * 0.95, -np.log(0.357)]
         for eq, answer in zip(self.block.deterministic_relationships, answers):
             self.assertEqual(eq.subs(self.block.param_dict), answer)
+
+    def test_variable_list(self):
+        self.block.solve_optimization(try_simplify=False)
+        self.assertEqual(
+            {x.base_name for x in self.block.variables},
+            {"A", "C", "I", "K", "L", "U", "Y", "lambda", "q", "lambda__H_1"},
+        )
+        self.assertEqual({x.base_name for x in self.block.shocks}, {"epsilon"})
 
 
 if __name__ == "__main__":

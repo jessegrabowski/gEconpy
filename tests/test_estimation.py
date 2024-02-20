@@ -1,5 +1,6 @@
 import os
 import unittest
+
 from pathlib import Path
 
 import numpy as np
@@ -29,7 +30,6 @@ class TestEstimationHelpers(unittest.TestCase):
         self.assertTrue(np.allclose(R, self.model.R.values))
 
     def test_build_Q_and_R(self):
-
         shock_names = [x.base_name for x in self.model.shocks]
         state_sigmas = dict(zip(shock_names, [0.1] * self.model.n_shocks))
         observed_vars = list(self.model.steady_state_dict.keys())

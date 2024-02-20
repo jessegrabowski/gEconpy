@@ -1,12 +1,11 @@
 import unittest
+
 from functools import partial
 
 import numpy as np
-from scipy.stats import gamma
 
 from gEconpy.exceptions.exceptions import (
     IgnoredCloseMatchWarning,
-    MultipleParameterDefinitionException,
     UnusedParameterWarning,
 )
 from gEconpy.parser.parse_distributions import (

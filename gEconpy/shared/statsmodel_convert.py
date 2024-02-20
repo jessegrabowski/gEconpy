@@ -1,11 +1,12 @@
-from typing import Callable, Dict, Optional
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
+
 from statsmodels.tsa.statespace.kalman_filter import INVERT_UNIVARIATE, SOLVE_LU
 from statsmodels.tsa.statespace.mlemodel import MLEModel, _handle_args
 
-from gEconpy.classes.transformers import IdentityTransformer, PositiveTransformer
+from gEconpy.estimation.transformers import IdentityTransformer, PositiveTransformer
 
 
 def compile_to_statsmodels(model) -> MLEModel:
@@ -33,12 +34,12 @@ def compile_to_statsmodels(model) -> MLEModel:
             self,
             data: pd.DataFrame,
             initialization: str,
-            param_start_dict: Dict[str, float],
-            shock_start_dict: Dict[str, float],
-            noise_start_dict: Optional[Dict[str, float]] = None,
-            param_transforms: Optional[Dict[str, Callable]] = None,
-            shock_transforms: Optional[Dict[str, Callable]] = None,
-            noise_transforms: Optional[Dict[str, Callable]] = None,
+            param_start_dict: dict[str, float],
+            shock_start_dict: dict[str, float],
+            noise_start_dict: Optional[dict[str, float]] = None,
+            param_transforms: Optional[dict[str, Callable]] = None,
+            shock_transforms: Optional[dict[str, Callable]] = None,
+            noise_transforms: Optional[dict[str, Callable]] = None,
             x0: Optional[np.ndarray] = None,
             P0: Optional[np.ndarray] = None,
             fit_MAP: bool = False,
@@ -156,9 +157,9 @@ def compile_to_statsmodels(model) -> MLEModel:
 
         def _validate_start_dict(
             self,
-            param_start_dict: Dict[str, float],
-            shock_start_dict: Dict[str, float],
-            noise_start_dict: Dict[str, float],
+            param_start_dict: dict[str, float],
+            shock_start_dict: dict[str, float],
+            noise_start_dict: dict[str, float],
         ) -> None:
             """
             Validate that all the parameters, shocks, and observation noises that are supposed to be
@@ -167,11 +168,11 @@ def compile_to_statsmodels(model) -> MLEModel:
 
             Parameters
             ----------
-            param_start_dict: Dict[str, float]
+            param_start_dict: dict
                 A dictionary of starting values for parameters that are to be estimated.
-            shock_start_dict: Dict[str, float]
+            shock_start_dict: dict
                 A dictionary of starting values for shocks that are to be estimated.
-            noise_start_dict: Dict[str, float]
+            noise_start_dict: dict
                 A dictionary of starting values for observation noises that are to be estimated.
             """
             missing_vars = [x for x in self.params_to_estimate if x not in param_start_dict.keys()]

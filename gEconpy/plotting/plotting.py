@@ -1,30 +1,31 @@
 from itertools import combinations_with_replacement
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
+
 from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from scipy import stats
 
 
-def prepare_gridspec_figure(n_cols: int, n_plots: int) -> Tuple[GridSpec, List]:
+def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list]:
     """
      Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
-     Parameters
-     ----------
+    Parameters
+    ----------
      n_cols : int
          The number of columns in the grid.
      n_plots : int
          The number of subplots in the grid.
 
-     Returns
-     -------
+    Returns
+    -------
      GridSpec
          A matplotlib GridSpec object representing the layout of the grid.
     list of tuple(slice, slice)
@@ -94,12 +95,12 @@ def _plot_single_variable(data, ax, ci=None, cmap=None, fill_color="tab:blue"):
 
 def plot_simulation(
     simulation: pd.DataFrame,
-    vars_to_plot: Optional[List[str]] = None,
+    vars_to_plot: Optional[list[str]] = None,
     ci: Optional[float] = None,
     n_cols: Optional[int] = None,
     cmap: Optional[Union[str, Colormap]] = None,
     fill_color: Optional[str] = None,
-    figsize: Tuple[int, int] = (12, 8),
+    figsize: tuple[int, int] = (12, 8),
     dpi: int = 100,
 ) -> plt.Figure:
     """
@@ -163,13 +164,13 @@ def plot_simulation(
 
 def plot_irf(
     irf: pd.DataFrame,
-    vars_to_plot: Optional[List[str]] = None,
-    shocks_to_plot: Optional[List[str]] = None,
+    vars_to_plot: Optional[list[str]] = None,
+    shocks_to_plot: Optional[list[str]] = None,
     n_cols: Optional[int] = None,
     legend: bool = False,
     cmap: Optional[Union[str, Colormap]] = None,
-    legend_kwargs: Optional[Dict] = None,
-    figsize: Tuple[int, int] = (14, 10),
+    legend_kwargs: Optional[dict] = None,
+    figsize: tuple[int, int] = (14, 10),
     dpi: int = 100,
 ) -> plt.Figure:
     """
@@ -268,7 +269,7 @@ def plot_irf(
 
 def plot_prior_solvability(
     data: pd.DataFrame,
-    params_to_plot: Optional[List[str]] = None,
+    params_to_plot: Optional[list[str]] = None,
 ):
     """
     Plot the results of sampling from the prior distributions of a GCN and attempting to fit a DSGE model.
@@ -285,7 +286,7 @@ def plot_prior_solvability(
         The number of samples to draw from the prior distributions.
     seed : int, optional
         The seed to use for the random number generator.
-    params_to_plot : List[str], optional
+    params_to_plot : list of str, optional
         A list of parameter names to include in the plots. If not provided, all parameters will be plotted.
 
     Returns
@@ -294,7 +295,7 @@ def plot_prior_solvability(
         The Figure object containing the plots
 
     Notes
-    ----------
+    -----
     - Parameters will be sampled from prior distributions defined in the GCN.
     - The following failure modes are considered:
         - Steady state: The steady state of the model could not be calculated.
@@ -350,7 +351,6 @@ def plot_prior_solvability(
         param_1, param_2 = pair
         axis = axes[row][col]
         if param_1 == param_2:
-
             X_sorted = plot_data[param_1].sort_values()
             X_success = X_sorted[plot_data["success"]]
             X_failure = X_sorted[~plot_data["success"]]
@@ -422,7 +422,9 @@ def plot_prior_solvability(
     return fig
 
 
-def plot_eigenvalues(model: Any, figsize: Tuple[float, float] = None, dpi: int = None):
+def plot_eigenvalues(
+    model: Any, figsize: Optional[tuple[float, float]] = None, dpi: Optional[int] = None
+):
     """
     Plot the eigenvalues of the model solution, along with a unit circle. Eigenvalues with modulus greater than 1 are
     shown in red, while those with modulus less than 1 are shown in blue. Eigenvalues greater than 10 in modulus
@@ -432,7 +434,7 @@ def plot_eigenvalues(model: Any, figsize: Tuple[float, float] = None, dpi: int =
     ----------
     model : gEconModel
         The model to plot the eigenvalues of.
-    figsize : Tuple[float, float], optional
+    figsize : tuple[float, float], optional
         The size of the figure to create.
     dpi : int, optional
         The resolution of the figure to create.
@@ -470,14 +472,14 @@ def plot_eigenvalues(model: Any, figsize: Tuple[float, float] = None, dpi: int =
 
 def plot_covariance_matrix(
     data: pd.DataFrame,
-    vars_to_plot: Optional[List[str]] = None,
+    vars_to_plot: Optional[list[str]] = None,
     cbarlabel: str = "Covariance",
-    figsize: Tuple[float, float] = (4, 4),
+    figsize: tuple[float, float] = (4, 4),
     dpi: int = 100,
-    cbar_kw: Optional[Dict] = None,
+    cbar_kw: Optional[dict] = None,
     cmap: str = "YlGn",
-    heatmap_kwargs: Optional[Dict] = None,
-    annotation_kwargs: Optional[Dict] = None,
+    heatmap_kwargs: Optional[dict] = None,
+    annotation_kwargs: Optional[dict] = None,
 ) -> plt.Figure:
     """
     Plots a heatmap of the covariance matrix of the input data.
@@ -504,6 +506,7 @@ def plot_covariance_matrix(
         Keyword arguments forwarded to plt.imshow
     annotation_kwargs: dict, optional
         Keyword arguments forwarded to gEconpy.plotting.annotate_heatmap
+
     Returns
     -------
     matplotlib.figure.Figure
@@ -661,8 +664,8 @@ def annotate_heatmap(
 
 def plot_acf(
     acorr_matrix: pd.DataFrame,
-    vars_to_plot: Optional[List[str]] = None,
-    figsize: Optional[Tuple[int, int]] = (14, 4),
+    vars_to_plot: Optional[list[str]] = None,
+    figsize: Optional[tuple[int, int]] = (14, 4),
     dpi: Optional[int] = 100,
     n_cols: Optional[int] = 4,
 ) -> plt.Figure:
@@ -721,8 +724,8 @@ def plot_acf(
 
 def plot_corner(
     idata: Any,
-    var_names: Optional[List[str]] = None,
-    figsize: Tuple[int, int] = (14, 14),
+    var_names: Optional[list[str]] = None,
+    figsize: tuple[int, int] = (14, 14),
     dpi: int = 144,
     hist_bins: int = 200,
     rug_bins: int = 50,
@@ -739,9 +742,9 @@ def plot_corner(
     ----------
     idata : arviz.InferenceData
         An arviz idata object with a posterior group.
-    var_names : List[str], optional
+    var_names : list of str, optional
         A list of strings specifying the variables to plot. If not provided, all variables in `idata` will be plotted.
-    figsize : Tuple[int, int], optional
+    figsize : tuple, optional
         The size of the figure in inches. Default is (14, 14).
     dpi : int, optional
         The resolution of the figure in dots per inch. Default is 144.
@@ -757,7 +760,7 @@ def plot_corner(
         Whether or not to show the modes of the marginal distributions. Default is True.
 
     Returns
-    ----------
+    -------
     matplotlib.figure.Figure
         Figure object containing the plots.
     """
@@ -856,13 +859,12 @@ def plot_kalman_filter(
     data: pd.DataFrame,
     kalman_output: str = "predicted",
     n_cols: Optional[int] = None,
-    vars_to_plot: Optional[List[str]] = None,
+    vars_to_plot: Optional[list[str]] = None,
     fig: Optional[Figure] = None,
-    figsize: Tuple[int, int] = (14, 6),
+    figsize: tuple[int, int] = (14, 6),
     dpi: int = 144,
     cmap: Optional[str] = None,
 ):
-
     """
     Plot Kalman filter, prediction or smoothed series for variables in idata.
 

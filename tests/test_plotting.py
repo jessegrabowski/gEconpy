@@ -1,8 +1,10 @@
 import os
 import unittest
+
 from pathlib import Path
 
 import numpy as np
+
 from matplotlib import pyplot as plt
 
 from gEconpy.classes.model import gEconModel
@@ -133,11 +135,14 @@ class TestIRFPlot(unittest.TestCase):
     def test_shock_not_found_raises(self):
         with self.assertRaises(ValueError) as error:
             fig = plot_irf(
-                self.irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y", "Invalid"]
+                self.irf,
+                vars_to_plot=["Y", "C"],
+                shocks_to_plot=["epsilon_Y", "Invalid"],
             )
         error_msg = error.exception
         self.assertEqual(
-            str(error_msg), "Invalid not found among shocks used in impulse response data."
+            str(error_msg),
+            "Invalid not found among shocks used in impulse response data.",
         )
 
     def test_legend(self):
@@ -282,7 +287,8 @@ class TestPlotACF(unittest.TestCase):
             fig = plot_acf(self.acf, vars_to_plot=["K", "C", "Invalid"])
         msg = str(error.exception)
         self.assertEqual(
-            msg, "Can not plot variable Invalid, it was not found in the provided covariance matrix"
+            msg,
+            "Can not plot variable Invalid, it was not found in the provided covariance matrix",
         )
 
 

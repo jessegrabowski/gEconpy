@@ -1,37 +1,58 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
-from numpy.typing import ArrayLike
+
 from scipy import linalg
+
+# A very small number
+EPSILON = np.spacing(1)
 
 
 def qzdiv(
-    stake: float, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
-) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+    stake: float, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Christopher Sim's qzdiv http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
-    :param stake: float, largest positive value for which an eigenvalue is considered stable
-    :param A: Array, upper-triangular matrix
-    :param B: Array, upper-triangular matrix
-    :param Q: Array, matrix of left Schur vectors.
-    :param Z: Array, matrix of right Schur vectors.
-    :return: Tuple, A, B, Q, Z, sorted such that all unstable roots are placed in the lower-right corners of the
-             matrices.
 
-    Original docstring:
+    Rearranges the QZ decomposition of the system matrices G0 and G1 such that all unstable roots are placed in the
+    lower-right corners of the matrices.
+
     Takes U.T. matrices A, B, orthonormal matrices Q,Z, rearranges them so that all cases of abs(B(i,i)/A(i,i))>stake
     are in lower right  corner, while preserving U.T. and orthonormal properties and Q'AZ' and Q'BZ'.
     The columns of v are sorted correspondingly.
 
-    Additional notes:
+    Parameters
+    ----------
+    stake : float
+        Largest positive value for which an eigenvalue is considered stable
+    A : np.ndarray
+        Upper-triangular matrix
+    B : np.ndarray
+        Upper-triangular matrix
+    Q : np.ndarray
+        Matrix of left Schur vectors.
+    Z : np.ndarray
+        Matrix of right Schur vectors.
+
+    Returns
+    -------
+    A : np.ndarray
+        Upper-triangular matrix
+    B : np.ndarray
+        Upper-triangular matrix
+    Q : np.ndarray
+        Matrix of left Schur vectors.
+    Z : np.ndarray
+        Matrix of right Schur vectors.
+
+    Notes
+    -----
     Matrices A, B, Q, and Z are the output of the generalized Schur decomposition (QZ decomposition) of the system
     matrices G0 and G1. A and B are upper triangular, with the properties Q @ A @ Z.T = G0 and Q @ B @ Z.T = G1.
 
     TODO: scipy offers a sorted qz routine, ordqz, which automatically sorts the matrices by size of eigenvalue. This
         seems to be what the functions qzdiv and qzswitch do, so it might be worthwhile to see if we can just use
         ordqz instead.
-
-    TODO: Add shape information to the Typing (see PEP 646)
     """
 
     n, _ = A.shape
@@ -59,25 +80,43 @@ def qzdiv(
 
 
 def qzswitch(
-    i: int, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
-) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+    i: int, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Christopher Sim's qzswitch,
-    :param i: int, index of matrix diagonal to switch
-    :param A: Array, upper-triangular matrix
-    :param B: Array, upper-triangular matrix
-    :param Q: Array, matrix of left Schur vectors.
-    :param Z: Array, matrix of right Schur vectors.
-    :return: Tuple of A, B, Q, Z
+    Christopher Sim's qzswitch
 
-    Original docstring:
+    Switches the diagonal elements of the upper-triangular matrices A and B, while maintaining the QZ decomposition
+    properties of the matrices Q and Z.
+
     Takes U.T. matrices A, B, orthonormal matrices Q,Z, interchanges diagonal elements i and i+1 of both A and B,
     while maintaining Q'AZ' and Q'BZ' unchanged.  If diagonal elements of A and B are zero at matching positions,
     the returned A will have zeros at both positions on the diagonal.  This is natural behavior if this routine is used
     to drive all zeros on the diagonal of A to the lower right, but in this case the qz transformation is not unique
     and it is not possible simply to switch the positions of the diagonal elements of both A and B.
 
-    TODO: Add shape information to the Typing (see PEP 646)
+    Parameters
+    ----------
+    i : int
+        Index of matrix diagonal to switch
+    A : np.ndarray
+        Upper-triangular matrix
+    B : np.ndarray
+        Upper-triangular matrix
+    Q : np.ndarray
+        Matrix of left Schur vectors.
+    Z : np.ndarray
+        Matrix of right Schur vectors.
+
+    Returns
+    -------
+    A : np.ndarray
+        Upper-triangular matrix
+    B : np.ndarray
+        Upper-triangular matrix
+    Q : np.ndarray
+        Matrix of left Schur vectors.
+    Z : np.ndarray
+        Matrix of right Schur vectors.
     """
     eps = np.spacing(1)
 
@@ -137,26 +176,45 @@ def qzswitch(
 
 
 def determine_n_unstable(
-    A: ArrayLike, B: ArrayLike, div: float, realsmall: float
-) -> Tuple[float, int, bool]:
+    A: np.ndarray, B: np.ndarray, realsmall: float = EPSILON, div: Optional[float] = None
+) -> tuple[float, int, bool]:
     """
-    :param A: array, upper-triangular matrix, output of QZ decomposition
-    :param B: array, upper-triangular matrix, output of QZ decomposition
-    :param div: float, largest positive value for which an eigenvalue is considered stable
-    :param realsmall: an arbitrarily small number
-    :return: Tuple
+    Determine the number of unstable roots in a system
 
-    Originally part of gensys, this helper function determines how many roots of the system described by A and B are
-    unstable. Returns three values:
-        div, a float representing which roots of the system can be considered stable,
-        n_unstable, an int of how many unstable roots are in the system, and
-        zxz, a bool that signals whether the system has a unique solution.
+    Parameters
+    ----------
+    A: np.ndarray
+        Upper-triangular matrix
+    B: np.ndarray
+        Upper-triangular matrix
+    div: float, optional
+        Largest positive value for which an eigenvalue is considered stable. If None, the function will calculate the
+        a threshold based on the values of A and B.
+    realsmall: float
+        An arbitrarily small number. Default is np.spacing(1)
+
+    Returns
+    -------
+    div: float
+        Largest positive value for which an eigenvalue is considered stable
+    n_unstable: int
+        Number of unstable roots in the system
+    zxz: bool
+        Signals whether the system has a unique solution
+
+    Notes
+    -----
+    Originally part of gensys program by Christopher Sims, http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
     n, _ = A.shape
     n_unstable = 0
     zxz = False
+
+    realsmall = np.spacing(1) if realsmall is None else realsmall
     compute_div = div is None
-    div = 1.01 if div is None else div
+
+    if div is None:
+        div = 1.01
 
     for i in range(n):
         if compute_div:
@@ -171,14 +229,29 @@ def determine_n_unstable(
     return div, n_unstable, zxz
 
 
-def split_matrix_on_eigen_stability(A: ArrayLike, n_unstable: int) -> Tuple[ArrayLike, ArrayLike]:
+def split_matrix_on_eigen_stability(
+    A: np.ndarray, n_unstable: int
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    :param A: Arrayline, array to split
-    :param n_unstable: int, number of unstable roots in the
-    :return: Tuple of (A1, A2), the A matrix split such that all stable roots are in the A1 matrix,
-             and the unstable roots are in the A2 matrix.
+    Split a matrix into two matrices based on the number of unstable roots
 
-    Originally in the gensys function, split out here for readability.
+    Parameters
+    ----------
+    A : np.ndarray
+        Array to split
+    n_unstable : int
+        Number of unstable roots in the system
+
+    Returns
+    -------
+    A1 : np.ndarray
+        Array split such that all stable roots are in the A1 matrix
+    A2 : np.ndarray
+        Array split such that all unstable roots are in the A2 matrix
+
+    Notes
+    -----
+    Originally part of the gensys program by Christopher Sims, http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
     n, _ = A.shape
     stable_slice = slice(None, n - n_unstable)
@@ -190,17 +263,35 @@ def split_matrix_on_eigen_stability(A: ArrayLike, n_unstable: int) -> Tuple[Arra
     return A1, A2
 
 
-def build_u_v_d(eta: ArrayLike, realsmall: float):
+def build_u_v_d(
+    eta: np.ndarray, realsmall: float = EPSILON
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
+    Build the U, V, and D matrices from the SVD decomposition of the matrix eta
 
-    :param eta:
-    :param realsmall:
-    :return: tuple, svd decomposition of eta plus an array of non-zero indices
+    Parameters
+    ----------
+    eta : np.ndarray
+        Matrix to decompose
+    realsmall : float
+        An arbitrarily small number
 
-    Piece of gensys adapted from Matlab code, split out as a helper function.
+    Returns
+    -------
+    u_eta : np.ndarray
+        Left singular vectors of eta
+    v_eta : np.ndarray
+        Right singular vectors of eta
+    d_eta : np.ndarray
+        Diagonal matrix of singular values of eta
+    big_ev : np.ndarray
+        Array of non-zero indices
+
+    Notes
+    -----
+    Originally part of the gensys program by Christopher Sims, http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
-
-    u_eta, d_eta, v_eta = linalg.svd(eta)
+    [u_eta, d_eta, v_eta] = linalg.svd(eta, full_matrices=False, compute_uv=True)
     d_eta = np.diag(d_eta)  # match matlab output of svd
     v_eta = v_eta.conj().T  # match matlab output of svd
 
@@ -218,14 +309,14 @@ def build_u_v_d(eta: ArrayLike, realsmall: float):
 
 
 def gensys(
-    g0: ArrayLike,
-    g1: ArrayLike,
-    c: ArrayLike,
-    psi: ArrayLike,
-    pi: ArrayLike,
+    g0: np.ndarray,
+    g1: np.ndarray,
+    c: np.ndarray,
+    psi: np.ndarray,
+    pi: np.ndarray,
     div: Optional[float] = None,
-    tol: Optional[float] = 1e-8,
-) -> Tuple:
+    tol: float = 1e-8,
+) -> tuple:
     """
     Christopher Sim's gensys, http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
 
@@ -244,38 +335,38 @@ def gensys(
 
     Parameters
     ----------
-    g0: ArrayLike
+    g0: np.ndarray
         Coefficient matrix of the dynamic system corresponding to the time-t variables
-    g1: ArrayLike
+    g1: np.ndarray
         Coefficient matrix of the dynamic system corresponding to the time t-1 variables
-    c: ArrayLike
+    c: np.ndarray
         Vector of constant terms
-    psi: ArrayLike
+    psi: np.ndarray
         Coefficient matrix of the dynamic system corresponding to the exogenous shock terms
-    pi: ArrayLike
+    pi: np.ndarray
         Coefficient matrix of the dynamic system corresponding to the endogenously determined
         expectational errors.
     div: float
-        # TODO: WRITE ME
+        Largest positive value for which an eigenvalue is considered stable. Default is 1.01
     tol: float, default: 1e-8
         Level of floating point precision
 
     Returns
     -------
-    G_1: ArrayLike
+    G_1: np.ndarray
         Policy function relating the current timestep to the next, transition matrix T in state space jargon.
-    C: ArrayLike
+    C: np.ndarray
         Array of system means, intercept vector c in state space jargon.
-    impact: ArrayLike
+    impact: np.ndarray
         Policy function component relating exogenous shocks observed at the t to variable values in t+1, selection
         matric R in state space jargon.
-    f_mat: ArrayLike
+    f_mat: np.ndarray
         # TODO: WRITE ME
-    f_wt: ArrayLike
+    f_wt: np.ndarray
         # TODO: WRITE ME
-    y_wt: ArrayLike
+    y_wt: np.ndarray
         # TODO: WRITE ME
-    gev: ArrayLike
+    gev: np.ndarray
         Generalized left and right eigenvalues generated by qz(g0, g1), sorted such that stable roots are in the
         top-left corner
     eu: tuple
@@ -284,10 +375,8 @@ def gensys(
         Number of loose endogenous variables.
 
     References
-    -------
+    ----------
     ..[1] Sims, Christopher A. "Solving linear rational expectations models." Computational economics 20.1-2 (2002): 1.
-
-    TODO: Can this be written in Numba/Aesara?
     """
     eu = [0, 0, 0]
 
@@ -312,7 +401,9 @@ def gensys(
 
     # No stable roots
     if n_unstable == 0:
-        big_ev = 0
+        big_ev = np.zeros(
+            0,
+        )
 
         u_eta = np.zeros((0, 0))
         d_eta = np.zeros((0, 0))
@@ -339,7 +430,7 @@ def gensys(
         unique = True
     else:
         loose = v_eta_1 - v_eta @ v_eta.T @ v_eta_1
-        ul, dl, vl = linalg.svd(loose)
+        [ul, dl, vl] = linalg.svd(loose)
         if dl.ndim == 1:
             dl = np.diag(dl)
 
@@ -394,7 +485,7 @@ def interpret_gensys_output(eu):
     elif eu[0] == -1:
         message = f"System is indeterminate. There are {eu[2]} loose endogenous variables."
     elif eu[1] == -1:
-        message = f"Solution exists, but it is not unique -- sunspots."
+        message = "Solution exists, but it is not unique -- sunspots."
     elif eu[0] == 0 and eu[1] == 0:
         message = "Solution does not exist."
     elif eu[0] == 1 and eu[1] == 0:

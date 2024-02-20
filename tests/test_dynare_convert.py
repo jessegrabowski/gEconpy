@@ -1,5 +1,6 @@
 import os
 import unittest
+
 from pathlib import Path
 
 import numpy as np
@@ -82,8 +83,8 @@ class TestDynareConvert(unittest.TestCase):
         from string import ascii_letters
 
         file = ""
-        l = np.random.choice(list(ascii_letters), size=1000, replace=True).tolist()
-        file = write_lines_from_list(l, file, line_max=50)
+        lines = np.random.choice(list(ascii_letters), size=1000, replace=True).tolist()
+        file = write_lines_from_list(lines, file, line_max=50)
 
         file_lines = file.split("\n")
         self.assertTrue(all([len(x.strip()) <= 51 for x in file_lines]))

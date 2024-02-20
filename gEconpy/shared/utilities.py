@@ -1,6 +1,6 @@
 from copy import copy
 from enum import EnumMeta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 
 import numba as nb
 import numpy as np
@@ -33,15 +33,15 @@ class IterEnum(EnumMeta):
             raise StopIteration
 
 
-def flatten_list(l, result_list=None):
+def flatten_list(in_list: list, result_list: Optional[list] = None) -> list:
     if result_list is None:
         result_list = []
 
-    if not isinstance(l, list):
-        result_list.append(l)
+    if not isinstance(in_list, list):
+        result_list.append(in_list)
         return result_list
 
-    for item in l:
+    for item in in_list:
         if isinstance(item, list):
             result_list = flatten_list(item, result_list)
         else:
@@ -62,7 +62,7 @@ def eq_to_ss(eq):
     return eq.subs(sub_dict)
 
 
-def expand_subs_for_all_times(sub_dict: Dict[TimeAwareSymbol, TimeAwareSymbol]):
+def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]):
     result = {}
     for lhs, rhs in sub_dict.items():
         for t in [-1, 0, 1, "ss"]:
@@ -150,7 +150,7 @@ def is_number(x: str):
     return all([c in set("0123456789.") for c in x])
 
 
-def sequential(x: Any, funcs: List[Callable]) -> Any:
+def sequential(x: Any, funcs: list[Callable]) -> Any:
     """
     Parameters
     ----------
@@ -194,6 +194,18 @@ def merge_dictionaries(*dicts):
     return result
 
 
+def recursively_self_substitute_dict(sub_dict, max_iter=5):
+    eqs = list(sub_dict.values())
+    for i in range(max_iter):
+        new_eqs = substitute_all_equations(eqs, sub_dict)
+        sub_dict = substitute_all_equations(sub_dict, sub_dict)
+        no_changes = all([new_eq == old_eq for new_eq, old_eq in zip(new_eqs, eqs)])
+        eqs = new_eqs
+        if no_changes:
+            break
+    return {var: eq for var, eq in zip(sub_dict.keys(), eqs)}
+
+
 def make_all_var_time_combos(var_list):
     result = []
     for x in var_list:
@@ -203,7 +215,7 @@ def make_all_var_time_combos(var_list):
 
 
 def build_Q_matrix(
-    model_shocks: List[str],
+    model_shocks: list[str],
     shock_dict: Optional[dict[str, float]] = None,
     shock_cov_matrix: Optional[np.array] = None,
     shock_std_priors: Optional[dict[str, Any]] = None,
@@ -237,7 +249,7 @@ def build_Q_matrix(
         A default value of fall back on if no other information is available about a shock's standard deviation
 
     Raises
-    ---------
+    ------
     LinalgError
         If the provided Q is not positive semi-definite
     ValueError
@@ -317,7 +329,7 @@ def get_shock_std_priors_from_hyperpriors(shocks, priors, out_keys="parent"):
     Extract a single key, value pair from the model hyper_priors.
 
     Parameters
-    -------
+    ----------
     shocks: list of sympy Symbols
         Model shocks
     priors: dict of key, tuple
@@ -354,18 +366,21 @@ def split_random_variables(param_dict, shock_names, obs_names):
 
     Parameters
     ----------
-    param_dict : Dict[str, float]
+    param_dict : dict
         A dictionary of parameters and their values.
-    shock_names : List[str]
+    shock_names : list of str
         A list of the names of shock variables.
-    obs_names : List[str]
+    obs_names : list of str
         A list of the names of observable variables.
 
     Returns
     -------
-    Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]
-        A tuple containing three dictionaries: the first has parameters, the second has
-        all shock variances parameters, and the third has observation noise variances.
+    out_param_dict: dict
+        Dictionary mapping parameter names to values
+    shock_dict: dict
+        Dictionary mapping shock names to values
+    obs_dict: dict
+        Dictionary mapping names of observed variables to observation noise values
     """
 
     out_param_dict = SymbolDictionary()

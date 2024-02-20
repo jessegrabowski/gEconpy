@@ -1,8 +1,9 @@
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Optional
 
 import numba as nb
 import numpy as np
 import sympy as sp
+
 from scipy import linalg
 
 
@@ -20,7 +21,7 @@ def numba_lambdify_scalar(inputs, expr, sig):
 
     Parameters
     ----------
-    inputs : List[str]
+    inputs : list of str
         A list of strings containing the names of the variables in the expression.
     expr : sympy.Expr
         The sympy expression to be converted.
@@ -44,7 +45,7 @@ def numba_lambdify_scalar(inputs, expr, sig):
     return locals()["f"]
 
 
-def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = None) -> List:
+def extract_sparse_data_from_model(model, params_to_estimate: Optional[list] = None) -> list:
     """
     Extract sparse data from a DSGE model.
 
@@ -120,7 +121,7 @@ def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = N
 
 # @nb.njit
 def matrix_from_csr_data(
-    data: np.ndarray, indices: np.ndarray, idxptrs: np.ndarray, shape: Tuple[int, int]
+    data: np.ndarray, indices: np.ndarray, idxptrs: np.ndarray, shape: tuple[int, int]
 ) -> np.ndarray:
     """
     Convert a CSR matrix into a dense numpy array.
@@ -155,10 +156,10 @@ def matrix_from_csr_data(
 
 
 def build_system_matrices(
-    param_dict: Dict[str, float],
-    sparse_datas: List[Tuple[Callable, np.ndarray, np.ndarray, Tuple[int, int]]],
-    vars_to_estimate: Optional[List[str]] = None,
-) -> List[np.ndarray]:
+    param_dict: dict[str, float],
+    sparse_datas: list[tuple[Callable, np.ndarray, np.ndarray, tuple[int, int]]],
+    vars_to_estimate: Optional[list[str]] = None,
+) -> list[np.ndarray]:
     """
     Build system matrices for a DSGE model.
 
@@ -182,6 +183,7 @@ def build_system_matrices(
             Shape of the matrix as a tuple (n_rows, n_cols)
     vars_to_estimate : list of str, optional
         List of parameter names to use in building the matrices, by default None
+
     Returns
     -------
     list of numpy arrays

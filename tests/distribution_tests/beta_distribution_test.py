@@ -1,13 +1,10 @@
 import unittest
-from functools import partial
 
-import numpy as np
-from scipy.stats import beta
+from functools import partial
 
 from gEconpy.exceptions.exceptions import (
     IgnoredCloseMatchWarning,
     InvalidParameterException,
-    MultipleParameterDefinitionException,
     UnusedParameterWarning,
 )
 from gEconpy.parser.parse_distributions import (

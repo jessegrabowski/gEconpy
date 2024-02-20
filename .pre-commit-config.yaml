@@ -10,27 +10,12 @@ repos:
         exclude: .txt$
     -   id: trailing-whitespace
     -   id: requirements-txt-fixer
-- repo: https://github.com/PyCQA/isort
-  rev: 5.12.0
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.2.1
   hooks:
-    - id: isort
-      name: isort
-- repo: https://github.com/asottile/pyupgrade
-  rev: v3.3.1
-  hooks:
-    - id: pyupgrade
-      args: [--py37-plus]
-- repo: https://github.com/psf/black
-  rev: 22.12.0
-  hooks:
-    - id: black
-    - id: black-jupyter
-- repo: https://github.com/PyCQA/pylint
-  rev: v2.16.0b1
-  hooks:
-    - id: pylint
-      args: [--rcfile=.pylintrc]
-      files: ^gEconpy/
+    - id: ruff
+      args: ["--fix", "--output-format=full"]
+    - id: ruff-format
 - repo: local
   hooks:
     - id: no-relative-imports
@@ -38,3 +23,17 @@ repos:
       entry: from \.[\.\w]* import
       types: [python]
       language: pygrep
+#- repo: https://github.com/pre-commit/mirrors-mypy
+#  rev: v1.8.0
+#  hooks:
+#    - id: mypy
+#      language: python
+#      entry: python ./scripts/run_mypy.py --verbose
+#      additional_dependencies:
+#      - numpy>=1.20
+#      - pandas
+#      - types-filelock
+#      - types-setuptools>=67.6.0.8
+#      always_run: true
+#      require_serial: true
+#      pass_filenames: false

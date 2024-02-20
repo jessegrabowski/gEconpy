@@ -1,6 +1,7 @@
 import re
+
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Optional
 
 import sympy as sp
 
@@ -8,7 +9,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.parser.constants import CALIBRATING_EQ_TOKEN, LOCAL_DICT, TIME_INDEX_DICT
 
 
-def rebuild_eqs_from_parser_output(parser_output: List[str]) -> List[List[str]]:
+def rebuild_eqs_from_parser_output(parser_output: list[str]) -> list[list[str]]:
     """
     Takes the output of pyparsing applied to the text of a model block and returns a list of lists of tokens
     that represent equations.
@@ -186,12 +187,12 @@ def convert_to_python_operator(token: str) -> str:
         A string representing a mathematical operation.
 
     Returns
-    ---------
+    -------
     str
         A string representing the same operation in python syntax.
 
     Notes
-    ----------
+    -----
     The syntax of a gEcon GCN file is slightly different from what SymPy expects, this function resolves the
     differences. In particular:
         1. Exponents are marked with a caret "^" in the GCN file, and must be converted to python's **
@@ -298,7 +299,7 @@ def convert_symbols_to_time_symbols(eq: sp.Eq) -> sp.Eq:
     return eq.subs(sub_dict)
 
 
-def single_symbol_to_sympy(variable: str, assumptions: Optional[Dict] = None) -> TimeAwareSymbol:
+def single_symbol_to_sympy(variable: str, assumptions: Optional[dict] = None) -> TimeAwareSymbol:
     """
     Convert a single gEcon style variable (e.g. X[], or X[-1]) to a Time-Aware Sympy symbol. If it seems to be a
     parameter (no []), it returns a standard Sympy symbol instead.
@@ -307,7 +308,7 @@ def single_symbol_to_sympy(variable: str, assumptions: Optional[Dict] = None) ->
     ----------
     variable : str
         A gEcon variable or parameter.
-    assumptions : Optional[Dict]
+    assumptions : dict, optional
         Assumptions for the symbol.
 
     Returns
@@ -330,8 +331,7 @@ def single_symbol_to_sympy(variable: str, assumptions: Optional[Dict] = None) ->
         return TimeAwareSymbol(variable_name, time_index, **assumptions[variable_name])
 
 
-def build_sympy_equations(eqs: List[List[str]], assumptions: Optional[Dict] = None) -> List[sp.Eq]:
-
+def build_sympy_equations(eqs: list[list[str]], assumptions: Optional[dict] = None) -> list[sp.Eq]:
     """
     Convert processed list of equation tokens to sympy equations.
 

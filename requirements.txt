@@ -1,13 +1,15 @@
 arviz
-emcee
 joblib
 matplotlib
 numba
 numpy
 pandas
+pymc
 pyparsing
+pytensor
 scipy
 setuptools
 statsmodels
 sympy
+sympytensor
 xarray

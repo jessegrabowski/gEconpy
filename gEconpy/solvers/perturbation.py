@@ -1,14 +1,13 @@
-from typing import List, Tuple
-
 import numpy as np
 import sympy as sp
+
 from numpy.typing import ArrayLike
 from scipy import linalg
 from sympy.solvers.solveset import NonlinearError
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.shared.utilities import eq_to_ss
-from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
+from gEconpy.solvers.cycle_reduction import nb_cycle_reduction, nb_solve_shock_matrix
 from gEconpy.solvers.gensys import gensys
 
 
@@ -31,7 +30,7 @@ class PerturbationSolver:
         D: ArrayLike,
         tol: float = 1e-8,
         verbose: bool = True,
-    ) -> Tuple:
+    ) -> tuple:
         n_eq, n_vars = A.shape
         _, n_shocks = D.shape
 
@@ -78,7 +77,7 @@ class PerturbationSolver:
         max_iter: int = 1000,
         tol: float = 1e-8,
         verbose: bool = True,
-    ) -> Tuple[ArrayLike, ArrayLike, str, float]:
+    ) -> tuple[ArrayLike, ArrayLike, str, float]:
         """
         Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
         obtain the first-order linear approxiate policy matrices T and R.
@@ -124,10 +123,10 @@ class PerturbationSolver:
 
         # A, B, C, D = A.astype('float64'), B.astype('float64'), C.astype('float64'), D.astype('float64')
 
-        T, result, log_norm = cycle_reduction(A, B, C, max_iter, tol, verbose)
+        T, result, log_norm = nb_cycle_reduction(A, B, C, max_iter, tol, verbose)
 
         if T is not None:
-            R = solve_shock_matrix(B, C, D, T)
+            R = nb_solve_shock_matrix(B, C, D, T)
 
         return T, R, result, log_norm
 
@@ -173,7 +172,7 @@ class PerturbationSolver:
 
         return norm_deterministic, norm_stochastic
 
-    def log_linearize_model(self, not_loglin_variables=None) -> List[sp.Matrix]:
+    def log_linearize_model(self, not_loglin_variables=None) -> list[sp.Matrix]:
         """
         :return: List, a list of Sympy matrices comprised of parameters and steady-state values, see docstring.
 
@@ -211,7 +210,7 @@ class PerturbationSolver:
                     dydx *= 1.0 if var.base_name in not_loglin_variables else var.to_ss()
                     atoms = dydx.atoms()
                     if len(atoms) == 1:
-                        x = list(atoms)[0]
+                        x = next(iter(atoms))
                         if isinstance(x, sp.core.numbers.Number) and x != 0:
                             dydx = sp.Float(x)
                     F_row.append(dydx)
@@ -223,7 +222,7 @@ class PerturbationSolver:
 
         return Fs
 
-    def convert_linear_system_to_matrices(self) -> List[sp.Matrix]:
+    def convert_linear_system_to_matrices(self) -> list[sp.Matrix]:
         """
 
         :return: List of sympy Matrices representing the linear system
@@ -259,7 +258,7 @@ class PerturbationSolver:
 
     def make_all_variable_time_combinations(
         self,
-    ) -> Tuple[List[TimeAwareSymbol], List[TimeAwareSymbol], List[TimeAwareSymbol]]:
+    ) -> tuple[list[TimeAwareSymbol], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
         """
         :return: Tuple of three lists, containing all model variables at time steps t-1, t, and t+1, respectively.
         """

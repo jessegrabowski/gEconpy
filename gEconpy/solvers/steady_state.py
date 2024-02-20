@@ -1,9 +1,10 @@
 from itertools import product
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Union
 from warnings import catch_warnings, simplefilter
 
 import numpy as np
 import sympy as sp
+
 from joblib import Parallel, delayed
 from scipy import optimize
 
@@ -15,30 +16,28 @@ from gEconpy.shared.utilities import eq_to_ss, substitute_all_equations
 
 class SteadyStateSolver:
     def __init__(self, model):
-
-        self.variables: List[TimeAwareSymbol] = model.variables
-        self.shocks: List[sp.Add] = model.shocks
+        self.variables: list[TimeAwareSymbol] = model.variables
+        self.shocks: list[sp.Add] = model.shocks
 
         self.n_variables: int = model.n_variables
 
         self.free_param_dict: SymbolDictionary[str, float] = model.free_param_dict
-        self.params_to_calibrate: List[sp.Symbol] = model.params_to_calibrate
-        self.calibrating_equations: List[sp.Add] = model.calibrating_equations
+        self.params_to_calibrate: list[sp.Symbol] = model.params_to_calibrate
+        self.calibrating_equations: list[sp.Add] = model.calibrating_equations
         self.shock_dict: Optional[SymbolDictionary[str, float]] = None
 
-        self.system_equations: List[sp.Add] = model.system_equations
+        self.system_equations: list[sp.Add] = model.system_equations
         self.steady_state_relationships: SymbolDictionary[
             str, Union[float, sp.Add]
         ] = model.steady_state_relationships
 
-        self.steady_state_system: List[sp.Add] = []
+        self.steady_state_system: list[sp.Add] = []
         self.steady_state_dict: SymbolDictionary[str, float] = SymbolDictionary()
         self.steady_state_solved: bool = False
 
         self.build_steady_state_system()
 
     def build_steady_state_system(self):
-
         ss_vars = map(lambda x: x.to_ss(), self.variables)
         self.steady_state_dict = SymbolDictionary.fromkeys(ss_vars, None).to_string().sort_keys()
 
@@ -48,7 +47,12 @@ class SteadyStateSolver:
         ]
 
     def _validate_optimizer_kwargs(
-        self, optimizer_kwargs: dict, n_eq: int, method: str, use_jac: bool, use_hess: bool
+        self,
+        optimizer_kwargs: dict,
+        n_eq: int,
+        method: str,
+        use_jac: bool,
+        use_hess: bool,
     ) -> dict:
         """
         Validate user-provided keyword arguments to either scipy.optimize.root or scipy.optimize.minimize, and insert
@@ -101,7 +105,7 @@ class SteadyStateSolver:
 
         return optimizer_kwargs
 
-    def apply_user_simplifications(self) -> List[sp.Add]:
+    def apply_user_simplifications(self) -> list[sp.Add]:
         """
         Check if the system is analytically solvable without resorting to an optimizer. Currently, this is true only
         if it is a linear model, or if the user has provided the complete steady state.
@@ -141,16 +145,17 @@ class SteadyStateSolver:
 
         try:
             eqs_to_solve = [eq for i, eq in enumerate(simplified_eqs) if not zeros[i]]
-        except TypeError:
+        except TypeError as e:
             msg = "Found the following loose symbols during simplification:\n"
             # Something didn't reduce, figure out what and show the user
+            print(zeros)
             for i, eq in enumerate(zeros):
                 loose_symbols = [
                     x for x in eq.atoms() if isinstance(x, (sp.Symbol, TimeAwareSymbol))
                 ]
                 if len(loose_symbols) > 0:
                     msg += f"Equation {i}: " + ", ".join([x.name for x in loose_symbols]) + "\n"
-
+            print(e)
             raise ValueError(msg)
 
         return eqs_to_solve
@@ -159,7 +164,7 @@ class SteadyStateSolver:
         self,
         apply_user_simplifications: Optional[bool] = True,
         model_is_linear: Optional[bool] = True,
-        optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        optimizer_kwargs: Optional[dict[str, Any]] = None,
         method: Optional[str] = "root",
         use_jac: Optional[bool] = True,
         use_hess: Optional[bool] = True,
@@ -280,7 +285,8 @@ class SteadyStateSolver:
                     "calib_dict": calib_dict.to_string(),
                     "resids": np.array(
                         f_ss_resid(
-                            np.array(list(ss_dict.values()) + list(calib_dict.values())), params
+                            np.array(list(ss_dict.values()) + list(calib_dict.values())),
+                            params,
                         )
                     ),
                     "success": success,
@@ -289,7 +295,9 @@ class SteadyStateSolver:
             return ss_func
 
         f_user = numba_lambdify(
-            exog_vars=vars_and_calib_sym, endog_vars=params, expr=[list(user_provided.values())]
+            exog_vars=vars_and_calib_sym,
+            endog_vars=params,
+            expr=[list(user_provided.values())],
         )
 
         optimizer_required = True
@@ -392,14 +400,17 @@ class SteadyStateSolver:
                 "ss_dict": ss_dict.to_string(),
                 "calib_dict": calib_dict.to_string(),
                 "resids": np.array(
-                    f_ss_resid(np.array(list(ss_dict.values()) + list(calib_dict.values())), params)
+                    f_ss_resid(
+                        np.array(list(ss_dict.values()) + list(calib_dict.values())),
+                        params,
+                    )
                 ),
                 "success": success,
             }
 
         return ss_func
 
-    def _solve_linear_steady_state(self) -> List[sp.Add]:
+    def _solve_linear_steady_state(self) -> list[sp.Add]:
         """
         If the model is linear, we can quickly solve for the steady state by putting everything into a matrix and
         getting the reduced row-echelon form.
@@ -423,7 +434,8 @@ class SteadyStateSolver:
         # simplifications make the next few steps a lot faster
         sub_dict, simplified_system = sp.cse(all_eqs, ignore=all_vars_and_calib_sym)
         A, b = sp.linear_eq_to_matrix(
-            [eq_to_ss(eq).subs(shock_subs) for eq in simplified_system], all_vars_and_calib_sym_ss
+            [eq_to_ss(eq).subs(shock_subs) for eq in simplified_system],
+            all_vars_and_calib_sym_ss,
         )
         Ab = sp.Matrix([[A, b]])
         A_rref, _ = Ab.rref()
@@ -459,13 +471,12 @@ class SymbolicSteadyStateSolver:
     @staticmethod
     def score_eq(
         eq: sp.Expr,
-        var_list: List[sp.Symbol],
-        state_vars: List[sp.Symbol],
+        var_list: list[sp.Symbol],
+        state_vars: list[sp.Symbol],
         var_penalty_factor: float = 25,
         state_var_penalty_factor: float = 5,
         length_penalty_factor: float = 1,
     ) -> float:
-
         """
         Compute an "unfitness" score for an equation using three simple heuristics:
             1. The number of jumper variables in the expression
@@ -548,7 +559,9 @@ class SymbolicSteadyStateSolver:
         return sp.Float(0)
 
     @staticmethod
-    def clean_substitutions(sub_dict: Dict[sp.Symbol, sp.Expr]) -> Dict[sp.Symbol, sp.Expr]:
+    def clean_substitutions(
+        sub_dict: dict[sp.Symbol, sp.Expr],
+    ) -> dict[sp.Symbol, sp.Expr]:
         """
         "Cleans" a dictionary of substitutions by:
             1. Delete substitutions in the form of x=x or x=0 (x=0 implies the substitution is redundant with other
@@ -591,14 +604,14 @@ class SymbolicSteadyStateSolver:
 
     def get_candidates(
         self,
-        system: List[sp.Expr],
-        variables: List[sp.Symbol],
-        state_variables: List[sp.Symbol],
+        system: list[sp.Expr],
+        variables: list[sp.Symbol],
+        state_variables: list[sp.Symbol],
         var_penalty_factor: float = 25,
         state_var_penalty_factor: float = 5,
         length_penalty_factor: float = 1,
         cores: int = -1,
-    ) -> Dict[sp.Symbol, Tuple[sp.Expr, float]]:
+    ) -> dict[sp.Symbol, tuple[sp.Expr, float]]:
         """
         Attempt to solve every equation in the system for every variable. Scores the results using the score_eq
         function, and returns (solution, score) pairs with the highest fitness (lowest unfitness).
@@ -673,7 +686,6 @@ class SymbolicSteadyStateSolver:
         cores=-1,
         zero_tol=12,
     ):
-
         ss_vars = [x.to_ss() for x in mod.variables]
         state_vars = [x for x in mod.variables if x.base_name == "Y"]
         ss_system = mod.steady_state_system
@@ -767,20 +779,20 @@ class SymbolicSteadyStateSolver:
 # class SteadyStateSolver:
 #     def __init__(self, model):
 #
-#         self.variables: List[sp.Symbol] = model.variables
-#         self.shocks: List[sp.Add] = model.shocks
+#         self.variables: list[sp.Symbol] = model.variables
+#         self.shocks: list[sp.Add] = model.shocks
 #
 #         self.n_variables: int = model.n_variables
 #
 #         self.free_param_dict: SymbolDictionary[str, float] = model.free_param_dict
-#         self.params_to_calibrate: List[sp.Symbol] = model.params_to_calibrate
-#         self.calibrating_equations: List[sp.Add] = model.calibrating_equations
-#         self.system_equations: List[sp.Add] = model.system_equations
+#         self.params_to_calibrate: list[sp.Symbol] = model.params_to_calibrate
+#         self.calibrating_equations: list[sp.Add] = model.calibrating_equations
+#         self.system_equations: list[sp.Add] = model.system_equations
 #         self.steady_state_relationships: SymbolDictionary[
 #             str, Union[float, sp.Add]
 #         ] = model.steady_state_relationships
 #
-#         self.steady_state_system: List[sp.Add] = []
+#         self.steady_state_system: list[sp.Add] = []
 #         self.steady_state_dict: SymbolDictionary[str, float] = SymbolDictionary()
 #         self.steady_state_solved: bool = False
 #
@@ -815,8 +827,8 @@ class SymbolicSteadyStateSolver:
 #
 #     def solve_steady_state(
 #         self,
-#         param_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
-#         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+#         param_bounds: Optional[dict[str, tuple[float, float]]] = None,
+#         optimizer_kwargs: Optional[dict[str, Any]] = None,
 #         use_jac: Optional[bool] = False,
 #     ) -> Callable:
 #         """
@@ -911,10 +923,10 @@ class SymbolicSteadyStateSolver:
 #
 #     def _solve_calibrating_equations(
 #         self,
-#         param_bounds: Optional[Dict[str, Tuple[float, float]]],
-#         optimizer_kwargs: Optional[Dict[str, Any]],
+#         param_bounds: Optional[dict[str, tuple[float, float]]],
+#         optimizer_kwargs: Optional[dict[str, Any]],
 #         use_jac: bool = False,
-#     ) -> Tuple[Callable, Dict]:
+#     ) -> tuple[Callable, Dict]:
 #         """
 #         Parameters
 #         ----------
@@ -1080,11 +1092,11 @@ class SymbolicSteadyStateSolver:
 #
 #     def _solve_remaining_equations(
 #         self,
-#         calib_dict: Dict[str, float],
-#         var_dict: Dict[str, float],
-#         additional_solutions: Dict[str, float],
-#         param_bounds: Optional[Dict[str, Tuple[float, float]]],
-#         optimizer_kwargs: Optional[Dict[str, Any]],
+#         calib_dict: dict[str, float],
+#         var_dict: dict[str, float],
+#         additional_solutions: dict[str, float],
+#         param_bounds: Optional[dict[str, tuple[float, float]]],
+#         optimizer_kwargs: Optional[dict[str, Any]],
 #         use_jac: bool,
 #     ) -> Callable:
 #         """
@@ -1230,15 +1242,15 @@ class SymbolicSteadyStateSolver:
 #
 #     def _bundle_symbolic_solutions_with_optimizer_solutions(
 #         self,
-#         unknowns: List[str],
+#         unknowns: list[str],
 #         f: Callable,
 #         f_jac: Optional[Callable],
-#         param_dict: Dict[str, float],
-#         symbolic_solutions: Optional[Dict[str, float]],
+#         param_dict: dict[str, float],
+#         symbolic_solutions: Optional[dict[str, float]],
 #         n_eqs: int,
-#         output_names: List[str],
-#         param_bounds: Optional[Dict[str, Tuple[float, float]]],
-#         optimizer_kwargs: Optional[Dict[str, Any]],
+#         output_names: list[str],
+#         param_bounds: Optional[dict[str, tuple[float, float]]],
+#         optimizer_kwargs: Optional[dict[str, Any]],
 #     ) -> Callable:
 #
 #         parameters = list(param_dict.keys())
@@ -1307,9 +1319,9 @@ class SymbolicSteadyStateSolver:
 #
 #     @staticmethod
 #     def _build_jacobian(
-#         diff_variables: List[Union[str, sp.Symbol]],
-#         additional_inputs: List[Union[str, sp.Symbol]],
-#         equations: List[sp.Add],
+#         diff_variables: list[Union[str, sp.Symbol]],
+#         additional_inputs: list[Union[str, sp.Symbol]],
+#         equations: list[sp.Add],
 #     ) -> Callable:
 #         """
 #         Parameters
@@ -1343,8 +1355,8 @@ class SymbolicSteadyStateSolver:
 #
 #     @staticmethod
 #     def _prepare_optimizer_kwargs(
-#         optimizer_kwargs: Optional[Dict[str, Any]], n_unknowns: int
-#     ) -> Dict[str, Any]:
+#         optimizer_kwargs: Optional[dict[str, Any]], n_unknowns: int
+#     ) -> dict[str, Any]:
 #         if optimizer_kwargs is None:
 #             optimizer_kwargs = {}
 #
@@ -1358,8 +1370,8 @@ class SymbolicSteadyStateSolver:
 #
 #     @staticmethod
 #     def _prepare_param_bounds(
-#         param_bounds: Optional[List[Tuple[float, float]]], n_params
-#     ) -> List[Tuple[float, float]]:
+#         param_bounds: Optional[list[tuple[float, float]]], n_params
+#     ) -> list[tuple[float, float]]:
 #         if param_bounds is None:
 #             bounds = [(1e-4, 0.999) for _ in range(n_params)]
 #         else:
@@ -1380,11 +1392,11 @@ class SymbolicSteadyStateSolver:
 #
 #     def heuristic_solver(
 #         self,
-#         solution_dict: Dict[str, float],
-#         subbed_ss_system: List[Any],
-#         steady_state_system: List[Any],
-#         unknowns: List[str],
-#     ) -> Tuple[Dict[str, float], ArrayLike]:
+#         solution_dict: dict[str, float],
+#         subbed_ss_system: list[Any],
+#         steady_state_system: list[Any],
+#         unknowns: list[str],
+#     ) -> tuple[dict[str, float], ArrayLike]:
 #         """
 #         Parameters
 #         ----------

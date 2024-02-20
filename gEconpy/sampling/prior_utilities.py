@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import xarray as xr
+
 from numpy.linalg import LinAlgError
 
 from gEconpy.classes.progress_bar import ProgressBar
@@ -43,7 +44,10 @@ def prior_solvability_check(
             tol = 1e-18
             verbose = False
 
-            exog, endog = np.array(list(param_dict.values())), np.array(list(ss_dict.values()))
+            exog, endog = (
+                np.array(list(param_dict.values())),
+                np.array(list(ss_dict.values())),
+            )
             A, B, C, D = model.build_perturbation_matrices(exog, endog)
 
             if pert_solver == "cycle_reduction":
@@ -142,7 +146,6 @@ def simulate_trajectories_from_prior(
     param_subset=None,
     pert_kwargs=None,
 ):
-
     if pert_kwargs is None:
         pert_kwargs = {}
 

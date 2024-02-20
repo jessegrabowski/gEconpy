@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import sympy as sp
 
@@ -7,6 +7,7 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
     ControlVariableNotFoundException,
+    DuplicateParameterError,
     DynamicCalibratingEquationException,
     MultipleObjectiveFunctionsException,
     OptimizationProblemNotDefinedException,
@@ -34,9 +35,9 @@ class Block:
     def __init__(
         self,
         name: str,
-        block_dict: Dict[str, List[List[str]]],
-        assumptions: Optional[Dict[str, dict]] = None,
-        solution_hints: Optional[Dict[str, str]] = None,
+        block_dict: dict[str, list[list[str]]],
+        assumptions: Optional[dict[str, dict]] = None,
+        solution_hints: Optional[dict[str, str]] = None,
         allow_incomplete_initialization: bool = False,
     ) -> None:
         """
@@ -46,9 +47,9 @@ class Block:
         ----------
         name: str
             The name of the block
-        block_dict: Dict[str, str]
-            Dictionary of component:List[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
-        solution_hints: Dict[str, str], optional
+        block_dict: dict
+            Dictionary of component:list[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
+        solution_hints: dict, optional
             If not None, a dictionary of flags that help the solve_optimization method combine
             the FoC into the "expected" solution. Currently unused.
         allow_incomplete_initialization: bool, optional
@@ -58,28 +59,24 @@ class Block:
         self.name = name
         self.short_name = "".join(word[0] for word in name.split("_"))
 
-        self.definitions: Optional[Dict[int, sp.Add]] = None
-        self.controls: Optional[List[TimeAwareSymbol]] = None
-        self.objective: Optional[Dict[int, sp.Add]] = None
-        self.constraints: Optional[Dict[int, sp.Add]] = None
-        self.identities: Optional[Dict[int, sp.Add]] = None
-        self.shocks: Optional[Dict[int, TimeAwareSymbol]] = None
-        self.calibration: Optional[Dict[int, sp.Add]] = None
+        self.definitions: Optional[dict[int, sp.Add]] = None
+        self.controls: Optional[list[TimeAwareSymbol]] = None
+        self.objective: Optional[dict[int, sp.Add]] = None
+        self.constraints: Optional[dict[int, sp.Add]] = None
+        self.identities: Optional[dict[int, sp.Add]] = None
+        self.shocks: Optional[dict[int, TimeAwareSymbol]] = None
+        self.calibration: Optional[dict[int, sp.Add]] = None
 
-        self.variables: List[TimeAwareSymbol] = []
+        self.variables: list[TimeAwareSymbol] = []
         self.param_dict: SymbolDictionary[str, float] = SymbolDictionary()
+        self.deterministic_dict: SymbolDictionary[sp.Symbol, sp.Expr] = SymbolDictionary()
+        self.calib_dict: SymbolDictionary[sp.Symbol, sp.Expr] = SymbolDictionary()
 
-        self.params_to_calibrate: Optional[List[sp.Symbol]] = None
-        self.calibrating_equations: Optional[List[sp.Add]] = None
+        self.system_equations: Optional[list[sp.Expr]] = None
+        self.multipliers: dict[int, Optional[TimeAwareSymbol]] = {}
+        self.eliminated_variables: list[sp.Symbol] = []
 
-        self.deterministic_params: Optional[List[sp.Symbol]] = None
-        self.deterministic_relationships: Optional[List[sp.Add]] = None
-
-        self.system_equations: List[sp.Add] = []
-        self.multipliers: Dict[int, TimeAwareSymbol] = {}
-        self.eliminated_variables: List[sp.Symbol] = []
-
-        self.equation_flags: Dict[int, Dict[str, bool]] = {}
+        self.equation_flags: dict[int, dict[str, bool]] = {}
 
         self.n_equations = 0
         self.initialized = False
@@ -189,7 +186,7 @@ class Block:
         Parameters
         ----------
         block_dict : dict
-            Dictionary of component:List[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
+            Dictionary of component:list[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
         key : str
             A component name.
 
@@ -200,8 +197,8 @@ class Block:
         return key in block_dict and hasattr(self, key) and block_dict[key] is not None
 
     def _extract_lagrange_multipliers(
-        self, equations: List[List[str]], assumptions: dict
-    ) -> Tuple[List[List[str]], List[Union[TimeAwareSymbol, None]]]:
+        self, equations: list[list[str]], assumptions: dict
+    ) -> tuple[list[list[str]], list[Union[TimeAwareSymbol, None]]]:
         """
         gEcon allows the user to name lagrange multipliers in the GCN file. These multiplier variables need to be saved
         and used once the optimization problem is solved. This function removes the ": muliplier[]" from each equation
@@ -241,8 +238,8 @@ class Block:
         return result, multipliers
 
     def _parse_variable_list(
-        self, block_dict: dict, key: str, assumptions: dict = None
-    ) -> Optional[List[sp.Symbol]]:
+        self, block_dict: dict, key: str, assumptions: Optional[dict] = None
+    ) -> Optional[list[sp.Symbol]]:
         """
         Two components -- controls and shocks -- expect a simple list of variables, which is a case the
         gEcon_parser.build_sympy_equations cannot handle.
@@ -265,7 +262,7 @@ class Block:
         if not self._validate_key(block_dict, key):
             return
 
-        raw_list = [item for l in block_dict[key] for item in l]
+        raw_list = [item for lines in block_dict[key] for item in lines]
         output = []
         for variable in raw_list:
             variable = parse_equations.single_symbol_to_sympy(variable, assumptions)
@@ -278,7 +275,7 @@ class Block:
         :return: None
         Get a list of all unique variables in the Block and store it in the class attribute "variables"
         """
-        objective, constraints, identities = [], [], []
+        objective, constraints, identities, multipliers = [], [], [], []
         sub_dict = {}
         if self.definitions is not None:
             _, definitions = unpack_keys_and_values(self.definitions)
@@ -293,7 +290,11 @@ class Block:
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
 
-        all_equations = [eq for l in [objective, constraints, identities] for eq in l]
+        if self.multipliers is not None:
+            _, multipliers = unpack_keys_and_values(self.multipliers)
+            multipliers = [x for x in multipliers if x is not None]
+
+        all_equations = [eq for eqs_list in [objective, constraints, identities] for eq in eqs_list]
         for eq in all_equations:
             eq = eq.subs(sub_dict)
             atoms = eq.atoms()
@@ -302,7 +303,18 @@ class Block:
                 if variable.to_ss() not in self.variables:
                     self.variables.append(variable.to_ss())
 
-    def _get_and_record_equation_numbers(self, equations: List[sp.Eq]) -> List[int]:
+        if self.variables is None:
+            return
+
+        # Can't directly check if variables are not in shocks, because shocks will be None if there are none in the
+        # model
+        shocks = self.shocks or []
+        self.variables = [*self.variables, *multipliers]
+        self.variables = sorted(
+            list({x for x in self.variables if x.set_t(0) not in shocks}), key=lambda x: x.name
+        )
+
+    def _get_and_record_equation_numbers(self, equations: list[sp.Eq]) -> list[int]:
         """
         Get a list of all unique variables in the Block and store it in the class attribute "variables".
 
@@ -318,8 +330,8 @@ class Block:
         return equation_numbers
 
     def _parse_equation_list(
-        self, block_dict: dict, key: str, assumptions: Dict[str, str]
-    ) -> Optional[Dict[int, sp.Eq]]:
+        self, block_dict: dict, key: str, assumptions: dict[str, str]
+    ) -> Optional[dict[int, sp.Eq]]:
         """
         Convert a list of equations represented as strings into a dictionary of sympy equations, indexed by their
         equation number.
@@ -383,52 +395,50 @@ class Block:
             return
 
         eq_idxs, equations = unpack_keys_and_values(self.calibration)
+        duplicates = []
 
         for idx, eq in zip(eq_idxs, equations):
             atoms = eq.atoms()
+            lhs, rhs = eq.lhs, eq.rhs
+            if not lhs.is_symbol:
+                raise ValueError(
+                    "Left-hand side of calibrating expressions should be the single parameter to be "
+                    f"computed. Found multiple argumnets: {eq.lhs.args}"
+                )
 
             # Check if this equation is a normal parameter definition. If so, it will be exactly in the form x = y
-            if eq.lhs.is_symbol and eq.rhs.is_number:
-                param = eq.lhs
-                value = eq.rhs
-                self.param_dict[param] = value
-
-            elif self.equation_flags[idx]["is_calibrating"]:
-
+            if self.equation_flags[idx]["is_calibrating"]:
                 # Check if this equation is a valid calibrating equation
                 if not all([x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)]):
                     raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
-
-                if self.params_to_calibrate is None:
-                    self.params_to_calibrate = [eq.lhs]
+                if lhs in self.calib_dict:
+                    duplicates.append(lhs)
                 else:
-                    self.params_to_calibrate.append(eq.lhs)
+                    self.calib_dict[lhs] = rhs
 
-                if self.calibrating_equations is None:
-                    self.calibrating_equations = [set_equality_equals_zero(eq.rhs)]
+            elif rhs.is_number:
+                if lhs in self.param_dict:
+                    duplicates.append(lhs)
                 else:
-                    self.calibrating_equations.append(set_equality_equals_zero(eq.rhs))
+                    self.param_dict[lhs] = rhs.doit()
 
             else:
                 # What is left should only be "deterministic relationships", parameters that are defined as
                 # functions of other parameters that the user wants to keep track of.
 
                 # Check that these are functions of numbers and parameters only
-
                 if any([isinstance(x, TimeAwareSymbol) for x in atoms]):
                     raise ValueError(
                         "Parameters defined as functions in the calibration sub-block cannot be functions "
                         f"of variables. Found:\n\n {eq} in {self.name}"
                     )
-                if self.deterministic_params is None:
-                    self.deterministic_params = [eq.lhs]
+                if eq.lhs in self.deterministic_dict:
+                    duplicates.append(lhs)
                 else:
-                    self.deterministic_params.append(eq.lhs)
+                    self.deterministic_dict[lhs] = rhs
 
-                if self.deterministic_relationships is None:
-                    self.deterministic_relationships = [set_equality_equals_zero(eq.rhs)]
-                else:
-                    self.deterministic_relationships.append(set_equality_equals_zero(eq.rhs))
+        if len(duplicates) > 0:
+            raise DuplicateParameterError(duplicates, self.name)
 
     def _build_lagrangian(self) -> sp.Add:
         """
@@ -443,7 +453,7 @@ class Block:
         -------
         None
         """
-        objective = list(self.objective.values())[0]
+        objective = next(iter(self.objective.values()))
         constraints = self.constraints
         multipliers = self.multipliers
         sub_dict = dict()
@@ -460,6 +470,7 @@ class Block:
                 lm = multipliers[key]
             else:
                 lm = TimeAwareSymbol(f"lambda__{self.short_name}_{i}", 0)
+                self.multipliers[i] = lm
                 i += 1
 
             lagrange = lagrange - lm * (
@@ -500,7 +511,7 @@ class Block:
 
         # Return 1 if there is no continuation value
         if all([x.time_index in [0, -1] for x in variables]):
-            return 1.0
+            return sp.Float(1.0)
 
         else:
             continuation_value = [x for x in variables if x.time_index == 1]
@@ -549,6 +560,10 @@ class Block:
         self.system_equations = simplified_system
         self.eliminated_variables = eliminated_variables
 
+        for key, value in self.multipliers.items():
+            if value in eliminated_variables:
+                self.multipliers[key] = None
+
     def solve_optimization(self, try_simplify: bool = True) -> None:
         r"""
         Solve the optimization problem implied by the block structure:
@@ -573,15 +588,14 @@ class Block:
         -----
         All first order conditions, along with the constraints and objective are stored in the .system_equations method.
         No attempt is made to simplify the resulting system if try_simplify = False.
-
-        TODO: Add helper functions to simplify common setups, including CRRA/log-utility (extract Euler equation,
-            labor supply curve, etc), and common production functions (CES, CD -- extract demand curves, prices, or
-            marginal costs)
-
-        TODO: Automatically solving for un-named lagrange multipliers is currently done by the Model class, is this
-                correct?
         """
+
+        # TODO: Add helper functions to simplify common setups, including CRRA/log-utility (extract Euler equation,
+        #     labor supply curve, etc), and common production functions (CES, CD -- extract demand curves, prices, or
+        #     marginal costs)
         sub_dict = dict()
+        if self.system_equations is None:
+            self.system_equations = []
 
         if self.definitions is not None:
             _, definitions = unpack_keys_and_values(self.definitions)
@@ -630,3 +644,6 @@ class Block:
 
         if try_simplify:
             self.simplify_system_equations()
+
+        # Update the variable list
+        self._get_variable_list()

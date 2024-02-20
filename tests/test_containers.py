@@ -1,7 +1,7 @@
 import unittest
-from typing import List
 
 import sympy as sp
+
 from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -144,7 +144,7 @@ class TestSymbolDictionary(unittest.TestCase):
 
         self.assertRaises(ValueError, lambda: d1 | d2)
 
-        def loop_update(ds: List):
+        def loop_update(ds: list):
             d0 = ds.pop(0)
             for d in ds:
                 d0 = d0 | d

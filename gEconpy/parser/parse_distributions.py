@@ -1,10 +1,12 @@
 import re
+
 from abc import ABC, abstractmethod
 from functools import partial, reduce
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Literal, Optional, Union
 from warnings import warn
 
 import numpy as np
+
 from scipy import optimize
 from scipy.stats import (
     beta,
@@ -128,7 +130,7 @@ class CompositeDistribution:
         }
         assert len(point_dict.keys()) == 1
 
-        point_val = list(point_dict.values())[0]
+        point_val = next(iter(point_dict.values()))
 
         return param_dict, point_val
 
@@ -181,9 +183,8 @@ class BaseDistributionParser(ABC):
         upper_bound_param_name: Optional[str],
         lower_bound_param_name: Optional[str],
         n_params: int,
-        all_valid_parameters: List[str],
+        all_valid_parameters: list[str],
     ):
-
         self.variable_name = variable_name
         self.d_name = d_name
         self.loc_param_name = loc_param_name
@@ -199,21 +200,20 @@ class BaseDistributionParser(ABC):
         self.std_constraint = None
 
     @abstractmethod
-    def build_distribution(self, param_dict: Dict[str, str]) -> rv_continuous:
+    def build_distribution(self, param_dict: dict[str, str]) -> rv_continuous:
         raise NotImplementedError
 
     @abstractmethod
-    def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
+    def _parse_parameters(self, param_dict: dict[str, str]) -> dict[str, float]:
         raise NotImplementedError
 
     def _parse_parameter(
         self,
-        param_dict: Dict[str, str],
-        aliases: List[str],
+        param_dict: dict[str, str],
+        aliases: list[str],
         canon_name: str,
         additional_transformation: Callable = lambda name, value: value,
     ):
-
         param_names = list(param_dict.keys())
         param_name = self._parse_parameter_candidates(canon_name, param_names, aliases)
         if param_name is None:
@@ -265,10 +265,10 @@ class BaseDistributionParser(ABC):
             )
 
     @abstractmethod
-    def _postprocess_parameters(self, param_dict: Dict[str, float]) -> Dict[str, float]:
+    def _postprocess_parameters(self, param_dict: dict[str, float]) -> dict[str, float]:
         raise NotImplementedError
 
-    def _parse_mean_constraint(self, param_dict: Dict[str, str]) -> Dict:
+    def _parse_mean_constraint(self, param_dict: dict[str, str]) -> dict:
         aliases = MEAN_ALIASES
         param_names = list(param_dict.keys())
         mean_param = self._parse_parameter_candidates("mean", param_names, aliases)
@@ -281,7 +281,7 @@ class BaseDistributionParser(ABC):
         self.mean_constraint = value
         return {}
 
-    def _parse_std_constraint(self, param_dict: Dict[str, str]) -> Dict:
+    def _parse_std_constraint(self, param_dict: dict[str, str]) -> dict:
         aliases = STD_ALIASES
         param_names = list(param_dict.keys())
         std_param = self._parse_parameter_candidates("mean", param_names, aliases)
@@ -301,7 +301,7 @@ class BaseDistributionParser(ABC):
         return self.std_constraint is not None
 
     def _parse_parameter_candidates(
-        self, canon_param_name: str, param_names: List[str], aliases: List[str]
+        self, canon_param_name: str, param_names: list[str], aliases: list[str]
     ) -> Optional[str]:
         candidates = list(set(param_names).intersection(set(aliases)))
         if len(candidates) == 0:
@@ -327,9 +327,9 @@ class BaseDistributionParser(ABC):
                 self.variable_name, self.d_name, canon_param_name, candidates
             )
 
-        return list(candidates)[0]
+        return next(iter(candidates))
 
-    def _warn_about_unused_parameters(self, param_dict: Dict[str, str]) -> None:
+    def _warn_about_unused_parameters(self, param_dict: dict[str, str]) -> None:
         used_parameters = self.used_parameters
         all_params = list(param_dict.keys())
 
@@ -365,14 +365,14 @@ class NormalDistributionParser(BaseDistributionParser):
         )
 
     def build_distribution(
-        self, param_dict: Dict[str, str], package="scipy", model=None
+        self, param_dict: dict[str, str], backend="scipy", model=None
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
 
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
 
-        if package == "scipy":
+        if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
             parameters = list(parsed_param_dict.keys())
 
@@ -384,7 +384,7 @@ class NormalDistributionParser(BaseDistributionParser):
             else:
                 return truncnorm(**parsed_param_dict)
 
-    def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
+    def _parse_parameters(self, param_dict: dict[str, str]) -> dict[str, float]:
         parsed_param_dict = {}
 
         def tau_to_sigma(name, value):
@@ -426,8 +426,7 @@ class NormalDistributionParser(BaseDistributionParser):
 
         return parsed_param_dict
 
-    def _postprocess_parameters(self, param_dict: Dict[str, float]) -> Dict[str, float]:
-
+    def _postprocess_parameters(self, param_dict: dict[str, float]) -> dict[str, float]:
         parameters = list(param_dict.keys())
 
         # Easiest case: No bounds
@@ -561,18 +560,18 @@ class HalfNormalDistributionParser(BaseDistributionParser):
         )
 
     def build_distribution(
-        self, param_dict: Dict[str, str], package="scipy", model=None
+        self, param_dict: dict[str, str], backend="scipy", model=None
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
 
-        if package == "scipy":
+        if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
 
             return halfnorm(**parsed_param_dict)
 
-    def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
+    def _parse_parameters(self, param_dict: dict[str, str]) -> dict[str, float]:
         parsed_param_dict = {}
 
         def tau_to_sigma(name, value):
@@ -602,7 +601,7 @@ class HalfNormalDistributionParser(BaseDistributionParser):
 
         return parsed_param_dict
 
-    def _postprocess_parameters(self, param_dict: Dict[str, float]) -> Dict[str, float]:
+    def _postprocess_parameters(self, param_dict: dict[str, float]) -> dict[str, float]:
         if self._has_mean_constraint() and self._has_std_constraint():
             mean, std = self.mean_constraint, self.std_constraint
 
@@ -635,25 +634,28 @@ class UniformDistributionParser(BaseDistributionParser):
             lower_bound_param_name="a",
             upper_bound_param_name="b",
             n_params=2,
-            all_valid_parameters=["loc", "scale"]
-            + LOWER_BOUND_ALIASES
-            + UPPER_BOUND_ALIASES
-            + MOMENTS,
+            all_valid_parameters=[
+                "loc",
+                "scale",
+                *LOWER_BOUND_ALIASES,
+                *UPPER_BOUND_ALIASES,
+                *MOMENTS,
+            ],
         )
 
     def build_distribution(
-        self, param_dict: Dict[str, str], package="scipy", model=None
+        self, param_dict: dict[str, str], backend="scipy", model=None
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
 
-        if package == "scipy":
+        if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
 
             return uniform(**parsed_param_dict)
 
-    def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
+    def _parse_parameters(self, param_dict: dict[str, str]) -> dict[str, float]:
         parse_loc_parameter = partial(
             self._parse_parameter,
             canon_name=self.loc_param_name,
@@ -690,8 +692,7 @@ class UniformDistributionParser(BaseDistributionParser):
 
         return parsed_param_dict
 
-    def _postprocess_parameters(self, param_dict: Dict[str, float]) -> Dict[str, float]:
-
+    def _postprocess_parameters(self, param_dict: dict[str, float]) -> dict[str, float]:
         parameters = list(param_dict.keys())
 
         # Case 1: Two moment constraints
@@ -758,17 +759,17 @@ class InverseGammaDistributionParser(BaseDistributionParser):
         )
 
     def build_distribution(
-        self, param_dict: Dict[str, str], package="scipy", model=None
+        self, param_dict: dict[str, str], backend="scipy", model=None
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
 
-        if package == "scipy":
+        if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
             return invgamma(**parsed_param_dict)
 
-    def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
+    def _parse_parameters(self, param_dict: dict[str, str]) -> dict[str, float]:
         parse_loc_parameter = partial(
             self._parse_parameter,
             canon_name=self.loc_param_name,
@@ -799,7 +800,7 @@ class InverseGammaDistributionParser(BaseDistributionParser):
 
         return parsed_param_dict
 
-    def _postprocess_parameters(self, param_dict: Dict[str, float]) -> Dict[str, float]:
+    def _postprocess_parameters(self, param_dict: dict[str, float]) -> dict[str, float]:
         # TODO: What should be done with loc?
         parameters = list(param_dict.keys())
 
@@ -871,18 +872,17 @@ class BetaDistributionParser(BaseDistributionParser):
         self.shape_param_name_2 = "b"
 
     def build_distribution(
-        self, param_dict: Dict[str, str], package="scipy", model=None
+        self, param_dict: dict[str, str], backend="scipy", model=None
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
 
-        if package == "scipy":
+        if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
             return beta(**parsed_param_dict)
 
-    def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
-
+    def _parse_parameters(self, param_dict: dict[str, str]) -> dict[str, float]:
         parse_loc_parameter = partial(
             self._parse_parameter,
             canon_name=self.loc_param_name,
@@ -919,7 +919,7 @@ class BetaDistributionParser(BaseDistributionParser):
 
         return parsed_param_dict
 
-    def _postprocess_parameters(self, param_dict: Dict[str, float]) -> Dict[str, float]:
+    def _postprocess_parameters(self, param_dict: dict[str, float]) -> dict[str, float]:
         parameters = list(param_dict.keys())
         used_parameters = self.used_parameters
 
@@ -935,13 +935,13 @@ class BetaDistributionParser(BaseDistributionParser):
                 )
 
             if std <= 0:
-                used_name = list(set(used_parameters).intersection(set(STD_ALIASES)))[0]
+                used_name = next(iter(set(used_parameters).intersection(set(STD_ALIASES))))
                 raise InvalidParameterException(
                     self.variable_name, self.d_name, "mean", used_name, "sd > 0"
                 )
 
             if ((1 - mean) ** 2 * mean) < (std**2):
-                used_name = list(set(used_parameters).intersection(set(STD_ALIASES)))[0]
+                used_name = next(iter(set(used_parameters).intersection(set(STD_ALIASES))))
                 raise InvalidParameterException(
                     self.variable_name,
                     self.d_name,
@@ -1019,17 +1019,17 @@ class GammaDistributionParser(BaseDistributionParser):
         )
 
     def build_distribution(
-        self, param_dict: Dict[str, str], package="scipy", model=None
+        self, param_dict: dict[str, str], backend="scipy", model=None
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
 
-        if package == "scipy":
+        if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
             return gamma(**parsed_param_dict)
 
-    def _parse_parameters(self, param_dict: Dict[str, str]) -> Dict[str, float]:
+    def _parse_parameters(self, param_dict: dict[str, str]) -> dict[str, float]:
         parse_loc_parameter = partial(
             self._parse_parameter,
             canon_name=self.loc_param_name,
@@ -1060,7 +1060,7 @@ class GammaDistributionParser(BaseDistributionParser):
 
         return parsed_param_dict
 
-    def _postprocess_parameters(self, param_dict: Dict[str, float]) -> Dict[str, float]:
+    def _postprocess_parameters(self, param_dict: dict[str, float]) -> dict[str, float]:
         parameters = list(param_dict.keys())
 
         user_passed_scale = self.scale_param_name in parameters
@@ -1107,7 +1107,7 @@ class GammaDistributionParser(BaseDistributionParser):
 
 def match_first_two_moments(
     target_mean: float, target_std: float, dist_object: rv_continuous
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     def moment_errors(
         x, target_mean: float, target_std: float, dist_object: rv_continuous
     ) -> float:
@@ -1139,7 +1139,7 @@ def match_first_two_moments(
     return loc, scale
 
 
-def build_alias_to_canon_dict(alias_list, cannon_names) -> Dict[str, str]:
+def build_alias_to_canon_dict(alias_list, cannon_names) -> dict[str, str]:
     alias_to_canon_dict = {}
     aliases = reduce(lambda a, b: a + b, alias_list)
 
@@ -1151,7 +1151,7 @@ def build_alias_to_canon_dict(alias_list, cannon_names) -> Dict[str, str]:
     return alias_to_canon_dict
 
 
-def preprocess_distribution_string(variable_name: str, d_string: str) -> Tuple[str, Dict[str, str]]:
+def preprocess_distribution_string(variable_name: str, d_string: str) -> tuple[str, dict[str, str]]:
     """
     Parameters
     ----------
@@ -1169,7 +1169,7 @@ def preprocess_distribution_string(variable_name: str, d_string: str) -> Tuple[s
     name_to_canon_dict = build_alias_to_canon_dict(DIST_ALIAS_LIST, CANON_NAMES)
 
     digit_pattern = r" ?\d*\.?\d* ?"
-    general_pattern = rf" ?[\w\.]* ?"
+    general_pattern = r" ?[\w\.]* ?"
 
     # The not last args have a comma, while the last arg does not.
     dist_name_pattern = r"(\w+)"
@@ -1210,8 +1210,8 @@ def preprocess_distribution_string(variable_name: str, d_string: str) -> Tuple[s
 
 
 def preprocess_prior_dict(
-    raw_prior_dict: Dict[str, str]
-) -> Tuple[List[str], List[str], List[Dict[str, str]]]:
+    raw_prior_dict: dict[str, str],
+) -> tuple[list[str], list[str], list[dict[str, str]]]:
     """
 
     Parameters
@@ -1242,8 +1242,8 @@ def preprocess_prior_dict(
 def distribution_factory(
     variable_name: str,
     d_name: str,
-    param_dict: Dict[str, str],
-    package: str = "scipy",
+    param_dict: dict[str, str],
+    backend: str = "scipy",
     model=None,
 ) -> rv_continuous:
     """
@@ -1255,8 +1255,8 @@ def distribution_factory(
         plaintext name of the distribution to parameterize, from the CANNON_NAMES list.
     param_dict: dict
         a dictionary of parameter: value pairs, or parameter: string pairs in the case of composite distributions
-    package: str
-        package of the distribution function to parameterize
+    backend: str
+        backend of the distribution function to parameterize
 
     Returns
     -------
@@ -1264,7 +1264,7 @@ def distribution_factory(
         a scipy distribution object object
     """
 
-    if package not in ["scipy"]:
+    if backend not in ["scipy"]:
         raise NotImplementedError
 
     parser = None
@@ -1291,18 +1291,18 @@ def distribution_factory(
         print(d_name)
         raise ValueError("How did you even get here?")
 
-    d = parser.build_distribution(param_dict, package=package, model=model)
+    d = parser.build_distribution(param_dict, backend=backend, model=model)
     return d
 
 
 def rename_dict_keys_with_value_transform(
-    d: Dict,
-    to_rename: List[str],
+    d: dict,
+    to_rename: list[str],
     new_key: str,
     variable_name: str,
     d_name: str,
     transformation: Callable = lambda name, value: value,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     result = {}
     matches = [key for key in d.keys() if key in set(to_rename)]
     if len(matches) > 1:
@@ -1317,7 +1317,7 @@ def rename_dict_keys_with_value_transform(
     return result
 
 
-def param_values_to_floats(param_dict: Dict):
+def param_values_to_floats(param_dict: dict):
     for param, param_value in param_dict.items():
         if isinstance(param_value, str):
             if is_number(param_value):
@@ -1327,8 +1327,8 @@ def param_values_to_floats(param_dict: Dict):
 
 
 def split_out_composite_distributions(
-    variable_names: List[str], d_names: List[str], param_dicts: List[Dict[str, str]]
-) -> Tuple[Dict[str, Tuple[str, Dict[str, str]]], Dict[str, Tuple[str, Dict[str, str]]]]:
+    variable_names: list[str], d_names: list[str], param_dicts: list[dict[str, str]]
+) -> tuple[dict[str, tuple[str, dict[str, str]]], dict[str, tuple[str, dict[str, str]]]]:
     basic_distributions = {}
     composite_distributions = {}
 
@@ -1355,7 +1355,7 @@ def fetch_rv_params(param_dict, model):
 
 
 def composite_distribution_factory(
-    variable_name, d_name, param_dict, package="scipy", model=None
+    variable_name, d_name, param_dict, backend="scipy", model=None
 ) -> Union[CompositeDistribution, None]:
     """
     Parameters
@@ -1367,8 +1367,8 @@ def composite_distribution_factory(
     param_dict: dict
         Dictionary of parameter name, parameter value pairs. Parameter values should be either scipy rv_frozen objects
         or strings that can be converted to floats.
-    package: str
-        Which package to use to create the distributions. Currently "scipy".
+    backend: str
+        Which backend to use to create the distributions. Currently "scipy".
 
     Returns
     -------
@@ -1390,10 +1390,10 @@ def composite_distribution_factory(
             return 1 / value
         return value
 
-    if package == "scipy":
+    if backend == "scipy":
         base_d = NAME_TO_DIST_SCIPY_FUNC[d_name]
     else:
-        raise NotImplementedError('Only package = "scipy"  is supported.')
+        raise NotImplementedError('Only backend = "scipy"  is supported.')
 
     param_dict = param_values_to_floats(param_dict)
 
@@ -1402,7 +1402,7 @@ def composite_distribution_factory(
         has_upper_bound = any([x in set(param_dict.keys()) for x in UPPER_BOUND_ALIASES])
         has_lower_bound = any([x in set(param_dict.keys()) for x in LOWER_BOUND_ALIASES])
 
-        if (has_upper_bound or has_lower_bound) and package == "scipy":
+        if (has_upper_bound or has_lower_bound) and backend == "scipy":
             warn(
                 'Moment conditions are not supported for compound distributions, and parameters "mean" and "std" will'
                 'be interpreted as "loc" and "scale". Since you have passed boundaries, the first and second moments'
@@ -1430,7 +1430,7 @@ def composite_distribution_factory(
             param_dict, UPPER_BOUND_ALIASES, "b", variable_name, d_name
         )
 
-    elif d_name == "halfnormal" and package == "scipy":
+    elif d_name == "halfnormal" and backend == "scipy":
         if any([x in set(param_dict.keys()) for x in MEAN_ALIASES]):
             warn(
                 "Moment conditions are not supported for compound distributions. If you pass a random variable as a "
@@ -1448,7 +1448,7 @@ def composite_distribution_factory(
         )
 
     elif d_name == "inv_gamma":
-        if any([x in set(param_dict.keys()) for x in MOMENTS]) and package == "scipy":
+        if any([x in set(param_dict.keys()) for x in MOMENTS]) and backend == "scipy":
             warn(
                 "Moment conditions are not supported for compound distributions. If you pass a random variable as a "
                 "parameter value, do not pass in mean or std.",
@@ -1464,7 +1464,7 @@ def composite_distribution_factory(
         )
 
     elif d_name == "beta":
-        if any([x in set(param_dict.keys()) for x in MOMENTS]) and package == "scipy":
+        if any([x in set(param_dict.keys()) for x in MOMENTS]) and backend == "scipy":
             warn(
                 "Moment conditions are not supported for compound distributions. If you pass a random variable as a "
                 "parameter value, do not pass in mean or std. These conditions will be ignored, and this may cause an"
@@ -1481,7 +1481,7 @@ def composite_distribution_factory(
             )
 
     elif d_name == "gamma":
-        if any([x in set(param_dict.keys()) for x in MOMENTS]) and package == "scipy":
+        if any([x in set(param_dict.keys()) for x in MOMENTS]) and backend == "scipy":
             warn(
                 "Moment conditions are not supported for compound distributions. If you pass a random variable as a "
                 "parameter value, do not pass in mean or std. These conditions will be ignored, and this may cause an"
@@ -1497,12 +1497,33 @@ def composite_distribution_factory(
                 param_dict, BETA_SHAPE_ALIASES_2, "b", variable_name, d_name
             )
 
-    if package == "scipy":
+    if backend == "scipy":
         d = CompositeDistribution(base_d, **param_dict)
         return d
 
 
-def create_prior_distribution_dictionary(raw_prior_dict: Dict[str, str]) -> Dict[str, Any]:
+def create_prior_distribution_dictionary(
+    raw_prior_dict: dict[str, str], backend: Literal["scipy", "pymc"] = "scipy"
+) -> tuple[SymbolDictionary, SymbolDictionary]:
+    """
+
+    Parameters
+    ----------
+    raw_prior_dict: dict[str, str]
+        Dictionary of variable name: distribution string pairs.
+
+    backend: Literal['scipy', 'pymc']
+        Which backend to use to create the distributions. Currently "scipy" and "pymc" are supported.
+
+    Returns
+    -------
+    prior_dict: SymbolDictionary
+        A dictionary of variable name: distribution pairs.
+
+    hyper_prior_dict: SymbolDictionary
+        A dictionary of variable name: (parent_rv, param, rv) pairs. This is used to keep track of the parent-child
+        relationships between distributions in the case of compound distributions.
+    """
     variable_names, d_names, param_dicts = preprocess_prior_dict(raw_prior_dict)
     basic_distributions, compound_distributions = split_out_composite_distributions(
         variable_names, d_names, param_dicts
@@ -1522,7 +1543,7 @@ def create_prior_distribution_dictionary(raw_prior_dict: Dict[str, str]) -> Dict
                 param_dict[param] = prior_dict[value]
                 rvs_used_in_d.append((variable_name, param, value))
 
-        d = composite_distribution_factory(variable_name, d_name, param_dict)
+        d = composite_distribution_factory(variable_name, d_name, param_dict, backend=backend)
         prior_dict[variable_name] = d
         for parent_rv, param, rv in rvs_used_in_d:
             hyper_prior_dict[rv] = (parent_rv, param, prior_dict[rv])

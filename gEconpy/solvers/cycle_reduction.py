@@ -1,20 +1,20 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
+
 from numba import njit
 from numpy.typing import ArrayLike
 
 
 @njit(cache=True)
-def cycle_reduction(
+def nb_cycle_reduction(
     A0: ArrayLike,
     A1: ArrayLike,
     A2: ArrayLike,
     max_iter: int = 1000,
     tol: float = 1e-7,
     verbose: bool = True,
-) -> Tuple[Optional[ArrayLike], str, float]:
-
+) -> tuple[Optional[ArrayLike], str, float]:
     """
     Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1].
     Useful in the DSGE context to solve for the implicit derivative of the policy function, g, with respect to
@@ -43,9 +43,16 @@ def cycle_reduction(
 
     Returns
     -------
+    X: array
+        Solution to matrix quadratic equation
+    result: str
+        String indicating the result of the optimization. If the algorithm converges, this will be "Optimization
+        successful". If the algorithm fails to converge, this will be "Iteration on all matrices failed to converged"
+    log_norm: float
+        Logarithm of the L1 norm of the matrix A1. This is useful for diagnosing the success of the algorithm.
 
     References
-    -------
+    ----------
     ..[1] D.A. Bini, G. Latouche, B. Meini (2002), "Solving matrix polynomial equations
           arising in queueing problems", Linear Algebra and its Applications 340, pp. 222-244
     ..[2]
@@ -107,7 +114,7 @@ def cycle_reduction(
 
 
 @njit(cache=True)
-def solve_shock_matrix(B, C, D, G_1):
+def nb_solve_shock_matrix(B, C, D, G_1):
     """
     Given the partial solution to the linear approximate policy function G_1, solve for the remaining component of the
     policy function, R.
@@ -125,6 +132,7 @@ def solve_shock_matrix(B, C, D, G_1):
     G_1: ArrayLike
         Transition matrix T in state space jargon. Gives the effect of variable values at time t on the
         values of the variables at time t+1.
+
     Returns
     -------
     impact: ArrayLike

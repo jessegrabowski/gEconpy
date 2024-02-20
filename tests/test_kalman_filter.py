@@ -1,5 +1,6 @@
 import os
 import unittest
+
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +31,8 @@ class BasicFunctionalityTests(unittest.TestCase):
 
         system = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )

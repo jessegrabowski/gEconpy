@@ -1,10 +1,12 @@
 import os
 import re
 import unittest
+
 from pathlib import Path
 from unittest import mock
 
 import sympy as sp
+
 from scipy import optimize
 
 from gEconpy.classes.model import gEconModel
@@ -182,7 +184,7 @@ class SteadyStateModelTwo(unittest.TestCase):
         all_params = param_dict | calib_solution
 
         ss_var = [x.to_ss() for x in self.model.variables]
-        A, C, I, K, L, U, Y, lam, q = ss_var
+        A, C, I, K, L, U, Y, lam, q = ss_var  # noqa: E741
         ss_dict = {
             k: v.subs(all_params)
             for k, v in zip(
@@ -409,19 +411,24 @@ class SteadyStateModelFour(unittest.TestCase):
 class SteadyStateWithUserError(unittest.TestCase):
     def setUp(self):
         self.model = gEconModel(
-            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_ss_Error.gcn"), verbose=False
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_ss_Error.gcn"),
+            verbose=False,
         )
 
     def test_raises_on_nonzero_resids(self):
         self.assertRaises(
-            ValueError, self.model.steady_state, apply_user_simplifications=True, verbose=False
+            ValueError,
+            self.model.steady_state,
+            apply_user_simplifications=True,
+            verbose=False,
         )
 
 
 class FullyUserDefinedSteadyState(unittest.TestCase):
     def test_ss_solves_from_user_definition(self):
         model = gEconModel(
-            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"),
+            verbose=False,
         )
 
         for method in ["root", "minimize"]:
@@ -430,7 +437,8 @@ class FullyUserDefinedSteadyState(unittest.TestCase):
 
     def test_ss_solves_when_ignoring_user_definition(self):
         model = gEconModel(
-            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"),
+            verbose=False,
         )
 
         for method in ["root", "minimize"]:
@@ -439,13 +447,15 @@ class FullyUserDefinedSteadyState(unittest.TestCase):
 
     def test_solver_matches_user_solution(self):
         model = gEconModel(
-            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"),
+            verbose=False,
         )
         model.steady_state(apply_user_simplifications=False, verbose=False)
         ss_dict_numeric = model.steady_state_dict.copy()
 
         model = gEconModel(
-            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"), verbose=False
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"),
+            verbose=False,
         )
         model.steady_state(apply_user_simplifications=True, verbose=False)
         ss_dict_user = model.steady_state_dict.copy()

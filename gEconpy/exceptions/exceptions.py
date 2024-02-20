@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 
 import sympy as sp
 
@@ -8,7 +8,7 @@ from gEconpy.solvers.gensys import interpret_gensys_output
 
 
 class GCNSyntaxError(ValueError):
-    def __init__(self, block_name: str, key: List[str]):
+    def __init__(self, block_name: str, key: list[str]):
         self.block_name = block_name
         self.key = key
 
@@ -94,7 +94,7 @@ class OptimizationProblemNotDefinedException(ValueError):
 
 
 class MultipleObjectiveFunctionsException(ValueError):
-    def __init__(self, block_name: str, eqs: List[sp.Eq]) -> None:
+    def __init__(self, block_name: str, eqs: list[sp.Eq]) -> None:
         self.block_name = block_name
 
         n_eqs = len(eqs)
@@ -103,8 +103,8 @@ class MultipleObjectiveFunctionsException(ValueError):
         for eq in eqs:
             message += str(eq) + "\n"
         message += (
-            f" Only one objective function is supported. Please manually simplify the objective"
-            f" to a single function."
+            " Only one objective function is supported. Please manually simplify the objective"
+            " to a single function."
         )
 
         super().__init__(message)
@@ -127,8 +127,8 @@ class ControlVariableNotFoundException(ValueError):
 class SteadyStateNotSolvedError(ValueError):
     def __init__(self):
         message = (
-            f"The system cannot be solved before the steady-state has been found! Call the .steady_state() method"
-            f"to solve for the steady state."
+            "The system cannot be solved before the steady-state has been found! Call the .steady_state() method"
+            "to solve for the steady state."
         )
 
         super().__init__(message)
@@ -137,15 +137,15 @@ class SteadyStateNotSolvedError(ValueError):
 class PerturbationSolutionNotFoundException(ValueError):
     def __init__(self):
         message = (
-            f"This operation cannot be completed until the model has a solved perturbation solution. Please "
-            f"call the .solve() method to solve for the policy function."
+            "This operation cannot be completed until the model has a solved perturbation solution. Please "
+            "call the .solve() method to solve for the policy function."
         )
 
         super().__init__(message)
 
 
 class MultipleSteadyStateBlocksException(ValueError):
-    def __init__(self, ss_block_names: List[str]):
+    def __init__(self, ss_block_names: list[str]):
         message = (
             f"Found multiple blocks with reserved steady states names: {', '.join(ss_block_names)}. Please pass"
             f"only up to one steady state block, and do not name any blocks with the reserved steady states "
@@ -207,7 +207,7 @@ class ParameterNotFoundException(ValueError):
         variable_name: str,
         d_name: str,
         param_name: str,
-        valid_param_names: List[str],
+        valid_param_names: list[str],
         maybe_typo: Optional[str],
         best_guess: Optional[str],
     ):
@@ -228,7 +228,7 @@ class ParameterNotFoundException(ValueError):
 
 class MultipleParameterDefinitionException(ValueError):
     def __init__(
-        self, variable_name: str, d_name: str, param_name: str, result_list: List[str]
+        self, variable_name: str, d_name: str, param_name: str, result_list: list[str]
     ) -> None:
         message = (
             f'The {d_name} distribution associated with "{variable_name}" has multiple declarations for '
@@ -293,6 +293,47 @@ class InsufficientDegreesOfFreedomException(ValueError):
             f'The {d_name} distribution associated with model variable "{variable_name}" has only one parameter,'
             f"and cannot meet two moment conditions. Please only pass either a mean or a std if you wish to match "
             f"a moment, or use the loc and scale parameters directly."
+        )
+
+        super().__init__(message)
+
+
+class OrphanParameterError(ValueError):
+    def __init__(self, orphans):
+        n = len(orphans)
+        verb = "was" if n == 1 else "were"
+        message = (
+            f'The following parameter{"s" if n > 1 else ""} {verb} found among model equations but did not appear in '
+            f'any calibration block: {", ".join([x.name for x in orphans])}'
+        )
+
+        super().__init__(message)
+
+
+class ExtraParameterError(ValueError):
+    def __init__(self, extras):
+        n = len(extras)
+        verb = "was" if n == 1 else "were"
+        message = (
+            f'The following parameter{"s" if n > 1 else ""} {verb} were given initial values in calibration blocks but '
+            f'were not used in model equations: {", ".join([x.name for x in extras])} \n'
+            f'Verify your model equations, or remove these parameters if they are not needed.'
+        )
+
+        super().__init__(message)
+
+
+class DuplicateParameterError(ValueError):
+    def __init__(self, extras, block=None):
+        n = len(extras)
+        verb = "was" if n == 1 else "were"
+        location = "calibration blocks"
+        if block is not None:
+            location = f"in {block} calibration block"
+        message = (
+            f'The following parameter{"s" if n > 1 else ""} {verb} were given initial values in {location} more '
+            f'than once: {", ".join([x.name for x in extras])} \n'
+            f'Model parameters should be declared only once. Check your GCN file and remove one of the declarations.'
         )
 
         super().__init__(message)

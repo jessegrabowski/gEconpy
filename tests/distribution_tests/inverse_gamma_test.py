@@ -1,8 +1,8 @@
 import unittest
+
 from functools import partial
 
 import numpy as np
-from scipy.stats import invgamma
 
 from gEconpy.exceptions.exceptions import (
     IgnoredCloseMatchWarning,

@@ -63,8 +63,8 @@ class ProgressBar:
 
         Returns
         -------
-        Tuple[str, str]
-            Tuple of strings in the format "mm:ss".
+        minutes: str
+        seconds: str
         """
 
         minutes, seconds = np.divmod(timestamp, 60)

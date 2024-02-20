@@ -1,7 +1,9 @@
 import re
+
 from enum import Enum
 
 import sympy as sp
+
 from sympy.abc import _clash1, _clash2
 
 from gEconpy.shared.utilities import IterEnum

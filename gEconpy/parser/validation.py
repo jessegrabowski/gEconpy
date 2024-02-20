@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union
+from typing import Union
 
 from gEconpy.exceptions.exceptions import InvalidComponentNameException
 from gEconpy.parser.constants import BLOCK_COMPONENTS
@@ -87,7 +87,7 @@ def jaccard_distance(s: str, d: str) -> float:
     return intersection / union
 
 
-def elementwise_jaccard_distance(s: str, l: List[str]) -> List[float]:
+def elementwise_jaccard_distance(s: str, others: list[str]) -> list[float]:
     """
     Calculate the Jaccard distance between a string and each element in a list of strings.
 
@@ -95,7 +95,7 @@ def elementwise_jaccard_distance(s: str, l: List[str]) -> List[float]:
     ----------
     s : str
         The string to compare against.
-    l : list of str
+    others : list of str
         The list of strings to compare to `s`.
 
     Returns
@@ -103,12 +103,12 @@ def elementwise_jaccard_distance(s: str, l: List[str]) -> List[float]:
     list of float
         A list of the Jaccard distances between `s` and each element in `l`.
     """
-    return [jaccard_distance(s, element) for element in l]
+    return [jaccard_distance(s, element) for element in others]
 
 
 def find_typos_and_guesses(
-    user_inputs: List[str], valid_inputs: List[str], match_threshold: float = 0.8
-) -> Tuple[Union[str, None], Union[str, None]]:
+    user_inputs: list[str], valid_inputs: list[str], match_threshold: float = 0.8
+) -> tuple[Union[str, None], Union[str, None]]:
     """
     Find the best matching suggestion from a list of valid inputs for a list of invalid user inputs.
 

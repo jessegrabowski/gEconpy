@@ -1,6 +1,7 @@
 import os
 import re
 import unittest
+
 from pathlib import Path
 from unittest import mock
 
@@ -8,6 +9,7 @@ import arviz as az
 import numpy as np
 import pandas as pd
 import sympy as sp
+
 from numpy.testing import assert_allclose
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -16,7 +18,6 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import GensysFailedException
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.sampling import (
-    kalman_filter_from_posterior,
     simulate_trajectories_from_posterior,
 )
 from gEconpy.shared.utilities import string_keys_to_sympy
@@ -66,13 +67,15 @@ class ModelErrorTests(unittest.TestCase):
         expected_warnings = [
             "Simplification via try_reduce was requested but not possible because the system is not well defined.",
             "Removal of constant variables was requested but not possible because the system is not well defined.",
-            f"The model does not appear correctly specified, there are 8 equations but "
-            f"11 variables. It will not be possible to solve this model. Please check the "
-            f"specification using available diagnostic tools, and check the GCN file for typos.",
+            "The model does not appear correctly specified, there are 8 equations but "
+            "11 variables. It will not be possible to solve this model. Please check the "
+            "specification using available diagnostic tools, and check the GCN file for typos.",
         ]
 
         with unittest.mock.patch(
-            "builtins.open", new=unittest.mock.mock_open(read_data=self.GCN_file), create=True
+            "builtins.open",
+            new=unittest.mock.mock_open(read_data=self.GCN_file),
+            create=True,
         ):
             with self.assertWarns(UserWarning) as warnings:
                 model = gEconModel(
@@ -197,19 +200,24 @@ class ModelErrorTests(unittest.TestCase):
                     """
 
         with unittest.mock.patch(
-            "builtins.open", new=unittest.mock.mock_open(read_data=GCN_file), create=True
+            "builtins.open",
+            new=unittest.mock.mock_open(read_data=GCN_file),
+            create=True,
         ):
             with self.assertRaises(ValueError) as error:
                 model = gEconModel(
-                    "", verbose=False, simplify_tryreduce=False, simplify_constants=False
+                    "",
+                    verbose=False,
+                    simplify_tryreduce=False,
+                    simplify_constants=False,
                 )
             msg = str(error.exception)
 
         self.assertEqual(
             msg,
             "The following parameters were found among model equations, but were not found among "
-            f"defined defined or calibrated parameters: beta.\n Verify that these "
-            f"parameters have been defined in a calibration block somewhere in your GCN file.",
+            "defined defined or calibrated parameters: beta.\n Verify that these "
+            "parameters have been defined in a calibration block somewhere in your GCN file.",
         )
 
 
@@ -285,7 +293,8 @@ class ModelClassTestsOne(unittest.TestCase):
     def test_conflicting_assumptions_are_removed(self):
         with self.assertWarns(UserWarning):
             model = gEconModel(
-                os.path.join(ROOT, "Test GCNs/conflicting_assumptions.gcn"), verbose=False
+                os.path.join(ROOT, "Test GCNs/conflicting_assumptions.gcn"),
+                verbose=False,
             )
 
         self.assertTrue("real" not in model.assumptions["TC"].keys())
@@ -338,7 +347,8 @@ class ModelClassTestsOne(unittest.TestCase):
 
         A, _, _, _ = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
@@ -398,7 +408,8 @@ class ModelClassTestsOne(unittest.TestCase):
 
         A, _, _, _ = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
@@ -431,10 +442,18 @@ class ModelClassTestsOne(unittest.TestCase):
         Tc, Rc = self.model.T, self.model.R
 
         assert_allclose(
-            Tg.round(5).values, Tc.round(5).values, rtol=1e-5, equal_nan=True, err_msg="T"
+            Tg.round(5).values,
+            Tc.round(5).values,
+            rtol=1e-5,
+            equal_nan=True,
+            err_msg="T",
         )
         assert_allclose(
-            Rg.round(5).values, Rc.round(5).values, rtol=1e-5, equal_nan=True, err_msg="R"
+            Rg.round(5).values,
+            Rc.round(5).values,
+            rtol=1e-5,
+            equal_nan=True,
+            err_msg="R",
         )
 
     def test_blanchard_kahn_conditions(self):
@@ -549,7 +568,8 @@ class ModelClassTestsTwo(unittest.TestCase):
 
         A, _, _, _ = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
@@ -612,7 +632,8 @@ class ModelClassTestsTwo(unittest.TestCase):
 
         A, _, _, _ = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
@@ -645,10 +666,18 @@ class ModelClassTestsTwo(unittest.TestCase):
         Tc, Rc = self.model.T, self.model.R
 
         assert_allclose(
-            Tg.round(5).values, Tc.round(5).values, rtol=1e-5, equal_nan=True, err_msg="T"
+            Tg.round(5).values,
+            Tc.round(5).values,
+            rtol=1e-5,
+            equal_nan=True,
+            err_msg="T",
         )
         assert_allclose(
-            Rg.round(5).values, Rc.round(5).values, rtol=1e-5, equal_nan=True, err_msg="R"
+            Rg.round(5).values,
+            Rc.round(5).values,
+            rtol=1e-5,
+            equal_nan=True,
+            err_msg="R",
         )
 
 
@@ -674,7 +703,7 @@ class ModelClassTestsThree(unittest.TestCase):
             self.model.try_reduce_vars,
             [
                 "Div[]",
-                "TC[]"
+                "TC[]",
                 # TimeAwareSymbol("Div", 0, **self.model.assumptions["DIV"]),
                 # TimeAwareSymbol("TC", 0, **self.model.assumptions["TC"]),
             ],
@@ -697,7 +726,15 @@ class ModelClassTestsThree(unittest.TestCase):
         result = [block_name for block_name in self.model.blocks.keys()]
         self.assertEqual(result, block_names)
 
-        (rho_technology, gamma_R, gamma_pi, gamma_Y, phi_pi_obj, phi_pi, rho_pi_dot,) = sp.symbols(
+        (
+            rho_technology,
+            gamma_R,
+            gamma_pi,
+            gamma_Y,
+            phi_pi_obj,
+            phi_pi,
+            rho_pi_dot,
+        ) = sp.symbols(
             [
                 "rho_technology",
                 "gamma_R",
@@ -894,7 +931,11 @@ class TestLinearModel(unittest.TestCase):
             self.model.T[["A", "K"]].values, T_dynare, rtol=1e-5, atol=1e-5, err_msg="T"
         )
         assert_allclose(
-            self.model.R.values, R_dynare.reshape(-1, 1), rtol=1e-5, atol=1e-5, err_msg="R"
+            self.model.R.values,
+            R_dynare.reshape(-1, 1),
+            rtol=1e-5,
+            atol=1e-5,
+            err_msg="R",
         )
 
     def test_solvers_agree(self):
@@ -957,7 +998,9 @@ class TestModelSimulationTools(unittest.TestCase):
         n_simulations = 1
         Q = np.array([[0.01]])
         data = self.model.simulate(
-            simulation_length=simulation_length, n_simulations=n_simulations, shock_cov_matrix=Q
+            simulation_length=simulation_length,
+            n_simulations=n_simulations,
+            shock_cov_matrix=Q,
         )
 
         self.assertTrue(isinstance(data, pd.DataFrame))
@@ -969,7 +1012,9 @@ class TestModelSimulationTools(unittest.TestCase):
         n_simulations = 1
         shock_dict = {"epsilon_A": 0.1}
         data = self.model.simulate(
-            simulation_length=simulation_length, n_simulations=n_simulations, shock_dict=shock_dict
+            simulation_length=simulation_length,
+            n_simulations=n_simulations,
+            shock_dict=shock_dict,
         )
 
         self.assertTrue(isinstance(data, pd.DataFrame))
