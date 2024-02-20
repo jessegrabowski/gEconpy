@@ -1,6 +1,7 @@
 import os
 import re
 import unittest
+
 from pathlib import Path
 from unittest import mock
 
@@ -8,6 +9,7 @@ import arviz as az
 import numpy as np
 import pandas as pd
 import sympy as sp
+
 from numpy.testing import assert_allclose
 
 from gEconpy.classes.containers import SymbolDictionary

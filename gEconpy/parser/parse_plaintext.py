@@ -108,9 +108,9 @@ def extract_distributions(text: str) -> tuple[str, dict[str, str]]:
 
     Returns
     -------
-    str
+    outputs: str
         Model file with prior distribution information removed.
-    Dict[str, str]
+    prior_dict: dict
         Dictionary of the form parameter:distribution.
 
     Examples

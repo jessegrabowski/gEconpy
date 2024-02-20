@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import xarray as xr
+
 from numpy.linalg import LinAlgError
 
 from gEconpy.classes.progress_bar import ProgressBar

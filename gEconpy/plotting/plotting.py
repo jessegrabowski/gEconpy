@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
+
 from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
@@ -16,15 +17,15 @@ def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list]:
     """
      Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
-     Parameters
-     ----------
+    Parameters
+    ----------
      n_cols : int
          The number of columns in the grid.
      n_plots : int
          The number of subplots in the grid.
 
-     Returns
-     -------
+    Returns
+    -------
      GridSpec
          A matplotlib GridSpec object representing the layout of the grid.
     list of tuple(slice, slice)
@@ -287,7 +288,7 @@ def plot_prior_solvability(
         The number of samples to draw from the prior distributions.
     seed : int, optional
         The seed to use for the random number generator.
-    params_to_plot : List[str], optional
+    params_to_plot : list of str, optional
         A list of parameter names to include in the plots. If not provided, all parameters will be plotted.
 
     Returns
@@ -296,7 +297,7 @@ def plot_prior_solvability(
         The Figure object containing the plots
 
     Notes
-    ----------
+    -----
     - Parameters will be sampled from prior distributions defined in the GCN.
     - The following failure modes are considered:
         - Steady state: The steady state of the model could not be calculated.
@@ -438,7 +439,7 @@ def plot_eigenvalues(model: Any, figsize: tuple[float, float] = None, dpi: int =
     ----------
     model : gEconModel
         The model to plot the eigenvalues of.
-    figsize : Tuple[float, float], optional
+    figsize : tuple[float, float], optional
         The size of the figure to create.
     dpi : int, optional
         The resolution of the figure to create.
@@ -510,6 +511,7 @@ def plot_covariance_matrix(
         Keyword arguments forwarded to plt.imshow
     annotation_kwargs: dict, optional
         Keyword arguments forwarded to gEconpy.plotting.annotate_heatmap
+
     Returns
     -------
     matplotlib.figure.Figure
@@ -745,9 +747,9 @@ def plot_corner(
     ----------
     idata : arviz.InferenceData
         An arviz idata object with a posterior group.
-    var_names : List[str], optional
+    var_names : list of str, optional
         A list of strings specifying the variables to plot. If not provided, all variables in `idata` will be plotted.
-    figsize : Tuple[int, int], optional
+    figsize : tuple, optional
         The size of the figure in inches. Default is (14, 14).
     dpi : int, optional
         The resolution of the figure in dots per inch. Default is 144.
@@ -763,7 +765,7 @@ def plot_corner(
         Whether or not to show the modes of the marginal distributions. Default is True.
 
     Returns
-    ----------
+    -------
     matplotlib.figure.Figure
         Figure object containing the plots.
     """

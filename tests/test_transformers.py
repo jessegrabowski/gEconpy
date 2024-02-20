@@ -1,6 +1,6 @@
 import unittest
 
-from gEconpy.classes.transformers import (
+from gEconpy.estimation.transformers import (
     IdentityTransformer,
     IntervalTransformer,
     PositiveTransformer,

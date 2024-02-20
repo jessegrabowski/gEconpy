@@ -1,4 +1,5 @@
 import unittest
+
 from functools import partial
 
 from scipy.stats import halfnorm

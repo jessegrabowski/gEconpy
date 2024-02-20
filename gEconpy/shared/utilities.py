@@ -199,6 +199,18 @@ def merge_dictionaries(*dicts):
     return result
 
 
+def recursively_self_substitute_dict(sub_dict, max_iter=5):
+    eqs = list(sub_dict.values())
+    for i in range(max_iter):
+        new_eqs = substitute_all_equations(eqs, sub_dict)
+        sub_dict = substitute_all_equations(sub_dict, sub_dict)
+        no_changes = all([new_eq == old_eq for new_eq, old_eq in zip(new_eqs, eqs)])
+        eqs = new_eqs
+        if no_changes:
+            break
+    return {var: eq for var, eq in zip(sub_dict.keys(), eqs)}
+
+
 def make_all_var_time_combos(var_list):
     result = []
     for x in var_list:
@@ -242,7 +254,7 @@ def build_Q_matrix(
         A default value of fall back on if no other information is available about a shock's standard deviation
 
     Raises
-    ---------
+    ------
     LinalgError
         If the provided Q is not positive semi-definite
     ValueError
@@ -323,7 +335,7 @@ def get_shock_std_priors_from_hyperpriors(shocks, priors, out_keys="parent"):
     Extract a single key, value pair from the model hyper_priors.
 
     Parameters
-    -------
+    ----------
     shocks: list of sympy Symbols
         Model shocks
     priors: dict of key, tuple
@@ -362,18 +374,21 @@ def split_random_variables(param_dict, shock_names, obs_names):
 
     Parameters
     ----------
-    param_dict : Dict[str, float]
+    param_dict : dict
         A dictionary of parameters and their values.
-    shock_names : List[str]
+    shock_names : list of str
         A list of the names of shock variables.
-    obs_names : List[str]
+    obs_names : list of str
         A list of the names of observable variables.
 
     Returns
     -------
-    Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]
-        A tuple containing three dictionaries: the first has parameters, the second has
-        all shock variances parameters, and the third has observation noise variances.
+    out_param_dict: dict
+        Dictionary mapping parameter names to values
+    shock_dict: dict
+        Dictionary mapping shock names to values
+    obs_dict: dict
+        Dictionary mapping names of observed variables to observation noise values
     """
 
     out_param_dict = SymbolDictionary()

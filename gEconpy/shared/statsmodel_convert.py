@@ -2,10 +2,11 @@ from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
+
 from statsmodels.tsa.statespace.kalman_filter import INVERT_UNIVARIATE, SOLVE_LU
 from statsmodels.tsa.statespace.mlemodel import MLEModel, _handle_args
 
-from gEconpy.classes.transformers import IdentityTransformer, PositiveTransformer
+from gEconpy.estimation.transformers import IdentityTransformer, PositiveTransformer
 
 
 def compile_to_statsmodels(model) -> MLEModel:
@@ -171,11 +172,11 @@ def compile_to_statsmodels(model) -> MLEModel:
 
             Parameters
             ----------
-            param_start_dict: Dict[str, float]
+            param_start_dict: dict
                 A dictionary of starting values for parameters that are to be estimated.
-            shock_start_dict: Dict[str, float]
+            shock_start_dict: dict
                 A dictionary of starting values for shocks that are to be estimated.
-            noise_start_dict: Dict[str, float]
+            noise_start_dict: dict
                 A dictionary of starting values for observation noises that are to be estimated.
             """
             missing_vars = [

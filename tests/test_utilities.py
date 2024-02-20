@@ -1,7 +1,9 @@
 import unittest
+
 from pathlib import Path
 
 import numpy as np
+
 from scipy import stats
 
 from gEconpy.parser.parse_distributions import CompositeDistribution

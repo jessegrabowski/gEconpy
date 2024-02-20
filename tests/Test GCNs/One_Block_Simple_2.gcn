@@ -55,7 +55,7 @@ block HOUSEHOLD
 	{
 		L[ss] / K[ss] = 0.36 -> alpha;
 		theta = 0.357;
-		beta = 0.99;
+		beta = 1 / 1.01;
 		delta = 0.02;
 		tau = 2;
 

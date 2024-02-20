@@ -1,8 +1,9 @@
-name: geconpy-test
+name: gEconpy
 channels:
 - conda-forge
-- defaults
 dependencies:
+  - python=3.11
+
   # Base dependencies
   - numpy
   - numba
@@ -13,11 +14,17 @@ dependencies:
   - xarray
   - matplotlib
   - joblib
-  - emcee
   - arviz
   - statsmodels
+  - pymc
+  - pytensor
+
   # Testing dependencies
   - pre-commit
   - pytest-cov>=2.5
   - pytest>=3.0
   - pytest-env
+
+  - pip
+  - pip:
+      - sympytensor

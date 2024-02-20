@@ -1,6 +1,7 @@
 import unittest
 
 import sympy as sp
+
 from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.containers import SymbolDictionary

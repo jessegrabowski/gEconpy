@@ -1,10 +1,12 @@
 import os
 import re
 import unittest
+
 from pathlib import Path
 from unittest import mock
 
 import sympy as sp
+
 from scipy import optimize
 
 from gEconpy.classes.model import gEconModel

@@ -1,4 +1,5 @@
 import re
+
 from collections import defaultdict
 
 import sympy as sp
@@ -185,12 +186,12 @@ def convert_to_python_operator(token: str) -> str:
         A string representing a mathematical operation.
 
     Returns
-    ---------
+    -------
     str
         A string representing the same operation in python syntax.
 
     Notes
-    ----------
+    -----
     The syntax of a gEcon GCN file is slightly different from what SymPy expects, this function resolves the
     differences. In particular:
         1. Exponents are marked with a caret "^" in the GCN file, and must be converted to python's **
@@ -308,7 +309,7 @@ def single_symbol_to_sympy(
     ----------
     variable : str
         A gEcon variable or parameter.
-    assumptions : Optional[Dict]
+    assumptions : dict, optional
         Assumptions for the symbol.
 
     Returns

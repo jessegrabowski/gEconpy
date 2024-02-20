@@ -2,6 +2,7 @@ from collections import defaultdict
 from typing import Any
 
 import sympy as sp
+
 from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol

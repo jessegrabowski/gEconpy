@@ -1,10 +1,11 @@
 import os
 import unittest
+
 from pathlib import Path
 from warnings import catch_warnings, simplefilter
 
 from gEconpy import compile_to_statsmodels, gEconModel
-from gEconpy.classes.transformers import IntervalTransformer, PositiveTransformer
+from gEconpy.estimation.transformers import IntervalTransformer, PositiveTransformer
 
 ROOT = Path(__file__).parent.absolute()
 

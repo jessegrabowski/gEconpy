@@ -1,6 +1,9 @@
 import numpy as np
-from numpy.typing import ArrayLike
+
 from scipy import linalg
+
+# A very small number
+EPSILON = np.spacing(1)
 
 
 def qzdiv(
@@ -205,8 +208,12 @@ def determine_n_unstable(
     n, _ = A.shape
     n_unstable = 0
     zxz = False
+
+    realsmall = np.spacing(1) if realsmall is None else realsmall
     compute_div = div is None
-    div = 1.01 if div is None else div
+
+    if div is None:
+        div = 1.01
 
     for i in range(n):
         if compute_div:
@@ -257,7 +264,9 @@ def split_matrix_on_eigen_stability(
     return A1, A2
 
 
-def build_u_v_d(eta: ArrayLike, realsmall: float):
+def build_u_v_d(
+    eta: np.ndarray, realsmall: float = EPSILON
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Computes the singular value decomposition (SVD) of the input matrix `eta` and identifies non-zero indices.
 
@@ -408,7 +417,9 @@ def gensys(
 
     # No stable roots
     if n_unstable == 0:
-        big_ev = 0
+        big_ev = np.zeros(
+            0,
+        )
 
         u_eta = np.zeros((0, 0))
         d_eta = np.zeros((0, 0))
@@ -435,7 +446,7 @@ def gensys(
         unique = True
     else:
         loose = v_eta_1 - v_eta @ v_eta.T @ v_eta_1
-        ul, dl, vl = linalg.svd(loose)
+        [ul, dl, vl] = linalg.svd(loose)
         if dl.ndim == 1:
             dl = np.diag(dl)
 

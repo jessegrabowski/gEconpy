@@ -1,6 +1,7 @@
 import re
 
 import sympy as sp
+
 from sympy.abc import greeks
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -11,7 +12,7 @@ OPERATORS = list("+-/*^()=")
 
 def get_name(x: str | sp.Symbol) -> str:
     """
-    This function returns the name of a string, TimeAwareSymbol, or sp.Symbol object.
+    Return the name of a string, TimeAwareSymbol, or sp.Symbol object.
 
     Parameters
     ----------
@@ -20,7 +21,7 @@ def get_name(x: str | sp.Symbol) -> str:
 
     Returns
     -------
-    str
+    name: str
         The name of the object.
     """
 
@@ -38,7 +39,7 @@ def build_hash_table(
     items_to_hash: list[str | sp.Symbol],
 ) -> tuple[dict[str, str], dict[str, str]]:
     """
-    This function builds a pair of hash tables, one mapping variable names to hash values
+    Build a pair of hash tables, one mapping variable names to hash values
     and the other mapping hash values to variable names.
 
     To safely distinguish between numeric values, variables, parameters, and time-indices
@@ -71,13 +72,13 @@ def build_hash_table(
 
 def substitute_equation_from_dict(eq_str: str, hash_dict: dict[str, str]) -> str:
     """
-    This function substitutes variables in an equation string with their corresponding values from a dictionary.
+    Substitute variables in an equation string with their corresponding values from a dictionary.
 
     Parameters
     ----------
     eq_str : str
         The equation string containing variables to be replaced.
-    hash_dict : Dict[str, str]
+    hash_dict : dict[str, str]
         A dictionary mapping variables to their corresponding values.
 
     Returns
@@ -98,12 +99,11 @@ def make_var_to_matlab_sub_dict(
     var_list: list[str | TimeAwareSymbol | sp.Symbol], clash_prefix: str = "a"
 ) -> dict[str | TimeAwareSymbol | sp.Symbol, str]:
     """
-    This function builds a dictionary that maps variables to their corresponding names that
-    can be used in a Matlab script.
+    Build a dictionary that maps variables to their corresponding names that can be used in a Matlab script.
 
     Parameters
     ----------
-    var_list : List[Union[str, TimeAwareSymbol, sp.Symbol]]
+    var_list : list of either strings or Symbols
         A list of variables to be mapped. Can contain strings, TimeAwareSymbol objects,
          or sp.Symbol objects.
     clash_prefix : str, optional
@@ -112,7 +112,7 @@ def make_var_to_matlab_sub_dict(
 
     Returns
     -------
-    Dict[Union[str, TimeAwareSymbol, sp.Symbol], str]
+    sub_dict: dict
         A dictionary mapping the variables in `var_list` to their corresponding
         names that can be used in a Matlab script.
 
@@ -152,8 +152,7 @@ def make_var_to_matlab_sub_dict(
 
 def convert_var_timings_to_matlab(var_list: list[str]) -> list[str]:
     """
-    This function converts the timing notation in a list of variable names to a
-    form that can be used in a Dynare mod file.
+    Convert the timing notation in a list of variable names to a form that can be used in a Dynare mod file.
 
     Parameters
     ----------
@@ -178,8 +177,7 @@ def write_lines_from_list(
     items_to_write: list[str], file: str, line_start: str = "", line_max: int = 50
 ) -> str:
     """
-    This function writes a list of items to a string, inserting line
-    breaks at a specified maximum line length.
+    Write a list of items to a string, inserting line breaks at a specified maximum line length.
 
     Parameters
     ----------
@@ -219,9 +217,8 @@ UNDER_T_PATTERN = r"_t(?=[^\w]|$)"
 
 def make_mod_file(model) -> str:
     """
-    This function generates a string representation of a Dynare model file for
-    a dynamic stochastic general equilibrium (DSGE) model. For more information,
-    see [1].
+    Generate a string representation of a Dynare model file for a dynamic stochastic general equilibrium (DSGE) model.
+    For more information, see [1].
 
     Parameters
     ----------

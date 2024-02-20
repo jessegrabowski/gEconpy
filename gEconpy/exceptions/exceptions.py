@@ -300,6 +300,47 @@ class InsufficientDegreesOfFreedomException(ValueError):
         super().__init__(message)
 
 
+class OrphanParameterError(ValueError):
+    def __init__(self, orphans):
+        n = len(orphans)
+        verb = "was" if n == 1 else "were"
+        message = (
+            f'The following parameter{"s" if n > 1 else ""} {verb} found among model equations but did not appear in '
+            f'any calibration block: {", ".join([x.name for x in orphans])}'
+        )
+
+        super().__init__(message)
+
+
+class ExtraParameterError(ValueError):
+    def __init__(self, extras):
+        n = len(extras)
+        verb = "was" if n == 1 else "were"
+        message = (
+            f'The following parameter{"s" if n > 1 else ""} {verb} were given initial values in calibration blocks but '
+            f'were not used in model equations: {", ".join([x.name for x in extras])} \n'
+            f'Verify your model equations, or remove these parameters if they are not needed.'
+        )
+
+        super().__init__(message)
+
+
+class DuplicateParameterError(ValueError):
+    def __init__(self, extras, block=None):
+        n = len(extras)
+        verb = "was" if n == 1 else "were"
+        location = "calibration blocks"
+        if block is not None:
+            location = f"in {block} calibration block"
+        message = (
+            f'The following parameter{"s" if n > 1 else ""} {verb} were given initial values in {location} more '
+            f'than once: {", ".join([x.name for x in extras])} \n'
+            f'Model parameters should be declared only once. Check your GCN file and remove one of the declarations.'
+        )
+
+        super().__init__(message)
+
+
 class IgnoredCloseMatchWarning(UserWarning):
     pass
 

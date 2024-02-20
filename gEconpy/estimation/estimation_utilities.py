@@ -3,6 +3,7 @@ from collections.abc import Callable
 import numba as nb
 import numpy as np
 import sympy as sp
+
 from scipy import linalg
 
 
@@ -20,7 +21,7 @@ def numba_lambdify_scalar(inputs, expr, sig):
 
     Parameters
     ----------
-    inputs : List[str]
+    inputs : list of str
         A list of strings containing the names of the variables in the expression.
     expr : sympy.Expr
         The sympy expression to be converted.
@@ -184,6 +185,7 @@ def build_system_matrices(
             Shape of the matrix as a tuple (n_rows, n_cols)
     vars_to_estimate : list of str, optional
         List of parameter names to use in building the matrices, by default None
+
     Returns
     -------
     list of numpy arrays

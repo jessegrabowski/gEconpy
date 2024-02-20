@@ -1,12 +1,13 @@
 import numpy as np
 import sympy as sp
+
 from numpy.typing import ArrayLike
 from scipy import linalg
 from sympy.solvers.solveset import NonlinearError
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.shared.utilities import eq_to_ss
-from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
+from gEconpy.solvers.cycle_reduction import nb_cycle_reduction, nb_solve_shock_matrix
 from gEconpy.solvers.gensys import gensys
 
 
@@ -126,10 +127,10 @@ class PerturbationSolver:
 
         # A, B, C, D = A.astype('float64'), B.astype('float64'), C.astype('float64'), D.astype('float64')
 
-        T, result, log_norm = cycle_reduction(A, B, C, max_iter, tol, verbose)
+        T, result, log_norm = nb_cycle_reduction(A, B, C, max_iter, tol, verbose)
 
         if T is not None:
-            R = solve_shock_matrix(B, C, D, T)
+            R = nb_solve_shock_matrix(B, C, D, T)
 
         return T, R, result, log_norm
 
@@ -215,7 +216,7 @@ class PerturbationSolver:
                     )
                     atoms = dydx.atoms()
                     if len(atoms) == 1:
-                        x = list(atoms)[0]
+                        x = next(iter(atoms))
                         if isinstance(x, sp.core.numbers.Number) and x != 0:
                             dydx = sp.Float(x)
                     F_row.append(dydx)

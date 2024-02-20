@@ -1,6 +1,7 @@
 from typing import Any
 
 import numpy as np
+
 from numpy.typing import ArrayLike
 from scipy import stats
 
@@ -11,7 +12,7 @@ from gEconpy.estimation.estimation_utilities import (
 )
 from gEconpy.estimation.kalman_filter import kalman_filter
 from gEconpy.shared.utilities import split_random_variables
-from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
+from gEconpy.solvers.cycle_reduction import nb_cycle_reduction, nb_solve_shock_matrix
 
 
 def build_and_solve(
@@ -61,8 +62,8 @@ def build_and_solve(
     bk_condition_met = check_bk_condition(A, B, C, tol=1e-8)
 
     try:
-        T, result, log_norm = cycle_reduction(A, B, C, 1000, 1e-8, False)
-        R = solve_shock_matrix(B, C, D, T)
+        T, result, log_norm = nb_cycle_reduction(A, B, C, 1000, 1e-8, False)
+        R = nb_solve_shock_matrix(B, C, D, T)
     except np.linalg.LinAlgError:
         T = np.zeros_like(A)
         R = np.zeros((T.shape[0], 1))
@@ -84,9 +85,9 @@ def build_Z_matrix(obs_variables: list[str], state_variables: list[str]) -> np.n
 
     Parameters
     ----------
-    obs_variables : List[str]
+    obs_variables : list of str
         The names of the observed variables.
-    state_variables : List[str]
+    state_variables : list of str
         The names of the state variables.
 
     Returns
@@ -112,19 +113,19 @@ def build_Q_and_H(
 
     Parameters
     ----------
-    state_sigmas : Dict[str, float]
+    state_sigmas : dict
         A dictionary of variances associated with shocks in the state-space system.
-    shock_variables : List[str]
+    shock_variables : list of str
         A list of strings representing shocks.
-    obs_variables : List[str]
+    obs_variables : list of str
         A list of strings representing the observed variables.
-    obs_sigmas : Optional[Dict[str, float]]
+    obs_sigmas : dict, optional
         A dictionary of variances associated with observed variables. If not provided, all variances are set to 0.
 
     Returns
     -------
-    Tuple[np.ndarray, np.ndarray]
-        A tuple containing the Q and H matrices.
+    Q: np.ndarray
+    H: np.ndarray
     """
 
     k_posdef = len(shock_variables)
@@ -328,7 +329,7 @@ def evaluate_logp2(
         return -np.inf, np.zeros(data.shape[0])
 
     try:
-        T, result, log_norm = cycle_reduction(A, B, C, verbose=False)
+        T, result, log_norm = nb_cycle_reduction(A, B, C, verbose=False)
         T = np.ascontiguousarray(T)
     except np.linalg.LinAlgError:
         T = None
@@ -337,7 +338,7 @@ def evaluate_logp2(
     if result != "Optimization successful":
         return -np.inf, np.zeros(data.shape[0])
 
-    R = solve_shock_matrix(B, C, D, T)
+    R = nb_solve_shock_matrix(B, C, D, T)
 
     a0 = np.array(list(a0_dict.values()))[:, None] if len(a0_dict) > 0 else None
     P0 = (

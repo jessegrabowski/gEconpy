@@ -274,3 +274,33 @@ class _LAPACK:
         )  # INFO
 
         return functype(addr)
+
+    @classmethod
+    def numba_xsysv(cls, dtype):
+        """
+        From LAPACK docs:
+
+        *SYSV computes the solution to a real system of linear equations
+        A * X = B,
+        where A is an N-by-N symmetric matrix and X and B are N-by-NRHS
+        matrices.
+        """
+        d = _blas_kinds[dtype]
+        func_name = f"{d}sysv"
+        float_pointer = _get_float_pointer_for_dtype(d)
+        addr = get_cython_function_address("scipy.linalg.cython_lapack", func_name)
+        functype = ctypes.CFUNCTYPE(
+            None,
+            _ptr_int,  # UPLO
+            _ptr_int,  # N
+            _ptr_int,  # NRHS
+            float_pointer,  # A
+            _ptr_int,  # LDA
+            _ptr_int,  # IPIV
+            float_pointer,  # B
+            _ptr_int,  # LDB
+            float_pointer,  # WORK
+            _ptr_int,  # LWORK
+            _ptr_int,  # INFO
+        )
+        return functype(addr)

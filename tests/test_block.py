@@ -1,5 +1,6 @@
 import os
 import unittest
+
 from pathlib import Path
 
 import numpy as np
@@ -32,7 +33,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(
@@ -51,7 +54,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(
@@ -75,7 +80,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(
@@ -98,7 +105,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(
@@ -120,7 +129,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             };
             """
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         block = Block("HOUSEHOLD", block_dict)
@@ -138,7 +149,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(
@@ -158,7 +171,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.assertRaises(ValueError, Block, "HOUSEHOLD", block_dict)
@@ -180,7 +195,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
         block = Block("HOUSEHOLD", block_dict)
 
@@ -231,7 +248,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
         block = Block("HOUSEHOLD", block_dict)
 
@@ -245,7 +264,9 @@ class BlockTestCases(unittest.TestCase):
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
         self.block = Block("HOUSEHOLD", block_dict)
@@ -316,7 +337,7 @@ class BlockTestCases(unittest.TestCase):
         U = TimeAwareSymbol("U", 1)
         Y = TimeAwareSymbol("Y", 0)
         C = TimeAwareSymbol("C", 0)
-        I = TimeAwareSymbol("I", 0)
+        I = TimeAwareSymbol("I", 0)  # noqa: E741
         K = TimeAwareSymbol("K", 0)
         L = TimeAwareSymbol("L", 0)
         A = TimeAwareSymbol("A", 0)
@@ -366,7 +387,7 @@ class BlockTestCases(unittest.TestCase):
         U = TimeAwareSymbol("U", 1)
         Y = TimeAwareSymbol("Y", 0)
         C = TimeAwareSymbol("C", 0)
-        I = TimeAwareSymbol("I", 0)
+        I = TimeAwareSymbol("I", 0)  # noqa: E741
         K = TimeAwareSymbol("K", 0)
         L = TimeAwareSymbol("L", 0)
         A = TimeAwareSymbol("A", 0)
@@ -412,9 +433,9 @@ class BlockTestCases(unittest.TestCase):
             1 - L
         ) ** (1 - theta) * theta - lamb
 
-        dL_dL = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C**theta * (1 - L) ** (
-            -theta
-        ) * (1 - theta) * -1 + lamb_H_1 * (1 - alpha) * A * K**alpha * L ** (-alpha)
+        dL_dL = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C**theta * (1 - L) ** (-theta) * (
+            1 - theta
+        ) * -1 + lamb_H_1 * (1 - alpha) * A * K**alpha * L ** (-alpha)
         dL_dK = (
             lamb_H_1 * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
             - q
@@ -434,7 +455,9 @@ class BlockTestCases(unittest.TestCase):
             os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
 
         block = Block("FIRM", block_dict)
@@ -459,7 +482,9 @@ class BlockTestCases(unittest.TestCase):
             os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
+        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
+            parser_output
+        )
         firm_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
 
         firm_block = Block("FIRM", firm_dict)
@@ -543,6 +568,14 @@ class BlockTestCases(unittest.TestCase):
         answers = [3 + 0.99 * 0.95, -np.log(0.357)]
         for eq, answer in zip(self.block.deterministic_relationships, answers):
             self.assertEqual(eq.subs(self.block.param_dict), answer)
+
+    def test_variable_list(self):
+        self.block.solve_optimization(try_simplify=False)
+        self.assertEqual(
+            {x.base_name for x in self.block.variables},
+            {"A", "C", "I", "K", "L", "U", "Y", "lambda", "q", "lambda__H_1"},
+        )
+        self.assertEqual({x.base_name for x in self.block.shocks}, {"epsilon"})
 
 
 if __name__ == "__main__":

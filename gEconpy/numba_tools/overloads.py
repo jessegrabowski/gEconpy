@@ -1,5 +1,6 @@
 import numpy as np
 import scipy
+
 from numba.core import types
 from numba.extending import overload
 from numba.np.linalg import (
@@ -876,3 +877,19 @@ def solve_discrete_lyapunov_impl(A, Q, method="auto"):
         return X
 
     return impl
+
+
+# def solve_assume_a_sym_impl(A, B,
+#                             lower: bool = False,
+#                             check_finite: bool = True,
+#                             transposed: bool = False):
+#     ensure_lapack()
+#
+#     _check_scipy_linalg_matrix(A, "solve(assume_a='sym')")
+#     _check_scipy_linalg_matrix(B, "solve(assume_a='sym')")
+#
+#     dtype = A.dtype
+#     w_type = _get_underlying_float(dtype)
+#     numba_xsysv = _LAPACK().numba_xsysv(dtype)
+#
+#     def impl(A, B, lower, check_finite, transposed):

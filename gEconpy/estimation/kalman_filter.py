@@ -1,4 +1,5 @@
 import numpy as np
+
 from numba import njit
 from numpy.typing import ArrayLike
 from scipy import linalg
@@ -15,10 +16,12 @@ def build_mask_matrix(nan_mask: ArrayLike) -> ArrayLike:
     The Kalman Filter can "natively" handle missing values by treating observed states as un-observed states for
     iterations where data is not available. To do this, the Z and H matrices must be modified. This function creates
     a matrix W such that W @ Z and W @ H have zeros where data is missing.
+
     Parameters
     ----------
     nan_mask: array
         A 1d array of boolean flags of length n, indicating whether a state is observed in the current iteration.
+
     Returns
     -------
     W: array
@@ -64,8 +67,14 @@ def standard_kalman_filter(
     R: array
     H: array
     Q: array
+
     Returns
     -------
+    filtered_states: array
+    predicted_states: array
+    filtered_cov: array
+    predicted_cov: array
+    log_likelihood: array
     """
     n_steps, k_obs = data.shape
     k_states, k_posdef = R.shape

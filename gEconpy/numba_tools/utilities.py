@@ -4,6 +4,7 @@ from collections.abc import Callable
 import numba as nb
 import numpy as np
 import sympy as sp
+
 from numba.core import types
 from numba.core.errors import TypingError
 
@@ -25,18 +26,18 @@ def _get_underlying_float(dtype):
 
 def _check_scipy_linalg_matrix(a, func_name):
     prefix = "scipy.linalg"
-    interp = (prefix, func_name)
+
     # Unpack optional type
     if isinstance(a, types.Optional):
         a = a.type
     if not isinstance(a, types.Array):
-        msg = "%s.%s() only supported for array types" % interp
+        msg = f"{prefix}.{func_name} only supported for array types"
         raise TypingError(msg, highlighting=False)
     if not a.ndim == 2:
-        msg = "%s.%s() only supported on 2-D arrays." % interp
+        msg = f"{prefix}.{func_name} only supported on 2-D arrays."
         raise TypingError(msg, highlighting=False)
     if not isinstance(a.dtype, (types.Float, types.Complex)):
-        msg = "%s.%s() only supported on " "float and complex arrays." % interp
+        msg = f"{prefix}.{func_name} only supported on " "float and complex arrays."
         raise TypingError(msg, highlighting=False)
 
 
@@ -92,6 +93,7 @@ def _ouc(alpha, beta):
         alpha vector, as returned by zgges
     beta: Array, complex
         beta vector, as return by zgges
+
     Returns
     -------
     out: Array, bool
@@ -189,7 +191,7 @@ def numba_lambdify(
                 # Case 2a: It's a simple list of sympy things
                 if isinstance(item, (sp.Matrix, sp.Expr)):
                     new_expr.append(item.subs(FLOAT_SUBS))
-                # Case 2b: It's a system of equations, List[List[sp.Expr]]
+                # Case 2b: It's a system of equations, list[list[sp.Expr]]
                 elif isinstance(item, list):
                     if all([isinstance(x, (sp.Matrix, sp.Expr)) for x in item]):
                         new_expr.append([x.subs(FLOAT_SUBS) for x in item])

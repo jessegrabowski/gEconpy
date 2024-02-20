@@ -1,4 +1,5 @@
 import sympy as sp
+
 from sympy.core.cache import cacheit
 
 
@@ -6,6 +7,7 @@ class TimeAwareSymbol(sp.Symbol):
     __slots__ = ("time_index", "base_name", "__dict__")
     time_index: int | str
     base_name: str
+    safe_name: str
 
     def __new__(cls, name, time_index, **assumptions):
         cls._sanitize(assumptions, cls)
@@ -55,7 +57,7 @@ class TimeAwareSymbol(sp.Symbol):
         return time_name
 
     def _hashable_content(self):
-        return super()._hashable_content() + (self.time_index,)
+        return (*super()._hashable_content(), self.time_index)
 
     def __getnewargs_ex__(self):
         return (
