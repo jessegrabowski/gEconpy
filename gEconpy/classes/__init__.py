@@ -1,3 +1,3 @@
-from gEconpy.classes.model import gEconModel
-
-__all__ = ["gEconModel"]
+# from gEconpy.model.model import gEconModel
+#
+# __all__ = ["gEconModel"]

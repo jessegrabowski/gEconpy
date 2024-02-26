@@ -7,12 +7,13 @@ from gEconpy import (
     shared,
     solvers,
 )
-from gEconpy.classes import gEconModel
+
+# from gEconpy.classes import gEconModel
 from gEconpy.shared import compile_to_statsmodels, make_mod_file
 
 __version__ = "1.2.1"
 __all__ = [
-    "gEconModel",
+    # "gEconModel",
     "classes",
     "estimation",
     "exceptions",

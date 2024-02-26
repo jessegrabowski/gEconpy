@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import sympy as sp
 
-from gEconpy.classes.block import Block
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
     ControlVariableNotFoundException,
@@ -14,6 +13,7 @@ from gEconpy.exceptions.exceptions import (
     MultipleObjectiveFunctionsException,
     OptimizationProblemNotDefinedException,
 )
+from gEconpy.model.block import Block
 from gEconpy.parser import constants, file_loaders, gEcon_parser
 from gEconpy.shared.utilities import set_equality_equals_zero, unpack_keys_and_values
 

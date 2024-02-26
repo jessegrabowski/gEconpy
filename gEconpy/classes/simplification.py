@@ -1,4 +1,3 @@
-from typing import Optional
 from warnings import warn
 
 import numpy as np
@@ -13,10 +12,10 @@ from gEconpy.shared.utilities import (
 )
 
 
-def _check_system_is_square(name: str, n_equations: int, n_variables: int) -> bool:
+def _check_system_is_square(msg: str, n_equations: int, n_variables: int) -> bool:
     if n_equations != n_variables:
         warn(
-            f'Simplification via {name} was requested but not possible because the system is not well defined. '
+            f'{msg} was requested but not possible because the system is not well defined. '
             f'Found {n_equations} equation{"s" if n_equations > 1 else ""} but {n_variables} variable'
             f'{"s" if n_variables > 1 else ""}'
         )
@@ -38,7 +37,11 @@ def reduce_variable_list(equations, variables):
     return reduced_variables, eliminated_vars
 
 
-def try_reduce(try_reduce_vars, equations, variables):
+def simplify_tryreduce(
+    try_reduce_vars: list[TimeAwareSymbol],
+    equations: list[sp.Expr],
+    variables: list[TimeAwareSymbol],
+) -> tuple[list[sp.Expr], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     """
     Attempt to reduce the number of equations in the system by removing equations requested in the `tryreduce`
     block of the GCN file. Equations are considered safe to remove if they are "self-contained" that is, if
@@ -51,8 +54,10 @@ def try_reduce(try_reduce_vars, equations, variables):
     """
     n_equations = len(equations)
     n_variables = len(variables)
-    if not _check_system_is_square("try_reduce", n_equations, n_variables):
-        return
+    if not _check_system_is_square(
+        "Simplification via a tryreduce block", n_equations, n_variables
+    ):
+        return equations, variables, []
 
     occurrence_matrix = np.zeros((n_variables, n_variables))
     reduced_equations = []
@@ -75,9 +80,9 @@ def try_reduce(try_reduce_vars, equations, variables):
     return reduced_equations, reduced_variables, eliminated_vars
 
 
-def simplify_singletons(
+def simplify_constants(
     equations: list[sp.Expr], variables: list[TimeAwareSymbol]
-) -> Optional[list[TimeAwareSymbol]]:
+) -> tuple[list[sp.Expr], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     """
     Simplify the system by removing variables that are deterministically defined as a known value. Common examples
     include P[] = 1, setting the price level of the economy as the numeraire, or B[] = 0, putting the bond market
@@ -94,8 +99,8 @@ def simplify_singletons(
     n_equations = len(equations)
     n_variables = len(variables)
 
-    if not _check_system_is_square("try_reduce", n_equations, n_variables):
-        return
+    if not _check_system_is_square("Removal of constant variables", n_equations, n_variables):
+        return equations, variables, []
 
     reduce_dict = {}
 

@@ -7,7 +7,7 @@ import numpy as np
 
 from matplotlib import pyplot as plt
 
-from gEconpy.classes.model import gEconModel
+from gEconpy.model.model import gEconModel
 from gEconpy.plotting import (
     plot_covariance_matrix,
     plot_eigenvalues,
