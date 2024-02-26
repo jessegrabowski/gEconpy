@@ -5,9 +5,9 @@ from pathlib import Path
 
 import numpy as np
 
-from gEconpy.classes.model import gEconModel
 from gEconpy.estimation.estimate import build_and_solve, build_Q_and_H
 from gEconpy.estimation.estimation_utilities import extract_sparse_data_from_model
+from gEconpy.model.model import gEconModel
 
 ROOT = Path(__file__).parent.absolute()
 

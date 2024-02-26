@@ -10,17 +10,20 @@ from gEconpy.exceptions.exceptions import (
     ExtraParameterError,
     OrphanParameterError,
 )
+from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.parser.file_loaders import (
-    block_dict_to_model,
+    block_dict_to_model_primitives,
     block_dict_to_param_dict,
     block_dict_to_variables_and_shocks,
     gcn_to_block_dict,
     load_gcn,
+    model_from_gcn,
     parsed_model_to_data,
 )
 from gEconpy.parser.gEcon_parser import preprocess_gcn
-from gEconpy.solvers.parameters import compile_param_dict_func
+
+GCN_ROOT = "tests/Test GCNs"
 
 TEST_GCN_FILES = [
     "One_Block_Simple_1.gcn",
@@ -144,7 +147,7 @@ EXPECTED_SHOCKS = {
 
 @pytest.mark.parametrize("gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES)
 def test_build_model_blocks(gcn_path, name):
-    raw_model = load_gcn(os.path.join("Test GCNs", gcn_path))
+    raw_model = load_gcn(os.path.join(GCN_ROOT, gcn_path))
     parsed_model, prior_dict = preprocess_gcn(raw_model)
 
     parse_result = parsed_model_to_data(parsed_model, False)
@@ -157,14 +160,10 @@ def test_build_model_blocks(gcn_path, name):
     assert try_reduce_vars == EXPECTED_TRYREDUCE[name]
     assert len(steady_state_equations) == EXPECTED_SS_LEN[name]
 
-    for block in blocks.values():
-        print(block.deterministic_params, block.deterministic_relationships)
-    assert False
-
 
 @pytest.mark.parametrize("gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES)
 def test_block_dict_to_variables_and_shocks(gcn_path, name):
-    raw_model = load_gcn(os.path.join("Test GCNs", gcn_path))
+    raw_model = load_gcn(os.path.join(GCN_ROOT, gcn_path))
     parsed_model, prior_dict = preprocess_gcn(raw_model)
 
     parse_result = parsed_model_to_data(parsed_model, False)
@@ -180,32 +179,16 @@ def test_block_dict_to_variables_and_shocks(gcn_path, name):
     assert shock_names == expected_shocks
 
 
-def test_loading_fails_if_orphan_parameters():
-    outputs = gcn_to_block_dict(os.path.join("Test GCNs", "Open_RBC_with_orphan_params.gcn"), True)
-    with pytest.raises(OrphanParameterError):
-        block_dict_to_model(*outputs, verbose=False)
-
-
-def test_loading_fails_if_extra_parameters():
-    outputs = gcn_to_block_dict(os.path.join("Test GCNs", "Open_RBC_with_extra_params.gcn"), True)
-    with pytest.raises(ExtraParameterError):
-        block_dict_to_model(*outputs, verbose=False)
-
-
-def test_loading_fails_if_duplicate_parameters_in_single_block():
-    # Duplicate parameters in a single block will raise earlier than those between blocks
+@pytest.mark.parametrize(
+    "gcn_file",
+    ["One_Block_Simple_with_duplicate_param_1.gcn", "One_Block_Simple_with_duplicate_param_2.gcn"],
+    ids=["within_block", "between_blocks"],
+)
+def test_loading_fails_if_duplicate_parameters_in_two_blocks(gcn_file):
     with pytest.raises(DuplicateParameterError):
-        outputs = gcn_to_block_dict(
-            os.path.join("Test GCNs", "One_Block_Simple_with_duplicate_param_1.gcn"), True
-        )
-
-
-def test_loading_fails_if_duplicate_parameters_in_two_blocks():
-    outputs = gcn_to_block_dict(
-        os.path.join("Test GCNs", "One_Block_Simple_with_duplicate_param_2.gcn"), True
-    )
-    with pytest.raises(DuplicateParameterError):
-        block_dict_to_model(*outputs, verbose=False)
+        outputs = gcn_to_block_dict(os.path.join(GCN_ROOT, gcn_file), True)
+        block_dict, assumptions, options, tryreduce, steady_state_equations, prior_dict = outputs
+        block_dict_to_model_primitives(block_dict, assumptions, tryreduce, prior_dict)
 
 
 EXPECTED_PARAM_DICT = {
@@ -235,17 +218,17 @@ EXPECTED_PARAM_DICT = {
 )
 def test_create_parameter_function(gcn_path, name, backend):
     expected = EXPECTED_PARAM_DICT[name]
-    block_dict, *outputs = gcn_to_block_dict(os.path.join("tests/Test GCNs", gcn_path), True)
+    block_dict, *outputs = gcn_to_block_dict(os.path.join(GCN_ROOT, gcn_path), True)
     param_dict = block_dict_to_param_dict(block_dict, "param_dict")
     deterministic_dict = block_dict_to_param_dict(block_dict, "deterministic_dict")
 
-    f = compile_param_dict_func(param_dict, deterministic_dict, backend)
+    f, _ = compile_param_dict_func(param_dict, deterministic_dict, backend)
 
     inputs = list(param_dict.keys())
     np.random.shuffle(inputs)
     shuffled_input_dict = {k: param_dict[k] for k in inputs}
     output = f(**shuffled_input_dict)
-    print(output)
+
     computed_param_dict = output.to_string().values_to_float()
 
     for k in expected.keys():
@@ -254,28 +237,19 @@ def test_create_parameter_function(gcn_path, name, backend):
         )
 
 
-@pytest.mark.parametrize(
-    "gcn_path, name",
-    [("One_Block_Simple_1_w_Distributions.gcn", "one_block_prior")],
-    ids=["one_block_prior"],
-)
-@pytest.mark.parametrize("simplify", [True, False], ids=["simplify", "no_simplify"])
-def test_gcn_to_block_dict(gcn_path, name, simplify):
-    outputs = gcn_to_block_dict(os.path.join("Test GCNs", gcn_path), simplify)
+def test_load_gcn(gcn_path, name, simplify):
+    model = model_from_gcn(
+        os.path.join(GCN_ROOT, gcn_path), simplify_blocks=simplify, verbose=False
+    )
+    print(model.parameters(beta=0.5))
     assert False
 
 
-@pytest.mark.parametrize(
-    "gcn_path, name",
-    [
-        ("One_Block_Simple_1_w_Distributions.gcn", "one_block_prior"),
-        ("One_Block_Simple_1_w_Steady_State.gcn", "one_block_ss"),
-        ("Full_New_Keyensian.gcn", "full_nk"),
-    ],
-    ids=["one_block_prior", "one_block_ss", "full_nk"],
-)
-@pytest.mark.parametrize("simplify", [True, False], ids=["simplify", "no_simplify"])
-def test_block_dict_to_model(gcn_path, name, simplify):
-    outputs = gcn_to_block_dict(os.path.join("Test GCNs", gcn_path), simplify)
-    block_dict_to_model(*outputs)
-    assert False
+def test_loading_fails_if_orphan_parameters():
+    with pytest.raises(OrphanParameterError):
+        model_from_gcn(os.path.join(GCN_ROOT, "Open_RBC_with_orphan_params.gcn"))
+
+
+def test_loading_fails_if_extra_parameters():
+    with pytest.raises(ExtraParameterError):
+        model_from_gcn(os.path.join(GCN_ROOT, "Open_RBC_with_extra_params.gcn"))

@@ -124,6 +124,18 @@ class ControlVariableNotFoundException(ValueError):
         super().__init__(message)
 
 
+class ModelUnknownParameterError(ValueError):
+    def __init__(self, unknown_updates: list[str]):
+        self.unknown_updates = unknown_updates
+
+        message = (
+            f"The following parameters were given new values, but do not exist in the model: "
+            f"{', '.join(unknown_updates)}."
+        )
+
+        super().__init__(message)
+
+
 class SteadyStateNotSolvedError(ValueError):
     def __init__(self):
         message = (
@@ -201,7 +213,7 @@ class RepeatedParameterException(ValueError):
         super().__init__(message)
 
 
-class ParameterNotFoundException(ValueError):
+class DistributionParameterNotFoundException(ValueError):
     def __init__(
         self,
         variable_name: str,

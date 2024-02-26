@@ -5,13 +5,13 @@ from pathlib import Path
 
 import numpy as np
 
-from gEconpy.classes.model import gEconModel
 from gEconpy.estimation.estimation_utilities import (
     build_system_matrices,
     check_bk_condition,
     extract_sparse_data_from_model,
 )
 from gEconpy.estimation.kalman_filter import kalman_filter, univariate_kalman_filter
+from gEconpy.model.model import gEconModel
 
 ROOT = Path(__file__).parent.absolute()
 

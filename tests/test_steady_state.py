@@ -9,7 +9,7 @@ import sympy as sp
 
 from scipy import optimize
 
-from gEconpy.classes.model import gEconModel
+from gEconpy.model.model import gEconModel
 
 ROOT = Path(__file__).parent.absolute()
 

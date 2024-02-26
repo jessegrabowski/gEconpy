@@ -3,15 +3,21 @@ from warnings import warn
 
 import sympy as sp
 
-from gEconpy.classes.block import Block
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.classes.simplification import simplify_singletons, try_reduce
+from gEconpy.classes.simplification import simplify_constants, simplify_tryreduce
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
     DuplicateParameterError,
     ExtraParameterError,
     MultipleSteadyStateBlocksException,
     OrphanParameterError,
+)
+from gEconpy.model.block import Block
+from gEconpy.model.compile import BACKENDS
+from gEconpy.model.model import Model, compile_model_functions
+from gEconpy.model.steady_state.steady_state import (
+    make_steady_state_shock_dict,
+    system_to_steady_state,
 )
 from gEconpy.parser.constants import STEADY_STATE_NAMES
 from gEconpy.parser.gEcon_parser import (
@@ -27,11 +33,72 @@ from gEconpy.shared.utilities import unpack_keys_and_values
 PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
 
 
-def read_gcn(
+def model_from_gcn(
     gcn_path: str,
-):
-    outputs = gcn_to_block_dict(gcn_path, simplify_blocks=True)
-    block_dict, assumptions, options, try_reduce, steady_state_equations, prior_info = outputs
+    simplify_blocks: bool = True,
+    simplify_tryreduce: bool = True,
+    simplify_constants: bool = True,
+    verbose: bool = True,
+    backend: BACKENDS = "numpy",
+    **kwargs,
+) -> Model:
+    outputs = gcn_to_block_dict(gcn_path, simplify_blocks=simplify_blocks)
+    block_dict, assumptions, options, try_reduce, provided_ss_equations, prior_info = outputs
+
+    (
+        equations,
+        param_dict,
+        calib_dict,
+        deterministic_dict,
+        variables,
+        shocks,
+        param_priors,
+        shock_priors,
+        reduced_vars,
+        singletons,
+    ) = block_dict_to_model_primitives(
+        block_dict,
+        assumptions,
+        try_reduce,
+        prior_info,
+        simplify_tryreduce=simplify_tryreduce,
+        simplify_constants=simplify_constants,
+    )
+
+    validate_results(equations, param_dict, calib_dict, deterministic_dict)
+    ss_shock_dict = make_steady_state_shock_dict(shocks)
+    steady_state_equations = system_to_steady_state(equations, ss_shock_dict)
+
+    f_params, f_resid, f_error = compile_model_functions(
+        steady_state_equations,
+        variables,
+        param_dict,
+        deterministic_dict,
+        calib_dict,
+        backend=backend,
+        **kwargs,
+    )
+
+    if verbose:
+        build_report(
+            equations,
+            param_dict,
+            calib_dict,
+            variables,
+            shocks,
+            param_priors,
+            shock_priors,
+            reduced_vars,
+            singletons,
+        )
+
+    return Model(
+        variables=variables,
+        shocks=shocks,
+        equations=equations,
+        param_dict=param_dict,
+        f_params=f_params,
+    )
 
 
 def load_gcn(gcn_path: str) -> str:
@@ -54,7 +121,7 @@ def load_gcn(gcn_path: str) -> str:
     return gcn_raw
 
 
-def get_steady_state_equations(
+def get_provided_ss_equations(
     raw_blocks: dict[str, str],
     assumptions: ASSUMPTION_DICT = None,
 ) -> dict[str, sp.Expr]:
@@ -108,11 +175,11 @@ def get_steady_state_equations(
     for k, eq in steady_state_dict.items():
         steady_state_dict[k] = eq.subs(steady_state_dict)
 
-    steady_state_relationships = steady_state_dict.sort_keys().to_string().values_to_float()
+    provided_ss_equations = steady_state_dict.sort_keys().to_string().values_to_float()
 
     del raw_blocks[ss_key]
 
-    return steady_state_relationships
+    return provided_ss_equations
 
 
 def block_dict_to_equation_list(block_dict: dict[str, Block]) -> list[sp.Expr]:
@@ -248,14 +315,14 @@ def parsed_model_to_data(
         Dictionary of model options.
     tryreduce: list[str]
         List of variables to try to eliminate from model equations via substitution.
-    steady_state_equations: dict[str, sp.Expr]
+    provided_ss_equations: dict[str, sp.Expr]
         Dictionary of user-provided steady-state equations. Keys are variable names, and values should be expressions
         giving the steady-state value of the variable in terms of parameters only.
     """
 
     block_dict: dict[str, Block] = {}
     raw_blocks, options, tryreduce, assumptions = split_gcn_into_dictionaries(parsed_model)
-    steady_state_equations = get_steady_state_equations(raw_blocks, assumptions)
+    provided_ss_equations = get_provided_ss_equations(raw_blocks, assumptions)
 
     for block_name, block_content in raw_blocks.items():
         parsed_block_dict = parsed_block_to_dict(block_content)
@@ -264,7 +331,7 @@ def parsed_model_to_data(
 
         block_dict[block.name] = block
 
-    return block_dict, assumptions, options, tryreduce, steady_state_equations
+    return block_dict, assumptions, options, tryreduce, provided_ss_equations
 
 
 def gcn_to_block_dict(
@@ -279,13 +346,13 @@ def gcn_to_block_dict(
 ]:
     raw_model = load_gcn(gcn_path)
     parsed_model, prior_dict = preprocess_gcn(raw_model)
-    block_dict, assumptions, options, tryreduce, steady_state_equations = parsed_model_to_data(
+    block_dict, assumptions, options, tryreduce, provided_ss_equations = parsed_model_to_data(
         parsed_model, simplify_blocks
     )
 
     tryreduce = [single_symbol_to_sympy(x, assumptions) for x in tryreduce]
 
-    return block_dict, assumptions, options, tryreduce, steady_state_equations, prior_dict
+    return block_dict, assumptions, options, tryreduce, provided_ss_equations, prior_dict
 
 
 def check_for_orphan_params(equations: list[sp.Expr], param_dict: SymbolDictionary) -> None:
@@ -318,8 +385,8 @@ def apply_simplifications(
     try_reduce_vars: list[TimeAwareSymbol],
     equations: list[sp.Expr],
     variables: list[TimeAwareSymbol],
-    do_try_reduce: bool = True,
-    do_simplify_singletons: bool = True,
+    do_simplify_tryreduce: bool = True,
+    do_simplify_constants: bool = True,
 ) -> tuple[
     list[sp.Expr],
     list[TimeAwareSymbol],
@@ -329,29 +396,29 @@ def apply_simplifications(
     eliminated_variables = None
     singletons = None
 
-    if do_try_reduce:
-        equations, variables, eliminated_variables = try_reduce(
+    if do_simplify_tryreduce:
+        equations, variables, eliminated_variables = simplify_tryreduce(
             try_reduce_vars, equations, variables
         )
-    if do_simplify_singletons:
-        equations, variables, singletons = simplify_singletons(equations, variables)
+    if do_simplify_constants:
+        equations, variables, singletons = simplify_constants(equations, variables)
 
     return equations, variables, eliminated_variables, singletons
 
 
-def validate_results(equations, param_dict):
-    check_for_orphan_params(equations, param_dict)
-    check_for_extra_params(equations, param_dict)
+def validate_results(equations, param_dict, calib_dict, deterministic_dict):
+    joint_dict = param_dict | calib_dict | deterministic_dict
+    check_for_orphan_params(equations, joint_dict)
+    check_for_extra_params(equations, joint_dict)
 
 
-def block_dict_to_model(
+def block_dict_to_model_primitives(
     block_dict: dict[str, Block],
     assumptions: ASSUMPTION_DICT,
-    options: dict[str, str],
     try_reduce_vars: list[TimeAwareSymbol],
-    steady_state_equations: dict[str, sp.Expr],
     prior_info: dict[str, str],
-    verbose=True,
+    simplify_tryreduce: bool = True,
+    simplify_constants: bool = True,
 ):
     equations = block_dict_to_equation_list(block_dict)
     param_dict = block_dict_to_param_dict(block_dict, "param_dict")
@@ -362,24 +429,25 @@ def block_dict_to_model(
         prior_info, assumptions, param_dict
     )
     equations, variables, eliminated_variables, singletons = apply_simplifications(
-        try_reduce_vars, equations, variables, do_try_reduce=True, do_simplify_singletons=True
+        try_reduce_vars,
+        equations,
+        variables,
+        do_simplify_tryreduce=simplify_tryreduce,
+        do_simplify_constants=simplify_constants,
     )
-    validate_results(equations, param_dict)
 
-    if verbose:
-        build_report(
-            equations,
-            param_dict,
-            calib_dict,
-            variables,
-            shocks,
-            param_priors,
-            shock_priors,
-            eliminated_variables,
-            singletons,
-        )
-
-    return
+    return (
+        equations,
+        param_dict,
+        calib_dict,
+        deterministic_dict,
+        variables,
+        shocks,
+        param_priors,
+        shock_priors,
+        eliminated_variables,
+        singletons,
+    )
 
 
 def build_report(
