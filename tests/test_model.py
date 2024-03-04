@@ -2,9 +2,13 @@ import os
 import unittest
 
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
+import numpy as np
 import pytest
+
+from numpy.testing import assert_allclose
 
 from gEconpy.exceptions.exceptions import GensysFailedException
 from gEconpy.model.compile import BACKENDS
@@ -106,8 +110,150 @@ def test_build_warns_if_model_not_defined(
 def test_model_parameters(gcn_path: str, name: str, backend: BACKENDS):
     file_path = os.path.join(ROOT, "Test GCNs", gcn_path)
     model = model_from_gcn(file_path, verbose=False, backend=backend, mode="FAST_COMPILE")
-    print(model.parameters())
-    assert False
+
+    # Test default parameters
+    params = model.parameters()
+    assert all([params[k] == model._default_params[k] for k in model._default_params])
+
+    # Test parameter update
+    old_params = model._default_params.copy()
+    params = model.parameters(beta=0.5)
+    assert params["beta"] == 0.5
+    assert model._default_params["beta"] == old_params["beta"]
+
+
+@pytest.mark.parametrize(
+    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
+)
+def test_deterministic_model_parameters(backend: BACKENDS):
+    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
+    model = model_from_gcn(file_path, verbose=False, backend=backend, mode="FAST_COMPILE")
+    params = model.parameters()
+
+    # Test numeric expression in calibration block
+    assert_allclose(params["beta"], 1 / 1.01)
+
+    # Test deterministic relationship
+    params = model.parameters(theta=0.9)
+    assert params["theta"] == 0.9
+    assert_allclose(params["zeta"], -np.log(0.9))
+
+
+def test_all_backends_agree_on_parameters():
+    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
+    models = [
+        model_from_gcn(
+            file_path, verbose=False, backend=cast(BACKENDS, backend), mode="FAST_COMPILE"
+        )
+        for backend in ["numpy", "numba", "pytensor"]
+    ]
+    params = [np.r_[list(model.parameters().values())] for model in models]
+
+    for i in range(3):
+        for j in range(i):
+            assert_allclose(params[i], params[j])
+
+
+@pytest.mark.parametrize(
+    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
+)
+@pytest.mark.parametrize(
+    ("gcn_file", "expected_result"),
+    [
+        (
+            "One_Block_Simple_1_w_Steady_State.gcn",
+            np.array(
+                [
+                    1.0,
+                    0.91982617,
+                    0.27872301,
+                    13.9361507,
+                    0.3198395,
+                    -132.00424906,
+                    1.19854918,
+                    0.51233068,
+                    0.51233068,
+                ]
+            ),
+        ),
+        (
+            "Open_RBC.gcn",
+            np.array(
+                [
+                    1.00000000e00,
+                    0.00000000e00,
+                    9.23561040e00,
+                    0.00000000e00,
+                    2.73647613e00,
+                    1.09459045e02,
+                    2.59033302e01,
+                    4.22567464e00,
+                    0.00000000e00,
+                    0.00000000e00,
+                    7.32557872e01,
+                    1.19720865e01,
+                    7.54570414e-02,
+                    1.00000101e-02,
+                    1.00000101e-02,
+                ]
+            ),
+        ),
+        (
+            "Full_New_Keyensian.gcn",
+            np.array(
+                [
+                    1.50620761e00,
+                    6.69069052e-01,
+                    2.77976530e-01,
+                    1.11190612e01,
+                    6.16941715e00,
+                    1.40646786e00,
+                    6.66135866e-01,
+                    3.85588572e00,
+                    1.40646786e00,
+                    -1.11511509e00,
+                    -1.47270439e02,
+                    1.78418414e00,
+                    8.90392916e-01,
+                    6.25000000e-01,
+                    1.00000000e00,
+                    1.00000000e00,
+                    1.00000000e00,
+                    8.90392916e-01,
+                    1.01010101e00,
+                    3.51010101e-02,
+                    1.00000000e00,
+                    1.00000000e00,
+                    1.08810356e00,
+                    1.08810356e00,
+                ]
+            ),
+        ),
+    ],
+    ids=["one_block", "open_rbc", "nk"],
+)
+def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndarray):
+    n = expected_result.shape[0]
+
+    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}")
+    model = model_from_gcn(file_path, verbose=False, backend=backend, mode="FAST_COMPILE")
+    params = model.parameters()
+    ss_dict = model.f_ss(**params)
+    ss = np.array(np.r_[list(ss_dict.values())])
+
+    assert_allclose(ss, expected_result)
+    assert_allclose(model._evaluate_steady_state(), np.zeros(n), atol=1e-8)
+
+    # Total error and gradient should be zero at the steady state as well
+    error = model.f_ss_error(**params, **ss_dict)
+    grad = model.f_ss_error_grad(**params, **ss_dict)
+    hess = model.f_ss_error_hess(**params, **ss_dict)
+
+    assert_allclose(error, 0.0, atol=1e-8)
+    assert_allclose(grad.ravel(), np.zeros((n,)), atol=1e-8)
+
+    # Hessian should be PSD at the minimum (since it's a convex function)
+    assert np.all(np.linalg.eigvals(hess) > -1e8)
 
 
 def test_invalid_solver_raises(self):

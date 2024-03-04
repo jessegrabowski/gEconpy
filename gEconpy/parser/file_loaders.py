@@ -14,8 +14,9 @@ from gEconpy.exceptions.exceptions import (
 )
 from gEconpy.model.block import Block
 from gEconpy.model.compile import BACKENDS
-from gEconpy.model.model import Model, compile_model_functions
+from gEconpy.model.model import Model, compile_model_ss_functions
 from gEconpy.model.steady_state.steady_state import (
+    ERROR_FUNCTIONS,
     make_steady_state_shock_dict,
     system_to_steady_state,
 )
@@ -40,10 +41,11 @@ def model_from_gcn(
     simplify_constants: bool = True,
     verbose: bool = True,
     backend: BACKENDS = "numpy",
+    error_function: ERROR_FUNCTIONS = "squared",
     **kwargs,
 ) -> Model:
     outputs = gcn_to_block_dict(gcn_path, simplify_blocks=simplify_blocks)
-    block_dict, assumptions, options, try_reduce, provided_ss_equations, prior_info = outputs
+    block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
 
     (
         equations,
@@ -65,19 +67,26 @@ def model_from_gcn(
         simplify_constants=simplify_constants,
     )
 
+    ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
+
     validate_results(equations, param_dict, calib_dict, deterministic_dict)
     ss_shock_dict = make_steady_state_shock_dict(shocks)
     steady_state_equations = system_to_steady_state(equations, ss_shock_dict)
 
-    f_params, f_resid, f_error = compile_model_functions(
+    f_params, f_ss, resid_funcs, error_funcs = compile_model_ss_functions(
         steady_state_equations,
+        ss_solution_dict,
         variables,
         param_dict,
         deterministic_dict,
         calib_dict,
+        error_func=error_function,
         backend=backend,
         **kwargs,
     )
+
+    f_ss_resid, f_ss_jac = resid_funcs
+    f_ss_error, f_ss_grad, f_ss_hess = error_funcs
 
     if verbose:
         build_report(
@@ -97,7 +106,13 @@ def model_from_gcn(
         shocks=shocks,
         equations=equations,
         param_dict=param_dict,
+        f_ss=f_ss,
+        f_ss_jac=f_ss_jac,
         f_params=f_params,
+        f_ss_resid=f_ss_resid,
+        f_ss_error=f_ss_error,
+        f_ss_error_grad=f_ss_grad,
+        f_ss_error_hess=f_ss_hess,
     )
 
 
@@ -180,6 +195,30 @@ def get_provided_ss_equations(
     del raw_blocks[ss_key]
 
     return provided_ss_equations
+
+
+def simplify_provided_ss_equations(
+    ss_solution_dict: SymbolDictionary, variables: list[TimeAwareSymbol]
+) -> SymbolDictionary:
+    if not ss_solution_dict:
+        return ss_solution_dict
+
+    ss_variables = [x.to_ss() for x in variables]
+    extra_equations = SymbolDictionary(
+        {k: v for k, v in ss_solution_dict.to_sympy().items() if k not in ss_variables}
+    )
+    if not extra_equations:
+        return ss_solution_dict
+
+    simplified_ss_dict = SymbolDictionary(
+        {k: v for k, v in ss_solution_dict.to_sympy().items() if k in ss_variables}
+    )
+    for var, eq in simplified_ss_dict.items():
+        if not hasattr(eq, "subs"):
+            continue
+        simplified_ss_dict[var] = eq.subs(extra_equations)
+
+    return simplified_ss_dict
 
 
 def block_dict_to_equation_list(block_dict: dict[str, Block]) -> list[sp.Expr]:
@@ -346,13 +385,13 @@ def gcn_to_block_dict(
 ]:
     raw_model = load_gcn(gcn_path)
     parsed_model, prior_dict = preprocess_gcn(raw_model)
-    block_dict, assumptions, options, tryreduce, provided_ss_equations = parsed_model_to_data(
+    block_dict, assumptions, options, tryreduce, ss_solution_dict = parsed_model_to_data(
         parsed_model, simplify_blocks
     )
 
     tryreduce = [single_symbol_to_sympy(x, assumptions) for x in tryreduce]
 
-    return block_dict, assumptions, options, tryreduce, provided_ss_equations, prior_dict
+    return block_dict, assumptions, options, tryreduce, ss_solution_dict, prior_dict
 
 
 def check_for_orphan_params(equations: list[sp.Expr], param_dict: SymbolDictionary) -> None:

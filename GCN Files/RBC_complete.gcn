@@ -59,7 +59,7 @@ block HOUSEHOLD
 
 	constraints
 	{
-		C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
+		C[] + I[] = r[] * K[-1] + w[] * L[] + Div[] : lambda[];
 		K[] = (1 - delta) * K[-1] + I[];
 	};
 
@@ -94,6 +94,10 @@ block FIRM
     {
         # Perfect competition
         mc[] = 1;
+
+		# Profit is Y - TC, but TC is defined as a negative number in the objective,
+		# so use +
+		Div[] = Y[] + TC[]
     };
 
     calibration

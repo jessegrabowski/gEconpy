@@ -47,6 +47,7 @@ def compile_param_dict_func(
     inputs = list(param_dict.to_sympy().keys())
     output_params = inputs + list(deterministic_dict.to_sympy().keys())
     output_exprs = inputs + list(deterministic_dict.values())
+
     f, cache = compile_function(inputs, output_exprs, backend=backend, cache=cache)
 
     return dictionary_return_wrapper(f, output_params), cache

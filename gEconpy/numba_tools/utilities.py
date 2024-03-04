@@ -1,5 +1,6 @@
 import re
-from collections.abc import Callable
+
+from typing import Callable, Optional, Union
 
 import numba as nb
 import numpy as np
@@ -7,6 +8,9 @@ import sympy as sp
 
 from numba.core import types
 from numba.core.errors import TypingError
+from sympy.printing.numpy import NumPyPrinter, _known_functions_numpy
+
+_known_functions_numpy.update({"DiracDelta": lambda x: 0.0, "log": "log"})
 
 # Pattern needs to hit "0," and "0]". but not "x0" or "6.0", and return the
 # close-bracket (if any).
@@ -111,11 +115,65 @@ def _ouc(alpha, beta):
     return out
 
 
+class NumbaFriendlyNumPyPrinter(NumPyPrinter):
+    _kf = _known_functions_numpy
+
+    def _print_Max(self, expr):
+        # Use maximum instead of amax, because 1) we only expect scalars, and 2) numba doesn't accept amax
+        return "{}({})".format(
+            self._module_format(self._module + ".maximum"),
+            ",".join(self._print(i) for i in expr.args),
+        )
+
+    def _print_Piecewise(self, expr):
+        # Use the default python Piecewise instead of the numpy one -- looping with if conditions is faster in numba
+        # anyway.
+        result = []
+        i = 0
+        for arg in expr.args:
+            e = arg.expr
+            c = arg.cond
+            if i == 0:
+                result.append("(")
+            result.append("(")
+            result.append(self._print(sp.Float(e)))
+            result.append(")")
+            result.append(" if ")
+            result.append(self._print(c))
+            result.append(" else ")
+            i += 1
+        result = result[:-1]
+        if result[-1] == "True":
+            result = result[:-2]
+            result.append(")")
+        else:
+            result.append(" else None)")
+        return "".join(result)
+
+    def _print_DiracDelta(self, expr):
+        # The proper function should return infinity at one point, but the measure of that point is zero so this should
+        # be fine. Pytensor defines grad(grad(max(0, x), x), x) to be zero everywhere.
+        return "0.0"
+
+    def _print_log(self, expr):
+        return "{}({})".format(
+            self._module_format(self._module + ".log"),
+            ",".join(self._print(i) for i in expr.args),
+        )
+
+    def _print_exp(self, expr):
+        return "{}({})".format(
+            self._module_format(self._module + ".exp"),
+            ",".join(self._print(i) for i in expr.args),
+        )
+
+
 def numba_lambdify(
     exog_vars: list[sp.Symbol],
-    expr: list[sp.Expr] | sp.Matrix | list[sp.Matrix],
-    endog_vars: list[sp.Symbol] | None = None,
-    func_signature: str | None = None,
+    expr: Union[list[sp.Expr], sp.Matrix, list[sp.Matrix]],
+    endog_vars: Optional[list[sp.Symbol]] = None,
+    func_signature: Optional[str] = None,
+    ravel_outputs=False,
 ) -> Callable:
     """
     Convert a sympy expression into a Numba-compiled function.  Unlike sp.lambdify, the resulting function can be
@@ -138,6 +196,9 @@ def numba_lambdify(
         A list of "exogenous" variables, passed as a second argument to the function.
     func_signature: str
         A numba function signature, passed to the numba.njit decorator on the generated function.
+    ravel_outputs: bool, default False
+        If true, all outputs of the jitted function will be raveled before they are returned. This is useful for
+        removing size-1 dimensions from sympy vectors.
 
     Returns
     -------
@@ -148,11 +209,12 @@ def numba_lambdify(
     -----
     The function returned by this function is pickleable.
     """
-
+    ZERO_PATTERN = re.compile(r"(?<![\.\w])0([ ,\]])")
     FLOAT_SUBS = {
         sp.core.numbers.One(): sp.Float(1),
         sp.core.numbers.NegativeOne(): sp.Float(-1),
     }
+    printer = NumbaFriendlyNumPyPrinter()
 
     if func_signature is None:
         decorator = "@nb.njit"
@@ -191,16 +253,22 @@ def numba_lambdify(
                 # Case 2a: It's a simple list of sympy things
                 if isinstance(item, (sp.Matrix, sp.Expr)):
                     new_expr.append(item.subs(FLOAT_SUBS))
-                # Case 2b: It's a system of equations, list[list[sp.Expr]]
+                # Case 2b: It's a system of equations, List[List[sp.Expr]]
                 elif isinstance(item, list):
                     if all([isinstance(x, (sp.Matrix, sp.Expr)) for x in item]):
                         new_expr.append([x.subs(FLOAT_SUBS) for x in item])
                     else:
                         raise ValueError("Unexpected input type for expr")
+
+                # Case 2c: It's a constant -- just pass it along unchanged.
+                elif isinstance(item, (int, float)):
+                    new_expr.append(item)
+                else:
+                    raise ValueError(f"Unexpected input type for expr: {expr}")
+
             expr = new_expr
         else:
             raise ValueError("Unexpected input type for expr")
-
         sub_dict, expr = sp.cse(expr)
 
         # Converting matrices to a list of lists is convenient because NumPyPrinter() won't wrap them in np.array
@@ -214,8 +282,10 @@ def numba_lambdify(
         codes = []
         retvals = []
         for i, expr in enumerate(exprs):
-            code = sp.printing.numpy.NumPyPrinter().doprint(expr)
+            code = printer.doprint(expr)
+
             delimiter = "]," if "]," in code else ","
+            delimiter = ","
             code = code.split(delimiter)
             code = [" " * 8 + eq.strip() for eq in code]
             code = f"{delimiter}\n".join(code)
@@ -223,10 +293,12 @@ def numba_lambdify(
 
             # Handle conversion of 0 to 0.0
             code = re.sub(ZERO_PATTERN, r"0.0\g<1>", code)
-
             code_name = f"retval_{i}"
             retvals.append(code_name)
             code = f"    {code_name} = np.array(\n{code}\n    )"
+            if ravel_outputs:
+                code += ".ravel()"
+
             codes.append(code)
         code = "\n".join(codes)
 
@@ -248,10 +320,7 @@ def numba_lambdify(
         unpacked_inputs += "\n" + exog_unpacked
 
     assignments = "\n".join(
-        [
-            f"    {x} = {sp.printing.numpy.NumPyPrinter().doprint(y).replace('numpy.', 'np.')}"
-            for x, y in sub_dict
-        ]
+        [f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}" for x, y in sub_dict]
     )
     returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
     full_code = f"{decorator}\ndef f({input_signature}):\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
