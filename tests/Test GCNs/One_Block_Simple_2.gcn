@@ -36,7 +36,7 @@ block HOUSEHOLD
 
 	constraints
 	{
-		Y[] = A[] * K[] ^ alpha * L[] ^ (1 - alpha);
+		Y[] = A[] * K[] ^ alpha * L[] ^ (1 - alpha) + Theta + zeta;
 		I[] = Y[] - C[] : lambda[];
 		K[] = I[] + (1 - delta) * K[-1] : q[];
 	};

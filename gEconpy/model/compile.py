@@ -13,11 +13,17 @@ from gEconpy.numba_tools.utilities import numba_lambdify
 BACKENDS = Literal["numpy", "numba", "pytensor"]
 
 
+def output_to_tensor(x, cache):
+    if isinstance(x, (int, float)):
+        return pytensor.tensor.constant(x, dtype=pytensor.config.floatX)
+    return as_tensor(x, cache)
+
+
 def dictionary_return_wrapper(f: Callable, outputs: list[sp.Symbol]) -> Callable:
     @wraps(f)
     def inner(*args, **kwargs):
         values = f(*args, **kwargs)
-        return SymbolDictionary(zip(outputs, values))
+        return SymbolDictionary(zip(outputs, values)).to_string()
 
     return inner
 
@@ -40,7 +46,7 @@ def _configue_pytensor_kwargs(kwargs: dict) -> dict:
 
 def compile_function(
     inputs: list[sp.Symbol],
-    outputs: list[Union[sp.Symbol, sp.Expr]],
+    outputs: Union[list[Union[sp.Symbol, sp.Expr]], sp.MutableDenseMatrix],
     backend: BACKENDS,
     cache: Optional[dict] = None,
     **kwargs,
@@ -87,7 +93,10 @@ def compile_function(
 
 
 def compile_to_numpy(
-    inputs: list[sp.Symbol], outputs: list[Union[sp.Symbol, sp.Expr]], cache: dict, **kwargs
+    inputs: list[sp.Symbol],
+    outputs: Union[list[Union[sp.Symbol, sp.Expr]], sp.MutableDenseMatrix],
+    cache: dict,
+    **kwargs,
 ):
     f = sp.lambdify(inputs, outputs)
     return f, cache
@@ -108,7 +117,8 @@ def compile_to_pytensor_function(
 
     outputs = [outputs] if not isinstance(outputs, list) else outputs
     input_pt = [as_tensor(x, cache) for x in inputs]
-    output_pt = [as_tensor(x, cache) for x in outputs]
+    output_pt = [output_to_tensor(x, cache) for x in outputs]
+    output_pt = output_pt[0] if len(output_pt) == 1 else output_pt
 
     f = pytensor.function(input_pt, output_pt, **kwargs)
     return f, cache

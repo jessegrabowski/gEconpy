@@ -1,5 +1,7 @@
-from typing import Callable, Union
+from functools import wraps
+from typing import Callable, Optional, Union
 
+import numpy as np
 import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -9,17 +11,24 @@ from gEconpy.exceptions.exceptions import (
 )
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.model.steady_state.steady_state import compile_resid_and_sq_err
+from gEconpy.model.steady_state.steady_state import (
+    ERROR_FUNCTIONS,
+    compile_known_ss,
+    compile_ss_resid_and_sq_err,
+    steady_state_error_function,
+)
 
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
 
 
-def compile_model_functions(
+def compile_model_ss_functions(
     steady_state_equations,
+    ss_solution_dict,
     variables,
     param_dict,
     deterministic_dict,
     calib_dict,
+    error_func: ERROR_FUNCTIONS = "squared",
     backend: BACKENDS = "numpy",
     **kwargs,
 ):
@@ -35,12 +44,33 @@ def compile_model_functions(
     parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
 
     variables += list(calib_dict.to_sympy().keys())
+    ss_error = steady_state_error_function(steady_state_equations, variables, error_func)
 
-    (f_resid, f_error), cache = compile_resid_and_sq_err(
-        steady_state_equations, variables, parameters, backend=backend, cache=cache, **kwargs
+    f_ss, cache = compile_known_ss(
+        ss_solution_dict, variables, parameters, backend=backend, cache=cache, **kwargs
     )
 
-    return f_params, f_resid, f_error
+    (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess), cache = compile_ss_resid_and_sq_err(
+        steady_state_equations,
+        variables,
+        parameters,
+        ss_error,
+        backend=backend,
+        cache=cache,
+        **kwargs,
+    )
+
+    return f_params, f_ss, (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess)
+
+
+def quad_loss_wrapper(f: Callable) -> Callable:
+    @wraps(f)
+    def inner(x_ss, theta):
+        res_dict = f(**x_ss, **theta)
+        res_vec = np.array(list(res_dict.values()))
+        return (res_vec @ res_vec) / res_vec.shape[0]
+
+    return inner
 
 
 class Model:
@@ -51,6 +81,13 @@ class Model:
         equations: list[sp.Expr],
         param_dict: SymbolDictionary,
         f_params: Callable,
+        f_ss_resid: Callable,
+        f_ss: Optional[Callable] = None,
+        f_ss_error: Optional[Callable] = None,
+        f_ss_jac: Optional[Callable] = None,
+        f_ss_error_grad: Optional[Callable] = None,
+        f_ss_error_hess: Optional[Callable] = None,
+        backend: BACKENDS = "numpy",
     ) -> None:
         """
         Initialize a DSGE model object from a GCN file.
@@ -67,14 +104,49 @@ class Model:
             Dictionary of parameters in the model
         f_params: Callable
             Function that returns a dictionary of parameter values given a dictionary of parameter values
+        f_ss_resid: Callable
+            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and evaluates
+            the system of model equations f(x_ss, theta) = 0.
+        f_ss: Callable
+            Function that takes current parameter values and returns a dictionary of steady-state values.
+        f_ss_error: Callable, optional
+            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
+            a scalar error measure of x_ss given theta.
+            If None, the sum of squared residuals returned by f_ss_resid is used.
+        f_ss_error_grad: Callable, optional
+            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
+            the gradients of the error function f_ss_error with respect to the steady-state variable values x_ss
+
+            If f_ss_error is not provided, an error will be raised if a gradient function is passed.
+        f_ss_error_hess: Callable, optional
+            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
+            the Hessian of the error function f_ss_error with respect to the steady-state variable values x_ss
+
+            If f_ss_error is not provided, an error will be raised if a gradient function is passed.
+
+        f_ss_jac: Callable, optional
+
+
         """
-        # Model components
+
         self.variables = variables
         self.shocks = shocks
         self.equations = equations
 
         self._default_params = param_dict
         self.f_params = f_params
+        self.f_ss_resid = f_ss_resid
+
+        if f_ss_error is None:
+            if self.f_ss_error_grad is not None:
+                self.f_ss_error = quad_loss_wrapper(f_ss_resid)
+        else:
+            self.f_ss_error = f_ss_error
+
+        self.f_ss = f_ss
+        self.f_ss_jac = f_ss_jac
+        self.f_ss_error_grad = f_ss_error_grad
+        self.f_ss_error_hess = f_ss_error_hess
 
         # self.steady_state_relationships: SymbolDictionary[VariableType, sp.Add] = SymbolDictionary()
         #
@@ -114,7 +186,7 @@ class Model:
         # self.steady_state_solver = SteadyStateSolver(self)
         # self.perturbation_solver = PerturbationSolver(self)
 
-    def parameters(self, **updates: dict[str, float]):
+    def parameters(self, **updates: float):
         param_dict = self._default_params.copy()
         unknown_updates = set(updates.keys()) - set(param_dict.keys())
         if unknown_updates:
@@ -122,6 +194,16 @@ class Model:
         param_dict.update(updates)
 
         return self.f_params(**param_dict)
+
+    def steady_state(self, **updates: float):
+        param_dict = self.parameters(**updates)
+        return self.f_ss(**param_dict)
+
+    def _evaluate_steady_state(self, **updates: float):
+        param_dict = self.parameters(**updates)
+        ss_dict = self.f_ss(**param_dict)
+
+        return self.f_ss_resid(**param_dict, **ss_dict)
 
 
 #
@@ -175,10 +257,7 @@ class Model:
 #         -------
 #         None
 #         """
-#
-#         if self.options.get("linear", False):
-#             model_is_linear = True
-#
+##
 #         if not self.steady_state_solved:
 #             self.f_ss = self.steady_state_solver.solve_steady_state(
 #                 apply_user_simplifications=apply_user_simplifications,

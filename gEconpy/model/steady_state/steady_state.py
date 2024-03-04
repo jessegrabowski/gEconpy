@@ -1,4 +1,4 @@
-from typing import Any, Callable, Optional, Union, cast
+from typing import Any, Callable, Literal, Optional, Union
 from warnings import catch_warnings, simplefilter
 
 import numpy as np
@@ -11,9 +11,12 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
     BACKENDS,
     compile_function,
+    dictionary_return_wrapper,
 )
 from gEconpy.numba_tools.utilities import numba_lambdify
 from gEconpy.shared.utilities import eq_to_ss, substitute_all_equations
+
+ERROR_FUNCTIONS = Literal["squared", "mean_squared", "abs", "l2-norm"]
 
 
 def _validate_optimizer_kwargs(
@@ -89,8 +92,76 @@ def system_to_steady_state(system, shock_dict):
     return steady_state_system
 
 
-def compile_resid_and_sq_err(
+def faster_simplify(x: sp.Expr, var_list: list[TimeAwareSymbol]):
+    # return sp.powsimp(sp.powdenest(x, force=True), force=True)
+    return x
+
+
+def steady_state_error_function(
+    steady_state, variables: list[sp.Symbol], func: ERROR_FUNCTIONS = "squared"
+) -> sp.Expr:
+    ss_vars = [x.to_ss() if isinstance(x, TimeAwareSymbol) else x for x in variables]
+
+    if func == "squared":
+        error = sum([faster_simplify(eq**2, ss_vars) for eq in steady_state])
+    elif func == "mean_squared":
+        error = sum([faster_simplify(eq**2, ss_vars) for eq in steady_state]) / len(steady_state)
+    elif func == "abs":
+        error = sum([faster_simplify(sp.Abs(eq), ss_vars) for eq in steady_state])
+    elif func == "l2-norm":
+        error = sp.sqrt(sum([faster_simplify(eq**2, ss_vars) for eq in steady_state]))
+    else:
+        raise NotImplementedError(
+            f"Error function {func} not implemented, must be one of {ERROR_FUNCTIONS}"
+        )
+
+    return error
+
+
+def compile_ss_resid_and_sq_err(
     steady_state: list[sp.Expr],
+    variables: list[TimeAwareSymbol],
+    parameters: list[sp.Symbol],
+    ss_error: sp.Expr,
+    backend: BACKENDS,
+    cache: dict,
+    **kwargs,
+):
+    cache = {} if cache is None else cache
+    ss_variables = [x.to_ss() if hasattr(x, "to_ss") else x for x in variables]
+    print(ss_variables)
+
+    resid_jac = sp.Matrix(
+        [[faster_simplify(eq.diff(x), ss_variables) for x in ss_variables] for eq in steady_state]
+    )
+
+    f_ss_resid, cache = compile_function(
+        ss_variables + parameters, steady_state, backend=backend, cache=cache, **kwargs
+    )
+    f_ss_jac, cache = compile_function(
+        ss_variables + parameters, resid_jac, backend=backend, cache=cache, **kwargs
+    )
+
+    error_grad = sp.Matrix([faster_simplify(ss_error.diff(x), ss_variables) for x in ss_variables])
+    error_hess = sp.Matrix(
+        [[faster_simplify(eq.diff(x), ss_variables) for eq in error_grad] for x in ss_variables]
+    )
+
+    f_ss_error, cache = compile_function(
+        ss_variables + parameters, [ss_error], backend=backend, cache=cache, **kwargs
+    )
+    f_ss_grad, cache = compile_function(
+        ss_variables + parameters, error_grad, backend=backend, cache=cache, **kwargs
+    )
+    f_ss_hess, cache = compile_function(
+        ss_variables + parameters, error_hess, backend=backend, cache=cache, **kwargs
+    )
+
+    return (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess), cache
+
+
+def compile_known_ss(
+    ss_solution_dict: SymbolDictionary,
     variables: list[TimeAwareSymbol],
     parameters: list[sp.Symbol],
     backend: BACKENDS,
@@ -98,20 +169,17 @@ def compile_resid_and_sq_err(
     **kwargs,
 ):
     cache = {} if cache is None else cache
+    if not ss_solution_dict:
+        return None, cache
+
     ss_variables = [x.to_ss() if hasattr(x, "to_ss") else x for x in variables]
-
-    ss_sum = cast(sp.Expr, sum(steady_state))
-    ss_sum = ss_sum.powsimp().collect(ss_variables).powsimp().cancel()
-    sq_err = ss_sum**2
-
-    f_resid, cache = compile_function(
-        ss_variables + parameters, steady_state, backend=backend, cache=cache, **kwargs
-    )
-    f_error, cache = compile_function(
-        ss_variables + parameters, sq_err, backend=backend, cache=cache, **kwargs
+    output_vars, output_exprs = (
+        list(ss_solution_dict.to_sympy().keys()),
+        list(ss_solution_dict.values()),
     )
 
-    return (f_resid, f_error), cache
+    f_ss, cache = compile_function(parameters, output_exprs, backend=backend, cache=cache, **kwargs)
+    return dictionary_return_wrapper(f_ss, output_vars), cache
 
 
 class SteadyStateSolver:
