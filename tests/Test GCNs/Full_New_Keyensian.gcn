@@ -19,6 +19,8 @@ assumptions
 
 	positive
 	{
+		shock_technology[], shock_preference[], pi[], pi_star[], pi_obj[], r[], r_G[], mc[], w[], w_star[],
+		Y[], C[], I[], K[], L[],
 		delta, beta, sigma_C, sigma_L, gamma_I, phi_H;
 	};
 };

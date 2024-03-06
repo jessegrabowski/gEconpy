@@ -129,7 +129,6 @@ def compile_ss_resid_and_sq_err(
 ):
     cache = {} if cache is None else cache
     ss_variables = [x.to_ss() if hasattr(x, "to_ss") else x for x in variables]
-    print(ss_variables)
 
     resid_jac = sp.Matrix(
         [[faster_simplify(eq.diff(x), ss_variables) for x in ss_variables] for eq in steady_state]
@@ -172,7 +171,6 @@ def compile_known_ss(
     if not ss_solution_dict:
         return None, cache
 
-    ss_variables = [x.to_ss() if hasattr(x, "to_ss") else x for x in variables]
     output_vars, output_exprs = (
         list(ss_solution_dict.to_sympy().keys()),
         list(ss_solution_dict.values()),

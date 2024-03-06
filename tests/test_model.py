@@ -256,6 +256,25 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
     assert np.all(np.linalg.eigvals(hess) > -1e8)
 
 
+@pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
+@pytest.mark.parametrize("gcn_file", ["One_Block_Simple_1_w_Steady_State", "Open_RBC"])
+def test_numerical_steady_state(how, gcn_file):
+    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
+    model_1 = model_from_gcn(file_path, verbose=False, backend="numpy", mode="FAST_COMPILE")
+    analytic_res = model_1.steady_state()
+    analytic_values = np.array(list(analytic_res.values()))
+    model_1.f_ss = None
+
+    numeric_res = model_1.steady_state(how=how, verbose=False)
+    numeric_values = np.array(list(numeric_res.values()))
+    errors = model_1.f_ss_resid(**numeric_res.to_string(), **model_1.parameters().to_string())
+
+    if how == "root":
+        assert_allclose(analytic_values, numeric_values, atol=1e-2)
+    elif how == "minimize":
+        assert_allclose(errors, np.zeros_like(errors), atol=1e-2)
+
+
 def test_invalid_solver_raises(self):
     file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
     model = model_from_gcn(file_path, verbose=False)
