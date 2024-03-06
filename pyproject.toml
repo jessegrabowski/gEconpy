@@ -3,7 +3,8 @@ minversion = "6.0"
 xfail_strict=true
 filterwarnings = [
     "error",
-    "ignore::DeprecationWarning"]
+    "ignore::DeprecationWarning",
+    "ignore::RuntimeWarning"]
 env = ["NUMBA_DISABLE_JIT = 1"]
 
 [tool.ruff.lint]

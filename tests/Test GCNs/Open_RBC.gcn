@@ -1,3 +1,11 @@
+assumptions
+{
+    positive
+    {
+        A[], r[], N[], K[], Y[], I[], C[];
+    };
+};
+
 block STEADY_STATE
 {
     identities

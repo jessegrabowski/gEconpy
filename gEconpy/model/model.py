@@ -1,10 +1,18 @@
-from functools import wraps
+import functools as ft
+
 from typing import Callable, Optional, Union
 
 import numpy as np
 import sympy as sp
 
+from scipy import optimize
+
 from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.optimize_wrapper import (
+    CostFuncWrapper,
+    optimzer_early_stopping_wrapper,
+    postprocess_optimizer_res,
+)
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
     ModelUnknownParameterError,
@@ -63,14 +71,17 @@ def compile_model_ss_functions(
     return f_params, f_ss, (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess)
 
 
-def quad_loss_wrapper(f: Callable) -> Callable:
-    @wraps(f)
-    def inner(x_ss, theta):
-        res_dict = f(**x_ss, **theta)
-        res_vec = np.array(list(res_dict.values()))
-        return (res_vec @ res_vec) / res_vec.shape[0]
+def infer_variable_bounds(variables):
+    bounds = []
+    for var in variables:
+        assumptions = var.assumptions0
+        is_positive = assumptions.get("positive", False)
+        is_negative = assumptions.get("negative", False)
+        lhs = 0 if is_positive else None
+        rhs = 0 if is_negative else None
+        bounds.append((lhs, rhs))
 
-    return inner
+    return bounds
 
 
 class Model:
@@ -137,16 +148,12 @@ class Model:
         self.f_params = f_params
         self.f_ss_resid = f_ss_resid
 
-        if f_ss_error is None:
-            if self.f_ss_error_grad is not None:
-                self.f_ss_error = quad_loss_wrapper(f_ss_resid)
-        else:
-            self.f_ss_error = f_ss_error
+        self.f_ss_error = f_ss_error
+        self.f_ss_error_grad = f_ss_error_grad
+        self.f_ss_error_hess = f_ss_error_hess
 
         self.f_ss = f_ss
         self.f_ss_jac = f_ss_jac
-        self.f_ss_error_grad = f_ss_error_grad
-        self.f_ss_error_hess = f_ss_error_hess
 
         # self.steady_state_relationships: SymbolDictionary[VariableType, sp.Add] = SymbolDictionary()
         #
@@ -195,15 +202,152 @@ class Model:
 
         return self.f_params(**param_dict)
 
-    def steady_state(self, **updates: float):
-        param_dict = self.parameters(**updates)
-        return self.f_ss(**param_dict)
+    def steady_state(
+        self,
+        how="analytic",
+        use_jac=True,
+        use_hess=True,
+        progressbar=True,
+        optimizer_kwargs: Optional[dict] = None,
+        verbose=True,
+        **updates: float,
+    ):
+        ss_variables = [x.to_ss() for x in self.variables]
+
+        if how == "analytic":
+            param_dict = self.parameters(**updates)
+            return self.f_ss(**param_dict)
+        elif how == "root":
+            res = self._solve_steady_state_with_root(
+                use_jac, progressbar, optimizer_kwargs, **updates
+            )
+        elif how == "minimize":
+            res = self._solve_steady_state_with_minimize(
+                use_jac, use_hess, progressbar, optimizer_kwargs, **updates
+            )
+        else:
+            raise NotImplementedError()
+
+        return postprocess_optimizer_res(res, ss_variables, verbose=verbose)
 
     def _evaluate_steady_state(self, **updates: float):
         param_dict = self.parameters(**updates)
         ss_dict = self.f_ss(**param_dict)
 
         return self.f_ss_resid(**param_dict, **ss_dict)
+
+    def _solve_steady_state_with_root(
+        self,
+        use_jac: bool = True,
+        progressbar: bool = True,
+        optimizer_kwargs: Optional[dict] = None,
+        **param_updates,
+    ):
+        if optimizer_kwargs is None:
+            optimizer_kwargs = {}
+
+        all_variables = set([x.to_ss() for x in self.variables])
+        known_variables = set() if self.f_ss is None else set(self.f_ss(**self.parameters()).keys())
+        vars_to_solve = sorted(list(all_variables - known_variables), key=lambda x: x.name)
+
+        n_variables = len(vars_to_solve)
+        maxeval = optimizer_kwargs.pop("niter", 5000)
+        x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
+        param_dict = self.parameters(**param_updates)
+
+        def scipy_wrapper(f, f_ss):
+            if f_ss is not None:
+
+                @ft.wraps(f)
+                def inner(ss_values, param_dict):
+                    given_ss = f_ss(**param_dict)
+                    return f(*ss_values, **given_ss, **param_dict)
+            else:
+
+                @ft.wraps(f)
+                def inner(ss_values, param_dict):
+                    return f(*ss_values, **param_dict)
+
+            return inner
+
+        objective = CostFuncWrapper(
+            maxeval=maxeval,
+            f=scipy_wrapper(self.f_ss_resid, self.f_ss),
+            f_jac=scipy_wrapper(self.f_ss_jac, self.f_ss) if use_jac else None,
+            progressbar=progressbar,
+        )
+
+        f_optim = ft.partial(
+            optimize.root,
+            objective,
+            x0,
+            jac=use_jac,
+            args=param_dict,
+            **optimizer_kwargs,
+        )
+        res = optimzer_early_stopping_wrapper(f_optim)
+
+        return res
+
+    def _solve_steady_state_with_minimize(
+        self,
+        use_jac: bool = True,
+        use_hess: bool = True,
+        progressbar: bool = True,
+        optimizer_kwargs: Optional[dict] = None,
+        **param_updates,
+    ):
+        if optimizer_kwargs is None:
+            optimizer_kwargs = {}
+
+        n_variables = len(self.variables)
+        maxeval = optimizer_kwargs.pop("niter", 5000)
+        x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
+        tol = optimizer_kwargs.pop("tol", 1e-30)
+        bounds = optimizer_kwargs.pop("bounds", None)
+
+        if bounds is None:
+            bounds = infer_variable_bounds(self.variables)
+
+        has_bounds = any([x != (None, None) for x in bounds])
+        method = optimizer_kwargs.pop(
+            "method", "trust-krylov" if not has_bounds else "trust-constr"
+        )
+        if method not in ["trust-constr", "L-BFGS-B"]:
+            has_bounds = False
+
+        param_dict = self.parameters(**param_updates)
+
+        def scipy_wrapper(f):
+            @ft.wraps(f)
+            def inner(ss_values, param_dict):
+                x = f(*ss_values, **param_dict)
+                return np.array(x).squeeze()
+
+            return inner
+
+        objective = CostFuncWrapper(
+            maxeval=maxeval,
+            f=scipy_wrapper(self.f_ss_error),
+            f_jac=scipy_wrapper(self.f_ss_error_grad) if use_jac else None,
+            f_hess=scipy_wrapper(self.f_ss_error_hess) if use_hess else None,
+            progressbar=progressbar,
+        )
+
+        f_optim = ft.partial(
+            optimize.minimize,
+            objective,
+            x0,
+            jac=use_jac,
+            hess=scipy_wrapper(self.f_ss_error_hess) if use_hess else None,
+            args=param_dict,
+            callback=objective.callback,
+            method=method,
+            tol=tol,
+            bounds=bounds if has_bounds else None,
+            **optimizer_kwargs,
+        )
+        return optimzer_early_stopping_wrapper(f_optim)
 
 
 #
