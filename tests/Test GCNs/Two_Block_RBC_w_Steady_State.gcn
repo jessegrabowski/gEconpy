@@ -1,0 +1,85 @@
+block STEADY_STATE
+{
+    identities
+    {
+        A[ss] = 1;
+        r[ss] = 1 / beta - (1 - delta);
+        w[ss] = (1 - alpha) * (alpha / r[ss]) ^ (alpha / (1 - alpha));
+        Y[ss] = (r[ss] / (r[ss] - delta * alpha)) ^ (sigma_C / (sigma_C + sigma_L)) *
+                (w[ss] * (w[ss] / (1 - alpha)) ^ sigma_L) ^ (1 / (sigma_C + sigma_L));
+        I[ss] = delta * alpha / r[ss] * Y[ss];
+        C[ss] = ((1 - alpha) ^ (-sigma_L) * w[ss] ^ (1 + sigma_L)) ^ (1 / sigma_C) * Y[ss] ^ (-sigma_L / sigma_C);
+        K[ss] = alpha * Y[ss] / r[ss];
+        L[ss] = (1 - alpha) * Y[ss] / w[ss];
+        U[ss] = 1 / (1 - beta) * (C[ss] ^ (1 - sigma_C) / (1 - sigma_C) - L[ss] ^ (1 + sigma_L) / (1 + sigma_L));
+        lambda[ss] = C[ss] ^ (-sigma_C);
+        q[ss] = lambda[ss];
+        TC[ss] = -(w[ss] * L[ss] + r[ss] * K[ss]);
+    };
+};
+
+block HOUSEHOLD
+{
+    definitions
+    {
+		u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) -
+			  L[] ^ (1 + sigma_L) / (1 + sigma_L);
+    };
+    controls
+    {
+		K[], C[], L[], I[];
+    };
+    objective
+    {
+		U[] = u[] + beta * E[][U[1]];
+    };
+    constraints
+    {
+		C[] + I[] = w[] * L[] + r[] * K[-1] : lambda[];
+		K[] = (1 - delta) * K[-1] + I[] : q[];
+    };
+
+    calibration
+    {
+		beta = 0.985;
+		delta = 0.025;
+		sigma_C = 2;
+		sigma_L = 1.5;
+    };
+};
+
+
+block FIRM
+{
+	controls
+	{
+		K[-1], L[];
+	};
+
+    objective
+    {
+		TC[] = -(w[] * L[] + r[] * K[-1]);
+    };
+
+    constraints
+    {
+		Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha) : P[];
+    };
+
+	identities
+	{
+		log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+		P[] = 1;
+	};
+
+	shocks
+	{
+		epsilon_A[];
+	};
+
+    calibration
+    {
+		alpha = 0.35;
+		rho_A = 0.95;
+    };
+};

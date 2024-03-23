@@ -29,6 +29,31 @@ from gEconpy.model.steady_state.steady_state import (
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
 
 
+def scipy_wrapper(f, var_names, unknown_var_idxs, f_ss=None):
+    if f_ss is not None:
+
+        @ft.wraps(f)
+        def inner(ss_values, param_dict):
+            print(unknown_var_idxs)
+
+            given_ss = f_ss(**param_dict)
+            ss_dict = dict(zip(var_names, ss_values))
+            ss_dict.update(given_ss)
+            res = f(**ss_dict, **param_dict)
+            if res.ndim == 1:
+                return res[unknown_var_idxs]
+            return res
+
+    else:
+
+        @ft.wraps(f)
+        def inner(ss_values, param_dict):
+            ss_dict = dict(zip(var_names, ss_values))
+            return f(**ss_dict, **param_dict)
+
+    return inner
+
+
 def compile_model_ss_functions(
     steady_state_equations,
     ss_solution_dict,
@@ -246,34 +271,27 @@ class Model:
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
 
-        all_variables = set([x.to_ss() for x in self.variables])
-        known_variables = set() if self.f_ss is None else set(self.f_ss(**self.parameters()).keys())
-        vars_to_solve = sorted(list(all_variables - known_variables), key=lambda x: x.name)
+        ss_variables = [x.to_ss() for x in self.variables]
+        known_variables = (
+            set() if self.f_ss is None else set(self.f_ss(**self.parameters()).to_sympy().keys())
+        )
+        vars_to_solve = sorted(list(set(ss_variables) - known_variables), key=lambda x: x.name)
+
+        unknown_var_idx = np.array([x in vars_to_solve for x in ss_variables], dtype="bool")
+        var_names_to_solve = [x.name for x in vars_to_solve]
 
         n_variables = len(vars_to_solve)
         maxeval = optimizer_kwargs.pop("niter", 5000)
         x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
         param_dict = self.parameters(**param_updates)
-
-        def scipy_wrapper(f, f_ss):
-            if f_ss is not None:
-
-                @ft.wraps(f)
-                def inner(ss_values, param_dict):
-                    given_ss = f_ss(**param_dict)
-                    return f(*ss_values, **given_ss, **param_dict)
-            else:
-
-                @ft.wraps(f)
-                def inner(ss_values, param_dict):
-                    return f(*ss_values, **param_dict)
-
-            return inner
+        print(self.f_ss_resid(*np.full(len(ss_variables), 0.8), **param_dict))
 
         objective = CostFuncWrapper(
             maxeval=maxeval,
-            f=scipy_wrapper(self.f_ss_resid, self.f_ss),
-            f_jac=scipy_wrapper(self.f_ss_jac, self.f_ss) if use_jac else None,
+            f=scipy_wrapper(self.f_ss_resid, var_names_to_solve, unknown_var_idx, self.f_ss),
+            f_jac=scipy_wrapper(self.f_ss_jac, var_names_to_solve, unknown_var_idx, self.f_ss)
+            if use_jac
+            else None,
             progressbar=progressbar,
         )
 
@@ -300,7 +318,15 @@ class Model:
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
 
-        n_variables = len(self.variables)
+        all_variables = set([x.to_ss() for x in self.variables])
+        known_variables = set() if self.f_ss is None else set(self.f_ss(**self.parameters()).keys())
+        vars_to_solve = sorted(list(all_variables - known_variables), key=lambda x: x.name)
+        vars_to_solve = [x.name for x in vars_to_solve]
+        unknown_var_idx = np.array(
+            [i for i, var in enumerate(self.variables) if var.name in vars_to_solve]
+        )
+
+        n_variables = len(vars_to_solve)
         maxeval = optimizer_kwargs.pop("niter", 5000)
         x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
         tol = optimizer_kwargs.pop("tol", 1e-30)
@@ -318,19 +344,15 @@ class Model:
 
         param_dict = self.parameters(**param_updates)
 
-        def scipy_wrapper(f):
-            @ft.wraps(f)
-            def inner(ss_values, param_dict):
-                x = f(*ss_values, **param_dict)
-                return np.array(x).squeeze()
-
-            return inner
-
         objective = CostFuncWrapper(
             maxeval=maxeval,
-            f=scipy_wrapper(self.f_ss_error),
-            f_jac=scipy_wrapper(self.f_ss_error_grad) if use_jac else None,
-            f_hess=scipy_wrapper(self.f_ss_error_hess) if use_hess else None,
+            f=scipy_wrapper(self.f_ss_error, vars_to_solve, unknown_var_idx, self.f_ss),
+            f_jac=scipy_wrapper(self.f_ss_error_grad, vars_to_solve, unknown_var_idx, self.f_ss)
+            if use_jac
+            else None,
+            f_hess=scipy_wrapper(self.f_ss_error_hess, vars_to_solve, unknown_var_idx, self.f_ss)
+            if use_hess
+            else None,
             progressbar=progressbar,
         )
 
@@ -339,7 +361,9 @@ class Model:
             objective,
             x0,
             jac=use_jac,
-            hess=scipy_wrapper(self.f_ss_error_hess) if use_hess else None,
+            hess=scipy_wrapper(self.f_ss_error_hess, vars_to_solve, unknown_var_idx, self.f_ss)
+            if use_hess
+            else None,
             args=param_dict,
             callback=objective.callback,
             method=method,

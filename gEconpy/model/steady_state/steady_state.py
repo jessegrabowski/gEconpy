@@ -135,25 +135,50 @@ def compile_ss_resid_and_sq_err(
     )
 
     f_ss_resid, cache = compile_function(
-        ss_variables + parameters, steady_state, backend=backend, cache=cache, **kwargs
+        ss_variables + parameters,
+        steady_state,
+        backend=backend,
+        cache=cache,
+        stack_returns=True,
+        **kwargs,
     )
     f_ss_jac, cache = compile_function(
-        ss_variables + parameters, resid_jac, backend=backend, cache=cache, **kwargs
+        ss_variables + parameters,
+        resid_jac,
+        backend=backend,
+        cache=cache,
+        stack_returns=True,
+        **kwargs,
     )
 
-    error_grad = sp.Matrix([faster_simplify(ss_error.diff(x), ss_variables) for x in ss_variables])
+    error_grad = [faster_simplify(ss_error.diff(x), ss_variables) for x in ss_variables]
     error_hess = sp.Matrix(
         [[faster_simplify(eq.diff(x), ss_variables) for eq in error_grad] for x in ss_variables]
     )
 
     f_ss_error, cache = compile_function(
-        ss_variables + parameters, [ss_error], backend=backend, cache=cache, **kwargs
+        ss_variables + parameters,
+        [ss_error],
+        backend=backend,
+        cache=cache,
+        stack_returns=True,
+        **kwargs,
     )
     f_ss_grad, cache = compile_function(
-        ss_variables + parameters, error_grad, backend=backend, cache=cache, **kwargs
+        ss_variables + parameters,
+        error_grad,
+        backend=backend,
+        cache=cache,
+        stack_returns=True,
+        **kwargs,
     )
     f_ss_hess, cache = compile_function(
-        ss_variables + parameters, error_hess, backend=backend, cache=cache, **kwargs
+        ss_variables + parameters,
+        error_hess,
+        backend=backend,
+        cache=cache,
+        stack_returns=True,
+        **kwargs,
     )
 
     return (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess), cache
@@ -176,7 +201,9 @@ def compile_known_ss(
         list(ss_solution_dict.values()),
     )
 
-    f_ss, cache = compile_function(parameters, output_exprs, backend=backend, cache=cache, **kwargs)
+    f_ss, cache = compile_function(
+        parameters, output_exprs, backend=backend, cache=cache, stack_returns=True, **kwargs
+    )
     return dictionary_return_wrapper(f_ss, output_vars), cache
 
 

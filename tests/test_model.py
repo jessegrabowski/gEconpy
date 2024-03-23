@@ -257,8 +257,15 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
 
 
 @pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
-@pytest.mark.parametrize("gcn_file", ["One_Block_Simple_1_w_Steady_State", "Open_RBC"])
+@pytest.mark.parametrize(
+    "gcn_file", ["One_Block_Simple_1_w_Steady_State", "Open_RBC", "Full_New_Keyensian"]
+)
 def test_numerical_steady_state(how, gcn_file):
+    if gcn_file == "Full_New_Keyensian":
+        pytest.skip(
+            "NK model fails to find numerical SS without careful tuning; skip this test for now"
+        )
+
     file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
     model_1 = model_from_gcn(file_path, verbose=False, backend="numpy", mode="FAST_COMPILE")
     analytic_res = model_1.steady_state()
@@ -268,6 +275,31 @@ def test_numerical_steady_state(how, gcn_file):
     numeric_res = model_1.steady_state(how=how, verbose=False)
     numeric_values = np.array(list(numeric_res.values()))
     errors = model_1.f_ss_resid(**numeric_res.to_string(), **model_1.parameters().to_string())
+
+    if how == "root":
+        assert_allclose(analytic_values, numeric_values, atol=1e-2)
+    elif how == "minimize":
+        assert_allclose(errors, np.zeros_like(errors), atol=1e-2)
+
+
+@pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
+@pytest.mark.parametrize("gcn_file", ["Two_Block_RBC_w_Partial_Steady_State"])
+def test_partially_analytical_steady_state(how, gcn_file):
+    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
+    analytic_path = os.path.join(ROOT, "Test GCNs/Two_Block_RBC_w_Steady_State.gcn")
+    analytic_model = model_from_gcn(
+        analytic_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
+    )
+    analytic_res = analytic_model.steady_state()
+    analytic_values = np.array(list(analytic_res.values()))
+
+    partial_model = model_from_gcn(file_path, verbose=False, backend="numpy", mode="FAST_COMPILE")
+    numeric_res = partial_model.steady_state(how=how, verbose=False)
+    numeric_values = np.array(list(numeric_res.values()))
+
+    errors = partial_model.f_ss_resid(
+        **numeric_res.to_string(), **partial_model.parameters().to_string()
+    )
 
     if how == "root":
         assert_allclose(analytic_values, numeric_values, atol=1e-2)
