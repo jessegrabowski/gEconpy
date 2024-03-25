@@ -11,6 +11,105 @@ from gEconpy.solvers.cycle_reduction import nb_cycle_reduction, nb_solve_shock_m
 from gEconpy.solvers.gensys import gensys
 
 
+def make_all_variable_time_combinations(
+    variables,
+) -> tuple[list[TimeAwareSymbol], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
+    """
+    Given a list of TimeAwareSymbols, all at time t, shift them to create all possible lags, current, and lead variables.
+
+    Parameters
+    ----------
+    variables: List[TimeAwareSymbol]
+        List of variables to shift.
+
+    Returns
+    -------
+    lags: List[TimeAwareSymbol]
+        List of variables shifted to t-1.
+    now: List[TimeAwareSymbol]
+        List of variables at time t.
+    leads: List[TimeAwareSymbol]
+        List of variables shifted to t+1.
+    """
+    # Set all variables to time t, remove duplicates, and sort by base name.
+    now = set([x.set_t(0) for x in variables])
+    now = sorted(list(now), key=lambda x: x.base_name)
+
+    # Create lags and leads by shifting the time of the variables.
+    lags = [x.step_backward() for x in now]
+    leads = [x.step_forward() for x in now]
+
+    return lags, now, leads
+
+
+def log_linearize_model(
+    variables: list[TimeAwareSymbol],
+    equations: list[sp.Expr],
+    shocks: list[sp.Symbol],
+) -> list[sp.Matrix]:
+    """
+    Log-linearize a model around its steady state.
+
+    Parameters
+    ----------
+    variables: List[TimeAwareSymbol]
+        List of all variables in the model, expressed at time t
+
+    equations: List[sp.Expr]
+        List of equations that define the model.
+
+    shocks: List[sp.Symbol]
+        List of exogenous shocks in the model.
+
+    Returns
+    -------
+    Fs: List[sp.Matrix]
+        List of matrices representing the log-linearized model.
+
+    Notes
+    -----
+    Convert the non-linear model to its log-linear approximation using a first-order Taylor expansion around the
+    deterministic steady state. The specific method of log-linearization is taken from ..[1]
+
+    .. math::
+        F_1 T y_{t-1} + F_2 @ T @ y_t + F_3 @ T @ y_{t+1} + F4 \varepsilon_t = 0
+
+    Where T is a diagonal matrix containing steady-state values on the diagonal. Each of F1, F2, F3, and F4 are the
+    Jacobian matrices of the model equations with respect to the variables at time t-1, t, t+1, and the exogenous shocks,
+    respectively. Evaluating the matrix multiplications in the expression above obtains:
+
+    .. math::
+        A y_{t-1} + B y_t + C y_{t+1} + D \varepsilon = 0
+
+    Matrices A, B, C, and D are returned by this function.
+
+    References
+    ----------
+    [1] gEcon User's Guide, page 54, equation 9.9.
+    """
+
+    not_loglin_variables = [sp.Symbol(f"{x.base_name}_not_login", postive=True) for x in variables]
+
+    Fs = []
+    lags, now, leads = make_all_variable_time_combinations(variables)
+    T = sp.diag(
+        *[
+            x.to_ss() ** (1 - x_not_loglin)
+            for x, x_not_loglin in zip(variables, not_loglin_variables)
+        ]
+    )
+
+    for var_group in [lags, now, leads]:
+        F = sp.Matrix([[eq_to_ss(eq.diff(var)).powsimp() for var in var_group] for eq in equations])
+        F = F @ T
+        Fs.append(F)
+
+    F = sp.Matrix([[eq_to_ss(eq.diff(shock)).powsimp() for shock in shocks] for eq in equations])
+    Fs.append(F)
+
+    return Fs
+
+
 class PerturbationSolver:
     def __init__(self, model):
         self.steady_state_dict = model.steady_state_dict
@@ -264,16 +363,3 @@ class PerturbationSolver:
         Fs = [A[:, idx] for idx in slices]
 
         return Fs
-
-    def make_all_variable_time_combinations(
-        self,
-    ) -> tuple[list[TimeAwareSymbol], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
-        """
-        :return: Tuple of three lists, containing all model variables at time steps t-1, t, and t+1, respectively.
-        """
-
-        now = sorted(self.variables, key=lambda x: x.base_name)
-        lags = [x.step_backward() for x in now]
-        leads = [x.step_forward() for x in now]
-
-        return lags, now, leads

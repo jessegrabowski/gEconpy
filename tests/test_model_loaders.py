@@ -10,7 +10,13 @@ from gEconpy.exceptions.exceptions import (
     ExtraParameterError,
     OrphanParameterError,
 )
+from gEconpy.model.build import model_from_gcn
+from gEconpy.model.model import compile_model_ss_functions
 from gEconpy.model.parameters import compile_param_dict_func
+from gEconpy.model.steady_state.steady_state import (
+    make_steady_state_shock_dict,
+    system_to_steady_state,
+)
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.parser.file_loaders import (
     block_dict_to_model_primitives,
@@ -18,8 +24,9 @@ from gEconpy.parser.file_loaders import (
     block_dict_to_variables_and_shocks,
     gcn_to_block_dict,
     load_gcn,
-    model_from_gcn,
     parsed_model_to_data,
+    simplify_provided_ss_equations,
+    validate_results,
 )
 from gEconpy.parser.gEcon_parser import preprocess_gcn
 
@@ -237,11 +244,65 @@ def test_create_parameter_function(gcn_path, name, backend):
         )
 
 
+def test_all_model_functions_return_arrays():
+    outputs = gcn_to_block_dict(
+        os.path.join(GCN_ROOT, "One_Block_Simple_1.gcn"), simplify_blocks=True
+    )
+    block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
+
+    (
+        equations,
+        param_dict,
+        calib_dict,
+        deterministic_dict,
+        variables,
+        shocks,
+        param_priors,
+        shock_priors,
+        reduced_vars,
+        singletons,
+    ) = block_dict_to_model_primitives(
+        block_dict,
+        assumptions,
+        try_reduce,
+        prior_info,
+        simplify_tryreduce=True,
+        simplify_constants=True,
+    )
+
+    ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
+
+    validate_results(equations, param_dict, calib_dict, deterministic_dict)
+    ss_shock_dict = make_steady_state_shock_dict(shocks)
+    steady_state_equations = system_to_steady_state(equations, ss_shock_dict)
+
+    f_params, f_ss, resid_funcs, error_funcs = compile_model_ss_functions(
+        steady_state_equations,
+        ss_solution_dict,
+        variables,
+        param_dict,
+        deterministic_dict,
+        calib_dict,
+        error_func="squared",
+        backend="numpy",
+    )
+
+    f_ss_resid, f_ss_jac = resid_funcs
+    f_ss_error, f_ss_grad, f_ss_hess = error_funcs
+
+    parameters = f_params(**param_dict)
+    ss = f_ss(**parameters)
+    x0 = {var.to_ss().name: 0.8 for var in variables}
+    x0.update(ss)
+    for f in [f_ss_resid, f_ss_jac, f_ss_grad, f_ss_hess]:
+        result = f(**x0, **parameters)
+        assert isinstance(result, np.ndarray)
+
+
 def test_load_gcn(gcn_path, name, simplify):
     model = model_from_gcn(
         os.path.join(GCN_ROOT, gcn_path), simplify_blocks=simplify, verbose=False
     )
-    print(model.parameters(beta=0.5))
     assert False
 
 

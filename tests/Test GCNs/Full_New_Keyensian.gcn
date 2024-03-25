@@ -145,7 +145,6 @@ block WAGE_SETTING
 	{
 		LHS_w[] = RHS_w[];
 
-		#Equation 23
 		LHS_w[] =  1 / (1 + psi_w) * w_star[] * lambda[] * L_d_star[] +
 			beta * eta_w * E[][
 				pi[1] * (w_star[1] / w_star[]) ^ (1 / psi_w) * LHS_w[1]

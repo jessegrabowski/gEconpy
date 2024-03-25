@@ -38,6 +38,15 @@ def stack_return_wrapper(f: Callable) -> Callable:
     return inner
 
 
+def pop_return_wrapper(f: Callable) -> Callable:
+    @wraps(f)
+    def inner(*args, **kwargs):
+        values = f(*args, **kwargs)
+        return values[0]
+
+    return inner
+
+
 def numba_input_wrapper(f: Callable, inputs: list[str]) -> Callable:
     @wraps(f)
     @nb.njit
@@ -60,6 +69,7 @@ def compile_function(
     backend: BACKENDS,
     cache: Optional[dict] = None,
     stack_return: bool = False,
+    pop_return: bool = False,
     **kwargs,
 ) -> tuple[Callable, dict]:
     """
@@ -87,6 +97,10 @@ def compile_function(
         If True, the function will return a single numpy array with all outputs. Otherwise it will return a tuple of
         numpy arrays. Default is False.
 
+    pop_return: bool, optional
+        If True, the function will return only the 0th element of the output. Used to remove the list wrapper around
+        scalar outputs. Default is False.
+
     Returns
     -------
     f: Callable
@@ -96,11 +110,13 @@ def compile_function(
         A dictionary mapping from sympy symbols to pytensor symbols.
     """
     if backend == "numpy":
-        f, cache = compile_to_numpy(inputs, outputs, cache, stack_return, **kwargs)
+        f, cache = compile_to_numpy(inputs, outputs, cache, stack_return, pop_return, **kwargs)
     elif backend == "numba":
-        f, cache = compile_to_numba(inputs, outputs, cache, stack_return, **kwargs)
+        f, cache = compile_to_numba(inputs, outputs, cache, stack_return, pop_return, **kwargs)
     elif backend == "pytensor":
-        f, cache = compile_to_pytensor_function(inputs, outputs, cache, stack_return, **kwargs)
+        f, cache = compile_to_pytensor_function(
+            inputs, outputs, cache, stack_return, pop_return, **kwargs
+        )
     else:
         raise NotImplementedError(f"backend {backend} not implemented. Must be one of {BACKENDS}.")
 
@@ -112,11 +128,14 @@ def compile_to_numpy(
     outputs: Union[list[Union[sp.Symbol, sp.Expr]], sp.MutableDenseMatrix],
     cache: dict,
     stack_return: bool,
+    pop_return: bool,
     **kwargs,
 ):
     f = sp.lambdify(inputs, outputs)
     if stack_return:
         f = stack_return_wrapper(f)
+    if pop_return:
+        f = pop_return_wrapper(f)
     return f, cache
 
 
@@ -125,11 +144,14 @@ def compile_to_numba(
     outputs: list[Union[sp.Symbol, sp.Expr]],
     cache: dict,
     stack_return: bool,
+    pop_return: bool,
     **kwargs,
 ):
     f = numba_input_wrapper(numba_lambdify(inputs, outputs), [x.name for x in inputs])
     if stack_return:
         f = stack_return_wrapper(f)
+    if pop_return:
+        f = pop_return_wrapper(f)
     return f, cache
 
 
@@ -138,6 +160,7 @@ def compile_to_pytensor_function(
     outputs: list[Union[sp.Symbol, sp.Expr]],
     cache: dict,
     stack_return: bool,
+    pop_return: bool,
     **kwargs,
 ):
     kwargs = _configue_pytensor_kwargs(kwargs)
@@ -146,9 +169,10 @@ def compile_to_pytensor_function(
     outputs = [outputs] if not isinstance(outputs, list) else outputs
     input_pt = [as_tensor(x, cache) for x in inputs]
     output_pt = [output_to_tensor(x, cache) for x in outputs]
-    output_pt = output_pt[0] if len(output_pt) == 1 else output_pt
     if stack_return:
         output_pt = pytensor.tensor.stack(output_pt)
+    if pop_return:
+        output_pt = output_pt[0] if len(output_pt) == 1 else output_pt
 
     f = pytensor.function(input_pt, output_pt, **kwargs)
     return f, cache
