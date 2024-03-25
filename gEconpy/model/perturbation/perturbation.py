@@ -61,9 +61,6 @@ def log_linearize_model(
     shocks: List[sp.Symbol]
         List of exogenous shocks in the model.
 
-    not_loglin_variables: List[str], optional
-        List of variable names that should not be log-linearized. Default is None.
-
     Returns
     -------
     Fs: List[sp.Matrix]
