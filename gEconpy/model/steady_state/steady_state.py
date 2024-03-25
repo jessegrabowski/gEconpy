@@ -139,7 +139,7 @@ def compile_ss_resid_and_sq_err(
         steady_state,
         backend=backend,
         cache=cache,
-        stack_returns=True,
+        stack_return=True,
         **kwargs,
     )
     f_ss_jac, cache = compile_function(
@@ -147,7 +147,6 @@ def compile_ss_resid_and_sq_err(
         resid_jac,
         backend=backend,
         cache=cache,
-        stack_returns=True,
         **kwargs,
     )
 
@@ -161,7 +160,7 @@ def compile_ss_resid_and_sq_err(
         [ss_error],
         backend=backend,
         cache=cache,
-        stack_returns=True,
+        pop_return=True,
         **kwargs,
     )
     f_ss_grad, cache = compile_function(
@@ -169,7 +168,7 @@ def compile_ss_resid_and_sq_err(
         error_grad,
         backend=backend,
         cache=cache,
-        stack_returns=True,
+        stack_return=True,
         **kwargs,
     )
     f_ss_hess, cache = compile_function(
@@ -177,7 +176,6 @@ def compile_ss_resid_and_sq_err(
         error_hess,
         backend=backend,
         cache=cache,
-        stack_returns=True,
         **kwargs,
     )
 

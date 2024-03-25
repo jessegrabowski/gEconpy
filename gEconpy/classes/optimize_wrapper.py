@@ -7,8 +7,6 @@ import numpy as np
 
 from fastprogress.fastprogress import ProgressBar, progress_bar
 
-from gEconpy.classes.containers import SymbolDictionary
-
 
 class CostFuncWrapper:
     def __init__(
@@ -129,8 +127,9 @@ def optimzer_early_stopping_wrapper(f_optim):
     return res
 
 
-def postprocess_optimizer_res(res, variables, assumptions=None, verbose=True):
+def postprocess_optimizer_res(res, res_dict, assumptions=None, verbose=True):
     success = res.success
+
     f_x = np.atleast_1d(res.fun)
 
     if success:
@@ -141,4 +140,4 @@ def postprocess_optimizer_res(res, variables, assumptions=None, verbose=True):
     if verbose:
         warnings.warn(msg)
 
-    return SymbolDictionary(zip(variables, res.x))
+    return res_dict

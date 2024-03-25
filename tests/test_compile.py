@@ -1,3 +1,5 @@
+from typing import Literal
+
 import numpy as np
 import pytest
 import sympy as sp
@@ -6,7 +8,7 @@ from gEconpy.model.compile import compile_function
 
 
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
-def test_scalar_function(backend):
+def test_scalar_function(backend: Literal["numpy", "numba", "pytensor"]):
     x = sp.symbols("x")
     f = x**2
     f_func, _ = compile_function([x], f, backend=backend, mode="FAST_COMPILE")
@@ -15,7 +17,7 @@ def test_scalar_function(backend):
 
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
 @pytest.mark.parametrize("stack_return", [True, False])
-def test_multiple_outputs(backend, stack_return):
+def test_multiple_outputs(backend: Literal["numpy", "numba", "pytensor"], stack_return: bool):
     x, y, z = sp.symbols("x y z ")
     x2 = x**2
     y2 = y**2
@@ -30,12 +32,14 @@ def test_multiple_outputs(backend, stack_return):
 
 
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
-def test_matrix_function(backend):
+@pytest.mark.parametrize("stack_return", [True, False])
+def test_matrix_function(backend: Literal["numpy", "numba", "pytensor"], stack_return: bool):
     x, y, z = sp.symbols("x y z")
     f = sp.Matrix([x, y, z]).reshape(1, 3)
 
     f_func, _ = compile_function([x, y, z], f, backend=backend, mode="FAST_COMPILE")
     res = f_func(x=2, y=3, z=4)
+    print(res, type(res), res.shape)
     assert isinstance(res, np.ndarray)
     assert res.shape == (1, 3)
     np.testing.assert_allclose(res, np.array([[2.0, 3.0, 4.0]]))

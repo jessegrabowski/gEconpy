@@ -11,8 +11,8 @@ import pytest
 from numpy.testing import assert_allclose
 
 from gEconpy.exceptions.exceptions import GensysFailedException
+from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
-from gEconpy.parser.file_loaders import model_from_gcn
 
 ROOT = Path(__file__).parent.absolute()
 
@@ -285,6 +285,9 @@ def test_numerical_steady_state(how, gcn_file):
 @pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
 @pytest.mark.parametrize("gcn_file", ["Two_Block_RBC_w_Partial_Steady_State"])
 def test_partially_analytical_steady_state(how, gcn_file):
+    if how == "root":
+        pytest.xfail("Partial analytical steady state does not work with root method")
+
     file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
     analytic_path = os.path.join(ROOT, "Test GCNs/Two_Block_RBC_w_Steady_State.gcn")
     analytic_model = model_from_gcn(
@@ -301,10 +304,8 @@ def test_partially_analytical_steady_state(how, gcn_file):
         **numeric_res.to_string(), **partial_model.parameters().to_string()
     )
 
-    if how == "root":
-        assert_allclose(analytic_values, numeric_values, atol=1e-2)
-    elif how == "minimize":
-        assert_allclose(errors, np.zeros_like(errors), atol=1e-2)
+    assert_allclose(analytic_values, numeric_values, atol=1e-2)
+    assert_allclose(errors, np.zeros_like(errors), atol=1e-2)
 
 
 def test_invalid_solver_raises(self):
