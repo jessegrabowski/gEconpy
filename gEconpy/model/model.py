@@ -63,11 +63,17 @@ def compile_model_ss_functions(
     calib_dict,
     error_func: ERROR_FUNCTIONS = "squared",
     backend: BACKENDS = "numpy",
+    return_symbolic: bool = False,
+    stack_return: Optional[bool] = None,
     **kwargs,
 ):
     cache = {}
     f_params, cache = compile_param_dict_func(
-        param_dict, deterministic_dict, backend=backend, cache=cache
+        param_dict,
+        deterministic_dict,
+        backend=backend,
+        cache=cache,
+        return_symbolic=return_symbolic,
     )
 
     calib_eqs = [lhs - rhs for lhs, rhs in calib_dict.to_sympy().items()]
@@ -80,7 +86,14 @@ def compile_model_ss_functions(
     ss_error = steady_state_error_function(steady_state_equations, variables, error_func)
 
     f_ss, cache = compile_known_ss(
-        ss_solution_dict, variables, parameters, backend=backend, cache=cache, **kwargs
+        ss_solution_dict,
+        variables,
+        parameters,
+        backend=backend,
+        cache=cache,
+        return_symbolic=return_symbolic,
+        stack_return=stack_return,
+        **kwargs,
     )
 
     (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess), cache = compile_ss_resid_and_sq_err(
@@ -90,10 +103,12 @@ def compile_model_ss_functions(
         ss_error,
         backend=backend,
         cache=cache,
+        return_symbolic=return_symbolic,
+        stack_return=stack_return,
         **kwargs,
     )
 
-    return f_params, f_ss, (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess)
+    return (f_params, f_ss, (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess)), cache
 
 
 def infer_variable_bounds(variables):
@@ -169,6 +184,7 @@ class Model:
         self.variables = variables
         self.shocks = shocks
         self.equations = equations
+        self.params = list(param_dict.to_sympy().keys())
 
         self._default_params = param_dict
         self.f_params: Callable = f_params

@@ -125,6 +125,8 @@ def compile_ss_resid_and_sq_err(
     ss_error: sp.Expr,
     backend: BACKENDS,
     cache: dict,
+    return_symbolic: bool,
+    stack_return: Optional[bool] = False,
     **kwargs,
 ):
     cache = {} if cache is None else cache
@@ -139,7 +141,8 @@ def compile_ss_resid_and_sq_err(
         steady_state,
         backend=backend,
         cache=cache,
-        stack_return=True,
+        stack_return=True if stack_return is None else stack_return,
+        return_symbolic=return_symbolic,
         **kwargs,
     )
     f_ss_jac, cache = compile_function(
@@ -147,6 +150,8 @@ def compile_ss_resid_and_sq_err(
         resid_jac,
         backend=backend,
         cache=cache,
+        return_symbolic=return_symbolic,
+        stack_return=False if stack_return is None else stack_return,
         **kwargs,
     )
 
@@ -161,6 +166,8 @@ def compile_ss_resid_and_sq_err(
         backend=backend,
         cache=cache,
         pop_return=True,
+        return_symbolic=return_symbolic,
+        stack_return=False if stack_return is None else stack_return,
         **kwargs,
     )
     f_ss_grad, cache = compile_function(
@@ -168,7 +175,8 @@ def compile_ss_resid_and_sq_err(
         error_grad,
         backend=backend,
         cache=cache,
-        stack_return=True,
+        stack_return=True if stack_return is None else stack_return,
+        return_symbolic=return_symbolic,
         **kwargs,
     )
     f_ss_hess, cache = compile_function(
@@ -176,6 +184,8 @@ def compile_ss_resid_and_sq_err(
         error_hess,
         backend=backend,
         cache=cache,
+        return_symbolic=return_symbolic,
+        stack_return=False if stack_return is None else stack_return,
         **kwargs,
     )
 
@@ -188,6 +198,8 @@ def compile_known_ss(
     parameters: list[sp.Symbol],
     backend: BACKENDS,
     cache: dict,
+    return_symbolic: bool = False,
+    stack_return: Optional[bool] = None,
     **kwargs,
 ):
     cache = {} if cache is None else cache
@@ -200,8 +212,17 @@ def compile_known_ss(
     )
 
     f_ss, cache = compile_function(
-        parameters, output_exprs, backend=backend, cache=cache, stack_returns=True, **kwargs
+        parameters,
+        output_exprs,
+        backend=backend,
+        cache=cache,
+        stack_return=True if stack_return is None else stack_return,
+        return_symbolic=return_symbolic,
+        **kwargs,
     )
+    if return_symbolic and backend == "pytensor":
+        return f_ss, cache
+
     return dictionary_return_wrapper(f_ss, output_vars), cache
 
 
