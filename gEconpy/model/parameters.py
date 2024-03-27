@@ -13,6 +13,7 @@ def compile_param_dict_func(
     deterministic_dict: SymbolDictionary,
     backend: BACKENDS = "numpy",
     cache: Optional[dict] = None,
+    return_symbolic: bool = False,
 ) -> tuple[Callable, dict]:
     """
     Compile a function to compute model parameters from given "free" parameters.
@@ -33,6 +34,9 @@ def compile_param_dict_func(
         A dictionary mapping from pytensor symbols to sympy expressions. Used to prevent duplicate mappings from
         sympy symbol to pytensor symbol from being created. Default is a empty dictionary, implying no other functions
         have been compiled yet.
+    return_symbolic: bool, default False
+        When true, if backend is "pytensor", return a symbolic graph representing the computation of parameter values
+        rather than a compiled pytensor function. Ignored if backend is not "pytensor"
 
     Returns
     -------
@@ -48,6 +52,11 @@ def compile_param_dict_func(
     output_params = inputs + list(deterministic_dict.to_sympy().keys())
     output_exprs = inputs + list(deterministic_dict.values())
 
-    f, cache = compile_function(inputs, output_exprs, backend=backend, cache=cache)
+    f, cache = compile_function(
+        inputs, output_exprs, backend=backend, cache=cache, return_symbolic=return_symbolic
+    )
+
+    if return_symbolic and backend == "pytensor":
+        return f, cache
 
     return dictionary_return_wrapper(f, output_params), cache

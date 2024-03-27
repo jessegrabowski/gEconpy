@@ -14,6 +14,38 @@ from gEconpy.numba_tools.utilities import numba_lambdify
 BACKENDS = Literal["numpy", "numba", "pytensor"]
 
 
+def sp_to_pt_from_cache(symbol_list: list[sp.Symbol], cache: dict) -> SymbolDictionary:
+    """
+    Look up a list of symbols in a Sympy PytensorPrinter cache and return a SymbolDictionary mapping each symbol
+    to its corresponding tensor variable on the compute graph.
+
+    Parameters
+    ----------
+    symbol_list: list[sp.Symbol]
+        List of sympy symbols to look up in the cache
+
+    cache: dict
+        Dictionary created by SympyTensor during printing.
+
+    Returns
+    -------
+    sp_to_pt: SymbolDictionary
+        Mapping from sympy symbols to their pytensor Variables
+    """
+
+    sp_to_pt = {}
+    cached_names = [x[0] for x in cache.keys()]
+    cached_tensors = list(cache.values())
+    for symbol in symbol_list:
+        if symbol.name in cached_names:
+            idx = cached_names.index(symbol.name)
+            sp_to_pt[symbol] = cached_tensors[idx]
+        else:
+            raise ValueError(f"{symbol} not found in the provided cache")
+
+    return SymbolDictionary(sp_to_pt)
+
+
 def output_to_tensor(x, cache):
     if isinstance(x, (int, float)):
         return pytensor.tensor.constant(x, dtype=pytensor.config.floatX)
@@ -70,6 +102,7 @@ def compile_function(
     cache: Optional[dict] = None,
     stack_return: bool = False,
     pop_return: bool = False,
+    return_symbolic: bool = False,
     **kwargs,
 ) -> tuple[Callable, dict]:
     """
@@ -101,6 +134,10 @@ def compile_function(
         If True, the function will return only the 0th element of the output. Used to remove the list wrapper around
         scalar outputs. Default is False.
 
+    return_symbolic: bool, default True
+        If True, when mode="pytensor", the will return a symbolic pytensor computation graph instead of a compiled
+        function. Ignored when mode is not "pytensor".
+
     Returns
     -------
     f: Callable
@@ -115,7 +152,7 @@ def compile_function(
         f, cache = compile_to_numba(inputs, outputs, cache, stack_return, pop_return, **kwargs)
     elif backend == "pytensor":
         f, cache = compile_to_pytensor_function(
-            inputs, outputs, cache, stack_return, pop_return, **kwargs
+            inputs, outputs, cache, stack_return, pop_return, return_symbolic, **kwargs
         )
     else:
         raise NotImplementedError(f"backend {backend} not implemented. Must be one of {BACKENDS}.")
@@ -161,6 +198,7 @@ def compile_to_pytensor_function(
     cache: dict,
     stack_return: bool,
     pop_return: bool,
+    return_symbolic: bool,
     **kwargs,
 ):
     kwargs = _configue_pytensor_kwargs(kwargs)
@@ -173,6 +211,9 @@ def compile_to_pytensor_function(
         output_pt = pytensor.tensor.stack(output_pt)
     if pop_return:
         output_pt = output_pt[0] if len(output_pt) == 1 else output_pt
+
+    if return_symbolic:
+        return output_pt, cache
 
     f = pytensor.function(input_pt, output_pt, **kwargs)
     return f, cache
