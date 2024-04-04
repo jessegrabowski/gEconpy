@@ -169,9 +169,8 @@ class NumbaFriendlyNumPyPrinter(NumPyPrinter):
 
 
 def numba_lambdify(
-    exog_vars: list[sp.Symbol],
+    inputs: list[sp.Symbol],
     expr: Union[list[sp.Expr], sp.Matrix, list[sp.Matrix]],
-    endog_vars: Optional[list[sp.Symbol]] = None,
     func_signature: Optional[str] = None,
     ravel_outputs=False,
 ) -> Callable:
@@ -184,7 +183,7 @@ def numba_lambdify(
 
     Parameters
     ----------
-    exog_vars: list of sympy.Symbol
+    inputs: list of sympy.Symbol
         A list of "exogenous" variables. The distinction between "exogenous" and "enodgenous" is
         useful when passing the resulting function to a scipy.optimize optimizer. In this context, exogenous
         variables should be the choice varibles used to minimize the function.
@@ -192,8 +191,6 @@ def numba_lambdify(
         The sympy expression(s) to be converted. Expects a list of expressions (in the case that we're compiling a
         system to be stacked into a single output vector), a single matrix (which is returned as a single nd-array)
         or a list of matrices (which are returned as a list of nd-arrays)
-    endog_vars : Optional, list of sympy.Symbol
-        A list of "exogenous" variables, passed as a second argument to the function.
     func_signature: str
         A numba function signature, passed to the numba.njit decorator on the generated function.
     ravel_outputs: bool, default False
@@ -210,6 +207,7 @@ def numba_lambdify(
     The function returned by this function is pickleable.
     """
     ZERO_PATTERN = re.compile(r"(?<![\.\w])0([ ,\]])")
+    ZERO_ONE_INDEX_PATTERN = re.compile(r"((?<=\[)(([0,1])\.0)(?=\]))")
     FLOAT_SUBS = {
         sp.core.numbers.One(): sp.Float(1),
         sp.core.numbers.NegativeOne(): sp.Float(-1),
@@ -220,16 +218,6 @@ def numba_lambdify(
         decorator = "@nb.njit"
     else:
         decorator = f"@nb.njit({func_signature})"
-
-    len_checks = []
-    len_checks.append(
-        f'    assert len(exog_inputs) == {len(exog_vars)}, "Expected {len(exog_vars)} exog_inputs"'
-    )
-    if endog_vars is not None:
-        len_checks.append(
-            f'    assert len(endog_inputs) == {len(endog_vars)}, "Expected {len(endog_vars)} exog_inputs"'
-        )
-    len_checks = "\n".join(len_checks)
 
     # Special case: expr is [[]]. This can occur if no user-defined steady-state values were provided.
     # It shouldn't happen otherwise.
@@ -293,6 +281,10 @@ def numba_lambdify(
 
             # Handle conversion of 0 to 0.0
             code = re.sub(ZERO_PATTERN, r"0.0\g<1>", code)
+
+            # Repair indexing -- we might have converted x[0] to x[0.0] or x[1] to x[1.0]
+            code = re.sub(ZERO_ONE_INDEX_PATTERN, r"\g<3>", code)
+
             code_name = f"retval_{i}"
             retvals.append(code_name)
             code = f"    {code_name} = np.array(\n{code}\n    )"
@@ -302,31 +294,20 @@ def numba_lambdify(
             codes.append(code)
         code = "\n".join(codes)
 
-    input_signature = "exog_inputs"
-    unpacked_inputs = "\n".join(
-        [
-            f"    {getattr(x, 'safe_name', x.name)} = exog_inputs[{i}]"
-            for i, x in enumerate(exog_vars)
-        ]
-    )
-    if endog_vars is not None:
-        input_signature += ", endog_inputs"
-        exog_unpacked = "\n".join(
-            [
-                f"    {getattr(x, 'safe_name', x.name)} = endog_inputs[{i}]"
-                for i, x in enumerate(endog_vars)
-            ]
-        )
-        unpacked_inputs += "\n" + exog_unpacked
+    input_signature = ", ".join([getattr(x, "safe_name", x.name) for x in inputs])
 
     assignments = "\n".join(
         [f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}" for x, y in sub_dict]
     )
+    assignments = re.sub(ZERO_ONE_INDEX_PATTERN, r"\g<3>", assignments)
+
     returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
-    full_code = f"{decorator}\ndef f({input_signature}):\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
+    full_code = (
+        f"{decorator}\ndef f({input_signature}):\n\n{assignments}\n\n{code}\n\n    return {returns}"
+    )
 
     docstring = f"'''Automatically generated code:\n{full_code}'''"
-    code = f"{decorator}\ndef f({input_signature}):\n    {docstring}\n{len_checks}\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
+    code = f"{decorator}\ndef f({input_signature}):\n    {docstring}\n\n{assignments}\n\n{code}\n\n    return {returns}"
 
     exec(code)
     return locals()["f"]
