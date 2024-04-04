@@ -1,4 +1,5 @@
 import functools as ft
+import logging
 
 from typing import Callable, Optional, Union
 
@@ -19,6 +20,7 @@ from gEconpy.exceptions.exceptions import (
 )
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.parameters import compile_param_dict_func
+from gEconpy.model.perturbation.perturbation import override_dummy_wrapper
 from gEconpy.model.steady_state.steady_state import (
     ERROR_FUNCTIONS,
     compile_known_ss,
@@ -27,6 +29,7 @@ from gEconpy.model.steady_state.steady_state import (
 )
 
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
+_log = logging.getLogger(__name__)
 
 
 def scipy_wrapper(f, var_names, unknown_var_idxs, f_ss=None):
@@ -138,6 +141,7 @@ class Model:
         f_ss_jac: Optional[Callable] = None,
         f_ss_error_grad: Optional[Callable] = None,
         f_ss_error_hess: Optional[Callable] = None,
+        f_linearize: Optional[Callable] = None,
         f_perturbation: Optional[Callable] = None,
         backend: BACKENDS = "numpy",
     ) -> None:
@@ -178,6 +182,7 @@ class Model:
 
         f_ss_jac: Callable, optional
 
+        f_linearize: Callable, optional
 
         """
 
@@ -197,7 +202,9 @@ class Model:
         self.f_ss: Callable = f_ss
         self.f_ss_jac: Callable = f_ss_jac
 
-        self.f_perturbation: Callable = None
+        if backend == "numpy":
+            f_linearize = override_dummy_wrapper(f_linearize, "not_loglin_variable")
+        self.f_linearize: Callable = f_linearize
 
         # self.steady_state_relationships: SymbolDictionary[VariableType, sp.Add] = SymbolDictionary()
         #
@@ -258,8 +265,14 @@ class Model:
     ):
         param_dict = self.parameters(**updates)
 
-        if how == "analytic":
-            return self.f_ss(**param_dict)
+        if how == "analytic" and self.f_ss is None:
+            how = "minimize"
+        else:
+            ss_dict = self.f_ss(**param_dict)
+            if len(ss_dict) != len(self.variables):
+                how = "minimize"
+            else:
+                return ss_dict
 
         ss_variables = [x.to_ss() for x in self.variables]
         known_variables = (
@@ -414,6 +427,59 @@ class Model:
             **optimizer_kwargs,
         )
         return optimzer_early_stopping_wrapper(f_optim)
+
+    def linearize_model(
+        self,
+        order=1,
+        not_loglin_variables=None,
+        steady_state_dict=None,
+        loglin_negative_ss=False,
+        **param_updates,
+    ):
+        if order != 1:
+            raise NotImplementedError("Only first order linearization is currently supported.")
+        if not_loglin_variables is None:
+            not_loglin_variables = []
+
+        n_variables = len(self.variables)
+        not_loglin_flags = np.zeros(n_variables)
+        for i, var in enumerate(self.variables):
+            not_loglin_flags[i] = var.base_name in not_loglin_variables
+
+        param_dict = self.parameters(**param_updates)
+
+        if steady_state_dict is None:
+            steady_state_dict = self.steady_state()
+
+        ss_values = np.array(list(steady_state_dict.values()))
+        ss_zeros = np.abs(ss_values) < 1e-8
+        ss_negative = ss_values < 0.0
+
+        if np.any(ss_zeros):
+            zero_idxs = np.flatnonzero(ss_zeros)
+            zero_vars = [self.variables[i] for i in zero_idxs]
+            _log.warning(
+                f"The following variables had steady-state values close to zero and will not be log-linearized:"
+                f"{[x.base_name for x in zero_vars]}"
+            )
+
+            not_loglin_flags[ss_zeros] = 1
+
+        if np.any(ss_negative) and not loglin_negative_ss:
+            neg_idxs = np.flatnonzero(ss_negative)
+            neg_vars = [self.variables[i] for i in neg_idxs]
+            _log.warning(
+                f"The following variables had negative steady-state values and will not be log-linearized:"
+                f"{[x.base_name for x in neg_vars]}"
+            )
+
+            not_loglin_flags[neg_idxs] = 1
+
+        A, B, C, D = self.f_linearize(
+            **param_dict, **steady_state_dict, not_loglin_variable=not_loglin_flags
+        )
+
+        return A, B, C, D
 
 
 #

@@ -1,7 +1,6 @@
 from functools import wraps
 from typing import Callable, Literal, Optional, Union
 
-import numba as nb
 import numpy as np
 import pytensor
 import sympy as sp
@@ -75,16 +74,6 @@ def pop_return_wrapper(f: Callable) -> Callable:
     def inner(*args, **kwargs):
         values = f(*args, **kwargs)
         return values[0]
-
-    return inner
-
-
-def numba_input_wrapper(f: Callable, inputs: list[str]) -> Callable:
-    @wraps(f)
-    @nb.njit
-    def inner(**kwargs):
-        input = [kwargs[k] for k in inputs]
-        return f(input)
 
     return inner
 
@@ -184,7 +173,7 @@ def compile_to_numba(
     pop_return: bool,
     **kwargs,
 ):
-    f = numba_input_wrapper(numba_lambdify(inputs, outputs), [x.name for x in inputs])
+    f = numba_lambdify(inputs, outputs)
     if stack_return:
         f = stack_return_wrapper(f)
     if pop_return:

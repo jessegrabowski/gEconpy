@@ -3,14 +3,13 @@ from inspect import signature
 from typing import Optional
 
 import numpy as np
-import pytensor.tensor as pt
 import sympy as sp
 
 from numpy.typing import ArrayLike
 from scipy import linalg
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.compile import BACKENDS, compile_function, sp_to_pt_from_cache
+from gEconpy.model.compile import BACKENDS, compile_function
 from gEconpy.shared.utilities import eq_to_ss
 from gEconpy.solvers.cycle_reduction import nb_cycle_reduction, nb_solve_shock_matrix
 from gEconpy.solvers.gensys import gensys
@@ -44,7 +43,7 @@ def override_dummy_wrapper(f, param_name="not_loglin_variable"):
 
     @wraps(f)
     def inner(*args, **kwargs):
-        loglin = kwargs.pop("not_loglin_variables")
+        loglin = kwargs.pop(param_name)
         kwargs[dummies[0]] = loglin
 
         return f(*args, **kwargs)
@@ -74,7 +73,7 @@ def make_all_variable_time_combinations(
     """
     # Set all variables to time t, remove duplicates, and sort by base name.
     now = list(set([x.set_t(0) for x in variables]))
-    # now = sorted(list(now), key=lambda x: x.base_name)
+    now = sorted(now, key=lambda x: x.base_name)
 
     # Create lags and leads by shifting the time of the variables.
     lags = [x.step_backward() for x in now]
@@ -140,34 +139,11 @@ def linearize_model(
 
     eq_vec = sp.Matrix(equations)
     A, B, C, D = (eq_to_ss(eq_vec.jacobian(var_group)) for var_group in [lags, now, leads, shocks])
-    not_loglin_var = sp.IndexedBase("not_loglin_variables", shape=(len(variables),))
+    not_loglin_var = sp.IndexedBase("not_loglin_variable", shape=(len(variables),))
     T = sp.diag(*[ss_var ** (1 - not_loglin_var[i]) for i, ss_var in enumerate(ss_variables)])
 
     Fs = [A @ T, B @ T, C @ T, D]
-    return Fs
-
-
-def pt_linearize(
-    variables: list[TimeAwareSymbol],
-    equations: list[sp.Expr],
-    shocks: list[sp.Symbol],
-    cache,
-    order=1,
-):
-    if order != 1:
-        raise NotImplementedError("Only order = 1 linearization is currently implemented.")
-
-    lags, now, leads = make_all_variable_time_combinations(variables)
-    ss_pt_dict = sp_to_pt_from_cache([x.to_ss() for x in variables], cache)
-    ss_pt = list(ss_pt_dict.values())
-
-    eq_vec = sp.Matrix(equations)
-    A, B, C, D = (eq_to_ss(eq_vec.jacobian(var_group)) for var_group in [lags, now, leads, shocks])
-    not_loglin_var = pt.tensor("not_loglin_variables", shape=(len(variables),), dtype="int32")
-    T = pt.diag(pt.stack(ss_pt) ** (1 - not_loglin_var))
-
-    Fs = [A @ T, B @ T, C @ T, D]
-    return Fs
+    return Fs, not_loglin_var
 
 
 def compile_linearized_system(
@@ -183,17 +159,15 @@ def compile_linearized_system(
     cache = {} if cache is None else cache
 
     ss_variables = [x.to_ss() for x in variables]
-    A, B, C, D = linearize_model(variables, equations, shocks)
+    outputs, not_loglin_var = linearize_model(variables, equations, shocks)
 
-    if backend != "pytensor":
-        not_loglin_variable = sp.IndexedBase("not_loglin_variable")
-        T = sp.diag(*[var ** (1 - not_loglin_variable[i]) for i, var in enumerate(ss_variables)])
-        inputs = parameters + ss_variables + [not_loglin_variable]
-        outputs = [A @ T, B @ T, C @ T, D]
+    inputs = parameters + ss_variables + [not_loglin_var]
 
-    f_ss, cache = compile_function(
+    f_linearize, cache = compile_function(
         inputs, outputs, backend=backend, cache=cache, return_symbolic=return_symbolic, **kwargs
     )
+
+    return f_linearize, cache
 
 
 def solve_policy_function_with_cycle_reduction(
