@@ -13,6 +13,7 @@ from numpy.testing import assert_allclose
 from gEconpy.exceptions.exceptions import GensysFailedException
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
+from tests.utilities.expected_matrices import expected_linearization_result
 
 ROOT = Path(__file__).parent.absolute()
 
@@ -306,6 +307,28 @@ def test_partially_analytical_steady_state(how, gcn_file):
 
     assert_allclose(analytic_values, numeric_values, atol=1e-2)
     assert_allclose(errors, np.zeros_like(errors), atol=1e-2)
+
+
+@pytest.mark.parametrize(
+    "gcn_file, name",
+    [
+        ("One_Block_Simple_1_w_Steady_State", "one_block_ss"),
+        ("Two_Block_RBC_w_Steady_State", "two_block_ss"),
+        ("Full_New_Keyensian", "full_nk"),
+    ],
+    ids=["one_block_ss", "two_block_ss", "full_nk"],
+)
+@pytest.mark.parametrize(
+    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
+)
+def test_linearize(gcn_file, name, backend):
+    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
+    model = model_from_gcn(file_path, verbose=False, backend=backend, mode="FAST_COMPILE")
+    outputs = model.linearize_model(loglin_negative_ss=True)
+
+    for mat_name, out in zip(["A", "B", "C", "D"], outputs):
+        expected_out = expected_linearization_result[gcn_file][mat_name]
+        assert_allclose(out, expected_out, atol=1e-8, err_msg=f"{mat_name} failed")
 
 
 def test_invalid_solver_raises(self):

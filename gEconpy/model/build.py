@@ -55,6 +55,9 @@ def model_from_gcn(
     ss_shock_dict = make_steady_state_shock_dict(shocks)
     steady_state_equations = system_to_steady_state(equations, ss_shock_dict)
 
+    variables = sorted(variables, key=lambda x: x.base_name)
+    shocks = sorted(shocks, key=lambda x: x.base_name)
+
     functions, cache = compile_model_ss_functions(
         steady_state_equations,
         ss_solution_dict,
@@ -67,12 +70,22 @@ def model_from_gcn(
         return_symbolic=symbolic_model,
         **kwargs,
     )
+
     f_params, f_ss, resid_funcs, error_funcs = functions
     f_ss_resid, f_ss_jac = resid_funcs
     f_ss_error, f_ss_grad, f_ss_hess = error_funcs
 
-    f_linearize = compile_linearized_system(
-        variables, equations, shocks, backend=backend, return_symbolic=symbolic_model, cache=cache
+    parameters = list((param_dict | deterministic_dict).to_sympy().keys())
+    parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
+
+    f_linearize, cache = compile_linearized_system(
+        variables,
+        equations,
+        shocks,
+        parameters,
+        backend=backend,
+        return_symbolic=symbolic_model,
+        cache=cache,
     )
 
     if verbose:
@@ -100,4 +113,6 @@ def model_from_gcn(
         f_ss_error=f_ss_error,
         f_ss_error_grad=f_ss_grad,
         f_ss_error_hess=f_ss_hess,
+        f_linearize=f_linearize,
+        backend=backend,
     )

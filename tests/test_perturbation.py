@@ -8,6 +8,7 @@ from gEconpy.model.build import model_from_gcn
 from gEconpy.model.perturbation.perturbation import (
     linearize_model,
     make_all_variable_time_combinations,
+    override_dummy_wrapper,
 )
 from gEconpy.shared.utilities import eq_to_ss
 
@@ -52,18 +53,12 @@ def test_variables_to_all_times():
 )
 def test_log_linearize_model(gcn_file):
     mod = model_from_gcn(os.path.join("tests/Test GCNs", gcn_file), verbose=False)
-    A, B, C, D = linearize_model(mod.variables, mod.equations, mod.shocks)
+    (A, B, C, D), not_loglin_variable = linearize_model(mod.variables, mod.equations, mod.shocks)
     lags, now, leads = make_all_variable_time_combinations(mod.variables)
 
     ss_vars = [x.to_ss() for x in mod.variables]
     ss_shocks = [x.to_ss() for x in mod.shocks]
     parameters = list(mod.parameters().to_sympy().keys())
-
-    # not_loglin_variables = [
-    #     sp.Symbol(f"{x.base_name}_not_login", postive=True) for x in mod.variables
-    # ]
-
-    not_loglin_variable = sp.IndexedBase("not_loglin_variable")
 
     sub_dict = {x.name: 0.8 for x in ss_vars}
     shock_dict = {x.to_ss().name: 0.0 for x in mod.shocks}
@@ -75,6 +70,7 @@ def test_log_linearize_model(gcn_file):
 
     for i, (M1, M2) in enumerate(zip([A, B, C, D], [(A2, A22), (B2, B22), (C2, C22), (D2, D22)])):
         f1 = sp.lambdify(ss_vars + ss_shocks + parameters + [not_loglin_variable], M1)
+        f1 = override_dummy_wrapper(f1, "not_loglin_variable")
         f2 = sp.lambdify(ss_vars + ss_shocks + parameters, list(M2))
 
         for loglin_value in [0, 1]:
@@ -82,7 +78,7 @@ def test_log_linearize_model(gcn_file):
                 **mod.parameters(),
                 **sub_dict,
                 **shock_dict,
-                **dict.fromkeys([x.name for x in not_loglin_variable], loglin_value),
+                not_loglin_variable=np.full(len(ss_vars), loglin_value),
             )
             x2 = f2(**mod.parameters(), **sub_dict, **shock_dict)
 
