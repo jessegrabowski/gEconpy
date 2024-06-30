@@ -10,7 +10,7 @@ dependencies installed:
 .. code-block:: bash
 
     conda env create -f environment.yaml
-    conda activate cge-modeling
+    conda activate gEconpy
 
 
 Other Methods

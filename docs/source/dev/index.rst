@@ -1,4 +1,4 @@
-Contributing to CGE Modeling
-============================
+Contributing to gEconpy
+=======================
 
 WRITEME
