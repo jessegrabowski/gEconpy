@@ -1,4 +1,4 @@
-version: 2
+version: 1
 
 sphinx:
     configuration: examples/conf.py
