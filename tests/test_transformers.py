@@ -20,7 +20,9 @@ class TestIdentityTransformer(unittest.TestCase):
         cases = [-1, 1, 0.2]
         for case in cases:
             self.assertAlmostEqual(
-                case, self.transformer.unconstrain(self.transformer.constrain(case)), msg=f"{case}"
+                case,
+                self.transformer.unconstrain(self.transformer.constrain(case)),
+                msg=f"{case}",
             )
 
 
@@ -37,7 +39,9 @@ class TestPositiveTransformer(unittest.TestCase):
         cases = [-1, 1, 0.2]
         for case in cases:
             self.assertAlmostEqual(
-                case, self.transformer.unconstrain(self.transformer.constrain(case)), msg=f"{case}"
+                case,
+                self.transformer.unconstrain(self.transformer.constrain(case)),
+                msg=f"{case}",
             )
 
 
@@ -55,7 +59,9 @@ class TestIntervalTransformer(unittest.TestCase):
         cases = [-1, 1, 0.2]
         for case in cases:
             self.assertAlmostEqual(
-                case, self.transformer.unconstrain(self.transformer.constrain(case)), msg=f"{case}"
+                case,
+                self.transformer.unconstrain(self.transformer.constrain(case)),
+                msg=f"{case}",
             )
 
 

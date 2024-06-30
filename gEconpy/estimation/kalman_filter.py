@@ -1,14 +1,9 @@
-from typing import Tuple
-
 import numpy as np
 from numba import njit
 from numpy.typing import ArrayLike
 from scipy import linalg
 
-from gEconpy.numba_tools.overloads import (  # pylint: disable=unused-import
-    solve_discrete_lyapunov_impl,
-    solve_triangular_impl,
-)
+from gEconpy.numba_tools.overloads import solve_triangular_impl  #  noqa
 
 MVN_CONST = np.log(2.0 * np.pi)
 EPS = 1e-12
@@ -52,7 +47,7 @@ def standard_kalman_filter(
     Q: ArrayLike,
     a0: ArrayLike,
     P0: ArrayLike,
-) -> Tuple:
+) -> tuple:
     """
     Parameters
     ----------
@@ -88,7 +83,9 @@ def standard_kalman_filter(
     predicted_cov[0] = P
 
     for i in range(n_steps):
-        a_filtered, a_hat, P_filtered, P_hat, ll = kalman_step(data[i].copy(), a, P, T, Z, R, H, Q)
+        a_filtered, a_hat, P_filtered, P_hat, ll = kalman_step(
+            data[i].copy(), a, P, T, Z, R, H, Q
+        )
 
         filtered_states[i] = a_filtered[:, 0]
         predicted_states[i + 1] = a_hat[:, 0]
@@ -159,7 +156,10 @@ def filter_step(y, Z, H, a, P):
         F_chol, linalg.solve_triangular(F_chol, v, lower=True), lower=True, trans=1
     )
     n = y.shape[0]
-    ll = -0.5 * (n * MVN_CONST + (v.T @ inner_term).ravel()) - np.log(np.diag(F_chol)).sum()
+    ll = (
+        -0.5 * (n * MVN_CONST + (v.T @ inner_term).ravel())
+        - np.log(np.diag(F_chol)).sum()
+    )
 
     return a_filtered, P_filtered, ll
 
@@ -184,7 +184,7 @@ def univariate_kalman_filter(
     Q: ArrayLike,
     a0: ArrayLike,
     P0: ArrayLike,
-) -> Tuple:
+) -> tuple:
     n_steps, k_obs = data.shape
     k_states, k_posdef = R.shape
 
@@ -234,7 +234,9 @@ def univariate_kalman_step(y, a, P, T, Z, R, H, Q):
     y_masked = y.copy()
     y_masked[nan_mask] = 0.0
 
-    a_filtered, P_filtered, ll = univariate_filter_step(y_masked, Z_masked, H_masked, a, P)
+    a_filtered, P_filtered, ll = univariate_filter_step(
+        y_masked, Z_masked, H_masked, a, P
+    )
 
     a_hat, P_hat = predict(a=a_filtered, P=P_filtered, T=T, R=R, Q=Q)
 
@@ -303,7 +305,9 @@ def make_initial_conditions(T, R, Q, a0, P0):
 @njit
 def kalman_filter(data, T, Z, R, H, Q, a0=None, P0=None, filter_type="standard"):
     if filter_type not in ["standard", "univariate"]:
-        raise NotImplementedError('Only "standard" and "univariate" kalman filters are implemented')
+        raise NotImplementedError(
+            'Only "standard" and "univariate" kalman filters are implemented'
+        )
 
     a0, P0 = make_initial_conditions(T, R, Q, a0, P0)
 

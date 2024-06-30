@@ -1,5 +1,4 @@
 import re
-from typing import Dict, Tuple
 
 from gEconpy.exceptions.exceptions import (
     DistributionParsingError,
@@ -97,7 +96,7 @@ def remove_comments(text: str) -> str:
     return "\n".join(output)
 
 
-def extract_distributions(text: str) -> Tuple[str, Dict[str, str]]:
+def extract_distributions(text: str) -> tuple[str, dict[str, str]]:
     """
     Extract prior distributions from a GCN model file and return the "clean" model file and a dictionary of the form
     parameter:distribution.
@@ -131,7 +130,6 @@ def extract_distributions(text: str) -> Tuple[str, Dict[str, str]]:
 
             # This is a shock definition, there won't be an "=" after the distribution
             if "[]" in param_name:
-
                 dist_info = other.strip().replace(";", "")
                 new_line = param_name.strip() + ";"
 

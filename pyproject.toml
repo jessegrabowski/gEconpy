@@ -6,16 +6,8 @@ filterwarnings = [
     "ignore::DeprecationWarning"]
 env = ["NUMBA_DISABLE_JIT = 1"]
 
-[tool.isort]
-profile = 'black'
-
-[tool.black]
-line-length = 100
-
-[tool.nbqa.mutate]
-isort = 1
-black = 1
-pyupgrade = 1
+[tool.ruff.lint]
+ignore = ["E741"]
 
 [tool.bumpver]
 current_version = "1.2.1"

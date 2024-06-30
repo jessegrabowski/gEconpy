@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
 
 import numba as nb
 import numpy as np
@@ -44,7 +44,9 @@ def numba_lambdify_scalar(inputs, expr, sig):
     return locals()["f"]
 
 
-def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = None) -> List:
+def extract_sparse_data_from_model(
+    model, params_to_estimate: list | None = None
+) -> list:
     """
     Extract sparse data from a DSGE model.
 
@@ -120,7 +122,7 @@ def extract_sparse_data_from_model(model, params_to_estimate: Optional[List] = N
 
 # @nb.njit
 def matrix_from_csr_data(
-    data: np.ndarray, indices: np.ndarray, idxptrs: np.ndarray, shape: Tuple[int, int]
+    data: np.ndarray, indices: np.ndarray, idxptrs: np.ndarray, shape: tuple[int, int]
 ) -> np.ndarray:
     """
     Convert a CSR matrix into a dense numpy array.
@@ -155,10 +157,10 @@ def matrix_from_csr_data(
 
 
 def build_system_matrices(
-    param_dict: Dict[str, float],
-    sparse_datas: List[Tuple[Callable, np.ndarray, np.ndarray, Tuple[int, int]]],
-    vars_to_estimate: Optional[List[str]] = None,
-) -> List[np.ndarray]:
+    param_dict: dict[str, float],
+    sparse_datas: list[tuple[Callable, np.ndarray, np.ndarray, tuple[int, int]]],
+    vars_to_estimate: list[str] | None = None,
+) -> list[np.ndarray]:
     """
     Build system matrices for a DSGE model.
 
@@ -190,7 +192,9 @@ def build_system_matrices(
 
     result = []
     if vars_to_estimate:
-        params_to_use = {k: v for k, v in param_dict.to_string().items() if k in vars_to_estimate}
+        params_to_use = {
+            k: v for k, v in param_dict.to_string().items() if k in vars_to_estimate
+        }
     else:
         params_to_use = param_dict.to_string()
 
@@ -236,7 +240,9 @@ def compute_eigenvalues(A, B, C, tol=1e-8):
 
     eqs_and_leads_idx = np.hstack((np.arange(n_vars), lead_var_idx + n_vars))
 
-    Gamma_0 = np.vstack((np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq))))))
+    Gamma_0 = np.vstack(
+        (np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq)))))
+    )
 
     Gamma_1 = np.vstack(
         (
@@ -247,7 +253,9 @@ def compute_eigenvalues(A, B, C, tol=1e-8):
     Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
     Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
 
-    A, B, alpha, beta, Q, Z = linalg.ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
+    A, B, alpha, beta, Q, Z = linalg.ordqz(
+        -Gamma_0, Gamma_1, sort="ouc", output="complex"
+    )
 
     gev = np.vstack((np.diag(A), np.diag(B))).T
 

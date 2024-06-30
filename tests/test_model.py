@@ -16,7 +16,6 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import GensysFailedException
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.sampling import (
-    kalman_filter_from_posterior,
     simulate_trajectories_from_posterior,
 )
 from gEconpy.shared.utilities import string_keys_to_sympy
@@ -66,16 +65,18 @@ class ModelErrorTests(unittest.TestCase):
         expected_warnings = [
             "Simplification via try_reduce was requested but not possible because the system is not well defined.",
             "Removal of constant variables was requested but not possible because the system is not well defined.",
-            f"The model does not appear correctly specified, there are 8 equations but "
-            f"11 variables. It will not be possible to solve this model. Please check the "
-            f"specification using available diagnostic tools, and check the GCN file for typos.",
+            "The model does not appear correctly specified, there are 8 equations but "
+            "11 variables. It will not be possible to solve this model. Please check the "
+            "specification using available diagnostic tools, and check the GCN file for typos.",
         ]
 
         with unittest.mock.patch(
-            "builtins.open", new=unittest.mock.mock_open(read_data=self.GCN_file), create=True
+            "builtins.open",
+            new=unittest.mock.mock_open(read_data=self.GCN_file),
+            create=True,
         ):
             with self.assertWarns(UserWarning) as warnings:
-                model = gEconModel(
+                gEconModel(
                     "", verbose=False, simplify_tryreduce=True, simplify_constants=True
                 )
 
@@ -123,7 +124,9 @@ class ModelErrorTests(unittest.TestCase):
         file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
         model = gEconModel(file_path, verbose=False)
         model.steady_state(verbose=False, model_is_linear=True)
-        model.solve_model(solver="gensys", on_failure="ignore", model_is_linear=True, verbose=True)
+        model.solve_model(
+            solver="gensys", on_failure="ignore", model_is_linear=True, verbose=True
+        )
 
         gensys_message = mock_print.call_args.args[0]
         self.assertEqual(gensys_message, "Solution exists, but is not unique.")
@@ -150,7 +153,7 @@ class ModelErrorTests(unittest.TestCase):
         model.solve_model(solver="gensys", verbose=False)
 
         with self.assertWarns(UserWarning):
-            Sigma = model.compute_stationary_covariance_matrix()
+            model.compute_stationary_covariance_matrix()
 
     def test_sample_priors_fails_without_priors(self):
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
@@ -197,19 +200,24 @@ class ModelErrorTests(unittest.TestCase):
                     """
 
         with unittest.mock.patch(
-            "builtins.open", new=unittest.mock.mock_open(read_data=GCN_file), create=True
+            "builtins.open",
+            new=unittest.mock.mock_open(read_data=GCN_file),
+            create=True,
         ):
             with self.assertRaises(ValueError) as error:
-                model = gEconModel(
-                    "", verbose=False, simplify_tryreduce=False, simplify_constants=False
+                gEconModel(
+                    "",
+                    verbose=False,
+                    simplify_tryreduce=False,
+                    simplify_constants=False,
                 )
             msg = str(error.exception)
 
         self.assertEqual(
             msg,
             "The following parameters were found among model equations, but were not found among "
-            f"defined defined or calibrated parameters: beta.\n Verify that these "
-            f"parameters have been defined in a calibration block somewhere in your GCN file.",
+            "defined defined or calibrated parameters: beta.\n Verify that these "
+            "parameters have been defined in a calibration block somewhere in your GCN file.",
         )
 
 
@@ -248,7 +256,9 @@ class ModelClassTestsOne(unittest.TestCase):
         self.assertEqual(simple_output.strip(), simple_report.strip())
 
     def test_model_options(self):
-        self.assertEqual(self.model.options, {"output logfile": False, "output LaTeX": False})
+        self.assertEqual(
+            self.model.options, {"output logfile": False, "output LaTeX": False}
+        )
 
     def test_reduce_vars_saved(self):
         self.assertEqual(
@@ -274,7 +284,12 @@ class ModelClassTestsOne(unittest.TestCase):
             True,
         )
         self.assertEqual(
-            all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]),
+            all(
+                [
+                    self.model.free_param_dict[x] == param_dict[x]
+                    for x in param_dict.keys()
+                ]
+            ),
             True,
         )
         self.assertEqual(
@@ -285,7 +300,8 @@ class ModelClassTestsOne(unittest.TestCase):
     def test_conflicting_assumptions_are_removed(self):
         with self.assertWarns(UserWarning):
             model = gEconModel(
-                os.path.join(ROOT, "Test GCNs/conflicting_assumptions.gcn"), verbose=False
+                os.path.join(ROOT, "Test GCNs/conflicting_assumptions.gcn"),
+                verbose=False,
             )
 
         self.assertTrue("real" not in model.assumptions["TC"].keys())
@@ -338,7 +354,8 @@ class ModelClassTestsOne(unittest.TestCase):
 
         A, _, _, _ = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
@@ -349,8 +366,10 @@ class ModelClassTestsOne(unittest.TestCase):
             _,
         ) = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(
-            A, self.model.T.values, self.model.R.values, variables, 1e-7
+        gEcon_matrices = (
+            self.model.perturbation_solver.statespace_to_gEcon_representation(
+                A, self.model.T.values, self.model.R.values, variables, 1e-7
+            )
         )
         model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
 
@@ -398,7 +417,8 @@ class ModelClassTestsOne(unittest.TestCase):
 
         A, _, _, _ = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
@@ -409,8 +429,10 @@ class ModelClassTestsOne(unittest.TestCase):
             _,
         ) = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(
-            A, self.model.T.values, self.model.R.values, variables, 1e-7
+        gEcon_matrices = (
+            self.model.perturbation_solver.statespace_to_gEcon_representation(
+                A, self.model.T.values, self.model.R.values, variables, 1e-7
+            )
         )
         model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
 
@@ -431,10 +453,18 @@ class ModelClassTestsOne(unittest.TestCase):
         Tc, Rc = self.model.T, self.model.R
 
         assert_allclose(
-            Tg.round(5).values, Tc.round(5).values, rtol=1e-5, equal_nan=True, err_msg="T"
+            Tg.round(5).values,
+            Tc.round(5).values,
+            rtol=1e-5,
+            equal_nan=True,
+            err_msg="T",
         )
         assert_allclose(
-            Rg.round(5).values, Rc.round(5).values, rtol=1e-5, equal_nan=True, err_msg="R"
+            Rg.round(5).values,
+            Rc.round(5).values,
+            rtol=1e-5,
+            equal_nan=True,
+            err_msg="R",
         )
 
     def test_blanchard_kahn_conditions(self):
@@ -463,7 +493,9 @@ class ModelClassTestsOne(unittest.TestCase):
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 
-        Sigma = self.model.compute_stationary_covariance_matrix(shock_dict={"epsilon_A": 0.01})
+        Sigma = self.model.compute_stationary_covariance_matrix(
+            shock_dict={"epsilon_A": 0.01}
+        )
         self.assertTrue(isinstance(Sigma, pd.DataFrame))
         self.assertTrue(all([x == self.model.n_variables for x in Sigma.shape]))
 
@@ -501,7 +533,12 @@ class ModelClassTestsTwo(unittest.TestCase):
         }
 
         self.assertEqual(
-            all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]),
+            all(
+                [
+                    self.model.free_param_dict[x] == param_dict[x]
+                    for x in param_dict.keys()
+                ]
+            ),
             True,
         )
         self.assertEqual(self.model.params_to_calibrate, [])
@@ -549,7 +586,8 @@ class ModelClassTestsTwo(unittest.TestCase):
 
         A, _, _, _ = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
@@ -560,8 +598,10 @@ class ModelClassTestsTwo(unittest.TestCase):
             _,
         ) = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(
-            A, self.model.T.values, self.model.R.values, variables, 1e-7
+        gEcon_matrices = (
+            self.model.perturbation_solver.statespace_to_gEcon_representation(
+                A, self.model.T.values, self.model.R.values, variables, 1e-7
+            )
         )
         model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
 
@@ -612,7 +652,8 @@ class ModelClassTestsTwo(unittest.TestCase):
 
         A, _, _, _ = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
@@ -623,8 +664,10 @@ class ModelClassTestsTwo(unittest.TestCase):
             _,
         ) = self.model.perturbation_solver.make_all_variable_time_combinations()
 
-        gEcon_matrices = self.model.perturbation_solver.statespace_to_gEcon_representation(
-            A, self.model.T.values, self.model.R.values, variables, 1e-7
+        gEcon_matrices = (
+            self.model.perturbation_solver.statespace_to_gEcon_representation(
+                A, self.model.T.values, self.model.R.values, variables, 1e-7
+            )
         )
         model_P, model_Q, model_R, model_S, *_ = gEcon_matrices
 
@@ -645,10 +688,18 @@ class ModelClassTestsTwo(unittest.TestCase):
         Tc, Rc = self.model.T, self.model.R
 
         assert_allclose(
-            Tg.round(5).values, Tc.round(5).values, rtol=1e-5, equal_nan=True, err_msg="T"
+            Tg.round(5).values,
+            Tc.round(5).values,
+            rtol=1e-5,
+            equal_nan=True,
+            err_msg="T",
         )
         assert_allclose(
-            Rg.round(5).values, Rc.round(5).values, rtol=1e-5, equal_nan=True, err_msg="R"
+            Rg.round(5).values,
+            Rc.round(5).values,
+            rtol=1e-5,
+            equal_nan=True,
+            err_msg="R",
         )
 
 
@@ -674,7 +725,7 @@ class ModelClassTestsThree(unittest.TestCase):
             self.model.try_reduce_vars,
             [
                 "Div[]",
-                "TC[]"
+                "TC[]",
                 # TimeAwareSymbol("Div", 0, **self.model.assumptions["DIV"]),
                 # TimeAwareSymbol("TC", 0, **self.model.assumptions["TC"]),
             ],
@@ -697,7 +748,15 @@ class ModelClassTestsThree(unittest.TestCase):
         result = [block_name for block_name in self.model.blocks.keys()]
         self.assertEqual(result, block_names)
 
-        (rho_technology, gamma_R, gamma_pi, gamma_Y, phi_pi_obj, phi_pi, rho_pi_dot,) = sp.symbols(
+        (
+            rho_technology,
+            gamma_R,
+            gamma_pi,
+            gamma_Y,
+            phi_pi_obj,
+            phi_pi,
+            rho_pi_dot,
+        ) = sp.symbols(
             [
                 "rho_technology",
                 "gamma_R",
@@ -735,7 +794,12 @@ class ModelClassTestsThree(unittest.TestCase):
             True,
         )
         self.assertEqual(
-            all([self.model.free_param_dict[x] == param_dict[x] for x in param_dict.keys()]),
+            all(
+                [
+                    self.model.free_param_dict[x] == param_dict[x]
+                    for x in param_dict.keys()
+                ]
+            ),
             True,
         )
         self.assertEqual(self.model.params_to_calibrate, [phi_pi, phi_pi_obj])
@@ -751,8 +815,12 @@ class ModelClassTestsThree(unittest.TestCase):
         self.model.solve_model(solver="cycle_reduction", verbose=False)
         Tc, Rc = self.model.T, self.model.R
 
-        assert_allclose(Tg.values, Tc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="T")
-        assert_allclose(Rg.values, Rc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="R")
+        assert_allclose(
+            Tg.values, Tc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="T"
+        )
+        assert_allclose(
+            Rg.values, Rc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="R"
+        )
 
     # def test_solve_model(self):
     #     self.model.steady_state(verbose=False)
@@ -894,7 +962,11 @@ class TestLinearModel(unittest.TestCase):
             self.model.T[["A", "K"]].values, T_dynare, rtol=1e-5, atol=1e-5, err_msg="T"
         )
         assert_allclose(
-            self.model.R.values, R_dynare.reshape(-1, 1), rtol=1e-5, atol=1e-5, err_msg="R"
+            self.model.R.values,
+            R_dynare.reshape(-1, 1),
+            rtol=1e-5,
+            atol=1e-5,
+            err_msg="R",
         )
 
     def test_solvers_agree(self):
@@ -905,24 +977,36 @@ class TestLinearModel(unittest.TestCase):
 
         self.setUp()
         self.model.steady_state(verbose=False, model_is_linear=True)
-        self.model.solve_model(solver="cycle_reduction", verbose=False, model_is_linear=True)
+        self.model.solve_model(
+            solver="cycle_reduction", verbose=False, model_is_linear=True
+        )
         Tc, Rc = self.model.T, self.model.R
 
-        assert_allclose(Tg.values, Tc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="T")
-        assert_allclose(Rg.values, Rc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="R")
+        assert_allclose(
+            Tg.values, Tc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="T"
+        )
+        assert_allclose(
+            Rg.values, Rc.values, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg="R"
+        )
 
 
 class TestModelSimulationTools(unittest.TestCase):
     def setUp(self):
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
+        file_path = os.path.join(
+            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
+        )
         self.model = gEconModel(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 
     def test_sample_param_dicts(self):
-        param_dict, shock_dict, obs_dict = self.model.sample_param_dict_from_prior(n_samples=100)
+        param_dict, shock_dict, obs_dict = self.model.sample_param_dict_from_prior(
+            n_samples=100
+        )
 
-        self.assertTrue(all([x in self.model.free_param_dict for x in param_dict.to_string()]))
+        self.assertTrue(
+            all([x in self.model.free_param_dict for x in param_dict.to_string()])
+        )
         self.assertTrue(len(param_dict) == 3)
 
         self.assertTrue(all([x.name in shock_dict for x in self.model.shocks]))
@@ -948,7 +1032,7 @@ class TestModelSimulationTools(unittest.TestCase):
         self.model.hyper_priors = SymbolDictionary()
         self.model.shock_priors = SymbolDictionary()
         with self.assertWarns(UserWarning):
-            data = self.model.simulate(
+            self.model.simulate(
                 simulation_length=simulation_length, n_simulations=n_simulations
             )
 
@@ -957,7 +1041,9 @@ class TestModelSimulationTools(unittest.TestCase):
         n_simulations = 1
         Q = np.array([[0.01]])
         data = self.model.simulate(
-            simulation_length=simulation_length, n_simulations=n_simulations, shock_cov_matrix=Q
+            simulation_length=simulation_length,
+            n_simulations=n_simulations,
+            shock_cov_matrix=Q,
         )
 
         self.assertTrue(isinstance(data, pd.DataFrame))
@@ -969,7 +1055,9 @@ class TestModelSimulationTools(unittest.TestCase):
         n_simulations = 1
         shock_dict = {"epsilon_A": 0.1}
         data = self.model.simulate(
-            simulation_length=simulation_length, n_simulations=n_simulations, shock_dict=shock_dict
+            simulation_length=simulation_length,
+            n_simulations=n_simulations,
+            shock_dict=shock_dict,
         )
 
         self.assertTrue(isinstance(data, pd.DataFrame))
@@ -1018,7 +1106,7 @@ class TestModelSimulationTools(unittest.TestCase):
         data = data.droplevel(axis=1, level=1).T[["C", "K"]]
 
         with self.assertRaises(ValueError):
-            idata = self.model.fit(
+            self.model.fit(
                 data,
                 filter_type="univariate",
                 draws=36,

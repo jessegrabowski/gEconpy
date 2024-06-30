@@ -1,5 +1,5 @@
 import re
-from typing import Callable, List, Optional, Union
+from collections.abc import Callable
 
 import numba as nb
 import numpy as np
@@ -110,10 +110,10 @@ def _ouc(alpha, beta):
 
 
 def numba_lambdify(
-    exog_vars: List[sp.Symbol],
-    expr: Union[List[sp.Expr], sp.Matrix, List[sp.Matrix]],
-    endog_vars: Optional[List[sp.Symbol]] = None,
-    func_signature: Optional[str] = None,
+    exog_vars: list[sp.Symbol],
+    expr: list[sp.Expr] | sp.Matrix | list[sp.Matrix],
+    endog_vars: list[sp.Symbol] | None = None,
+    func_signature: str | None = None,
 ) -> Callable:
     """
     Convert a sympy expression into a Numba-compiled function.  Unlike sp.lambdify, the resulting function can be

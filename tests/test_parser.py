@@ -135,7 +135,7 @@ class ParserTestCases(unittest.TestCase):
         with open(os.path.join(ROOT, "Test Answer Strings/test_parse_gcn.txt")) as file:
             expected_result = file.read()
 
-        self.assertEqual(parser_output, expected_result)
+        self.assertEqual(parser_output.strip(), expected_result.strip())
 
     def test_block_extraction(self):
         test_file = """options
@@ -186,16 +186,22 @@ class ParserTestCases(unittest.TestCase):
         self.assertEqual(result.strip(), "tryreduce { Div[], TC[] ; };")
 
         result = parse_plaintext.delete_block(parser_output, "tryreduce")
-        with open(os.path.join(ROOT, "Test Answer Strings/test_block_deletion.txt")) as file:
+        with open(
+            os.path.join(ROOT, "Test Answer Strings/test_block_deletion.txt")
+        ) as file:
             expected_result = file.read()
 
-        self.assertEqual(result.strip(), expected_result)
+        self.assertEqual(result.strip(), expected_result.strip())
 
     def test_split_gcn_by_blocks(self):
-        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"))
+        test_file = file_loaders.load_gcn(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+        )
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
 
-        with open(os.path.join(ROOT, "Test Answer Strings/test_split_gcn_by_blocks.txt")) as file:
+        with open(
+            os.path.join(ROOT, "Test Answer Strings/test_split_gcn_by_blocks.txt")
+        ) as file:
             expected_result = file.read()
 
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
@@ -209,20 +215,24 @@ class ParserTestCases(unittest.TestCase):
         self.assertIs(block_dict["tryreduce"], None)
         self.assertTrue(isinstance(block_dict["assumptions"], defaultdict))
 
-        self.assertEqual(block_dict["HOUSEHOLD"].strip(), expected_result)
+        self.assertEqual(block_dict["HOUSEHOLD"].strip(), expected_result.strip())
 
     def test_equation_rebuilding(self):
-        test_eq = (
-            "{Y[] = C[] + I[] + G[]; A[] ^ ( ( alpha + 1 ) / alpha ) - B[] / C[] * exp ( L[] ); };"
-        )
+        test_eq = "{Y[] = C[] + I[] + G[]; A[] ^ ( ( alpha + 1 ) / alpha ) - B[] / C[] * exp ( L[] ); };"
 
         parser_output, _ = gEcon_parser.preprocess_gcn(test_eq)
-        parsed_block = pyparsing.nestedExpr("{", "};").parseString(parser_output).asList()[0]
+        parsed_block = (
+            pyparsing.nestedExpr("{", "};").parseString(parser_output).asList()[0]
+        )
         eqs = gEcon_parser.rebuild_eqs_from_parser_output(parsed_block)
 
         self.assertEqual(len(eqs), 2)
-        self.assertEqual(" ".join(eqs[0]).strip(), test_eq.split(";")[0].replace("{", "").strip())
-        self.assertEqual(" ".join(eqs[1]).strip(), test_eq.split(";")[1].replace("};", "").strip())
+        self.assertEqual(
+            " ".join(eqs[0]).strip(), test_eq.split(";")[0].replace("{", "").strip()
+        )
+        self.assertEqual(
+            " ".join(eqs[1]).strip(), test_eq.split(";")[1].replace("};", "").strip()
+        )
 
     def test_parse_block_to_dict(self):
         test_eq = "{definitions { u[] = log ( C[] ) + log ( L[] ) ; };"
@@ -239,7 +249,9 @@ class ParserTestCases(unittest.TestCase):
             [["U[]", "=", "u[]", "+", "beta", "*", "E[]", "[", "U[1]", "]"]],
         )
 
-        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"))
+        test_file = file_loaders.load_gcn(
+            os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
+        )
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         household = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
@@ -372,7 +384,9 @@ class ParserTestCases(unittest.TestCase):
             result = [x for x in result.atoms() if isinstance(x, sp.Symbol)][0]
             self.assertEqual(result, expected_result)
 
-        eq_test = sp.Eq(x_t + x_t1 - x_tL1 * x_10t**x_tL10, x_ss - long_name_t / name_with_num)
+        eq_test = sp.Eq(
+            x_t + x_t1 - x_tL1 * x_10t**x_tL10, x_ss - long_name_t / name_with_num
+        )
         eq_answer = sp.Eq(
             answers[0] + answers[1] - answers[2] * answers[3] ** answers[4],
             answers[5] - answers[6] / answers[7],
@@ -543,7 +557,8 @@ class ParserTestCases(unittest.TestCase):
             ),
             sp.Eq(
                 sp.Symbol("alpha"),
-                TimeAwareSymbol("L", 0).to_ss() / TimeAwareSymbol("K", 0).to_ss() - 0.36,
+                TimeAwareSymbol("L", 0).to_ss() / TimeAwareSymbol("K", 0).to_ss()
+                - 0.36,
             ),
         ]
 
@@ -557,7 +572,9 @@ class ParserTestCases(unittest.TestCase):
             eq2 = answers[i]
 
             self.assertEqual(((eq1.lhs - eq1.rhs) - (eq2.lhs - eq2.rhs)).simplify(), 0)
-            self.assertTrue(not flags[0]["is_calibrating"] if i < 2 else flags[0]["is_calibrating"])
+            self.assertTrue(
+                not flags[0]["is_calibrating"] if i < 2 else flags[0]["is_calibrating"]
+            )
 
     def test_composite_distribution(self):
         sigma_epsilon = invgamma(a=20)
@@ -572,7 +589,9 @@ class ParserTestCases(unittest.TestCase):
         point_dict = {"loc": 0.1, "scale": 1, "epsilon": 1}
         self.assertEqual(
             d.logpdf(point_dict),
-            mu_epsilon.logpdf(0.1) + sigma_epsilon.logpdf(1) + norm(loc=0.1, scale=1).logpdf(1),
+            mu_epsilon.logpdf(0.1)
+            + sigma_epsilon.logpdf(1)
+            + norm(loc=0.1, scale=1).logpdf(1),
         )
 
     def test_shock_block_with_multiple_distributions(self):

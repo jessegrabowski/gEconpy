@@ -66,7 +66,7 @@ class TestPlotSimulation(unittest.TestCase):
 
     def test_var_not_found_raises(self):
         with self.assertRaises(ValueError) as error:
-            fig = plot_simulation(self.data, vars_to_plot=["Y", "C", "Invalid"])
+            plot_simulation(self.data, vars_to_plot=["Y", "C", "Invalid"])
         error_msg = error.exception
         self.assertEqual(str(error_msg), "Invalid not found among model variables.")
 
@@ -96,7 +96,9 @@ class TestIRFPlot(unittest.TestCase):
         cls.model = gEconModel(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
-        cls.irf = cls.model.impulse_response_function(simulation_length=100, shock_size=0.1)
+        cls.irf = cls.model.impulse_response_function(
+            simulation_length=100, shock_size=0.1
+        )
 
     def test_plot_irf_defaults(self):
         fig = plot_irf(self.irf)
@@ -125,23 +127,30 @@ class TestIRFPlot(unittest.TestCase):
 
     def test_var_not_found_raises(self):
         with self.assertRaises(ValueError) as error:
-            fig = plot_irf(self.irf, vars_to_plot=["Y", "C", "Invalid"])
+            plot_irf(self.irf, vars_to_plot=["Y", "C", "Invalid"])
         error_msg = error.exception
-        self.assertEqual(str(error_msg), "Invalid not found among simulated impulse responses.")
+        self.assertEqual(
+            str(error_msg), "Invalid not found among simulated impulse responses."
+        )
         plt.close()
 
     def test_shock_not_found_raises(self):
         with self.assertRaises(ValueError) as error:
-            fig = plot_irf(
-                self.irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y", "Invalid"]
+            plot_irf(
+                self.irf,
+                vars_to_plot=["Y", "C"],
+                shocks_to_plot=["epsilon_Y", "Invalid"],
             )
         error_msg = error.exception
         self.assertEqual(
-            str(error_msg), "Invalid not found among shocks used in impulse response data."
+            str(error_msg),
+            "Invalid not found among shocks used in impulse response data.",
         )
 
     def test_legend(self):
-        fig = plot_irf(self.irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y"], legend=True)
+        fig = plot_irf(
+            self.irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y"], legend=True
+        )
         self.assertIsNotNone(fig.axes[0].get_legend())
         self.assertIsNone(fig.axes[1].get_legend())
         plt.close()
@@ -150,7 +159,9 @@ class TestIRFPlot(unittest.TestCase):
 class TestPriorSolvabilityPlot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
+        file_path = os.path.join(
+            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
+        )
         cls.model = gEconModel(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
@@ -265,7 +276,9 @@ class TestPlotACF(unittest.TestCase):
         cls.model = gEconModel(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
-        cls.acf = cls.model.compute_autocorrelation_matrix(shock_cov_matrix=np.eye(1) * 0.01)
+        cls.acf = cls.model.compute_autocorrelation_matrix(
+            shock_cov_matrix=np.eye(1) * 0.01
+        )
 
     def test_plot_with_defaults(self):
         fig = plot_acf(self.acf)
@@ -279,17 +292,20 @@ class TestPlotACF(unittest.TestCase):
 
     def test_invalid_var_raises(self):
         with self.assertRaises(ValueError) as error:
-            fig = plot_acf(self.acf, vars_to_plot=["K", "C", "Invalid"])
+            plot_acf(self.acf, vars_to_plot=["K", "C", "Invalid"])
         msg = str(error.exception)
         self.assertEqual(
-            msg, "Can not plot variable Invalid, it was not found in the provided covariance matrix"
+            msg,
+            "Can not plot variable Invalid, it was not found in the provided covariance matrix",
         )
 
 
 class TestPostEstimationPlots(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
+        file_path = os.path.join(
+            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
+        )
         cls.model = gEconModel(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
@@ -319,21 +335,27 @@ class TestPostEstimationPlots(unittest.TestCase):
             self.model, self.data, posterior, n_samples=10
         )
 
-        fig = plot_kalman_filter(conditional_posterior, self.data, kalman_output="predicted")
+        fig = plot_kalman_filter(
+            conditional_posterior, self.data, kalman_output="predicted"
+        )
         self.assertIsNotNone(fig)
         plt.close()
 
-        fig = plot_kalman_filter(conditional_posterior, self.data, kalman_output="filtered")
+        fig = plot_kalman_filter(
+            conditional_posterior, self.data, kalman_output="filtered"
+        )
         self.assertIsNotNone(fig)
         plt.close()
 
-        fig = plot_kalman_filter(conditional_posterior, self.data, kalman_output="smoothed")
+        fig = plot_kalman_filter(
+            conditional_posterior, self.data, kalman_output="smoothed"
+        )
         self.assertIsNotNone(fig)
         plt.close()
 
     def test_plot_kalman_raises_on_invalid_args(self):
         with self.assertRaises(ValueError):
-            fig = plot_kalman_filter(self.idata, self.data, kalman_output="invalid")
+            plot_kalman_filter(self.idata, self.data, kalman_output="invalid")
 
 
 if __name__ == "__main__":

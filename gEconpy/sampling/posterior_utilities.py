@@ -17,12 +17,15 @@ def simulate_trajectories_from_posterior(
     model_var_names = [x.base_name for x in model.variables]
     shock_names = [x.base_name for x in model.shocks]
 
-    random_idx = np.random.choice(posterior.dims["sample"], replace=False, size=n_samples)
+    random_idx = np.random.choice(
+        posterior.coords["sample"], replace=False, size=n_samples
+    )
     progress_bar = ProgressBar(n_samples, "Sampling")
     for i, idx in enumerate(random_idx):
+        index = dict(zip(["chain", "draw"], idx))
         param_dict = {
             k: v["data"]
-            for k, v in posterior.sel(sample=posterior.sample[idx]).to_dict()["data_vars"].items()
+            for k, v in posterior.sel(**index).to_dict()["data_vars"].items()
         }
         free_param_dict, shock_dict, obs_dict = split_random_variables(
             param_dict, shock_names, model_var_names
@@ -59,7 +62,9 @@ def simulate_trajectories_from_posterior(
     return simulations
 
 
-def kalman_filter_from_posterior(model, data, posterior, n_samples=1000, filter_type="univariate"):
+def kalman_filter_from_posterior(
+    model, data, posterior, n_samples=1000, filter_type="univariate"
+):
     observed_vars = data.columns.tolist()
     model_var_names = [x.base_name for x in model.variables]
     shock_names = [x.base_name for x in model.shocks]
@@ -68,12 +73,15 @@ def kalman_filter_from_posterior(model, data, posterior, n_samples=1000, filter_
     model_var_names = [x.base_name for x in model.variables]
     shock_names = [x.base_name for x in model.shocks]
 
-    random_idx = np.random.choice(posterior.dims["sample"], replace=False, size=n_samples)
+    random_idx = np.random.choice(
+        posterior.coords["sample"], replace=False, size=n_samples
+    )
     progress_bar = ProgressBar(n_samples, "Sampling")
     for idx in random_idx:
+        index = dict(zip(["chain", "draw"], idx))
         all_param_dict = {
             k: v["data"]
-            for k, v in posterior.sel(sample=posterior.sample[idx]).to_dict()["data_vars"].items()
+            for k, v in posterior.sel(**index).to_dict()["data_vars"].items()
         }
 
         param_dict, a0_dict, P0_dict = split_param_dict(all_param_dict)
@@ -94,7 +102,11 @@ def kalman_filter_from_posterior(model, data, posterior, n_samples=1000, filter_
         Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, noise_dict)
 
         a0 = np.array(list(a0_dict.values()))[:, None] if len(a0_dict) > 0 else None
-        P0 = np.eye(len(P0_dict)) * np.array(list(P0_dict.keys())) if len(P0_dict) > 0 else None
+        P0 = (
+            np.eye(len(P0_dict)) * np.array(list(P0_dict.keys()))
+            if len(P0_dict) > 0
+            else None
+        )
 
         filter_results = kalman_filter(
             np.ascontiguousarray(data.values),
@@ -109,7 +121,9 @@ def kalman_filter_from_posterior(model, data, posterior, n_samples=1000, filter_
         )
         filtered_states, _, filtered_covariances, *_ = filter_results
 
-        smoother_results = kalman_smoother(T, R, Q, filtered_states, filtered_covariances)
+        smoother_results = kalman_smoother(
+            T, R, Q, filtered_states, filtered_covariances
+        )
         results.append(list(filter_results) + list(smoother_results))
 
         progress_bar.stop()

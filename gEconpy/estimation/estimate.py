@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -15,8 +15,8 @@ from gEconpy.solvers.cycle_reduction import cycle_reduction, solve_shock_matrix
 
 
 def build_and_solve(
-    param_dict: dict, sparse_datas: List, vars_to_estimate: Optional[List] = None
-) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
+    param_dict: dict, sparse_datas: list, vars_to_estimate: list | None = None
+) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
     """
     A collection of functionality already in the gEcon model object, extracted for speed and memory optimizations
     when doing parallel fitting. Specifically, this function avoids the need of passing around the (potentially large)
@@ -47,7 +47,9 @@ def build_and_solve(
     TODO: njit this function by figuring out how to get rid of the sympy lambdify functions inside sparse_datas
     """
 
-    res = build_system_matrices(param_dict, sparse_datas, vars_to_estimate=vars_to_estimate)
+    res = build_system_matrices(
+        param_dict, sparse_datas, vars_to_estimate=vars_to_estimate
+    )
     A, B, C, D = res
 
     if not all([check_finite_matrix(x) for x in res]):
@@ -67,7 +69,9 @@ def build_and_solve(
         success = False
         return T, R, success
 
-    success = (result == "Optimization successful") & (log_norm < 1e-8) & bk_condition_met
+    success = (
+        (result == "Optimization successful") & (log_norm < 1e-8) & bk_condition_met
+    )
 
     T = np.ascontiguousarray(T)
     R = np.ascontiguousarray(R)
@@ -75,7 +79,7 @@ def build_and_solve(
     return T, R, success
 
 
-def build_Z_matrix(obs_variables: List[str], state_variables: List[str]) -> np.ndarray:
+def build_Z_matrix(obs_variables: list[str], state_variables: list[str]) -> np.ndarray:
     """Constructs the design matrix Z for a state-space system.
 
     Parameters
@@ -91,16 +95,18 @@ def build_Z_matrix(obs_variables: List[str], state_variables: List[str]) -> np.n
         The design matrix Z.
     """
 
-    Z = np.array([[x == var for x in state_variables] for var in obs_variables], dtype="float64")
+    Z = np.array(
+        [[x == var for x in state_variables] for var in obs_variables], dtype="float64"
+    )
     return Z
 
 
 def build_Q_and_H(
-    state_sigmas: Dict[str, float],
-    shock_variables: List[str],
-    obs_variables: List[str],
-    obs_sigmas: Optional[Dict[str, float]] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+    state_sigmas: dict[str, float],
+    shock_variables: list[str],
+    obs_variables: list[str],
+    obs_sigmas: dict[str, float] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Build the Q and H matrices for a state-space system.
 
@@ -147,7 +153,7 @@ def build_Q_and_H(
 
 
 def evaluate_prior_logp(
-    all_param_dict: Dict[str, float], prior_dict: Dict[str, stats.rv_continuous]
+    all_param_dict: dict[str, float], prior_dict: dict[str, stats.rv_continuous]
 ) -> float:
     """
     Evaluate the log probability density function (PDF) of the prior distribution for a given set of parameters.
@@ -173,8 +179,8 @@ def evaluate_prior_logp(
 
 
 def split_param_dict(
-    all_param_dict: Dict[str, float]
-) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+    all_param_dict: dict[str, float],
+) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
     """
     Split a dictionary of parameters into three dictionaries based on their keys.
 
@@ -196,7 +202,9 @@ def split_param_dict(
     P0_dict = {}
 
     initial_names = [x for x in all_param_dict.keys() if x.endswith("__initial")]
-    initial_cov_names = [x for x in all_param_dict.keys() if x.endswith("__initial_cov")]
+    initial_cov_names = [
+        x for x in all_param_dict.keys() if x.endswith("__initial_cov")
+    ]
 
     for k, v in all_param_dict.items():
         if k in initial_names:
@@ -210,15 +218,15 @@ def split_param_dict(
 
 
 def evaluate_logp(
-    all_param_dict: Dict[str, Any],
+    all_param_dict: dict[str, Any],
     df: np.ndarray,
     sparse_datas: np.ndarray,
     Z: np.ndarray,
-    priors: Dict[str, Any],
-    shock_names: List[str],
-    observed_vars: List[str],
+    priors: dict[str, Any],
+    shock_names: list[str],
+    observed_vars: list[str],
     filter_type: str = "standard",
-) -> Tuple[float, np.ndarray]:
+) -> tuple[float, np.ndarray]:
     """
     Evaluate the log likelihood of a log-linearized DSGE model using the Kalman Filter.
 
@@ -263,11 +271,17 @@ def evaluate_logp(
         return -np.inf, np.zeros(df.shape[0])
 
     a0 = np.array(list(a0_dict.values()))[:, None] if len(a0_dict) > 0 else None
-    P0 = np.eye(len(P0_dict)) * np.array(list(P0_dict.keys())) if len(P0_dict) > 0 else None
+    P0 = (
+        np.eye(len(P0_dict)) * np.array(list(P0_dict.keys()))
+        if len(P0_dict) > 0
+        else None
+    )
 
     Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, obs_dict)
 
-    *_, ll_obs = kalman_filter(df.values, T, Z, R, H, Q, a0, P0, filter_type=filter_type)
+    *_, ll_obs = kalman_filter(
+        df.values, T, Z, R, H, Q, a0, P0, filter_type=filter_type
+    )
     ll += ll_obs.sum()
 
     return ll, ll_obs
@@ -317,7 +331,7 @@ def evaluate_logp2(
         T, result, log_norm = cycle_reduction(A, B, C, verbose=False)
         T = np.ascontiguousarray(T)
     except np.linalg.LinAlgError:
-        T, log_norm = None, None
+        T = None
         result = "Failed"
 
     if result != "Optimization successful":
@@ -326,7 +340,11 @@ def evaluate_logp2(
     R = solve_shock_matrix(B, C, D, T)
 
     a0 = np.array(list(a0_dict.values()))[:, None] if len(a0_dict) > 0 else None
-    P0 = np.eye(len(P0_dict)) * np.array(list(P0_dict.keys())) if len(P0_dict) > 0 else None
+    P0 = (
+        np.eye(len(P0_dict)) * np.array(list(P0_dict.keys()))
+        if len(P0_dict) > 0
+        else None
+    )
 
     Q, H = build_Q_and_H(shock_dict, shock_names, observed_vars, obs_dict)
 

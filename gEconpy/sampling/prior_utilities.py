@@ -43,11 +43,16 @@ def prior_solvability_check(
             tol = 1e-18
             verbose = False
 
-            exog, endog = np.array(list(param_dict.values())), np.array(list(ss_dict.values()))
+            exog, endog = (
+                np.array(list(param_dict.values())),
+                np.array(list(ss_dict.values())),
+            )
             A, B, C, D = model.build_perturbation_matrices(exog, endog)
 
             if pert_solver == "cycle_reduction":
-                solver = model.perturbation_solver.solve_policy_function_with_cycle_reduction
+                solver = (
+                    model.perturbation_solver.solve_policy_function_with_cycle_reduction
+                )
                 T, R, result, log_norm = solver(A, B, C, D, max_iter, tol, verbose)
                 pert_success = log_norm < 1e-8
 
@@ -122,7 +127,7 @@ def get_initial_time_index(df):
             offset = pd.DateOffset(months=3)
         elif "M" in base_freq:
             offset = pd.DateOffset(months=1)
-        elif "A" in base_freq:
+        elif "Y" in base_freq:
             offset = pd.DateOffset(years=1)
         else:
             raise NotImplementedError("Data isn't one of: Quarterly, Monthly, Annual")
@@ -142,13 +147,10 @@ def simulate_trajectories_from_prior(
     param_subset=None,
     pert_kwargs=None,
 ):
-
     if pert_kwargs is None:
         pert_kwargs = {}
 
     simulations = []
-    model_var_names = [x.base_name for x in model.variables]
-    shock_names = [x.name for x in model.shocks]
 
     free_param_dicts, shock_dicts, _ = model.sample_param_dict_from_prior(
         n_samples, seed, param_subset
@@ -202,12 +204,12 @@ def safe_get_idx_as_dict(df, idx):
         return df.iloc[idx].to_dict()
 
 
-def kalman_filter_from_prior(model, data, n_samples, filter_type="univariate", seed=None):
+def kalman_filter_from_prior(
+    model, data, n_samples, filter_type="univariate", seed=None
+):
     observed_vars = data.columns.tolist()
     model_var_names = [x.base_name for x in model.variables]
     shock_names = [x.name for x in model.shocks]
-
-    initial_params = model.free_param_dict.copy()
 
     results = []
     dicts_of_samples = model.sample_param_dict_from_prior(n_samples, seed=seed)
@@ -237,7 +239,9 @@ def kalman_filter_from_prior(model, data, n_samples, filter_type="univariate", s
             )
             filtered_states, _, filtered_covariances, *_ = filter_results
 
-            smoother_results = kalman_smoother(T, R, Q, filtered_states, filtered_covariances)
+            smoother_results = kalman_smoother(
+                T, R, Q, filtered_states, filtered_covariances
+            )
             results.append(list(filter_results) + list(smoother_results))
 
             i += 1

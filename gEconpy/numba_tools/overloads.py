@@ -531,7 +531,9 @@ def ordqz_impl(A, B, sort, output):
         _check_finite_matrix(B)
 
         if sort not in ["lhp", "rhp", "iuc", "ouc"]:
-            raise ValueError('Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"')
+            raise ValueError(
+                'Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"'
+            )
 
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
@@ -650,7 +652,9 @@ def ordqz_impl(A, B, sort, output):
         _check_finite_matrix(B)
 
         if sort not in ["lhp", "rhp", "iuc", "ouc"]:
-            raise ValueError('Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"')
+            raise ValueError(
+                'Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"'
+            )
 
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
@@ -846,8 +850,8 @@ def solve_discrete_lyapunov_impl(A, Q, method="auto"):
     _check_scipy_linalg_matrix(A, "solve_continuous_lyapunov")
     _check_scipy_linalg_matrix(Q, "solve_continuous_lyapunov")
 
-    dtype = A.dtype
-    w_type = _get_underlying_float(dtype)
+    # dtype = A.dtype
+    # w_type = _get_underlying_float(dtype)  #  noeq
 
     def impl(A, Q, method="auto"):
         _M, _N = np.int32(A.shape)

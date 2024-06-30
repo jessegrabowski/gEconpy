@@ -1,13 +1,10 @@
 import unittest
 from functools import partial
 
-import numpy as np
-from scipy.stats import beta
 
 from gEconpy.exceptions.exceptions import (
     IgnoredCloseMatchWarning,
     InvalidParameterException,
-    MultipleParameterDefinitionException,
     UnusedParameterWarning,
 )
 from gEconpy.parser.parse_distributions import (
@@ -63,7 +60,9 @@ class TestBetaDistributionParser(unittest.TestCase):
 
     def test_typo_in_scale_parameter(self):
         param_dict = {"mean": "0", "scaale": "2.5"}
-        self.assertWarns(IgnoredCloseMatchWarning, self.parse_scale_parameter, param_dict)
+        self.assertWarns(
+            IgnoredCloseMatchWarning, self.parse_scale_parameter, param_dict
+        )
 
     def test_unused_parameter_warning(self):
         parser = self.parser
@@ -78,7 +77,9 @@ class TestBetaDistributionParser(unittest.TestCase):
     def test_typo_in_alpha(self):
         param_dict = {"alppha": "0", "sd": "1"}
 
-        self.assertWarns(IgnoredCloseMatchWarning, self.parse_shape_parameter_1, param_dict)
+        self.assertWarns(
+            IgnoredCloseMatchWarning, self.parse_shape_parameter_1, param_dict
+        )
 
     def test_moment_inequality_error(self):
         parser = self.parser

@@ -1,5 +1,3 @@
-from typing import Optional, Tuple
-
 import numpy as np
 from numba import njit
 from numpy.typing import ArrayLike
@@ -13,8 +11,7 @@ def cycle_reduction(
     max_iter: int = 1000,
     tol: float = 1e-7,
     verbose: bool = True,
-) -> Tuple[Optional[ArrayLike], str, float]:
-
+) -> tuple[ArrayLike | None, str, float]:
     """
     Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1].
     Useful in the DSGE context to solve for the implicit derivative of the policy function, g, with respect to
@@ -87,9 +84,7 @@ def cycle_reduction(
         elif np.isnan(A0_L1_norm) or i == (max_iter - 1):
             # If we fail, figure out how far we got
             if A0_L1_norm < tol:
-                result = (
-                    "Iteration on matrix A0 and A1 converged towards a solution, but A2 did not."
-                )
+                result = "Iteration on matrix A0 and A1 converged towards a solution, but A2 did not."
                 log_norm = np.log(np.linalg.norm(A2, 1))
             else:
                 result = "Iteration on all matrices failed to converged"

@@ -1,5 +1,5 @@
 from itertools import combinations_with_replacement
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -12,7 +12,7 @@ from matplotlib.gridspec import GridSpec
 from scipy import stats
 
 
-def prepare_gridspec_figure(n_cols: int, n_plots: int) -> Tuple[GridSpec, List]:
+def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list]:
     """
      Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
@@ -94,12 +94,12 @@ def _plot_single_variable(data, ax, ci=None, cmap=None, fill_color="tab:blue"):
 
 def plot_simulation(
     simulation: pd.DataFrame,
-    vars_to_plot: Optional[List[str]] = None,
-    ci: Optional[float] = None,
-    n_cols: Optional[int] = None,
-    cmap: Optional[Union[str, Colormap]] = None,
-    fill_color: Optional[str] = None,
-    figsize: Tuple[int, int] = (12, 8),
+    vars_to_plot: list[str] | None = None,
+    ci: float | None = None,
+    n_cols: int | None = None,
+    cmap: str | Colormap | None = None,
+    fill_color: str | None = None,
+    figsize: tuple[int, int] = (12, 8),
     dpi: int = 100,
 ) -> plt.Figure:
     """
@@ -163,13 +163,13 @@ def plot_simulation(
 
 def plot_irf(
     irf: pd.DataFrame,
-    vars_to_plot: Optional[List[str]] = None,
-    shocks_to_plot: Optional[List[str]] = None,
-    n_cols: Optional[int] = None,
+    vars_to_plot: list[str] | None = None,
+    shocks_to_plot: list[str] | None = None,
+    n_cols: int | None = None,
     legend: bool = False,
-    cmap: Optional[Union[str, Colormap]] = None,
-    legend_kwargs: Optional[Dict] = None,
-    figsize: Tuple[int, int] = (14, 10),
+    cmap: str | Colormap | None = None,
+    legend_kwargs: dict | None = None,
+    figsize: tuple[int, int] = (14, 10),
     dpi: int = 100,
 ) -> plt.Figure:
     """
@@ -223,7 +223,9 @@ def plot_irf(
     else:
         for shock in shocks_to_plot:
             if shock not in shock_list:
-                raise ValueError(f"{shock} not found among shocks used in impulse response data.")
+                raise ValueError(
+                    f"{shock} not found among shocks used in impulse response data."
+                )
 
     if not isinstance(shocks_to_plot, list):
         raise ValueError(
@@ -268,7 +270,7 @@ def plot_irf(
 
 def plot_prior_solvability(
     data: pd.DataFrame,
-    params_to_plot: Optional[List[str]] = None,
+    params_to_plot: list[str] | None = None,
 ):
     """
     Plot the results of sampling from the prior distributions of a GCN and attempting to fit a DSGE model.
@@ -350,7 +352,6 @@ def plot_prior_solvability(
         param_1, param_2 = pair
         axis = axes[row][col]
         if param_1 == param_2:
-
             X_sorted = plot_data[param_1].sort_values()
             X_success = X_sorted[plot_data["success"]]
             X_failure = X_sorted[~plot_data["success"]]
@@ -359,7 +360,9 @@ def plot_prior_solvability(
             n_failure = X_failure.shape[0]
 
             if n_success > 0:
-                success_grid = np.linspace(X_success.min() * 0.9, X_success.max() * 1.1, 100)
+                success_grid = np.linspace(
+                    X_success.min() * 0.9, X_success.max() * 1.1, 100
+                )
                 d_success = stats.gaussian_kde(X_success)
                 axis.plot(success_grid, d_success.pdf(success_grid), color="tab:blue")
                 axis.fill_between(
@@ -371,7 +374,10 @@ def plot_prior_solvability(
                 )
 
             if n_failure > 0:
-                failure_grid = np.linspace(X_failure.min() * 0.9, X_failure.max() * 1.1, 100)
+                failure_grid = np.linspace(
+                    X_failure.min() * 0.9, X_failure.max() * 1.1, 100
+                )
+
                 d_failure = stats.gaussian_kde(X_failure)
                 axis.plot(failure_grid, d_failure.pdf(failure_grid), color="tab:red")
                 axis.fill_between(
@@ -422,7 +428,7 @@ def plot_prior_solvability(
     return fig
 
 
-def plot_eigenvalues(model: Any, figsize: Tuple[float, float] = None, dpi: int = None):
+def plot_eigenvalues(model: Any, figsize: tuple[float, float] = None, dpi: int = None):
     """
     Plot the eigenvalues of the model solution, along with a unit circle. Eigenvalues with modulus greater than 1 are
     shown in red, while those with modulus less than 1 are shown in blue. Eigenvalues greater than 10 in modulus
@@ -470,14 +476,14 @@ def plot_eigenvalues(model: Any, figsize: Tuple[float, float] = None, dpi: int =
 
 def plot_covariance_matrix(
     data: pd.DataFrame,
-    vars_to_plot: Optional[List[str]] = None,
+    vars_to_plot: list[str] | None = None,
     cbarlabel: str = "Covariance",
-    figsize: Tuple[float, float] = (4, 4),
+    figsize: tuple[float, float] = (4, 4),
     dpi: int = 100,
-    cbar_kw: Optional[Dict] = None,
+    cbar_kw: dict | None = None,
     cmap: str = "YlGn",
-    heatmap_kwargs: Optional[Dict] = None,
-    annotation_kwargs: Optional[Dict] = None,
+    heatmap_kwargs: dict | None = None,
+    annotation_kwargs: dict | None = None,
 ) -> plt.Figure:
     """
     Plots a heatmap of the covariance matrix of the input data.
@@ -536,9 +542,9 @@ def plot_covariance_matrix(
 
 def plot_heatmap(
     data: pd.DataFrame,
-    ax: Optional[Any] = None,
-    cbar_kw: Optional[dict] = None,
-    cbarlabel: Optional[str] = "",
+    ax: Any | None = None,
+    cbar_kw: dict | None = None,
+    cbarlabel: str | None = "",
     **kwargs,
 ):
     """
@@ -661,10 +667,10 @@ def annotate_heatmap(
 
 def plot_acf(
     acorr_matrix: pd.DataFrame,
-    vars_to_plot: Optional[List[str]] = None,
-    figsize: Optional[Tuple[int, int]] = (14, 4),
-    dpi: Optional[int] = 100,
-    n_cols: Optional[int] = 4,
+    vars_to_plot: list[str] | None = None,
+    figsize: tuple[int, int] | None = (14, 4),
+    dpi: int | None = 100,
+    n_cols: int | None = 4,
 ) -> plt.Figure:
     """
     Plot the autocorrelation function for a set of variables.
@@ -721,8 +727,8 @@ def plot_acf(
 
 def plot_corner(
     idata: Any,
-    var_names: Optional[List[str]] = None,
-    figsize: Tuple[int, int] = (14, 14),
+    var_names: list[str] | None = None,
+    figsize: tuple[int, int] = (14, 14),
     dpi: int = 144,
     hist_bins: int = 200,
     rug_bins: int = 50,
@@ -763,7 +769,9 @@ def plot_corner(
     """
 
     if not hasattr(idata, "posterior"):
-        raise ValueError("Argument idata should be an arviz idata object with a posterior group")
+        raise ValueError(
+            "Argument idata should be an arviz idata object with a posterior group"
+        )
 
     var_names = var_names or list(idata.posterior.data_vars)
     k_params = len(var_names)
@@ -823,7 +831,9 @@ def plot_corner(
                 if len(y_mode) > 1:
                     y_mode = y_mode[0]
 
-                axis.contourf(x_edges[1:], y_edges[1:], H, cmap="Blues", levels=rug_levels)
+                axis.contourf(
+                    x_edges[1:], y_edges[1:], H, cmap="Blues", levels=rug_levels
+                )
 
                 if show_marginal_modes:
                     axis.axvline(x_mode, ls="--", lw=0.5, color="k")
@@ -855,14 +865,13 @@ def plot_kalman_filter(
     idata: xr.Dataset,
     data: pd.DataFrame,
     kalman_output: str = "predicted",
-    n_cols: Optional[int] = None,
-    vars_to_plot: Optional[List[str]] = None,
-    fig: Optional[Figure] = None,
-    figsize: Tuple[int, int] = (14, 6),
+    n_cols: int | None = None,
+    vars_to_plot: list[str] | None = None,
+    fig: Figure | None = None,
+    figsize: tuple[int, int] = (14, 6),
     dpi: int = 144,
-    cmap: Optional[str] = None,
+    cmap: str | None = None,
 ):
-
     """
     Plot Kalman filter, prediction or smoothed series for variables in idata.
 
@@ -912,7 +921,9 @@ def plot_kalman_filter(
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
     time_idx = idata.coords["time"]
     time_slice = (
-        slice(None, None, None) if kalman_output.lower() == "predicted" else slice(1, None, None)
+        slice(None, None, None)
+        if kalman_output.lower() == "predicted"
+        else slice(1, None, None)
     )
 
     for idx, variable in enumerate(vars_to_plot):

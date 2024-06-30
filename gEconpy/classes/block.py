@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Union
 
 import sympy as sp
 
@@ -34,9 +33,9 @@ class Block:
     def __init__(
         self,
         name: str,
-        block_dict: Dict[str, List[List[str]]],
-        assumptions: Optional[Dict[str, dict]] = None,
-        solution_hints: Optional[Dict[str, str]] = None,
+        block_dict: dict[str, list[list[str]]],
+        assumptions: dict[str, dict] | None = None,
+        solution_hints: dict[str, str] | None = None,
         allow_incomplete_initialization: bool = False,
     ) -> None:
         """
@@ -58,28 +57,28 @@ class Block:
         self.name = name
         self.short_name = "".join(word[0] for word in name.split("_"))
 
-        self.definitions: Optional[Dict[int, sp.Add]] = None
-        self.controls: Optional[List[TimeAwareSymbol]] = None
-        self.objective: Optional[Dict[int, sp.Add]] = None
-        self.constraints: Optional[Dict[int, sp.Add]] = None
-        self.identities: Optional[Dict[int, sp.Add]] = None
-        self.shocks: Optional[Dict[int, TimeAwareSymbol]] = None
-        self.calibration: Optional[Dict[int, sp.Add]] = None
+        self.definitions: dict[int, sp.Add] | None = None
+        self.controls: list[TimeAwareSymbol] | None = None
+        self.objective: dict[int, sp.Add] | None = None
+        self.constraints: dict[int, sp.Add] | None = None
+        self.identities: dict[int, sp.Add] | None = None
+        self.shocks: dict[int, TimeAwareSymbol] | None = None
+        self.calibration: dict[int, sp.Add] | None = None
 
-        self.variables: List[TimeAwareSymbol] = []
+        self.variables: list[TimeAwareSymbol] = []
         self.param_dict: SymbolDictionary[str, float] = SymbolDictionary()
 
-        self.params_to_calibrate: Optional[List[sp.Symbol]] = None
-        self.calibrating_equations: Optional[List[sp.Add]] = None
+        self.params_to_calibrate: list[sp.Symbol] | None = None
+        self.calibrating_equations: list[sp.Add] | None = None
 
-        self.deterministic_params: Optional[List[sp.Symbol]] = None
-        self.deterministic_relationships: Optional[List[sp.Add]] = None
+        self.deterministic_params: list[sp.Symbol] | None = None
+        self.deterministic_relationships: list[sp.Add] | None = None
 
-        self.system_equations: List[sp.Add] = []
-        self.multipliers: Dict[int, TimeAwareSymbol] = {}
-        self.eliminated_variables: List[sp.Symbol] = []
+        self.system_equations: list[sp.Add] = []
+        self.multipliers: dict[int, TimeAwareSymbol] = {}
+        self.eliminated_variables: list[sp.Symbol] = []
 
-        self.equation_flags: Dict[int, Dict[str, bool]] = {}
+        self.equation_flags: dict[int, dict[str, bool]] = {}
 
         self.n_equations = 0
         self.initialized = False
@@ -117,11 +116,19 @@ class Block:
         self.controls = self._parse_variable_list(block_dict, "controls", assumptions)
         self.shocks = self._parse_variable_list(block_dict, "shocks", assumptions)
 
-        self.definitions = self._parse_equation_list(block_dict, "definitions", assumptions)
+        self.definitions = self._parse_equation_list(
+            block_dict, "definitions", assumptions
+        )
         self.objective = self._parse_equation_list(block_dict, "objective", assumptions)
-        self.constraints = self._parse_equation_list(block_dict, "constraints", assumptions)
-        self.identities = self._parse_equation_list(block_dict, "identities", assumptions)
-        self.calibration = self._parse_equation_list(block_dict, "calibration", assumptions)
+        self.constraints = self._parse_equation_list(
+            block_dict, "constraints", assumptions
+        )
+        self.identities = self._parse_equation_list(
+            block_dict, "identities", assumptions
+        )
+        self.calibration = self._parse_equation_list(
+            block_dict, "calibration", assumptions
+        )
 
         self.initialized = self._validate_initialization()
 
@@ -155,10 +162,14 @@ class Block:
         """
 
         if self.objective is not None and self.controls is None:
-            raise OptimizationProblemNotDefinedException(block_name=self.name, missing="controls")
+            raise OptimizationProblemNotDefinedException(
+                block_name=self.name, missing="controls"
+            )
 
         if self.objective is None and self.controls is not None:
-            raise OptimizationProblemNotDefinedException(block_name=self.name, missing="objective")
+            raise OptimizationProblemNotDefinedException(
+                block_name=self.name, missing="objective"
+            )
 
         if self.objective is not None and len(list(self.objective.values())) > 1:
             raise MultipleObjectiveFunctionsException(
@@ -169,7 +180,9 @@ class Block:
             for control in self.controls:
                 control_found = False
                 eq_dicts = [
-                    x for x in [self.definitions, self.objective, self.constraints] if x is not None
+                    x
+                    for x in [self.definitions, self.objective, self.constraints]
+                    if x is not None
                 ]
                 for eq_dict in eq_dicts:
                     for eq in list(eq_dict.values()):
@@ -200,8 +213,8 @@ class Block:
         return key in block_dict and hasattr(self, key) and block_dict[key] is not None
 
     def _extract_lagrange_multipliers(
-        self, equations: List[List[str]], assumptions: dict
-    ) -> Tuple[List[List[str]], List[Union[TimeAwareSymbol, None]]]:
+        self, equations: list[list[str]], assumptions: dict
+    ) -> tuple[list[list[str]], list[TimeAwareSymbol | None]]:
         """
         gEcon allows the user to name lagrange multipliers in the GCN file. These multiplier variables need to be saved
         and used once the optimization problem is solved. This function removes the ": muliplier[]" from each equation
@@ -229,7 +242,9 @@ class Block:
             if ":" in eq:
                 colon_idx = eq.index(":")
                 multiplier = eq[-1]
-                multiplier = parse_equations.single_symbol_to_sympy(multiplier, assumptions)
+                multiplier = parse_equations.single_symbol_to_sympy(
+                    multiplier, assumptions
+                )
                 eq = eq[:colon_idx].copy()
 
                 result.append(eq)
@@ -242,7 +257,7 @@ class Block:
 
     def _parse_variable_list(
         self, block_dict: dict, key: str, assumptions: dict = None
-    ) -> Optional[List[sp.Symbol]]:
+    ) -> list[sp.Symbol] | None:
         """
         Two components -- controls and shocks -- expect a simple list of variables, which is a case the
         gEcon_parser.build_sympy_equations cannot handle.
@@ -265,7 +280,7 @@ class Block:
         if not self._validate_key(block_dict, key):
             return
 
-        raw_list = [item for l in block_dict[key] for item in l]
+        raw_list = [var for var_list in block_dict[key] for var in var_list]
         output = []
         for variable in raw_list:
             variable = parse_equations.single_symbol_to_sympy(variable, assumptions)
@@ -293,7 +308,9 @@ class Block:
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
 
-        all_equations = [eq for l in [objective, constraints, identities] for eq in l]
+        all_equations = [
+            eq for eq_list in [objective, constraints, identities] for eq in eq_list
+        ]
         for eq in all_equations:
             eq = eq.subs(sub_dict)
             atoms = eq.atoms()
@@ -302,7 +319,7 @@ class Block:
                 if variable.to_ss() not in self.variables:
                     self.variables.append(variable.to_ss())
 
-    def _get_and_record_equation_numbers(self, equations: List[sp.Eq]) -> List[int]:
+    def _get_and_record_equation_numbers(self, equations: list[sp.Eq]) -> list[int]:
         """
         Get a list of all unique variables in the Block and store it in the class attribute "variables".
 
@@ -318,8 +335,8 @@ class Block:
         return equation_numbers
 
     def _parse_equation_list(
-        self, block_dict: dict, key: str, assumptions: Dict[str, str]
-    ) -> Optional[Dict[int, sp.Eq]]:
+        self, block_dict: dict, key: str, assumptions: dict[str, str]
+    ) -> dict[int, sp.Eq] | None:
         """
         Convert a list of equations represented as strings into a dictionary of sympy equations, indexed by their
         equation number.
@@ -343,7 +360,9 @@ class Block:
             return
 
         equations = block_dict[key]
-        equations, lagrange_multipliers = self._extract_lagrange_multipliers(equations, assumptions)
+        equations, lagrange_multipliers = self._extract_lagrange_multipliers(
+            equations, assumptions
+        )
 
         parser_output = parse_equations.build_sympy_equations(equations, assumptions)
         if len(parser_output) > 0:
@@ -394,10 +413,17 @@ class Block:
                 self.param_dict[param] = value
 
             elif self.equation_flags[idx]["is_calibrating"]:
-
                 # Check if this equation is a valid calibrating equation
-                if not all([x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)]):
-                    raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
+                if not all(
+                    [
+                        x.time_index == "ss"
+                        for x in atoms
+                        if isinstance(x, TimeAwareSymbol)
+                    ]
+                ):
+                    raise DynamicCalibratingEquationException(
+                        eq=eq, block_name=self.name
+                    )
 
                 if self.params_to_calibrate is None:
                     self.params_to_calibrate = [eq.lhs]
@@ -426,9 +452,13 @@ class Block:
                     self.deterministic_params.append(eq.lhs)
 
                 if self.deterministic_relationships is None:
-                    self.deterministic_relationships = [set_equality_equals_zero(eq.rhs)]
+                    self.deterministic_relationships = [
+                        set_equality_equals_zero(eq.rhs)
+                    ]
                 else:
-                    self.deterministic_relationships.append(set_equality_equals_zero(eq.rhs))
+                    self.deterministic_relationships.append(
+                        set_equality_equals_zero(eq.rhs)
+                    )
 
     def _build_lagrangian(self) -> sp.Add:
         """
@@ -468,7 +498,7 @@ class Block:
 
         return lagrange
 
-    def _get_discount_factor(self) -> Optional[sp.Symbol]:
+    def _get_discount_factor(self) -> sp.Symbol | None:
         """
         Calculate the discount factor of a Bellman equation.
 
@@ -526,8 +556,12 @@ class Block:
 
         system = self.system_equations
         simplified_system = system.copy()
-        variables = [x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
-        generated_multipliers = list({x for x in variables if "lambda__" in x.base_name})
+        variables = [
+            x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)
+        ]
+        generated_multipliers = list(
+            {x for x in variables if "lambda__" in x.base_name}
+        )
 
         # Strictly heuristic simplification: look for an equation of the form x = y and use it to substitute away
         # the generated multipliers.
@@ -590,12 +624,16 @@ class Block:
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
             for eq in identities:
-                self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
+                self.system_equations.append(
+                    set_equality_equals_zero(eq.subs(sub_dict))
+                )
 
         if self.constraints is not None:
             _, constraints = unpack_keys_and_values(self.constraints)
             for eq in constraints:
-                self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
+                self.system_equations.append(
+                    set_equality_equals_zero(eq.subs(sub_dict))
+                )
 
         if self.controls is None and self.objective is None:
             return

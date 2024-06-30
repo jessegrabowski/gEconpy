@@ -1,6 +1,7 @@
 from copy import copy
 from enum import EnumMeta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
+from collections.abc import Callable
 
 import numba as nb
 import numpy as np
@@ -33,15 +34,15 @@ class IterEnum(EnumMeta):
             raise StopIteration
 
 
-def flatten_list(l, result_list=None):
+def flatten_list(items, result_list=None):
     if result_list is None:
         result_list = []
 
-    if not isinstance(l, list):
-        result_list.append(l)
+    if not isinstance(items, list):
+        result_list.append(items)
         return result_list
 
-    for item in l:
+    for item in items:
         if isinstance(item, list):
             result_list = flatten_list(item, result_list)
         else:
@@ -62,11 +63,13 @@ def eq_to_ss(eq):
     return eq.subs(sub_dict)
 
 
-def expand_subs_for_all_times(sub_dict: Dict[TimeAwareSymbol, TimeAwareSymbol]):
+def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]):
     result = {}
     for lhs, rhs in sub_dict.items():
         for t in [-1, 0, 1, "ss"]:
-            result[lhs.set_t(t)] = rhs.set_t(t) if isinstance(rhs, TimeAwareSymbol) else rhs
+            result[lhs.set_t(t)] = (
+                rhs.set_t(t) if isinstance(rhs, TimeAwareSymbol) else rhs
+            )
 
     return result
 
@@ -123,7 +126,9 @@ def substitute_all_equations(eqs, *sub_dicts):
         result = {}
         for key in eqs:
             result[key] = (
-                eqs[key] if isinstance(eqs[key], (int, float)) else eqs[key].subs(sub_dict)
+                eqs[key]
+                if isinstance(eqs[key], (int, float))
+                else eqs[key].subs(sub_dict)
             )
         return result
 
@@ -150,7 +155,7 @@ def is_number(x: str):
     return all([c in set("0123456789.") for c in x])
 
 
-def sequential(x: Any, funcs: List[Callable]) -> Any:
+def sequential(x: Any, funcs: list[Callable]) -> Any:
     """
     Parameters
     ----------
@@ -203,11 +208,11 @@ def make_all_var_time_combos(var_list):
 
 
 def build_Q_matrix(
-    model_shocks: List[str],
-    shock_dict: Optional[dict[str, float]] = None,
-    shock_cov_matrix: Optional[np.array] = None,
-    shock_std_priors: Optional[dict[str, Any]] = None,
-    default_value: Optional[float] = 0.01,
+    model_shocks: list[str],
+    shock_dict: dict[str, float] | None = None,
+    shock_cov_matrix: np.ndarray | None = None,
+    shock_std_priors: dict[str, Any] | None = None,
+    default_value: float | None = 0.01,
 ) -> np.array:
     """
     Take different options for user input and reconcile them into a covariance matrix. Exactly one or zero of shock_dict
@@ -261,7 +266,8 @@ def build_Q_matrix(
                 f"Provided covariance matrix has shape {shock_cov_matrix.shape}, expected ({n}, {n})"
             )
         try:
-            L = np.linalg.cholesky(shock_cov_matrix)
+            # check that the result is PSD
+            np.linalg.cholesky(shock_cov_matrix)
             return shock_cov_matrix
         except np.linalg.LinAlgError:
             raise np.linalg.LinAlgError("The provided Q is not positive semi-definite.")
@@ -335,7 +341,9 @@ def get_shock_std_priors_from_hyperpriors(shocks, priors, out_keys="parent"):
     """
 
     if out_keys not in ["parent", "param"]:
-        raise ValueError(f'out_keys must be one of "parent" or "param", found {out_keys}')
+        raise ValueError(
+            f'out_keys must be one of "parent" or "param", found {out_keys}'
+        )
 
     shock_std_dict = SymbolDictionary()
     for k, (parent, param, d) in priors.items():
