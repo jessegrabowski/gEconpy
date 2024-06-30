@@ -11,7 +11,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.9"]
+        python-version: ["3.12"]
         test-subset:
           - |
             tests/
@@ -55,7 +55,7 @@ jobs:
         activate-environment: geconpy-test
         channel-priority: strict
         environment-file: conda_envs/geconpy_test.yml
-        python-version: 3.9
+        python-version: 3.12
         use-mamba: true
         use-only-tar-bz2: false # IMPORTANT: This may break caching of conda packages! See https://github.com/conda-incubator/setup-miniconda/issues/267
 

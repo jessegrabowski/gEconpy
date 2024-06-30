@@ -21,3 +21,4 @@ push            = false
 "pyproject.toml" = ['current_version = "{version}"']
 "setup.cfg" = ['version = {version}']
 "gEconpy/__init__.py" = ["{version}"]
+"docs/source/conf.py" = ["release = {version}"]
