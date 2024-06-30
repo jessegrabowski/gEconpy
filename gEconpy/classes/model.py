@@ -226,7 +226,7 @@ class gEconModel:
         equations than parameters. This message will warn the user in this case.
 
         Parameters
-        -------
+        ----------
         reduced_vars: list
             A list of variables reduced by the `try_reduce` method. Used to print the names of eliminated variables.
 
@@ -707,8 +707,8 @@ class gEconModel:
     ) -> bool | pd.DataFrame:
         """
         Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
-        unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
-        this test suggests timing problems in the definition of the model.
+        unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of forward-looking variables.
+        Failing this test suggests timing problems in the definition of the model.
 
         Parameters
         ----------
@@ -728,7 +728,13 @@ class gEconModel:
 
         Returns
         -------
-
+        None
+            If "return_value" is 'none'
+        condition_satisfied: bool
+            Flag indicating whether the BK condition was met, if "return_value" is "bool"
+        eigenvalues: pd.DataFrame
+            Dataframe of eigenvalues with three columns: real part, imaginary part, and modulus, if
+            "return_value" is "df"
         """
         if self.build_perturbation_matrices is None:
             raise PerturbationSolutionNotFoundException()
@@ -824,7 +830,7 @@ class gEconModel:
         information about a shock is available, the standard deviation will be set to 0.01.
 
         Parameters
-        -------
+        ----------
         shock_dict, dict of str: float, optional
             A dictionary of shock sizes to be used to compute the stationary covariance matrix.
         shock_cov_matrix: array, optional
@@ -997,7 +1003,7 @@ class gEconModel:
             information.
 
         References
-        -------
+        ----------
         ..[1] Foreman-Mackey, Daniel, et al. “Emcee: The MCMC Hammer.” Publications of the Astronomical Society of the
               Pacific, vol. 125, no. 925, Mar. 2013, pp. 306–12. arXiv.org, https://doi.org/10.1086/670067.
         """

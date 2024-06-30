@@ -1,0 +1,13 @@
+matplotlib
+myst-nb
+sphinx-codeautolink
+sphinx>=5
+sphinx-copybutton
+sphinx-design
+sphinx-notfound-page
+sphinxcontrib-bibtex
+sphinxext-opengraph
+sphinx-sitemap
+sphinx-immaterial
+numpydoc
+jupytext
