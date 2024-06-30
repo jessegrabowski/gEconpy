@@ -28,7 +28,7 @@ pytensor, then install ``gEconpy`` in that environment:
 
 .. code-block:: bash
 
-    conda create -n geconpy python=3.12 pip pytensor
+    conda create -n geconpy "python=3.12" pip pytensor
     conda activate geconpy
     pip install gEconpy
 
