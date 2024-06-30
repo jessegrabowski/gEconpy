@@ -9,7 +9,7 @@ python:
      path: .
 
 conda:
-  environment: "conda-envs/environment_docs.yml"
+  environment: "conda_envs/environment_docs.yml"
 
 build:
   os: "ubuntu-22.04"
