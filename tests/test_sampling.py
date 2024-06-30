@@ -32,7 +32,9 @@ class TestPriorSampling(unittest.TestCase):
         cls.model.solve_model(verbose=False)
 
     def test_sample_solvability_cycle_reduction(self):
-        data = prior_solvability_check(self.model, n_samples=100, pert_solver="cycle_reduction")
+        data = prior_solvability_check(
+            self.model, n_samples=100, pert_solver="cycle_reduction"
+        )
 
         self.assertEqual(data.shape[0], 100)
 
@@ -43,7 +45,7 @@ class TestPriorSampling(unittest.TestCase):
 
     def test_invalid_solver_raises(self):
         with self.assertRaises(ValueError):
-            data = prior_solvability_check(self.model, n_samples=1, pert_solver="invalid")
+            prior_solvability_check(self.model, n_samples=1, pert_solver="invalid")
 
 
 class TestGetInitialTime(unittest.TestCase):
@@ -58,21 +60,27 @@ class TestGetInitialTime(unittest.TestCase):
         df = pd.DataFrame(np.random.normal(size=100), index=index)
         initial_index = get_initial_time_index(df)
 
-        self.assertEqual(initial_index, np.array(pd.to_datetime("1900-01-01"), dtype="datetime64"))
+        self.assertEqual(
+            initial_index, np.array(pd.to_datetime("1900-01-01"), dtype="datetime64")
+        )
 
     def test_quarterly_period_index(self):
         index = pd.date_range(start="1900-04-01", periods=100, freq="QS")
         df = pd.DataFrame(np.random.normal(size=100), index=index)
         initial_index = get_initial_time_index(df)
 
-        self.assertEqual(initial_index, np.array(pd.to_datetime("1900-01-01"), dtype="datetime64"))
+        self.assertEqual(
+            initial_index, np.array(pd.to_datetime("1900-01-01"), dtype="datetime64")
+        )
 
     def test_annual_period_index(self):
         index = pd.date_range(start="1901-01-01", periods=100, freq="YS")
         df = pd.DataFrame(np.random.normal(size=100), index=index)
         initial_index = get_initial_time_index(df)
 
-        self.assertEqual(initial_index, np.array(pd.to_datetime("1900-01-01"), dtype="datetime64"))
+        self.assertEqual(
+            initial_index, np.array(pd.to_datetime("1900-01-01"), dtype="datetime64")
+        )
 
 
 class TestSimulateTrajectories(unittest.TestCase):
@@ -88,7 +96,9 @@ class TestSimulateTrajectories(unittest.TestCase):
             self.model, n_simulations=10, n_samples=10, simulation_length=10
         )
 
-        self.assertEqual(data.index.values.tolist(), [x.base_name for x in self.model.variables])
+        self.assertEqual(
+            data.index.values.tolist(), [x.base_name for x in self.model.variables]
+        )
         self.assertTrue(data.shape == (self.model.n_variables, 10 * 10 * 10))
 
     def test_pert_kwargs(self):
@@ -111,7 +121,9 @@ class TestKalmanFilterFromPrior(unittest.TestCase):
         cls.model.solve_model(verbose=False)
 
     def test_univariate_filter(self):
-        data = self.model.simulate(simulation_length=100, n_simulations=1).T.droplevel(1)[["Y"]]
+        data = self.model.simulate(simulation_length=100, n_simulations=1).T.droplevel(
+            1
+        )[["Y"]]
         kf_output = kalman_filter_from_prior(
             self.model, data, n_samples=10, filter_type="univariate"
         )

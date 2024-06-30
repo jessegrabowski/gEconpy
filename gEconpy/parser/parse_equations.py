@@ -1,6 +1,5 @@
 import re
 from collections import defaultdict
-from typing import Dict, List, Optional
 
 import sympy as sp
 
@@ -8,7 +7,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.parser.constants import CALIBRATING_EQ_TOKEN, LOCAL_DICT, TIME_INDEX_DICT
 
 
-def rebuild_eqs_from_parser_output(parser_output: List[str]) -> List[List[str]]:
+def rebuild_eqs_from_parser_output(parser_output: list[str]) -> list[list[str]]:
     """
     Takes the output of pyparsing applied to the text of a model block and returns a list of lists of tokens
     that represent equations.
@@ -298,7 +297,9 @@ def convert_symbols_to_time_symbols(eq: sp.Eq) -> sp.Eq:
     return eq.subs(sub_dict)
 
 
-def single_symbol_to_sympy(variable: str, assumptions: Optional[Dict] = None) -> TimeAwareSymbol:
+def single_symbol_to_sympy(
+    variable: str, assumptions: dict | None = None
+) -> TimeAwareSymbol:
     """
     Convert a single gEcon style variable (e.g. X[], or X[-1]) to a Time-Aware Sympy symbol. If it seems to be a
     parameter (no []), it returns a standard Sympy symbol instead.
@@ -330,8 +331,9 @@ def single_symbol_to_sympy(variable: str, assumptions: Optional[Dict] = None) ->
         return TimeAwareSymbol(variable_name, time_index, **assumptions[variable_name])
 
 
-def build_sympy_equations(eqs: List[List[str]], assumptions: Optional[Dict] = None) -> List[sp.Eq]:
-
+def build_sympy_equations(
+    eqs: list[list[str]], assumptions: dict | None = None
+) -> list[sp.Eq]:
     """
     Convert processed list of equation tokens to sympy equations.
 
@@ -410,7 +412,9 @@ def build_sympy_equations(eqs: List[List[str]], assumptions: Optional[Dict] = No
         eq_sympy = sp.Eq(*eq_sympy)
         flags["is_calibrating"] = calibrating_parameter is not None
         if flags["is_calibrating"]:
-            param = sp.Symbol(calibrating_parameter, **assumptions[calibrating_parameter])
+            param = sp.Symbol(
+                calibrating_parameter, **assumptions[calibrating_parameter]
+            )
             eq_sympy = sp.Eq(param, eq_sympy.lhs - eq_sympy.rhs)
 
         # eq_sympy = rename_time_indexes(eq_sympy)

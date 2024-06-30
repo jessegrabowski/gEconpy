@@ -1,5 +1,3 @@
-from typing import Optional, Tuple
-
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy import linalg
@@ -7,7 +5,7 @@ from scipy import linalg
 
 def qzdiv(
     stake: float, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
-) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+) -> tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
     """
     Christopher Sim's qzdiv http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
     :param stake: float, largest positive value for which an eigenvalue is considered stable
@@ -60,7 +58,7 @@ def qzdiv(
 
 def qzswitch(
     i: int, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
-) -> Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+) -> tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
     """
     Christopher Sim's qzswitch,
     :param i: int, index of matrix diagonal to switch
@@ -138,7 +136,7 @@ def qzswitch(
 
 def determine_n_unstable(
     A: ArrayLike, B: ArrayLike, div: float, realsmall: float
-) -> Tuple[float, int, bool]:
+) -> tuple[float, int, bool]:
     """
     :param A: array, upper-triangular matrix, output of QZ decomposition
     :param B: array, upper-triangular matrix, output of QZ decomposition
@@ -171,7 +169,9 @@ def determine_n_unstable(
     return div, n_unstable, zxz
 
 
-def split_matrix_on_eigen_stability(A: ArrayLike, n_unstable: int) -> Tuple[ArrayLike, ArrayLike]:
+def split_matrix_on_eigen_stability(
+    A: ArrayLike, n_unstable: int
+) -> tuple[ArrayLike, ArrayLike]:
     """
     :param A: Arrayline, array to split
     :param n_unstable: int, number of unstable roots in the
@@ -223,9 +223,9 @@ def gensys(
     c: ArrayLike,
     psi: ArrayLike,
     pi: ArrayLike,
-    div: Optional[float] = None,
-    tol: Optional[float] = 1e-8,
-) -> Tuple:
+    div: float | None = None,
+    tol: float | None = 1e-8,
+) -> tuple:
     """
     Christopher Sim's gensys, http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
 
@@ -350,7 +350,13 @@ def gensys(
     if unique:
         eu[1] = 1
 
-    inner_term = u_eta @ linalg.solve(d_eta, v_eta.conj().T) @ v_eta_1 @ d_eta_1 @ u_eta_1.conj().T
+    inner_term = (
+        u_eta
+        @ linalg.solve(d_eta, v_eta.conj().T)
+        @ v_eta_1
+        @ d_eta_1
+        @ u_eta_1.conj().T
+    )
 
     T_mat = np.c_[np.eye(n_stable), -inner_term.conj().T]
     G_0 = np.r_[T_mat @ A, np.c_[np.zeros((n_unstable, n_stable)), np.eye(n_unstable)]]
@@ -392,9 +398,11 @@ def interpret_gensys_output(eu):
     if eu[0] == -2 and eu[1] == -2:
         message = "Coincident zeros.  Indeterminacy and/or nonexistence. Check that your system is correctly defined."
     elif eu[0] == -1:
-        message = f"System is indeterminate. There are {eu[2]} loose endogenous variables."
+        message = (
+            f"System is indeterminate. There are {eu[2]} loose endogenous variables."
+        )
     elif eu[1] == -1:
-        message = f"Solution exists, but it is not unique -- sunspots."
+        message = "Solution exists, but it is not unique -- sunspots."
     elif eu[0] == 0 and eu[1] == 0:
         message = "Solution does not exist."
     elif eu[0] == 1 and eu[1] == 0:

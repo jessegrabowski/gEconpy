@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, Union
+from typing import Any
 
 import sympy as sp
 from sympy.polys.domains.mpelements import ComplexElement
@@ -13,7 +13,7 @@ def safe_string_to_sympy(s, assumptions=None):
     if isinstance(s, sp.Symbol):
         return s
 
-    assumptions = assumptions or defaultdict(lambda: {})
+    assumptions = assumptions or defaultdict(dict)
 
     *name, time_index_str = s.split("_")
     if time_index_str not in [str(x) for x in SAFE_STRING_TO_INDEX_DICT.keys()]:
@@ -28,7 +28,7 @@ def safe_string_to_sympy(s, assumptions=None):
     return symbol
 
 
-def symbol_to_string(symbol: Union[str, sp.Symbol]):
+def symbol_to_string(symbol: str | sp.Symbol):
     if isinstance(symbol, str):
         return symbol
     else:
@@ -37,7 +37,7 @@ def symbol_to_string(symbol: Union[str, sp.Symbol]):
 
 def string_keys_to_sympy(d, assumptions=None):
     result = {}
-    assumptions = assumptions or defaultdict(lambda: {})
+    assumptions = assumptions or defaultdict(dict)
 
     for key, value in d.items():
         if isinstance(key, sp.Symbol):
@@ -62,7 +62,7 @@ def sympy_keys_to_strings(d):
     return result
 
 
-def sympy_number_values_to_floats(d: Dict[sp.Symbol, Any]):
+def sympy_number_values_to_floats(d: dict[sp.Symbol, Any]):
     for var, value in d.items():
         if isinstance(value, sp.core.Number):
             d[var] = float(value)
@@ -71,7 +71,7 @@ def sympy_number_values_to_floats(d: Dict[sp.Symbol, Any]):
     return d
 
 
-def float_values_to_sympy_float(d: Dict[sp.Symbol, Any]):
+def float_values_to_sympy_float(d: dict[sp.Symbol, Any]):
     for var, value in d.items():
         if isinstance(value, (float, int)):
             d[var] = sp.Float(value)

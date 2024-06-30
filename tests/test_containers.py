@@ -1,5 +1,4 @@
 import unittest
-from typing import List
 
 import sympy as sp
 from sympy.polys.domains.mpelements import ComplexElement
@@ -12,15 +11,15 @@ class TestSymbolDictErrors(unittest.TestCase):
     def test_raises_on_invalid_keys(self):
         with self.assertRaises(KeyError):
             # Only string or sp.Symbol keys allowed
-            A = SymbolDictionary({1: 3})
+            SymbolDictionary({1: 3})
 
     def test_raises_on_mixed_keys(self):
         with self.assertRaises(KeyError):
             # Cannot mix strings and symbols
-            A = SymbolDictionary({"A": 3, sp.Symbol("B"): 2})
+            SymbolDictionary({"A": 3, sp.Symbol("B"): 2})
 
         with self.assertRaises(KeyError):
-            B = SymbolDictionary({sp.Symbol("B"): 2, "A": 3})
+            SymbolDictionary({sp.Symbol("B"): 2, "A": 3})
 
     def test_setitem_raises_on_wrong_key_type(self):
         d = SymbolDictionary({sp.Symbol("A"): 3})
@@ -144,7 +143,7 @@ class TestSymbolDictionary(unittest.TestCase):
 
         self.assertRaises(ValueError, lambda: d1 | d2)
 
-        def loop_update(ds: List):
+        def loop_update(ds: list):
             d0 = ds.pop(0)
             for d in ds:
                 d0 = d0 | d
@@ -156,7 +155,9 @@ class TestSymbolDictionary(unittest.TestCase):
         d = self.d.copy()
         d_sp = d.float_to_values()
         values = list(d_sp.values())
-        self.assertTrue(all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values]))
+        self.assertTrue(
+            all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values])
+        )
 
         d_np = d_sp.values_to_float()
         values = list(d_np.values())
@@ -166,7 +167,9 @@ class TestSymbolDictionary(unittest.TestCase):
         d = self.d.copy()
         d.float_to_values(inplace=True)
         values = list(d.values())
-        self.assertTrue(all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values]))
+        self.assertTrue(
+            all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values])
+        )
 
         d.values_to_float(inplace=True)
         values = list(d.values())

@@ -17,7 +17,9 @@ ROOT = Path(__file__).parent.absolute()
 
 class BasicFunctionalityTests(unittest.TestCase):
     def setUp(self):
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn")
+        file_path = os.path.join(
+            ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
+        )
         self.model = gEconModel(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
@@ -25,12 +27,17 @@ class BasicFunctionalityTests(unittest.TestCase):
     def test_extract_system_matrics(self):
         param_dict = self.model.free_param_dict
 
-        sparse_data = extract_sparse_data_from_model(self.model, params_to_estimate=["theta"])
-        A, B, C, D = build_system_matrices(param_dict, sparse_data, vars_to_estimate=["theta"])
+        sparse_data = extract_sparse_data_from_model(
+            self.model, params_to_estimate=["theta"]
+        )
+        A, B, C, D = build_system_matrices(
+            param_dict, sparse_data, vars_to_estimate=["theta"]
+        )
 
         system = self.model.build_perturbation_matrices(
             np.fromiter(
-                (self.model.free_param_dict | self.model.calib_param_dict).values(), dtype="float"
+                (self.model.free_param_dict | self.model.calib_param_dict).values(),
+                dtype="float",
             ),
             np.fromiter(self.model.steady_state_dict.values(), dtype="float"),
         )
@@ -189,13 +196,17 @@ class UnivariateKalmanFilterTest(unittest.TestCase):
 
 class TestModelEstimation(unittest.TestCase):
     def setUp(self):
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn")
+        file_path = os.path.join(
+            ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
+        )
         self.model = gEconModel(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 
         self.data = (
-            self.model.simulate(simulation_length=100, n_simulations=1).xs(axis=1, level=1, key=0).T
+            self.model.simulate(simulation_length=100, n_simulations=1)
+            .xs(axis=1, level=1, key=0)
+            .T
         )
 
     def filter_random_sample(self):

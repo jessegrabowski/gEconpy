@@ -1,0 +1,23 @@
+name: geconpy
+channels:
+  - conda-forge
+dependencies:
+  # Core dependencies
+  - python=3.12
+  - pymc
+  - pytensor
+  - emcee
+  - joblib
+  - matplotlib
+  - numba
+  - numpy
+  - pandas
+  - pyparsing
+  - scipy
+  - setuptools
+  - statsmodels
+  - sympy
+
+  - pip:
+      - sympytensor
+      - gEconpy

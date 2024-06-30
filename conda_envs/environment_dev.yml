@@ -1,0 +1,36 @@
+name: geconpy-dev
+channels:
+  - conda-forge
+dependencies:
+  # Core dependencies
+  - python=3.12
+  - pymc
+  - pytensor
+  - emcee
+  - joblib
+  - matplotlib
+  - numba
+  - numpy
+  - pandas
+  - pyparsing
+  - scipy
+  - setuptools
+  - statsmodels
+  - sympy
+
+  # For building docs
+  - sphinx>=5.1.0,<6
+  - sphinx_rtd_theme
+  - pygments
+  - pydot
+  - ipython
+
+  # developer tools
+  - pre-commit
+  - pytest
+  - pytest-env
+  - pytest-cov
+
+  - pip:
+      - sympytensor
+      - bumpver

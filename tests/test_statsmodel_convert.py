@@ -12,7 +12,9 @@ ROOT = Path(__file__).parent.absolute()
 class TestStatsModelConversion(unittest.TestCase):
     @classmethod
     def setUp(self) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
+        file_path = os.path.join(
+            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
+        )
         self.model = gEconModel(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
@@ -42,7 +44,6 @@ class TestStatsModelConversion(unittest.TestCase):
 
         MLEModel = compile_to_statsmodels(self.model)
         initial_params = self.model.free_param_dict.copy()
-
         mle_mod = MLEModel(
             self.data,
             param_start_dict=param_start_dict,
@@ -68,11 +69,15 @@ class TestStatsModelConversion(unittest.TestCase):
 
         # Check that parameters were changed
         for param in ["alpha", "gamma", "rho"]:
-            self.assertNotEqual(self.model.free_param_dict[param], initial_params[param], msg=param)
+            self.assertNotEqual(
+                self.model.free_param_dict[param], initial_params[param], msg=param
+            )
 
         # Make sure parameters not given start values were not changed
         for param in ["beta", "delta"]:
-            self.assertEqual(self.model.free_param_dict[param], initial_params[param], msg=param)
+            self.assertEqual(
+                self.model.free_param_dict[param], initial_params[param], msg=param
+            )
 
     def test_mle_fit_MAP(self):
         param_start_dict = {
@@ -119,11 +124,15 @@ class TestStatsModelConversion(unittest.TestCase):
 
         # Check that parameters were changed
         for param in ["alpha", "gamma", "rho"]:
-            self.assertNotEqual(self.model.free_param_dict[param], initial_params[param], msg=param)
+            self.assertNotEqual(
+                self.model.free_param_dict[param], initial_params[param], msg=param
+            )
 
         # Make sure parameters not given start values were not changed
         for param in ["beta", "delta"]:
-            self.assertEqual(self.model.free_param_dict[param], initial_params[param], msg=param)
+            self.assertEqual(
+                self.model.free_param_dict[param], initial_params[param], msg=param
+            )
 
         self.assertIsNotNone(mle_res)
 

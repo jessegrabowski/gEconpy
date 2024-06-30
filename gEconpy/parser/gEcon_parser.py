@@ -1,6 +1,5 @@
 import re
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
 
 import pyparsing as pp
 from sympy.core.assumptions import _assume_rules
@@ -28,7 +27,7 @@ from gEconpy.parser.validation import (
 from gEconpy.shared.utilities import flatten_list
 
 
-def block_to_clean_list(block: str) -> List[str]:
+def block_to_clean_list(block: str) -> list[str]:
     """
     Processes a block of text by removing certain characters, and then splitting it into a list of strings.
 
@@ -50,7 +49,7 @@ def block_to_clean_list(block: str) -> List[str]:
     return block
 
 
-def extract_assumption_sub_blocks(block_str) -> Dict[str, List[str]]:
+def extract_assumption_sub_blocks(block_str) -> dict[str, list[str]]:
     """
     Extracts the special "Assumptions" block from the GCN file. Saves each user-provided assumption to a dictionary,
     along with all variables associated to that assumption.
@@ -93,7 +92,7 @@ def extract_assumption_sub_blocks(block_str) -> Dict[str, List[str]]:
     return LAYERED_BLOCK.parse_string(block_str).as_dict()["assumptions"]
 
 
-def validate_assumptions(block_dict: Dict[str, List[str]]) -> None:
+def validate_assumptions(block_dict: dict[str, list[str]]) -> None:
     """
     Verify that all keys extracted from the assumption block are valid sympy assumptions.
 
@@ -110,14 +109,18 @@ def validate_assumptions(block_dict: Dict[str, List[str]]) -> None:
 
     for assumption in block_dict.keys():
         if assumption not in SYMPY_ASSUMPTIONS:
-            best_guess, maybe_typo = find_typos_and_guesses([assumption], SYMPY_ASSUMPTIONS)
+            best_guess, maybe_typo = find_typos_and_guesses(
+                [assumption], SYMPY_ASSUMPTIONS
+            )
             message = f'Assumption "{assumption}" is not a valid Sympy assumption.'
             if best_guess is not None:
                 message += f' Did you mean "{best_guess}"?'
             raise ValueError(message)
 
 
-def create_assumption_kwargs(assumption_dicts: Dict[str, List[str]]) -> Dict[str, Dict[str, bool]]:
+def create_assumption_kwargs(
+    assumption_dicts: dict[str, list[str]],
+) -> dict[str, dict[str, bool]]:
     """
     Extracts assumption flags from `assumption_dicts` and returns them in a dictionary keyed by variable names.
 
@@ -154,7 +157,9 @@ def create_assumption_kwargs(assumption_dicts: Dict[str, List[str]]) -> Dict[str
             implications = dict(_assume_rules.full_implications[(k, v)])
             for user_k, user_v in user_assumptions[base_var].items():
                 # Assumptions agree, move along
-                if ((user_k == k) and (user_v == v)) or (user_k not in implications.keys()):
+                if ((user_k == k) and (user_v == v)) or (
+                    user_k not in implications.keys()
+                ):
                     continue
 
                 # Assumptions disagree -- delete the default
@@ -164,7 +169,7 @@ def create_assumption_kwargs(assumption_dicts: Dict[str, List[str]]) -> Dict[str
     return assumption_kwargs
 
 
-def preprocess_gcn(gcn_raw: str) -> Tuple[str, Dict[str, str]]:
+def preprocess_gcn(gcn_raw: str) -> tuple[str, dict[str, str]]:
     """
     Preprocesses `gcn_raw` and returns the result.
 
@@ -187,7 +192,7 @@ def preprocess_gcn(gcn_raw: str) -> Tuple[str, Dict[str, str]]:
     return gcn_processed, prior_dict
 
 
-def parse_options_flags(options: str) -> Optional[Dict[str, bool]]:
+def parse_options_flags(options: str) -> dict[str, bool] | None:
     """
     Extracts flags and values from `options`.
 
@@ -217,14 +222,20 @@ def parse_options_flags(options: str) -> Optional[Dict[str, bool]]:
     for option in options:
         flag, value = option.split("=")
         value = value.replace(";", "").strip()
-        value = True if value.lower() == "true" else False if value.lower() == "false" else value
+        value = (
+            True
+            if value.lower() == "true"
+            else False
+            if value.lower() == "false"
+            else value
+        )
 
         result[flag.strip()] = value
 
     return result
 
 
-def extract_special_block(text: str, block_name: str) -> Dict[str, List[str]]:
+def extract_special_block(text: str, block_name: str) -> dict[str, list[str]]:
     """
     Parameters
     ----------
@@ -271,7 +282,7 @@ def extract_special_block(text: str, block_name: str) -> Dict[str, List[str]]:
     return result
 
 
-def split_gcn_into_block_dictionary(text: str) -> Dict[str, str]:
+def split_gcn_into_block_dictionary(text: str) -> dict[str, str]:
     """
     Split the preprocessed GCN text by block and stores the results in a dictionary.
 
@@ -310,7 +321,7 @@ def split_gcn_into_block_dictionary(text: str) -> Dict[str, str]:
     return results
 
 
-def parsed_block_to_dict(block: str) -> Dict[str, List[List[str]]]:
+def parsed_block_to_dict(block: str) -> dict[str, list[list[str]]]:
     """
     Extracts the block components and equations from a pre-processed model block.
 

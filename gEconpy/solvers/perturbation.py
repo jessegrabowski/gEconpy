@@ -1,5 +1,3 @@
-from typing import List, Tuple
-
 import numpy as np
 import sympy as sp
 from numpy.typing import ArrayLike
@@ -31,7 +29,7 @@ class PerturbationSolver:
         D: ArrayLike,
         tol: float = 1e-8,
         verbose: bool = True,
-    ) -> Tuple:
+    ) -> tuple:
         n_eq, n_vars = A.shape
         _, n_shocks = D.shape
 
@@ -40,7 +38,9 @@ class PerturbationSolver:
 
         n_leads = len(lead_var_idx)
 
-        Gamma_0 = np.vstack([np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
+        Gamma_0 = np.vstack(
+            [np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])]
+        )
 
         Gamma_1 = np.vstack(
             [
@@ -65,7 +65,9 @@ class PerturbationSolver:
         psi = np.ascontiguousarray(Psi)
         pi = np.ascontiguousarray(Pi)
 
-        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
+        G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(
+            g0, g1, c, psi, pi
+        )
 
         return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
 
@@ -78,7 +80,7 @@ class PerturbationSolver:
         max_iter: int = 1000,
         tol: float = 1e-8,
         verbose: bool = True,
-    ) -> Tuple[ArrayLike, ArrayLike, str, float]:
+    ) -> tuple[ArrayLike, ArrayLike, str, float]:
         """
         Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
         obtain the first-order linear approxiate policy matrices T and R.
@@ -134,9 +136,9 @@ class PerturbationSolver:
     def statespace_to_gEcon_representation(self, A, T, R, variables, tol):
         n_vars = len(variables)
 
-        state_var_idx = np.where(np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol)[
-            0
-        ]
+        state_var_idx = np.where(
+            np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol
+        )[0]
         state_var_mask = np.isin(np.arange(n_vars), state_var_idx)
 
         n_shocks = self.n_shocks
@@ -173,7 +175,7 @@ class PerturbationSolver:
 
         return norm_deterministic, norm_stochastic
 
-    def log_linearize_model(self, not_loglin_variables=None) -> List[sp.Matrix]:
+    def log_linearize_model(self, not_loglin_variables=None) -> list[sp.Matrix]:
         """
         :return: List, a list of Sympy matrices comprised of parameters and steady-state values, see docstring.
 
@@ -208,7 +210,9 @@ class PerturbationSolver:
                 F_row = []
                 for var in var_group:
                     dydx = sp.powsimp(eq_to_ss(eq.diff(var)))
-                    dydx *= 1.0 if var.base_name in not_loglin_variables else var.to_ss()
+                    dydx *= (
+                        1.0 if var.base_name in not_loglin_variables else var.to_ss()
+                    )
                     atoms = dydx.atoms()
                     if len(atoms) == 1:
                         x = list(atoms)[0]
@@ -223,7 +227,7 @@ class PerturbationSolver:
 
         return Fs
 
-    def convert_linear_system_to_matrices(self) -> List[sp.Matrix]:
+    def convert_linear_system_to_matrices(self) -> list[sp.Matrix]:
         """
 
         :return: List of sympy Matrices representing the linear system
@@ -251,7 +255,10 @@ class PerturbationSolver:
             )
 
         offsets = np.array([0, n, n, n, 1])
-        slices = [slice(i, i + offset) for i, offset in zip(offsets.cumsum()[:-1], offsets[1:])]
+        slices = [
+            slice(i, i + offset)
+            for i, offset in zip(offsets.cumsum()[:-1], offsets[1:])
+        ]
 
         Fs = [A[:, idx] for idx in slices]
 
@@ -259,7 +266,7 @@ class PerturbationSolver:
 
     def make_all_variable_time_combinations(
         self,
-    ) -> Tuple[List[TimeAwareSymbol], List[TimeAwareSymbol], List[TimeAwareSymbol]]:
+    ) -> tuple[list[TimeAwareSymbol], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
         """
         :return: Tuple of three lists, containing all model variables at time steps t-1, t, and t+1, respectively.
         """

@@ -1,5 +1,4 @@
 import re
-from typing import Dict, List, Tuple, Union
 
 import sympy as sp
 from sympy.abc import greeks
@@ -10,7 +9,7 @@ from gEconpy.shared.utilities import make_all_var_time_combos
 OPERATORS = list("+-/*^()=")
 
 
-def get_name(x: Union[str, sp.Symbol]) -> str:
+def get_name(x: str | sp.Symbol) -> str:
     """
     This function returns the name of a string, TimeAwareSymbol, or sp.Symbol object.
 
@@ -36,8 +35,8 @@ def get_name(x: Union[str, sp.Symbol]) -> str:
 
 
 def build_hash_table(
-    items_to_hash: List[Union[str, sp.Symbol]]
-) -> Tuple[Dict[str, str], Dict[str, str]]:
+    items_to_hash: list[str | sp.Symbol],
+) -> tuple[dict[str, str], dict[str, str]]:
     """
     This function builds a pair of hash tables, one mapping variable names to hash values
     and the other mapping hash values to variable names.
@@ -70,7 +69,7 @@ def build_hash_table(
     return var_to_hash, hash_to_var
 
 
-def substitute_equation_from_dict(eq_str: str, hash_dict: Dict[str, str]) -> str:
+def substitute_equation_from_dict(eq_str: str, hash_dict: dict[str, str]) -> str:
     """
     This function substitutes variables in an equation string with their corresponding values from a dictionary.
 
@@ -96,8 +95,8 @@ def substitute_equation_from_dict(eq_str: str, hash_dict: Dict[str, str]) -> str
 
 
 def make_var_to_matlab_sub_dict(
-    var_list: List[Union[str, TimeAwareSymbol, sp.Symbol]], clash_prefix: str = "a"
-) -> Dict[Union[str, TimeAwareSymbol, sp.Symbol], str]:
+    var_list: list[str | TimeAwareSymbol | sp.Symbol], clash_prefix: str = "a"
+) -> dict[str | TimeAwareSymbol | sp.Symbol, str]:
     """
     This function builds a dictionary that maps variables to their corresponding names that
     can be used in a Matlab script.
@@ -138,16 +137,20 @@ def make_var_to_matlab_sub_dict(
             time_index = var.safe_name.split("_")[-1]
             var_name += f"_{time_index}"
         elif isinstance(var, sp.Symbol):
-            var_name = var.name if var.name.lower() not in greeks else clash_prefix + var.name
+            var_name = (
+                var.name if var.name.lower() not in greeks else clash_prefix + var.name
+            )
         else:
-            raise ValueError("var_list should contain only strings, symbols, or TimeAwareSymbols")
+            raise ValueError(
+                "var_list should contain only strings, symbols, or TimeAwareSymbols"
+            )
 
         sub_dict[var] = var_name
 
     return sub_dict
 
 
-def convert_var_timings_to_matlab(var_list: List[str]) -> List[str]:
+def convert_var_timings_to_matlab(var_list: list[str]) -> list[str]:
     """
     This function converts the timing notation in a list of variable names to a
     form that can be used in a Dynare mod file.
@@ -164,20 +167,23 @@ def convert_var_timings_to_matlab(var_list: List[str]) -> List[str]:
         form that can be used in a Dynare mod file (e.g. '(1)', '(-1)', '').
     """
     matlab_var_list = [
-        var.replace("_t+1", "(1)").replace("_t-1", "(-1)").replace("_t", "") for var in var_list
+        var.replace("_t+1", "(1)").replace("_t-1", "(-1)").replace("_t", "")
+        for var in var_list
     ]
 
     return matlab_var_list
 
 
-def write_lines_from_list(l: List[str], file: str, line_start: str = "", line_max: int = 50) -> str:
+def write_lines_from_list(
+    items_to_write: list[str], file: str, line_start: str = "", line_max: int = 50
+) -> str:
     """
     This function writes a list of items to a string, inserting line
     breaks at a specified maximum line length.
 
     Parameters
     ----------
-    l : list of strings
+    items_to_write : list of strings
         A list of items to be written to the string.
     file : str
         A string to which the items will be appended.
@@ -193,7 +199,7 @@ def write_lines_from_list(l: List[str], file: str, line_start: str = "", line_ma
     """
 
     line = line_start
-    for item in sorted(l):
+    for item in sorted(items_to_write):
         line += f" {item},"
         if len(line) > line_max:
             line = line[:-1]
@@ -248,11 +254,15 @@ def make_mod_file(model) -> str:
     var_to_matlab = make_var_to_matlab_sub_dict(
         make_all_var_time_combos(var_list), clash_prefix="var_"
     )
-    par_to_matlab = make_var_to_matlab_sub_dict(param_dict.keys(), clash_prefix="param_")
+    par_to_matlab = make_var_to_matlab_sub_dict(
+        param_dict.keys(), clash_prefix="param_"
+    )
     shock_to_matlab = make_var_to_matlab_sub_dict(shocks, clash_prefix="exog_")
 
     items_to_hash = (
-        list(var_to_matlab.keys()) + list(par_to_matlab.keys()) + list(shock_to_matlab.keys())
+        list(var_to_matlab.keys())
+        + list(par_to_matlab.keys())
+        + list(shock_to_matlab.keys())
     )
 
     file = ""
@@ -267,7 +277,9 @@ def make_mod_file(model) -> str:
         line_start="varexo",
     )
     file += "\n"
-    file = write_lines_from_list(list(par_to_matlab.values()), file, line_start="parameters")
+    file = write_lines_from_list(
+        list(par_to_matlab.values()), file, line_start="parameters"
+    )
     file += "\n"
 
     for model_param in sorted(param_dict.keys()):
@@ -286,7 +298,9 @@ def make_mod_file(model) -> str:
         matlab_subdict = {}
 
         for atom in eq.atoms():
-            if not isinstance(atom, TimeAwareSymbol) and isinstance(atom, sp.core.Symbol):
+            if not isinstance(atom, TimeAwareSymbol) and isinstance(
+                atom, sp.core.Symbol
+            ):
                 if atom in par_to_matlab.keys():
                     matlab_subdict[atom] = sp.Symbol(par_to_matlab[atom])
             elif isinstance(atom, TimeAwareSymbol):

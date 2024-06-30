@@ -1,13 +1,10 @@
-from typing import Union
-
 import sympy as sp
 from sympy.core.cache import cacheit
 
 
 class TimeAwareSymbol(sp.Symbol):
-
     __slots__ = ("time_index", "base_name", "__dict__")
-    time_index: Union[int, str]
+    time_index: int | str
     base_name: str
 
     def __new__(cls, name, time_index, **assumptions):

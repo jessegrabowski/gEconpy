@@ -52,7 +52,9 @@ class TestBuildQMatrix(unittest.TestCase):
         self.assertTrue(np.allclose(Q, expected_Q))
 
     def test_build_from_priors(self):
-        Q = build_Q_matrix(model_shocks=self.shocks, shock_std_priors=self.shock_std_priors)
+        Q = build_Q_matrix(
+            model_shocks=self.shocks, shock_std_priors=self.shock_std_priors
+        )
         expected_Q = np.eye(3)
         for i, shock_d in enumerate(self.shock_std_priors.values()):
             expected_Q[i, i] = shock_d.mean()
@@ -91,8 +93,12 @@ class TestExtractShockStd(unittest.TestCase):
             "epsilon_A": CompositeDistribution(
                 stats.norm, loc=stats.norm(0, 1), scale=stats.gamma(2, 1)
             ),
-            "epsilon_B": CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1)),
-            "epsilon_C": CompositeDistribution(stats.norm, loc=0, scale=stats.gamma(2, 1)),
+            "epsilon_B": CompositeDistribution(
+                stats.norm, loc=0, scale=stats.gamma(2, 1)
+            ),
+            "epsilon_C": CompositeDistribution(
+                stats.norm, loc=0, scale=stats.gamma(2, 1)
+            ),
         }
         self.hyper_priors = {
             "sigma_A": ("epsilon_A", "scale", stats.gamma(2, 1)),

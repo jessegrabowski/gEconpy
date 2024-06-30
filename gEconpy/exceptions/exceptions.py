@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -8,7 +6,7 @@ from gEconpy.solvers.gensys import interpret_gensys_output
 
 
 class GCNSyntaxError(ValueError):
-    def __init__(self, block_name: str, key: List[str]):
+    def __init__(self, block_name: str, key: list[str]):
         self.block_name = block_name
         self.key = key
 
@@ -94,7 +92,7 @@ class OptimizationProblemNotDefinedException(ValueError):
 
 
 class MultipleObjectiveFunctionsException(ValueError):
-    def __init__(self, block_name: str, eqs: List[sp.Eq]) -> None:
+    def __init__(self, block_name: str, eqs: list[sp.Eq]) -> None:
         self.block_name = block_name
 
         n_eqs = len(eqs)
@@ -103,8 +101,8 @@ class MultipleObjectiveFunctionsException(ValueError):
         for eq in eqs:
             message += str(eq) + "\n"
         message += (
-            f" Only one objective function is supported. Please manually simplify the objective"
-            f" to a single function."
+            " Only one objective function is supported. Please manually simplify the objective"
+            " to a single function."
         )
 
         super().__init__(message)
@@ -127,8 +125,8 @@ class ControlVariableNotFoundException(ValueError):
 class SteadyStateNotSolvedError(ValueError):
     def __init__(self):
         message = (
-            f"The system cannot be solved before the steady-state has been found! Call the .steady_state() method"
-            f"to solve for the steady state."
+            "The system cannot be solved before the steady-state has been found! Call the .steady_state() method"
+            "to solve for the steady state."
         )
 
         super().__init__(message)
@@ -137,15 +135,15 @@ class SteadyStateNotSolvedError(ValueError):
 class PerturbationSolutionNotFoundException(ValueError):
     def __init__(self):
         message = (
-            f"This operation cannot be completed until the model has a solved perturbation solution. Please "
-            f"call the .solve() method to solve for the policy function."
+            "This operation cannot be completed until the model has a solved perturbation solution. Please "
+            "call the .solve() method to solve for the policy function."
         )
 
         super().__init__(message)
 
 
 class MultipleSteadyStateBlocksException(ValueError):
-    def __init__(self, ss_block_names: List[str]):
+    def __init__(self, ss_block_names: list[str]):
         message = (
             f"Found multiple blocks with reserved steady states names: {', '.join(ss_block_names)}. Please pass"
             f"only up to one steady state block, and do not name any blocks with the reserved steady states "
@@ -207,16 +205,18 @@ class ParameterNotFoundException(ValueError):
         variable_name: str,
         d_name: str,
         param_name: str,
-        valid_param_names: List[str],
-        maybe_typo: Optional[str],
-        best_guess: Optional[str],
+        valid_param_names: list[str],
+        maybe_typo: str | None,
+        best_guess: str | None,
     ):
         message = (
             f"No {param_name} parameter was found for the {d_name} distribution associated with model parameter "
             f'"{variable_name}". Valid aliases for {param_name} are: '
         )
         if len(valid_param_names) > 1:
-            message += ", ".join(valid_param_names[:-1]) + f", and {valid_param_names[-1]}."
+            message += (
+                ", ".join(valid_param_names[:-1]) + f", and {valid_param_names[-1]}."
+            )
         else:
             message += f"{valid_param_names[0]}."
 
@@ -228,7 +228,7 @@ class ParameterNotFoundException(ValueError):
 
 class MultipleParameterDefinitionException(ValueError):
     def __init__(
-        self, variable_name: str, d_name: str, param_name: str, result_list: List[str]
+        self, variable_name: str, d_name: str, param_name: str, result_list: list[str]
     ) -> None:
         message = (
             f'The {d_name} distribution associated with "{variable_name}" has multiple declarations for '
@@ -241,15 +241,15 @@ class MultipleParameterDefinitionException(ValueError):
 
 class UnusedParameterError(ValueError):
     def __init__(self, d_name: str, param_name: str) -> None:
-        message = (
-            f"{d_name} distributions do not have a {param_name}; do not call this parse method."
-        )
+        message = f"{d_name} distributions do not have a {param_name}; do not call this parse method."
 
         super().__init__(message)
 
 
 class InvalidParameterException(ValueError):
-    def __init__(self, variable_name, d_name, canon_param_name, param_name, constraints):
+    def __init__(
+        self, variable_name, d_name, canon_param_name, param_name, constraints
+    ):
         message = (
             f'The {canon_param_name} of the {d_name.upper()} distribution associated with "{variable_name}" '
             f"(passed as {param_name}) is invalid. It should respect the following constraints: {constraints}."
@@ -278,7 +278,9 @@ class InvalidMeanException(ValueError):
 
 
 class DistributionOverDefinedException(ValueError):
-    def __init__(self, variable_name, d_name, dist_n_params, n_params_passed, n_constraints):
+    def __init__(
+        self, variable_name, d_name, dist_n_params, n_params_passed, n_constraints
+    ):
         message = (
             f"The {d_name} distribution associated wth {variable_name} is over-defined. The distribution has "
             f"{dist_n_params} free parameters, but you passed {n_params_passed} plus {n_constraints} moment "

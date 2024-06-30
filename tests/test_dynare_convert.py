@@ -33,7 +33,9 @@ class TestDynareConvert(unittest.TestCase):
         self.assertTrue(all([x in var_to_hash for x in test_list]))
 
         hashed_string = "_".join([var_to_hash.get(x) for x in test_list])
-        unhashed_string = "_".join([hash_to_var.get(x) for x in hashed_string.split("_")])
+        unhashed_string = "_".join(
+            [hash_to_var.get(x) for x in hashed_string.split("_")]
+        )
 
         self.assertEqual("_".join(test_list), unhashed_string)
 
@@ -63,10 +65,14 @@ class TestDynareConvert(unittest.TestCase):
         clash_sub_dict = make_var_to_matlab_sub_dict(variables, clash_prefix="param_")
 
         self.assertTrue(all([x in clash_sub_dict for x in variables]))
-        self.assertTrue(all([get_name(x).startswith("param_") for x in clash_sub_dict.values()]))
+        self.assertTrue(
+            all([get_name(x).startswith("param_") for x in clash_sub_dict.values()])
+        )
 
         valid_variables = [sp.Symbol("Y"), TimeAwareSymbol("C", 1), "shocks"]
-        clash_sub_dict = make_var_to_matlab_sub_dict(valid_variables, clash_prefix="param_")
+        clash_sub_dict = make_var_to_matlab_sub_dict(
+            valid_variables, clash_prefix="param_"
+        )
 
         self.assertTrue(all([get_name(k) == v for k, v in clash_sub_dict.items()]))
 
@@ -82,14 +88,16 @@ class TestDynareConvert(unittest.TestCase):
         from string import ascii_letters
 
         file = ""
-        l = np.random.choice(list(ascii_letters), size=1000, replace=True).tolist()
-        file = write_lines_from_list(l, file, line_max=50)
+        items = np.random.choice(list(ascii_letters), size=1000, replace=True).tolist()
+        file = write_lines_from_list(items, file, line_max=50)
 
         file_lines = file.split("\n")
         self.assertTrue(all([len(x.strip()) <= 51 for x in file_lines]))
 
     def test_make_mod_file(self):
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
+        file_path = os.path.join(
+            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
+        )
         model = gEconModel(file_path, verbose=False)
         model.steady_state(verbose=False)
         model.solve_model(verbose=False)

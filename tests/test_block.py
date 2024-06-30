@@ -35,7 +35,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
-        self.assertRaises(OptimizationProblemNotDefinedException, Block, "HOUSEHOLD", block_dict)
+        self.assertRaises(
+            OptimizationProblemNotDefinedException, Block, "HOUSEHOLD", block_dict
+        )
 
     def test_raises_if_objective_missing(self):
         test_file = """
@@ -52,7 +54,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
-        self.assertRaises(OptimizationProblemNotDefinedException, Block, "HOUSEHOLD", block_dict)
+        self.assertRaises(
+            OptimizationProblemNotDefinedException, Block, "HOUSEHOLD", block_dict
+        )
 
     def test_raises_if_multiple_objective(self):
         test_file = """
@@ -74,7 +78,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
-        self.assertRaises(MultipleObjectiveFunctionsException, Block, "HOUSEHOLD", block_dict)
+        self.assertRaises(
+            MultipleObjectiveFunctionsException, Block, "HOUSEHOLD", block_dict
+        )
 
     def test_raises_if_controls_not_found(self):
         test_file = """
@@ -95,7 +101,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
-        self.assertRaises(ControlVariableNotFoundException, Block, "HOUSEHOLD", block_dict)
+        self.assertRaises(
+            ControlVariableNotFoundException, Block, "HOUSEHOLD", block_dict
+        )
 
     def test_block_parser_handles_empty_block(self):
         test_file = """
@@ -133,7 +141,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
-        self.assertRaises(DynamicCalibratingEquationException, Block, "HOUSEHOLD", block_dict)
+        self.assertRaises(
+            DynamicCalibratingEquationException, Block, "HOUSEHOLD", block_dict
+        )
 
     def test_function_of_variables_in_calibration_raises(self):
         test_file = """
@@ -179,10 +189,10 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
         error_msg = error.exception
         self.assertEqual(
             str(error_msg),
-            f"Block HOUSEHOLD has multiple t+1 variables in the Bellman equation, this is not "
-            f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]], "
-            f"where a[] is the instantaneous value function at time t, defined in the "
-            f'"definitions" component of the block.',
+            "Block HOUSEHOLD has multiple t+1 variables in the Bellman equation, this is not "
+            "currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]], "
+            "where a[] is the instantaneous value function at time t, defined in the "
+            '"definitions" component of the block.',
         )
 
     def test_lagrange_multiplier_in_objective(self):
@@ -231,7 +241,9 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
 
 class BlockTestCases(unittest.TestCase):
     def setUp(self):
-        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn"))
+        test_file = file_loaders.load_gcn(
+            os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
+        )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
@@ -312,14 +324,22 @@ class BlockTestCases(unittest.TestCase):
         lamb_H_1 = TimeAwareSymbol("lambda__H_1", 0)
         q = TimeAwareSymbol("q", 0)
 
-        alpha, beta, delta, theta, tau = sp.symbols(["alpha", "beta", "delta", "theta", "tau"])
+        alpha, beta, delta, theta, tau = sp.symbols(
+            ["alpha", "beta", "delta", "theta", "tau"]
+        )
 
         utility = (C**theta * (1 - L) ** (1 - theta)) ** (1 - tau) / (1 - tau)
         mkt_clearing = C + I - Y
         production = Y - A * K**alpha * L ** (1 - alpha)
         law_motion_K = K - (1 - delta) * K.step_backward() - I
 
-        answer = beta * U + utility - lamb * mkt_clearing - q * law_motion_K - lamb_H_1 * production
+        answer = (
+            beta * U
+            + utility
+            - lamb * mkt_clearing
+            - q * law_motion_K
+            - lamb_H_1 * production
+        )
 
         L = self.block._build_lagrangian()
         self.assertEqual((L - answer).simplify(), 0)
@@ -333,7 +353,12 @@ class BlockTestCases(unittest.TestCase):
         objective = set_equality_equals_zero(objective[0].subs(sub_dict))
 
         self.assertEqual(
-            all([set_equality_equals_zero(eq) in self.block.system_equations for eq in identities]),
+            all(
+                [
+                    set_equality_equals_zero(eq) in self.block.system_equations
+                    for eq in identities
+                ]
+            ),
             True,
         )
         self.assertIn(objective, self.block.system_equations)
@@ -379,11 +404,13 @@ class BlockTestCases(unittest.TestCase):
             K.to_ss(),
         ]
 
-        sub_dict = dict(zip(all_variables, np.random.uniform(0, 1, size=len(all_variables))))
+        sub_dict = dict(
+            zip(all_variables, np.random.uniform(0, 1, size=len(all_variables)))
+        )
 
-        dL_dC = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C ** (theta - 1) * (1 - L) ** (
-            1 - theta
-        ) * theta - lamb
+        dL_dC = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C ** (theta - 1) * (
+            1 - L
+        ) ** (1 - theta) * theta - lamb
 
         dL_dL = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C**theta * (1 - L) ** (
             -theta
@@ -395,13 +422,17 @@ class BlockTestCases(unittest.TestCase):
         )
         dL_dI = -lamb + q
 
-        subbed_system = [np.float32(eq.subs(sub_dict)) for eq in self.block.system_equations]
+        subbed_system = [
+            np.float32(eq.subs(sub_dict)) for eq in self.block.system_equations
+        ]
 
         for solution in [dL_dC, dL_dL, dL_dK, dL_dI]:
             self.assertIn(np.float32(solution.subs(sub_dict)), subbed_system)
 
     def test_firm_block_lagrange_parsing(self):
-        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"))
+        test_file = file_loaders.load_gcn(
+            os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
+        )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
@@ -424,7 +455,9 @@ class BlockTestCases(unittest.TestCase):
         self.assertEqual((block._build_lagrangian() - L).simplify(), 0)
 
     def test_firm_FOC(self):
-        test_file = file_loaders.load_gcn(os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn"))
+        test_file = file_loaders.load_gcn(
+            os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
+        )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict = gEcon_parser.split_gcn_into_block_dictionary(parser_output)
         firm_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
@@ -458,7 +491,9 @@ class BlockTestCases(unittest.TestCase):
             epsilon,
         ]
 
-        sub_dict = dict(zip(all_variables, np.random.uniform(0, 1, size=len(all_variables))))
+        sub_dict = dict(
+            zip(all_variables, np.random.uniform(0, 1, size=len(all_variables)))
+        )
 
         dL_dK = -r + P * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
         dL_dL = -w + P * A * (1 - alpha) * K**alpha * L ** (-alpha)
@@ -469,7 +504,6 @@ class BlockTestCases(unittest.TestCase):
             self.assertIn(solution.subs(sub_dict), subbed_system)
 
     def test_get_param_dict_and_calibrating_equations(self):
-
         self.block.solve_optimization(try_simplify=False)
 
         alpha, theta, beta, delta, tau, rho = sp.symbols(
@@ -479,7 +513,9 @@ class BlockTestCases(unittest.TestCase):
         L = TimeAwareSymbol("L", 0).to_ss()
 
         answer = {theta: 0.357, beta: 0.99, delta: 0.02, tau: 2, rho: 0.95}
-        self.assertEqual(all([key in self.block.param_dict.keys() for key in answer.keys()]), True)
+        self.assertEqual(
+            all([key in self.block.param_dict.keys() for key in answer.keys()]), True
+        )
 
         for key in self.block.param_dict:
             self.assertEqual((answer[key] - self.block.param_dict[key]).simplify(), 0)
@@ -492,7 +528,8 @@ class BlockTestCases(unittest.TestCase):
             self.assertEqual(
                 eq.simplify(),
                 (
-                    self.block.params_to_calibrate[i] - self.block.calibrating_equations[i]
+                    self.block.params_to_calibrate[i]
+                    - self.block.calibrating_equations[i]
                 ).simplify(),
             )
 
@@ -500,7 +537,9 @@ class BlockTestCases(unittest.TestCase):
         self.assertEqual(len(self.block.deterministic_relationships), 2)
         self.assertEqual(len(self.block.deterministic_params), 2)
 
-        self.assertEqual([x.name for x in self.block.deterministic_params], ["Theta", "zeta"])
+        self.assertEqual(
+            [x.name for x in self.block.deterministic_params], ["Theta", "zeta"]
+        )
         answers = [3 + 0.99 * 0.95, -np.log(0.357)]
         for eq, answer in zip(self.block.deterministic_relationships, answers):
             self.assertEqual(eq.subs(self.block.param_dict), answer)
