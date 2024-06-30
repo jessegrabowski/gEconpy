@@ -16,7 +16,9 @@ import contextlib
 import os
 import sys
 
-sys.path.append("..")
+sys.path.insert(0, os.path.abspath(os.path.join("..", "..")))
+
+import gEconpy
 
 # -- Monkey Patch ----------------------------------------------------------
 #  Monkey patch contextlib.contextmanager.__doc__ to avoid noise
@@ -32,14 +34,27 @@ sys.path.insert(0, os.path.abspath("../sphinxext"))
 
 # General information about the project.
 project = "gEconpy"
-release = "1.2.1"
 copyright = "2022-2024, Jesse Grabowski"
+
+version = gEconpy.__version__
+on_readthedocs = os.environ.get("READTHEDOCS", False)
+rtd_version = os.environ.get("READTHEDOCS_VERSION", "")
+if on_readthedocs:
+    if rtd_version.lower() == "stable":
+        version = gEconpy.__version__.split("+")[0]
+    elif rtd_version.lower() == "latest":
+        version = "dev"
+    else:
+        version = rtd_version
+else:
+    rtd_version = "local"
+# The full version, including alpha/beta/rc tags.
+release = version
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
 extensions = [
     "sphinx.ext.autodoc",
-    # numpydoc or sphinx.ext.napoleon, but not both
     "numpydoc",
     "sphinx.ext.doctest",
     "sphinx.ext.extlinks",
@@ -68,7 +83,6 @@ numpydoc_xref_ignore = {
     "instance", "M", "N"
 }
 
-
 exclude_patterns = [
     "_build",
     "**.ipynb_checkpoints",
@@ -87,7 +101,6 @@ intersphinx_mapping = {
     "xarray": ("https://docs.xarray.dev/en/stable/", None),
 }
 
-
 # myst config
 nb_execution_mode = "off"
 nb_execution_allow_errors = False
@@ -100,13 +113,11 @@ myst_substitutions = {
 }
 myst_heading_anchors = 0
 
-
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
 # The suffix of source filenames.
 source_suffix = [".rst", ".md"]
-
 
 # The encoding of source files.
 # source_encoding = 'utf-8-sig'
@@ -135,7 +146,7 @@ exclude_patterns = ['_build', '**.ipynb_checkpoints', '*/autosummary/*.rst',
 html_theme = 'sphinx_immaterial'
 html_title = project
 html_short_title = project
-html_sidebars = { '**': ['globaltoc.html', 'relations.html', 'sourcelink.html', 'searchbox.html'] }
+html_sidebars = {'**': ['globaltoc.html', 'relations.html', 'sourcelink.html', 'searchbox.html']}
 
 # html_extra_path = ['version_info/versions-v3.json']
 # material theme options (see theme.conf for more information)

@@ -1,0 +1,37 @@
+name: geconpy-docs
+channels:
+  - conda-forge
+dependencies:
+  # Core dependencies
+  - python=3.12
+  - pymc
+  - pytensor
+  - emcee
+  - joblib
+  - matplotlib
+  - numba
+  - numpy
+  - pandas
+  - pyparsing
+  - scipy
+  - setuptools
+  - statsmodels
+  - sympy
+
+  # Extra dependencies for docs build
+  - ipython
+  - jax
+  - jupyter-sphinx
+  - myst-nb
+  - numpydoc
+  - pre-commit
+  - sphinx>=5
+  - sphinx-copybutton
+  - sphinx-design
+  - sphinx-notfound-page
+  - sphinx-sitemap
+  - sphinx-codeautolink
+  - sphinxcontrib-bibtex
+  - sphinx-immaterial
+  - jupytext
+  - watermark
