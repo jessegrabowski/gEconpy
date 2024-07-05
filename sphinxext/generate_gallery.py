@@ -138,9 +138,10 @@ def main(app):
                 section_title=title, section_id=folder, underlines="-" * len(title)
             )
         )
+
         thumbnail_dir = os.path.join("..", "..", "_thumbnails", folder)
-        if not os.path.isdir(thumbnail_dir):
-            os.mkdir(thumbnail_dir)
+        if not os.path.exists(thumbnail_dir):
+            os.makedirs(thumbnail_dir)
 
         if folder in external_nbs.keys():
             for descr in external_nbs[folder]:
