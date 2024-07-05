@@ -1,4 +1,4 @@
-Contributing to gEconpy
-=======================
+Contributing
+============
 
 WRITEME

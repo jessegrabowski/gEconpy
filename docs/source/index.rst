@@ -47,10 +47,9 @@ If you use gEconpy in your research, please cite the package using the following
    :maxdepth: 1
    :hidden:
 
-   install
-   get_started
-   user_guide
+   get_started/index
+   user_guide/index
+   examples/gallery
    api
-   about
    dev/index
    release/index

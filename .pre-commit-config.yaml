@@ -45,3 +45,36 @@ repos:
   hooks:
     - id: check-execution-order
       args: [--strict]
+- repo: local
+  hooks:
+    - id: notebook_name
+      entry: '\(notebook_name\)='
+      language: pygrep
+      minimum_pre_commit_version: 2.8.0
+      name: Check notebooks do not use literally notebook_name as target
+      types: [jupyter]
+
+    - id: no-references-as-links
+      name: Check no references that should be sphinx cross-references are urls
+      description: >-
+        'A quick check to prevent urls pointing to pymc docs or other sphinx built docs like arviz, numpy, scipy...'
+      files: ^examples/.+\.ipynb$
+      exclude: >
+          (?x)(index.md|
+               404.md|
+               conf.py)
+      entry: >
+          (?x)(arviz-devs.github.io|
+               pymc-experimental.readthedocs.io|
+               docs.pymc.io|
+               numpy.org/doc|
+               pymc-examples.readthedocs.io|
+               docs.python.org|
+               xarray.pydata.org
+               python.arviz.org|
+               pytensor.readthedocs.io|
+               docs.xarray.dev|
+               www.pymc.io|
+               docs.scipy.org/doc)
+      language: pygrep
+      types_or: [markdown, rst, jupyter]
