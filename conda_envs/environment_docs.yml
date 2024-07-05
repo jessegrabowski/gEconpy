@@ -4,6 +4,7 @@ channels:
 dependencies:
   # Core dependencies
   - python=3.12
+  - pip
   - pymc
   - pytensor
   - emcee
@@ -32,5 +33,5 @@ dependencies:
   - sphinx-sitemap
   - sphinx-codeautolink
   - sphinxcontrib-bibtex
-  - pydata_sphinx_theme
+  - pydata-sphinx-theme
   - watermark
