@@ -6,6 +6,5 @@ Time Aware Symbol
 
 .. autosummary::
     :toctree: generated/
-    :no-inherited-members:
 
     TimeAwareSymbol
