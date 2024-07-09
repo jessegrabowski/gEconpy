@@ -7,30 +7,45 @@ def qzdiv(
     stake: float, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
 ) -> tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
     """
-    Christopher Sim's qzdiv http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
-    :param stake: float, largest positive value for which an eigenvalue is considered stable
-    :param A: Array, upper-triangular matrix
-    :param B: Array, upper-triangular matrix
-    :param Q: Array, matrix of left Schur vectors.
-    :param Z: Array, matrix of right Schur vectors.
-    :return: Tuple, A, B, Q, Z, sorted such that all unstable roots are placed in the lower-right corners of the
-             matrices.
+     Christopher Sim's qzdiv
 
-    Original docstring:
-    Takes U.T. matrices A, B, orthonormal matrices Q,Z, rearranges them so that all cases of abs(B(i,i)/A(i,i))>stake
-    are in lower right  corner, while preserving U.T. and orthonormal properties and Q'AZ' and Q'BZ'.
+    Takes upper-triangular matrices :math:`A`, :math:`B` and orthonormal matrices :math:`Q`, :math:`Z`, and rearranges
+    them so that all cases of ``abs(B(i, i) / A(i, i)) > stake`` are in the lower-right corner, while preserving
+    upper-triangular and orthonormal properties, and maintaining the relationships :math:`Q^TAZ'` and :math:`Q^TBZ'`.
     The columns of v are sorted correspondingly.
 
-    Additional notes:
-    Matrices A, B, Q, and Z are the output of the generalized Schur decomposition (QZ decomposition) of the system
-    matrices G0 and G1. A and B are upper triangular, with the properties Q @ A @ Z.T = G0 and Q @ B @ Z.T = G1.
+    Matrices :math:`A`, :math:`B`, :math:`Q`, and :math:`Z` are the output of the generalized Schur decomposition
+    (QZ decomposition) of the system matrices :math:`G_0` and :math:`G_1`. A and B are upper triangular, with the
+    properties :math:`QAZ^T = G_0` and :math:`QBZ^T = G_1`.
 
-    TODO: scipy offers a sorted qz routine, ordqz, which automatically sorts the matrices by size of eigenvalue. This
-        seems to be what the functions qzdiv and qzswitch do, so it might be worthwhile to see if we can just use
-        ordqz instead.
+     Parameters
+     ----------
+     stake : float
+         Largest positive value for which an eigenvalue is considered stable.
+     A : ArrayLike
+         Upper-triangular matrix.
+     B : ArrayLike
+         Upper-triangular matrix.
+     Q : ArrayLike
+         Matrix of left Schur vectors.
+     Z : ArrayLike
+         Matrix of right Schur vectors.
 
-    TODO: Add shape information to the Typing (see PEP 646)
+     Returns
+     -------
+     tuple of ArrayLike
+         A, B, Q, Z matrices sorted such that all unstable roots are placed in the lower-right corners of the matrices.
+
+     Notes
+     -----
+     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
     """
+
+    # TODO: scipy offers a sorted qz routine, ordqz, which automatically sorts the matrices by size of eigenvalue. This
+    #     seems to be what the functions qzdiv and qzswitch do, so it might be worthwhile to see if we can just use
+    #     ordqz instead.
+    #
+    # TODO: Add shape information to the Typing (see PEP 646)
 
     n, _ = A.shape
 
@@ -60,22 +75,43 @@ def qzswitch(
     i: int, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
 ) -> tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
     """
-    Christopher Sim's qzswitch,
-    :param i: int, index of matrix diagonal to switch
-    :param A: Array, upper-triangular matrix
-    :param B: Array, upper-triangular matrix
-    :param Q: Array, matrix of left Schur vectors.
-    :param Z: Array, matrix of right Schur vectors.
-    :return: Tuple of A, B, Q, Z
+    Christopher Sim's qzswitch.
 
-    Original docstring:
-    Takes U.T. matrices A, B, orthonormal matrices Q,Z, interchanges diagonal elements i and i+1 of both A and B,
-    while maintaining Q'AZ' and Q'BZ' unchanged.  If diagonal elements of A and B are zero at matching positions,
-    the returned A will have zeros at both positions on the diagonal.  This is natural behavior if this routine is used
-    to drive all zeros on the diagonal of A to the lower right, but in this case the qz transformation is not unique
-    and it is not possible simply to switch the positions of the diagonal elements of both A and B.
+    Takes upper-triangular matrices A, B, orthonormal matrices Q, Z, and interchanges diagonal elements i and i+1 of
+    both A and B, while maintaining Q'AZ' and Q'BZ' unchanged. If diagonal elements of A and B are zero at matching
+    positions, the returned A will have zeros at both positions on the diagonal. This is natural behavior if this
+    routine is used to drive all zeros on the diagonal of A to the lower right, but in this case the qz transformation
+    is not unique and it is not possible simply to switch the positions of the diagonal elements of both A and B.
 
-    TODO: Add shape information to the Typing (see PEP 646)
+    Parameters
+    ----------
+    i : int
+        Index of matrix diagonal to switch.
+    A : ArrayLike
+        Upper-triangular matrix.
+    B : ArrayLike
+        Upper-triangular matrix.
+    Q : ArrayLike
+        Matrix of left Schur vectors.
+    Z : ArrayLike
+        Matrix of right Schur vectors.
+
+    Returns
+    -------
+    tuple of ArrayLike
+        Contains four elements:
+            A : ArrayLike
+                Upper-triangular matrix with switched diagonal elements.
+            B : ArrayLike
+                Upper-triangular matrix with switched diagonal elements.
+            Q : ArrayLike
+                Orthonormal matrix of left Schur vectors.
+            Z : ArrayLike
+                Orthonormal matrix of right Schur vectors.
+
+    Notes
+    -----
+    Originally part of gensys. Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
     eps = np.spacing(1)
 
@@ -138,17 +174,33 @@ def determine_n_unstable(
     A: ArrayLike, B: ArrayLike, div: float, realsmall: float
 ) -> tuple[float, int, bool]:
     """
-    :param A: array, upper-triangular matrix, output of QZ decomposition
-    :param B: array, upper-triangular matrix, output of QZ decomposition
-    :param div: float, largest positive value for which an eigenvalue is considered stable
-    :param realsmall: an arbitrarily small number
-    :return: Tuple
+    Determines how many roots of the system described by A and B are unstable.
 
-    Originally part of gensys, this helper function determines how many roots of the system described by A and B are
-    unstable. Returns three values:
-        div, a float representing which roots of the system can be considered stable,
-        n_unstable, an int of how many unstable roots are in the system, and
-        zxz, a bool that signals whether the system has a unique solution.
+    Parameters
+    ----------
+    A : array
+        Upper-triangular matrix, output of QZ decomposition.
+    B : array
+        Upper-triangular matrix, output of QZ decomposition.
+    div : float
+        Largest positive value for which an eigenvalue is considered stable.
+    realsmall : float
+        An arbitrarily small number.
+
+    Returns
+    -------
+    tuple
+        Contains three elements:
+            div : float
+                Represents which roots of the system can be considered stable.
+            n_unstable : int
+                The number of unstable roots in the system.
+            zxz : bool
+                Signals whether the system has a unique solution.
+
+    Notes
+    -----
+    Originally part of gensys. Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
     n, _ = A.shape
     n_unstable = 0
@@ -173,12 +225,27 @@ def split_matrix_on_eigen_stability(
     A: ArrayLike, n_unstable: int
 ) -> tuple[ArrayLike, ArrayLike]:
     """
-    :param A: Arrayline, array to split
-    :param n_unstable: int, number of unstable roots in the
-    :return: Tuple of (A1, A2), the A matrix split such that all stable roots are in the A1 matrix,
-             and the unstable roots are in the A2 matrix.
+    Splits a matrix into stable and unstable parts based on the number of unstable roots.
 
-    Originally in the gensys function, split out here for readability.
+    Parameters
+    ----------
+    A : ArrayLike
+        Array to split.
+    n_unstable : int
+        Number of unstable roots in the system.
+
+    Returns
+    -------
+    tuple of ArrayLike
+        Contains two elements:
+            A1 : ArrayLike
+                Matrix containing all stable roots.
+            A2 : ArrayLike
+                Matrix containing all unstable roots.
+
+    Notes
+    -----
+    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
     n, _ = A.shape
     stable_slice = slice(None, n - n_unstable)
@@ -192,14 +259,28 @@ def split_matrix_on_eigen_stability(
 
 def build_u_v_d(eta: ArrayLike, realsmall: float):
     """
+    Computes the singular value decomposition (SVD) of the input matrix `eta` and identifies non-zero indices.
 
-    :param eta:
-    :param realsmall:
-    :return: tuple, svd decomposition of eta plus an array of non-zero indices
+    Parameters
+    ----------
+    eta : ArrayLike
+        Input matrix for which to compute the SVD.
+    realsmall : float
+        A small threshold value to determine non-zero singular values.
 
-    Piece of gensys adapted from Matlab code, split out as a helper function.
+    Returns
+    -------
+    tuple
+        Contains two elements:
+            (U, V, D) : tuple of ArrayLike
+                SVD decomposition of `eta` where `U` and `V` are orthogonal matrices and `D` is a diagonal matrix.
+            non_zero_indices : ArrayLike
+                Array of non-zero indices based on the threshold `realsmall`.
+
+    Notes
+    -----
+    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
-
     u_eta, d_eta, v_eta = linalg.svd(eta)
     d_eta = np.diag(d_eta)  # match matlab output of svd
     v_eta = v_eta.conj().T  # match matlab output of svd
@@ -227,68 +308,83 @@ def gensys(
     tol: float | None = 1e-8,
 ) -> tuple:
     """
-    Christopher Sim's gensys, http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
+    Christopher Sim's gensys
 
-    Solves rational expectations equations as described in [1] by partitioning partitioning the system into stable
-    and unstable roots, then eliminating the unstable roots via QZ decomposition.
+    Solves rational expectations equations by partitioning the system into stable and unstable roots,
+    then eliminating the unstable roots via QZ decomposition.
 
-    Original matlab docstring:
-    System given as g0*y(t)=g1*y(t-1)+c+psi*z(t)+pi*eta(t), with z an exogenous variable process and eta being
-    endogenously determined one-step-ahead expectational errors.  Returned system is
-        y(t)=G1*y(t-1)+C+impact*z(t)+ywt*inv(I-fmat*inv(L))*fwt*z(t+1) .
-    If z(t) is i.i.d., the last term drops out. If div is omitted from argument list, a div>1 is calculated.
-    eu(1)=1 for existence,
-    eu(2)=1 for uniqueness.
-    eu(1)=-1 for existence only with not-s.c. z;
-    eu=[-2,-2] for coincident zeros.
+    System given as:
+
+    .. math::
+
+        G_0 \\cdot y_t = G_1 \\cdot y_{t-1} + c + \\psi \\cdot z_t + \\pi \\cdot \\eta_t,
+
+    with :math:`z_t` an exogenous variable process and :math:`\\eta_t` being endogenously determined one-step-ahead expectational errors.
+
+    Returned system is:
+
+    .. math::
+
+        y_t = G_1 \\cdot y_{t-1} + C + \\text{impact} \\cdot z_t + ywt \\cdot (I - fmat \\cdot L^{-1})^{-1} \\cdot fwt \\cdot z_{t+1}.
+
+    If :math:`z_t` is i.i.d., the last term drops out. If `div` is omitted from argument list, a :math:`div > 1` is calculated.
 
     Parameters
     ----------
-    g0: ArrayLike
-        Coefficient matrix of the dynamic system corresponding to the time-t variables
-    g1: ArrayLike
-        Coefficient matrix of the dynamic system corresponding to the time t-1 variables
-    c: ArrayLike
-        Vector of constant terms
-    psi: ArrayLike
-        Coefficient matrix of the dynamic system corresponding to the exogenous shock terms
-    pi: ArrayLike
+    g0 : ArrayLike
+        Coefficient matrix of the dynamic system corresponding to the time-t variables.
+    g1 : ArrayLike
+        Coefficient matrix of the dynamic system corresponding to the time t-1 variables.
+    c : ArrayLike
+        Vector of constant terms.
+    psi : ArrayLike
+        Coefficient matrix of the dynamic system corresponding to the exogenous shock terms.
+    pi : ArrayLike
         Coefficient matrix of the dynamic system corresponding to the endogenously determined
         expectational errors.
-    div: float
-        # TODO: WRITE ME
-    tol: float, default: 1e-8
-        Level of floating point precision
+    div : float
+        Threshold value for determining stable and unstable roots.
+    tol : float, default: 1e-8
+        Level of floating point precision.
 
     Returns
     -------
-    G_1: ArrayLike
+    G1 : ArrayLike
         Policy function relating the current timestep to the next, transition matrix T in state space jargon.
-    C: ArrayLike
+    C : ArrayLike
         Array of system means, intercept vector c in state space jargon.
-    impact: ArrayLike
+    impact : ArrayLike
         Policy function component relating exogenous shocks observed at the t to variable values in t+1, selection
-        matric R in state space jargon.
-    f_mat: ArrayLike
-        # TODO: WRITE ME
-    f_wt: ArrayLike
-        # TODO: WRITE ME
-    y_wt: ArrayLike
-        # TODO: WRITE ME
-    gev: ArrayLike
+        matrix R in state space jargon.
+    fmat : ArrayLike
+        Matrix used in the transformation of the system to handle unstable roots.
+    fwt : ArrayLike
+        Weight matrix corresponding to fmat.
+    ywt : ArrayLike
+        Weight matrix corresponding to the stable part of the system.
+    gev : ArrayLike
         Generalized left and right eigenvalues generated by qz(g0, g1), sorted such that stable roots are in the
-        top-left corner
-    eu: tuple
-        Tuple of two values indicting uniqueness and determinacy of the solution.
-    loose: int
+        top-left corner.
+    eu : tuple
+        Tuple of two values indicating existence and uniqueness of the solution, with the following meanings:
+
+        - eu[0] = 1 for existence,
+        - eu[1] = 1 for uniqueness.
+        - eu[0] = -1 for existence only with not-s.c. z;
+        - eu = [-2, -2] for coincident zeros.
+
+    loose : int
         Number of loose endogenous variables.
 
     References
-    -------
-    ..[1] Sims, Christopher A. "Solving linear rational expectations models." Computational economics 20.1-2 (2002): 1.
+    ----------
+    .. [1] Sims, Christopher A. "Solving linear rational expectations models." Computational Economics 20.1-2 (2002): 1.
 
-    TODO: Can this be written in Numba/Aesara?
+    Notes
+    -----
+    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
+
     eu = [0, 0, 0]
 
     n, _ = g1.shape
@@ -394,6 +490,25 @@ def gensys(
 
 
 def interpret_gensys_output(eu):
+    """
+    Interprets the output of the gensys function, providing a message that describes the existence and uniqueness
+    of the solution.
+
+    Parameters
+    ----------
+    eu : tuple of int
+        A tuple of two integers returned by the gensys function:
+            eu[0] : int
+                Indicates existence of the solution.
+            eu[1] : int
+                Indicates uniqueness of the solution.
+
+    Returns
+    -------
+    message : str
+        A message describing the existence and uniqueness of the solution based on the values in `eu`.
+    """
+
     message = ""
     if eu[0] == -2 and eu[1] == -2:
         message = "Coincident zeros.  Indeterminacy and/or nonexistence. Check that your system is correctly defined."

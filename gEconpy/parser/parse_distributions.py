@@ -1419,16 +1419,16 @@ def composite_distribution_factory(
     -------
     d: CompositeDistribution
          A wrapper around a set of scipy distributions with three methods: .rvs(), .pdf(), and .logpdf()
-
-    TODO: This function is a huge mess of if-else statements. All of this should maybe be put into the parser classes
-        to take advantage of all the parameter checking that happens there. Consider this temporary.
-
-    TODO: Currently no checks are done on the support of the parameter to ensure it matches parameter requirements
-        e.g. a > 0, b > 0 in the beta distribution.
-
-    TODO: It might be possible to do moment matching in some limited sense. Currently the initial value for the
-        parameter distributions is thrown away, could use this value to moment match? Maybe not worth it.
     """
+
+    # TODO: This function is a huge mess of if-else statements. All of this should maybe be put into the parser classes
+    #     to take advantage of all the parameter checking that happens there. Consider this temporary.
+    #
+    # TODO: Currently no checks are done on the support of the parameter to ensure it matches parameter requirements
+    #     e.g. a > 0, b > 0 in the beta distribution.
+    #
+    # TODO: It might be possible to do moment matching in some limited sense. Currently the initial value for the
+    #     parameter distributions is thrown away, could use this value to moment match? Maybe not worth it.
 
     def tau_to_scale(key, value):
         if key in {"tau", "precision"}:
