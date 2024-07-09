@@ -124,9 +124,9 @@ def find_typos_and_guesses(
     tuple of (str or None, str or None)
         A tuple containing the best matching valid input and the user input that may be a typo, if they are above the
         match threshold. If no user input is above the threshold, both elements of the tuple will be None.
-
-    TODO: Tune match_threshold
     """
+
+    #     TODO: Tune match_threshold
 
     best_guess = max(
         valid_inputs, key=lambda x: elementwise_jaccard_distance(x, user_inputs)
