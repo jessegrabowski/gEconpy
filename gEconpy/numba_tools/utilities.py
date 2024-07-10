@@ -1,6 +1,6 @@
 import re
 
-from typing import Callable, Optional, Union
+from collections.abc import Callable
 
 import numba as nb
 import numpy as np
@@ -170,8 +170,8 @@ class NumbaFriendlyNumPyPrinter(NumPyPrinter):
 
 def numba_lambdify(
     inputs: list[sp.Symbol],
-    expr: Union[list[sp.Expr], sp.Matrix, list[sp.Matrix]],
-    func_signature: Optional[str] = None,
+    expr: list[sp.Expr] | sp.Matrix | list[sp.Matrix],
+    func_signature: str | None = None,
     ravel_outputs=False,
 ) -> Callable:
     """
@@ -297,14 +297,15 @@ def numba_lambdify(
     input_signature = ", ".join([getattr(x, "safe_name", x.name) for x in inputs])
 
     assignments = "\n".join(
-        [f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}" for x, y in sub_dict]
+        [
+            f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}"
+            for x, y in sub_dict
+        ]
     )
     assignments = re.sub(ZERO_ONE_INDEX_PATTERN, r"\g<3>", assignments)
 
     returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
-    full_code = (
-        f"{decorator}\ndef f({input_signature}):\n\n{assignments}\n\n{code}\n\n    return {returns}"
-    )
+    full_code = f"{decorator}\ndef f({input_signature}):\n\n{assignments}\n\n{code}\n\n    return {returns}"
 
     docstring = f"'''Automatically generated code:\n{full_code}'''"
     code = f"{decorator}\ndef f({input_signature}):\n    {docstring}\n\n{assignments}\n\n{code}\n\n    return {returns}"

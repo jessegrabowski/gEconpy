@@ -2,7 +2,8 @@ import re
 
 from abc import ABC, abstractmethod
 from functools import partial, reduce
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Literal
+from collections.abc import Callable
 from warnings import warn
 
 import numpy as np
@@ -101,11 +102,15 @@ DIST_ALIAS_LIST = [
 class CompositeDistribution:
     def __init__(self, dist, **parameters):
         defined_params = {
-            param: value for param, value in parameters.items() if isinstance(value, (int, float))
+            param: value
+            for param, value in parameters.items()
+            if isinstance(value, (int, float))
         }
 
         self.rv_params = {
-            param: value for param, value in parameters.items() if isinstance(value, rv_frozen)
+            param: value
+            for param, value in parameters.items()
+            if isinstance(value, rv_frozen)
         }
         self.d = partial(dist, **defined_params)
 
@@ -119,14 +124,18 @@ class CompositeDistribution:
 
     def _unpack_pdf_dict(self, point_dict):
         param_dict = {
-            param: value for param, value in point_dict.items() if param in self.rv_params.keys()
+            param: value
+            for param, value in point_dict.items()
+            if param in self.rv_params.keys()
         }
         assert set(param_dict.keys()).union(set(self.rv_params.keys())) == set(
             self.rv_params.keys()
         )
 
         point_dict = {
-            param: value for param, value in point_dict.items() if param not in param_dict.keys()
+            param: value
+            for param, value in point_dict.items()
+            if param not in param_dict.keys()
         }
         assert len(point_dict.keys()) == 1
 
@@ -164,7 +173,9 @@ class CompositeDistribution:
         n_samples = len(point_dicts)
         samples = np.zeros(n_samples)
         for idx in range(n_samples):
-            sample_params = {param: value.rvs() for param, value in self.rv_params.items()}
+            sample_params = {
+                param: value.rvs() for param, value in self.rv_params.items()
+            }
             sample_params.update(point_dicts[idx])
             samples[idx] = self.d(**sample_params).rvs()
 
@@ -177,11 +188,11 @@ class BaseDistributionParser(ABC):
         self,
         variable_name: str,
         d_name: str,
-        loc_param_name: Optional[str],
+        loc_param_name: str | None,
         scale_param_name: str,
-        shape_param_name: Optional[str],
-        upper_bound_param_name: Optional[str],
-        lower_bound_param_name: Optional[str],
+        shape_param_name: str | None,
+        upper_bound_param_name: str | None,
+        lower_bound_param_name: str | None,
         n_params: int,
         all_valid_parameters: list[str],
     ):
@@ -227,13 +238,17 @@ class BaseDistributionParser(ABC):
         return {canon_name: value}
 
     def _verify_distribution_parameterization(self, param_dict):
-        n_constraints = sum([self.mean_constraint is not None, self.std_constraint is not None])
+        n_constraints = sum(
+            [self.mean_constraint is not None, self.std_constraint is not None]
+        )
         if n_constraints > self.n_params:
             raise InsufficientDegreesOfFreedomException(self.variable_name, self.d_name)
 
         declared_params = list(param_dict.keys())
         boundary_params = [self.lower_bound_param_name, self.upper_bound_param_name]
-        declared_params = [param for param in declared_params if param not in boundary_params]
+        declared_params = [
+            param for param in declared_params if param not in boundary_params
+        ]
 
         n_params_passed = len(declared_params)
         if (n_constraints + n_params_passed) > self.n_params:
@@ -255,7 +270,10 @@ class BaseDistributionParser(ABC):
                     f"{self.std_constraint} > 0",
                 )
 
-        if self.scale_param_name in declared_params and param_dict[self.scale_param_name] <= 0:
+        if (
+            self.scale_param_name in declared_params
+            and param_dict[self.scale_param_name] <= 0
+        ):
             raise InvalidParameterException(
                 self.variable_name,
                 self.d_name,
@@ -302,15 +320,19 @@ class BaseDistributionParser(ABC):
 
     def _parse_parameter_candidates(
         self, canon_param_name: str, param_names: list[str], aliases: list[str]
-    ) -> Optional[str]:
+    ) -> str | None:
         candidates = list(set(param_names).intersection(set(aliases)))
         if len(candidates) == 0:
-            invalid_param_names = list(set(param_names) - set(self.all_valid_parameters))
+            invalid_param_names = list(
+                set(param_names) - set(self.all_valid_parameters)
+            )
 
             if len(invalid_param_names) == 0:
                 return None
 
-            best_guess, maybe_typo = find_typos_and_guesses(invalid_param_names, aliases)
+            best_guess, maybe_typo = find_typos_and_guesses(
+                invalid_param_names, aliases
+            )
 
             if best_guess is not None and maybe_typo is not None:
                 warn(
@@ -343,7 +365,10 @@ class BaseDistributionParser(ABC):
             if n_params == 1:
                 message += unused_parameters[0] + "."
             else:
-                message += ", ".join(unused_parameters[:-1]) + f", and {unused_parameters[-1]}."
+                message += (
+                    ", ".join(unused_parameters[:-1])
+                    + f", and {unused_parameters[-1]}."
+                )
             message += " Please verify whether these parameters are needed, and adjust the GCN file accordingly."
 
             warn(message, category=UnusedParameterWarning)
@@ -502,7 +527,10 @@ class NormalDistributionParser(BaseDistributionParser):
                     alpha = (a - loc) / scale
                     beta = (b - loc) / scale
 
-                    return truncnorm(loc=loc, scale=scale, a=alpha, b=beta).mean() - target_mean
+                    return (
+                        truncnorm(loc=loc, scale=scale, a=alpha, b=beta).mean()
+                        - target_mean
+                    )
 
                 loc = optimize.root_scalar(
                     match_mean,
@@ -522,7 +550,10 @@ class NormalDistributionParser(BaseDistributionParser):
                     alpha = (a - loc) / scale
                     beta = (b - loc) / scale
 
-                    return truncnorm(loc=loc, scale=scale, a=alpha, b=beta).std() - target_std
+                    return (
+                        truncnorm(loc=loc, scale=scale, a=alpha, b=beta).std()
+                        - target_std
+                    )
 
                 scale = optimize.root_scalar(
                     match_std,
@@ -727,12 +758,16 @@ class UniformDistributionParser(BaseDistributionParser):
 
             elif self.scale_param_name in parameters:
                 # TODO: Determine if this case is plausible, doesn't seem so, because sigma = 12 ** (-1/2) * scale
-                raise ValueError("Scale and Std are not enough to identify a Uniform distribution!")
+                raise ValueError(
+                    "Scale and Std are not enough to identify a Uniform distribution!"
+                )
 
         # Case 4: User passed the bounds directly, convert to loc and scale then delete
         else:
             if self.lower_bound_param_name in parameters:
-                param_dict[self.loc_param_name] = param_dict[self.lower_bound_param_name]
+                param_dict[self.loc_param_name] = param_dict[
+                    self.lower_bound_param_name
+                ]
                 del param_dict[self.lower_bound_param_name]
             if self.upper_bound_param_name in parameters:
                 b = param_dict[self.upper_bound_param_name]
@@ -755,7 +790,9 @@ class InverseGammaDistributionParser(BaseDistributionParser):
             upper_bound_param_name=None,
             lower_bound_param_name=None,
             n_params=3,
-            all_valid_parameters=INV_GAMMA_SHAPE_ALIASES + INV_GAMMA_SCALE_ALIASES + ["loc"],
+            all_valid_parameters=INV_GAMMA_SHAPE_ALIASES
+            + INV_GAMMA_SCALE_ALIASES
+            + ["loc"],
         )
 
     def build_distribution(
@@ -804,7 +841,7 @@ class InverseGammaDistributionParser(BaseDistributionParser):
         # TODO: What should be done with loc?
         parameters = list(param_dict.keys())
 
-        user_passed_loc = self.loc_param_name in parameters
+        # user_passed_loc = self.loc_param_name in parameters
         user_passed_scale = self.scale_param_name in parameters
         user_passed_shape = self.shape_param_name in parameters
 
@@ -935,13 +972,17 @@ class BetaDistributionParser(BaseDistributionParser):
                 )
 
             if std <= 0:
-                used_name = next(iter(set(used_parameters).intersection(set(STD_ALIASES))))
+                used_name = next(
+                    iter(set(used_parameters).intersection(set(STD_ALIASES)))
+                )
                 raise InvalidParameterException(
                     self.variable_name, self.d_name, "mean", used_name, "sd > 0"
                 )
 
             if ((1 - mean) ** 2 * mean) < (std**2):
-                used_name = next(iter(set(used_parameters).intersection(set(STD_ALIASES))))
+                used_name = next(
+                    iter(set(used_parameters).intersection(set(STD_ALIASES)))
+                )
                 raise InvalidParameterException(
                     self.variable_name,
                     self.d_name,
@@ -951,9 +992,9 @@ class BetaDistributionParser(BaseDistributionParser):
                 )
 
             x = (1 - mean) / mean
-            param_dict[self.shape_param_name_1] = alpha = x / (std**2 * (x + 1) ** 3) - (
-                1 / (x + 1)
-            )
+            param_dict[self.shape_param_name_1] = alpha = x / (
+                std**2 * (x + 1) ** 3
+            ) - (1 / (x + 1))
             param_dict[self.shape_param_name_2] = alpha * x
 
         # # Case 2: No moment constraints
@@ -1015,7 +1056,10 @@ class GammaDistributionParser(BaseDistributionParser):
             lower_bound_param_name=None,
             upper_bound_param_name=None,
             n_params=3,
-            all_valid_parameters=GAMMA_SHAPE_ALIASES + GAMMA_SCALE_ALIASES + MOMENTS + ["loc"],
+            all_valid_parameters=GAMMA_SHAPE_ALIASES
+            + GAMMA_SCALE_ALIASES
+            + MOMENTS
+            + ["loc"],
         )
 
     def build_distribution(
@@ -1151,7 +1195,9 @@ def build_alias_to_canon_dict(alias_list, cannon_names) -> dict[str, str]:
     return alias_to_canon_dict
 
 
-def preprocess_distribution_string(variable_name: str, d_string: str) -> tuple[str, dict[str, str]]:
+def preprocess_distribution_string(
+    variable_name: str, d_string: str
+) -> tuple[str, dict[str, str]]:
     """
     Parameters
     ----------
@@ -1168,14 +1214,16 @@ def preprocess_distribution_string(variable_name: str, d_string: str) -> tuple[s
     """
     name_to_canon_dict = build_alias_to_canon_dict(DIST_ALIAS_LIST, CANON_NAMES)
 
-    digit_pattern = r" ?\d*\.?\d* ?"
+    # digit_pattern = r" ?\d*\.?\d* ?"
     general_pattern = r" ?[\w\.]* ?"
 
     # The not last args have a comma, while the last arg does not.
     dist_name_pattern = r"(\w+)"
     not_last_arg_pattern = rf"(\w+ ?={general_pattern}, ?)"
     last_arg_pattern = rf"(\w+ ?={general_pattern})"
-    valid_pattern = rf"{dist_name_pattern}\({not_last_arg_pattern}*?{last_arg_pattern}\),?$"
+    valid_pattern = (
+        rf"{dist_name_pattern}\({not_last_arg_pattern}*?{last_arg_pattern}\),?$"
+    )
 
     # TODO: sort out where the typo is and tell the user.
     if re.search(valid_pattern, d_string) is None:
@@ -1306,7 +1354,9 @@ def rename_dict_keys_with_value_transform(
     result = {}
     matches = [key for key in d.keys() if key in set(to_rename)]
     if len(matches) > 1:
-        raise MultipleParameterDefinitionException(variable_name, d_name, new_key, matches)
+        raise MultipleParameterDefinitionException(
+            variable_name, d_name, new_key, matches
+        )
 
     for key, value in d.items():
         if key in to_rename:
@@ -1328,7 +1378,9 @@ def param_values_to_floats(param_dict: dict):
 
 def split_out_composite_distributions(
     variable_names: list[str], d_names: list[str], param_dicts: list[dict[str, str]]
-) -> tuple[dict[str, tuple[str, dict[str, str]]], dict[str, tuple[str, dict[str, str]]]]:
+) -> tuple[
+    dict[str, tuple[str, dict[str, str]]], dict[str, tuple[str, dict[str, str]]]
+]:
     basic_distributions = {}
     composite_distributions = {}
 
@@ -1349,14 +1401,16 @@ def fetch_rv_params(param_dict, model):
         elif isinstance(v, str):
             return_dict[k] = model[v]
         else:
-            raise ValueError(f"Found an illegal key:value pair in prior param dict, {k}:{v}")
+            raise ValueError(
+                f"Found an illegal key:value pair in prior param dict, {k}:{v}"
+            )
 
     return return_dict
 
 
 def composite_distribution_factory(
     variable_name, d_name, param_dict, backend="scipy", model=None
-) -> Union[CompositeDistribution, None]:
+) -> CompositeDistribution | None:
     """
     Parameters
     ----------
@@ -1399,8 +1453,12 @@ def composite_distribution_factory(
 
     # validate parameters by simple rename, error on more complicated setups (no moment constraints!)
     if d_name == "normal":
-        has_upper_bound = any([x in set(param_dict.keys()) for x in UPPER_BOUND_ALIASES])
-        has_lower_bound = any([x in set(param_dict.keys()) for x in LOWER_BOUND_ALIASES])
+        has_upper_bound = any(
+            [x in set(param_dict.keys()) for x in UPPER_BOUND_ALIASES]
+        )
+        has_lower_bound = any(
+            [x in set(param_dict.keys()) for x in LOWER_BOUND_ALIASES]
+        )
 
         if (has_upper_bound or has_lower_bound) and backend == "scipy":
             warn(
@@ -1533,7 +1591,9 @@ def create_prior_distribution_dictionary(
     hyper_prior_dict = SymbolDictionary()
 
     for variable_name, (d_name, param_dict) in basic_distributions.items():
-        d = distribution_factory(variable_name=variable_name, d_name=d_name, param_dict=param_dict)
+        d = distribution_factory(
+            variable_name=variable_name, d_name=d_name, param_dict=param_dict
+        )
         prior_dict[variable_name] = d
 
     for variable_name, (d_name, param_dict) in compound_distributions.items():
@@ -1543,7 +1603,9 @@ def create_prior_distribution_dictionary(
                 param_dict[param] = prior_dict[value]
                 rvs_used_in_d.append((variable_name, param, value))
 
-        d = composite_distribution_factory(variable_name, d_name, param_dict, backend=backend)
+        d = composite_distribution_factory(
+            variable_name, d_name, param_dict, backend=backend
+        )
         prior_dict[variable_name] = d
         for parent_rv, param, rv in rvs_used_in_d:
             hyper_prior_dict[rv] = (parent_rv, param, prior_dict[rv])

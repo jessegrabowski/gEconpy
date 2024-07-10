@@ -49,11 +49,14 @@ def test_variables_to_all_times():
 
 
 @pytest.mark.parametrize(
-    "gcn_file", ["One_Block_Simple_1.gcn", "Two_Block_RBC_1.gcn", "Full_New_Keyensian.gcn"]
+    "gcn_file",
+    ["One_Block_Simple_1.gcn", "Two_Block_RBC_1.gcn", "Full_New_Keyensian.gcn"],
 )
 def test_log_linearize_model(gcn_file):
     mod = model_from_gcn(os.path.join("tests/Test GCNs", gcn_file), verbose=False)
-    (A, B, C, D), not_loglin_variable = linearize_model(mod.variables, mod.equations, mod.shocks)
+    (A, B, C, D), not_loglin_variable = linearize_model(
+        mod.variables, mod.equations, mod.shocks
+    )
     lags, now, leads = make_all_variable_time_combinations(mod.variables)
 
     ss_vars = [x.to_ss() for x in mod.variables]
@@ -65,10 +68,15 @@ def test_log_linearize_model(gcn_file):
 
     A2, B2, C2, D2 = linearize_method_2(now, mod.equations, mod.shocks)
     A22, B22, C22, D22 = linearize_method_2(
-        now, mod.equations, mod.shocks, not_loglin_variables=[x.base_name for x in mod.variables]
+        now,
+        mod.equations,
+        mod.shocks,
+        not_loglin_variables=[x.base_name for x in mod.variables],
     )
 
-    for i, (M1, M2) in enumerate(zip([A, B, C, D], [(A2, A22), (B2, B22), (C2, C22), (D2, D22)])):
+    for i, (M1, M2) in enumerate(
+        zip([A, B, C, D], [(A2, A22), (B2, B22), (C2, C22), (D2, D22)])
+    ):
         f1 = sp.lambdify(ss_vars + ss_shocks + parameters + [not_loglin_variable], M1)
         f1 = override_dummy_wrapper(f1, "not_loglin_variable")
         f2 = sp.lambdify(ss_vars + ss_shocks + parameters, list(M2))
@@ -86,7 +94,8 @@ def test_log_linearize_model(gcn_file):
 
 
 @pytest.mark.parametrize(
-    "gcn_file", ["One_Block_Simple_1.gcn", "Two_Block_RBC_1.gcn", "Full_New_Keyensian.gcn"]
+    "gcn_file",
+    ["One_Block_Simple_1.gcn", "Two_Block_RBC_1.gcn", "Full_New_Keyensian.gcn"],
 )
 def test_solve_with_gensys(gcn_file):
-    mod = model_from_gcn(os.path.join("tests/Test GCNs", gcn_file), verbose=False)
+    model_from_gcn(os.path.join("tests/Test GCNs", gcn_file), verbose=False)

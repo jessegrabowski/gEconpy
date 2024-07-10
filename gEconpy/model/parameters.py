@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.model.compile import (
@@ -12,7 +12,7 @@ def compile_param_dict_func(
     param_dict: SymbolDictionary,
     deterministic_dict: SymbolDictionary,
     backend: BACKENDS = "numpy",
-    cache: Optional[dict] = None,
+    cache: dict | None = None,
     return_symbolic: bool = False,
 ) -> tuple[Callable, dict]:
     """
@@ -53,7 +53,11 @@ def compile_param_dict_func(
     output_exprs = inputs + list(deterministic_dict.values())
 
     f, cache = compile_function(
-        inputs, output_exprs, backend=backend, cache=cache, return_symbolic=return_symbolic
+        inputs,
+        output_exprs,
+        backend=backend,
+        cache=cache,
+        return_symbolic=return_symbolic,
     )
 
     if return_symbolic and backend == "pytensor":

@@ -110,7 +110,9 @@ def test_build_warns_if_model_not_defined(
 )
 def test_model_parameters(gcn_path: str, name: str, backend: BACKENDS):
     file_path = os.path.join(ROOT, "Test GCNs", gcn_path)
-    model = model_from_gcn(file_path, verbose=False, backend=backend, mode="FAST_COMPILE")
+    model = model_from_gcn(
+        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
+    )
 
     # Test default parameters
     params = model.parameters()
@@ -128,7 +130,9 @@ def test_model_parameters(gcn_path: str, name: str, backend: BACKENDS):
 )
 def test_deterministic_model_parameters(backend: BACKENDS):
     file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
-    model = model_from_gcn(file_path, verbose=False, backend=backend, mode="FAST_COMPILE")
+    model = model_from_gcn(
+        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
+    )
     params = model.parameters()
 
     # Test numeric expression in calibration block
@@ -144,7 +148,10 @@ def test_all_backends_agree_on_parameters():
     file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
     models = [
         model_from_gcn(
-            file_path, verbose=False, backend=cast(BACKENDS, backend), mode="FAST_COMPILE"
+            file_path,
+            verbose=False,
+            backend=cast(BACKENDS, backend),
+            mode="FAST_COMPILE",
         )
         for backend in ["numpy", "numba", "pytensor"]
     ]
@@ -237,7 +244,9 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
     n = expected_result.shape[0]
 
     file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}")
-    model = model_from_gcn(file_path, verbose=False, backend=backend, mode="FAST_COMPILE")
+    model = model_from_gcn(
+        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
+    )
     params = model.parameters()
     ss_dict = model.f_ss(**params)
     ss = np.array(np.r_[list(ss_dict.values())])
@@ -268,14 +277,18 @@ def test_numerical_steady_state(how, gcn_file):
         )
 
     file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
-    model_1 = model_from_gcn(file_path, verbose=False, backend="numpy", mode="FAST_COMPILE")
+    model_1 = model_from_gcn(
+        file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
+    )
     analytic_res = model_1.steady_state()
     analytic_values = np.array(list(analytic_res.values()))
     model_1.f_ss = None
 
     numeric_res = model_1.steady_state(how=how, verbose=False)
     numeric_values = np.array(list(numeric_res.values()))
-    errors = model_1.f_ss_resid(**numeric_res.to_string(), **model_1.parameters().to_string())
+    errors = model_1.f_ss_resid(
+        **numeric_res.to_string(), **model_1.parameters().to_string()
+    )
 
     if how == "root":
         assert_allclose(analytic_values, numeric_values, atol=1e-2)
@@ -297,7 +310,9 @@ def test_partially_analytical_steady_state(how, gcn_file):
     analytic_res = analytic_model.steady_state()
     analytic_values = np.array(list(analytic_res.values()))
 
-    partial_model = model_from_gcn(file_path, verbose=False, backend="numpy", mode="FAST_COMPILE")
+    partial_model = model_from_gcn(
+        file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
+    )
     numeric_res = partial_model.steady_state(how=how, verbose=False)
     numeric_values = np.array(list(numeric_res.values()))
 
@@ -323,7 +338,9 @@ def test_partially_analytical_steady_state(how, gcn_file):
 )
 def test_linearize(gcn_file, name, backend):
     file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
-    model = model_from_gcn(file_path, verbose=False, backend=backend, mode="FAST_COMPILE")
+    model = model_from_gcn(
+        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
+    )
     outputs = model.linearize_model(loglin_negative_ss=True)
 
     for mat_name, out in zip(["A", "B", "C", "D"], outputs):
@@ -365,7 +382,9 @@ def test_gensys_fails_to_solve(self):
     model.steady_state(verbose=False, model_is_linear=True)
 
     with self.assertRaises(GensysFailedException):
-        model.solve_model(solver="gensys", on_failure="error", model_is_linear=True, verbose=False)
+        model.solve_model(
+            solver="gensys", on_failure="error", model_is_linear=True, verbose=False
+        )
 
 
 @mock.patch("builtins.print")
@@ -373,7 +392,9 @@ def test_outputs_after_gensys_failure(self, mock_print):
     file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
     model = gEconModel(file_path, verbose=False)
     model.steady_state(verbose=False, model_is_linear=True)
-    model.solve_model(solver="gensys", on_failure="ignore", model_is_linear=True, verbose=True)
+    model.solve_model(
+        solver="gensys", on_failure="ignore", model_is_linear=True, verbose=True
+    )
 
     gensys_message = mock_print.call_args.args[0]
     self.assertEqual(gensys_message, "Solution exists, but is not unique.")
@@ -402,7 +423,7 @@ def test_compute_stationary_covariance_warns_if_using_default(self):
     model.solve_model(solver="gensys", verbose=False)
 
     with self.assertWarns(UserWarning):
-        Sigma = model.compute_stationary_covariance_matrix()
+        model.compute_stationary_covariance_matrix()
 
 
 def test_sample_priors_fails_without_priors(self):
@@ -456,7 +477,7 @@ def test_missing_parameter_definition_raises(self):
         create=True,
     ):
         with self.assertRaises(ValueError) as error:
-            model = gEconModel(
+            gEconModel(
                 "",
                 verbose=False,
                 simplify_tryreduce=False,

@@ -32,7 +32,9 @@ def reduce_variable_list(equations, variables):
     }
 
     reduced_variables = sorted(list(reduced_variables), key=lambda x: x.name)
-    eliminated_vars = sorted(list(set(variables) - set(reduced_variables)), key=lambda x: x.name)
+    eliminated_vars = sorted(
+        list(set(variables) - set(reduced_variables)), key=lambda x: x.name
+    )
 
     return reduced_variables, eliminated_vars
 
@@ -76,7 +78,9 @@ def simplify_tryreduce(
         if not any([var in eq.atoms() for var in to_remove]):
             reduced_equations.append(eq)
 
-    reduced_variables, eliminated_vars = reduce_variable_list(reduced_equations, variables)
+    reduced_variables, eliminated_vars = reduce_variable_list(
+        reduced_equations, variables
+    )
     return reduced_equations, reduced_variables, eliminated_vars
 
 
@@ -99,7 +103,9 @@ def simplify_constants(
     n_equations = len(equations)
     n_variables = len(variables)
 
-    if not _check_system_is_square("Removal of constant variables", n_equations, n_variables):
+    if not _check_system_is_square(
+        "Removal of constant variables", n_equations, n_variables
+    ):
         return equations, variables, []
 
     reduce_dict = {}
@@ -116,6 +122,8 @@ def simplify_constants(
     reduced_equations = substitute_all_equations(equations, reduce_dict)
     reduced_equations = [eq for eq in reduced_equations if eq != 0]
 
-    reduced_variables, eliminated_vars = reduce_variable_list(reduced_equations, variables)
+    reduced_variables, eliminated_vars = reduce_variable_list(
+        reduced_equations, variables
+    )
 
     return reduced_equations, reduced_variables, eliminated_vars

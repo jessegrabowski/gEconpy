@@ -208,7 +208,9 @@ class SymbolicSteadyStateSolver:
 
         with Parallel(cores) as pool:
             solutions = pool(delayed(self.solve_and_return)(eq, v) for eq, v in eq_vars)
-            scores = np.array(pool(delayed(self.score_eq)(eq, *args) for eq in solutions))
+            scores = np.array(
+                pool(delayed(self.score_eq)(eq, *args) for eq in solutions)
+            )
 
         score_matrix = scores.reshape(n, k)
         idx_matrix = np.arange(n * k).reshape(n, k)
@@ -243,7 +245,8 @@ class SymbolicSteadyStateSolver:
 
         system = ss_system.copy()
         calib_eqs = [
-            var - eq for var, eq in zip(mod.params_to_calibrate, mod.calibrating_equations)
+            var - eq
+            for var, eq in zip(mod.params_to_calibrate, mod.calibrating_equations)
         ]
         system.extend(calib_eqs)
 
@@ -277,7 +280,9 @@ class SymbolicSteadyStateSolver:
             system = [
                 eq
                 for eq in system
-                if not self.test_expr_is_zero(eq.subs(unsolved_dict), params, tol=zero_tol)
+                if not self.test_expr_is_zero(
+                    eq.subs(unsolved_dict), params, tol=zero_tol
+                )
             ]
             solved_dict = self.make_solved_subs(sub_dict, mod.assumptions)
             unsolved_dict = {v: k.subs(unsolved_dict) for k, v in solved_dict.items()}
@@ -289,7 +294,9 @@ class SymbolicSteadyStateSolver:
             if min(scores) > 100:
                 break
 
-        to_solve = {x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)}
+        to_solve = {
+            x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)
+        }
         system = [eq.simplify() for eq in system]
         try:
             final_solutions = sp.solve(system, to_solve, dict=True)

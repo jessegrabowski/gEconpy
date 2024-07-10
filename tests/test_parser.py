@@ -203,8 +203,8 @@ class ParserTestCases(unittest.TestCase):
         ) as file:
             expected_result = file.read()
 
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
 
         self.assertEqual(

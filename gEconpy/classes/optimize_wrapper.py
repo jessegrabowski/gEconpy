@@ -1,7 +1,7 @@
 import sys
 import warnings
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import numpy as np
 
@@ -12,8 +12,8 @@ class CostFuncWrapper:
     def __init__(
         self,
         f: Callable,
-        f_jac: Optional[Callable] = None,
-        f_hess: Optional[Callable] = None,
+        f_jac: Callable | None = None,
+        f_hess: Callable | None = None,
         maxeval: int = 5000,
         progressbar: bool = True,
         update_every: int = 10,
@@ -40,7 +40,9 @@ class CostFuncWrapper:
         self.previous_x = None
         self.progressbar = progressbar
         if progressbar:
-            self.progress = progress_bar(range(maxeval), total=maxeval, display=progressbar)
+            self.progress = progress_bar(
+                range(maxeval), total=maxeval, display=progressbar
+            )
             self.progress.update(0)
         else:
             self.progress = range(maxeval)
@@ -109,7 +111,9 @@ class CostFuncWrapper:
                 else:
                     norm_grad = np.linalg.norm(grad)
                     norm_hess = np.linalg.norm(hess)
-                    self.progress.comment = self.desc.format(value, norm_grad, norm_hess)
+                    self.progress.comment = self.desc.format(
+                        value, norm_grad, norm_hess
+                    )
 
 
 def optimzer_early_stopping_wrapper(f_optim):

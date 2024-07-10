@@ -1,7 +1,8 @@
 import functools as ft
 import logging
 
-from typing import Callable, Optional, Union
+from typing import Union
+from collections.abc import Callable
 
 import numpy as np
 import sympy as sp
@@ -67,7 +68,7 @@ def compile_model_ss_functions(
     error_func: ERROR_FUNCTIONS = "squared",
     backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
-    stack_return: Optional[bool] = None,
+    stack_return: bool | None = None,
     **kwargs,
 ):
     cache = {}
@@ -86,7 +87,9 @@ def compile_model_ss_functions(
     parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
 
     variables += list(calib_dict.to_sympy().keys())
-    ss_error = steady_state_error_function(steady_state_equations, variables, error_func)
+    ss_error = steady_state_error_function(
+        steady_state_equations, variables, error_func
+    )
 
     f_ss, cache = compile_known_ss(
         ss_solution_dict,
@@ -99,19 +102,26 @@ def compile_model_ss_functions(
         **kwargs,
     )
 
-    (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess), cache = compile_ss_resid_and_sq_err(
-        steady_state_equations,
-        variables,
-        parameters,
-        ss_error,
-        backend=backend,
-        cache=cache,
-        return_symbolic=return_symbolic,
-        stack_return=stack_return,
-        **kwargs,
+    (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess), cache = (
+        compile_ss_resid_and_sq_err(
+            steady_state_equations,
+            variables,
+            parameters,
+            ss_error,
+            backend=backend,
+            cache=cache,
+            return_symbolic=return_symbolic,
+            stack_return=stack_return,
+            **kwargs,
+        )
     )
 
-    return (f_params, f_ss, (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess)), cache
+    return (
+        f_params,
+        f_ss,
+        (f_ss_resid, f_ss_jac),
+        (f_ss_error, f_ss_grad, f_ss_hess),
+    ), cache
 
 
 def infer_variable_bounds(variables):
@@ -136,13 +146,13 @@ class Model:
         param_dict: SymbolDictionary,
         f_params: Callable,
         f_ss_resid: Callable,
-        f_ss: Optional[Callable] = None,
-        f_ss_error: Optional[Callable] = None,
-        f_ss_jac: Optional[Callable] = None,
-        f_ss_error_grad: Optional[Callable] = None,
-        f_ss_error_hess: Optional[Callable] = None,
-        f_linearize: Optional[Callable] = None,
-        f_perturbation: Optional[Callable] = None,
+        f_ss: Callable | None = None,
+        f_ss_error: Callable | None = None,
+        f_ss_jac: Callable | None = None,
+        f_ss_error_grad: Callable | None = None,
+        f_ss_error_hess: Callable | None = None,
+        f_linearize: Callable | None = None,
+        f_perturbation: Callable | None = None,
         backend: BACKENDS = "numpy",
     ) -> None:
         """
@@ -259,7 +269,7 @@ class Model:
         use_jac=True,
         use_hess=True,
         progressbar=True,
-        optimizer_kwargs: Optional[dict] = None,
+        optimizer_kwargs: dict | None = None,
         verbose=True,
         **updates: float,
     ):
@@ -276,11 +286,17 @@ class Model:
 
         ss_variables = [x.to_ss() for x in self.variables]
         known_variables = (
-            set() if self.f_ss is None else set(self.f_ss(**self.parameters()).to_sympy().keys())
+            set()
+            if self.f_ss is None
+            else set(self.f_ss(**self.parameters()).to_sympy().keys())
         )
-        vars_to_solve = sorted(list(set(ss_variables) - known_variables), key=lambda x: x.name)
+        vars_to_solve = sorted(
+            list(set(ss_variables) - known_variables), key=lambda x: x.name
+        )
         var_names_to_solve = [x.name for x in vars_to_solve]
-        unknown_var_idx = np.array([x in vars_to_solve for x in ss_variables], dtype="bool")
+        unknown_var_idx = np.array(
+            [x in vars_to_solve for x in ss_variables], dtype="bool"
+        )
 
         if how == "root":
             if np.any(~unknown_var_idx):
@@ -309,8 +325,12 @@ class Model:
         else:
             raise NotImplementedError()
 
-        provided_ss_values = self.f_ss(**param_dict).to_sympy() if self.f_ss is not None else {}
-        optimizer_results = SymbolDictionary({var: res.x[i] for i, var in enumerate(vars_to_solve)})
+        provided_ss_values = (
+            self.f_ss(**param_dict).to_sympy() if self.f_ss is not None else {}
+        )
+        optimizer_results = SymbolDictionary(
+            {var: res.x[i] for i, var in enumerate(vars_to_solve)}
+        )
         res_dict = optimizer_results | provided_ss_values
         res_dict = SymbolDictionary({x: res_dict[x] for x in ss_variables})
 
@@ -325,10 +345,10 @@ class Model:
     def _solve_steady_state_with_root(
         self,
         use_jac: bool = True,
-        vars_to_solve: Optional[list[str]] = None,
-        unknown_var_idx: Optional[np.ndarray] = None,
+        vars_to_solve: list[str] | None = None,
+        unknown_var_idx: np.ndarray | None = None,
         progressbar: bool = True,
-        optimizer_kwargs: Optional[dict] = None,
+        optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
         **param_updates,
     ):
@@ -346,7 +366,9 @@ class Model:
         objective = CostFuncWrapper(
             maxeval=maxeval,
             f=scipy_wrapper(self.f_ss_resid, vars_to_solve, unknown_var_idx, self.f_ss),
-            f_jac=scipy_wrapper(self.f_ss_jac, vars_to_solve, unknown_var_idx, self.f_ss)
+            f_jac=scipy_wrapper(
+                self.f_ss_jac, vars_to_solve, unknown_var_idx, self.f_ss
+            )
             if use_jac
             else None,
             progressbar=progressbar,
@@ -369,10 +391,10 @@ class Model:
         self,
         use_jac: bool = True,
         use_hess: bool = True,
-        vars_to_solve: Optional[list[str]] = None,
-        unknown_var_idx: Optional[np.ndarray] = None,
+        vars_to_solve: list[str] | None = None,
+        unknown_var_idx: np.ndarray | None = None,
         progressbar: bool = True,
-        optimizer_kwargs: Optional[dict] = None,
+        optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
         **param_updates,
     ):
@@ -402,10 +424,14 @@ class Model:
         objective = CostFuncWrapper(
             maxeval=maxeval,
             f=scipy_wrapper(self.f_ss_error, vars_to_solve, unknown_var_idx, self.f_ss),
-            f_jac=scipy_wrapper(self.f_ss_error_grad, vars_to_solve, unknown_var_idx, self.f_ss)
+            f_jac=scipy_wrapper(
+                self.f_ss_error_grad, vars_to_solve, unknown_var_idx, self.f_ss
+            )
             if use_jac
             else None,
-            f_hess=scipy_wrapper(self.f_ss_error_hess, vars_to_solve, unknown_var_idx, self.f_ss)
+            f_hess=scipy_wrapper(
+                self.f_ss_error_hess, vars_to_solve, unknown_var_idx, self.f_ss
+            )
             if use_hess
             else None,
             progressbar=progressbar,
@@ -416,7 +442,9 @@ class Model:
             objective,
             x0,
             jac=use_jac,
-            hess=scipy_wrapper(self.f_ss_error_hess, vars_to_solve, unknown_var_idx, self.f_ss)
+            hess=scipy_wrapper(
+                self.f_ss_error_hess, vars_to_solve, unknown_var_idx, self.f_ss
+            )
             if use_hess
             else None,
             args=param_dict,
@@ -437,7 +465,9 @@ class Model:
         **param_updates,
     ):
         if order != 1:
-            raise NotImplementedError("Only first order linearization is currently supported.")
+            raise NotImplementedError(
+                "Only first order linearization is currently supported."
+            )
         if not_loglin_variables is None:
             not_loglin_variables = []
 
