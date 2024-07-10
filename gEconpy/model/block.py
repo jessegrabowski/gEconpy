@@ -24,12 +24,11 @@ class Block:
     """
     The Block class holds equations and parameters associated with each block of the DSGE model. They hold methods
     to solve their associated optimization problem. Blocks should be created by a Model.
-
-    TODO: Refactor this into an abstract class with basic functionality, then create some child classes for specific
-    problems, e.g. IdentityBlock, OptimizationBlock, CRRABlock, etc, each with their own optimization machinery.
-
-    TODO: Split components out into their own class/protocol and let them handle their own parsing?
     """
+
+    #     TODO: Split components out into their own class/protocol and let them handle their own parsing?
+    #    TODO: Refactor this into an abstract class with basic functionality, then create some child classes for specific
+    #     problems, e.g. IdentityBlock, OptimizationBlock, CRRABlock, etc, each with their own optimization machinery.
 
     def __init__(
         self,
@@ -58,24 +57,21 @@ class Block:
         self.name = name
         self.short_name = "".join(word[0] for word in name.split("_"))
 
-        self.definitions: dict[int, sp.Add] | None = None
+        self.definitions: dict[int, sp.Eq] | None = None
         self.controls: list[TimeAwareSymbol] | None = None
-        self.objective: dict[int, sp.Add] | None = None
-        self.constraints: dict[int, sp.Add] | None = None
-        self.identities: dict[int, sp.Add] | None = None
+        self.objective: dict[int, sp.Expr] | None = None
+        self.constraints: dict[int, sp.Eq] | None = None
+        self.identities: dict[int, sp.Eq] | None = None
         self.shocks: dict[int, TimeAwareSymbol] | None = None
-        self.calibration: dict[int, sp.Add] | None = None
+        self.calibration: dict[int, sp.Expr] | None = None
 
         self.variables: list[TimeAwareSymbol] = []
         self.param_dict: SymbolDictionary[str, float] = SymbolDictionary()
 
-        self.params_to_calibrate: list[sp.Symbol] | None = None
-        self.calibrating_equations: list[sp.Add] | None = None
+        self.calib_dict: SymbolDictionary[str, float] = SymbolDictionary()
+        self.deterministic_dict: SymbolDictionary[str, float] = SymbolDictionary()
 
-        self.deterministic_params: list[sp.Symbol] | None = None
-        self.deterministic_relationships: list[sp.Add] | None = None
-
-        self.system_equations: list[sp.Add] = []
+        self.system_equations: list[sp.Expr] = []
         self.multipliers: dict[int, TimeAwareSymbol] = {}
         self.eliminated_variables: list[sp.Symbol] = []
 
@@ -96,6 +92,22 @@ class Block:
             f"{self.name} Block of {self.n_equations} equations, initialized: {self.initialized}, "
             f"solved: {self.system_equations is not None}"
         )
+
+    @property
+    def deterministic_params(self) -> list[sp.Symbol]:
+        return list(self.deterministic_dict.to_sympy().keys())
+
+    @property
+    def deterministic_relationships(self) -> list[sp.Expr]:
+        return list(self.deterministic_dict.values())
+
+    @property
+    def params_to_calibrate(self) -> list[sp.Symbol]:
+        return list(self.calib_dict.to_sympy().keys())
+
+    @property
+    def calibrating_equations(self) -> list[sp.Expr]:
+        return list(self.calib_dict.values())
 
     def initialize_from_dictionary(self, block_dict: dict, assumptions: dict) -> None:
         """
@@ -437,7 +449,7 @@ class Block:
             if eq.lhs.is_symbol and eq.rhs.is_number:
                 param = eq.lhs
                 value = eq.rhs
-                self.param_dict[param] = value
+                self.param_dict[param] = value.evalf()
 
             elif self.equation_flags[idx]["is_calibrating"]:
                 # Check if this equation is a valid calibrating equation
@@ -476,16 +488,8 @@ class Block:
                 if eq.lhs in self.deterministic_dict:
                     duplicates.append(lhs)
                 else:
-                    self.deterministic_dict[lhs] = rhs
+                    self.deterministic_dict[lhs] = rhs.doit()
 
-                if self.deterministic_relationships is None:
-                    self.deterministic_relationships = [
-                        set_equality_equals_zero(eq.rhs)
-                    ]
-                else:
-                    self.deterministic_relationships.append(
-                        set_equality_equals_zero(eq.rhs)
-                    )
         if len(duplicates) > 0:
             raise DuplicateParameterError(duplicates, self.name)
 

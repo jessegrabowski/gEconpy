@@ -86,7 +86,7 @@ def compile_model_ss_functions(
     parameters = list((param_dict | deterministic_dict).to_sympy().keys())
     parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
 
-    variables += list(calib_dict.to_sympy().keys())
+    variables = variables + list(calib_dict.to_sympy().keys())
     ss_error = steady_state_error_function(
         steady_state_equations, variables, error_func
     )

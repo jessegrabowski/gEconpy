@@ -50,7 +50,7 @@ def compile_param_dict_func(
 
     inputs = list(param_dict.to_sympy().keys())
     output_params = inputs + list(deterministic_dict.to_sympy().keys())
-    output_exprs = inputs + list(deterministic_dict.values())
+    output_exprs = inputs + list(deterministic_dict.values_to_float().values())
 
     f, cache = compile_function(
         inputs,

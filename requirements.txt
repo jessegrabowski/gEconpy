@@ -13,3 +13,4 @@ statsmodels
 sympy
 sympytensor
 xarray
+fastprogress

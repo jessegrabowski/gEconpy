@@ -92,7 +92,7 @@ class OptimizationProblemNotDefinedException(ValueError):
 
 
 class MultipleObjectiveFunctionsException(ValueError):
-    def __init__(self, block_name: str, eqs: list[sp.Eq]) -> None:
+    def __init__(self, block_name: str, eqs: list[sp.Expr]) -> None:
         self.block_name = block_name
 
         n_eqs = len(eqs)
