@@ -139,9 +139,9 @@ def linearize_model(
     lags, now, leads = make_all_variable_time_combinations(variables)
 
     eq_vec = sp.Matrix(equations)
-    A, B, C, D = (
-        eq_to_ss(eq_vec.jacobian(var_group)) for var_group in [lags, now, leads, shocks]
-    )
+    A, B, C = (eq_to_ss(eq_vec.jacobian(var_group)) for var_group in [lags, now, leads])
+    D = eq_to_ss(eq_vec.jacobian(shocks)) if shocks else sp.ZeroMatrix(*eq_vec.shape)
+
     not_loglin_var = sp.IndexedBase("not_loglin_variable", shape=(len(variables),))
     T = sp.diag(
         *[ss_var ** (1 - not_loglin_var[i]) for i, ss_var in enumerate(ss_variables)]

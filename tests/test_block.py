@@ -345,13 +345,13 @@ class BlockTestCases(unittest.TestCase):
         lamb_H_1 = TimeAwareSymbol("lambda__H_1", 0)
         q = TimeAwareSymbol("q", 0)
 
-        alpha, beta, delta, theta, tau = sp.symbols(
-            ["alpha", "beta", "delta", "theta", "tau"]
+        alpha, beta, delta, theta, tau, Theta, zeta = sp.symbols(
+            ["alpha", "beta", "delta", "theta", "tau", "Theta", "zeta"]
         )
 
         utility = (C**theta * (1 - L) ** (1 - theta)) ** (1 - tau) / (1 - tau)
         mkt_clearing = C + I - Y
-        production = Y - A * K**alpha * L ** (1 - alpha)
+        production = Y - A * K**alpha * L ** (1 - alpha) - (Theta + zeta)
         law_motion_K = K - (1 - delta) * K.step_backward() - I
 
         answer = (
@@ -428,6 +428,12 @@ class BlockTestCases(unittest.TestCase):
         sub_dict = dict(
             zip(all_variables, np.random.uniform(0, 1, size=len(all_variables)))
         )
+
+        # These are extraneous parameters used to test deterministic relationships. We can ignore them for the
+        # purpose of this test.
+        Theta, zeta = sp.symbols("Theta, zeta")
+        sub_dict[Theta] = 0
+        sub_dict[zeta] = 0
 
         dL_dC = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C ** (theta - 1) * (
             1 - L
@@ -537,13 +543,15 @@ class BlockTestCases(unittest.TestCase):
         K = TimeAwareSymbol("K", 0).to_ss()
         L = TimeAwareSymbol("L", 0).to_ss()
 
-        answer = {theta: 0.357, beta: 0.99, delta: 0.02, tau: 2, rho: 0.95}
+        answer = {theta: 0.357, beta: 1 / 1.01, delta: 0.02, tau: 2, rho: 0.95}
         self.assertEqual(
             all([key in self.block.param_dict.keys() for key in answer.keys()]), True
         )
 
         for key in self.block.param_dict:
-            self.assertEqual((answer[key] - self.block.param_dict[key]).simplify(), 0)
+            np.testing.assert_allclose(
+                answer[key], self.block.param_dict.values_to_float()[key]
+            )
 
         assert self.block.params_to_calibrate == [alpha]
 
@@ -565,9 +573,11 @@ class BlockTestCases(unittest.TestCase):
         self.assertEqual(
             [x.name for x in self.block.deterministic_params], ["Theta", "zeta"]
         )
-        answers = [3 + 0.99 * 0.95, -np.log(0.357)]
+        answers = [3 + 1 / 1.01 * 0.95, -np.log(0.357)]
         for eq, answer in zip(self.block.deterministic_relationships, answers):
-            self.assertEqual(eq.subs(self.block.param_dict), answer)
+            np.testing.assert_allclose(
+                float(eq.subs(self.block.param_dict).evalf()), answer
+            )
 
     def test_variable_list(self):
         self.block.solve_optimization(try_simplify=False)
