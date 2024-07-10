@@ -33,8 +33,8 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
@@ -54,8 +54,8 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
@@ -80,8 +80,8 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
@@ -105,8 +105,8 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
@@ -129,8 +129,8 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             };
             """
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
@@ -149,8 +149,8 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
@@ -171,8 +171,8 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
@@ -195,8 +195,8 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
         block = Block("HOUSEHOLD", block_dict)
@@ -248,8 +248,8 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
             """
 
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
         block = Block("HOUSEHOLD", block_dict)
@@ -264,8 +264,8 @@ class BlockTestCases(unittest.TestCase):
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
 
@@ -433,9 +433,9 @@ class BlockTestCases(unittest.TestCase):
             1 - L
         ) ** (1 - theta) * theta - lamb
 
-        dL_dL = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C**theta * (1 - L) ** (-theta) * (
-            1 - theta
-        ) * -1 + lamb_H_1 * (1 - alpha) * A * K**alpha * L ** (-alpha)
+        dL_dL = (C**theta * (1 - L) ** (1 - theta)) ** (-tau) * C**theta * (1 - L) ** (
+            -theta
+        ) * (1 - theta) * -1 + lamb_H_1 * (1 - alpha) * A * K**alpha * L ** (-alpha)
         dL_dK = (
             lamb_H_1 * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
             - q
@@ -455,8 +455,8 @@ class BlockTestCases(unittest.TestCase):
             os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         block_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
 
@@ -482,8 +482,8 @@ class BlockTestCases(unittest.TestCase):
             os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-        block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(
-            parser_output
+        block_dict, options, tryreduce, assumptions = (
+            gEcon_parser.split_gcn_into_dictionaries(parser_output)
         )
         firm_dict = gEcon_parser.parsed_block_to_dict(block_dict["FIRM"])
 

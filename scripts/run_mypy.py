@@ -7,6 +7,7 @@ Usage
 -----
 python scripts/run_mypy.py [--verbose]
 """
+
 import argparse
 import importlib
 import os
@@ -90,7 +91,9 @@ def check_results(mypy_lines: Iterator[str]):
         print("!!!!!!!!!")
         print(f"{len(failing)} files failed.")
         print("\n".join(sorted(map(str, failing))))
-        print("You can run `python scripts/run_mypy.py --verbose` to reproduce this test locally.")
+        print(
+            "You can run `python scripts/run_mypy.py --verbose` to reproduce this test locally."
+        )
         sys.exit(1)
 
     if all_files.issubset(passing):
@@ -103,7 +106,9 @@ def check_results(mypy_lines: Iterator[str]):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run mypy type checks on gEconpy codebase.")
+    parser = argparse.ArgumentParser(
+        description="Run mypy type checks on gEconpy codebase."
+    )
     parser.add_argument(
         "--verbose", action="count", default=0, help="Pass this to print mypy output."
     )

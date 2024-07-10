@@ -316,7 +316,9 @@ class Block:
             _, multipliers = unpack_keys_and_values(self.multipliers)
             multipliers = [x for x in multipliers if x is not None]
 
-        all_equations = [eq for eqs_list in [objective, constraints, identities] for eq in eqs_list]
+        all_equations = [
+            eq for eqs_list in [objective, constraints, identities] for eq in eqs_list
+        ]
         for eq in all_equations:
             eq = eq.subs(sub_dict)
             atoms = eq.atoms()
@@ -324,7 +326,7 @@ class Block:
             for variable in variables:
                 if variable.to_ss() not in self.variables:
                     self.variables.append(variable.to_ss())
-       
+
         if self.variables is None:
             return
 
@@ -333,7 +335,8 @@ class Block:
         shocks = self.shocks or []
         self.variables = [*self.variables, *multipliers]
         self.variables = sorted(
-            list({x for x in self.variables if x.set_t(0) not in shocks}), key=lambda x: x.name
+            list({x for x in self.variables if x.set_t(0) not in shocks}),
+            key=lambda x: x.name,
         )
 
     def _get_and_record_equation_numbers(self, equations: list[sp.Eq]) -> list[int]:

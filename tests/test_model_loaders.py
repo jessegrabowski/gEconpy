@@ -99,7 +99,11 @@ EXPECTED_OPTIONS = {
     "one_block": {},
     "one_block_ss": {"output logfile": False, "output LaTeX": False},
     "one_block_2": {"output logfile": False, "output LaTeX": False},
-    "full_nk": {"output logfile": True, "output LaTeX": True, "output LaTeX landscape": True},
+    "full_nk": {
+        "output logfile": True,
+        "output LaTeX": True,
+        "output LaTeX landscape": True,
+    },
 }
 
 EXPECTED_TRYREDUCE = {
@@ -152,7 +156,9 @@ EXPECTED_SHOCKS = {
 }
 
 
-@pytest.mark.parametrize("gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES)
+@pytest.mark.parametrize(
+    "gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES
+)
 def test_build_model_blocks(gcn_path, name):
     raw_model = load_gcn(os.path.join(GCN_ROOT, gcn_path))
     parsed_model, prior_dict = preprocess_gcn(raw_model)
@@ -161,14 +167,21 @@ def test_build_model_blocks(gcn_path, name):
     blocks, assumptions, options, try_reduce_vars, steady_state_equations = parse_result
 
     assert list(blocks.keys()) == EXPECTED_BLOCKS[name]
-    assert all([assumptions[var] == EXPECTED_ASSUMPTIONS[name][var] for var in assumptions.keys()])
+    assert all(
+        [
+            assumptions[var] == EXPECTED_ASSUMPTIONS[name][var]
+            for var in assumptions.keys()
+        ]
+    )
     assert options.keys() == EXPECTED_OPTIONS[name].keys()
     assert all([options[k] == EXPECTED_OPTIONS[name][k] for k in options.keys()])
     assert try_reduce_vars == EXPECTED_TRYREDUCE[name]
     assert len(steady_state_equations) == EXPECTED_SS_LEN[name]
 
 
-@pytest.mark.parametrize("gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES)
+@pytest.mark.parametrize(
+    "gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES
+)
 def test_block_dict_to_variables_and_shocks(gcn_path, name):
     raw_model = load_gcn(os.path.join(GCN_ROOT, gcn_path))
     parsed_model, prior_dict = preprocess_gcn(raw_model)
@@ -188,13 +201,23 @@ def test_block_dict_to_variables_and_shocks(gcn_path, name):
 
 @pytest.mark.parametrize(
     "gcn_file",
-    ["One_Block_Simple_with_duplicate_param_1.gcn", "One_Block_Simple_with_duplicate_param_2.gcn"],
+    [
+        "One_Block_Simple_with_duplicate_param_1.gcn",
+        "One_Block_Simple_with_duplicate_param_2.gcn",
+    ],
     ids=["within_block", "between_blocks"],
 )
 def test_loading_fails_if_duplicate_parameters_in_two_blocks(gcn_file):
     with pytest.raises(DuplicateParameterError):
         outputs = gcn_to_block_dict(os.path.join(GCN_ROOT, gcn_file), True)
-        block_dict, assumptions, options, tryreduce, steady_state_equations, prior_dict = outputs
+        (
+            block_dict,
+            assumptions,
+            options,
+            tryreduce,
+            steady_state_equations,
+            prior_dict,
+        ) = outputs
         block_dict_to_model_primitives(block_dict, assumptions, tryreduce, prior_dict)
 
 
@@ -300,7 +323,7 @@ def test_all_model_functions_return_arrays():
 
 
 def test_load_gcn(gcn_path, name, simplify):
-    model = model_from_gcn(
+    model_from_gcn(
         os.path.join(GCN_ROOT, gcn_path), simplify_blocks=simplify, verbose=False
     )
     assert False

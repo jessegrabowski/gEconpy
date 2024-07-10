@@ -7,8 +7,8 @@ EPSILON = np.spacing(1)
 
 
 def qzdiv(
-    stake: float, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
-) -> tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+    stake: float, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
      Christopher Sim's qzdiv
 
@@ -25,18 +25,18 @@ def qzdiv(
      ----------
      stake : float
          Largest positive value for which an eigenvalue is considered stable.
-     A : ArrayLike
+     A : np.ndarray
          Upper-triangular matrix.
-     B : ArrayLike
+     B : np.ndarray
          Upper-triangular matrix.
-     Q : ArrayLike
+     Q : np.ndarray
          Matrix of left Schur vectors.
-     Z : ArrayLike
+     Z : np.ndarray
          Matrix of right Schur vectors.
 
      Returns
      -------
-     tuple of ArrayLike
+     tuple of np.ndarray
          A, B, Q, Z matrices sorted such that all unstable roots are placed in the lower-right corners of the matrices.
 
      Notes
@@ -75,8 +75,8 @@ def qzdiv(
 
 
 def qzswitch(
-    i: int, A: ArrayLike, B: ArrayLike, Q: ArrayLike, Z: ArrayLike
-) -> tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]:
+    i: int, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Christopher Sim's qzswitch.
 
@@ -90,26 +90,26 @@ def qzswitch(
     ----------
     i : int
         Index of matrix diagonal to switch.
-    A : ArrayLike
+    A : np.ndarray
         Upper-triangular matrix.
-    B : ArrayLike
+    B : np.ndarray
         Upper-triangular matrix.
-    Q : ArrayLike
+    Q : np.ndarray
         Matrix of left Schur vectors.
-    Z : ArrayLike
+    Z : np.ndarray
         Matrix of right Schur vectors.
 
     Returns
     -------
-    tuple of ArrayLike
+    tuple of np.ndarray
         Contains four elements:
-            A : ArrayLike
+            A : np.ndarray
                 Upper-triangular matrix with switched diagonal elements.
-            B : ArrayLike
+            B : np.ndarray
                 Upper-triangular matrix with switched diagonal elements.
-            Q : ArrayLike
+            Q : np.ndarray
                 Orthonormal matrix of left Schur vectors.
-            Z : ArrayLike
+            Z : np.ndarray
                 Orthonormal matrix of right Schur vectors.
 
     Notes
@@ -174,7 +174,7 @@ def qzswitch(
 
 
 def determine_n_unstable(
-    A: ArrayLike, B: ArrayLike, div: float, realsmall: float
+    A: np.ndarray, B: np.ndarray, div: float, realsmall: float
 ) -> tuple[float, int, bool]:
     """
     Determines how many roots of the system described by A and B are unstable.
@@ -229,25 +229,25 @@ def determine_n_unstable(
 
 
 def split_matrix_on_eigen_stability(
-    A: ArrayLike, n_unstable: int
-) -> tuple[ArrayLike, ArrayLike]:
+    A: np.ndarray, n_unstable: int
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Splits a matrix into stable and unstable parts based on the number of unstable roots.
 
     Parameters
     ----------
-    A : ArrayLike
+    A : np.ndarray
         Array to split.
     n_unstable : int
         Number of unstable roots in the system.
 
     Returns
     -------
-    tuple of ArrayLike
+    tuple of np.ndarray
         Contains two elements:
-            A1 : ArrayLike
+            A1 : np.ndarray
                 Matrix containing all stable roots.
-            A2 : ArrayLike
+            A2 : np.ndarray
                 Matrix containing all unstable roots.
 
     Notes
@@ -272,7 +272,7 @@ def build_u_v_d(
 
     Parameters
     ----------
-    eta : ArrayLike
+    eta : np.ndarray
         Input matrix for which to compute the SVD.
     realsmall : float
         A small threshold value to determine non-zero singular values.
@@ -281,9 +281,9 @@ def build_u_v_d(
     -------
     tuple
         Contains two elements:
-            (U, V, D) : tuple of ArrayLike
+            (U, V, D) : tuple of np.ndarray
                 SVD decomposition of `eta` where `U` and `V` are orthogonal matrices and `D` is a diagonal matrix.
-            non_zero_indices : ArrayLike
+            non_zero_indices : np.ndarray
                 Array of non-zero indices based on the threshold `realsmall`.
 
     Notes
@@ -308,11 +308,11 @@ def build_u_v_d(
 
 
 def gensys(
-    g0: ArrayLike,
-    g1: ArrayLike,
-    c: ArrayLike,
-    psi: ArrayLike,
-    pi: ArrayLike,
+    g0: np.ndarray,
+    g1: np.ndarray,
+    c: np.ndarray,
+    psi: np.ndarray,
+    pi: np.ndarray,
     div: float | None = None,
     tol: float | None = 1e-8,
 ) -> tuple:
@@ -340,15 +340,15 @@ def gensys(
 
     Parameters
     ----------
-    g0 : ArrayLike
+    g0 : np.ndarray
         Coefficient matrix of the dynamic system corresponding to the time-t variables.
-    g1 : ArrayLike
+    g1 : np.ndarray
         Coefficient matrix of the dynamic system corresponding to the time t-1 variables.
-    c : ArrayLike
+    c : np.ndarray
         Vector of constant terms.
-    psi : ArrayLike
+    psi : np.ndarray
         Coefficient matrix of the dynamic system corresponding to the exogenous shock terms.
-    pi : ArrayLike
+    pi : np.ndarray
         Coefficient matrix of the dynamic system corresponding to the endogenously determined
         expectational errors.
     div : float
@@ -358,20 +358,20 @@ def gensys(
 
     Returns
     -------
-    G1 : ArrayLike
+    G1 : np.ndarray
         Policy function relating the current timestep to the next, transition matrix T in state space jargon.
-    C : ArrayLike
+    C : np.ndarray
         Array of system means, intercept vector c in state space jargon.
-    impact : ArrayLike
+    impact : np.ndarray
         Policy function component relating exogenous shocks observed at the t to variable values in t+1, selection
         matrix R in state space jargon.
-    fmat : ArrayLike
+    fmat : np.ndarray
         Matrix used in the transformation of the system to handle unstable roots.
-    fwt : ArrayLike
+    fwt : np.ndarray
         Weight matrix corresponding to fmat.
-    ywt : ArrayLike
+    ywt : np.ndarray
         Weight matrix corresponding to the stable part of the system.
-    gev : ArrayLike
+    gev : np.ndarray
         Generalized left and right eigenvalues generated by qz(g0, g1), sorted such that stable roots are in the
         top-left corner.
     eu : tuple

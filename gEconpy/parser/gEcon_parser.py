@@ -1,7 +1,7 @@
 import re
 
 from collections import defaultdict
-from typing import Literal, Optional, Union, cast
+from typing import Literal, cast
 
 import pyparsing as pp
 
@@ -119,7 +119,9 @@ def validate_assumptions(block_dict: dict[str, list[str]]) -> None:
 
     for assumption in block_dict.keys():
         if assumption not in SYMPY_ASSUMPTIONS:
-            best_guess, maybe_typo = find_typos_and_guesses([assumption], SYMPY_ASSUMPTIONS)
+            best_guess, maybe_typo = find_typos_and_guesses(
+                [assumption], SYMPY_ASSUMPTIONS
+            )
             message = f'Assumption "{assumption}" is not a valid Sympy assumption.'
             if best_guess is not None:
                 message += f' Did you mean "{best_guess}"?'
@@ -165,7 +167,9 @@ def create_assumption_kwargs(
             implications = dict(_assume_rules.full_implications[(k, v)])
             for user_k, user_v in user_assumptions[base_var].items():
                 # Assumptions agree, move along
-                if ((user_k == k) and (user_v == v)) or (user_k not in implications.keys()):
+                if ((user_k == k) and (user_v == v)) or (
+                    user_k not in implications.keys()
+                ):
                     continue
 
                 # Assumptions disagree -- delete the default
@@ -201,7 +205,7 @@ def preprocess_gcn(gcn_raw: str) -> tuple[str, dict[str, str]]:
     return gcn_processed, prior_dict
 
 
-def parse_options_flags(options: str) -> Optional[dict[str, bool]]:
+def parse_options_flags(options: str) -> dict[str, bool] | None:
     """
     Extracts flags and values from `options`.
 
@@ -231,7 +235,13 @@ def parse_options_flags(options: str) -> Optional[dict[str, bool]]:
     for option in options:
         flag, value = option.split("=")
         value = value.replace(";", "").strip()
-        value = True if value.lower() == "true" else False if value.lower() == "false" else value
+        value = (
+            True
+            if value.lower() == "true"
+            else False
+            if value.lower() == "false"
+            else value
+        )
 
         result[flag.strip()] = value
 
@@ -283,7 +293,9 @@ def extract_special_block(text: str, block_name: str) -> dict[str, list[str]]:
     return block
 
 
-def process_special_block_text(text: str, name: SPECIAL_BLOCK) -> tuple[str, Union[dict, list]]:
+def process_special_block_text(
+    text: str, name: SPECIAL_BLOCK
+) -> tuple[str, dict | list]:
     """
     Extract special blocks from a preprocessed GCN text string. Modifies the GCN text string in-place by deleting
     the special block.

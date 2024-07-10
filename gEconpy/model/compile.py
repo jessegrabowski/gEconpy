@@ -1,5 +1,6 @@
 from functools import wraps
-from typing import Callable, Literal, Optional, Union
+from typing import Literal
+from collections.abc import Callable
 
 import numpy as np
 import pytensor
@@ -86,9 +87,9 @@ def _configue_pytensor_kwargs(kwargs: dict) -> dict:
 
 def compile_function(
     inputs: list[sp.Symbol],
-    outputs: Union[list[Union[sp.Symbol, sp.Expr]], sp.MutableDenseMatrix],
+    outputs: list[sp.Symbol | sp.Expr] | sp.MutableDenseMatrix,
     backend: BACKENDS,
-    cache: Optional[dict] = None,
+    cache: dict | None = None,
     stack_return: bool = False,
     pop_return: bool = False,
     return_symbolic: bool = False,
@@ -136,22 +137,28 @@ def compile_function(
         A dictionary mapping from sympy symbols to pytensor symbols.
     """
     if backend == "numpy":
-        f, cache = compile_to_numpy(inputs, outputs, cache, stack_return, pop_return, **kwargs)
+        f, cache = compile_to_numpy(
+            inputs, outputs, cache, stack_return, pop_return, **kwargs
+        )
     elif backend == "numba":
-        f, cache = compile_to_numba(inputs, outputs, cache, stack_return, pop_return, **kwargs)
+        f, cache = compile_to_numba(
+            inputs, outputs, cache, stack_return, pop_return, **kwargs
+        )
     elif backend == "pytensor":
         f, cache = compile_to_pytensor_function(
             inputs, outputs, cache, stack_return, pop_return, return_symbolic, **kwargs
         )
     else:
-        raise NotImplementedError(f"backend {backend} not implemented. Must be one of {BACKENDS}.")
+        raise NotImplementedError(
+            f"backend {backend} not implemented. Must be one of {BACKENDS}."
+        )
 
     return f, cache
 
 
 def compile_to_numpy(
     inputs: list[sp.Symbol],
-    outputs: Union[list[Union[sp.Symbol, sp.Expr]], sp.MutableDenseMatrix],
+    outputs: list[sp.Symbol | sp.Expr] | sp.MutableDenseMatrix,
     cache: dict,
     stack_return: bool,
     pop_return: bool,
@@ -167,7 +174,7 @@ def compile_to_numpy(
 
 def compile_to_numba(
     inputs: list[sp.Symbol],
-    outputs: list[Union[sp.Symbol, sp.Expr]],
+    outputs: list[sp.Symbol | sp.Expr],
     cache: dict,
     stack_return: bool,
     pop_return: bool,
@@ -183,7 +190,7 @@ def compile_to_numba(
 
 def compile_to_pytensor_function(
     inputs: list[sp.Symbol],
-    outputs: list[Union[sp.Symbol, sp.Expr]],
+    outputs: list[sp.Symbol | sp.Expr],
     cache: dict,
     stack_return: bool,
     pop_return: bool,

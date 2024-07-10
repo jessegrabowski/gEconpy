@@ -1,4 +1,5 @@
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Literal
+from collections.abc import Callable
 from warnings import catch_warnings, simplefilter
 
 import numpy as np
@@ -105,7 +106,9 @@ def steady_state_error_function(
     if func == "squared":
         error = sum([faster_simplify(eq**2, ss_vars) for eq in steady_state])
     elif func == "mean_squared":
-        error = sum([faster_simplify(eq**2, ss_vars) for eq in steady_state]) / len(steady_state)
+        error = sum([faster_simplify(eq**2, ss_vars) for eq in steady_state]) / len(
+            steady_state
+        )
     elif func == "abs":
         error = sum([faster_simplify(sp.Abs(eq), ss_vars) for eq in steady_state])
     elif func == "l2-norm":
@@ -126,14 +129,17 @@ def compile_ss_resid_and_sq_err(
     backend: BACKENDS,
     cache: dict,
     return_symbolic: bool,
-    stack_return: Optional[bool] = False,
+    stack_return: bool | None = False,
     **kwargs,
 ):
     cache = {} if cache is None else cache
     ss_variables = [x.to_ss() if hasattr(x, "to_ss") else x for x in variables]
 
     resid_jac = sp.Matrix(
-        [[faster_simplify(eq.diff(x), ss_variables) for x in ss_variables] for eq in steady_state]
+        [
+            [faster_simplify(eq.diff(x), ss_variables) for x in ss_variables]
+            for eq in steady_state
+        ]
     )
 
     f_ss_resid, cache = compile_function(
@@ -157,7 +163,10 @@ def compile_ss_resid_and_sq_err(
 
     error_grad = [faster_simplify(ss_error.diff(x), ss_variables) for x in ss_variables]
     error_hess = sp.Matrix(
-        [[faster_simplify(eq.diff(x), ss_variables) for eq in error_grad] for x in ss_variables]
+        [
+            [faster_simplify(eq.diff(x), ss_variables) for eq in error_grad]
+            for x in ss_variables
+        ]
     )
 
     f_ss_error, cache = compile_function(
@@ -199,7 +208,7 @@ def compile_known_ss(
     backend: BACKENDS,
     cache: dict,
     return_symbolic: bool = False,
-    stack_return: Optional[bool] = None,
+    stack_return: bool | None = None,
     **kwargs,
 ):
     cache = {} if cache is None else cache
@@ -236,21 +245,25 @@ class SteadyStateSolver:
         self.free_param_dict: SymbolDictionary[str, float] = model.free_param_dict
         self.params_to_calibrate: list[sp.Symbol] = model.params_to_calibrate
         self.calibrating_equations: list[sp.Add] = model.calibrating_equations
-        self.shock_dict: Optional[SymbolDictionary[str, float]] = None
+        self.shock_dict: SymbolDictionary[str, float] | None = None
 
         self.system_equations: list[sp.Add] = model.system_equations
-        self.steady_state_relationships: SymbolDictionary[
-            str, Union[float, sp.Add]
-        ] = model.steady_state_relationships
+        self.steady_state_relationships: SymbolDictionary[str, float | sp.Add] = (
+            model.steady_state_relationships
+        )
 
         ss_vars = make_steady_state_variables(self.variables)
         self.steady_state_dict: SymbolDictionary[str, float] = (
             SymbolDictionary.fromkeys(ss_vars, None).to_string().sort_keys()
         )
 
-        self.shock_dict: SymbolDictionary[str, float] = make_steady_state_shock_dict(self.shocks)
+        self.shock_dict: SymbolDictionary[str, float] = make_steady_state_shock_dict(
+            self.shocks
+        )
 
-        steady_state_system = system_to_steady_state(self.system_equations, self.shock_dict)
+        steady_state_system = system_to_steady_state(
+            self.system_equations, self.shock_dict
+        )
         self.steady_state_system: list[sp.Expr] = steady_state_system
 
         self.steady_state_solved: bool = False
@@ -265,7 +278,9 @@ class SteadyStateSolver:
         is_presolved: bool
         """
         param_dict = self.free_param_dict.copy().to_sympy()
-        user_provided = self.steady_state_relationships.copy().to_sympy().float_to_values()
+        user_provided = (
+            self.steady_state_relationships.copy().to_sympy().float_to_values()
+        )
         ss_eqs = self.steady_state_system.copy()
         calib_eqs = self.calibrating_equations.copy()
         all_eqs = ss_eqs + calib_eqs
@@ -304,7 +319,11 @@ class SteadyStateSolver:
                     x for x in eq.atoms() if isinstance(x, (sp.Symbol, TimeAwareSymbol))
                 ]
                 if len(loose_symbols) > 0:
-                    msg += f"Equation {i}: " + ", ".join([x.name for x in loose_symbols]) + "\n"
+                    msg += (
+                        f"Equation {i}: "
+                        + ", ".join([x.name for x in loose_symbols])
+                        + "\n"
+                    )
             print(e)
             raise ValueError(msg)
 
@@ -312,12 +331,12 @@ class SteadyStateSolver:
 
     def solve_steady_state(
         self,
-        apply_user_simplifications: Optional[bool] = True,
-        model_is_linear: Optional[bool] = True,
-        optimizer_kwargs: Optional[dict[str, Any]] = None,
-        method: Optional[str] = "root",
-        use_jac: Optional[bool] = True,
-        use_hess: Optional[bool] = True,
+        apply_user_simplifications: bool | None = True,
+        model_is_linear: bool | None = True,
+        optimizer_kwargs: dict[str, Any] | None = None,
+        method: str | None = "root",
+        use_jac: bool | None = True,
+        use_hess: bool | None = True,
     ) -> Callable:
         """
         Solving of the steady state proceeds in three steps: solve calibrating equations (if any), gather user provided
@@ -367,7 +386,9 @@ class SteadyStateSolver:
         param_dict = self.free_param_dict.copy().to_sympy()
         params = list(param_dict.keys())
         calib_params = self.params_to_calibrate
-        user_provided = self.steady_state_relationships.copy().to_sympy().float_to_values()
+        user_provided = (
+            self.steady_state_relationships.copy().to_sympy().float_to_values()
+        )
         ss_eqs = self.steady_state_system.copy()
         calib_eqs = self.calibrating_equations.copy()
         all_eqs = ss_eqs + calib_eqs
@@ -382,7 +403,14 @@ class SteadyStateSolver:
             eqs_to_solve = all_eqs
 
         vars_sym = sorted(
-            list({x for eq in eqs_to_solve for x in eq.atoms() if isinstance(x, TimeAwareSymbol)}),
+            list(
+                {
+                    x
+                    for eq in eqs_to_solve
+                    for x in eq.atoms()
+                    if isinstance(x, TimeAwareSymbol)
+                }
+            ),
             key=lambda x: x.name,
         )
 
@@ -418,7 +446,9 @@ class SteadyStateSolver:
 
                 # Need to ravel because the result of Ab.rref() is a column vector
                 ss_values = f_ss(params).ravel()
-                result_dict = SymbolDictionary(dict(zip(all_vars_and_calib_sym, ss_values)))
+                result_dict = SymbolDictionary(
+                    dict(zip(all_vars_and_calib_sym, ss_values))
+                )
 
                 ss_dict = self.steady_state_dict.float_to_values().to_sympy().copy()
                 calib_dict = SymbolDictionary(
@@ -435,7 +465,9 @@ class SteadyStateSolver:
                     "calib_dict": calib_dict.to_string(),
                     "resids": np.array(
                         f_ss_resid(
-                            np.array(list(ss_dict.values()) + list(calib_dict.values())),
+                            np.array(
+                                list(ss_dict.values()) + list(calib_dict.values())
+                            ),
                             params,
                         )
                     ),
@@ -463,13 +495,19 @@ class SteadyStateSolver:
             )
 
             if use_jac:
-                jac = sp.Matrix([[eq.diff(x) for x in vars_and_calib_sym] for eq in eqs_to_solve])
-                f_jac_ss = numba_lambdify(exog_vars=vars_and_calib_sym, endog_vars=params, expr=jac)
+                jac = sp.Matrix(
+                    [[eq.diff(x) for x in vars_and_calib_sym] for eq in eqs_to_solve]
+                )
+                f_jac_ss = numba_lambdify(
+                    exog_vars=vars_and_calib_sym, endog_vars=params, expr=jac
+                )
 
         elif method == "minimize":
             # For minimization, need to form a loss function (use L2 norm -- better options?).
             loss = sum([eq**2 for eq in eqs_to_solve])
-            f_loss = numba_lambdify(exog_vars=vars_and_calib_sym, endog_vars=params, expr=[loss])
+            f_loss = numba_lambdify(
+                exog_vars=vars_and_calib_sym, endog_vars=params, expr=[loss]
+            )
             if use_jac:
                 jac = [loss.diff(x) for x in vars_and_calib_sym]
 
@@ -496,7 +534,9 @@ class SteadyStateSolver:
                 with catch_warnings():
                     simplefilter("ignore")
                     if method == "root":
-                        optim = optimize.root(f_ss, jac=f_jac_ss, args=params, **optimizer_kwargs)
+                        optim = optimize.root(
+                            f_ss, jac=f_jac_ss, args=params, **optimizer_kwargs
+                        )
                     elif method == "minimize":
                         optim = optimize.minimize(
                             f_loss,
@@ -513,7 +553,9 @@ class SteadyStateSolver:
                 success = True
 
             ss_dict = self.steady_state_dict.float_to_values().to_sympy().copy()
-            calib_dict = SymbolDictionary(dict(zip(self.params_to_calibrate, [np.inf] * k_calib)))
+            calib_dict = SymbolDictionary(
+                dict(zip(self.params_to_calibrate, [np.inf] * k_calib))
+            )
             user_dict = SymbolDictionary(
                 dict(
                     zip(
@@ -595,7 +637,7 @@ class SteadyStateSolver:
 
         return steady_state_values
 
-    def _steady_state_fast(self, model_is_linear: Optional[bool] = True):
+    def _steady_state_fast(self, model_is_linear: bool | None = True):
         param_dict = self.free_param_dict.copy().to_sympy()
         params = list(param_dict.keys())
 
@@ -610,5 +652,4 @@ class SteadyStateSolver:
             )
 
         f_ss = numba_lambdify(exog_vars=params, expr=steady_state_values)
-
-        pass
+        return f_ss

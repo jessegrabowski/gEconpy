@@ -17,23 +17,33 @@ def test_scalar_function(backend: Literal["numpy", "numba", "pytensor"]):
 
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
 @pytest.mark.parametrize("stack_return", [True, False])
-def test_multiple_outputs(backend: Literal["numpy", "numba", "pytensor"], stack_return: bool):
+def test_multiple_outputs(
+    backend: Literal["numpy", "numba", "pytensor"], stack_return: bool
+):
     x, y, z = sp.symbols("x y z ")
     x2 = x**2
     y2 = y**2
     z2 = z**2
     f_func, _ = compile_function(
-        [x, y, z], [x2, y2, z2], backend=backend, stack_return=stack_return, mode="FAST_COMPILE"
+        [x, y, z],
+        [x2, y2, z2],
+        backend=backend,
+        stack_return=stack_return,
+        mode="FAST_COMPILE",
     )
     res = f_func(x=2, y=3, z=4)
     assert isinstance(res, np.ndarray) if stack_return else isinstance(res, list)
     assert res.shape == (3,) if stack_return else len(res) == 3
-    np.testing.assert_allclose(res if stack_return else np.stack(res), np.array([4.0, 9.0, 16.0]))
+    np.testing.assert_allclose(
+        res if stack_return else np.stack(res), np.array([4.0, 9.0, 16.0])
+    )
 
 
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
 @pytest.mark.parametrize("stack_return", [True, False])
-def test_matrix_function(backend: Literal["numpy", "numba", "pytensor"], stack_return: bool):
+def test_matrix_function(
+    backend: Literal["numpy", "numba", "pytensor"], stack_return: bool
+):
     x, y, z = sp.symbols("x y z")
     f = sp.Matrix([x, y, z]).reshape(1, 3)
 

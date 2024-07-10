@@ -1,6 +1,5 @@
 from functools import wraps
 from inspect import signature
-from typing import Optional
 
 import numpy as np
 import sympy as sp
@@ -72,7 +71,7 @@ def make_all_variable_time_combinations(
         List of variables shifted to t+1.
     """
     # Set all variables to time t, remove duplicates, and sort by base name.
-    now = list(set([x.set_t(0) for x in variables]))
+    now = list({x.set_t(0) for x in variables})
     now = sorted(now, key=lambda x: x.base_name)
 
     # Create lags and leads by shifting the time of the variables.
@@ -132,15 +131,21 @@ def linearize_model(
     [1] gEcon User's Guide, page 54, equation 9.9.
     """
     if order != 1:
-        raise NotImplementedError("Only order = 1 linearization is currently implemented.")
+        raise NotImplementedError(
+            "Only order = 1 linearization is currently implemented."
+        )
 
     ss_variables = [x.to_ss() for x in variables]
     lags, now, leads = make_all_variable_time_combinations(variables)
 
     eq_vec = sp.Matrix(equations)
-    A, B, C, D = (eq_to_ss(eq_vec.jacobian(var_group)) for var_group in [lags, now, leads, shocks])
+    A, B, C, D = (
+        eq_to_ss(eq_vec.jacobian(var_group)) for var_group in [lags, now, leads, shocks]
+    )
     not_loglin_var = sp.IndexedBase("not_loglin_variable", shape=(len(variables),))
-    T = sp.diag(*[ss_var ** (1 - not_loglin_var[i]) for i, ss_var in enumerate(ss_variables)])
+    T = sp.diag(
+        *[ss_var ** (1 - not_loglin_var[i]) for i, ss_var in enumerate(ss_variables)]
+    )
 
     Fs = [A @ T, B @ T, C @ T, D]
     return Fs, not_loglin_var
@@ -153,7 +158,7 @@ def compile_linearized_system(
     parameters: list[sp.Symbol],
     backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
-    cache: Optional[dict] = None,
+    cache: dict | None = None,
     **kwargs,
 ):
     cache = {} if cache is None else cache
@@ -164,7 +169,12 @@ def compile_linearized_system(
     inputs = parameters + ss_variables + [not_loglin_var]
 
     f_linearize, cache = compile_function(
-        inputs, outputs, backend=backend, cache=cache, return_symbolic=return_symbolic, **kwargs
+        inputs,
+        outputs,
+        backend=backend,
+        cache=cache,
+        return_symbolic=return_symbolic,
+        **kwargs,
     )
 
     return f_linearize, cache
@@ -248,7 +258,9 @@ def solve_policy_function_with_gensys(
 
     n_leads = len(lead_var_idx)
 
-    Gamma_0 = np.vstack([np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
+    Gamma_0 = np.vstack(
+        [np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])]
+    )
 
     Gamma_1 = np.vstack(
         [
@@ -273,7 +285,9 @@ def solve_policy_function_with_gensys(
     psi = np.ascontiguousarray(Psi)
     pi = np.ascontiguousarray(Pi)
 
-    G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
+    G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(
+        g0, g1, c, psi, pi
+    )
 
     return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
 
@@ -289,7 +303,9 @@ def residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime):
 def statespace_to_gEcon_representation(self, A, T, R, variables, tol):
     n_vars = len(variables)
 
-    state_var_idx = np.where(np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol)[0]
+    state_var_idx = np.where(
+        np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol
+    )[0]
     state_var_mask = np.isin(np.arange(n_vars), state_var_idx)
 
     n_shocks = self.n_shocks

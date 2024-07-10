@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 from warnings import warn
 
 import sympy as sp
@@ -175,9 +175,10 @@ def block_dict_to_variables_and_shocks(
             shocks.extend(block.shocks)
 
     # Sort variables and shocks alphabetically by name, and set all time indices to 0
-    shocks = sorted(list(set([x.set_t(0) for x in shocks])), key=lambda x: x.name)
+    shocks = sorted(list({x.set_t(0) for x in shocks}), key=lambda x: x.name)
     variables = sorted(
-        list(set([x.set_t(0) for x in variables if x.set_t(0) not in shocks])), key=lambda x: x.name
+        list({x.set_t(0) for x in variables if x.set_t(0) not in shocks}),
+        key=lambda x: x.name,
     )
     return variables, shocks
 
@@ -243,7 +244,9 @@ def prior_info_to_prior_dict(
 
 def parsed_model_to_data(
     parsed_model: str, simplify_blocks: bool
-) -> tuple[dict[str, Block], ASSUMPTION_DICT, dict[str, str], list[str], dict[str, sp.Expr]]:
+) -> tuple[
+    dict[str, Block], ASSUMPTION_DICT, dict[str, str], list[str], dict[str, sp.Expr]
+]:
     """
     Builds blocks of the gEconpy model using strings parsed from the GCN file.
 
@@ -271,12 +274,16 @@ def parsed_model_to_data(
     """
 
     block_dict: dict[str, Block] = {}
-    raw_blocks, options, tryreduce, assumptions = split_gcn_into_dictionaries(parsed_model)
+    raw_blocks, options, tryreduce, assumptions = split_gcn_into_dictionaries(
+        parsed_model
+    )
     provided_ss_equations = get_provided_ss_equations(raw_blocks, assumptions)
 
     for block_name, block_content in raw_blocks.items():
         parsed_block_dict = parsed_block_to_dict(block_content)
-        block = Block(name=block_name, block_dict=parsed_block_dict, assumptions=assumptions)
+        block = Block(
+            name=block_name, block_dict=parsed_block_dict, assumptions=assumptions
+        )
         block.solve_optimization(try_simplify=simplify_blocks)
 
         block_dict[block.name] = block
@@ -296,8 +303,8 @@ def gcn_to_block_dict(
 ]:
     raw_model = load_gcn(gcn_path)
     parsed_model, prior_dict = preprocess_gcn(raw_model)
-    block_dict, assumptions, options, tryreduce, ss_solution_dict = parsed_model_to_data(
-        parsed_model, simplify_blocks
+    block_dict, assumptions, options, tryreduce, ss_solution_dict = (
+        parsed_model_to_data(parsed_model, simplify_blocks)
     )
 
     tryreduce = [single_symbol_to_sympy(x, assumptions) for x in tryreduce]
@@ -305,7 +312,9 @@ def gcn_to_block_dict(
     return block_dict, assumptions, options, tryreduce, ss_solution_dict, prior_dict
 
 
-def check_for_orphan_params(equations: list[sp.Expr], param_dict: SymbolDictionary) -> None:
+def check_for_orphan_params(
+    equations: list[sp.Expr], param_dict: SymbolDictionary
+) -> None:
     parameters = list(param_dict.to_sympy().keys())
     orphans = [
         atom
@@ -324,7 +333,7 @@ def check_for_orphan_params(equations: list[sp.Expr], param_dict: SymbolDictiona
 
 def check_for_extra_params(equations: list[sp.Expr], param_dict: SymbolDictionary):
     parameters = list(param_dict.to_sympy().keys())
-    all_atoms = set([atom for eq in equations for atom in eq.atoms()])
+    all_atoms = {atom for eq in equations for atom in eq.atoms()}
     extras = [parameter for parameter in parameters if parameter not in all_atoms]
 
     if len(extras) > 0:
@@ -340,8 +349,8 @@ def apply_simplifications(
 ) -> tuple[
     list[sp.Expr],
     list[TimeAwareSymbol],
-    Optional[list[TimeAwareSymbol]],
-    Optional[list[TimeAwareSymbol]],
+    list[TimeAwareSymbol] | None,
+    list[TimeAwareSymbol] | None,
 ]:
     eliminated_variables = None
     singletons = None
