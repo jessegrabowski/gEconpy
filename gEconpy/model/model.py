@@ -68,7 +68,6 @@ def compile_model_ss_functions(
     error_func: ERROR_FUNCTIONS = "squared",
     backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
-    stack_return: bool | None = None,
     **kwargs,
 ):
     cache = {}
@@ -98,7 +97,6 @@ def compile_model_ss_functions(
         backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
-        stack_return=stack_return,
         **kwargs,
     )
 
@@ -111,7 +109,6 @@ def compile_model_ss_functions(
             backend=backend,
             cache=cache,
             return_symbolic=return_symbolic,
-            stack_return=stack_return,
             **kwargs,
         )
     )
@@ -130,8 +127,8 @@ def infer_variable_bounds(variables):
         assumptions = var.assumptions0
         is_positive = assumptions.get("positive", False)
         is_negative = assumptions.get("negative", False)
-        lhs = 0 if is_positive else None
-        rhs = 0 if is_negative else None
+        lhs = 1e-8 if is_positive else None
+        rhs = -1e-8 if is_negative else None
         bounds.append((lhs, rhs))
 
     return bounds
@@ -144,6 +141,8 @@ class Model:
         shocks: list[TimeAwareSymbol],
         equations: list[sp.Expr],
         param_dict: SymbolDictionary,
+        deterministic_dict: SymbolDictionary,
+        calib_dict: SymbolDictionary,
         f_params: Callable,
         f_ss_resid: Callable,
         f_ss: Callable | None = None,
@@ -156,7 +155,7 @@ class Model:
         backend: BACKENDS = "numpy",
     ) -> None:
         """
-        Initialize a DSGE model object from a GCN file.
+        A Dynamic Stochastic General Equlibrium (DSGE) Model
 
         Parameters
         ----------
@@ -201,7 +200,10 @@ class Model:
         self.equations = equations
         self.params = list(param_dict.to_sympy().keys())
 
-        self._default_params = param_dict
+        self.deterministic_params = list(deterministic_dict.to_sympy().keys())
+        self.calibrated_params = list(calib_dict.to_sympy().keys())
+
+        self._default_params = param_dict.copy()
         self.f_params: Callable = f_params
         self.f_ss_resid: Callable = f_ss_resid
 
@@ -278,13 +280,14 @@ class Model:
         if how == "analytic" and self.f_ss is None:
             how = "minimize"
         else:
-            ss_dict = self.f_ss(**param_dict)
-            if len(ss_dict) != len(self.variables):
+            ss_dict = self.f_ss(**param_dict) if self.f_ss is not None else {}
+            if len(ss_dict) != 0 and len(ss_dict) != len(self.variables):
                 how = "minimize"
-            else:
+            elif len(ss_dict) == len(self.variables):
                 return ss_dict
 
         ss_variables = [x.to_ss() for x in self.variables]
+
         known_variables = (
             set()
             if self.f_ss is None
@@ -294,6 +297,7 @@ class Model:
             list(set(ss_variables) - known_variables), key=lambda x: x.name
         )
         var_names_to_solve = [x.name for x in vars_to_solve]
+
         unknown_var_idx = np.array(
             [x in vars_to_solve for x in ss_variables], dtype="bool"
         )
@@ -331,6 +335,7 @@ class Model:
         optimizer_results = SymbolDictionary(
             {var: res.x[i] for i, var in enumerate(vars_to_solve)}
         )
+
         res_dict = optimizer_results | provided_ss_values
         res_dict = SymbolDictionary({x: res_dict[x] for x in ss_variables})
 
@@ -360,6 +365,7 @@ class Model:
         x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
         if jitter_x0:
             x0 += np.random.normal(scale=0.01, size=n_variables)
+
         method = optimizer_kwargs.pop("method", "hybr")
         param_dict = self.parameters(**param_updates)
 

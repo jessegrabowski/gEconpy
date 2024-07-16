@@ -13,6 +13,8 @@ from numpy.testing import assert_allclose
 from gEconpy.exceptions.exceptions import GensysFailedException
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
+
+import numdifftools as nd
 from tests.utilities.expected_matrices import expected_linearization_result
 
 ROOT = Path(__file__).parent.absolute()
@@ -96,6 +98,138 @@ def test_build_warns_if_model_not_defined(
             )
 
 
+simple_vars = ["L", "K", "A", "Y", "I", "C", "q", "U", "lambda", "q"]
+simple_params = ["alpha", "theta", "beta", "delta", "tau", "rho"]
+simple_shocks = ["epsilon"]
+
+open_vars = [
+    "A",
+    "IIP",
+    "r",
+    "r_given",
+    "KtoN",
+    "N",
+    "K",
+    "C",
+    "U",
+    "Y",
+    "I",
+    "TB",
+    "TBtoY",
+    "CA",
+    "lambda",
+]
+open_params = [
+    "beta",
+    "delta",
+    "gamma",
+    "omega",
+    "psi2",
+    "psi",
+    "alpha",
+    "rstar",
+    "IIPbar",
+    "rho_A",
+]
+open_shocks = ["epsilon_A"]
+
+nk_vars = [
+    "shock_technology",
+    "shock_preference",
+    "pi",
+    "pi_star",
+    "pi_obj",
+    "B",
+    "r",
+    "r_G",
+    "mc",
+    "w",
+    "w_star",
+    "Y",
+    "C",
+    "lambda",
+    "q",
+    "I",
+    "K",
+    "L",
+    "U",
+    "TC",
+    "Div",
+    "LHS",
+    "RHS",
+    "LHS_w",
+    "RHS_w",
+]
+nk_params = [
+    "delta",
+    "beta",
+    "sigma_C",
+    "sigma_L",
+    "gamma_I",
+    "phi_H",
+    "psi_w",
+    "eta_w",
+    "alpha",
+    "rho_technology",
+    "rho_preference",
+    "psi_p",
+    "eta_p",
+    "gamma_R",
+    "gamma_pi",
+    "gamma_Y",
+    "phi_pi_obj",
+    "rho_pi_dot",
+]
+nk_shocks = ["epsilon_R", "epsilon_pi", "epsilon_Y", "epsilon_preference"]
+
+
+@pytest.mark.parametrize(
+    "gcn_path, expected_variables, expected_params, expected_shocks",
+    [
+        (
+            "One_Block_Simple_1_w_Steady_State.gcn",
+            simple_vars,
+            simple_params,
+            simple_shocks,
+        ),
+        ("Open_RBC.gcn", open_vars, open_params, open_shocks),
+        ("Full_New_Keyensian.gcn", nk_vars, nk_params, nk_shocks),
+    ],
+)
+def test_variables_parsed(
+    gcn_path, expected_variables, expected_params, expected_shocks
+):
+    file_path = os.path.join(ROOT, "Test GCNs", gcn_path)
+    model = model_from_gcn(
+        file_path,
+        verbose=False,
+        backend="numpy",
+        mode="FAST_COMPILE",
+        simplify_constants=False,
+        simplify_tryreduce=False,
+    )
+
+    model_vars = [v.base_name for v in model.variables]
+    model_params = [
+        p.name
+        for p in model.params + model.calibrated_params + model.deterministic_params
+    ]
+    model_shocks = [s.base_name for s in model.shocks]
+
+    assert (
+        set(model_vars) - set(expected_variables) == set()
+        and set(expected_variables) - set(model_vars) == set()
+    )
+    assert (
+        set(model_params) - set(expected_params) == set()
+        and set(expected_params) - set(model_params) == set()
+    )
+    assert (
+        set(model_shocks) - set(expected_shocks) == set()
+        and set(expected_shocks) - set(model_shocks) == set()
+    )
+
+
 @pytest.mark.parametrize(
     "gcn_path, name",
     [
@@ -116,7 +250,9 @@ def test_model_parameters(gcn_path: str, name: str, backend: BACKENDS):
 
     # Test default parameters
     params = model.parameters()
+
     assert all([params[k] == model._default_params[k] for k in model._default_params])
+    assert all(isinstance(v, float) for v in params.values())
 
     # Test parameter update
     old_params = model._default_params.copy()
@@ -259,6 +395,13 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
     grad = model.f_ss_error_grad(**params, **ss_dict)
     hess = model.f_ss_error_hess(**params, **ss_dict)
 
+    assert isinstance(error, float)
+    assert isinstance(grad, np.ndarray)
+    assert isinstance(hess, np.ndarray)
+
+    assert grad.ndim == 1
+    assert hess.ndim == 2
+
     assert_allclose(error, 0.0, atol=1e-8)
     assert_allclose(grad.ravel(), np.zeros((n,)), atol=1e-8)
 
@@ -266,29 +409,96 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
     assert np.all(np.linalg.eigvals(hess) > -1e8)
 
 
-@pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
+@pytest.mark.parametrize(
+    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
+)
 @pytest.mark.parametrize(
     "gcn_file", ["One_Block_Simple_1_w_Steady_State", "Open_RBC", "Full_New_Keyensian"]
 )
-def test_numerical_steady_state(how, gcn_file):
-    if gcn_file == "Full_New_Keyensian":
-        pytest.skip(
-            "NK model fails to find numerical SS without careful tuning; skip this test for now"
-        )
-
+def test_model_gradient(backend, gcn_file):
     file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
-    model_1 = model_from_gcn(
+    model = model_from_gcn(
         file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
     )
+
+    ss_result = model.steady_state().to_string()
+
+    np.testing.assert_allclose(
+        model.f_ss_error_grad(**ss_result, **model.parameters().to_string()),
+        0.0,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+    perturbed_point = {k: 0.8 for k, v in ss_result.to_string().items()}
+    test_point = np.array(list(perturbed_point.values()))
+
+    grad = model.f_ss_error_grad(**perturbed_point, **model.parameters().to_string())
+    numeric_grad = nd.Gradient(
+        lambda x: model.f_ss_error(*x, **model.parameters().to_string())
+    )(test_point)
+
+    np.testing.assert_allclose(grad, numeric_grad, rtol=1e-8, atol=1e-8)
+
+    hess = model.f_ss_error_hess(**perturbed_point, **model.parameters().to_string())
+    numeric_hess = nd.Hessian(
+        lambda x: model.f_ss_error(*x, **model.parameters().to_string())
+    )(test_point)
+
+    np.testing.assert_allclose(hess, numeric_hess, rtol=1e-8, atol=1e-8)
+
+    jac = model.f_ss_jac(**perturbed_point, **model.parameters().to_string())
+    numeric_jac = nd.Jacobian(
+        lambda x: model.f_ss_resid(*x, **model.parameters().to_string())
+    )(test_point)
+
+    np.testing.assert_allclose(jac, numeric_jac, rtol=1e-8, atol=1e-8)
+
+
+@pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
+@pytest.mark.parametrize(
+    "gcn_file",
+    [
+        "One_Block_Simple_1_w_Steady_State",
+        "Open_RBC",
+        pytest.param("Full_New_Keyensian"),
+    ],
+)
+@pytest.mark.parametrize(
+    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
+)
+def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
+    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
+    model_1 = model_from_gcn(
+        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
+    )
     analytic_res = model_1.steady_state()
-    analytic_values = np.array(list(analytic_res.values()))
+    analytic_values = np.array(
+        [analytic_res[x.to_ss().name] for x in model_1.variables]
+    )
     model_1.f_ss = None
 
-    numeric_res = model_1.steady_state(how=how, verbose=False)
-    numeric_values = np.array(list(numeric_res.values()))
+    # Cheat and start the optimizer close to the solution
+    x0 = analytic_values + np.random.normal(scale=1e-4, size=analytic_values.shape)
+    # x0 = np.full_like(analytic_values, 0.8)
+    numeric_res = model_1.steady_state(
+        how=how,
+        verbose=False,
+        optimizer_kwargs={
+            "x0": x0,
+            "tol": 1e-12,
+            "method": "trust-constr" if how == "minimize" else "hybr",
+            "options": {"maxiter": 10_000} if how == "minimize" else {},
+        },
+    )
+
+    numeric_values = np.array([numeric_res[x.to_ss()] for x in model_1.variables])
     errors = model_1.f_ss_resid(
         **numeric_res.to_string(), **model_1.parameters().to_string()
     )
+
+    print(analytic_res)
+    print(numeric_res)
 
     if how == "root":
         assert_allclose(analytic_values, numeric_values, atol=1e-2)

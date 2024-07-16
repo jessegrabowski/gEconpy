@@ -75,14 +75,13 @@ def model_from_gcn(
     f_ss_resid, f_ss_jac = resid_funcs
     f_ss_error, f_ss_grad, f_ss_hess = error_funcs
 
-    parameters = list((param_dict | deterministic_dict).to_sympy().keys())
-    parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
-
     f_linearize, cache = compile_linearized_system(
-        variables,
         equations,
+        variables,
+        param_dict,
+        deterministic_dict,
+        calib_dict,
         shocks,
-        parameters,
         backend=backend,
         return_symbolic=symbolic_model,
         cache=cache,
@@ -106,6 +105,8 @@ def model_from_gcn(
         shocks=shocks,
         equations=equations,
         param_dict=param_dict,
+        deterministic_dict=deterministic_dict,
+        calib_dict=calib_dict,
         f_ss=f_ss,
         f_ss_jac=f_ss_jac,
         f_params=f_params,
