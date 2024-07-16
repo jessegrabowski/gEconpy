@@ -74,7 +74,7 @@ def pop_return_wrapper(f: Callable) -> Callable:
     @wraps(f)
     def inner(*args, **kwargs):
         values = f(*args, **kwargs)
-        return values[0]
+        return np.array(values).item(0)
 
     return inner
 
@@ -203,13 +203,25 @@ def compile_to_pytensor_function(
     outputs = [outputs] if not isinstance(outputs, list) else outputs
     input_pt = [as_tensor(x, cache) for x in inputs]
     output_pt = [output_to_tensor(x, cache) for x in outputs]
+    original_shape = [x.type.shape for x in output_pt]
+
     if stack_return:
         output_pt = pytensor.tensor.stack(output_pt)
     if pop_return:
-        output_pt = output_pt[0] if len(output_pt) == 1 else output_pt
+        output_pt = (
+            output_pt[0]
+            if (isinstance(output_pt, list) and len(output_pt) == 1)
+            else output_pt
+        )
 
     if return_symbolic:
         return output_pt, cache
 
     f = pytensor.function(input_pt, output_pt, **kwargs)
+
+    # Pytensor never returns a scalar float (it will return a 0d array in this case), so we need to wrap the function
+    # in this case
+    if len(original_shape) == 1 and original_shape[0] == () and pop_return:
+        f = pop_return_wrapper(f)
+
     return f, cache

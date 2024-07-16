@@ -129,7 +129,6 @@ def compile_ss_resid_and_sq_err(
     backend: BACKENDS,
     cache: dict,
     return_symbolic: bool,
-    stack_return: bool | None = False,
     **kwargs,
 ):
     cache = {} if cache is None else cache
@@ -147,17 +146,20 @@ def compile_ss_resid_and_sq_err(
         steady_state,
         backend=backend,
         cache=cache,
-        stack_return=True if stack_return is None else stack_return,
         return_symbolic=return_symbolic,
+        stack_return=backend != "pytensor",
+        pop_return=False,
         **kwargs,
     )
+
     f_ss_jac, cache = compile_function(
         ss_variables + parameters,
         resid_jac,
         backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
-        stack_return=False if stack_return is None else stack_return,
+        stack_return=backend != "pytensor",
+        pop_return=backend == "pytensor",
         **kwargs,
     )
 
@@ -174,27 +176,33 @@ def compile_ss_resid_and_sq_err(
         [ss_error],
         backend=backend,
         cache=cache,
-        pop_return=True,
         return_symbolic=return_symbolic,
-        stack_return=False if stack_return is None else stack_return,
+        pop_return=True,
+        stack_return=False,
         **kwargs,
     )
+
     f_ss_grad, cache = compile_function(
         ss_variables + parameters,
         error_grad,
         backend=backend,
         cache=cache,
-        stack_return=True if stack_return is None else stack_return,
         return_symbolic=return_symbolic,
+        stack_return=True,
+        pop_return=False,
         **kwargs,
     )
+
     f_ss_hess, cache = compile_function(
         ss_variables + parameters,
         error_hess,
         backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
-        stack_return=False if stack_return is None else stack_return,
+        stack_return=backend
+        != "pytensor",  # error_hess is a list of one element; don't stack into a (1,n,n) array
+        pop_return=backend
+        == "pytensor",  # error_hess is a list of one element; need to remove the list wrapper
         **kwargs,
     )
 
@@ -310,10 +318,9 @@ class SteadyStateSolver:
 
         try:
             eqs_to_solve = [eq for i, eq in enumerate(simplified_eqs) if not zeros[i]]
-        except TypeError as e:
+        except TypeError:
             msg = "Found the following loose symbols during simplification:\n"
             # Something didn't reduce, figure out what and show the user
-            print(zeros)
             for i, eq in enumerate(zeros):
                 loose_symbols = [
                     x for x in eq.atoms() if isinstance(x, (sp.Symbol, TimeAwareSymbol))
@@ -324,7 +331,6 @@ class SteadyStateSolver:
                         + ", ".join([x.name for x in loose_symbols])
                         + "\n"
                     )
-            print(e)
             raise ValueError(msg)
 
         return eqs_to_solve

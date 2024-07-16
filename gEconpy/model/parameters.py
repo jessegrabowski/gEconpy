@@ -58,6 +58,8 @@ def compile_param_dict_func(
         backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
+        pop_return=False,
+        stack_return=True,
     )
 
     if return_symbolic and backend == "pytensor":

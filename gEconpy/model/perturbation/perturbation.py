@@ -7,6 +7,7 @@ import sympy as sp
 from numpy.typing import ArrayLike
 from scipy import linalg
 
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import BACKENDS, compile_function
 from gEconpy.shared.utilities import eq_to_ss
@@ -152,10 +153,12 @@ def linearize_model(
 
 
 def compile_linearized_system(
-    variables: list[TimeAwareSymbol],
     equations: list[sp.Expr],
+    variables: list[sp.Symbol | TimeAwareSymbol],
+    param_dict: SymbolDictionary[sp.Symbol, float | sp.Expr],
+    deterministic_dict: SymbolDictionary[sp.Symbol, sp.Expr],
+    calib_dict: SymbolDictionary[sp.Symbol, float | sp.Expr],
     shocks: list[TimeAwareSymbol],
-    parameters: list[sp.Symbol],
     backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
     cache: dict | None = None,
@@ -164,9 +167,13 @@ def compile_linearized_system(
     cache = {} if cache is None else cache
 
     ss_variables = [x.to_ss() for x in variables]
-    outputs, not_loglin_var = linearize_model(variables, equations, shocks)
 
-    inputs = parameters + ss_variables + [not_loglin_var]
+    parameters = list((param_dict | deterministic_dict).to_sympy().keys())
+    parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
+    calib_params = list(calib_dict.to_sympy().keys())
+
+    outputs, not_loglin_var = linearize_model(variables, equations, shocks)
+    inputs = ss_variables + calib_params + parameters + [not_loglin_var]
 
     f_linearize, cache = compile_function(
         inputs,
