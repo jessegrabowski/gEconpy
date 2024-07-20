@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any
+from typing import Any, cast
 
 import sympy as sp
 
@@ -36,16 +36,21 @@ def symbol_to_string(symbol: str | sp.Symbol):
         return symbol.safe_name if isinstance(symbol, TimeAwareSymbol) else symbol.name
 
 
-def string_keys_to_sympy(d, assumptions=None):
+def string_keys_to_sympy(d, assumptions=None, is_variable=None):
+    def has_time_suffix(s):
+        suffixes = ["_t", "_tp1", "_tm1", "_ss"]
+        return any(s.endswith(suffix) for suffix in suffixes)
+
     result = {}
-    assumptions = assumptions or defaultdict(dict)
+    assumptions = assumptions if assumptions is not None else defaultdict(dict)
+    is_variable = is_variable if is_variable is not None else defaultdict(bool)
 
     for key, value in d.items():
         if isinstance(key, sp.Symbol):
             result[key] = value
             continue
 
-        if "_" not in key:
+        if not is_variable.get(key, True) or not has_time_suffix(key):
             result[sp.Symbol(key, **assumptions.get(key, {}))] = value
             continue
 
@@ -109,6 +114,7 @@ class SymbolDictionary(dict):
 
         self.is_sympy: bool = False
         self._assumptions: dict = {}
+        self._is_variable: dict = {}
 
         keys = list(self.keys())
         if any([not isinstance(x, (sp.Symbol, str)) for x in keys]):
@@ -123,23 +129,26 @@ class SymbolDictionary(dict):
                 raise KeyError("Cannot mix sympy and string keys")
 
         self._save_assumptions(keys)
+        self._save_is_variable(keys)
 
-    def __or__(self, other):
+    def __or__(self, other: dict):
         if not isinstance(other, dict):
             raise ValueError("__or__ not defined on non-dictionary objects")
         if not isinstance(other, SymbolDictionary):
             other = SymbolDictionary(other)
 
-        d_copy = self.copy()
+        d_copy = cast(SymbolDictionary, self.copy())
 
         # If one dict or the other is empty, only merge assumptions
         if len(d_copy.keys()) == 0:
-            other_copy = other.copy()
+            other_copy = cast(SymbolDictionary, other.copy())
             other_copy._assumptions.update(self._assumptions)
+            other_copy._is_variable.update(self._is_variable)
             return other_copy
 
         if len(other.keys()) == 0:
             d_copy._assumptions.update(other._assumptions)
+            d_copy._is_variable.update(self._is_variable)
             return d_copy
 
         # If both are populated but of different types, raise an error
@@ -150,16 +159,19 @@ class SymbolDictionary(dict):
 
         # Full merge
         other_assumptions = getattr(other, "_assumptions", {})
+        other_is_variable = getattr(other, "_is_variable", {})
 
         d_copy.update(other)
         d_copy._assumptions.update(other_assumptions)
+        d_copy._is_variable.update(other_is_variable)
 
         return d_copy
 
-    def copy(self):
+    def copy(self) -> "SymbolDictionary":
         new_d = SymbolDictionary(super().copy())
         new_d.is_sympy = self.is_sympy
         new_d._assumptions = self._assumptions
+        new_d._is_variable = self._is_variable
 
         return new_d
 
@@ -174,6 +186,17 @@ class SymbolDictionary(dict):
             else:
                 self._assumptions[key.name] = key.assumptions0
 
+    def _save_is_variable(self, keys):
+        if not self.is_sympy:
+            return
+        if not isinstance(keys, list):
+            keys = [keys]
+        for key in keys:
+            if isinstance(key, TimeAwareSymbol):
+                self._is_variable[key.base_name] = True
+            else:
+                self._is_variable[key.name] = False
+
     def __setitem__(self, key, value):
         if len(self.keys()) == 0:
             self.is_sympy = isinstance(key, sp.Symbol)
@@ -181,24 +204,32 @@ class SymbolDictionary(dict):
             raise KeyError("Cannot add string key to dictionary in sympy mode")
         elif not self.is_sympy and isinstance(key, sp.Symbol):
             raise KeyError("Cannot add sympy key to dictionary in string mode")
+
         super().__setitem__(key, value)
         self._save_assumptions(key)
+        self._save_is_variable(key)
 
     def _clean_update(self, d):
         self.clear()
         self._assumptions.clear()
+        self._is_variable.clear()
 
         self.update(d)
         self._assumptions.update(d._assumptions)
+        self._is_variable.update(d._is_variable)
         self.is_sympy = d.is_sympy
 
-    def to_sympy(self, inplace=False, new_assumptions=None):
-        new_assumptions = new_assumptions or {}
+    def to_sympy(self, inplace=False, new_assumptions=None, new_is_variable=None):
+        new_assumptions = new_assumptions if new_assumptions is not None else {}
+        new_is_variable = new_is_variable if new_is_variable is not None else {}
 
         assumptions = self._assumptions.copy()
-        assumptions.update(new_assumptions)
+        is_variable = self._is_variable.copy()
 
-        d = SymbolDictionary(string_keys_to_sympy(self, assumptions))
+        assumptions.update(new_assumptions)
+        is_variable.update(new_is_variable)
+
+        d = SymbolDictionary(string_keys_to_sympy(self, assumptions, is_variable))
 
         if inplace:
             self._clean_update(d)
@@ -256,6 +287,7 @@ class SymbolDictionary(dict):
         copy_dict = self.copy()
         d = SymbolDictionary(sympy_keys_to_strings(copy_dict))
         d._assumptions = copy_dict._assumptions.copy()
+        d._is_variable = copy_dict._is_variable.copy()
 
         if inplace:
             self._clean_update(d)
@@ -267,6 +299,7 @@ class SymbolDictionary(dict):
         is_sympy = self.is_sympy
         d = SymbolDictionary(sort_dictionary(self.copy().to_string()))
         d._assumptions = self._assumptions.copy()
+        d._is_variable = self._is_variable.copy()
 
         if is_sympy:
             d = d.to_sympy()
@@ -281,6 +314,7 @@ class SymbolDictionary(dict):
         d = self.copy()
         d = sympy_number_values_to_floats(d)
         d._assumptions = self._assumptions.copy()
+        d._is_variable = self._is_variable.copy()
 
         if inplace:
             self._clean_update(d)
@@ -292,6 +326,7 @@ class SymbolDictionary(dict):
         d = self.copy()
         d = float_values_to_sympy_float(d)
         d._assumptions = self._assumptions.copy()
+        d._is_variable = self._is_variable.copy()
 
         if inplace:
             self._clean_update(d)

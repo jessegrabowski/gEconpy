@@ -11,6 +11,7 @@ from gEconpy.exceptions.exceptions import (
     ExtraParameterError,
     MultipleSteadyStateBlocksException,
     OrphanParameterError,
+    ExtraParameterWarning,
 )
 from gEconpy.model.block import Block
 from gEconpy.parser.constants import STEADY_STATE_NAMES
@@ -331,13 +332,20 @@ def check_for_orphan_params(
         raise OrphanParameterError(orphans)
 
 
-def check_for_extra_params(equations: list[sp.Expr], param_dict: SymbolDictionary):
+def check_for_extra_params(
+    equations: list[sp.Expr], param_dict: SymbolDictionary, on_unused_parameters="raise"
+):
     parameters = list(param_dict.to_sympy().keys())
     all_atoms = {atom for eq in equations for atom in eq.atoms()}
     extras = [parameter for parameter in parameters if parameter not in all_atoms]
 
     if len(extras) > 0:
-        raise ExtraParameterError(extras)
+        if on_unused_parameters == "raise":
+            raise ExtraParameterError(extras)
+        elif on_unused_parameters == "warn":
+            warn(ExtraParameterWarning(extras))
+        else:
+            return
 
 
 def apply_simplifications(
@@ -365,10 +373,12 @@ def apply_simplifications(
     return equations, variables, eliminated_variables, singletons
 
 
-def validate_results(equations, param_dict, calib_dict, deterministic_dict):
+def validate_results(
+    equations, param_dict, calib_dict, deterministic_dict, on_unused_parameters="raise"
+):
     joint_dict = param_dict | calib_dict | deterministic_dict
     check_for_orphan_params(equations, joint_dict)
-    check_for_extra_params(equations, joint_dict)
+    check_for_extra_params(equations, joint_dict, on_unused_parameters)
 
 
 def block_dict_to_model_primitives(

@@ -324,6 +324,7 @@ class Block:
         all_equations = [
             eq for eq_list in [objective, constraints, identities] for eq in eq_list
         ]
+
         if self.multipliers is not None:
             _, multipliers = unpack_keys_and_values(self.multipliers)
             multipliers = [x for x in multipliers if x is not None]
@@ -401,6 +402,7 @@ class Block:
             equations, flags = list(zip(*parser_output))
         else:
             equations, flags = [], {}
+
         equation_numbers = self._get_and_record_equation_numbers(equations)
 
         equations = dict(zip(equation_numbers, equations))
