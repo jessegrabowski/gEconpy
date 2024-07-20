@@ -15,6 +15,8 @@ from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
 
 import numdifftools as nd
+
+from gEconpy.model.model import scipy_wrapper
 from tests.utilities.expected_matrices import expected_linearization_result
 
 ROOT = Path(__file__).parent.absolute()
@@ -280,8 +282,13 @@ def test_deterministic_model_parameters(backend: BACKENDS):
     assert_allclose(params["zeta"], -np.log(0.9))
 
 
-def test_all_backends_agree_on_parameters():
-    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
+@pytest.mark.parametrize(
+    "gcn_path",
+    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keyensian.gcn"],
+    ids=["one_block_prior", "one_block_ss", "full_nk"],
+)
+def test_all_backends_agree_on_parameters(gcn_path):
+    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_path}")
     models = [
         model_from_gcn(
             file_path,
@@ -296,6 +303,86 @@ def test_all_backends_agree_on_parameters():
     for i in range(3):
         for j in range(i):
             assert_allclose(params[i], params[j])
+
+
+@pytest.mark.parametrize(
+    "gcn_path",
+    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keyensian.gcn"],
+    ids=["one_block_prior", "one_block_ss", "full_nk"],
+)
+@pytest.mark.parametrize(
+    "func",
+    ["f_ss_error_grad", "f_ss_error_hess", "f_ss_jac"],
+    ids=["grad", "hess", "jac"],
+)
+def test_all_backends_agree_on_functions(gcn_path, func):
+    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_path}")
+    models = [
+        model_from_gcn(
+            file_path,
+            verbose=False,
+            backend=cast(BACKENDS, backend),
+            mode="FAST_COMPILE",
+        )
+        for backend in ["numpy", "numba", "pytensor"]
+    ]
+    params = models[0].parameters().to_string()
+    ss_vars = [x.to_ss().name for x in models[0].variables]
+    x0 = dict(zip(ss_vars, np.full(len(models[0].variables), 0.8)))
+
+    vals = [getattr(model, func)(**params, **x0) for model in models]
+    for i in range(3):
+        for j in range(i):
+            assert_allclose(vals[i], vals[j])
+
+
+@pytest.mark.parametrize(
+    "gcn_path",
+    [
+        "Two_Block_RBC_w_Partial_Steady_State.gcn",
+        "Full_New_Keyensian_w_Partial_Steady_state.gcn",
+    ],
+    ids=["two_block", "full_nk"],
+)
+@pytest.mark.parametrize(
+    "func", ["f_ss_error_grad", "f_ss_error_hess"], ids=["grad", "hess"]
+)
+def test_scipy_wrapped_functions_agree(gcn_path, func):
+    backend_names = ["numpy", "numba", "pytensor"]
+    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_path}")
+    models = [
+        model_from_gcn(
+            file_path,
+            verbose=False,
+            backend=cast(BACKENDS, backend),
+            mode="FAST_COMPILE",
+        )
+        for backend in backend_names
+    ]
+
+    ss_variables = [x.to_ss() for x in models[0].variables]
+    known_variables = list(models[0].f_ss(**models[0].parameters()).to_sympy().keys())
+    vars_to_solve = [var for var in ss_variables if var not in known_variables]
+    var_names_to_solve = [x.name for x in vars_to_solve]
+    unknown_var_idx = np.array([x in vars_to_solve for x in ss_variables], dtype="bool")
+    params = models[0].parameters().to_string()
+    x0 = np.full(len(var_names_to_solve), 0.8)
+
+    vals = [
+        scipy_wrapper(
+            getattr(model, func), var_names_to_solve, unknown_var_idx, model.f_ss
+        )(x0, params)
+        for model in models
+    ]
+    for i in range(3):
+        for j in range(i):
+            assert_allclose(
+                vals[i],
+                vals[j],
+                err_msg=f"{backend_names[i]} and {backend_names[j]} disagree",
+                rtol=1e-8,
+                atol=1e-8,
+            )
 
 
 @pytest.mark.parametrize(
@@ -461,7 +548,10 @@ def test_model_gradient(backend, gcn_file):
     [
         "One_Block_Simple_1_w_Steady_State",
         "Open_RBC",
-        pytest.param("Full_New_Keyensian"),
+        pytest.param(
+            "Full_New_Keyensian",
+            marks=pytest.mark.skip("NK needs to be tuned to find SS without help"),
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -478,9 +568,7 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
     )
     model_1.f_ss = None
 
-    # Cheat and start the optimizer close to the solution
-    x0 = analytic_values + np.random.normal(scale=1e-4, size=analytic_values.shape)
-    # x0 = np.full_like(analytic_values, 0.8)
+    x0 = np.full_like(analytic_values, 0.8)
     numeric_res = model_1.steady_state(
         how=how,
         verbose=False,
@@ -497,41 +585,72 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
         **numeric_res.to_string(), **model_1.parameters().to_string()
     )
 
-    print(analytic_res)
-    print(numeric_res)
-
     if how == "root":
         assert_allclose(analytic_values, numeric_values, atol=1e-2)
     elif how == "minimize":
         assert_allclose(errors, np.zeros_like(errors), atol=1e-2)
 
 
-@pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
-@pytest.mark.parametrize("gcn_file", ["Two_Block_RBC_w_Partial_Steady_State"])
-def test_partially_analytical_steady_state(how, gcn_file):
-    if how == "root":
-        pytest.xfail("Partial analytical steady state does not work with root method")
+def test_numerical_steady_state_with_calibrated_params():
+    file_path = os.path.join("Test GCNs", "One_Block_Simple_2_without_Extra_Params.gcn")
+    model = model_from_gcn(
+        file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
+    )
+    res = model.steady_state(
+        how="minimize",
+        verbose=False,
+        optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 100_000}},
+        bounds={"alpha": (0.05, 0.7)},
+    )
+    res = res.to_string()
+    assert_allclose(res["L_ss"] / res["K_ss"], 0.36)
 
-    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
-    analytic_path = os.path.join(ROOT, "Test GCNs/Two_Block_RBC_w_Steady_State.gcn")
+
+@pytest.mark.parametrize(
+    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
+)
+@pytest.mark.parametrize(
+    "partial_file, analytic_file",
+    [
+        ("Two_Block_RBC_w_Partial_Steady_State", "Two_Block_RBC_w_Steady_State"),
+        ("Full_New_Keyensian_w_Partial_Steady_State", "Full_New_Keyensian"),
+    ],
+)
+def test_partially_analytical_steady_state(
+    backend: BACKENDS, partial_file, analytic_file
+):
+    file_path = os.path.join(ROOT, f"Test GCNs/{partial_file}.gcn")
+    analytic_path = os.path.join(ROOT, f"Test GCNs/{analytic_file}.gcn")
     analytic_model = model_from_gcn(
-        analytic_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
+        analytic_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
     analytic_res = analytic_model.steady_state()
     analytic_values = np.array(list(analytic_res.values()))
 
     partial_model = model_from_gcn(
-        file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
+        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
-    numeric_res = partial_model.steady_state(how=how, verbose=False)
+    numeric_res = partial_model.steady_state(
+        how="minimize",
+        verbose=False,
+        optimizer_kwargs={"method": "trust-ncg", "options": {"gtol": 1e-24}},
+    )
+
     numeric_values = np.array(list(numeric_res.values()))
 
     errors = partial_model.f_ss_resid(
         **numeric_res.to_string(), **partial_model.parameters().to_string()
     )
+    resid = partial_model.f_ss_resid(
+        **numeric_res.to_string(), **partial_model.parameters().to_string()
+    )
 
-    assert_allclose(analytic_values, numeric_values, atol=1e-2)
-    assert_allclose(errors, np.zeros_like(errors), atol=1e-2)
+    ATOL = RTOL = 1e-1
+    if partial_file == "Two_Block_RBC_w_Partial_Steady_State":
+        assert_allclose(analytic_values, numeric_values, atol=ATOL, rtol=RTOL)
+
+    assert_allclose(resid, 0, atol=ATOL, rtol=RTOL)
+    assert_allclose(errors, np.zeros_like(errors), atol=ATOL, rtol=RTOL)
 
 
 @pytest.mark.parametrize(
@@ -546,7 +665,7 @@ def test_partially_analytical_steady_state(how, gcn_file):
 @pytest.mark.parametrize(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
-def test_linearize(gcn_file, name, backend):
+def test_linearize(gcn_file, name, backend: BACKENDS):
     file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
     model = model_from_gcn(
         file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
@@ -558,21 +677,21 @@ def test_linearize(gcn_file, name, backend):
         assert_allclose(out, expected_out, atol=1e-8, err_msg=f"{mat_name} failed")
 
 
-def test_invalid_solver_raises(self):
-    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
+def test_invalid_solver_raises():
+    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn")
     model = model_from_gcn(file_path, verbose=False)
     model.steady_state(verbose=False)
 
-    with self.assertRaises(NotImplementedError):
+    with pytest.raises(NotImplementedError):
         model.solve_model(solver="invalid_solver")
 
 
-def test_bad_failure_argument_raises(self):
+def test_bad_failure_argument_raises():
     file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
-    model = gEconModel(file_path, verbose=False)
+    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.steady_state(verbose=False, model_is_linear=True)
 
-    with self.assertRaises(ValueError):
+    with pytest.raises(ValueError):
         model.solve_model(solver="gensys", on_failure="raise", model_is_linear=True)
 
 

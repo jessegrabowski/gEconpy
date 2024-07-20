@@ -337,6 +337,19 @@ class ExtraParameterError(ValueError):
         super().__init__(message)
 
 
+class ExtraParameterWarning(UserWarning):
+    def __init__(self, extras):
+        n = len(extras)
+        verb = "was" if n == 1 else "were"
+        message = (
+            f'The following parameter{"s" if n > 1 else ""} {verb} were given initial values in calibration blocks but '
+            f'were not used in model equations: {", ".join([x.name for x in extras])} \n'
+            f'Verify your model equations, or remove these parameters if they are not needed.'
+        )
+
+        super().__init__(message)
+
+
 class DuplicateParameterError(ValueError):
     def __init__(self, extras, block=None):
         n = len(extras)

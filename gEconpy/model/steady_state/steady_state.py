@@ -133,7 +133,6 @@ def compile_ss_resid_and_sq_err(
 ):
     cache = {} if cache is None else cache
     ss_variables = [x.to_ss() if hasattr(x, "to_ss") else x for x in variables]
-
     resid_jac = sp.Matrix(
         [
             [faster_simplify(eq.diff(x), ss_variables) for x in ss_variables]
@@ -211,7 +210,7 @@ def compile_ss_resid_and_sq_err(
 
 def compile_known_ss(
     ss_solution_dict: SymbolDictionary,
-    variables: list[TimeAwareSymbol],
+    variables: list[TimeAwareSymbol | sp.Symbol],
     parameters: list[sp.Symbol],
     backend: BACKENDS,
     cache: dict,
@@ -219,13 +218,27 @@ def compile_known_ss(
     stack_return: bool | None = None,
     **kwargs,
 ):
+    def to_ss(x):
+        if isinstance(x, TimeAwareSymbol):
+            return x.to_ss()
+        return x
+
     cache = {} if cache is None else cache
     if not ss_solution_dict:
         return None, cache
 
+    ss_solution_dict = ss_solution_dict.to_sympy()
+    ss_variables = [to_ss(x) for x in variables]
+
+    sorted_solution_dict = {
+        to_ss(k): ss_solution_dict[to_ss(k)]
+        for k in ss_variables
+        if k in ss_solution_dict.keys()
+    }
+
     output_vars, output_exprs = (
-        list(ss_solution_dict.to_sympy().keys()),
-        list(ss_solution_dict.values()),
+        list(sorted_solution_dict.keys()),
+        list(sorted_solution_dict.values()),
     )
 
     f_ss, cache = compile_function(

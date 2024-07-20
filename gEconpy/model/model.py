@@ -18,16 +18,26 @@ from gEconpy.classes.optimize_wrapper import (
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
     ModelUnknownParameterError,
+    GensysFailedException,
 )
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.model.perturbation.perturbation import override_dummy_wrapper
+from gEconpy.model.perturbation.perturbation import (
+    override_dummy_wrapper,
+    solve_policy_function_with_gensys,
+    solve_policy_function_with_cycle_reduction,
+    statespace_to_gEcon_representation,
+    residual_norms,
+)
 from gEconpy.model.steady_state.steady_state import (
     ERROR_FUNCTIONS,
     compile_known_ss,
     compile_ss_resid_and_sq_err,
     steady_state_error_function,
 )
+from gEconpy.solvers.gensys import interpret_gensys_output
+import pandas as pd
+
 
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
 _log = logging.getLogger(__name__)
@@ -42,7 +52,10 @@ def scipy_wrapper(f, var_names, unknown_var_idxs, f_ss=None):
             ss_dict = dict(zip(var_names, ss_values))
             ss_dict.update(given_ss)
             res = f(**ss_dict, **param_dict)
-            if res.ndim == 1:
+
+            if isinstance(res, float | int):
+                return res
+            elif res.ndim == 1:
                 res = res[unknown_var_idxs]
             elif res.ndim == 2:
                 res = res[unknown_var_idxs, :][:, unknown_var_idxs]
@@ -79,7 +92,7 @@ def compile_model_ss_functions(
         return_symbolic=return_symbolic,
     )
 
-    calib_eqs = [lhs - rhs for lhs, rhs in calib_dict.to_sympy().items()]
+    calib_eqs = list(calib_dict.to_sympy().values())
     steady_state_equations = steady_state_equations + calib_eqs
 
     parameters = list((param_dict | deterministic_dict).to_sympy().keys())
@@ -121,17 +134,14 @@ def compile_model_ss_functions(
     ), cache
 
 
-def infer_variable_bounds(variables):
-    bounds = []
-    for var in variables:
-        assumptions = var.assumptions0
-        is_positive = assumptions.get("positive", False)
-        is_negative = assumptions.get("negative", False)
-        lhs = 1e-8 if is_positive else None
-        rhs = -1e-8 if is_negative else None
-        bounds.append((lhs, rhs))
+def infer_variable_bounds(variable):
+    assumptions = variable.assumptions0
+    is_positive = assumptions.get("positive", False)
+    is_negative = assumptions.get("negative", False)
+    lhs = 1e-8 if is_positive else None
+    rhs = -1e-8 if is_negative else None
 
-    return bounds
+    return (lhs, rhs)
 
 
 class Model:
@@ -273,6 +283,7 @@ class Model:
         progressbar=True,
         optimizer_kwargs: dict | None = None,
         verbose=True,
+        bounds: dict[str, tuple[float, float]] | None = None,
         **updates: float,
     ):
         param_dict = self.parameters(**updates)
@@ -286,16 +297,16 @@ class Model:
             elif len(ss_dict) == len(self.variables):
                 return ss_dict
 
-        ss_variables = [x.to_ss() for x in self.variables]
+        ss_variables = [x.to_ss() for x in self.variables] + list(
+            self.calibrated_params
+        )
 
         known_variables = (
-            set()
+            []
             if self.f_ss is None
-            else set(self.f_ss(**self.parameters()).to_sympy().keys())
+            else list(self.f_ss(**self.parameters()).to_sympy().keys())
         )
-        vars_to_solve = sorted(
-            list(set(ss_variables) - known_variables), key=lambda x: x.name
-        )
+        vars_to_solve = [var for var in ss_variables if var not in known_variables]
         var_names_to_solve = [x.name for x in vars_to_solve]
 
         unknown_var_idx = np.array(
@@ -309,21 +320,23 @@ class Model:
                     "method = 'minimize' instead."
                 )
             res = self._solve_steady_state_with_root(
-                use_jac,
-                var_names_to_solve,
-                unknown_var_idx,
-                progressbar,
-                optimizer_kwargs,
+                use_jac=use_jac,
+                vars_to_solve=var_names_to_solve,
+                unknown_var_idx=unknown_var_idx,
+                progressbar=progressbar,
+                optimizer_kwargs=optimizer_kwargs,
+                bounds=bounds,
                 **updates,
             )
         elif how == "minimize":
             res = self._solve_steady_state_with_minimize(
-                use_jac,
-                use_hess,
-                var_names_to_solve,
-                unknown_var_idx,
-                progressbar,
-                optimizer_kwargs,
+                use_jac=use_jac,
+                use_hess=use_hess,
+                vars_to_solve=var_names_to_solve,
+                unknown_var_idx=unknown_var_idx,
+                progressbar=progressbar,
+                bounds=bounds,
+                optimizer_kwargs=optimizer_kwargs,
                 **updates,
             )
         else:
@@ -335,7 +348,6 @@ class Model:
         optimizer_results = SymbolDictionary(
             {var: res.x[i] for i, var in enumerate(vars_to_solve)}
         )
-
         res_dict = optimizer_results | provided_ss_values
         res_dict = SymbolDictionary({x: res_dict[x] for x in ss_variables})
 
@@ -355,6 +367,7 @@ class Model:
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
+        bounds: dict[str, tuple[float, float]] | None = None,
         **param_updates,
     ):
         if optimizer_kwargs is None:
@@ -402,21 +415,29 @@ class Model:
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
+        bounds: dict[str, tuple[float, float]] | None = None,
         **param_updates,
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
 
         n_variables = len(vars_to_solve)
-        maxeval = optimizer_kwargs.pop("niter", 5000)
+        maxiter = optimizer_kwargs.pop("maxiter", 5000)
         x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
         if jitter_x0:
             x0 += np.random.normal(scale=0.01, size=n_variables)
         tol = optimizer_kwargs.pop("tol", 1e-30)
-        bounds = optimizer_kwargs.pop("bounds", None)
 
-        if bounds is None:
-            bounds = infer_variable_bounds(self.variables)
+        # kwarg_bounds = optimizer_kwargs.pop("bounds", None)
+        user_bounds = {} if bounds is None else bounds
+
+        ss_variables = [x.to_ss() for x in self.variables] + self.calibrated_params
+        vars_to_solve_sp = [x for x in ss_variables if x.name in vars_to_solve]
+
+        bound_dict = {x.name: infer_variable_bounds(x) for x in vars_to_solve_sp}
+        bound_dict.update(user_bounds)
+
+        bounds = [bound_dict[x] for x in vars_to_solve]
 
         has_bounds = any([x != (None, None) for x in bounds])
         method = optimizer_kwargs.pop(
@@ -428,7 +449,7 @@ class Model:
         param_dict = self.parameters(**param_updates)
 
         objective = CostFuncWrapper(
-            maxeval=maxeval,
+            maxeval=maxiter,
             f=scipy_wrapper(self.f_ss_error, vars_to_solve, unknown_var_idx, self.f_ss),
             f_jac=scipy_wrapper(
                 self.f_ss_error_grad, vars_to_solve, unknown_var_idx, self.f_ss
@@ -516,6 +537,144 @@ class Model:
         )
 
         return A, B, C, D
+
+    def solve_model(
+        self,
+        solver="cycle_reduction",
+        not_loglin_variables: list[str] | None = None,
+        order: int = 1,
+        model_is_linear: bool = False,
+        loglin_negative_ss: bool = False,
+        tol: float = 1e-8,
+        max_iter: int = 1000,
+        verbose: bool = True,
+        on_failure="error",
+    ) -> None:
+        """
+        Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
+        package by Grzegorz Klima, Karol Podemski, and Kaja Retkiewicz-Wijtiwiak., http://gecon.r-forge.r-project.org/.
+
+        Parameters
+        ----------
+        solver: str, default: 'cycle_reduction'
+            Name of the algorithm to solve the linear solution. Currently "cycle_reduction" and "gensys" are supported.
+            Following Dynare, cycle_reduction is the default, but note that gEcon uses gensys.
+        not_loglin_variables: List, default: None
+            Variables to not log linearize when solving the model. Variables with steady state values close to zero
+            will be automatically selected to not log linearize.
+        order: int, default: 1
+            Order of taylor expansion to use to solve the model. Currently only 1st order approximation is supported.
+        model_is_linear: bool, default: False
+            Flag indicating whether a model has already been linearized by the user.
+        tol: float, default 1e-8
+            Desired level of floating point accuracy in the solution
+        max_iter: int, default: 1000
+            Maximum number of cycle_reduction iterations. Not used if solver is 'gensys'.
+        verbose: bool, default: True
+            Flag indicating whether to print solver results to the terminal
+        on_failure: str, one of ['error', 'ignore'], default: 'error'
+            Instructions on what to do if the algorithm to find a linearized policy matrix. "Error" will raise an error,
+            while "ignore" will return None. "ignore" is useful when repeatedly solving the model, e.g. when sampling.
+
+        Returns
+        -------
+        None
+        """
+
+        if on_failure not in ["error", "ignore"]:
+            raise ValueError(
+                f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}'
+            )
+
+        ss_dict = self.f_ss(**self.parameters())
+        A, B, C, D = self.linearize_model(
+            order=order,
+            not_loglin_variables=not_loglin_variables,
+            steady_state_dict=ss_dict,
+            loglin_negative_ss=loglin_negative_ss,
+        )
+
+        if solver == "gensys":
+            gensys_results = solve_policy_function_with_gensys(A, B, C, D, tol, verbose)
+            G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
+
+            success = all([x == 1 for x in eu[:2]])
+
+            if not success:
+                if on_failure == "error":
+                    raise GensysFailedException(eu)
+                elif on_failure == "ignore":
+                    if verbose:
+                        message = interpret_gensys_output(eu)
+                        print(message)
+                    self.P = None
+                    self.Q = None
+                    self.R = None
+                    self.S = None
+
+                    self.perturbation_solved = False
+
+                    return
+
+            if verbose:
+                message = interpret_gensys_output(eu)
+                print(message)
+                print(
+                    "Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S"
+                )
+
+            T = G_1[: self.n_variables, :][:, : self.n_variables]
+            R = impact[: self.n_variables, :]
+
+        elif solver == "cycle_reduction":
+            (
+                T,
+                R,
+                result,
+                log_norm,
+            ) = solve_policy_function_with_cycle_reduction(
+                A, B, C, D, max_iter, tol, verbose
+            )
+            if T is None:
+                if on_failure == "error":
+                    raise GensysFailedException(result)
+        else:
+            raise NotImplementedError(
+                'Only "cycle_reduction" and "gensys" are valid values for solver'
+            )
+
+        gEcon_matrices = statespace_to_gEcon_representation(
+            A, T, R, self.variables, tol
+        )
+        P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
+
+        resid_norms = residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
+        norm_deterministic, norm_stochastic = resid_norms
+
+        if verbose:
+            print(f"Norm of deterministic part: {norm_deterministic:0.9f}")
+            print(f"Norm of stochastic part:    {norm_deterministic:0.9f}")
+
+        self.T = pd.DataFrame(
+            T,
+            index=[
+                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
+            ],
+            columns=[
+                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
+            ],
+        )
+        self.R = pd.DataFrame(
+            R,
+            index=[
+                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
+            ],
+            columns=[
+                x.base_name for x in sorted(self.shocks, key=lambda x: x.base_name)
+            ],
+        )
+
+        self.perturbation_solved = True
 
 
 #

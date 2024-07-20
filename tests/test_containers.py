@@ -49,6 +49,13 @@ class TestSymbolDictionary(unittest.TestCase):
 
         self.d = SymbolDictionary({C: 1, A: -1, r: 2j, alpha: 0.3})
 
+    def test_constructors(self):
+        assert list(self.d._is_variable.keys()) == ["C", "A", "r", "alpha"]
+        assert self.d._is_variable["C"]
+        assert self.d._is_variable["A"]
+        assert self.d._is_variable["r"]
+        assert not self.d._is_variable["alpha"]
+
     def test_convert_to_string(self):
         d = self.d.to_string()
         self.assertEqual(list(d.keys()), ["C_t", "A_tp1", "r_tm1", "alpha"])
@@ -92,7 +99,11 @@ class TestSymbolDictionary(unittest.TestCase):
         new_d.sort_keys(inplace=True)
 
         self.assertEqual(list(new_d.keys()), [self.A, self.C, F, self.alpha, self.r])
-        self.assertEqual(self.d._assumptions, d1._assumptions | d2._assumptions)
+        self.assertEqual(
+            self.d._assumptions,
+            d1._assumptions | d2._assumptions,
+            d1._is_variable | d2._is_variable,
+        )
 
     def test_step_forward(self):
         d_tp1 = self.d.step_forward().to_string()
@@ -132,6 +143,7 @@ class TestSymbolDictionary(unittest.TestCase):
         d = self.d.copy()
 
         d_sorted = d.sort_keys()
+        print(d_sorted)
         self.assertEqual(list(d_sorted.keys()), [self.A, self.C, self.alpha, self.r])
 
         d.sort_keys(inplace=True)

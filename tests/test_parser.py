@@ -633,5 +633,77 @@ class ParserTestCases(unittest.TestCase):
             self.assertEqual(value, d)
 
 
+def test_parameters_parsed_with_time_subscripts():
+    test_file = """block SYSTEM_EQUATIONS
+    {
+        identities
+        {
+            #1. Labor supply
+            W[] = sigma * C[] + phi * L[];
+
+            #2. Euler Equation
+            sigma / beta * (E[][C[1]] - C[]) = R_ss * E[][R[1]];
+
+            #3. Law of motion of capital -- Timings have been changed to cause Gensys to fail
+            K[] = (1 - delta) * K[] + delta * I[];
+
+            #4. Production Function -- Timings have been changed to cause Gensys to fail
+            Y[] = A[] + alpha * E[][K[1]] + (1 - alpha) * L[];
+
+            #5. Demand for capital
+            R[] = Y[] - K[-1];
+
+            #6. Demand for labor
+            W[] = Y[] - L[];
+
+            #7. Equlibrium Condition
+            Y_ss * Y[] = C_ss * C[] + I_ss * I[];
+
+            #8. Productivity Shock
+            A[] = rho_A * A[-1] + epsilon_A[];
+
+        };
+
+        shocks
+        {
+            epsilon_A[];
+        };
+
+        calibration
+        {
+            sigma = 2;
+            phi = 1.5;
+            alpha = 0.35;
+            beta = 0.985;
+            delta = 0.025;
+            rho_A = 0.95;
+
+            #P_ss = 1;
+            R_ss = (1 / beta - (1 - delta));
+            W_ss = (1 - alpha) ^ (1 / (1 - alpha)) * (alpha / R_ss) ^ (alpha / (1 - alpha));
+            Y_ss = (R_ss / (R_ss - delta * alpha)) ^ (sigma / (sigma + phi)) *
+                   ((1 - alpha) ^ (-phi) * (W_ss) ^ (1 + phi)) ^ (1 / (sigma + phi));
+            K_ss = alpha * Y_ss / R_ss;
+
+            I_tp1 = delta * K_ss;
+            C_tm1 = Y_ss - I_ss;
+            L_t = (1 - alpha) * Y_ss / W_ss;
+        };
+    };
+    """
+
+    parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+    block_dict, options, tryreduce, assumptions = (
+        gEcon_parser.split_gcn_into_dictionaries(parser_output)
+    )
+    system = gEcon_parser.parsed_block_to_dict(block_dict["SYSTEM_EQUATIONS"])
+    parser_output = parse_equations.build_sympy_equations(
+        system["calibration"], assumptions
+    )
+
+    for eq, attrs in parser_output:
+        assert not any(isinstance(x, TimeAwareSymbol) for x in eq.atoms())
+
+
 if __name__ == "__main__":
     unittest.main()

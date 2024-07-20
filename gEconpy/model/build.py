@@ -24,6 +24,7 @@ def model_from_gcn(
     backend: BACKENDS = "numpy",
     symbolic_model: bool = False,
     error_function: ERROR_FUNCTIONS = "squared",
+    on_unused_parameters="raise",
     **kwargs,
 ) -> Model:
     outputs = gcn_to_block_dict(gcn_path, simplify_blocks=simplify_blocks)
@@ -51,7 +52,13 @@ def model_from_gcn(
 
     ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
 
-    validate_results(equations, param_dict, calib_dict, deterministic_dict)
+    validate_results(
+        equations,
+        param_dict,
+        calib_dict,
+        deterministic_dict,
+        on_unused_parameters=on_unused_parameters,
+    )
     ss_shock_dict = make_steady_state_shock_dict(shocks)
     steady_state_equations = system_to_steady_state(equations, ss_shock_dict)
 
