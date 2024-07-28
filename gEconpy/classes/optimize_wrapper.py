@@ -133,7 +133,6 @@ def optimzer_early_stopping_wrapper(f_optim):
 
 def postprocess_optimizer_res(res, res_dict, assumptions=None, verbose=True):
     success = res.success
-
     f_x = np.atleast_1d(res.fun)
 
     if success:

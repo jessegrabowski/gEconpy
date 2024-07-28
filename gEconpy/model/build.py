@@ -1,7 +1,7 @@
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model, compile_model_ss_functions
-from gEconpy.model.perturbation.perturbation import compile_linearized_system
-from gEconpy.model.steady_state.steady_state import (
+from gEconpy.model.perturbation import compile_linearized_system
+from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
     make_steady_state_shock_dict,
     system_to_steady_state,

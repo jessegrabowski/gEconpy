@@ -49,7 +49,7 @@ class TestSymbolDictionary(unittest.TestCase):
 
         self.d = SymbolDictionary({C: 1, A: -1, r: 2j, alpha: 0.3})
 
-    def test_constructors(self):
+    def test_is_variable(self):
         assert list(self.d._is_variable.keys()) == ["C", "A", "r", "alpha"]
         assert self.d._is_variable["C"]
         assert self.d._is_variable["A"]
@@ -70,6 +70,24 @@ class TestSymbolDictionary(unittest.TestCase):
         d = SymbolDictionary(dict(a=2, b=3)).to_sympy()
         self.assertEqual(list(d.keys()), [sp.Symbol("a"), sp.Symbol("b")])
         self.assertTrue(d.is_sympy)
+
+    def test_ambiguous_new_key(self):
+        # Test that when we add something in string mode, it gets "duck typed"
+        d = self.d.to_string()
+        d["F_ss"] = 3
+
+        d.to_sympy(inplace=True)
+        F_ss = TimeAwareSymbol("F", "ss")
+        assert F_ss in d.keys()
+
+        # But when we add in symbol mode, the original type (Symbol vs TimeAwareSymbol) is preserved
+        d = self.d.copy()
+        F_ss2 = sp.Symbol("F_ss")
+        d[F_ss2] = 3
+        d.to_string(inplace=True)
+        assert "F_ss" in d.keys()
+        d.to_sympy(inplace=True)
+        assert F_ss2 in d.keys()
 
     def test_copy(self):
         d_copy = self.d.copy()
