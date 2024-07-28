@@ -1,5 +1,5 @@
 from itertools import combinations_with_replacement
-from typing import Any
+from typing import Any, Optional
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -429,7 +429,9 @@ def plot_prior_solvability(
     return fig
 
 
-def plot_eigenvalues(model: Any, figsize: tuple[float, float] = None, dpi: int = None):
+def plot_eigenvalues(
+    model: Any, figsize: Optional[tuple[float, float]] = None, dpi: Optional[int] = None
+):
     """
     Plot the eigenvalues of the model solution, along with a unit circle. Eigenvalues with modulus greater than 1 are
     shown in red, while those with modulus less than 1 are shown in blue. Eigenvalues greater than 10 in modulus

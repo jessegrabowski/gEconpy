@@ -1,10 +1,11 @@
 import functools as ft
 import logging
 
-from typing import Union, Literal
 from collections.abc import Callable
+from typing import Literal, Union
 
 import numpy as np
+import pandas as pd
 import sympy as sp
 
 from scipy import optimize
@@ -17,19 +18,19 @@ from gEconpy.classes.optimize_wrapper import (
 )
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
-    ModelUnknownParameterError,
     GensysFailedException,
+    ModelUnknownParameterError,
 )
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import (
-    override_dummy_wrapper,
-    solve_policy_function_with_gensys,
-    solve_policy_function_with_cycle_reduction,
-    statespace_to_gEcon_representation,
-    residual_norms,
-    check_perturbation_solution,
     check_bk_condition,
+    check_perturbation_solution,
+    override_dummy_wrapper,
+    residual_norms,
+    solve_policy_function_with_cycle_reduction,
+    solve_policy_function_with_gensys,
+    statespace_to_gEcon_representation,
 )
 from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
@@ -38,7 +39,6 @@ from gEconpy.model.steady_state import (
     steady_state_error_function,
 )
 from gEconpy.solvers.gensys import interpret_gensys_output
-import pandas as pd
 
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
 _log = logging.getLogger(__name__)
@@ -177,7 +177,6 @@ class Model:
         f_ss_error_grad: Callable | None = None,
         f_ss_error_hess: Callable | None = None,
         f_linearize: Callable | None = None,
-        f_perturbation: Callable | None = None,
         backend: BACKENDS = "numpy",
     ) -> None:
         """
@@ -254,11 +253,9 @@ class Model:
         # self.n_equations: int = 0
         # self.n_calibrating_equations: int = 0
 
-        # # Steady state information
+        # Steady state information
         # self.steady_state_solved: bool = False
-        # self.steady_state_system: list[sp.Add] = []
         # self.steady_state_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
-        # self.residuals: list[float] = []
 
         # Linear representation
         self.A: pd.DataFrame | None = None
@@ -274,10 +271,6 @@ class Model:
         self.R: pd.DataFrame | None = None
         self.S: pd.DataFrame | None = None
 
-        # # Assign Solvers
-        # self.steady_state_solver = SteadyStateSolver(self)
-        # self.perturbation_solver = PerturbationSolver(self)
-
     def parameters(self, **updates: float):
         param_dict = self._default_params.copy()
         unknown_updates = set(updates.keys()) - set(param_dict.keys())
@@ -285,7 +278,7 @@ class Model:
             raise ModelUnknownParameterError(list(unknown_updates))
         param_dict.update(updates)
 
-        return self.f_params(**param_dict)
+        return self.f_params(**param_dict).to_string()
 
     def steady_state(
         self,
@@ -307,7 +300,9 @@ class Model:
             if len(ss_dict) != 0 and len(ss_dict) != len(self.variables):
                 how = "minimize"
             elif len(ss_dict) == len(self.variables):
-                return ss_dict
+                resid = self.f_ss_resid(**param_dict, **ss_dict)
+                success = np.allclose(resid, 0.0, atol=1e-8)
+                return ss_dict, success
 
         ss_variables = [x.to_ss() for x in self.variables] + list(
             self.calibrated_params
@@ -337,7 +332,6 @@ class Model:
                 unknown_var_idx=unknown_var_idx,
                 progressbar=progressbar,
                 optimizer_kwargs=optimizer_kwargs,
-                bounds=bounds,
                 **updates,
             )
         elif how == "minimize":
@@ -361,9 +355,15 @@ class Model:
             {var: res.x[i] for i, var in enumerate(vars_to_solve)}
         )
         res_dict = optimizer_results | provided_ss_values
-        res_dict = SymbolDictionary({x: res_dict[x] for x in ss_variables})
+        res_dict = SymbolDictionary({x: res_dict[x] for x in ss_variables}).to_string()
 
-        return postprocess_optimizer_res(res, res_dict, verbose=verbose)
+        return postprocess_optimizer_res(
+            res,
+            res_dict,
+            ft.partial(self.f_ss_resid, **param_dict),
+            ft.partial(self.f_ss_error_grad, **param_dict),
+            verbose=verbose,
+        )
 
     def _evaluate_steady_state(self, **updates: float):
         param_dict = self.parameters(**updates)
@@ -379,7 +379,6 @@ class Model:
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
-        bounds: dict[str, tuple[float, float]] | None = None,
         **param_updates,
     ):
         if optimizer_kwargs is None:
@@ -404,14 +403,16 @@ class Model:
 
         param_dict = self.parameters(**param_updates)
 
+        f = scipy_wrapper(self.f_ss_resid, vars_to_solve, unknown_var_idx, self.f_ss)
+        f_jac = (
+            scipy_wrapper(self.f_ss_jac, vars_to_solve, unknown_var_idx, self.f_ss)
+            if use_jac
+            else None
+        )
         objective = CostFuncWrapper(
             maxeval=maxiter,
-            f=scipy_wrapper(self.f_ss_resid, vars_to_solve, unknown_var_idx, self.f_ss),
-            f_jac=scipy_wrapper(
-                self.f_ss_jac, vars_to_solve, unknown_var_idx, self.f_ss
-            )
-            if use_jac
-            else None,
+            f=f,
+            f_jac=f_jac,
             progressbar=progressbar,
         )
 
@@ -621,6 +622,7 @@ class Model:
         parameter_updates: dict
             New parameter values at which to solve the model. Unspecified values will be taken from the initial values
             set in the GCN file.
+
         Returns
         -------
         None
@@ -633,7 +635,7 @@ class Model:
         if steady_state_kwargs is None:
             steady_state_kwargs = {}
 
-        ss_dict = self.steady_state(
+        ss_dict, success = self.steady_state(
             **self.parameters(**parameter_updates), **steady_state_kwargs
         )
         n_variables = len(self.variables)

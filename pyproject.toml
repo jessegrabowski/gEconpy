@@ -7,9 +7,6 @@ filterwarnings = [
     "ignore::RuntimeWarning"]
 env = ["NUMBA_DISABLE_JIT = 1"]
 
-[tool.ruff.lint]
-ignore = ["E741"]
-
 [tool.bumpver]
 current_version = "1.2.1"
 version_pattern = "MAJOR.MINOR.PATCH"
@@ -23,3 +20,45 @@ push            = false
 "setup.cfg" = ['version = {version}']
 "gEconpy/__init__.py" = ["{version}"]
 "docs/source/conf.py" = ["release = {version}"]
+
+
+[tool.ruff.lint]
+select = ["D", "E", "F", "I", "UP", "W", "RUF"]
+ignore = [
+  "E501",   # Line length
+  "E741",   # Ambiguous variable name
+  "RUF001", # String contains ambiguous character (such as Greek letters)
+  "RUF002", # Docstring contains ambiguous character (such as Greek letters)
+  "RUF012", # Mutable class attributes should be annotated with `typing.ClassVar`
+  "D100",
+  "D101",
+  "D102",
+  "D103",
+  "D104",
+  "D105",
+  "D107",
+  "D200",
+  "D202",
+  "D203",
+  "D204",
+  "D205",
+  "D209",
+  "D212",
+  "D213",
+  "D301",
+  "D400",
+  "D401",
+  "D403",
+  "D413",
+  "D415",
+  "D417",
+]
+
+[tool.ruff.lint.isort]
+lines-between-types = 1
+
+[tool.ruff.lint.per-file-ignores]
+'tests/*.py' = [
+  'F841', # Unused variable warning for test files -- common in pymc model declarations
+  'D106'  # Missing docstring for public method -- unittest test subclasses don't need docstrings
+]

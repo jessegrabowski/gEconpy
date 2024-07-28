@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import sympy as sp
 
-from gEconpy.model.compile import compile_function, BACKENDS
+from gEconpy.model.compile import BACKENDS, compile_function
 
 
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])

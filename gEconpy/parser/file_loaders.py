@@ -9,9 +9,9 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
     DuplicateParameterError,
     ExtraParameterError,
+    ExtraParameterWarning,
     MultipleSteadyStateBlocksException,
     OrphanParameterError,
-    ExtraParameterWarning,
 )
 from gEconpy.model.block import Block
 from gEconpy.parser.constants import STEADY_STATE_NAMES

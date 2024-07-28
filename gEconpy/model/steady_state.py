@@ -1,5 +1,5 @@
-from typing import Any, Literal
 from collections.abc import Callable
+from typing import Any, Literal
 from warnings import catch_warnings, simplefilter
 
 import numpy as np

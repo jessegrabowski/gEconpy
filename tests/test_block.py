@@ -337,7 +337,7 @@ class BlockTestCases(unittest.TestCase):
         U = TimeAwareSymbol("U", 1)
         Y = TimeAwareSymbol("Y", 0)
         C = TimeAwareSymbol("C", 0)
-        I = TimeAwareSymbol("I", 0)  # noqa: E741
+        I = TimeAwareSymbol("I", 0)
         K = TimeAwareSymbol("K", 0)
         L = TimeAwareSymbol("L", 0)
         A = TimeAwareSymbol("A", 0)
@@ -387,7 +387,7 @@ class BlockTestCases(unittest.TestCase):
         U = TimeAwareSymbol("U", 1)
         Y = TimeAwareSymbol("Y", 0)
         C = TimeAwareSymbol("C", 0)
-        I = TimeAwareSymbol("I", 0)  # noqa: E741
+        I = TimeAwareSymbol("I", 0)
         K = TimeAwareSymbol("K", 0)
         L = TimeAwareSymbol("L", 0)
         A = TimeAwareSymbol("A", 0)

@@ -1,9 +1,9 @@
 import re
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from functools import partial, reduce
 from typing import Any, Literal
-from collections.abc import Callable
 from warnings import warn
 
 import numpy as np

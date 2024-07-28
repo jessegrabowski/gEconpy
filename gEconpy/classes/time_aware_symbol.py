@@ -50,7 +50,7 @@ class TimeAwareSymbol(sp.Symbol):
         if idx == "ss":
             time_name = rf"{name}_{idx}"
         elif idx == "0":
-            time_name = r"%s_t" % name
+            time_name = rf"{name}_t"
         else:
             time_name = rf"{name}_t{operator}{idx}"
 

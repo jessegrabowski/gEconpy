@@ -1,7 +1,7 @@
+from collections.abc import Callable
 from copy import copy
 from enum import EnumMeta
 from typing import Any
-from collections.abc import Callable
 
 import numba as nb
 import numpy as np

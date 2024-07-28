@@ -212,7 +212,10 @@ def compile_linearized_system(
 
     Returns
     -------
-
+    f_linearze: Callable
+        Function that evaluates the linearized system of equations.
+    cache: dict
+        Dictionary mapping sympy symbols to pytensor tensors. Empty if backend is not pytensor
     """
     cache = {} if cache is None else cache
 

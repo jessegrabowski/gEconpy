@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pytest
 import sympy as sp
+
 from numpy.testing import assert_allclose
 
 from gEconpy.model.build import model_from_gcn
@@ -10,8 +11,8 @@ from gEconpy.model.perturbation import (
     linearize_model,
     make_all_variable_time_combinations,
     override_dummy_wrapper,
-    solve_policy_function_with_gensys,
     solve_policy_function_with_cycle_reduction,
+    solve_policy_function_with_gensys,
 )
 from gEconpy.shared.utilities import eq_to_ss
 

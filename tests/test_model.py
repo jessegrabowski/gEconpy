@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from typing import cast
 
+import numdifftools as nd
 import numpy as np
 import pandas as pd
 import pytest
@@ -13,9 +14,6 @@ from numpy.testing import assert_allclose
 from gEconpy.exceptions.exceptions import GensysFailedException
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
-
-import numdifftools as nd
-
 from gEconpy.model.model import scipy_wrapper
 from tests.utilities.expected_matrices import expected_linearization_result
 
@@ -504,7 +502,7 @@ def test_model_gradient(backend, gcn_file):
         file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
     )
 
-    ss_result = model.steady_state().to_string()
+    ss_result, success = model.steady_state()
 
     np.testing.assert_allclose(
         model.f_ss_error_grad(**ss_result, **model.parameters().to_string()),
@@ -558,14 +556,14 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
     model_1 = model_from_gcn(
         file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
-    analytic_res = model_1.steady_state()
+    analytic_res, success = model_1.steady_state()
     analytic_values = np.array(
         [analytic_res[x.to_ss().name] for x in model_1.variables]
     )
     model_1.f_ss = None
 
     x0 = np.full_like(analytic_values, 0.8)
-    numeric_res = model_1.steady_state(
+    numeric_res, success = model_1.steady_state(
         how=how,
         verbose=False,
         optimizer_kwargs={
@@ -576,10 +574,8 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
         },
     )
 
-    numeric_values = np.array([numeric_res[x.to_ss()] for x in model_1.variables])
-    errors = model_1.f_ss_resid(
-        **numeric_res.to_string(), **model_1.parameters().to_string()
-    )
+    numeric_values = np.array([numeric_res[x.to_ss().name] for x in model_1.variables])
+    errors = model_1.f_ss_resid(**numeric_res, **model_1.parameters())
 
     if how == "root":
         assert_allclose(analytic_values, numeric_values, atol=1e-2)
@@ -592,7 +588,7 @@ def test_numerical_steady_state_with_calibrated_params():
     model = model_from_gcn(
         file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
     )
-    res = model.steady_state(
+    res, success = model.steady_state(
         how="minimize",
         verbose=False,
         optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 100_000}},
@@ -620,13 +616,13 @@ def test_partially_analytical_steady_state(
     analytic_model = model_from_gcn(
         analytic_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
-    analytic_res = analytic_model.steady_state()
+    analytic_res, success = analytic_model.steady_state()
     analytic_values = np.array(list(analytic_res.values()))
 
     partial_model = model_from_gcn(
         file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
-    numeric_res = partial_model.steady_state(
+    numeric_res, success = partial_model.steady_state(
         how="minimize",
         verbose=False,
         optimizer_kwargs={"method": "trust-ncg", "options": {"gtol": 1e-24}},
@@ -666,7 +662,7 @@ def test_linearize(gcn_file, name, backend: BACKENDS):
     model = model_from_gcn(
         file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
-    steady_state_dict = model.steady_state()
+    steady_state_dict, success = model.steady_state()
     outputs = model.linearize_model(
         loglin_negative_ss=True, steady_state_dict=steady_state_dict
     )
