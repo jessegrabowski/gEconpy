@@ -21,8 +21,8 @@ def qzdiv(
     (QZ decomposition) of the system matrices :math:`G_0` and :math:`G_1`. A and B are upper triangular, with the
     properties :math:`QAZ^T = G_0` and :math:`QBZ^T = G_1`.
 
-     Parameters
-     ----------
+    Parameters
+    ----------
      stake : float
          Largest positive value for which an eigenvalue is considered stable.
      A : np.ndarray
@@ -34,13 +34,13 @@ def qzdiv(
      Z : np.ndarray
          Matrix of right Schur vectors.
 
-     Returns
-     -------
+    Returns
+    -------
      tuple of np.ndarray
          A, B, Q, Z matrices sorted such that all unstable roots are placed in the lower-right corners of the matrices.
 
-     Notes
-     -----
+    Notes
+    -----
      Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
     """
 

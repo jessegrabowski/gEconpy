@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import Optional
 
 import sympy as sp
 
@@ -269,7 +270,7 @@ class Block:
         return result, multipliers
 
     def _parse_variable_list(
-        self, block_dict: dict, key: str, assumptions: dict = None
+        self, block_dict: dict, key: str, assumptions: Optional[dict] = None
     ) -> list[sp.Symbol] | None:
         """
         Two components -- controls and shocks -- expect a simple list of variables, which is a case the

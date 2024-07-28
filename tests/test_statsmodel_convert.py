@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from warnings import catch_warnings, simplefilter
 
-from gEconpy import compile_to_statsmodels, gEconModel
+from gEconpy import compile_to_statsmodels
 from gEconpy.estimation.transformers import IntervalTransformer, PositiveTransformer
 
 ROOT = Path(__file__).parent.absolute()

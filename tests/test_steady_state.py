@@ -9,19 +9,19 @@ import sympy as sp
 
 from scipy import optimize
 
-from gEconpy.model.model import gEconModel
+from gEconpy.model.build import model_from_gcn
 
 ROOT = Path(__file__).parent.absolute()
 
 
 class SteadyStateModelOne(unittest.TestCase):
     def setUp(self):
-        self.model = gEconModel(
+        self.model = model_from_gcn(
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
         )
 
     def test_solve_ss_with_partial_user_solution(self):
-        self.model.steady_state(verbose=True, apply_user_simplifications=True)
+        self.model.steady_state(verbose=True)
         self.assertTrue(self.model.steady_state_solved)
 
     def test_wrong_user_solutions_raises(self):
@@ -82,7 +82,7 @@ class SteadyStateModelOne(unittest.TestCase):
         self.assertEqual(ss_report, expected_output)
 
     def test_incomplete_ss_relationship_raises_with_root(self):
-        self.model = gEconModel(
+        self.model = model_from_gcn(
             os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn"), verbose=False
         )
         self.model.steady_state_relationships["K_ss"] = 3.0

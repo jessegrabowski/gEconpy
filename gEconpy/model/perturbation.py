@@ -1,10 +1,11 @@
 from functools import wraps
 from inspect import signature
+from typing import Literal
 
 import numpy as np
+import pandas as pd
 import sympy as sp
 
-from numpy.typing import ArrayLike
 from scipy import linalg
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -87,8 +88,9 @@ def linearize_model(
     equations: list[sp.Expr],
     shocks: list[sp.Symbol],
     order=1,
-) -> list[sp.Matrix]:
-    """
+    model_is_linear=False,
+) -> tuple[list[sp.Matrix, ...], sp.Symbol]:
+    r"""
     Log-linearize a model around its steady state.
 
     Parameters
@@ -110,6 +112,10 @@ def linearize_model(
     Fs: List[sp.Matrix]
         List of matrices representing the log-linearized model.
 
+    not_loglin_variables: sp.Symbol
+        A special symbol created by the function that allows transformation between the log-linear and non-log-linear
+        representations of the model. See the Notes for details.
+
     Notes
     -----
     Convert the non-linear model to its log-linear approximation using a first-order Taylor expansion around the
@@ -118,9 +124,31 @@ def linearize_model(
     .. math::
         F_1 T y_{t-1} + F_2 @ T @ y_t + F_3 @ T @ y_{t+1} + F4 \varepsilon_t = 0
 
-    Where T is a diagonal matrix containing steady-state values on the diagonal. Each of F1, F2, F3, and F4 are the
-    Jacobian matrices of the model equations with respect to the variables at time t-1, t, t+1, and the exogenous shocks,
-    respectively. Evaluating the matrix multiplications in the expression above obtains:
+    Each of F1, F2, F3, and F4 are the Jacobian matrices of the model equations with respect to the variables at time
+    t-1, t, t+1, and the exogenous shocks, respectively.
+
+    The T matrix requires special note. It is a diagonal matrix with either the steady state value of the variable or
+    1, depending on whether the variable is log-linearized or not. Specifically:
+
+    .. math::
+        T = \text{Diagonal}(y_{ss}^{1 - \text{not_loglin_variable})
+
+    Where :math:`\text{not_loglin_variable}` is a vector whose :math:`i`-th value is zero if the :math:`i`-th variable
+    is log-linearized, and one otherwise. The :math:`T` matrix arises from application of the chain rule. When a
+    variable is assumed to be represented in logs, it is entered into all model equations as :math:`\exp(y)` (indeed,
+    Dynare requires the research to do exactly this). Having made this substitution, the partial derivative of a model
+    equation :math:`f(exp(x))` with respect to :math:`x` is:
+
+    .. math::
+       \frac{\partial f}{\partial x_ss} f(exp(x_ss)) = f'(exp(x_ss)) \cdot exp(x_ss)
+
+    Since we interpret the variable :math:`y_{ss}` as (implicitly) being in logs, this simplifies to
+    :math:`f'(y_ss) \cdot y_{ss}`. On the other hand, if we are not log-linearizing the variable, the partial derivative
+    is simply :math:`f'(y_ss)`. By setting the value of the exponent to 1 or 0, we can obtain the correct value of the
+    derivative for each equation, with respect to each variable.
+
+    Evaluating the matrix multiplications between each :math:`F` matrix and the :math:`T` matrix, we obtain the
+    following simplified expression:
 
     .. math::
         A y_{t-1} + B y_t + C y_{t+1} + D \varepsilon = 0
@@ -159,11 +187,36 @@ def compile_linearized_system(
     deterministic_dict: SymbolDictionary[sp.Symbol, sp.Expr],
     calib_dict: SymbolDictionary[sp.Symbol, float | sp.Expr],
     shocks: list[TimeAwareSymbol],
+    model_is_linear: bool = False,
     backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
     cache: dict | None = None,
     **kwargs,
 ):
+    """
+    Compile a function that evaluates the linearized system of equations.
+
+    Parameters
+    ----------
+    equations
+    variables
+    param_dict
+    deterministic_dict
+    calib_dict
+    shocks
+    model_is_linear
+    backend
+    return_symbolic
+    cache
+    kwargs
+
+    Returns
+    -------
+    f_linearze: Callable
+        Function that evaluates the linearized system of equations.
+    cache: dict
+        Dictionary mapping sympy symbols to pytensor tensors. Empty if backend is not pytensor
+    """
     cache = {} if cache is None else cache
 
     ss_variables = [x.to_ss() for x in variables]
@@ -172,7 +225,9 @@ def compile_linearized_system(
     parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
     calib_params = list(calib_dict.to_sympy().keys())
 
-    outputs, not_loglin_var = linearize_model(variables, equations, shocks)
+    outputs, not_loglin_var = linearize_model(
+        variables, equations, shocks, model_is_linear=model_is_linear
+    )
     inputs = ss_variables + calib_params + parameters + [not_loglin_var]
 
     f_linearize, cache = compile_function(
@@ -188,30 +243,30 @@ def compile_linearized_system(
 
 
 def solve_policy_function_with_cycle_reduction(
-    A: ArrayLike,
-    B: ArrayLike,
-    C: ArrayLike,
-    D: ArrayLike,
+    A: np.ndarray,
+    B: np.ndarray,
+    C: np.ndarray,
+    D: np.ndarray,
     max_iter: int = 1000,
     tol: float = 1e-8,
     verbose: bool = True,
-) -> tuple[ArrayLike, ArrayLike, str, float]:
+) -> tuple[np.ndarray, np.ndarray, str, float]:
     """
     Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
     obtain the first-order linear approxiate policy matrices T and R.
 
     Parameters
     ----------
-    A: Arraylike
+    A: np.ndarray
         Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
         values that are known when decision-making: those with t-1 subscripts.
-    B: ArrayLike
+    B: np.ndarray
         Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
         are observed when decision-making: those with t subscripts.
-    C: ArrayLike
+    C: np.ndarray
         Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
         enter in expectation when decision-making: those with t+1 subscripts.
-    D: ArrayLike
+    D: np.ndarray
         Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
     max_iter: int, default: 1000
         Maximum number of iterations to perform before giving up.
@@ -249,21 +304,22 @@ def solve_policy_function_with_cycle_reduction(
     return T, R, result, log_norm
 
 
-def solve_policy_function_with_gensys(
-    A: ArrayLike,
-    B: ArrayLike,
-    C: ArrayLike,
-    D: ArrayLike,
-    tol: float = 1e-8,
-    verbose: bool = True,
-) -> tuple:
+def _get_variable_counts(A, D):
     n_eq, n_vars = A.shape
     _, n_shocks = D.shape
 
-    lead_var_idx = np.where(np.sum(np.abs(C), axis=0) > tol)[0]
-    eqs_and_leads_idx = np.r_[np.arange(n_vars), lead_var_idx + n_vars].tolist()
+    return n_eq, n_vars, n_shocks
 
-    n_leads = len(lead_var_idx)
+
+def _find_lead_variables(C, tol=1e-8):
+    return np.where(np.sum(np.abs(C), axis=0) > tol)[0]
+
+
+def _gensys_setup(A, B, C, D, tol=1e-8):
+    n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
+
+    lead_var_idx = _find_lead_variables(C, tol)
+    eqs_and_leads_idx = np.r_[np.arange(n_vars), lead_var_idx + n_vars].tolist()
 
     Gamma_0 = np.vstack(
         [np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])]
@@ -285,7 +341,23 @@ def solve_policy_function_with_gensys(
     Psi = Psi[eqs_and_leads_idx, :]
     Pi = Pi[eqs_and_leads_idx, :][:, lead_var_idx]
 
-    # Is this necessary?
+    return Gamma_0, Gamma_1, Psi, Pi
+
+
+def solve_policy_function_with_gensys(
+    A: np.ndarray,
+    B: np.ndarray,
+    C: np.ndarray,
+    D: np.ndarray,
+    tol: float = 1e-8,
+) -> tuple:
+    n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
+
+    lead_var_idx = _find_lead_variables(C, tol)
+    n_leads = len(lead_var_idx)
+
+    Gamma_0, Gamma_1, Psi, Pi = _gensys_setup(A, B, C, D, tol)
+
     g0 = -np.ascontiguousarray(Gamma_0)  # NOTE THE IMPORTANT MINUS SIGN LURKING
     g1 = np.ascontiguousarray(Gamma_1)
     c = np.ascontiguousarray(np.zeros(shape=(n_vars + n_leads, 1)))
@@ -307,15 +379,15 @@ def residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime):
     return norm_deterministic, norm_stochastic
 
 
-def statespace_to_gEcon_representation(self, A, T, R, variables, tol):
-    n_vars = len(variables)
+def statespace_to_gEcon_representation(A, T, R, tol):
+    n_vars = T.shape[1]
+    n_shocks = R.shape[1]
 
     state_var_idx = np.where(
         np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol
     )[0]
     state_var_mask = np.isin(np.arange(n_vars), state_var_idx)
 
-    n_shocks = self.n_shocks
     shock_idx = np.arange(n_shocks)
 
     PP = T.copy()
@@ -334,3 +406,122 @@ def statespace_to_gEcon_representation(self, A, T, R, variables, tol):
     S_prime = QQ[:, shock_idx]
 
     return P, Q, R, S, A_prime, R_prime, S_prime
+
+
+def check_perturbation_solution(A, B, C, D, T, R, tol=1e-8):
+    P, Q, R, S, A_prime, R_prime, S_prime = statespace_to_gEcon_representation(
+        A, T, R, tol
+    )
+    norm_deterministic, norm_stochastic = residual_norms(
+        B, C, D, Q, P, A_prime, R_prime, S_prime
+    )
+
+    print(f"Norm of deterministic part: {norm_deterministic:0.9f}")
+    print(f"Norm of stochastic part:    {norm_stochastic:0.9f}")
+
+
+def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
+    Gamma_0, Gamma_1, *_ = _gensys_setup(A, B, C, D, tol)
+
+    # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
+    # have sign flip relative to qzdiv -- does it matter?
+    A, B, alpha, beta, Q, Z = linalg.ordqz(
+        -Gamma_0, Gamma_1, sort="ouc", output="complex"
+    )
+
+    gev = np.c_[np.diagonal(A), np.diagonal(B)]
+
+    eigenval = gev[:, 1] / (gev[:, 0] + tol)
+    pos_idx = np.where(np.abs(eigenval) > 0)
+
+    eig = np.empty(((np.abs(eigenval) > 0).sum(), 3))
+    eig[:, 0] = np.abs(eigenval)[pos_idx]
+    eig[:, 1] = np.real(eigenval)[pos_idx]
+    eig[:, 2] = np.imag(eigenval)[pos_idx]
+
+    sorted_idx = np.argsort(eig[:, 0])
+    eig = eig[sorted_idx, :]
+
+    return eig
+
+
+def check_bk_condition(
+    A,
+    B,
+    C,
+    D,
+    tol=1e-8,
+    verbose=True,
+    on_failure: Literal["raise", "ignore"] = "ignore",
+    return_value: Literal["dataframe", "bool", None] = "dataframe",
+):
+    """
+    Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
+    unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
+    this test suggests timing problems in the definition of the model.
+
+    Parameters
+    ----------
+    A: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
+        values that are known when decision-making: those with t-1 subscripts.
+    B: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+        are observed when decision-making: those with t subscripts.
+    C: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+        enter in expectation when decision-making: those with t+1 subscripts.
+    D: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
+    verbose: bool, default: True
+        Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
+    on_failure: str, default: 'ignore'
+        Action to take if the Blanchard-Kahn condition is not satisfied. Valid values are 'ignore' and 'raise'.
+    return_value: string, default: 'dataframe'
+        Controls what is returned by the function. Valid values are 'dataframe', 'bool', and 'none'.
+        If df, a dataframe containing eigenvalues is returned. If 'bool', a boolean indicating whether the BK
+        condition is satisfied. If None, nothing is returned.
+    tol: float, 1e-8
+        Tolerance below which numerical values are considered zero
+
+    Returns
+    -------
+    None
+        If return_value is 'none'
+
+    condition_satisfied, bool
+        If return_value is 'bool', returns True if the Blanchard-Kahn condition is satisfied, False otherwise.
+
+    Eigenvalues, pd.DataFrame
+        If return_value is 'df', returns a dataframe containing the real and imaginary components of the system's
+        eigenvalues, along with their modulus.
+    """
+    if return_value not in ["dataframe", "bool", None]:
+        raise ValueError(f'Unknown return type "{return_value}"')
+
+    n_forward = (np.abs(C).sum(axis=0) > tol).sum().astype(int)
+    eig = pd.DataFrame(
+        _compute_solution_eigenvalues(A, B, C, D, tol),
+        columns=["Modulus", "Real", "Imaginary"],
+    )
+    n_greater_than_one = (eig["Modulus"] > 1).sum()
+    condition_not_satisfied = n_forward > n_greater_than_one
+
+    message = (
+        f'Model solution has {n_greater_than_one} eigenvalues greater than one in modulus and {n_forward} '
+        f'forward-looking variables. '
+        f'\nBlanchard-Kahn condition is{" NOT" if condition_not_satisfied else ""} satisfied.'
+    )
+
+    if condition_not_satisfied and on_failure == "raise":
+        raise ValueError(message)
+
+    if verbose:
+        print(message)
+
+    if return_value is None:
+        return
+    if return_value == "dataframe":
+        return eig
+    else:
+        return ~condition_not_satisfied

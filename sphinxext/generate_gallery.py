@@ -8,16 +8,16 @@ import base64
 import json
 import os
 import shutil
+
 from glob import glob
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import sphinx
 
 from matplotlib import image
-
-import sphinx
 
 logger = sphinx.util.logging.getLogger(__name__)
 

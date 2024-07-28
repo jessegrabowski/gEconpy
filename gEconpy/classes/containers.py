@@ -24,7 +24,7 @@ def safe_string_to_sympy(s, assumptions=None):
 
     name = "_".join(name)
     time_index = SAFE_STRING_TO_INDEX_DICT[time_index_str]
-    symbol = TimeAwareSymbol(name, time_index, **assumptions[name])
+    symbol = TimeAwareSymbol(name, time_index, **assumptions.get(name, {}))
 
     return symbol
 

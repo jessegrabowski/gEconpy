@@ -11,7 +11,6 @@ from gEconpy.estimation.estimation_utilities import (
     extract_sparse_data_from_model,
 )
 from gEconpy.estimation.kalman_filter import kalman_filter, univariate_kalman_filter
-from gEconpy.model.model import gEconModel
 
 ROOT = Path(__file__).parent.absolute()
 

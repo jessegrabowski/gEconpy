@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import sympy as sp
 
-from gEconpy import gEconModel
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.shared.dynare_convert import (
     build_hash_table,

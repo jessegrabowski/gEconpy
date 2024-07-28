@@ -1,11 +1,14 @@
+import logging
 import sys
-import warnings
 
 from collections.abc import Callable
 
 import numpy as np
 
 from fastprogress.fastprogress import ProgressBar, progress_bar
+from scipy.optimize import OptimizeResult
+
+_log = logging.getLogger(__name__)
 
 
 class CostFuncWrapper:
@@ -67,7 +70,10 @@ class CostFuncWrapper:
         if self.n_eval > self.maxeval:
             self.update_progress_desc(value, grad, hess)
             self.interrupted = True
-            return value, grad
+
+            if self.use_jac:
+                return value, grad
+            return value
 
         self.n_eval += 1
         if self.progressbar:
@@ -131,17 +137,28 @@ def optimzer_early_stopping_wrapper(f_optim):
     return res
 
 
-def postprocess_optimizer_res(res, res_dict, assumptions=None, verbose=True):
+def postprocess_optimizer_res(
+    res,
+    res_dict,
+    f_resid,
+    f_jac,
+    verbose=True,
+) -> tuple[dict, OptimizeResult]:
     success = res.success
 
-    f_x = np.atleast_1d(res.fun)
+    f_x = np.r_[[x.ravel() for x in f_resid(**res_dict)]]
+    df_dx = f_jac(**res_dict)
 
-    if success:
-        msg = f"Steady state found! Sum of squared residuals is {(f_x ** 2).sum()}"
-    else:
-        msg = f"Steady state NOT found. Sum of squared residuals is {(f_x ** 2).sum()}"
+    msg = (
+        f"Steady state {'' if success else 'NOT '}found.\n"
+        f'{"-"*80}\n'
+        f"{'Optimizer message':<30}{res.message}\n"
+        f"{'Sum of squared residuals':<30}{(f_x ** 2).sum()}\n"
+        f"{'Maximum absoluate error':<30}{np.abs(f_x).max()}\n"
+        f"{'Gradient norm at solution':<30}{np.linalg.norm(df_dx)}"
+    )
 
     if verbose:
-        warnings.warn(msg)
+        _log.info(msg)
 
-    return res_dict
+    return res_dict, success

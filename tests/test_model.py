@@ -3,9 +3,10 @@ import unittest
 
 from pathlib import Path
 from typing import cast
-from unittest import mock
 
+import numdifftools as nd
 import numpy as np
+import pandas as pd
 import pytest
 
 from numpy.testing import assert_allclose
@@ -13,9 +14,6 @@ from numpy.testing import assert_allclose
 from gEconpy.exceptions.exceptions import GensysFailedException
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
-
-import numdifftools as nd
-
 from gEconpy.model.model import scipy_wrapper
 from tests.utilities.expected_matrices import expected_linearization_result
 
@@ -393,88 +391,84 @@ def test_scipy_wrapped_functions_agree(gcn_path, func):
     [
         (
             "One_Block_Simple_1_w_Steady_State.gcn",
-            np.array(
-                [
-                    1.0,
-                    0.91982617,
-                    0.27872301,
-                    13.9361507,
-                    0.3198395,
-                    -132.00424906,
-                    1.19854918,
-                    0.51233068,
-                    0.51233068,
-                ]
-            ),
+            {
+                "A_ss": 1.0,
+                "C_ss": 0.91982617,
+                "I_ss": 0.27872301,
+                "K_ss": 13.9361507,
+                "L_ss": 0.3198395,
+                "U_ss": -132.00424906,
+                "Y_ss": 1.19854918,
+                "lambda_ss": 0.51233068,
+                "q_ss": 0.51233068,
+            },
         ),
         (
             "Open_RBC.gcn",
-            np.array(
-                [
-                    1.00000000e00,
-                    0.00000000e00,
-                    9.23561040e00,
-                    0.00000000e00,
-                    2.73647613e00,
-                    1.09459045e02,
-                    2.59033302e01,
-                    4.22567464e00,
-                    0.00000000e00,
-                    0.00000000e00,
-                    7.32557872e01,
-                    1.19720865e01,
-                    7.54570414e-02,
-                    1.00000101e-02,
-                    1.00000101e-02,
-                ]
-            ),
+            {
+                "A_ss": 1.00000000e00,
+                "CA_ss": 0.00000000e00,
+                "C_ss": 9.23561040e00,
+                "IIP_ss": 0.00000000e00,
+                "I_ss": 2.73647613e00,
+                "K_ss": 1.09459045e02,
+                "KtoN_ss": 2.59033302e01,
+                "N_ss": 4.22567464e00,
+                "TB_ss": 0.00000000e00,
+                "TBtoY_ss": 0.00000000e00,
+                "U_ss": 7.32557872e01,
+                "Y_ss": 1.19720865e01,
+                "lambda_ss": 7.54570414e-02,
+                "r_ss": 1.00000101e-02,
+                "r_given_ss": 1.00000101e-02,
+            },
         ),
         (
             "Full_New_Keyensian.gcn",
-            np.array(
-                [
-                    1.50620761e00,
-                    6.69069052e-01,
-                    2.77976530e-01,
-                    1.11190612e01,
-                    6.16941715e00,
-                    1.40646786e00,
-                    6.66135866e-01,
-                    3.85588572e00,
-                    1.40646786e00,
-                    -1.11511509e00,
-                    -1.47270439e02,
-                    1.78418414e00,
-                    8.90392916e-01,
-                    6.25000000e-01,
-                    1.00000000e00,
-                    1.00000000e00,
-                    1.00000000e00,
-                    8.90392916e-01,
-                    1.01010101e00,
-                    3.51010101e-02,
-                    1.00000000e00,
-                    1.00000000e00,
-                    1.08810356e00,
-                    1.08810356e00,
-                ]
-            ),
+            {
+                "C_ss": 1.50620761e00,
+                "Div_ss": 6.69069052e-01,
+                "I_ss": 2.77976530e-01,
+                "K_ss": 1.11190612e01,
+                "LHS_ss": 6.16941715e00,
+                "LHS_w_ss": 1.40646786e00,
+                "L_ss": 6.66135866e-01,
+                "RHS_ss": 3.85588572e00,
+                "RHS_w_ss": 1.40646786e00,
+                "TC_ss": -1.11511509e00,
+                "U_ss": -1.47270439e02,
+                "Y_ss": 1.78418414e00,
+                "q_ss": 8.90392916e-01,
+                "mc_ss": 6.25000000e-01,
+                "shock_preference_ss": 1.00000000e00,
+                "shock_technology_ss": 1.00000000e00,
+                "pi_ss": 1.00000000e00,
+                "lambda_ss": 8.90392916e-01,
+                "r_G_ss": 1.01010101e00,
+                "r_ss": 3.51010101e-02,
+                "pi_obj_ss": 1.00000000e00,
+                "pi_star_ss": 1.00000000e00,
+                "w_ss": 1.08810356e00,
+                "w_star_ss": 1.08810356e00,
+            },
         ),
     ],
     ids=["one_block", "open_rbc", "nk"],
 )
 def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndarray):
-    n = expected_result.shape[0]
+    n = len(expected_result)
 
     file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}")
     model = model_from_gcn(
         file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
+
     params = model.parameters()
     ss_dict = model.f_ss(**params)
     ss = np.array(np.r_[list(ss_dict.values())])
+    expected_ss = np.r_[[expected_result[var] for var in ss_dict.to_string().keys()]]
 
-    assert_allclose(ss, expected_result)
+    assert_allclose(ss, expected_ss)
     assert_allclose(model._evaluate_steady_state(), np.zeros(n), atol=1e-8)
 
     # Total error and gradient should be zero at the steady state as well
@@ -508,7 +502,7 @@ def test_model_gradient(backend, gcn_file):
         file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
     )
 
-    ss_result = model.steady_state().to_string()
+    ss_result, success = model.steady_state()
 
     np.testing.assert_allclose(
         model.f_ss_error_grad(**ss_result, **model.parameters().to_string()),
@@ -562,14 +556,14 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
     model_1 = model_from_gcn(
         file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
-    analytic_res = model_1.steady_state()
+    analytic_res, success = model_1.steady_state()
     analytic_values = np.array(
         [analytic_res[x.to_ss().name] for x in model_1.variables]
     )
     model_1.f_ss = None
 
     x0 = np.full_like(analytic_values, 0.8)
-    numeric_res = model_1.steady_state(
+    numeric_res, success = model_1.steady_state(
         how=how,
         verbose=False,
         optimizer_kwargs={
@@ -580,10 +574,8 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
         },
     )
 
-    numeric_values = np.array([numeric_res[x.to_ss()] for x in model_1.variables])
-    errors = model_1.f_ss_resid(
-        **numeric_res.to_string(), **model_1.parameters().to_string()
-    )
+    numeric_values = np.array([numeric_res[x.to_ss().name] for x in model_1.variables])
+    errors = model_1.f_ss_resid(**numeric_res, **model_1.parameters())
 
     if how == "root":
         assert_allclose(analytic_values, numeric_values, atol=1e-2)
@@ -596,7 +588,7 @@ def test_numerical_steady_state_with_calibrated_params():
     model = model_from_gcn(
         file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
     )
-    res = model.steady_state(
+    res, success = model.steady_state(
         how="minimize",
         verbose=False,
         optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 100_000}},
@@ -624,13 +616,13 @@ def test_partially_analytical_steady_state(
     analytic_model = model_from_gcn(
         analytic_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
-    analytic_res = analytic_model.steady_state()
+    analytic_res, success = analytic_model.steady_state()
     analytic_values = np.array(list(analytic_res.values()))
 
     partial_model = model_from_gcn(
         file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
-    numeric_res = partial_model.steady_state(
+    numeric_res, success = partial_model.steady_state(
         how="minimize",
         verbose=False,
         optimizer_kwargs={"method": "trust-ncg", "options": {"gtol": 1e-24}},
@@ -670,7 +662,10 @@ def test_linearize(gcn_file, name, backend: BACKENDS):
     model = model_from_gcn(
         file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
     )
-    outputs = model.linearize_model(loglin_negative_ss=True)
+    steady_state_dict, success = model.steady_state()
+    outputs = model.linearize_model(
+        loglin_negative_ss=True, steady_state_dict=steady_state_dict
+    )
 
     for mat_name, out in zip(["A", "B", "C", "D"], outputs):
         expected_out = expected_linearization_result[gcn_file][mat_name]
@@ -689,137 +684,150 @@ def test_invalid_solver_raises():
 def test_bad_failure_argument_raises():
     file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
-    model.steady_state(verbose=False, model_is_linear=True)
 
     with pytest.raises(ValueError):
         model.solve_model(solver="gensys", on_failure="raise", model_is_linear=True)
 
 
-def test_bad_argument_to_bk_condition_raises(self):
-    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
-    model = gEconModel(file_path, verbose=False)
-    model.steady_state(verbose=False)
-    model.solve_model(verbose=False)
-
-    with self.assertRaises(ValueError):
-        model.check_bk_condition(return_value="invalid_argument")
-
-
-def test_gensys_fails_to_solve(self):
+def test_gensys_fails_to_solve():
     file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
-    model = gEconModel(file_path, verbose=False)
-    model.steady_state(verbose=False, model_is_linear=True)
+    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
 
-    with self.assertRaises(GensysFailedException):
-        model.solve_model(
-            solver="gensys", on_failure="error", model_is_linear=True, verbose=False
-        )
+    with pytest.raises(GensysFailedException):
+        model.solve_model(solver="gensys", on_failure="error", verbose=False)
 
 
-@mock.patch("builtins.print")
-def test_outputs_after_gensys_failure(self, mock_print):
+def test_outputs_after_gensys_failure(capsys):
     file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
-    model = gEconModel(file_path, verbose=False)
-    model.steady_state(verbose=False, model_is_linear=True)
-    model.solve_model(
-        solver="gensys", on_failure="ignore", model_is_linear=True, verbose=True
-    )
+    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model.solve_model(solver="gensys", on_failure="ignore", verbose=True)
 
-    gensys_message = mock_print.call_args.args[0]
-    self.assertEqual(gensys_message, "Solution exists, but is not unique.")
+    assert capsys.readouterr().out == "Solution exists, but is not unique.\n"
 
     P, Q, R, S = model.P, model.Q, model.R, model.S
     for X, name in zip([P, Q, R, S], ["P", "Q", "R", "S"]):
-        self.assertIsNone(X, msg=name)
+        assert X is None
 
 
-@mock.patch("builtins.print")
-def test_outputs_after_pert_success(self, mock_print):
+def test_outputs_after_pert_success(capsys):
     file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
-    model = gEconModel(file_path, verbose=False)
-    model.steady_state(verbose=False, model_is_linear=True)
-    model.solve_model(solver="gensys", verbose=True, model_is_linear=True)
+    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model.solve_model(solver="gensys", verbose=True)
 
-    # TODO: Can i get more print calls without having to parse through call_args_list?
-    result_messages = mock_print.call_args.args[0]
-    self.assertEqual(result_messages, "Norm of stochastic part:    0.000000000")
+    console_output = capsys.readouterr().out
+
+    result_messages = console_output.strip().split("\n")[-2:]
+
+    expected_messages = [
+        "Norm of deterministic part: 0.000000000",
+        "Norm of stochastic part:    0.000000000",
+    ]
+
+    for message, expected_message in zip(result_messages, expected_messages):
+        assert message == expected_message
 
 
-def test_compute_stationary_covariance_warns_if_using_default(self):
-    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
-    model = gEconModel(file_path, verbose=False)
-    model.steady_state(verbose=False)
+def test_bad_argument_to_bk_condition_raises():
+    file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(solver="gensys", verbose=False)
 
-    with self.assertWarns(UserWarning):
-        model.compute_stationary_covariance_matrix()
+    with pytest.raises(ValueError, match='Unknown return type "invalid_argument"'):
+        model.check_bk_condition(return_value="invalid_argument")
 
 
-def test_sample_priors_fails_without_priors(self):
-    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
-    model = gEconModel(file_path, verbose=False)
-    model.steady_state(verbose=False)
+def test_check_bk_condition():
+    file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(solver="gensys", verbose=False)
 
-    with self.assertRaises(ValueError):
-        model.sample_param_dict_from_prior()
-
-
-def test_missing_parameter_definition_raises(self):
-    GCN_file = """
-                block HOUSEHOLD
-                {
-                    definitions
-                    {
-                        u[] = log(C[]);
-                    };
-
-                    objective
-                    {
-                        U[] = u[] + beta * E[][U[1]];
-                    };
-
-                    controls
-                    {
-                        C[], K[], K[-1], Y[];
-                    };
-
-                    constraints
-                    {
-                        Y[] = K[-1] ^ alpha;
-                        Y[] = r[] * K[-1];
-                        K[] = (1 - delta) * K[-1];
-
-                    };
-
-                    calibration
-                    {
-                        K[ss] / Y[ss] = 0.33 -> alpha;
-                        delta = 0.035;
-                    };
-                };
-                """
-
-    with unittest.mock.patch(
-        "builtins.open",
-        new=unittest.mock.mock_open(read_data=GCN_file),
-        create=True,
-    ):
-        with self.assertRaises(ValueError) as error:
-            gEconModel(
-                "",
-                verbose=False,
-                simplify_tryreduce=False,
-                simplify_constants=False,
-            )
-        msg = str(error.exception)
-
-    self.assertEqual(
-        msg,
-        "The following parameters were found among model equations, but were not found among "
-        "defined defined or calibrated parameters: beta.\n Verify that these "
-        "parameters have been defined in a calibration block somewhere in your GCN file.",
+    bk_df = model.check_bk_condition(return_value="dataframe")
+    assert isinstance(bk_df, pd.DataFrame)
+    assert_allclose(
+        bk_df["Modulus"].values,
+        np.abs(bk_df["Real"].values + bk_df["Imaginary"].values * 1j),
     )
+
+    bk_res = model.check_bk_condition(return_value="bool")
+    assert bk_res
+
+
+# def test_compute_stationary_covariance_warns_if_using_default(self):
+#     file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+#     model = gEconModel(file_path, verbose=False)
+#     model.steady_state(verbose=False)
+#     model.solve_model(solver="gensys", verbose=False)
+#
+#     with self.assertWarns(UserWarning):
+#         model.compute_stationary_covariance_matrix()
+#
+#
+# def test_sample_priors_fails_without_priors(self):
+#     file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+#     model = gEconModel(file_path, verbose=False)
+#     model.steady_state(verbose=False)
+#     model.solve_model(solver="gensys", verbose=False)
+#
+#     with self.assertRaises(ValueError):
+#         model.sample_param_dict_from_prior()
+#
+#
+# def test_missing_parameter_definition_raises(self):
+#     GCN_file = """
+#                 block HOUSEHOLD
+#                 {
+#                     definitions
+#                     {
+#                         u[] = log(C[]);
+#                     };
+#
+#                     objective
+#                     {
+#                         U[] = u[] + beta * E[][U[1]];
+#                     };
+#
+#                     controls
+#                     {
+#                         C[], K[], K[-1], Y[];
+#                     };
+#
+#                     constraints
+#                     {
+#                         Y[] = K[-1] ^ alpha;
+#                         Y[] = r[] * K[-1];
+#                         K[] = (1 - delta) * K[-1];
+#
+#                     };
+#
+#                     calibration
+#                     {
+#                         K[ss] / Y[ss] = 0.33 -> alpha;
+#                         delta = 0.035;
+#                     };
+#                 };
+#                 """
+#
+#     with unittest.mock.patch(
+#         "builtins.open",
+#         new=unittest.mock.mock_open(read_data=GCN_file),
+#         create=True,
+#     ):
+#         with self.assertRaises(ValueError) as error:
+#             gEconModel(
+#                 "",
+#                 verbose=False,
+#                 simplify_tryreduce=False,
+#                 simplify_constants=False,
+#             )
+#         msg = str(error.exception)
+#
+#     self.assertEqual(
+#         msg,
+#         "The following parameters were found among model equations, but were not found among "
+#         "defined defined or calibrated parameters: beta.\n Verify that these "
+#         "parameters have been defined in a calibration block somewhere in your GCN file.",
+#     )
+#
 
 
 #

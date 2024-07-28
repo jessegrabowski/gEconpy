@@ -4,11 +4,15 @@ import numpy as np
 import pytest
 import sympy as sp
 
+from numpy.testing import assert_allclose
+
 from gEconpy.model.build import model_from_gcn
-from gEconpy.model.perturbation.perturbation import (
+from gEconpy.model.perturbation import (
     linearize_model,
     make_all_variable_time_combinations,
     override_dummy_wrapper,
+    solve_policy_function_with_cycle_reduction,
+    solve_policy_function_with_gensys,
 )
 from gEconpy.shared.utilities import eq_to_ss
 
@@ -94,8 +98,57 @@ def test_log_linearize_model(gcn_file):
 
 
 @pytest.mark.parametrize(
-    "gcn_file",
-    ["One_Block_Simple_1.gcn", "Two_Block_RBC_1.gcn", "Full_New_Keyensian.gcn"],
+    "gcn_file, state_variables",
+    [
+        ("One_Block_Simple_1_w_Steady_State.gcn", ["K", "A"]),
+        ("Open_RBC.gcn", ["A", "K", "IIP"]),
+        (
+            "Full_New_Keyensian.gcn",
+            [
+                "K",
+                "C",
+                "I",
+                "Y",
+                "w",
+                "pi_star",
+                "shock_technology",
+                "shock_preference",
+                "pi_obj",
+                "r_G",
+            ],
+        ),
+    ],
 )
-def test_solve_with_gensys(gcn_file):
-    model_from_gcn(os.path.join("tests/Test GCNs", gcn_file), verbose=False)
+def test_solve_policy_function(gcn_file, state_variables):
+    mod = model_from_gcn(os.path.join("tests/Test GCNs", gcn_file), verbose=False)
+    A, B, C, D = mod.linearize_model(order=1)
+
+    gensys_results = solve_policy_function_with_gensys(A, B, C, D, 1e-8, False)
+    G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
+
+    state_idxs = [
+        i for i, var in enumerate(mod.variables) if var.base_name in state_variables
+    ]
+    jumper_idxs = [
+        i for i, var in enumerate(mod.variables) if var.base_name not in state_variables
+    ]
+
+    assert not np.allclose(G_1[:, state_idxs], 0.0)
+    assert_allclose(G_1[:, jumper_idxs], 0.0, atol=1e-8, rtol=1e-8)
+
+    n = len(mod.variables)
+    T_gensys = G_1[:n, :][:, :n]
+    R_gensys = impact[:n, :]
+
+    (
+        T,
+        R,
+        result,
+        log_norm,
+    ) = solve_policy_function_with_cycle_reduction(A, B, C, D, 100_000, 1e-16, False)
+
+    assert not np.allclose(T[:, state_idxs], 0.0)
+    assert_allclose(T[:, jumper_idxs], 0.0, atol=1e-8, rtol=1e-8)
+
+    assert_allclose(T_gensys, T, atol=1e-8, rtol=1e-8)
+    assert_allclose(R_gensys, R, atol=1e-8, rtol=1e-8)

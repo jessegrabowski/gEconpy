@@ -1,10 +1,11 @@
 import functools as ft
 import logging
 
-from typing import Union
 from collections.abc import Callable
+from typing import Literal, Union
 
 import numpy as np
+import pandas as pd
 import sympy as sp
 
 from scipy import optimize
@@ -17,27 +18,27 @@ from gEconpy.classes.optimize_wrapper import (
 )
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
-    ModelUnknownParameterError,
     GensysFailedException,
+    ModelUnknownParameterError,
 )
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.model.perturbation.perturbation import (
+from gEconpy.model.perturbation import (
+    check_bk_condition,
+    check_perturbation_solution,
     override_dummy_wrapper,
-    solve_policy_function_with_gensys,
-    solve_policy_function_with_cycle_reduction,
-    statespace_to_gEcon_representation,
     residual_norms,
+    solve_policy_function_with_cycle_reduction,
+    solve_policy_function_with_gensys,
+    statespace_to_gEcon_representation,
 )
-from gEconpy.model.steady_state.steady_state import (
+from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
     compile_known_ss,
     compile_ss_resid_and_sq_err,
     steady_state_error_function,
 )
 from gEconpy.solvers.gensys import interpret_gensys_output
-import pandas as pd
-
 
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
 _log = logging.getLogger(__name__)
@@ -144,6 +145,21 @@ def infer_variable_bounds(variable):
     return (lhs, rhs)
 
 
+def validate_policy_function(
+    A, B, C, D, T, R, variables, tol: float = 1e-8, verbose: bool = True
+) -> bool:
+    gEcon_matrices = statespace_to_gEcon_representation(A, T, R, variables, tol)
+
+    P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
+
+    resid_norms = residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
+    norm_deterministic, norm_stochastic = resid_norms
+
+    if verbose:
+        print(f"Norm of deterministic part: {norm_deterministic:0.9f}")
+        print(f"Norm of stochastic part:    {norm_deterministic:0.9f}")
+
+
 class Model:
     def __init__(
         self,
@@ -161,7 +177,6 @@ class Model:
         f_ss_error_grad: Callable | None = None,
         f_ss_error_hess: Callable | None = None,
         f_linearize: Callable | None = None,
-        f_perturbation: Callable | None = None,
         backend: BACKENDS = "numpy",
     ) -> None:
         """
@@ -228,43 +243,33 @@ class Model:
             f_linearize = override_dummy_wrapper(f_linearize, "not_loglin_variable")
         self.f_linearize: Callable = f_linearize
 
-        # self.steady_state_relationships: SymbolDictionary[VariableType, sp.Add] = SymbolDictionary()
-        #
         # self.param_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         # self.shock_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         # self.hyper_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         # self.observation_noise_priors: SymbolDictionary[str, Any] = SymbolDictionary()
-        #
+
         # self.n_variables: int = 0
         # self.n_shocks: int = 0
         # self.n_equations: int = 0
         # self.n_calibrating_equations: int = 0
-        #
-        # # Functional representations of the model
-        # self.f_ss: Union[Callable, None] = None
-        # self.f_ss_resid: Union[Callable, None] = None
-        #
-        # # Steady state information
+
+        # Steady state information
         # self.steady_state_solved: bool = False
-        # self.steady_state_system: list[sp.Add] = []
         # self.steady_state_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
-        # self.residuals: list[float] = []
-        #
-        # # Functional representation of the perturbation system
-        # self.build_perturbation_matrices: Union[Callable, None] = None
-        #
-        # # Perturbation solution information
-        # self.perturbation_solved: bool = False
-        # self.T: pd.DataFrame = None
-        # self.R: pd.DataFrame = None
-        # self.P: pd.DataFrame = None
-        # self.Q: pd.DataFrame = None
-        # self.R: pd.DataFrame = None
-        # self.S: pd.DataFrame = None
-        #
-        # # Assign Solvers
-        # self.steady_state_solver = SteadyStateSolver(self)
-        # self.perturbation_solver = PerturbationSolver(self)
+
+        # Linear representation
+        self.A: pd.DataFrame | None = None
+        self.B: pd.DataFrame | None = None
+        self.C: pd.DataFrame | None = None
+        self.D: pd.DataFrame | None = None
+
+        # Perturbation solution information
+        self.T: pd.DataFrame | None = None
+        self.R: pd.DataFrame | None = None
+        self.P: pd.DataFrame | None = None
+        self.Q: pd.DataFrame | None = None
+        self.R: pd.DataFrame | None = None
+        self.S: pd.DataFrame | None = None
 
     def parameters(self, **updates: float):
         param_dict = self._default_params.copy()
@@ -273,7 +278,7 @@ class Model:
             raise ModelUnknownParameterError(list(unknown_updates))
         param_dict.update(updates)
 
-        return self.f_params(**param_dict)
+        return self.f_params(**param_dict).to_string()
 
     def steady_state(
         self,
@@ -295,7 +300,9 @@ class Model:
             if len(ss_dict) != 0 and len(ss_dict) != len(self.variables):
                 how = "minimize"
             elif len(ss_dict) == len(self.variables):
-                return ss_dict
+                resid = self.f_ss_resid(**param_dict, **ss_dict)
+                success = np.allclose(resid, 0.0, atol=1e-8)
+                return ss_dict, success
 
         ss_variables = [x.to_ss() for x in self.variables] + list(
             self.calibrated_params
@@ -325,7 +332,6 @@ class Model:
                 unknown_var_idx=unknown_var_idx,
                 progressbar=progressbar,
                 optimizer_kwargs=optimizer_kwargs,
-                bounds=bounds,
                 **updates,
             )
         elif how == "minimize":
@@ -349,9 +355,15 @@ class Model:
             {var: res.x[i] for i, var in enumerate(vars_to_solve)}
         )
         res_dict = optimizer_results | provided_ss_values
-        res_dict = SymbolDictionary({x: res_dict[x] for x in ss_variables})
+        res_dict = SymbolDictionary({x: res_dict[x] for x in ss_variables}).to_string()
 
-        return postprocess_optimizer_res(res, res_dict, verbose=verbose)
+        return postprocess_optimizer_res(
+            res,
+            res_dict,
+            ft.partial(self.f_ss_resid, **param_dict),
+            ft.partial(self.f_ss_error_grad, **param_dict),
+            verbose=verbose,
+        )
 
     def _evaluate_steady_state(self, **updates: float):
         param_dict = self.parameters(**updates)
@@ -367,29 +379,40 @@ class Model:
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
-        bounds: dict[str, tuple[float, float]] | None = None,
         **param_updates,
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
 
         n_variables = len(vars_to_solve)
-        maxeval = optimizer_kwargs.pop("niter", 5000)
+
+        maxiter = optimizer_kwargs.pop("maxiter", 5000)
+        method = optimizer_kwargs.pop("method", "hybr")
+
+        if "options" not in optimizer_kwargs:
+            optimizer_kwargs["options"] = {}
+
+        if method in ["hybr", "df-sane"]:
+            optimizer_kwargs["options"].update({"maxfev": maxiter})
+        else:
+            optimizer_kwargs["options"].update({"maxiter": maxiter})
+
         x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
         if jitter_x0:
             x0 += np.random.normal(scale=0.01, size=n_variables)
 
-        method = optimizer_kwargs.pop("method", "hybr")
         param_dict = self.parameters(**param_updates)
 
-        objective = CostFuncWrapper(
-            maxeval=maxeval,
-            f=scipy_wrapper(self.f_ss_resid, vars_to_solve, unknown_var_idx, self.f_ss),
-            f_jac=scipy_wrapper(
-                self.f_ss_jac, vars_to_solve, unknown_var_idx, self.f_ss
-            )
+        f = scipy_wrapper(self.f_ss_resid, vars_to_solve, unknown_var_idx, self.f_ss)
+        f_jac = (
+            scipy_wrapper(self.f_ss_jac, vars_to_solve, unknown_var_idx, self.f_ss)
             if use_jac
-            else None,
+            else None
+        )
+        objective = CostFuncWrapper(
+            maxeval=maxiter,
+            f=f,
+            f_jac=f_jac,
             progressbar=progressbar,
         )
 
@@ -402,7 +425,8 @@ class Model:
             method=method,
             **optimizer_kwargs,
         )
-        res = optimzer_early_stopping_wrapper(f_optim)
+        with np.errstate(all="ignore"):
+            res = optimzer_early_stopping_wrapper(f_optim)
 
         return res
 
@@ -422,7 +446,12 @@ class Model:
             optimizer_kwargs = {}
 
         n_variables = len(vars_to_solve)
+
         maxiter = optimizer_kwargs.pop("maxiter", 5000)
+        if "options" not in optimizer_kwargs:
+            optimizer_kwargs["options"] = {}
+        optimizer_kwargs["options"].update({"maxiter": maxiter})
+
         x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
         if jitter_x0:
             x0 += np.random.normal(scale=0.01, size=n_variables)
@@ -495,6 +524,7 @@ class Model:
             raise NotImplementedError(
                 "Only first order linearization is currently supported."
             )
+
         if not_loglin_variables is None:
             not_loglin_variables = []
 
@@ -504,9 +534,6 @@ class Model:
             not_loglin_flags[i] = var.base_name in not_loglin_variables
 
         param_dict = self.parameters(**param_updates)
-
-        if steady_state_dict is None:
-            steady_state_dict = self.steady_state()
 
         ss_values = np.array(list(steady_state_dict.values()))
         ss_zeros = np.abs(ss_values) < 1e-8
@@ -536,6 +563,18 @@ class Model:
             **param_dict, **steady_state_dict, not_loglin_variable=not_loglin_flags
         )
 
+        equation_names = [f"Equation {i}" for i in range(A.shape[0])]
+        self.A = pd.DataFrame(
+            A, index=equation_names, columns=[x.set_t(-1) for x in self.variables]
+        )
+        self.B = pd.DataFrame(
+            B, index=equation_names, columns=[x.set_t(0) for x in self.variables]
+        )
+        self.C = pd.DataFrame(
+            C, index=equation_names, columns=[x.set_t(1) for x in self.variables]
+        )
+        self.D = pd.DataFrame(D, index=equation_names, columns=self.shocks)
+
         return A, B, C, D
 
     def solve_model(
@@ -543,12 +582,13 @@ class Model:
         solver="cycle_reduction",
         not_loglin_variables: list[str] | None = None,
         order: int = 1,
-        model_is_linear: bool = False,
         loglin_negative_ss: bool = False,
+        steady_state_kwargs: dict | None = None,
         tol: float = 1e-8,
         max_iter: int = 1000,
         verbose: bool = True,
         on_failure="error",
+        **parameter_updates,
     ) -> None:
         """
         Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
@@ -559,13 +599,15 @@ class Model:
         solver: str, default: 'cycle_reduction'
             Name of the algorithm to solve the linear solution. Currently "cycle_reduction" and "gensys" are supported.
             Following Dynare, cycle_reduction is the default, but note that gEcon uses gensys.
-        not_loglin_variables: List, default: None
+        not_loglin_variables: list of strings, optional
             Variables to not log linearize when solving the model. Variables with steady state values close to zero
             will be automatically selected to not log linearize.
         order: int, default: 1
             Order of taylor expansion to use to solve the model. Currently only 1st order approximation is supported.
-        model_is_linear: bool, default: False
-            Flag indicating whether a model has already been linearized by the user.
+        loglin_negative_ss: bool, default is False
+            Whether to force log-linearization of variable with negative steady-state. This is impossible in principle
+            (how can :math:`exp(x_ss)` be negative?), but can still be done; see the docstring for
+            :fun:`perturbation.linearize_model` for details. Use with caution, as results will not correct.
         tol: float, default 1e-8
             Desired level of floating point accuracy in the solution
         max_iter: int, default: 1000
@@ -575,6 +617,11 @@ class Model:
         on_failure: str, one of ['error', 'ignore'], default: 'error'
             Instructions on what to do if the algorithm to find a linearized policy matrix. "Error" will raise an error,
             while "ignore" will return None. "ignore" is useful when repeatedly solving the model, e.g. when sampling.
+        steady_state_kwargs: dict, optional
+            Keyword arguments passed to the `steady_state` method. Default is None.
+        parameter_updates: dict
+            New parameter values at which to solve the model. Unspecified values will be taken from the initial values
+            set in the GCN file.
 
         Returns
         -------
@@ -585,17 +632,23 @@ class Model:
             raise ValueError(
                 f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}'
             )
+        if steady_state_kwargs is None:
+            steady_state_kwargs = {}
 
-        ss_dict = self.f_ss(**self.parameters())
+        ss_dict, success = self.steady_state(
+            **self.parameters(**parameter_updates), **steady_state_kwargs
+        )
+        n_variables = len(self.variables)
+
         A, B, C, D = self.linearize_model(
             order=order,
             not_loglin_variables=not_loglin_variables,
-            steady_state_dict=ss_dict,
+            steady_state_dict=ss_dict.to_string(),
             loglin_negative_ss=loglin_negative_ss,
         )
 
         if solver == "gensys":
-            gensys_results = solve_policy_function_with_gensys(A, B, C, D, tol, verbose)
+            gensys_results = solve_policy_function_with_gensys(A, B, C, D, tol)
             G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
 
             success = all([x == 1 for x in eu[:2]])
@@ -612,8 +665,6 @@ class Model:
                     self.R = None
                     self.S = None
 
-                    self.perturbation_solved = False
-
                     return
 
             if verbose:
@@ -623,8 +674,8 @@ class Model:
                     "Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S"
                 )
 
-            T = G_1[: self.n_variables, :][:, : self.n_variables]
-            R = impact[: self.n_variables, :]
+            T = G_1[:n_variables, :][:, :n_variables]
+            R = impact[:n_variables, :]
 
         elif solver == "cycle_reduction":
             (
@@ -642,18 +693,6 @@ class Model:
             raise NotImplementedError(
                 'Only "cycle_reduction" and "gensys" are valid values for solver'
             )
-
-        gEcon_matrices = statespace_to_gEcon_representation(
-            A, T, R, self.variables, tol
-        )
-        P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
-
-        resid_norms = residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
-        norm_deterministic, norm_stochastic = resid_norms
-
-        if verbose:
-            print(f"Norm of deterministic part: {norm_deterministic:0.9f}")
-            print(f"Norm of stochastic part:    {norm_deterministic:0.9f}")
 
         self.T = pd.DataFrame(
             T,
@@ -674,510 +713,60 @@ class Model:
             ],
         )
 
-        self.perturbation_solved = True
+        if verbose:
+            check_perturbation_solution(A, B, C, D, T, R, tol=tol)
+
+    def check_bk_condition(
+        self,
+        tol=1e-8,
+        verbose=True,
+        return_value: Literal["dataframe", "bool", None] = "dataframe",
+    ):
+        """
+        Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
+        unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
+        this test suggests timing problems in the definition of the model.
+
+        Parameters
+        ----------
+        verbose: bool, default: True
+            Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
+
+        return_value: string, default: 'dataframe'
+            Controls what is returned by the function. Valid values are 'dataframe', 'bool', and 'none'.
+            If df, a dataframe containing eigenvalues is returned. If 'bool', a boolean indicating whether the BK
+            condition is satisfied. If None, nothing is returned.
+
+        tol: float, 1e-8
+            Tolerance below which numerical values are considered zero
+
+        Returns
+        -------
+        None
+            If return_value is 'none'
+
+        condition_satisfied, bool
+            If return_value is 'bool', returns True if the Blanchard-Kahn condition is satisfied, False otherwise.
+
+        Eigenvalues, pd.DataFrame
+            If return_value is 'df', returns a dataframe containing the real and imaginary components of the system's
+            eigenvalues, along with their modulus.
+        """
+
+        A, B, C, D = self.A, self.B, self.C, self.D
+        if any([x is None for x in [A, B, C, D]]):
+            raise ValueError("Model has not been linearized, cannot check BK condition")
+        return check_bk_condition(
+            A.values,
+            B.values,
+            C.values,
+            D.values,
+            tol=tol,
+            return_value=return_value,
+            verbose=verbose,
+        )
 
 
-#
-#     def steady_state(
-#         self,
-#         verbose: Optional[bool] = True,
-#         model_is_linear: Optional[bool] = False,
-#         apply_user_simplifications=True,
-#         method: Optional[str] = "root",
-#         optimizer_kwargs: Optional[dict[str, Any]] = None,
-#         use_jac: Optional[bool] = True,
-#         use_hess: Optional[bool] = True,
-#         tol: Optional[float] = 1e-6,
-#     ) -> None:
-#         """
-#         Solves for a function f(params) that computes steady state values and calibrated parameter values given
-#         parameter values, stores results, and verifies that the residuals of the solution are zero.
-#
-#         Parameters
-#         ----------
-#         verbose: bool
-#             Flag controlling whether to print results of the steady state solver. Default is True.
-#         model_is_linear: bool, optional
-#             If True, the model is assumed to have been linearized by the user. A specialized solving routine is used
-#             to find the steady state, which is likely all zeros. If True, all other arguments to this function
-#             have no effect (except verbose). Default is False.
-#         apply_user_simplifications: bool
-#             Whether to simplify system equations using the user-defined steady state relationships defined in the GCN
-#             before passing the system to the numerical solver. Default is True.
-#         method: str
-#             One of "root" or "minimize". Indicates which family of solution algorithms should be used to find a
-#             numerical steady state: direct root finding or minimization of squared error. Not that "root" is not
-#             suitable if the number of inputs is not equal to the number of outputs, for example if user-provided
-#             steady state relationships do not result in elimination of model equations. Default is "root".
-#         optimizer_kwargs: dict
-#             Dictionary of arguments to be passed to scipy.optimize.root or scipy.optimize.minimize, see those
-#             functions for more details.
-#         use_jac: bool
-#             Whether to symbolically compute the Jacobian matrix of the steady state system (when method is "root") or
-#             the Jacobian vector of the loss function (when method is "minimize"). Strongly recommended. Default is True
-#         use_hess: bool
-#             Whether to symbolically compute the Hessian matrix of the loss function. Ignored if method is "root".
-#             If "False", the default BFGS solver will compute a numerical approximation, so not necessarily required.
-#             Still recommended. Default is True.
-#         tol: float
-#             Numerical tolerance for declaring a steady-state solution valid. Default is 1e-6. Note that this only used
-#             by the gEconpy model to decide if a steady state has been found, and is **NOT** passed to the scipy
-#             solution algorithms. To adjust solution tolerance for these algorithms, use optimizer_kwargs.
-#
-#         Returns
-#         -------
-#         None
-#         """
-##
-#         if not self.steady_state_solved:
-#             self.f_ss = self.steady_state_solver.solve_steady_state(
-#                 apply_user_simplifications=apply_user_simplifications,
-#                 model_is_linear=model_is_linear,
-#                 method=method,
-#                 optimizer_kwargs=optimizer_kwargs,
-#                 use_jac=use_jac,
-#                 use_hess=use_hess,
-#             )
-#
-#         self._process_steady_state_results(verbose, tol=tol)
-#
-#     def _process_steady_state_results(self, verbose=True, tol=1e-6) -> None:
-#         """Process results from steady state solver.
-#
-#         This function sets the steady state dictionary, calibrated parameter dictionary, and residuals attribute
-#         based on the results of the steady state solver. It also sets the `steady_state_solved` attribute to
-#         indicate whether the steady state was successfully found. If `verbose` is True, it prints a message
-#         indicating whether the steady state was found and the sum of squared residuals.
-#
-#         Parameters
-#         ----------
-#         verbose : bool, optional
-#             If True, print a message indicating whether the steady state was found and the sum of squared residuals.
-#             Default is True.
-#         tol: float, optional
-#             Numerical tolerance for declaring a steady-state solution has been found. Default is 1e-6.
-#
-#         Returns
-#         -------
-#         None
-#         """
-#         results = self.f_ss(self.free_param_dict)
-#         self.steady_state_dict = results["ss_dict"]
-#         self.calib_param_dict = results["calib_dict"]
-#         self.residuals = results["resids"]
-#
-#         self.steady_state_system = self.steady_state_solver.steady_state_system
-#         self.steady_state_solved = np.allclose(self.residuals, 0, atol=tol) & results["success"]
-#
-#         if verbose:
-#             if self.steady_state_solved:
-#                 print(
-#                     f"Steady state found! Sum of squared residuals is {(self.residuals ** 2).sum()}"
-#                 )
-#             else:
-#                 print(
-#                     f"Steady state NOT found. Sum of squared residuals is {(self.residuals ** 2).sum()}"
-#                 )
-#
-#     def print_steady_state(self):
-#         """
-#         Prints the steady state values for the model's variables and calibrated parameters.
-#
-#         Prints an error message if a valid steady state has not yet been found.
-#         """
-#         if len(self.steady_state_dict) == 0:
-#             print("Run the steady_state method to find a steady state before calling this method.")
-#             return
-#
-#         output = []
-#         if not self.steady_state_solved:
-#             output.append(
-#                 "Values come from the latest solver iteration but are NOT a valid steady state."
-#             )
-#
-#         max_var_name = (
-#             max(
-#                 len(x)
-#                 for x in list(self.steady_state_dict.keys()) + list(self.calib_param_dict.keys())
-#             )
-#             + 5
-#         )
-#
-#         for key, value in self.steady_state_dict.items():
-#             output.append(f"{key:{max_var_name}}{value:>10.3f}")
-#
-#         if len(self.params_to_calibrate) > 0:
-#             output.append("\n")
-#             output.append("In addition, the following parameter values were calibrated:")
-#             for key, value in self.calib_param_dict.items():
-#                 output.append(f"{key:{max_var_name}}{value:>10.3f}")
-#
-#         print("\n".join(output))
-#
-#     def solve_model(
-#         self,
-#         solver="cycle_reduction",
-#         not_loglin_variable: Optional[list[str]] = None,
-#         order: int = 1,
-#         model_is_linear: bool = False,
-#         tol: float = 1e-8,
-#         max_iter: int = 1000,
-#         verbose: bool = True,
-#         on_failure="error",
-#     ) -> None:
-#         """
-#         Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
-#         package by Grzegorz Klima, Karol Podemski, and Kaja Retkiewicz-Wijtiwiak., http://gecon.r-forge.r-project.org/.
-#
-#         Parameters
-#         ----------
-#         solver: str, default: 'cycle_reduction'
-#             Name of the algorithm to solve the linear solution. Currently "cycle_reduction" and "gensys" are supported.
-#             Following Dynare, cycle_reduction is the default, but note that gEcon uses gensys.
-#         not_loglin_variable: List, default: None
-#             Variables to not log linearize when solving the model. Variables with steady state values close to zero
-#             will be automatically selected to not log linearize.
-#         order: int, default: 1
-#             Order of taylor expansion to use to solve the model. Currently only 1st order approximation is supported.
-#         model_is_linear: bool, default: False
-#             Flag indicating whether a model has already been linearized by the user.
-#         tol: float, default 1e-8
-#             Desired level of floating point accuracy in the solution
-#         max_iter: int, default: 1000
-#             Maximum number of cycle_reduction iterations. Not used if solver is 'gensys'.
-#         verbose: bool, default: True
-#             Flag indicating whether to print solver results to the terminal
-#         on_failure: str, one of ['error', 'ignore'], default: 'error'
-#             Instructions on what to do if the algorithm to find a linearized policy matrix. "Error" will raise an error,
-#             while "ignore" will return None. "ignore" is useful when repeatedly solving the model, e.g. when sampling.
-#
-#         Returns
-#         -------
-#         None
-#         """
-#
-#         if on_failure not in ["error", "ignore"]:
-#             raise ValueError(
-#                 f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}'
-#             )
-#
-#         if self.options.get("linear", False):
-#             model_is_linear = True
-#
-#         param_dict = self.free_param_dict | self.calib_param_dict
-#         steady_state_dict = self.steady_state_dict
-#
-#         if self.build_perturbation_matrices is None:
-#             self._perturbation_setup(not_loglin_variable, order, model_is_linear, verbose, bool)
-#
-#         A, B, C, D = self.build_perturbation_matrices(
-#             np.array(list(param_dict.values())),
-#             np.array(list(steady_state_dict.values())),
-#         )
-#         _, variables, _ = self.perturbation_solver.make_all_variable_time_combinations()
-#
-#         if solver == "gensys":
-#             gensys_results = self.perturbation_solver.solve_policy_function_with_gensys(
-#                 A, B, C, D, tol, verbose
-#             )
-#             G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
-#
-#             success = all([x == 1 for x in eu[:2]])
-#
-#             if not success:
-#                 if on_failure == "error":
-#                     raise GensysFailedException(eu)
-#                 elif on_failure == "ignore":
-#                     if verbose:
-#                         message = interpret_gensys_output(eu)
-#                         print(message)
-#                     self.P = None
-#                     self.Q = None
-#                     self.R = None
-#                     self.S = None
-#
-#                     self.perturbation_solved = False
-#
-#                     return
-#
-#             if verbose:
-#                 message = interpret_gensys_output(eu)
-#                 print(message)
-#                 print(
-#                     "Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S"
-#                 )
-#
-#             T = G_1[: self.n_variables, :][:, : self.n_variables]
-#             R = impact[: self.n_variables, :]
-#
-#         elif solver == "cycle_reduction":
-#             (
-#                 T,
-#                 R,
-#                 result,
-#                 log_norm,
-#             ) = self.perturbation_solver.solve_policy_function_with_cycle_reduction(
-#                 A, B, C, D, max_iter, tol, verbose
-#             )
-#             if T is None:
-#                 if on_failure == "error":
-#                     raise GensysFailedException(result)
-#         else:
-#             raise NotImplementedError(
-#                 'Only "cycle_reduction" and "gensys" are valid values for solver'
-#             )
-#
-#         gEcon_matrices = self.perturbation_solver.statespace_to_gEcon_representation(
-#             A, T, R, variables, tol
-#         )
-#         P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
-#
-#         resid_norms = self.perturbation_solver.residual_norms(
-#             B, C, D, Q, P, A_prime, R_prime, S_prime
-#         )
-#         norm_deterministic, norm_stochastic = resid_norms
-#
-#         if verbose:
-#             print(f"Norm of deterministic part: {norm_deterministic:0.9f}")
-#             print(f"Norm of stochastic part:    {norm_deterministic:0.9f}")
-#
-#         self.T = pd.DataFrame(
-#             T,
-#             index=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
-#             columns=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
-#         )
-#         self.R = pd.DataFrame(
-#             R,
-#             index=[x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)],
-#             columns=[x.base_name for x in sorted(self.shocks, key=lambda x: x.base_name)],
-#         )
-#
-#         self.perturbation_solved = True
-#
-#     def _perturbation_setup(
-#         self,
-#         not_loglin_variables=None,
-#         order=1,
-#         model_is_linear=False,
-#         verbose=True,
-#         return_F_matrices=False,
-#         tol=1e-8,
-#     ):
-#         """
-#         Set up the perturbation matrices needed to simulate the model. Linearizes the model around the steady state and
-#         constructs matrices A, B, C, and D needed to solve the system.
-#
-#         Parameters
-#         ----------
-#         not_loglin_variables: list of str
-#             List of variables that should not be log-linearized. This is useful when a variable has a zero or negative
-#              steady state value and cannot be log-linearized.
-#         order: int
-#             The order of the approximation. Currently only order 1 is implemented.
-#         model_is_linear: bool
-#             If True, assumes that the model is already linearized in the GCN file and directly
-#              returns the matrices A, B, C, D.
-#         verbose: bool
-#             If True, prints warning messages.
-#         return_F_matrices: bool
-#             If True, returns the matrices A, B, C, D.
-#         tol: float
-#             The tolerance used to determine if a steady state value is close to zero.
-#
-#         Returns
-#         -------
-#         None or list of sympy matrices
-#             If return_F_matrices is True, returns the F matrices. Otherwise, does not return anything.
-#
-#         """
-#
-#         if self.options.get("linear", False):
-#             model_is_linear = True
-#
-#         free_param_dict = self.free_param_dict.copy()
-#
-#         parameters = list(free_param_dict.to_sympy().keys())
-#         variables = list(self.steady_state_dict.to_sympy().keys())
-#         params_to_calibrate = list(self.calib_param_dict.to_sympy().keys())
-#
-#         all_params = parameters + params_to_calibrate
-#
-#         shocks = self.shocks
-#         shock_ss_dict = dict(zip([x.to_ss() for x in shocks], np.zeros(self.n_shocks)))
-#         variables_and_shocks = self.variables + shocks
-#         valid_names = [x.base_name for x in variables_and_shocks]
-#
-#         steady_state_dict = self.steady_state_dict.copy()
-#
-#         if not model_is_linear:
-#             # We need shocks to be zero in A, B, C, D but 1 in T; can abuse the T_dummies to accomplish that.
-#             if not_loglin_variables is None:
-#                 not_loglin_variables = []
-#
-#             not_loglin_variables += [x.base_name for x in shocks]
-#
-#             # Validate that all user-supplied variables are in the model
-#             for variable in not_loglin_variables:
-#                 if variable not in valid_names:
-#                     raise VariableNotFoundException(variable)
-#
-#             # Variables that are zero at the SS can't be log-linearized, check for these here.
-#             close_to_zero_warnings = []
-#             for variable in variables_and_shocks:
-#                 if variable.base_name in not_loglin_variables:
-#                     continue
-#
-#                 if abs(steady_state_dict[variable.to_ss().name]) < tol:
-#                     not_loglin_variables.append(variable.base_name)
-#                     close_to_zero_warnings.append(variable)
-#
-#             if len(close_to_zero_warnings) > 0 and verbose:
-#                 warn(
-#                     "The following variables have steady state values close to zero and will not be log linearized: "
-#                     + ", ".join(x.base_name for x in close_to_zero_warnings)
-#                 )
-#
-#         if order != 1:
-#             raise NotImplementedError
-#
-#         if not self.steady_state_solved:
-#             raise SteadyStateNotSolvedError()
-#
-#         if model_is_linear:
-#             Fs = self.perturbation_solver.convert_linear_system_to_matrices()
-#
-#         else:
-#             Fs = self.perturbation_solver.log_linearize_model(
-#                 not_loglin_variables=not_loglin_variables
-#             )
-#
-#         Fs_subbed = [F.subs(shock_ss_dict) for F in Fs]
-#         self.build_perturbation_matrices = numba_lambdify(
-#             exog_vars=all_params, endog_vars=variables, expr=Fs_subbed
-#         )
-#
-#         if return_F_matrices:
-#             return Fs_subbed
-#
-#     def check_bk_condition(
-#         self,
-#         free_param_dict: Optional[dict[str, float]] = None,
-#         system_matrices: Optional[list[ArrayLike]] = None,
-#         verbose: Optional[bool] = True,
-#         return_value: Optional[str] = "df",
-#         tol=1e-8,
-#     ) -> Union[bool, pd.DataFrame]:
-#         """
-#         Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
-#         unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
-#         this test suggests timing problems in the definition of the model.
-#
-#         Parameters
-#         ----------
-#         free_param_dict: dict, optional
-#             A dictionary of parameter values. If None, the current stored values are used.
-#         system_matrices: list, optional
-#             A list of matrices A, B, C, D to be used to compute the bk_condition. If none, the current
-#             stored values are used.
-#         verbose: bool, default: True
-#             Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
-#         return_value: string, default: 'df'
-#             Controls what is returned by the function. Valid values are 'df', 'bool', and 'none'.
-#             If df, a dataframe containing eigenvalues is returned. If 'bool', a boolean indicating whether the BK
-#             condition is satisfied. If None, nothing is returned.
-#         tol: float, 1e-8
-#             Convergence tolerance for the gensys solver
-#
-#         Returns
-#         -------
-#         None
-#             If return_value is 'none'
-#
-#         condition_satisfied, bool
-#             If return_value is 'bool', returns True if the Blanchard-Kahn condition is satisfied, False otherwise.
-#
-#         Eigenvalues, pd.DataFrame
-#             If return_value is 'df', returns a dataframe containing the real and imaginary components of the system's
-#             eigenvalues, along with their modulus.
-#         """
-#         if self.build_perturbation_matrices is None:
-#             raise PerturbationSolutionNotFoundException()
-#
-#         if return_value not in ["df", "bool", "none"]:
-#             raise ValueError(
-#                 f'return_value must be one of "df", "bool", or "none". Found {return_value} '
-#             )
-#
-#         if free_param_dict is not None:
-#             results = self.f_ss(self.free_param_dict)
-#             self.steady_state_dict = results["ss_dict"]
-#             self.calib_param_dict = results["calib_dict"]
-#
-#         param_dict = self.free_param_dict | self.calib_param_dict
-#         steady_state_dict = self.steady_state_dict
-#
-#         if system_matrices is not None:
-#             A, B, C, D = system_matrices
-#         else:
-#             A, B, C, D = self.build_perturbation_matrices(
-#                 np.array(list(param_dict.values())),
-#                 np.array(list(steady_state_dict.values())),
-#             )
-#
-#         n_forward = (C.sum(axis=0) > 0).sum().astype(int)
-#         n_eq, n_vars = A.shape
-#
-#         # TODO: Compute system eigenvalues -- avoids calling the whole Gensys routine, but there is code duplication
-#         #   building Gamma_0 and Gamma_1
-#         lead_var_idx = np.where(np.sum(np.abs(C), axis=0) > tol)[0]
-#
-#         eqs_and_leads_idx = np.r_[np.arange(n_vars), lead_var_idx + n_vars].tolist()
-#
-#         Gamma_0 = np.vstack([np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])])
-#
-#         Gamma_1 = np.vstack(
-#             [
-#                 np.hstack([A, np.zeros((n_eq, n_eq))]),
-#                 np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)]),
-#             ]
-#         )
-#         Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
-#         Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
-#
-#         # A, B, Q, Z = qzdiv(1.01, *linalg.qz(-Gamma_0, Gamma_1, 'complex'))
-#
-#         # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
-#         # have sign flip relative to qzdiv -- does it matter?
-#         A, B, alpha, beta, Q, Z = linalg.ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
-#
-#         gev = np.c_[np.diagonal(A), np.diagonal(B)]
-#
-#         eigenval = gev[:, 1] / (gev[:, 0] + tol)
-#         pos_idx = np.where(np.abs(eigenval) > 0)
-#         eig = np.zeros(((np.abs(eigenval) > 0).sum(), 3))
-#         eig[:, 0] = np.abs(eigenval)[pos_idx]
-#         eig[:, 1] = np.real(eigenval)[pos_idx]
-#         eig[:, 2] = np.imag(eigenval)[pos_idx]
-#
-#         sorted_idx = np.argsort(eig[:, 0])
-#         eig = pd.DataFrame(eig[sorted_idx, :], columns=["Modulus", "Real", "Imaginary"])
-#
-#         n_g_one = (eig["Modulus"] > 1).sum()
-#         condition_not_satisfied = n_forward > n_g_one
-#         if verbose:
-#             print(
-#                 f"Model solution has {n_g_one} eigenvalues greater than one in modulus and {n_forward} "
-#                 f"forward-looking variables."
-#                 f'\nBlanchard-Kahn condition is{" NOT" if condition_not_satisfied else ""} satisfied.'
-#             )
-#
-#         if return_value == "none":
-#             return
-#         if return_value == "df":
-#             return eig
-#         elif return_value == "bool":
-#             return ~condition_not_satisfied
-#
 #     def compute_stationary_covariance_matrix(
 #         self,
 #         shock_dict: Optional[dict[str, float]] = None,

@@ -13,7 +13,7 @@ from gEconpy.exceptions.exceptions import (
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.model import compile_model_ss_functions
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.model.steady_state.steady_state import (
+from gEconpy.model.steady_state import (
     make_steady_state_shock_dict,
     system_to_steady_state,
 )

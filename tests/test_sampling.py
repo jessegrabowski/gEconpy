@@ -8,7 +8,6 @@ import pandas as pd
 
 from scipy import stats
 
-from gEconpy import gEconModel
 from gEconpy.sampling import prior_solvability_check
 from gEconpy.sampling.prior_utilities import (
     get_initial_time_index,

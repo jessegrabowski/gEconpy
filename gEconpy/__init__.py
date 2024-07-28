@@ -1,30 +1,28 @@
-# from gEconpy import (
-#     classes,
-#     # estimation,
-#     parser,
-#     plotting,
-#     sampling,
-#     shared,
-#     solvers,
-# )
-#
-# # from gEconpy.classes import gEconModel
-# from gEconpy.shared import compile_to_statsmodels, make_mod_file
-#
+from gEconpy import (
+    classes,
+    parser,
+    plotting,
+    sampling,
+    shared,
+    solvers,
+)
+from gEconpy.model.build import model_from_gcn
+from gEconpy.shared import compile_to_statsmodels, make_mod_file
+
 __version__ = "1.2.1"
-# __all__ = [
-#     # "gEconModel",
-#     "classes",
-#     "estimation",
-#     "exceptions",
-#     "parser",
-#     "plotting",
-#     "sampling",
-#     "shared",
-#     "solvers",
-#     "make_mod_file",
-#     "compile_to_statsmodels",
-# ]
+__all__ = [
+    "model_from_gcn",
+    "classes",
+    "estimation",
+    "exceptions",
+    "parser",
+    "plotting",
+    "sampling",
+    "shared",
+    "solvers",
+    "compile_to_statsmodels",
+    "make_mod_file",
+]
 
 import logging
 
