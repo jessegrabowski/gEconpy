@@ -1,7 +1,7 @@
 import numpy as np
 
 expected_linearization_result = {
-    "One_Block_Simple_1_w_Steady_State": {
+    "One_Block_Simple_1_w_Steady_State.gcn": {
         "A": np.array(
             [
                 [0.95, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -223,7 +223,7 @@ expected_linearization_result = {
         ),
         "D": np.array([[1.0], [0.0], [0.0], [0.0], [0.0], [0.0], [0.0], [0.0], [0.0]]),
     },
-    "Two_Block_RBC_w_Steady_State": {
+    "Two_Block_RBC_w_Steady_State.gcn": {
         "A": np.array(
             [
                 [0.0, 0.0, 0.0, 0.81816881, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -601,7 +601,7 @@ expected_linearization_result = {
             ]
         ),
     },
-    "Full_New_Keyensian": {
+    "Full_New_Keynesian.gcn": {
         "A": np.array(
             [
                 [

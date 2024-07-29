@@ -8,6 +8,7 @@ import pandas as pd
 
 from scipy import stats
 
+from gEconpy import model_from_gcn
 from gEconpy.sampling import prior_solvability_check
 from gEconpy.sampling.prior_utilities import (
     get_initial_time_index,
@@ -21,8 +22,9 @@ ROOT = Path(__file__).parent.absolute()
 class TestPriorSampling(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keyensian.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
+        cls.model = model_from_gcn(
+            "tests/Test GCNs/Full_New_Keynesian.gcn", verbose=False
+        )
 
         # Add some priors
         cls.model.param_priors["alpha"] = stats.beta(a=3, b=1)
@@ -87,8 +89,7 @@ class TestGetInitialTime(unittest.TestCase):
 class TestSimulateTrajectories(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
+        cls.model = model_from_gcn("tests/Test GCNs/RBC_Linearized.gcn", verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
 
@@ -116,8 +117,7 @@ class TestSimulateTrajectories(unittest.TestCase):
 class TestKalmanFilterFromPrior(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
+        cls.model = model_from_gcn("tests/Test GCNs/RBC_Linearized.gcn", verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
 

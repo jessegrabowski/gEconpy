@@ -65,6 +65,10 @@ def stack_return_wrapper(f: Callable) -> Callable:
     @wraps(f)
     def inner(*args, **kwargs):
         values = f(*args, **kwargs)
+        if not isinstance(values, list):
+            # Special case for single output functions, for example a partially declared steady state
+            # with only one equation
+            values = [values]
         return np.stack(values)
 
     return inner
@@ -73,8 +77,11 @@ def stack_return_wrapper(f: Callable) -> Callable:
 def pop_return_wrapper(f: Callable) -> Callable:
     @wraps(f)
     def inner(*args, **kwargs):
-        values = f(*args, **kwargs)
-        return np.array(values).item(0)
+        values = np.array(f(*args, **kwargs))
+        if values.ndim == 0:
+            return values.item(0)
+        else:
+            return values[0]
 
     return inner
 

@@ -1,8 +1,7 @@
 import functools as ft
 import logging
 
-from collections.abc import Callable
-from typing import Literal, Union
+from typing import Callable, Literal, Union
 
 import numpy as np
 import pandas as pd
@@ -142,13 +141,13 @@ def infer_variable_bounds(variable):
     lhs = 1e-8 if is_positive else None
     rhs = -1e-8 if is_negative else None
 
-    return (lhs, rhs)
+    return lhs, rhs
 
 
 def validate_policy_function(
-    A, B, C, D, T, R, variables, tol: float = 1e-8, verbose: bool = True
-) -> bool:
-    gEcon_matrices = statespace_to_gEcon_representation(A, T, R, variables, tol)
+    A, B, C, D, T, R, tol: float = 1e-8, verbose: bool = True
+) -> None:
+    gEcon_matrices = statespace_to_gEcon_representation(A, T, R, tol)
 
     P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
 
@@ -169,14 +168,16 @@ class Model:
         param_dict: SymbolDictionary,
         deterministic_dict: SymbolDictionary,
         calib_dict: SymbolDictionary,
-        f_params: Callable,
-        f_ss_resid: Callable,
-        f_ss: Callable | None = None,
-        f_ss_error: Callable | None = None,
-        f_ss_jac: Callable | None = None,
-        f_ss_error_grad: Callable | None = None,
-        f_ss_error_hess: Callable | None = None,
-        f_linearize: Callable | None = None,
+        f_params: Callable[[np.ndarray, ...], SymbolDictionary],
+        f_ss_resid: Callable[[np.ndarray, ...], float],
+        f_ss: Callable[[np.ndarray, ...], SymbolDictionary],
+        f_ss_error: Callable[[np.ndarray, ...], np.ndarray],
+        f_ss_jac: Callable[[np.ndarray, ...], np.ndarray],
+        f_ss_error_grad: Callable[[np.ndarray, ...], np.ndarray],
+        f_ss_error_hess: Callable[[np.ndarray, ...], np.ndarray],
+        f_linearize: Callable[
+            [np.ndarray, ...], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        ],
         backend: BACKENDS = "numpy",
     ) -> None:
         """
@@ -195,8 +196,8 @@ class Model:
         f_params: Callable
             Function that returns a dictionary of parameter values given a dictionary of parameter values
         f_ss_resid: Callable
-            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and evaluates
-            the system of model equations f(x_ss, theta) = 0.
+            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and
+            evaluates the system of model equations f(x_ss, theta) = 0.
         f_ss: Callable
             Function that takes current parameter values and returns a dictionary of steady-state values.
         f_ss_error: Callable, optional
@@ -229,33 +230,24 @@ class Model:
         self.calibrated_params = list(calib_dict.to_sympy().keys())
 
         self._default_params = param_dict.copy()
-        self.f_params: Callable = f_params
-        self.f_ss_resid: Callable = f_ss_resid
+        self.f_params = f_params
+        self.f_ss_resid = f_ss_resid
 
-        self.f_ss_error: Callable = f_ss_error
-        self.f_ss_error_grad: Callable = f_ss_error_grad
-        self.f_ss_error_hess: Callable = f_ss_error_hess
+        self.f_ss_error = f_ss_error
+        self.f_ss_error_grad = f_ss_error_grad
+        self.f_ss_error_hess = f_ss_error_hess
 
-        self.f_ss: Callable = f_ss
-        self.f_ss_jac: Callable = f_ss_jac
+        self.f_ss = f_ss
+        self.f_ss_jac = f_ss_jac
 
         if backend == "numpy":
             f_linearize = override_dummy_wrapper(f_linearize, "not_loglin_variable")
-        self.f_linearize: Callable = f_linearize
+        self.f_linearize = f_linearize
 
         # self.param_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         # self.shock_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         # self.hyper_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         # self.observation_noise_priors: SymbolDictionary[str, Any] = SymbolDictionary()
-
-        # self.n_variables: int = 0
-        # self.n_shocks: int = 0
-        # self.n_equations: int = 0
-        # self.n_calibrating_equations: int = 0
-
-        # Steady state information
-        # self.steady_state_solved: bool = False
-        # self.steady_state_dict: SymbolDictionary[sp.Symbol, float] = SymbolDictionary()
 
         # Linear representation
         self.A: pd.DataFrame | None = None
@@ -282,15 +274,63 @@ class Model:
 
     def steady_state(
         self,
-        how="analytic",
+        how: Literal["analytic", "root", "minimize"] = "analytic",
         use_jac=True,
         use_hess=True,
         progressbar=True,
         optimizer_kwargs: dict | None = None,
         verbose=True,
         bounds: dict[str, tuple[float, float]] | None = None,
+        fixed_values: dict[str, float] | None = None,
         **updates: float,
-    ):
+    ) -> tuple[SymbolDictionary[str, float], bool]:
+        """
+        Solve for the deterministic steady state of the DSGE model
+
+
+        Parameters
+        ----------
+        how: str, one of ['analytic', 'root', 'minimize'], default: 'analytic'
+            Method to use to solve for the steady state. If ``'analytic'``, the model is solved analytically using
+            user-provided steady-state equations. This is only possible if the steady-state equations are fully
+            defined. If ``'root'``, the steady state is solved using a root-finding algorithm. If ``'minimize'``, the
+            steady state is solved by minimizing a squared error loss function.
+
+        use_jac: bool, default: True
+            Flag indicating whether to use the Jacobian of the error function when solving for the steady state. Ignored
+            if ``how`` is 'analytic'.
+
+        use_hess: bool, default: True
+            Flag indicating whether to use the Hessian of the error function when solving for the steady state. Ignored
+            if ``how`` is 'analytic'.
+
+        progressbar: bool, default: True
+            Flag indicating whether to display a progress bar when solving for the steady state.
+
+        optimizer_kwargs: dict, optional
+            Keyword arguments passed to either scipy.optimize.root or scipy.optimize.minimize, depending on the value of
+            ``how``. Common argments include:
+
+            - 'method': str,
+                The optimization method to use. Default is ``'hybr'`` for ``how = 'root'`` and ``trust-krylov`` for
+                ``how = 'minimize'``
+            - 'maxiter': int,
+                The maximum number of iterations to use. Default is 5000. This argument will be automatically renamed
+                to match the argument expected by different optimizers (for example, the ``'hybr'`` method uses
+                ``maxfev``).
+
+        verbose
+        bounds
+        fixed_values
+        updates
+
+        Returns
+        -------
+        steady_state: SymbolDictionary
+            Dictionary of steady-state values
+        success: bool
+            Flag indicating whether the steady state was successfully solved
+        """
         param_dict = self.parameters(**updates)
 
         if how == "analytic" and self.f_ss is None:

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from gEconpy import model_from_gcn
 from gEconpy.estimation.estimation_utilities import (
     build_system_matrices,
     check_bk_condition,
@@ -20,12 +21,12 @@ class BasicFunctionalityTests(unittest.TestCase):
         file_path = os.path.join(
             ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
         )
-        self.model = gEconModel(file_path, verbose=False)
+        self.model = model_from_gcn(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 
     def test_extract_system_matrics(self):
-        param_dict = self.model.free_param_dict
+        param_dict = self.model.parameters()
 
         sparse_data = extract_sparse_data_from_model(
             self.model, params_to_estimate=["theta"]
@@ -199,7 +200,7 @@ class TestModelEstimation(unittest.TestCase):
         file_path = os.path.join(
             ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
         )
-        self.model = gEconModel(file_path, verbose=False)
+        self.model = model_from_gcn(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 

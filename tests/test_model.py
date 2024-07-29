@@ -1,8 +1,7 @@
 import os
 import unittest
 
-from pathlib import Path
-from typing import cast
+from unittest import mock
 
 import numdifftools as nd
 import numpy as np
@@ -16,13 +15,7 @@ from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import scipy_wrapper
 from tests.utilities.expected_matrices import expected_linearization_result
-
-ROOT = Path(__file__).parent.absolute()
-
-
-class gEconModel:
-    def __init__(self, *args, **kwargs):
-        pass
+from tests.utilities.shared_fixtures import load_and_cache_model
 
 
 @pytest.fixture
@@ -68,7 +61,9 @@ def gcn_file_1():
 expected_warnings = [
     "Simplification via a tryreduce block was requested but not possible because the system is not well defined.",
     "Removal of constant variables was requested but not possible because the system is not well defined.",
-    "The model does not appear correctly specified, there are 8 equations but 12 variables. It will not be possible to solve this model. Please check the specification using available diagnostic tools, and check the GCN file for typos.",
+    "The model does not appear correctly specified, there are 8 equations but 12 variables. It will not be possible to "
+    "solve this model. Please check the specification using available diagnostic tools, and check the GCN file for "
+    "typos.",
 ]
 
 
@@ -193,13 +188,13 @@ nk_shocks = ["epsilon_R", "epsilon_pi", "epsilon_Y", "epsilon_preference"]
             simple_shocks,
         ),
         ("Open_RBC.gcn", open_vars, open_params, open_shocks),
-        ("Full_New_Keyensian.gcn", nk_vars, nk_params, nk_shocks),
+        ("Full_New_Keynesian.gcn", nk_vars, nk_params, nk_shocks),
     ],
 )
 def test_variables_parsed(
     gcn_path, expected_variables, expected_params, expected_shocks
 ):
-    file_path = os.path.join(ROOT, "Test GCNs", gcn_path)
+    file_path = os.path.join("tests/Test GCNs", gcn_path)
     model = model_from_gcn(
         file_path,
         verbose=False,
@@ -235,18 +230,17 @@ def test_variables_parsed(
     [
         ("One_Block_Simple_1_w_Distributions.gcn", "one_block_prior"),
         ("One_Block_Simple_1_w_Steady_State.gcn", "one_block_ss"),
-        ("Full_New_Keyensian.gcn", "full_nk"),
+        ("Full_New_Keynesian.gcn", "full_nk"),
     ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
 @pytest.mark.parametrize(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
-def test_model_parameters(gcn_path: str, name: str, backend: BACKENDS):
-    file_path = os.path.join(ROOT, "Test GCNs", gcn_path)
-    model = model_from_gcn(
-        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
-    )
+def test_model_parameters(
+    load_and_cache_model, gcn_path: str, name: str, backend: BACKENDS
+):
+    model = load_and_cache_model(gcn_path, backend)
 
     # Test default parameters
     params = model.parameters()
@@ -264,11 +258,8 @@ def test_model_parameters(gcn_path: str, name: str, backend: BACKENDS):
 @pytest.mark.parametrize(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
-def test_deterministic_model_parameters(backend: BACKENDS):
-    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
-    model = model_from_gcn(
-        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
-    )
+def test_deterministic_model_parameters(load_and_cache_model, backend: BACKENDS):
+    model = load_and_cache_model("One_Block_Simple_2.gcn", backend)
     params = model.parameters()
 
     # Test numeric expression in calibration block
@@ -282,18 +273,12 @@ def test_deterministic_model_parameters(backend: BACKENDS):
 
 @pytest.mark.parametrize(
     "gcn_path",
-    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keyensian.gcn"],
+    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keynesian.gcn"],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
-def test_all_backends_agree_on_parameters(gcn_path):
-    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_path}")
+def test_all_backends_agree_on_parameters(load_and_cache_model, gcn_path):
     models = [
-        model_from_gcn(
-            file_path,
-            verbose=False,
-            backend=cast(BACKENDS, backend),
-            mode="FAST_COMPILE",
-        )
+        load_and_cache_model(gcn_path, backend)
         for backend in ["numpy", "numba", "pytensor"]
     ]
     params = [np.r_[list(model.parameters().values())] for model in models]
@@ -305,7 +290,7 @@ def test_all_backends_agree_on_parameters(gcn_path):
 
 @pytest.mark.parametrize(
     "gcn_path",
-    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keyensian.gcn"],
+    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keynesian.gcn"],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
 @pytest.mark.parametrize(
@@ -313,17 +298,9 @@ def test_all_backends_agree_on_parameters(gcn_path):
     ["f_ss_error_grad", "f_ss_error_hess", "f_ss_jac"],
     ids=["grad", "hess", "jac"],
 )
-def test_all_backends_agree_on_functions(gcn_path, func):
-    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_path}")
-    models = [
-        model_from_gcn(
-            file_path,
-            verbose=False,
-            backend=cast(BACKENDS, backend),
-            mode="FAST_COMPILE",
-        )
-        for backend in ["numpy", "numba", "pytensor"]
-    ]
+def test_all_backends_agree_on_functions(load_and_cache_model, gcn_path, func):
+    backends = ["numpy", "numba", "pytensor"]
+    models = [load_and_cache_model(gcn_path, backend) for backend in backends]
     params = models[0].parameters().to_string()
     ss_vars = [x.to_ss().name for x in models[0].variables]
     x0 = dict(zip(ss_vars, np.full(len(models[0].variables), 0.8)))
@@ -331,32 +308,25 @@ def test_all_backends_agree_on_functions(gcn_path, func):
     vals = [getattr(model, func)(**params, **x0) for model in models]
     for i in range(3):
         for j in range(i):
-            assert_allclose(vals[i], vals[j])
+            assert_allclose(
+                vals[i], vals[j], err_msg=f"{backends[i]} and {backends[j]} disagree"
+            )
 
 
 @pytest.mark.parametrize(
     "gcn_path",
     [
         "Two_Block_RBC_w_Partial_Steady_State.gcn",
-        "Full_New_Keyensian_w_Partial_Steady_state.gcn",
+        "Full_New_Keynesian_w_Partial_Steady_state.gcn",
     ],
     ids=["two_block", "full_nk"],
 )
 @pytest.mark.parametrize(
     "func", ["f_ss_error_grad", "f_ss_error_hess"], ids=["grad", "hess"]
 )
-def test_scipy_wrapped_functions_agree(gcn_path, func):
+def test_scipy_wrapped_functions_agree(load_and_cache_model, gcn_path, func):
     backend_names = ["numpy", "numba", "pytensor"]
-    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_path}")
-    models = [
-        model_from_gcn(
-            file_path,
-            verbose=False,
-            backend=cast(BACKENDS, backend),
-            mode="FAST_COMPILE",
-        )
-        for backend in backend_names
-    ]
+    models = [load_and_cache_model(gcn_path, backend) for backend in backend_names]
 
     ss_variables = [x.to_ss() for x in models[0].variables]
     known_variables = list(models[0].f_ss(**models[0].parameters()).to_sympy().keys())
@@ -424,7 +394,7 @@ def test_scipy_wrapped_functions_agree(gcn_path, func):
             },
         ),
         (
-            "Full_New_Keyensian.gcn",
+            "Full_New_Keynesian.gcn",
             {
                 "C_ss": 1.50620761e00,
                 "Div_ss": 6.69069052e-01,
@@ -455,13 +425,12 @@ def test_scipy_wrapped_functions_agree(gcn_path, func):
     ],
     ids=["one_block", "open_rbc", "nk"],
 )
-def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndarray):
+def test_steady_state(
+    load_and_cache_model, backend: BACKENDS, gcn_file: str, expected_result: np.ndarray
+):
     n = len(expected_result)
 
-    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}")
-    model = model_from_gcn(
-        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
-    )
+    model = load_and_cache_model(gcn_file, backend)
 
     params = model.parameters()
     ss_dict = model.f_ss(**params)
@@ -494,44 +463,42 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
 @pytest.mark.parametrize(
-    "gcn_file", ["One_Block_Simple_1_w_Steady_State", "Open_RBC", "Full_New_Keyensian"]
+    "gcn_file",
+    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keynesian.gcn"],
 )
-def test_model_gradient(backend, gcn_file):
-    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
-    model = model_from_gcn(
-        file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
-    )
+def test_model_gradient(load_and_cache_model, backend, gcn_file):
+    model = load_and_cache_model(gcn_file, backend)
 
     ss_result, success = model.steady_state()
 
     np.testing.assert_allclose(
-        model.f_ss_error_grad(**ss_result, **model.parameters().to_string()),
+        model.f_ss_error_grad(**ss_result, **model.parameters()),
         0.0,
         rtol=1e-12,
         atol=1e-12,
     )
 
-    perturbed_point = {k: 0.8 for k, v in ss_result.to_string().items()}
+    perturbed_point = {k: 0.8 for k, v in ss_result.items()}
     test_point = np.array(list(perturbed_point.values()))
 
-    grad = model.f_ss_error_grad(**perturbed_point, **model.parameters().to_string())
-    numeric_grad = nd.Gradient(
-        lambda x: model.f_ss_error(*x, **model.parameters().to_string())
-    )(test_point)
+    grad = model.f_ss_error_grad(**perturbed_point, **model.parameters())
+    numeric_grad = nd.Gradient(lambda x: model.f_ss_error(*x, **model.parameters()))(
+        test_point
+    )
 
     np.testing.assert_allclose(grad, numeric_grad, rtol=1e-8, atol=1e-8)
 
-    hess = model.f_ss_error_hess(**perturbed_point, **model.parameters().to_string())
-    numeric_hess = nd.Hessian(
-        lambda x: model.f_ss_error(*x, **model.parameters().to_string())
-    )(test_point)
+    hess = model.f_ss_error_hess(**perturbed_point, **model.parameters())
+    numeric_hess = nd.Hessian(lambda x: model.f_ss_error(*x, **model.parameters()))(
+        test_point
+    )
 
     np.testing.assert_allclose(hess, numeric_hess, rtol=1e-8, atol=1e-8)
 
-    jac = model.f_ss_jac(**perturbed_point, **model.parameters().to_string())
-    numeric_jac = nd.Jacobian(
-        lambda x: model.f_ss_resid(*x, **model.parameters().to_string())
-    )(test_point)
+    jac = model.f_ss_jac(**perturbed_point, **model.parameters())
+    numeric_jac = nd.Jacobian(lambda x: model.f_ss_resid(*x, **model.parameters()))(
+        test_point
+    )
 
     np.testing.assert_allclose(jac, numeric_jac, rtol=1e-8, atol=1e-8)
 
@@ -540,10 +507,10 @@ def test_model_gradient(backend, gcn_file):
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_1_w_Steady_State",
-        "Open_RBC",
+        "One_Block_Simple_1_w_Steady_State.gcn",
+        "Open_RBC.gcn",
         pytest.param(
-            "Full_New_Keyensian",
+            "Full_New_Keynesian.gcn",
             marks=pytest.mark.skip("NK needs to be tuned to find SS without help"),
         ),
     ],
@@ -551,19 +518,20 @@ def test_model_gradient(backend, gcn_file):
 @pytest.mark.parametrize(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
-def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
-    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
-    model_1 = model_from_gcn(
-        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
-    )
-    analytic_res, success = model_1.steady_state()
-    analytic_values = np.array(
-        [analytic_res[x.to_ss().name] for x in model_1.variables]
-    )
-    model_1.f_ss = None
+def test_numerical_steady_state(
+    load_and_cache_model, how: str, gcn_file: str, backend: BACKENDS
+):
+    model = load_and_cache_model(gcn_file, backend)
+    analytic_res, success = model.steady_state()
+    analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
+
+    # Overwrite the f_ss function with None to trigger numerical optimization
+    # Save it so we can put it back later, or else the cached model won't have a steady state function anymore
+    f_ss = model.f_ss
+    model.f_ss = None
 
     x0 = np.full_like(analytic_values, 0.8)
-    numeric_res, success = model_1.steady_state(
+    numeric_res, success = model.steady_state(
         how=how,
         verbose=False,
         optimizer_kwargs={
@@ -574,8 +542,11 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
         },
     )
 
-    numeric_values = np.array([numeric_res[x.to_ss().name] for x in model_1.variables])
-    errors = model_1.f_ss_resid(**numeric_res, **model_1.parameters())
+    # Restore steady state function in the cached function
+    model.f_ss = f_ss
+
+    numeric_values = np.array([numeric_res[x.to_ss().name] for x in model.variables])
+    errors = model.f_ss_resid(**numeric_res, **model.parameters())
 
     if how == "root":
         assert_allclose(analytic_values, numeric_values, atol=1e-2)
@@ -584,7 +555,7 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
 
 
 def test_numerical_steady_state_with_calibrated_params():
-    file_path = os.path.join("Test GCNs", "One_Block_Simple_2_without_Extra_Params.gcn")
+    file_path = "tests/Test GCNs/One_Block_Simple_2_without_Extra_Params.gcn"
     model = model_from_gcn(
         file_path, verbose=False, backend="numpy", mode="FAST_COMPILE"
     )
@@ -604,24 +575,21 @@ def test_numerical_steady_state_with_calibrated_params():
 @pytest.mark.parametrize(
     "partial_file, analytic_file",
     [
-        ("Two_Block_RBC_w_Partial_Steady_State", "Two_Block_RBC_w_Steady_State"),
-        ("Full_New_Keyensian_w_Partial_Steady_State", "Full_New_Keyensian"),
+        (
+            "Two_Block_RBC_w_Partial_Steady_State.gcn",
+            "Two_Block_RBC_w_Steady_State.gcn",
+        ),
+        ("Full_New_Keynesian_w_Partial_Steady_State.gcn", "Full_New_Keynesian.gcn"),
     ],
 )
 def test_partially_analytical_steady_state(
-    backend: BACKENDS, partial_file, analytic_file
+    load_and_cache_model, backend: BACKENDS, partial_file, analytic_file
 ):
-    file_path = os.path.join(ROOT, f"Test GCNs/{partial_file}.gcn")
-    analytic_path = os.path.join(ROOT, f"Test GCNs/{analytic_file}.gcn")
-    analytic_model = model_from_gcn(
-        analytic_path, verbose=False, backend=backend, mode="FAST_COMPILE"
-    )
+    analytic_model = load_and_cache_model(analytic_file, backend)
     analytic_res, success = analytic_model.steady_state()
     analytic_values = np.array(list(analytic_res.values()))
 
-    partial_model = model_from_gcn(
-        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
-    )
+    partial_model = load_and_cache_model(partial_file, backend)
     numeric_res, success = partial_model.steady_state(
         how="minimize",
         verbose=False,
@@ -648,20 +616,17 @@ def test_partially_analytical_steady_state(
 @pytest.mark.parametrize(
     "gcn_file, name",
     [
-        ("One_Block_Simple_1_w_Steady_State", "one_block_ss"),
-        ("Two_Block_RBC_w_Steady_State", "two_block_ss"),
-        ("Full_New_Keyensian", "full_nk"),
+        ("One_Block_Simple_1_w_Steady_State.gcn", "one_block_ss"),
+        ("Two_Block_RBC_w_Steady_State.gcn", "two_block_ss"),
+        ("Full_New_Keynesian.gcn", "full_nk"),
     ],
     ids=["one_block_ss", "two_block_ss", "full_nk"],
 )
 @pytest.mark.parametrize(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
-def test_linearize(gcn_file, name, backend: BACKENDS):
-    file_path = os.path.join(ROOT, f"Test GCNs/{gcn_file}.gcn")
-    model = model_from_gcn(
-        file_path, verbose=False, backend=backend, mode="FAST_COMPILE"
-    )
+def test_linearize(load_and_cache_model, gcn_file, name, backend: BACKENDS):
+    model = load_and_cache_model(gcn_file, backend)
     steady_state_dict, success = model.steady_state()
     outputs = model.linearize_model(
         loglin_negative_ss=True, steady_state_dict=steady_state_dict
@@ -673,7 +638,7 @@ def test_linearize(gcn_file, name, backend: BACKENDS):
 
 
 def test_invalid_solver_raises():
-    file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn")
+    file_path = "tests/Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
     model = model_from_gcn(file_path, verbose=False)
     model.steady_state(verbose=False)
 
@@ -682,7 +647,7 @@ def test_invalid_solver_raises():
 
 
 def test_bad_failure_argument_raises():
-    file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
+    file_path = "tests/Test GCNs/pert_fails.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
 
     with pytest.raises(ValueError):
@@ -690,7 +655,7 @@ def test_bad_failure_argument_raises():
 
 
 def test_gensys_fails_to_solve():
-    file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
+    file_path = "tests/Test GCNs/pert_fails.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
 
     with pytest.raises(GensysFailedException):
@@ -698,7 +663,7 @@ def test_gensys_fails_to_solve():
 
 
 def test_outputs_after_gensys_failure(capsys):
-    file_path = os.path.join(ROOT, "Test GCNs/pert_fails.gcn")
+    file_path = "tests/Test GCNs/pert_fails.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(solver="gensys", on_failure="ignore", verbose=True)
 
@@ -710,7 +675,7 @@ def test_outputs_after_gensys_failure(capsys):
 
 
 def test_outputs_after_pert_success(capsys):
-    file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(solver="gensys", verbose=True)
 
@@ -728,7 +693,7 @@ def test_outputs_after_pert_success(capsys):
 
 
 def test_bad_argument_to_bk_condition_raises():
-    file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(solver="gensys", verbose=False)
 
@@ -737,7 +702,7 @@ def test_bad_argument_to_bk_condition_raises():
 
 
 def test_check_bk_condition():
-    file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(solver="gensys", verbose=False)
 
@@ -1489,7 +1454,7 @@ def test_check_bk_condition():
 #
 # class ModelClassTestsThree(unittest.TestCase):
 #     def setUp(self):
-#         file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keyensian.gcn")
+#         file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keynesian.gcn")
 #         self.model = gEconModel(
 #             file_path, verbose=False, simplify_constants=False, simplify_tryreduce=False
 #         )

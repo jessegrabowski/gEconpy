@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import sympy as sp
 
+from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.shared.dynare_convert import (
     build_hash_table,
@@ -98,7 +99,7 @@ class TestDynareConvert(unittest.TestCase):
         file_path = os.path.join(
             ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
         )
-        model = gEconModel(file_path, verbose=False)
+        model = model_from_gcn(file_path, verbose=False)
         model.steady_state(verbose=False)
         model.solve_model(verbose=False)
 

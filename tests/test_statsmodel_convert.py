@@ -4,19 +4,16 @@ import unittest
 from pathlib import Path
 from warnings import catch_warnings, simplefilter
 
-from gEconpy import compile_to_statsmodels
+from gEconpy import compile_to_statsmodels, model_from_gcn
 from gEconpy.estimation.transformers import IntervalTransformer, PositiveTransformer
-
-ROOT = Path(__file__).parent.absolute()
 
 
 class TestStatsModelConversion(unittest.TestCase):
     @classmethod
     def setUp(self) -> None:
-        file_path = os.path.join(
-            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
-        )
-        self.model = gEconModel(file_path, verbose=False)
+        file_path = "tests/Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
+
+        self.model = model_from_gcn(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 

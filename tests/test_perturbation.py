@@ -6,7 +6,6 @@ import sympy as sp
 
 from numpy.testing import assert_allclose
 
-from gEconpy.model.build import model_from_gcn
 from gEconpy.model.perturbation import (
     linearize_model,
     make_all_variable_time_combinations,
@@ -15,6 +14,7 @@ from gEconpy.model.perturbation import (
     solve_policy_function_with_gensys,
 )
 from gEconpy.shared.utilities import eq_to_ss
+from tests.utilities.shared_fixtures import load_and_cache_model
 
 
 def linearize_method_2(variables, equations, shocks, not_loglin_variables=None):
@@ -39,8 +39,9 @@ def linearize_method_2(variables, equations, shocks, not_loglin_variables=None):
     return Fs
 
 
-def test_variables_to_all_times():
-    mod = model_from_gcn("tests/Test GCNs/One_Block_Simple_1.gcn", verbose=False)
+@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+def test_variables_to_all_times(load_and_cache_model, backend):
+    mod = load_and_cache_model("One_Block_Simple_1.gcn", backend)
     variables = mod.variables
     lags, now, leads = make_all_variable_time_combinations(variables)
 
@@ -54,10 +55,11 @@ def test_variables_to_all_times():
 
 @pytest.mark.parametrize(
     "gcn_file",
-    ["One_Block_Simple_1.gcn", "Two_Block_RBC_1.gcn", "Full_New_Keyensian.gcn"],
+    ["One_Block_Simple_1.gcn", "Two_Block_RBC_1.gcn", "Full_New_Keynesian.gcn"],
 )
-def test_log_linearize_model(gcn_file):
-    mod = model_from_gcn(os.path.join("tests/Test GCNs", gcn_file), verbose=False)
+@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+def test_log_linearize_model(load_and_cache_model, gcn_file, backend):
+    mod = load_and_cache_model(gcn_file, backend)
     (A, B, C, D), not_loglin_variable = linearize_model(
         mod.variables, mod.equations, mod.shocks
     )
@@ -103,7 +105,7 @@ def test_log_linearize_model(gcn_file):
         ("One_Block_Simple_1_w_Steady_State.gcn", ["K", "A"]),
         ("Open_RBC.gcn", ["A", "K", "IIP"]),
         (
-            "Full_New_Keyensian.gcn",
+            "Full_New_Keynesian.gcn",
             [
                 "K",
                 "C",
@@ -119,11 +121,15 @@ def test_log_linearize_model(gcn_file):
         ),
     ],
 )
-def test_solve_policy_function(gcn_file, state_variables):
-    mod = model_from_gcn(os.path.join("tests/Test GCNs", gcn_file), verbose=False)
-    A, B, C, D = mod.linearize_model(order=1)
+@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+def test_solve_policy_function(
+    load_and_cache_model, gcn_file, state_variables, backend
+):
+    mod = load_and_cache_model(gcn_file, backend)
+    steady_state_dict, succes = mod.steady_state()
+    A, B, C, D = mod.linearize_model(order=1, steady_state_dict=steady_state_dict)
 
-    gensys_results = solve_policy_function_with_gensys(A, B, C, D, 1e-8, False)
+    gensys_results = solve_policy_function_with_gensys(A, B, C, D, 1e-8)
     G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
 
     state_idxs = [

@@ -7,6 +7,7 @@ import numpy as np
 
 from matplotlib import pyplot as plt
 
+from gEconpy import model_from_gcn
 from gEconpy.plotting import (
     plot_covariance_matrix,
     plot_eigenvalues,
@@ -48,7 +49,7 @@ class TestPlotSimulation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
+        cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
         cls.data = cls.model.simulate(simulation_length=100, n_simulations=1)
@@ -93,8 +94,8 @@ class TestPlotSimulation(unittest.TestCase):
 class TestIRFPlot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keyensian.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
+        file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keynesian.gcn")
+        cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
         cls.irf = cls.model.impulse_response_function(
@@ -163,7 +164,7 @@ class TestPriorSolvabilityPlot(unittest.TestCase):
         file_path = os.path.join(
             ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
         )
-        cls.model = gEconModel(file_path, verbose=False)
+        cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
         cls.data = prior_solvability_check(cls.model, n_samples=1_000)
@@ -210,7 +211,7 @@ class TestPlotEigenvalues(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
+        cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
 
@@ -238,7 +239,7 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
+        cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
         cls.cov_matrix = cls.model.compute_stationary_covariance_matrix(
@@ -274,7 +275,7 @@ class TestPlotACF(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
+        cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
         cls.acf = cls.model.compute_autocorrelation_matrix(
@@ -307,7 +308,7 @@ class TestPostEstimationPlots(unittest.TestCase):
         file_path = os.path.join(
             ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
         )
-        cls.model = gEconModel(file_path, verbose=False)
+        cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
 

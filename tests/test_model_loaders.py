@@ -11,6 +11,7 @@ from gEconpy.exceptions.exceptions import (
     OrphanParameterError,
 )
 from gEconpy.model.build import model_from_gcn
+from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import compile_model_ss_functions
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.steady_state import (
@@ -36,7 +37,7 @@ TEST_GCN_FILES = [
     "One_Block_Simple_1.gcn",
     "One_Block_Simple_1_w_Steady_State.gcn",
     "One_Block_Simple_2.gcn",
-    "Full_New_Keyensian.gcn",
+    "Full_New_Keynesian.gcn",
 ]
 
 TEST_NAMES = ["one_block", "one_block_ss", "one_block_2", "full_nk"]
@@ -61,30 +62,46 @@ EXPECTED_BLOCKS = {
 
 nk_assumptions = defaultdict(lambda: DEFAULT_ASSUMPTIONS)
 nk_other = {
-    "TC": {"negative": True, "real": True},
-    "delta": {"positive": True, "real": True},
-    "beta": {"positive": True, "real": True},
-    "sigma_C": {"positive": True, "real": True},
-    "sigma_L": {"positive": True, "real": True},
-    "gamma_I": {"positive": True, "real": True},
-    "phi_H": {"positive": True, "real": True},
+    "TC": {"real": True, "negative": True},
+    "delta": {"real": True, "positive": True},
+    "beta": {"real": True, "positive": True},
+    "sigma_C": {"real": True, "positive": True},
+    "sigma_L": {"real": True, "positive": True},
+    "gamma_I": {"real": True, "positive": True},
+    "phi_H": {"real": True, "positive": True},
+    "shock_technology": {"real": True, "positive": True},
+    "shock_preference": {"real": True, "positive": True},
+    "pi": {"real": True, "positive": True},
+    "pi_star": {"real": True, "positive": True},
+    "pi_obj": {"real": True, "positive": True},
+    "r": {"real": True, "positive": True},
+    "r_G": {"real": True, "positive": True},
+    "mc": {"real": True, "positive": True},
+    "w": {"real": True, "positive": True},
+    "w_star": {"real": True, "positive": True},
+    "Y": {"real": True, "positive": True},
+    "C": {"real": True, "positive": True},
+    "I": {"real": True, "positive": True},
+    "K": {"real": True, "positive": True},
+    "L": {"real": True, "positive": True},
 }
+
 nk_assumptions.update(nk_other)
 
 one_block_2_assumptions = defaultdict(lambda: DEFAULT_ASSUMPTIONS)
 one_2_other = {
-    "Y": {"positive": True, "real": True},
-    "C": {"positive": True, "real": True},
-    "I": {"positive": True, "real": True},
-    "K": {"positive": True, "real": True},
-    "L": {"positive": True, "real": True},
-    "A": {"positive": True, "real": True},
-    "theta": {"positive": True, "real": True},
-    "beta": {"positive": True, "real": True},
-    "delta": {"positive": True, "real": True},
-    "tau": {"positive": True, "real": True},
-    "rho": {"positive": True, "real": True},
-    "alpha": {"positive": True, "real": True},
+    "Y": {"real": True, "positive": True},
+    "C": {"real": True, "positive": True},
+    "I": {"real": True, "positive": True},
+    "K": {"real": True, "positive": True},
+    "L": {"real": True, "positive": True},
+    "A": {"real": True, "positive": True},
+    "theta": {"real": True, "positive": True},
+    "beta": {"real": True, "positive": True},
+    "delta": {"real": True, "positive": True},
+    "tau": {"real": True, "positive": True},
+    "rho": {"real": True, "positive": True},
+    "alpha": {"real": True, "positive": True},
 }
 one_block_2_assumptions.update(one_2_other)
 
@@ -113,7 +130,7 @@ EXPECTED_TRYREDUCE = {
     "full_nk": ["Div[]", "TC[]"],
 }
 
-EXPECTED_SS_LEN = {"one_block": 1, "one_block_ss": 9, "one_block_2": 0, "full_nk": 0}
+EXPECTED_SS_LEN = {"one_block": 1, "one_block_ss": 9, "one_block_2": 0, "full_nk": 25}
 
 EXPECTED_VARIABLES = {
     "one_block": ["A", "C", "K", "U", "lambda"],
@@ -160,7 +177,7 @@ EXPECTED_SHOCKS = {
     "gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES
 )
 def test_build_model_blocks(gcn_path, name):
-    raw_model = load_gcn(os.path.join(GCN_ROOT, gcn_path))
+    raw_model = load_gcn(os.path.join("tests/Test GCNs", gcn_path))
     parsed_model, prior_dict = preprocess_gcn(raw_model)
 
     parse_result = parsed_model_to_data(parsed_model, False)
@@ -183,7 +200,7 @@ def test_build_model_blocks(gcn_path, name):
     "gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES
 )
 def test_block_dict_to_variables_and_shocks(gcn_path, name):
-    raw_model = load_gcn(os.path.join(GCN_ROOT, gcn_path))
+    raw_model = load_gcn(os.path.join("tests/Test GCNs", gcn_path))
     parsed_model, prior_dict = preprocess_gcn(raw_model)
 
     parse_result = parsed_model_to_data(parsed_model, False)
@@ -209,7 +226,7 @@ def test_block_dict_to_variables_and_shocks(gcn_path, name):
 )
 def test_loading_fails_if_duplicate_parameters_in_two_blocks(gcn_file):
     with pytest.raises(DuplicateParameterError):
-        outputs = gcn_to_block_dict(os.path.join(GCN_ROOT, gcn_file), True)
+        outputs = gcn_to_block_dict(os.path.join("tests/Test GCNs", gcn_file), True)
         (
             block_dict,
             assumptions,
@@ -248,7 +265,9 @@ EXPECTED_PARAM_DICT = {
 )
 def test_create_parameter_function(gcn_path, name, backend):
     expected = EXPECTED_PARAM_DICT[name]
-    block_dict, *outputs = gcn_to_block_dict(os.path.join(GCN_ROOT, gcn_path), True)
+    block_dict, *outputs = gcn_to_block_dict(
+        os.path.join("tests/Test GCNs", gcn_path), True
+    )
     param_dict = block_dict_to_param_dict(block_dict, "param_dict")
     deterministic_dict = block_dict_to_param_dict(block_dict, "deterministic_dict")
 
@@ -267,9 +286,12 @@ def test_create_parameter_function(gcn_path, name, backend):
         )
 
 
-def test_all_model_functions_return_arrays():
+@pytest.mark.parametrize(
+    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
+)
+def test_all_model_functions_return_arrays(backend: BACKENDS):
     outputs = gcn_to_block_dict(
-        os.path.join(GCN_ROOT, "One_Block_Simple_1.gcn"), simplify_blocks=True
+        "tests/Test GCNs/One_Block_Simple_1.gcn", simplify_blocks=True
     )
     block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
 
@@ -299,7 +321,7 @@ def test_all_model_functions_return_arrays():
     ss_shock_dict = make_steady_state_shock_dict(shocks)
     steady_state_equations = system_to_steady_state(equations, ss_shock_dict)
 
-    f_params, f_ss, resid_funcs, error_funcs = compile_model_ss_functions(
+    (f_params, f_ss, resid_funcs, error_funcs), cache = compile_model_ss_functions(
         steady_state_equations,
         ss_solution_dict,
         variables,
@@ -307,7 +329,7 @@ def test_all_model_functions_return_arrays():
         deterministic_dict,
         calib_dict,
         error_func="squared",
-        backend="numpy",
+        backend=backend,
     )
 
     f_ss_resid, f_ss_jac = resid_funcs
@@ -322,18 +344,45 @@ def test_all_model_functions_return_arrays():
         assert isinstance(result, np.ndarray)
 
 
-def test_load_gcn(gcn_path, name, simplify):
-    model_from_gcn(
-        os.path.join(GCN_ROOT, gcn_path), simplify_blocks=simplify, verbose=False
+@pytest.mark.parametrize(
+    "gcn_file",
+    [
+        "One_Block_Simple_1.gcn",
+        "Open_RBC.gcn",
+        "Full_New_Keynesian.gcn",
+    ],
+    ids=["one_block_simple", "open_rbc", "full_nk"],
+)
+def test_load_gcn(gcn_file):
+    from gEconpy.model.model import Model
+
+    mod = model_from_gcn(
+        os.path.join("tests/Test GCNs", gcn_file), simplify_blocks=True, verbose=False
     )
-    assert False
+    assert isinstance(mod, Model)
+    assert len(mod.shocks) > 0
+    assert len(mod.variables) > 0
+    assert len(mod.equations) > 0
+
+    assert mod.f_params is not None
+
+    assert mod.f_ss is not None
+    assert mod.f_ss_jac is not None
+
+    assert mod.f_ss_resid is not None
+    assert mod.f_ss_error_grad is not None
+    assert mod.f_ss_error_hess is not None
 
 
 def test_loading_fails_if_orphan_parameters():
     with pytest.raises(OrphanParameterError):
-        model_from_gcn(os.path.join(GCN_ROOT, "Open_RBC_with_orphan_params.gcn"))
+        model_from_gcn(
+            os.path.join("tests/Test GCNs", "Open_RBC_with_orphan_params.gcn")
+        )
 
 
 def test_loading_fails_if_extra_parameters():
     with pytest.raises(ExtraParameterError):
-        model_from_gcn(os.path.join(GCN_ROOT, "Open_RBC_with_extra_params.gcn"))
+        model_from_gcn(
+            os.path.join("tests/Test GCNs", "Open_RBC_with_extra_params.gcn")
+        )

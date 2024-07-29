@@ -439,6 +439,7 @@ class Block:
         eq_idxs, equations = unpack_keys_and_values(self.calibration)
         duplicates = []
 
+        # Main parameter processing loop
         for idx, eq in zip(eq_idxs, equations):
             atoms = eq.atoms()
             lhs, rhs = eq.lhs, eq.rhs
@@ -448,14 +449,23 @@ class Block:
                     f"computed. Found multiple argumnets: {eq.lhs.args}"
                 )
 
-            # Check if this equation is a normal parameter definition. If so, it will be exactly in the form x = y
-            if eq.lhs.is_symbol and eq.rhs.is_number:
-                param = eq.lhs
-                value = eq.rhs
-                self.param_dict[param] = value.evalf()
+            param = eq.lhs
 
+            # Check if the RHS is just a number (most common case). If so, convert it to a float (rather than
+            # an sp.Float, which won't play nice with lambdify later)
+            if eq.rhs.is_number:
+                value = eq.rhs.evalf()
+                if param in self.param_dict.keys():
+                    duplicates.append(param)
+                else:
+                    self.param_dict[param] = value
+
+            # If the RHS was not a number, its either a calibrating equation or a deterministic relationship of other
+            # parameters.
+
+            # Calibrating equations are tagged in the equation_flags dictionary during parsing.
             elif self.equation_flags[idx]["is_calibrating"]:
-                # Check if this equation is a valid calibrating equation
+                # Calibrating equations can have variables, but they must be in the steady state
                 if not all(
                     [
                         x.time_index == "ss"
@@ -467,16 +477,10 @@ class Block:
                         eq=eq, block_name=self.name
                     )
 
-                if lhs in self.calib_dict:
-                    duplicates.append(lhs)
+                if param in self.calib_dict:
+                    duplicates.append(param)
                 else:
-                    self.calib_dict[lhs] = rhs
-
-            elif rhs.is_number:
-                if lhs in self.param_dict:
-                    duplicates.append(lhs)
-                else:
-                    self.param_dict[lhs] = rhs.doit()
+                    self.calib_dict[param] = rhs
 
             else:
                 # What is left should only be "deterministic relationships", parameters that are defined as
