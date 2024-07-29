@@ -5,9 +5,9 @@ from pathlib import Path
 
 import numpy as np
 
+from gEconpy import model_from_gcn
 from gEconpy.estimation.estimate import build_and_solve, build_Q_and_H
 from gEconpy.estimation.estimation_utilities import extract_sparse_data_from_model
-from gEconpy.model.model import gEconModel
 
 ROOT = Path(__file__).parent.absolute()
 
@@ -17,12 +17,12 @@ class TestEstimationHelpers(unittest.TestCase):
         file_path = os.path.join(
             ROOT, "Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
         )
-        self.model = gEconModel(file_path, verbose=False)
+        self.model = model_from_gcn(file_path, verbose=False)
         self.model.steady_state(verbose=False)
         self.model.solve_model(verbose=False)
 
     def test_build_and_solve(self):
-        param_dict = self.model.free_param_dict
+        param_dict = self.model.parameters()
         to_estimate = list(param_dict.to_string().keys())
         sparse_data = extract_sparse_data_from_model(
             self.model, params_to_estimate=to_estimate

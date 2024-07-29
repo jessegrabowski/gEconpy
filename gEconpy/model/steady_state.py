@@ -146,7 +146,7 @@ def compile_ss_resid_and_sq_err(
         backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
-        stack_return=backend != "pytensor",
+        stack_return=True,
         pop_return=False,
         **kwargs,
     )
@@ -158,7 +158,7 @@ def compile_ss_resid_and_sq_err(
         cache=cache,
         return_symbolic=return_symbolic,
         stack_return=backend != "pytensor",
-        pop_return=backend == "pytensor",
+        pop_return=True,
         **kwargs,
     )
 
@@ -200,8 +200,7 @@ def compile_ss_resid_and_sq_err(
         return_symbolic=return_symbolic,
         stack_return=backend
         != "pytensor",  # error_hess is a list of one element; don't stack into a (1,n,n) array
-        pop_return=backend
-        == "pytensor",  # error_hess is a list of one element; need to remove the list wrapper
+        pop_return=True,
         **kwargs,
     )
 

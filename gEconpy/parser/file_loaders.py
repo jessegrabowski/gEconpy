@@ -286,7 +286,6 @@ def parsed_model_to_data(
             name=block_name, block_dict=parsed_block_dict, assumptions=assumptions
         )
         block.solve_optimization(try_simplify=simplify_blocks)
-
         block_dict[block.name] = block
 
     return block_dict, assumptions, options, tryreduce, provided_ss_equations

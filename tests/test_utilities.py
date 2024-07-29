@@ -1,7 +1,5 @@
 import unittest
 
-from pathlib import Path
-
 import numpy as np
 
 from scipy import stats
@@ -12,8 +10,6 @@ from gEconpy.shared.utilities import (
     compute_autocorrelation_matrix,
     get_shock_std_priors_from_hyperpriors,
 )
-
-ROOT = Path(__file__).parent.absolute()
 
 
 class TestBuildQMatrix(unittest.TestCase):

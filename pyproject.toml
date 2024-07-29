@@ -59,6 +59,8 @@ lines-between-types = 1
 
 [tool.ruff.lint.per-file-ignores]
 'tests/*.py' = [
+  'F401', # Unused import warning for test files -- this check removes imports of fixtures
+  'F811',  # Redefine while unused -- this check fails on imported fixtures
   'F841', # Unused variable warning for test files -- common in pymc model declarations
   'D106'  # Missing docstring for public method -- unittest test subclasses don't need docstrings
 ]
