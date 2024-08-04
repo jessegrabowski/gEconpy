@@ -14,13 +14,15 @@ from gEconpy.model.steady_state import print_steady_state
 def root_and_min_agree_helper(model: Model, **kwargs):
     verbose = kwargs.pop("verbose", False)
     progressbar = kwargs.pop("progressbar", False)
-    root_method = kwargs.pop("root_method", "hybr")
-    minimize_method = kwargs.pop("minimize_method", "Newton-CG")
+    root_method = kwargs.pop("root_method", None)
+    minimize_method = kwargs.pop("minimize_method", None)
     optimizer_kwargs = kwargs.pop("optimizer_kwargs", {})
 
     _ = kwargs.pop("how", None)
 
-    optimizer_kwargs["method"] = root_method
+    if root_method:
+        optimizer_kwargs["method"] = root_method
+
     ss_root, root_success = model.steady_state(
         how="root",
         verbose=verbose,
@@ -29,7 +31,8 @@ def root_and_min_agree_helper(model: Model, **kwargs):
         **kwargs,
     )
 
-    optimizer_kwargs["method"] = minimize_method
+    if minimize_method:
+        optimizer_kwargs["method"] = minimize_method
     ss_minimize, minimize_success = model.steady_state(
         how="minimize",
         verbose=verbose,
@@ -70,7 +73,7 @@ def model_4():
 
 
 def test_solve_ss_with_partial_user_solution(model_1):
-    res, success = model_1.steady_state(verbose=True)
+    res, success = model_1.steady_state()
     assert success
 
 
@@ -128,9 +131,15 @@ def test_print_steady_state_report_solver_fails(model_1, caplog):
 
 
 def test_incomplete_ss_relationship_raises_with_root(model_1):
+    expected_msg = (
+        'Solving a partially provided steady state with how = "root" is only allowed if applying the given '
+        "values results in a new square system.\n"
+        "Found: 1 provided steady state value\n"
+        "Eliminated: 0 equations."
+    )
     with pytest.raises(
         ValueError,
-        match='Solving a partially provided steady state using how="root" is not supported.',
+        match=expected_msg,
     ):
         model_1.steady_state(how="root", fixed_values={"K_ss": 3.0})
 
@@ -200,6 +209,7 @@ def test_steady_state_matches_analytic_w_calibrated_params(model_2):
     I_ss = delta * K_ss
 
     lambda_ss = theta * (C_ss**theta * (1 - L_ss) ** (1 - theta)) ** (1 - tau) / C_ss
+    q_ss = lambda_ss
 
     U_ss = (
         1
@@ -207,26 +217,36 @@ def test_steady_state_matches_analytic_w_calibrated_params(model_2):
         * (C_ss**theta * (1 - L_ss) ** (1 - theta)) ** (1 - tau)
         / (1 - tau)
     )
+
     f = sp.lambdify(alpha, (L_ss / K_ss - 0.36).simplify().subs(param_dict))
     res = optimize.root_scalar(f, bracket=[1e-4, 0.99])
 
     calib_solution = {alpha: res.root}
     all_params = param_dict | calib_solution
 
-    ss_var = [x.to_ss() for x in model_2.variables]
-    *_, K, L, _, _, _, _ = ss_var
-    ss_dict = {
-        k: float(v.subs(all_params))
-        for k, v in zip(
-            ss_var, [A_ss, C_ss, I_ss, K_ss, L_ss, U_ss, Y_ss, lambda_ss, lambda_ss]
-        )
+    answer_dict = {
+        "A_ss": A_ss,
+        "C_ss": C_ss,
+        "I_ss": I_ss,
+        "K_ss": K_ss,
+        "L_ss": L_ss,
+        "U_ss": U_ss,
+        "Y_ss": Y_ss,
+        "lambda_ss": lambda_ss,
+        "q_ss": q_ss,
+        "alpha": res.root,
     }
-    assert_allclose(ss_dict[L] / ss_dict[K], 0.36)
+
     numerical_ss_dict, success = model_2.steady_state(verbose=False, progressbar=False)
     assert success
 
-    for k in ss_dict:
-        assert_allclose(ss_dict[k], numerical_ss_dict[k.name], err_msg=k.name)
+    # Test calibration of alpha --> L_ss / K_ss = 0.36
+    assert_allclose(numerical_ss_dict["L_ss"] / numerical_ss_dict["K_ss"], 0.36)
+
+    ss_vars = [x.to_ss() for x in model_2.variables]
+    for k in ss_vars:
+        answer = float(answer_dict[k.name].subs(all_params))
+        assert_allclose(answer, numerical_ss_dict[k.name], err_msg=k.name)
 
 
 def test_numerical_solvers_succeed_and_agree_RBC(model_3):
@@ -266,36 +286,46 @@ def test_RBC_steady_state_matches_analytic(model_3):
 
     TC_ss = -(r_ss * K_ss + w_ss * L_ss)
 
-    ss_var = [x.to_ss() for x in model_3.variables]
-    answers = [
-        A_ss,
-        C_ss,
-        I_ss,
-        K_ss,
-        L_ss,
-        TC_ss,
-        U_ss,
-        Y_ss,
-        lambda_ss,
-        q_ss,
-        r_ss,
-        w_ss,
-    ]
-    ss_dict = {k: float(v.subs(param_dict)) for k, v in zip(ss_var, answers)}
-    numerical_ss_dict, success = model_3.steady_state(verbose=False, progressbar=False)
+    answer_dict = {
+        "A_ss": A_ss,
+        "C_ss": C_ss,
+        "I_ss": I_ss,
+        "K_ss": K_ss,
+        "L_ss": L_ss,
+        "TC_ss": TC_ss,
+        "U_ss": U_ss,
+        "Y_ss": Y_ss,
+        "lambda_ss": lambda_ss,
+        "q_ss": q_ss,
+        "r_ss": r_ss,
+        "w_ss": w_ss,
+    }
 
-    for k in ss_dict:
-        assert_allclose(ss_dict[k], numerical_ss_dict[k.name], err_msg=k.name)
+    numerical_ss_dict, success = model_3.steady_state(verbose=False, progressbar=False)
+    ss_vars = [x.to_ss() for x in model_3.variables]
+
+    for k in ss_vars:
+        answer = float(answer_dict[k.name].subs(param_dict))
+        assert_allclose(answer, numerical_ss_dict[k.name], err_msg=k.name)
 
 
 def test_numerical_solvers_succeed_and_agree_NK(model_4):
+    # This model's SS can't be solved without some help, so we provide the "obvious" solutions
+    # This is almost equivalent to the Full_New_Keynesian_w_Partial_Steady_State.gcn, with a bit less info
+    # (No solution for mc_ss, r_G, and r)
     root_and_min_agree_helper(
         model_4,
-        verbose=True,
-        progressbar=True,
-        root_method="lm",
-        minimize_method="L-BFGS-B",
-        optimizer_kwargs={"maxiter": 5000},
+        verbose=False,
+        progressbar=False,
+        optimizer_kwargs={"maxiter": 50_000},
+        fixed_values={
+            "shock_technology_ss": 1.0,
+            "shock_preference_ss": 1.0,
+            "pi_ss": 1.0,
+            "pi_star_ss": 1.0,
+            "pi_obj_ss": 1.0,
+            "B_ss": 0.0,
+        },
     )
 
 
@@ -312,6 +342,7 @@ def test_steady_state_matches_analytic_NK(model_4):
         gamma_Y,
         gamma_pi,
         phi_H,
+        phi_pi_obj,
         psi_p,
         psi_w,
         rho_pi_dot,
@@ -326,7 +357,6 @@ def test_steady_state_matches_analytic_NK(model_4):
     pi_ss = sp.Float(1)
     pi_star_ss = sp.Float(1)
     pi_obj_ss = sp.Float(1)
-    # B_ss = sp.Float(0)
 
     r_ss = 1 / beta - (1 - delta)
     r_G_ss = 1 / beta
@@ -337,7 +367,6 @@ def test_steady_state_matches_analytic_NK(model_4):
         * mc_ss ** (1 / (1 - alpha))
         * (alpha / r_ss) ** (alpha / (1 - alpha))
     )
-
     w_star_ss = w_ss
 
     Y_ss = (
@@ -384,40 +413,49 @@ def test_steady_state_matches_analytic_NK(model_4):
 
     RHS_w_ss = LHS_w_ss
 
-    ss_var = [x.to_ss() for x in model_4.variables]
-    answers = [
-        C_ss,
-        Div_ss,
-        I_ss,
-        K_ss,
-        LHS_ss,
-        LHS_w_ss,
-        L_ss,
-        RHS_ss,
-        RHS_w_ss,
-        TC_ss,
-        U_ss,
-        Y_ss,
-        lambda_ss,
-        mc_ss,
-        pi_obj_ss,
-        pi_star_ss,
-        pi_ss,
-        q_ss,
-        r_G_ss,
-        r_ss,
-        shock_preference_ss,
-        shock_technology_ss,
-        w_star_ss,
-        w_ss,
-    ]
-
-    ss_dict = {k: float(v.subs(param_dict)) for k, v in zip(ss_var, answers)}
+    answer_dict = {
+        "C_ss": C_ss,
+        "Div_ss": Div_ss,
+        "I_ss": I_ss,
+        "K_ss": K_ss,
+        "LHS_ss": LHS_ss,
+        "LHS_w_ss": LHS_w_ss,
+        "L_ss": L_ss,
+        "RHS_ss": RHS_ss,
+        "RHS_w_ss": RHS_w_ss,
+        "TC_ss": TC_ss,
+        "U_ss": U_ss,
+        "Y_ss": Y_ss,
+        "lambda_ss": lambda_ss,
+        "mc_ss": mc_ss,
+        "pi_obj_ss": pi_obj_ss,
+        "pi_star_ss": pi_star_ss,
+        "pi_ss": pi_ss,
+        "q_ss": q_ss,
+        "r_G_ss": r_G_ss,
+        "r_ss": r_ss,
+        "shock_preference_ss": shock_preference_ss,
+        "shock_technology_ss": shock_technology_ss,
+        "w_star_ss": w_star_ss,
+        "w_ss": w_ss,
+    }
 
     numerical_ss_dict, success = model_4.steady_state(
-        how="root", optimizer_kwargs={"method": "lm"}
+        how="root",
+        fixed_values={
+            "shock_technology_ss": 1.0,
+            "shock_preference_ss": 1.0,
+            "pi_ss": 1.0,
+            "pi_star_ss": 1.0,
+            "pi_obj_ss": 1.0,
+            "B_ss": 0.0,
+        },
+        verbose=False,
+        progressbar=False,
     )
     assert success
 
-    for k in ss_dict:
-        assert_allclose(ss_dict[k], numerical_ss_dict[k.name], err_msg=k.name)
+    ss_vars = [x.to_ss() for x in model_4.variables]
+    for k in ss_vars:
+        answer = float(answer_dict[k.name].subs(param_dict))
+        assert_allclose(answer, numerical_ss_dict[k.name], err_msg=k.name)

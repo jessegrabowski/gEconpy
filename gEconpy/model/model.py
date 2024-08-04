@@ -40,8 +40,9 @@ _log = logging.getLogger(__name__)
 
 def scipy_wrapper(
     f: Callable,
-    var_names: list[str],
-    unknown_var_idxs: np.ndarray[int],
+    variables: list[str],
+    unknown_var_idxs: np.ndarray[int | bool],
+    unknown_eq_idxs: np.ndarray[int | bool],
     f_ss: Callable | None = None,
 ) -> Callable:
     if f_ss is not None:
@@ -49,23 +50,23 @@ def scipy_wrapper(
         @ft.wraps(f)
         def inner(ss_values, param_dict):
             given_ss = f_ss(**param_dict)
-            ss_dict = dict(zip(var_names, ss_values))
+            ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
             ss_dict.update(given_ss)
             res = f(**ss_dict, **param_dict)
 
             if isinstance(res, float | int):
                 return res
             elif res.ndim == 1:
-                res = res[unknown_var_idxs]
+                res = res[unknown_eq_idxs]
             elif res.ndim == 2:
-                res = res[unknown_var_idxs, :][:, unknown_var_idxs]
+                res = res[unknown_eq_idxs, :][:, unknown_var_idxs]
             return res
 
     else:
 
         @ft.wraps(f)
         def inner(ss_values, param_dict):
-            ss_dict = dict(zip(var_names, ss_values))
+            ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
             return f(**ss_dict, **param_dict)
 
     return inner
@@ -114,6 +115,22 @@ def infer_variable_bounds(variable):
     return lhs, rhs
 
 
+def _initialize_x0(optimizer_kwargs, variables, jitter_x0):
+    n_variables = len(variables)
+
+    use_default_x0 = "x0" not in optimizer_kwargs
+    x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
+
+    if use_default_x0:
+        negative_idx = [x.assumptions0.get("negative", False) for x in variables]
+        x0[negative_idx] = -x0[negative_idx]
+
+    if jitter_x0:
+        x0 += np.random.normal(scale=1e-4, size=n_variables)
+
+    return x0
+
+
 def validate_policy_function(
     A, B, C, D, T, R, tol: float = 1e-8, verbose: bool = True
 ) -> None:
@@ -127,6 +144,23 @@ def validate_policy_function(
     if verbose:
         _log.info(f"Norm of deterministic part: {norm_deterministic:0.9f}")
         _log.info(f"Norm of stochastic part:    {norm_deterministic:0.9f}")
+
+
+def get_known_equation_mask(
+    steady_state_system: list[sp.Expr],
+    ss_dict: SymbolDictionary[sp.Symbol, float],
+    param_dict: SymbolDictionary[sp.Symbol, float],
+    tol: float = 1e-8,
+) -> np.ndarray:
+    sub_dict = ss_dict.copy() | param_dict.copy()
+    subbed_system = [eq.subs(sub_dict.to_sympy()) for eq in steady_state_system]
+
+    eq_is_zero_mask = [
+        (sp.Abs(subbed_eq) < tol) == True  # noqa: E712
+        for eq, subbed_eq in zip(steady_state_system, subbed_system)
+    ]
+
+    return np.array(eq_is_zero_mask)
 
 
 def validate_user_steady_state_simple(
@@ -324,6 +358,7 @@ class Model:
         verbose=True,
         bounds: dict[str, tuple[float, float]] | None = None,
         fixed_values: dict[str, float] | None = None,
+        jitter_x0: bool = False,
         **updates: float,
     ) -> tuple[SymbolDictionary[str, float], bool]:
         """
@@ -374,6 +409,9 @@ class Model:
             are the fixed values. These are not check for validity, and passing an inaccurate value may result in the
             system becoming unsolvable.
 
+        jitter_x0: bool
+            Whether to apply some small N(0, 1e-4) jitter to the initial point
+
         **updates: float, optional
             Parameter values at which to solve the steady state. Passed to self.parameters. If not provided, the default
             parameter values (those originally defined during model construction) are used.
@@ -399,8 +437,14 @@ class Model:
             ).to_string()
             f_ss = add_more_ss_values_wrapper(self.f_ss, fixed_dict)
 
+        # This logic could be made a lot of complex by looking into solver-specific arguments passed via
+        # "options"
+        tol = optimizer_kwargs.get("tol", 1e-8)
+
         param_dict = self.parameters(**updates)
         ss_dict = SymbolDictionary()
+        ss_system = system_to_steady_state(self.equations, self.shocks)
+        unknown_eq_idx = np.full(len(ss_system), True)
 
         # The default value is analytic, because that's best if the user gave everything we need to proceed. If he gave
         # nothing though, use minimize as a fallback default.
@@ -412,10 +456,23 @@ class Model:
             ss_dict = f_ss(**param_dict) if f_ss is not None else ss_dict
             if len(ss_dict) != 0 and len(ss_dict) != len(self.variables):
                 if how == "root":
-                    raise ValueError(
-                        'Solving a partially provided steady state using how="root" is not supported.'
+                    zero_eq_mask = get_known_equation_mask(
+                        steady_state_system=ss_system,
+                        ss_dict=ss_dict,
+                        param_dict=param_dict,
+                        tol=tol,
                     )
-                how = "minimize"
+                    if sum(zero_eq_mask) != len(ss_dict):
+                        n_eliminated = sum(zero_eq_mask)
+                        raise ValueError(
+                            'Solving a partially provided steady state with how = "root" is only allowed if applying '
+                            f'the given values results in a new square system.\n'
+                            f'Found: {len(ss_dict)} provided steady state value{"s" if len(ss_dict) != 1 else ""}\n'
+                            f'Eliminated: {n_eliminated} equation{"s" if n_eliminated != 1 else ""}.'
+                        )
+                    unknown_eq_idx = ~zero_eq_mask
+                else:
+                    how = "minimize"
 
             # Or, if we have everything, we're done.
             elif len(ss_dict) == len(self.variables):
@@ -423,13 +480,9 @@ class Model:
                 success = np.allclose(resid, 0.0, atol=1e-8)
                 return ss_dict, success
 
-        # This logic could be made a lot of complex by looking into solver-specific arguments passed via
-        # "options"
-        tol = optimizer_kwargs.get("tol", 1e-8)
-
         # Quick and dirty check of user-provided steady-state validity. This is NOT robust at all.
         validate_user_steady_state_simple(
-            steady_state_system=system_to_steady_state(self.equations, self.shocks),
+            steady_state_system=ss_system,
             ss_dict=ss_dict,
             param_dict=param_dict,
             tol=tol,
@@ -444,25 +497,20 @@ class Model:
         )
 
         vars_to_solve = [var for var in ss_variables if var not in known_variables]
-        var_names_to_solve = [x.name for x in vars_to_solve]
-
         unknown_var_idx = np.array(
             [x in vars_to_solve for x in ss_variables], dtype="bool"
         )
 
         if how == "root":
-            if np.any(~unknown_var_idx):
-                raise ValueError(
-                    "Method root not currently supported for partially defined steady states. Use "
-                    "method = 'minimize' instead."
-                )
             res = self._solve_steady_state_with_root(
                 f_ss=f_ss,
                 use_jac=use_jac,
-                vars_to_solve=var_names_to_solve,
+                vars_to_solve=vars_to_solve,
                 unknown_var_idx=unknown_var_idx,
+                unknown_eq_idx=unknown_eq_idx,
                 progressbar=progressbar,
                 optimizer_kwargs=optimizer_kwargs,
+                jitter_x0=jitter_x0,
                 **updates,
             )
 
@@ -471,11 +519,13 @@ class Model:
                 f_ss=f_ss,
                 use_jac=use_jac,
                 use_hess=use_hess,
-                vars_to_solve=var_names_to_solve,
+                vars_to_solve=vars_to_solve,
                 unknown_var_idx=unknown_var_idx,
+                unknown_eq_idx=unknown_var_idx,
                 progressbar=progressbar,
                 bounds=bounds,
                 optimizer_kwargs=optimizer_kwargs,
+                jitter_x0=jitter_x0,
                 **updates,
             )
         else:
@@ -507,8 +557,9 @@ class Model:
         self,
         f_ss,
         use_jac: bool = True,
-        vars_to_solve: list[str] | None = None,
+        vars_to_solve: list[TimeAwareSymbol] | None = None,
         unknown_var_idx: np.ndarray | None = None,
+        unknown_eq_idx: np.ndarray | None = None,
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
@@ -517,8 +568,6 @@ class Model:
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
         optimizer_kwargs = deepcopy(optimizer_kwargs)
-
-        n_variables = len(vars_to_solve)
 
         maxiter = optimizer_kwargs.pop("maxiter", 5000)
         method = optimizer_kwargs.pop("method", "hybr")
@@ -531,18 +580,20 @@ class Model:
         else:
             optimizer_kwargs["options"].update({"maxiter": maxiter})
 
-        x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
-        if jitter_x0:
-            x0 += np.random.normal(scale=0.01, size=n_variables)
+        x0 = _initialize_x0(optimizer_kwargs, vars_to_solve, jitter_x0)
 
         param_dict = self.parameters(**param_updates)
-
-        f = scipy_wrapper(self.f_ss_resid, vars_to_solve, unknown_var_idx, f_ss)
-        f_jac = (
-            scipy_wrapper(self.f_ss_jac, vars_to_solve, unknown_var_idx, f_ss)
-            if use_jac
-            else None
+        wrapper = ft.partial(
+            scipy_wrapper,
+            variables=vars_to_solve,
+            unknown_var_idxs=unknown_var_idx,
+            unknown_eq_idxs=unknown_eq_idx,
+            f_ss=f_ss,
         )
+
+        f = wrapper(self.f_ss_resid)
+        f_jac = wrapper(self.f_ss_jac) if use_jac else None
+
         objective = CostFuncWrapper(
             maxeval=maxiter,
             f=f,
@@ -571,6 +622,7 @@ class Model:
         use_hess: bool = True,
         vars_to_solve: list[str] | None = None,
         unknown_var_idx: np.ndarray | None = None,
+        unknown_eq_idx: np.ndarray | None = None,
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
@@ -581,31 +633,14 @@ class Model:
             optimizer_kwargs = {}
         optimizer_kwargs = deepcopy(optimizer_kwargs)
 
-        n_variables = len(vars_to_solve)
-
-        use_default_x0 = "x0" not in optimizer_kwargs
-        x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
-        if use_default_x0:
-            negative_idx = [
-                x.assumptions0.get("negative", False) for x in self.variables
-            ]
-            x0[negative_idx] = -x0[negative_idx]
-
-        if jitter_x0:
-            x0 += np.random.normal(scale=0.01, size=n_variables)
+        x0 = _initialize_x0(optimizer_kwargs, vars_to_solve, jitter_x0)
         tol = optimizer_kwargs.pop("tol", 1e-30)
 
-        # kwarg_bounds = optimizer_kwargs.pop("bounds", None)
         user_bounds = {} if bounds is None else bounds
-
-        ss_variables = [x.to_ss() for x in self.variables] + self.calibrated_params
-        vars_to_solve_sp = [x for x in ss_variables if x.name in vars_to_solve]
-
-        bound_dict = {x.name: infer_variable_bounds(x) for x in vars_to_solve_sp}
+        bound_dict = {x.name: infer_variable_bounds(x) for x in vars_to_solve}
         bound_dict.update(user_bounds)
 
-        bounds = [bound_dict[x] for x in vars_to_solve]
-
+        bounds = [bound_dict[x.name] for x in vars_to_solve]
         has_bounds = any([x != (None, None) for x in bounds])
 
         method = optimizer_kwargs.pop(
@@ -622,17 +657,19 @@ class Model:
             optimizer_kwargs["options"].update({"maxfun": maxiter})
 
         param_dict = self.parameters(**param_updates)
-        f = scipy_wrapper(self.f_ss_error, vars_to_solve, unknown_var_idx, f_ss)
-        f_jac = (
-            scipy_wrapper(self.f_ss_error_grad, vars_to_solve, unknown_var_idx, f_ss)
-            if use_jac
-            else None
+
+        wrapper = ft.partial(
+            scipy_wrapper,
+            variables=vars_to_solve,
+            unknown_var_idxs=unknown_var_idx,
+            unknown_eq_idxs=unknown_eq_idx,
+            f_ss=f_ss,
         )
-        f_hess = (
-            scipy_wrapper(self.f_ss_error_hess, vars_to_solve, unknown_var_idx, f_ss)
-            if use_hess
-            else None
-        )
+
+        f = wrapper(self.f_ss_error)
+        f_jac = wrapper(self.f_ss_error_grad) if use_jac else None
+        f_hess = wrapper(self.f_ss_error_hess) if use_hess else None
+
         objective = CostFuncWrapper(
             maxeval=maxiter,
             f=f,
