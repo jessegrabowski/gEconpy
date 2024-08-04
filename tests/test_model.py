@@ -330,15 +330,20 @@ def test_scipy_wrapped_functions_agree(load_and_cache_model, gcn_path, func):
 
     ss_variables = [x.to_ss() for x in models[0].variables]
     known_variables = list(models[0].f_ss(**models[0].parameters()).to_sympy().keys())
+
     vars_to_solve = [var for var in ss_variables if var not in known_variables]
-    var_names_to_solve = [x.name for x in vars_to_solve]
     unknown_var_idx = np.array([x in vars_to_solve for x in ss_variables], dtype="bool")
+
     params = models[0].parameters().to_string()
-    x0 = np.full(len(var_names_to_solve), 0.8)
+    x0 = np.full(len(vars_to_solve), 0.8)
 
     vals = [
         scipy_wrapper(
-            getattr(model, func), var_names_to_solve, unknown_var_idx, model.f_ss
+            getattr(model, func),
+            vars_to_solve,
+            unknown_var_idx,
+            unknown_var_idx,
+            model.f_ss,
         )(x0, params)
         for model in models
     ]
@@ -509,10 +514,7 @@ def test_model_gradient(load_and_cache_model, backend, gcn_file):
     [
         "One_Block_Simple_1_w_Steady_State.gcn",
         "Open_RBC.gcn",
-        pytest.param(
-            "Full_New_Keynesian.gcn",
-            marks=pytest.mark.skip("NK needs to be tuned to find SS without help"),
-        ),
+        "Full_New_Keynesian.gcn",
     ],
 )
 @pytest.mark.parametrize(
@@ -521,7 +523,9 @@ def test_model_gradient(load_and_cache_model, backend, gcn_file):
 def test_numerical_steady_state(
     load_and_cache_model, how: str, gcn_file: str, backend: BACKENDS
 ):
-    model = load_and_cache_model(gcn_file, backend)
+    # TODO: I was hitting errors when the models were reused, something about the fixed values was breaking stuff.
+    #  Need to track this bug down.
+    model = load_and_cache_model(gcn_file, backend, force_reload=True)
     analytic_res, success = model.steady_state()
     analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
 
@@ -530,16 +534,25 @@ def test_numerical_steady_state(
     f_ss = model.f_ss
     model.f_ss = None
 
-    x0 = np.full_like(analytic_values, 0.8)
+    if gcn_file == "Full_New_Keynesian.gcn":
+        fixed_values = {
+            "shock_technology_ss": 1.0,
+            "shock_preference_ss": 1.0,
+            "pi_ss": 1.0,
+            "pi_star_ss": 1.0,
+            "pi_obj_ss": 1.0,
+            "B_ss": 0.0,
+        }
+    else:
+        fixed_values = None
     numeric_res, success = model.steady_state(
         how=how,
         verbose=False,
         optimizer_kwargs={
-            "x0": x0,
-            "tol": 1e-12,
-            "method": "trust-constr" if how == "minimize" else "hybr",
-            "options": {"maxiter": 10_000} if how == "minimize" else {},
+            "maxiter": 50_000,
+            "method": "hybr" if how == "root" else "Newton-CG",
         },
+        fixed_values=fixed_values,
     )
 
     # Restore steady state function in the cached function
