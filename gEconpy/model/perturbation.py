@@ -1,3 +1,5 @@
+import logging
+
 from functools import wraps
 from inspect import signature
 from typing import Literal
@@ -14,6 +16,8 @@ from gEconpy.model.compile import BACKENDS, compile_function
 from gEconpy.shared.utilities import eq_to_ss
 from gEconpy.solvers.cycle_reduction import nb_cycle_reduction, nb_solve_shock_matrix
 from gEconpy.solvers.gensys import gensys
+
+_log = logging.getLogger(__name__)
 
 
 def override_dummy_wrapper(f, param_name="not_loglin_variable"):
@@ -416,8 +420,8 @@ def check_perturbation_solution(A, B, C, D, T, R, tol=1e-8):
         B, C, D, Q, P, A_prime, R_prime, S_prime
     )
 
-    print(f"Norm of deterministic part: {norm_deterministic:0.9f}")
-    print(f"Norm of stochastic part:    {norm_stochastic:0.9f}")
+    _log.info(f"Norm of deterministic part: {norm_deterministic:0.9f}")
+    _log.info(f"Norm of stochastic part:    {norm_stochastic:0.9f}")
 
 
 def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
@@ -517,7 +521,7 @@ def check_bk_condition(
         raise ValueError(message)
 
     if verbose:
-        print(message)
+        _log.info(message)
 
     if return_value is None:
         return

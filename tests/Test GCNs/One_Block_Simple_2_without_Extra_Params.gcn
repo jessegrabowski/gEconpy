@@ -17,14 +17,6 @@ assumptions
     };
 };
 
-block STEADY_STATE
-{
-    identities
-    {
-        A[ss] = 1;
-    };
-};
-
 block HOUSEHOLD
 {
 	definitions

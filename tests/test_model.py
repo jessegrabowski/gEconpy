@@ -662,27 +662,25 @@ def test_gensys_fails_to_solve():
         model.solve_model(solver="gensys", on_failure="error", verbose=False)
 
 
-def test_outputs_after_gensys_failure(capsys):
+def test_outputs_after_gensys_failure(caplog):
     file_path = "tests/Test GCNs/pert_fails.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(solver="gensys", on_failure="ignore", verbose=True)
 
-    assert capsys.readouterr().out == "Solution exists, but is not unique.\n"
+    captured_message = caplog.messages[-1]
+    assert captured_message == "Solution exists, but is not unique."
 
     P, Q, R, S = model.P, model.Q, model.R, model.S
     for X, name in zip([P, Q, R, S], ["P", "Q", "R", "S"]):
         assert X is None
 
 
-def test_outputs_after_pert_success(capsys):
+def test_outputs_after_pert_success(caplog):
     file_path = "tests/Test GCNs/RBC_Linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(solver="gensys", verbose=True)
 
-    console_output = capsys.readouterr().out
-
-    result_messages = console_output.strip().split("\n")[-2:]
-
+    result_messages = caplog.messages[-2:]
     expected_messages = [
         "Norm of deterministic part: 0.000000000",
         "Norm of stochastic part:    0.000000000",

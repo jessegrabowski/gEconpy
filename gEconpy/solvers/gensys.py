@@ -1,3 +1,4 @@
+import numba as nb
 import numpy as np
 
 from scipy import linalg
@@ -6,74 +7,20 @@ from scipy import linalg
 EPSILON = np.spacing(1)
 
 
-def qzdiv(
-    stake: float, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-     Christopher Sim's qzdiv
-
-    Takes upper-triangular matrices :math:`A`, :math:`B` and orthonormal matrices :math:`Q`, :math:`Z`, and rearranges
-    them so that all cases of ``abs(B(i, i) / A(i, i)) > stake`` are in the lower-right corner, while preserving
-    upper-triangular and orthonormal properties, and maintaining the relationships :math:`Q^TAZ'` and :math:`Q^TBZ'`.
-    The columns of v are sorted correspondingly.
-
-    Matrices :math:`A`, :math:`B`, :math:`Q`, and :math:`Z` are the output of the generalized Schur decomposition
-    (QZ decomposition) of the system matrices :math:`G_0` and :math:`G_1`. A and B are upper triangular, with the
-    properties :math:`QAZ^T = G_0` and :math:`QBZ^T = G_1`.
-
-    Parameters
-    ----------
-     stake : float
-         Largest positive value for which an eigenvalue is considered stable.
-     A : np.ndarray
-         Upper-triangular matrix.
-     B : np.ndarray
-         Upper-triangular matrix.
-     Q : np.ndarray
-         Matrix of left Schur vectors.
-     Z : np.ndarray
-         Matrix of right Schur vectors.
-
-    Returns
-    -------
-     tuple of np.ndarray
-         A, B, Q, Z matrices sorted such that all unstable roots are placed in the lower-right corners of the matrices.
-
-    Notes
-    -----
-     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
-    """
-
-    # TODO: scipy offers a sorted qz routine, ordqz, which automatically sorts the matrices by size of eigenvalue. This
-    #     seems to be what the functions qzdiv and qzswitch do, so it might be worthwhile to see if we can just use
-    #     ordqz instead.
-    #
-    # TODO: Add shape information to the Typing (see PEP 646)
-
-    n, _ = A.shape
-
-    root = np.hstack([np.diag(A)[:, None], np.diag(B)[:, None]])
-    root = np.abs(root)
-    root[:, 0] = root[:, 0] - (root[:, 0] < 1e-13) * (root[:, 0] + root[:, 1])
-    root[:, 1] = root[:, 1] / root[:, 0]
-
-    for i in range(n - 1, -1, -1):
-        m = None
-        for j in range(i, -1, -1):
-            if (root[j, 1] > stake) or (root[j, 1] < -0.1):
-                m = j
-                break
-
-        if m is None:
-            return A, B, Q, Z
-
-        for k in range(m, i):
-            A, B, Q, Z = qzswitch(k, A, B, Q, Z)
-            root[k, 1], root[k + 1, 1] = root[k + 1, 1], root[k, 1]
-
-    return A, B, Q, Z
+@nb.njit(cache=True)
+def neg_conj_flip(x):
+    x_conj = x.conj()
+    x[:] = np.array((-x_conj[1], x_conj[0]))
+    return x
 
 
+@nb.njit(
+    [
+        "UniTuple(c16[:,::1], 4)(i8, c16[:,::1], c16[:,::1], c16[:,::1], c16[:,::1])",
+        "UniTuple(f8[:,::1], 4)(i8, f8[:,::1], f8[:,::1] ,f8[:,::1], f8[:,::1])",
+    ],
+    cache=True,
+)
 def qzswitch(
     i: int, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -125,54 +72,153 @@ def qzswitch(
     e = B[i, i + 1]
     f = B[i + 1, i + 1]
 
+    wz = np.empty((2, 2), dtype=A.dtype)
+    xy = np.empty((2, 2), dtype=A.dtype)
+
     if (abs(c) < eps) & (abs(f) < eps):
         if abs(a) < eps:
             return A, B, Q, Z
 
         else:
-            wz = np.c_[b, -a].T
-            wz = wz / np.sqrt(wz.conj().T @ wz)
-            wz = np.hstack([wz, np.c_[wz[1].conj().T, -wz[0].conj().T].T])
-            xy = np.eye(2)
+            wz_row = np.array((b, -a))
+            wz_inner = (wz_row * wz_row.conj()).sum()
+            wz_row = wz_row / np.sqrt(wz_inner)
+
+            wz[:, 0] = wz_row
+            wz[:, 1] = neg_conj_flip(wz_row)
+            xy[:] = np.eye(2).astype(wz.dtype)
 
     elif (abs(a) < eps) & (abs(d) < eps):
         if abs(c) < eps:
             return A, B, Q, Z
         else:
-            wz = np.eye(2)
-            xy = np.c_[c, -b].T
-            xy = xy / np.sqrt(xy @ xy.conj().T)
-            xy = np.hstack([np.c_[xy[1].conj().T, -xy[0].conj().T].T, xy])
+            xy_row = np.array((c, -b))
+            xy_inner = (xy_row * xy_row.conj()).sum()
+            xy_row = xy_row / np.sqrt(xy_inner)
+
+            xy[:, 0] = neg_conj_flip(xy_row)
+            xy[:, 1] = xy_row
+            wz[:] = np.eye(2).astype(xy.dtype)
 
     else:
-        wz = np.c_[c * e - f * b, (c * d - f * a).conj()]
-        xy = np.c_[(b * d - e * a).conj(), (c * d - f * a).conj()]
+        wz_row = np.array((c * e - f * b, (c * d - f * a).conjugate()))
+        xy_row = np.array(((b * d - e * a).conjugate(), (c * d - f * a).conjugate()))
 
-        n = np.sqrt(wz @ wz.conj().T)
-        m = np.sqrt(xy @ xy.conj().T)
+        wz_inner = (wz_row * wz_row.conj()).sum()
+        xy_inner = (xy_row * xy_row.conj()).sum()
 
-        if m < eps * 100:
+        n = np.sqrt(wz_inner)
+        m = np.sqrt(xy_inner)
+
+        if np.abs(m) < eps * 100:
             return A, B, Q, Z
 
-        wz = wz / n
-        xy = xy / m
+        wz_row = wz_row / n
+        xy_row = xy_row / m
 
-        wz = np.vstack([wz, np.c_[-wz[:, 1].conj(), wz[:, 0].conj()]])
-        xy = np.vstack([xy, np.c_[-xy[:, 1].conj(), xy[:, 0].conj()]])
+        # xy = np.row_stack((xy, neg_conj_flip(xy)))
+        xy[0, :] = xy_row
+        xy[1, :] = neg_conj_flip(xy_row)
+
+        # wz = np.row_stack((wz, neg_conj_flip(wz)))
+        wz[0, :] = wz_row
+        wz[1, :] = neg_conj_flip(wz_row)
 
     idx_slice = slice(i, i + 2)
 
-    A[idx_slice, :] = xy @ A[idx_slice, :]
-    B[idx_slice, :] = xy @ B[idx_slice, :]
-    Q[idx_slice, :] = xy @ Q[idx_slice, :]
+    A[idx_slice, :] = xy @ np.ascontiguousarray(A[idx_slice, :])
+    B[idx_slice, :] = xy @ np.ascontiguousarray(B[idx_slice, :])
+    Q[idx_slice, :] = xy @ np.ascontiguousarray(Q[idx_slice, :])
 
-    A[:, idx_slice] = A[:, idx_slice] @ wz
-    B[:, idx_slice] = B[:, idx_slice] @ wz
-    Z[:, idx_slice] = Z[:, idx_slice] @ wz
+    A[:, idx_slice] = np.ascontiguousarray(A[:, idx_slice]) @ wz
+    B[:, idx_slice] = np.ascontiguousarray(B[:, idx_slice]) @ wz
+    Z[:, idx_slice] = np.ascontiguousarray(Z[:, idx_slice]) @ wz
 
     return A, B, Q, Z
 
 
+@nb.njit(
+    [
+        "UniTuple(c16[:,::1], 4)(f8, c16[:,::1], c16[:,::1] ,c16[:,::1], c16[:,::1])",
+        "UniTuple(f8[:,::1], 4)(f8, f8[:,::1], f8[:,::1] ,f8[:,::1], f8[:,::1])",
+    ],
+    cache=True,
+)
+def qzdiv(
+    stake: float, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+     Christopher Sim's qzdiv
+
+    Takes upper-triangular matrices :math:`A`, :math:`B` and orthonormal matrices :math:`Q`, :math:`Z`, and rearranges
+    them so that all cases of ``abs(B(i, i) / A(i, i)) > stake`` are in the lower-right corner, while preserving
+    upper-triangular and orthonormal properties, and maintaining the relationships :math:`Q^TAZ'` and :math:`Q^TBZ'`.
+    The columns of v are sorted correspondingly.
+
+    Matrices :math:`A`, :math:`B`, :math:`Q`, and :math:`Z` are the output of the generalized Schur decomposition
+    (QZ decomposition) of the system matrices :math:`G_0` and :math:`G_1`. A and B are upper triangular, with the
+    properties :math:`QAZ^T = G_0` and :math:`QBZ^T = G_1`.
+
+    Parameters
+    ----------
+     stake : float
+         Largest positive value for which an eigenvalue is considered stable.
+     A : np.ndarray
+         Upper-triangular matrix.
+     B : np.ndarray
+         Upper-triangular matrix.
+     Q : np.ndarray
+         Matrix of left Schur vectors.
+     Z : np.ndarray
+         Matrix of right Schur vectors.
+
+    Returns
+    -------
+     tuple of np.ndarray
+         A, B, Q, Z matrices sorted such that all unstable roots are placed in the lower-right corners of the matrices.
+
+    Notes
+    -----
+     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
+    """
+
+    # TODO: scipy offers a sorted qz routine, ordqz, which automatically sorts the matrices by size of eigenvalue. This
+    #     seems to be what the functions qzdiv and qzswitch do, so it might be worthwhile to see if we can just use
+    #     ordqz instead.
+    #
+    # TODO: Add shape information to the Typing (see PEP 646)
+
+    n, _ = A.shape
+
+    root = np.hstack((np.diag(A)[:, None], np.diag(B)[:, None]))
+    root = np.abs(root)
+    root[:, 0] = root[:, 0] - (root[:, 0] < 1e-13) * (root[:, 0] + root[:, 1])
+    root[:, 1] = root[:, 1] / root[:, 0]
+
+    for i in range(n - 1, -1, -1):
+        m = None
+        for j in range(i, -1, -1):
+            if (root[j, 1] > stake) or (root[j, 1] < -0.1):
+                m = j
+                break
+
+        if m is None:
+            return A, B, Q, Z
+
+        for k in range(m, i):
+            A[:], B[:], Q[:], Z[:] = qzswitch(k, A, B, Q, Z)
+            root[k, 1], root[k + 1, 1] = root[k + 1, 1], root[k, 1]
+
+    return A, B, Q, Z
+
+
+@nb.njit(
+    [
+        "Tuple((f8, i8, b1))(f8[:,::1], f8[:,::1], f8, f8)",
+        "Tuple((f8, i8, b1))(c16[:,::1], c16[:,::1], f8, f8)",
+    ],
+    cache=True,
+)
 def determine_n_unstable(
     A: np.ndarray, B: np.ndarray, div: float, realsmall: float
 ) -> tuple[float, int, bool]:
@@ -228,6 +274,13 @@ def determine_n_unstable(
     return div, n_unstable, zxz
 
 
+@nb.njit(
+    [
+        "UniTuple(f8[:,::1], 2)(f8[:,::1],  i8)",
+        "UniTuple(c16[:,::1], 2)(c16[:,::1], i8)",
+    ],
+    cache=True,
+)
 def split_matrix_on_eigen_stability(
     A: np.ndarray, n_unstable: int
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -264,6 +317,9 @@ def split_matrix_on_eigen_stability(
     return A1, A2
 
 
+# @nb.njit(['Tuple((f8[:,::1], f8[:,::1], f8[:,::1], i8[::1]))(f8[:,::1], f8)',
+#           'Tuple((c16[:,::1], c16[:,::1], c16[:,::1], i8[::1]))(c16[:,::1], f8)'],
+#          cache=True)
 def build_u_v_d(
     eta: np.ndarray, realsmall: float = EPSILON
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -290,23 +346,19 @@ def build_u_v_d(
     -----
     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
-    u_eta, d_eta, v_eta = linalg.svd(eta)
-    d_eta = np.diag(d_eta)  # match matlab output of svd
-    v_eta = v_eta.conj().T  # match matlab output of svd
+    u_eta, d_eta, vh_eta = linalg.svd(eta, compute_uv=True, full_matrices=False)
+    v_eta = vh_eta.conj().T
 
-    md = min(d_eta.shape)
-    big_ev = np.where(np.diagonal(d_eta[:md, :md] > realsmall))[0]
+    big_ev = np.flatnonzero(d_eta > realsmall)
 
     u_eta = u_eta[:, big_ev]
     v_eta = v_eta[:, big_ev]
-    d_eta = d_eta[big_ev, big_ev]
-
-    if d_eta.ndim == 1:
-        d_eta = np.diag(d_eta)
+    d_eta = np.diag(d_eta[big_ev])
 
     return u_eta, v_eta, d_eta, big_ev
 
 
+# @nb.njit(cache=True)
 def gensys(
     g0: np.ndarray,
     g1: np.ndarray,
@@ -407,8 +459,8 @@ def gensys(
         eu = [-2, -2, 0]
         return None, None, None, None, None, None, None, eu, None
 
-    A, B, Q, Z = qzdiv(div, A, B, Q, Z)
-    gev = np.c_[np.diagonal(A), np.diagonal(B)]
+    A[:], B[:], Q[:], Z[:] = qzdiv(div, A, B, Q, Z)
+    gev = np.column_stack((np.diagonal(A), np.diagonal(B)))
 
     Q1, Q2 = split_matrix_on_eigen_stability(Q, n_unstable)
 
@@ -465,30 +517,36 @@ def gensys(
         @ u_eta_1.conj().T
     )
 
-    T_mat = np.c_[np.eye(n_stable), -inner_term.conj().T]
-    G_0 = np.r_[T_mat @ A, np.c_[np.zeros((n_unstable, n_stable)), np.eye(n_unstable)]]
+    T_mat = np.column_stack((np.eye(n_stable), -inner_term.conj().T))
+    G_0 = np.row_stack(
+        (
+            T_mat @ A,
+            np.column_stack((np.zeros((n_unstable, n_stable)), np.eye(n_unstable))),
+        )
+    )
 
-    G_1 = np.r_[T_mat @ B, np.zeros((n_unstable, n))]
+    G_1 = np.row_stack((T_mat @ B, np.zeros((n_unstable, n))))
 
     G_0_inv = linalg.inv(G_0)
     G_1 = G_0_inv @ G_1
 
     idx = slice(n_stable, n)
 
-    C = np.r_[T_mat @ Q @ c, linalg.solve(A[idx, idx] - B[idx, idx], Q2) @ c]
+    C = np.row_stack((T_mat @ Q @ c, linalg.solve(A[idx, idx] - B[idx, idx], Q2) @ c))
 
-    impact = G_0_inv @ np.r_[T_mat @ Q @ psi, np.zeros((n_unstable, psi.shape[1]))]
+    impact = G_0_inv @ np.row_stack(
+        (T_mat @ Q @ psi, np.zeros((n_unstable, psi.shape[1])))
+    )
 
     f_mat = linalg.solve(B[idx, idx], A[idx, idx])
     f_wt = -linalg.solve(B[idx, idx], Q2) @ psi
     y_wt = G_0_inv[:, idx]
 
-    loose = (
-        G_0_inv
-        @ np.r_[
+    loose = G_0_inv @ np.row_stack(
+        (
             eta_wt_1 @ (np.eye(n_eta) - v_eta @ v_eta.conj().T),
             np.zeros((n_unstable, n_eta)),
-        ]
+        )
     )
 
     G_1 = (Z @ G_1 @ Z.conj().T).real
