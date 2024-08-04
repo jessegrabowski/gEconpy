@@ -57,10 +57,16 @@ def set_equality_equals_zero(eq):
     return eq.rhs - eq.lhs
 
 
-def eq_to_ss(eq):
+def eq_to_ss(eq: sp.Expr, shocks: list[TimeAwareSymbol] | None = None):
+    if shocks is None:
+        shock_subs = {}
+    else:
+        shock_subs = {x.to_ss(): 0.0 for x in shocks}
+
     var_list = [x for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
-    sub_dict = dict(zip(var_list, [x.to_ss() for x in var_list]))
-    return eq.subs(sub_dict)
+    to_ss_subs = dict(zip(var_list, [x.to_ss() for x in var_list]))
+
+    return eq.subs(to_ss_subs).subs(shock_subs)
 
 
 def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]):

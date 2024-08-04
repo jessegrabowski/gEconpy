@@ -1,6 +1,7 @@
 import functools as ft
 import logging
 
+from copy import deepcopy
 from typing import Callable, Literal, Union
 
 import numpy as np
@@ -21,7 +22,6 @@ from gEconpy.exceptions.exceptions import (
     ModelUnknownParameterError,
 )
 from gEconpy.model.compile import BACKENDS
-from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import (
     check_bk_condition,
     check_perturbation_solution,
@@ -31,19 +31,19 @@ from gEconpy.model.perturbation import (
     solve_policy_function_with_gensys,
     statespace_to_gEcon_representation,
 )
-from gEconpy.model.steady_state import (
-    ERROR_FUNCTIONS,
-    compile_known_ss,
-    compile_ss_resid_and_sq_err,
-    steady_state_error_function,
-)
+from gEconpy.model.steady_state import system_to_steady_state
 from gEconpy.solvers.gensys import interpret_gensys_output
 
 VariableType = Union[sp.Symbol, TimeAwareSymbol]
 _log = logging.getLogger(__name__)
 
 
-def scipy_wrapper(f, var_names, unknown_var_idxs, f_ss=None):
+def scipy_wrapper(
+    f: Callable,
+    var_names: list[str],
+    unknown_var_idxs: np.ndarray[int],
+    f_ss: Callable | None = None,
+) -> Callable:
     if f_ss is not None:
 
         @ft.wraps(f)
@@ -71,67 +71,37 @@ def scipy_wrapper(f, var_names, unknown_var_idxs, f_ss=None):
     return inner
 
 
-def compile_model_ss_functions(
-    steady_state_equations,
-    ss_solution_dict,
-    variables,
-    param_dict,
-    deterministic_dict,
-    calib_dict,
-    error_func: ERROR_FUNCTIONS = "squared",
-    backend: BACKENDS = "numpy",
-    return_symbolic: bool = False,
-    **kwargs,
-):
-    cache = {}
-    f_params, cache = compile_param_dict_func(
-        param_dict,
-        deterministic_dict,
-        backend=backend,
-        cache=cache,
-        return_symbolic=return_symbolic,
-    )
+def add_more_ss_values_wrapper(
+    f_ss: Callable | None, known_variables: SymbolDictionary
+) -> Callable:
+    """
+    Inject user-provided constant steady state values to the return of the steady state function.
 
-    calib_eqs = list(calib_dict.to_sympy().values())
-    steady_state_equations = steady_state_equations + calib_eqs
+    Parameters
+    ----------
+    f_ss: Callable, Optional
+        Compiled function that maps models parameters to numerical steady state values for variables.
 
-    parameters = list((param_dict | deterministic_dict).to_sympy().keys())
-    parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
+    known_variables: SymbolDictionary
+        Numerical values for model variables in the steady state provided by the user. Keys are expected to be string
+        variable names, and values floats.
 
-    variables = variables + list(calib_dict.to_sympy().keys())
-    ss_error = steady_state_error_function(
-        steady_state_equations, variables, error_func
-    )
+    Returns
+    -------
+    Callable
+        A new version of f_ss whose returns always includes the contents of known_variables.
+    """
 
-    f_ss, cache = compile_known_ss(
-        ss_solution_dict,
-        variables,
-        parameters,
-        backend=backend,
-        cache=cache,
-        return_symbolic=return_symbolic,
-        **kwargs,
-    )
+    @ft.wraps(f_ss)
+    def inner(**parameters):
+        if f_ss is None:
+            return known_variables
 
-    (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess), cache = (
-        compile_ss_resid_and_sq_err(
-            steady_state_equations,
-            variables,
-            parameters,
-            ss_error,
-            backend=backend,
-            cache=cache,
-            return_symbolic=return_symbolic,
-            **kwargs,
-        )
-    )
+        ss_dict = f_ss(**parameters)
+        ss_dict.update(known_variables)
+        return ss_dict
 
-    return (
-        f_params,
-        f_ss,
-        (f_ss_resid, f_ss_jac),
-        (f_ss_error, f_ss_grad, f_ss_hess),
-    ), cache
+    return inner
 
 
 def infer_variable_bounds(variable):
@@ -155,8 +125,80 @@ def validate_policy_function(
     norm_deterministic, norm_stochastic = resid_norms
 
     if verbose:
-        print(f"Norm of deterministic part: {norm_deterministic:0.9f}")
-        print(f"Norm of stochastic part:    {norm_deterministic:0.9f}")
+        _log.info(f"Norm of deterministic part: {norm_deterministic:0.9f}")
+        _log.info(f"Norm of stochastic part:    {norm_deterministic:0.9f}")
+
+
+def validate_user_steady_state_simple(
+    steady_state_system: list[sp.Expr],
+    ss_dict: SymbolDictionary[sp.Symbol, float],
+    param_dict: SymbolDictionary[sp.Symbol, float],
+    tol: float = 1e-8,
+) -> None:
+    r"""
+    Perform a "shallow" validation of user-provided steady-state values.
+
+    Insert provided numeric values into the systesm of steady state equations and check for non-zero residuals. This
+    is a "shallow" check in the sense that no effort is made to check dependencies between equations (that is,
+    sp.solve is not called). Partial steady states are allowed -- the function simply looks for numeric, non-zero values
+    after the provided values are substituted. Therefore, passing an incorrect value that would later cause a numeric
+    solver to fail is also not detected.
+
+    For example, the following system would be detected as having an incorrect steady-state: for :math:`x_1 = 0.5` :
+
+    .. math::
+
+        \begin{align}
+            x_1 - 1 &= 0 \\
+            x_2^ - 3 = 0
+        \end{align}
+
+    Because the first equation will reduce to :math:`-0.5` after simple substitution. On the other hand, this system
+    would not be marked at :math:`x_1 = 0.5`:
+
+    ..math::
+
+        \begin{align}
+            x_1 - x_2 &= 0 \\
+            x_2 - x_3 &= 0 \\
+            x_3 - 1 &= 0
+        \end{align}
+
+    Clearly this can be reduced to :math:`x_1 = 1$`, but no effort is made to perform these substitutions, so the error
+    will not be flagged. In general, these substitutions are non-trivial, and attempting to solve results in significant
+    time cost.
+
+    Parameters
+    ----------
+    steady_state_system: list of sp.Expr
+        System of model equations with all time indices set to the steady state
+    ss_dict: SymbolDictionary
+        Dictionary of user-provided steady state values. Expected to have TimeAwareSymbol variables as keys and numeric
+        values as values.
+    param_dict: SymbolDictionary
+        Dictionary of parameter values at which to solve for the steady state. Expected to have Symbol variables as
+         keys and numeric values as values.
+    tol: float
+        Radius around zero within which to consider values as zero. Default is 1e-8.
+    """
+    sub_dict = ss_dict.copy() | param_dict.copy()
+    subbed_system = [eq.subs(sub_dict.to_sympy()) for eq in steady_state_system]
+
+    # This has to use equality to check True -- sympy doesn't know the truth value of e.g. |x - 3| < 1e-8. But it does
+    # know that this is NOT the same as True.
+    invalid_equation_strings = [
+        str(eq)
+        for eq, subbed_eq in zip(steady_state_system, subbed_system)
+        if (sp.Abs(subbed_eq) < tol) is False
+    ]
+
+    if len(invalid_equation_strings) > 0:
+        msg = (
+            "User-provide steady state is not valid. The following equations had non-zero residuals "
+            "after subsitution:\n"
+        )
+        msg += "\n".join(invalid_equation_strings)
+        raise ValueError(msg)
 
 
 class Model:
@@ -319,10 +361,22 @@ class Model:
                 to match the argument expected by different optimizers (for example, the ``'hybr'`` method uses
                 ``maxfev``).
 
-        verbose
-        bounds
-        fixed_values
-        updates
+        verbose: bool, default True
+            If true, print a message about convergence (or not) to the console .
+
+        bounds: dict, optional
+            Dictionary of bounds for the steady-state variables. The keys are the variable names and the values are
+            tuples of the form (lower_bound, upper_bound). These are passed to the scipy.optimize.minimize function,
+            see that docstring for more information.
+
+        fixed_values: dict, optional
+            Dictionary of fixed values for the steady-state variables. The keys are the variable names and the values
+            are the fixed values. These are not check for validity, and passing an inaccurate value may result in the
+            system becoming unsolvable.
+
+        **updates: float, optional
+            Parameter values at which to solve the steady state. Passed to self.parameters. If not provided, the default
+            parameter values (those originally defined during model construction) are used.
 
         Returns
         -------
@@ -331,28 +385,64 @@ class Model:
         success: bool
             Flag indicating whether the steady state was successfully solved
         """
-        param_dict = self.parameters(**updates)
+        if optimizer_kwargs is None:
+            optimizer_kwargs = {}
 
-        if how == "analytic" and self.f_ss is None:
+        if fixed_values is None:
+            f_ss = self.f_ss
+        else:
+            fixed_vars = [
+                x for x in self.variables if x.to_ss().name in fixed_values.keys()
+            ]
+            fixed_dict = SymbolDictionary(
+                {x.to_ss(): fixed_values[x.to_ss().name] for x in fixed_vars}
+            ).to_string()
+            f_ss = add_more_ss_values_wrapper(self.f_ss, fixed_dict)
+
+        param_dict = self.parameters(**updates)
+        ss_dict = SymbolDictionary()
+
+        # The default value is analytic, because that's best if the user gave everything we need to proceed. If he gave
+        # nothing though, use minimize as a fallback default.
+        if how == "analytic" and f_ss is None:
             how = "minimize"
         else:
-            ss_dict = self.f_ss(**param_dict) if self.f_ss is not None else {}
+            # If we have at least some user information, check if its is complete. If it's not, we will minimize
+            # with the user-provided values fixed.
+            ss_dict = f_ss(**param_dict) if f_ss is not None else ss_dict
             if len(ss_dict) != 0 and len(ss_dict) != len(self.variables):
+                if how == "root":
+                    raise ValueError(
+                        'Solving a partially provided steady state using how="root" is not supported.'
+                    )
                 how = "minimize"
+
+            # Or, if we have everything, we're done.
             elif len(ss_dict) == len(self.variables):
                 resid = self.f_ss_resid(**param_dict, **ss_dict)
                 success = np.allclose(resid, 0.0, atol=1e-8)
                 return ss_dict, success
+
+        # This logic could be made a lot of complex by looking into solver-specific arguments passed via
+        # "options"
+        tol = optimizer_kwargs.get("tol", 1e-8)
+
+        # Quick and dirty check of user-provided steady-state validity. This is NOT robust at all.
+        validate_user_steady_state_simple(
+            steady_state_system=system_to_steady_state(self.equations, self.shocks),
+            ss_dict=ss_dict,
+            param_dict=param_dict,
+            tol=tol,
+        )
 
         ss_variables = [x.to_ss() for x in self.variables] + list(
             self.calibrated_params
         )
 
         known_variables = (
-            []
-            if self.f_ss is None
-            else list(self.f_ss(**self.parameters()).to_sympy().keys())
+            [] if f_ss is None else list(f_ss(**self.parameters()).to_sympy().keys())
         )
+
         vars_to_solve = [var for var in ss_variables if var not in known_variables]
         var_names_to_solve = [x.name for x in vars_to_solve]
 
@@ -367,6 +457,7 @@ class Model:
                     "method = 'minimize' instead."
                 )
             res = self._solve_steady_state_with_root(
+                f_ss=f_ss,
                 use_jac=use_jac,
                 vars_to_solve=var_names_to_solve,
                 unknown_var_idx=unknown_var_idx,
@@ -374,8 +465,10 @@ class Model:
                 optimizer_kwargs=optimizer_kwargs,
                 **updates,
             )
+
         elif how == "minimize":
             res = self._solve_steady_state_with_minimize(
+                f_ss=f_ss,
                 use_jac=use_jac,
                 use_hess=use_hess,
                 vars_to_solve=var_names_to_solve,
@@ -388,9 +481,7 @@ class Model:
         else:
             raise NotImplementedError()
 
-        provided_ss_values = (
-            self.f_ss(**param_dict).to_sympy() if self.f_ss is not None else {}
-        )
+        provided_ss_values = f_ss(**param_dict).to_sympy() if f_ss is not None else {}
         optimizer_results = SymbolDictionary(
             {var: res.x[i] for i, var in enumerate(vars_to_solve)}
         )
@@ -398,10 +489,11 @@ class Model:
         res_dict = SymbolDictionary({x: res_dict[x] for x in ss_variables}).to_string()
 
         return postprocess_optimizer_res(
-            res,
-            res_dict,
-            ft.partial(self.f_ss_resid, **param_dict),
-            ft.partial(self.f_ss_error_grad, **param_dict),
+            res=res,
+            res_dict=res_dict,
+            f_resid=ft.partial(self.f_ss_resid, **param_dict),
+            f_jac=ft.partial(self.f_ss_error_grad, **param_dict),
+            tol=tol,
             verbose=verbose,
         )
 
@@ -413,6 +505,7 @@ class Model:
 
     def _solve_steady_state_with_root(
         self,
+        f_ss,
         use_jac: bool = True,
         vars_to_solve: list[str] | None = None,
         unknown_var_idx: np.ndarray | None = None,
@@ -423,6 +516,7 @@ class Model:
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
+        optimizer_kwargs = deepcopy(optimizer_kwargs)
 
         n_variables = len(vars_to_solve)
 
@@ -443,9 +537,9 @@ class Model:
 
         param_dict = self.parameters(**param_updates)
 
-        f = scipy_wrapper(self.f_ss_resid, vars_to_solve, unknown_var_idx, self.f_ss)
+        f = scipy_wrapper(self.f_ss_resid, vars_to_solve, unknown_var_idx, f_ss)
         f_jac = (
-            scipy_wrapper(self.f_ss_jac, vars_to_solve, unknown_var_idx, self.f_ss)
+            scipy_wrapper(self.f_ss_jac, vars_to_solve, unknown_var_idx, f_ss)
             if use_jac
             else None
         )
@@ -458,8 +552,8 @@ class Model:
 
         f_optim = ft.partial(
             optimize.root,
-            objective,
-            x0,
+            fun=objective,
+            x0=x0,
             jac=use_jac,
             args=param_dict,
             method=method,
@@ -472,6 +566,7 @@ class Model:
 
     def _solve_steady_state_with_minimize(
         self,
+        f_ss,
         use_jac: bool = True,
         use_hess: bool = True,
         vars_to_solve: list[str] | None = None,
@@ -484,15 +579,18 @@ class Model:
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
+        optimizer_kwargs = deepcopy(optimizer_kwargs)
 
         n_variables = len(vars_to_solve)
 
-        maxiter = optimizer_kwargs.pop("maxiter", 5000)
-        if "options" not in optimizer_kwargs:
-            optimizer_kwargs["options"] = {}
-        optimizer_kwargs["options"].update({"maxiter": maxiter})
-
+        use_default_x0 = "x0" not in optimizer_kwargs
         x0 = optimizer_kwargs.pop("x0", np.full(n_variables, 0.8))
+        if use_default_x0:
+            negative_idx = [
+                x.assumptions0.get("negative", False) for x in self.variables
+            ]
+            x0[negative_idx] = -x0[negative_idx]
+
         if jitter_x0:
             x0 += np.random.normal(scale=0.01, size=n_variables)
         tol = optimizer_kwargs.pop("tol", 1e-30)
@@ -509,40 +607,46 @@ class Model:
         bounds = [bound_dict[x] for x in vars_to_solve]
 
         has_bounds = any([x != (None, None) for x in bounds])
+
         method = optimizer_kwargs.pop(
-            "method", "trust-krylov" if not has_bounds else "trust-constr"
+            "method", "trust-ncg" if not has_bounds else "trust-constr"
         )
-        if method not in ["trust-constr", "L-BFGS-B"]:
+        if method not in ["trust-constr", "L-BFGS-B", "powell"]:
             has_bounds = False
 
-        param_dict = self.parameters(**param_updates)
+        maxiter = optimizer_kwargs.pop("maxiter", 5000)
+        if "options" not in optimizer_kwargs:
+            optimizer_kwargs["options"] = {}
+        optimizer_kwargs["options"].update({"maxiter": maxiter})
+        if method == "L-BFGS-B":
+            optimizer_kwargs["options"].update({"maxfun": maxiter})
 
+        param_dict = self.parameters(**param_updates)
+        f = scipy_wrapper(self.f_ss_error, vars_to_solve, unknown_var_idx, f_ss)
+        f_jac = (
+            scipy_wrapper(self.f_ss_error_grad, vars_to_solve, unknown_var_idx, f_ss)
+            if use_jac
+            else None
+        )
+        f_hess = (
+            scipy_wrapper(self.f_ss_error_hess, vars_to_solve, unknown_var_idx, f_ss)
+            if use_hess
+            else None
+        )
         objective = CostFuncWrapper(
             maxeval=maxiter,
-            f=scipy_wrapper(self.f_ss_error, vars_to_solve, unknown_var_idx, self.f_ss),
-            f_jac=scipy_wrapper(
-                self.f_ss_error_grad, vars_to_solve, unknown_var_idx, self.f_ss
-            )
-            if use_jac
-            else None,
-            f_hess=scipy_wrapper(
-                self.f_ss_error_hess, vars_to_solve, unknown_var_idx, self.f_ss
-            )
-            if use_hess
-            else None,
+            f=f,
+            f_jac=f_jac,
+            f_hess=f_hess,
             progressbar=progressbar,
         )
 
         f_optim = ft.partial(
             optimize.minimize,
-            objective,
-            x0,
+            fun=objective,
+            x0=x0,
             jac=use_jac,
-            hess=scipy_wrapper(
-                self.f_ss_error_hess, vars_to_solve, unknown_var_idx, self.f_ss
-            )
-            if use_hess
-            else None,
+            hess=f_hess,
             args=param_dict,
             callback=objective.callback,
             method=method,
@@ -699,7 +803,7 @@ class Model:
                 elif on_failure == "ignore":
                     if verbose:
                         message = interpret_gensys_output(eu)
-                        print(message)
+                        _log.info(message)
                     self.P = None
                     self.Q = None
                     self.R = None
@@ -709,8 +813,8 @@ class Model:
 
             if verbose:
                 message = interpret_gensys_output(eu)
-                print(message)
-                print(
+                _log.info(message)
+                _log.info(
                     "Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S"
                 )
 

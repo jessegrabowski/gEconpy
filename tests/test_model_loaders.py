@@ -12,9 +12,9 @@ from gEconpy.exceptions.exceptions import (
 )
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
-from gEconpy.model.model import compile_model_ss_functions
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.steady_state import (
+    compile_model_ss_functions,
     make_steady_state_shock_dict,
     system_to_steady_state,
 )
@@ -318,8 +318,7 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
     ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
 
     validate_results(equations, param_dict, calib_dict, deterministic_dict)
-    ss_shock_dict = make_steady_state_shock_dict(shocks)
-    steady_state_equations = system_to_steady_state(equations, ss_shock_dict)
+    steady_state_equations = system_to_steady_state(equations, shocks)
 
     (f_params, f_ss, resid_funcs, error_funcs), cache = compile_model_ss_functions(
         steady_state_equations,

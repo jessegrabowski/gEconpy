@@ -1,9 +1,9 @@
 from gEconpy.model.compile import BACKENDS
-from gEconpy.model.model import Model, compile_model_ss_functions
+from gEconpy.model.model import Model
 from gEconpy.model.perturbation import compile_linearized_system
 from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
-    make_steady_state_shock_dict,
+    compile_model_ss_functions,
     system_to_steady_state,
 )
 from gEconpy.parser.file_loaders import (
@@ -59,8 +59,7 @@ def model_from_gcn(
         deterministic_dict,
         on_unused_parameters=on_unused_parameters,
     )
-    ss_shock_dict = make_steady_state_shock_dict(shocks)
-    steady_state_equations = system_to_steady_state(equations, ss_shock_dict)
+    steady_state_equations = system_to_steady_state(equations, shocks)
 
     variables = sorted(variables, key=lambda x: x.base_name)
     shocks = sorted(shocks, key=lambda x: x.base_name)

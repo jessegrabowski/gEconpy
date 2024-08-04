@@ -6,7 +6,8 @@ from collections.abc import Callable
 import numpy as np
 
 from fastprogress.fastprogress import ProgressBar, progress_bar
-from scipy.optimize import OptimizeResult
+
+from gEconpy.classes.containers import SymbolDictionary
 
 _log = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class CostFuncWrapper:
 
 
 def optimzer_early_stopping_wrapper(f_optim):
-    objective = f_optim.args[0]
+    objective = f_optim.keywords["fun"]
     progressbar = objective.progressbar
 
     res = f_optim()
@@ -142,23 +143,51 @@ def postprocess_optimizer_res(
     res_dict,
     f_resid,
     f_jac,
+    tol,
     verbose=True,
-) -> tuple[dict, OptimizeResult]:
+) -> tuple[SymbolDictionary, bool]:
     success = res.success
 
     f_x = np.r_[[x.ravel() for x in f_resid(**res_dict)]]
     df_dx = f_jac(**res_dict)
 
+    sse = (f_x**2).sum()
+    max_abs_error = np.max(np.abs(f_x))
+    grad_norm = np.linalg.norm(df_dx, ord=2)
+    abs_max_grad = np.max(np.abs(df_dx))
+
+    # Sometimes the optimizer is way too strict and returns success of False even if the point is pretty clearly
+    # minimum.
+    numeric_success = all(
+        condition < tol for condition in [sse, max_abs_error, grad_norm, abs_max_grad]
+    )
+
+    if numeric_success and not success:
+        word = " IS "
+    elif not numeric_success and not success:
+        word = " NOT "
+    else:
+        word = " "
+
+    line_1 = f"Steady state{word}found"
+    if numeric_success and not success:
+        line_1 += (
+            ", although optimizer returned success = False.\n"
+            "This can be ignored, but to silence this message, try reducing the solver-specific tolerance, "
+            "or use a different solution algorithm."
+        )
+
     msg = (
-        f"Steady state {'' if success else 'NOT '}found.\n"
+        f'{line_1}\n'
         f'{"-"*80}\n'
         f"{'Optimizer message':<30}{res.message}\n"
-        f"{'Sum of squared residuals':<30}{(f_x ** 2).sum()}\n"
-        f"{'Maximum absoluate error':<30}{np.abs(f_x).max()}\n"
-        f"{'Gradient norm at solution':<30}{np.linalg.norm(df_dx)}"
+        f"{'Sum of squared residuals':<30}{sse}\n"
+        f"{'Maximum absoluate error':<30}{max_abs_error}\n"
+        f"{'Gradient L2-norm at solution':<30}{grad_norm}\n"
+        f"{'Max abs gradient at solution':<30}{abs_max_grad}"
     )
 
     if verbose:
         _log.info(msg)
 
-    return res_dict, success
+    return res_dict, success | numeric_success
