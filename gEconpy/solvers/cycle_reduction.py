@@ -1,18 +1,15 @@
+import numba as nb
 import numpy as np
 
-from numba import njit
-from numpy.typing import ArrayLike
 
-
-@njit(cache=True)
+@nb.jit(cache=True)
 def nb_cycle_reduction(
-    A0: ArrayLike,
-    A1: ArrayLike,
-    A2: ArrayLike,
+    A0: np.ndarray,
+    A1: np.ndarray,
+    A2: np.ndarray,
     max_iter: int = 1000,
     tol: float = 1e-7,
-    verbose: bool = True,
-) -> tuple[ArrayLike | None, str, float]:
+) -> tuple[np.ndarray | None, np.ndarray | None, str, float]:
     """
     Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1].
     Useful in the DSGE context to solve for the implicit derivative of the policy function, g, with respect to
@@ -36,13 +33,13 @@ def nb_cycle_reduction(
         Maximum number of iterations to perform before giving up.
     tol: float, default: 1e-7
         Floating point tolerance used to detect algorithmic convergence
-    verbose: bool, default: True
-        If true, prints the sum of squared residuals that result when the system is computed used the solution.
 
     Returns
     -------
     X: array
         Solution to matrix quadratic equation
+    res: array
+        Residual of the matrix quadratic equation, or None if the algorithm fails to converge
     result: str
         String indicating the result of the optimization. If the algorithm converges, this will be "Optimization
         successful". If the algorithm fails to converge, this will be "Iteration on all matrices failed to converged"
@@ -59,23 +56,20 @@ def nb_cycle_reduction(
     result = "Optimization successful"
     log_norm = 0
     X = None
+    res = None
 
     A0_initial = A0.copy()
     A1_hat = A1.copy()
 
-    if verbose:
-        A1_initial = A1.copy()
-        A2_initial = A2.copy()
+    A1_initial = A1.copy()
+    A2_initial = A2.copy()
 
     n, _ = A0.shape
     idx_0 = np.arange(n)
     idx_1 = idx_0 + n
 
-    # Pre-allocate this so it doesn't have to be repeatedly created
-    EYE = np.eye(A1.shape[0])
-
     for i in range(max_iter):
-        tmp = np.vstack((A0, A2)) @ np.linalg.solve(A1, EYE) @ np.hstack((A0, A2))
+        tmp = np.vstack((A0, A2)) @ np.linalg.solve(A1, np.hstack((A0, A2)))
 
         A1 = A1 - tmp[idx_0, :][:, idx_1] - tmp[idx_1, :][:, idx_0]
         A0 = -tmp[idx_0, :][:, idx_0]
@@ -98,18 +92,15 @@ def nb_cycle_reduction(
                 result = "Iteration on all matrices failed to converged"
                 log_norm = np.log(np.linalg.norm(A1, 1))
 
-            return X, result, log_norm
+            return X, res, result, log_norm
 
     X = -np.linalg.solve(A1_hat, A0_initial)
+    res = A0_initial + A1_initial @ X + A2_initial @ X @ X
 
-    if verbose:
-        res = A0_initial + A1_initial @ X + A2_initial @ X @ X
-        print("Solution found, sum of squared residuals: ", (res**2).sum())
-
-    return X, result, log_norm
+    return X, res, result, log_norm
 
 
-@njit(cache=True)
+@nb.njit(cache=True)
 def nb_solve_shock_matrix(B, C, D, G_1):
     """
     Given the partial solution to the linear approximate policy function G_1, solve for the remaining component of the
@@ -137,4 +128,4 @@ def nb_solve_shock_matrix(B, C, D, G_1):
 
     """
 
-    return -np.linalg.solve(C @ G_1 + B, np.eye(C.shape[0])) @ D
+    return -np.linalg.solve(C @ G_1 + B, D.astype(C.dtype))

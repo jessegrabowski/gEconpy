@@ -16,8 +16,8 @@ def neg_conj_flip(x):
 
 @nb.njit(
     [
-        "UniTuple(c16[:,::1], 4)(i8, c16[:,::1], c16[:,::1], c16[:,::1], c16[:,::1])",
-        "UniTuple(f8[:,::1], 4)(i8, f8[:,::1], f8[:,::1] ,f8[:,::1], f8[:,::1])",
+        "UniTuple(c16[::1, :], 4)(i8, c16[::1, :], c16[::1, :], c16[::1, :], c16[::1, :])",
+        "UniTuple(f8[::1, :], 4)(i8, f8[::1, :], f8[::1, :] ,f8[::1, :], f8[::1, :])",
     ],
     cache=True,
 )
@@ -126,21 +126,21 @@ def qzswitch(
 
     idx_slice = slice(i, i + 2)
 
-    A[idx_slice, :] = xy @ np.ascontiguousarray(A[idx_slice, :])
-    B[idx_slice, :] = xy @ np.ascontiguousarray(B[idx_slice, :])
-    Q[idx_slice, :] = xy @ np.ascontiguousarray(Q[idx_slice, :])
+    A[idx_slice, :] = xy @ np.asfortranarray(A[idx_slice, :])
+    B[idx_slice, :] = xy @ np.asfortranarray(B[idx_slice, :])
+    Q[idx_slice, :] = xy @ np.asfortranarray(Q[idx_slice, :])
 
-    A[:, idx_slice] = np.ascontiguousarray(A[:, idx_slice]) @ wz
-    B[:, idx_slice] = np.ascontiguousarray(B[:, idx_slice]) @ wz
-    Z[:, idx_slice] = np.ascontiguousarray(Z[:, idx_slice]) @ wz
+    A[:, idx_slice] = np.asfortranarray(A[:, idx_slice]) @ wz
+    B[:, idx_slice] = np.asfortranarray(B[:, idx_slice]) @ wz
+    Z[:, idx_slice] = np.asfortranarray(Z[:, idx_slice]) @ wz
 
     return A, B, Q, Z
 
 
 @nb.njit(
     [
-        "UniTuple(c16[:,::1], 4)(f8, c16[:,::1], c16[:,::1] ,c16[:,::1], c16[:,::1])",
-        "UniTuple(f8[:,::1], 4)(f8, f8[:,::1], f8[:,::1] ,f8[:,::1], f8[:,::1])",
+        "UniTuple(c16[::1, :], 4)(f8, c16[::1, :], c16[::1, :] ,c16[::1, :], c16[::1, :])",
+        "UniTuple(f8[::1, :], 4)(f8, f8[::1, :], f8[::1, :] ,f8[::1, :], f8[::1, :])",
     ],
     cache=True,
 )
@@ -214,13 +214,13 @@ def qzdiv(
 
 @nb.njit(
     [
-        "Tuple((f8, i8, b1))(f8[:,::1], f8[:,::1], f8, f8)",
-        "Tuple((f8, i8, b1))(c16[:,::1], c16[:,::1], f8, f8)",
+        "Tuple((f8, i8, b1))(f8[::1, :], f8[::1, :], optional(f8), f8)",
+        "Tuple((f8, i8, b1))(c16[::1, :], c16[::1, :], optional(f8), f8)",
     ],
     cache=True,
 )
 def determine_n_unstable(
-    A: np.ndarray, B: np.ndarray, div: float, realsmall: float
+    A: np.ndarray, B: np.ndarray, div: float | None, realsmall: float
 ) -> tuple[float, int, bool]:
     """
     Determines how many roots of the system described by A and B are unstable.
@@ -231,8 +231,9 @@ def determine_n_unstable(
         Upper-triangular matrix, output of QZ decomposition.
     B : array
         Upper-triangular matrix, output of QZ decomposition.
-    div : float
-        Largest positive value for which an eigenvalue is considered stable.
+    div : float, Optional
+        Largest positive value for which an eigenvalue is considered stable. If None, a suitable value is calculated
+        based on the input matrices.
     realsmall : float
         An arbitrarily small number.
 
@@ -276,8 +277,8 @@ def determine_n_unstable(
 
 @nb.njit(
     [
-        "UniTuple(f8[:,::1], 2)(f8[:,::1],  i8)",
-        "UniTuple(c16[:,::1], 2)(c16[:,::1], i8)",
+        "UniTuple(f8[::1, :], 2)(f8[::1, :],  i8)",
+        "UniTuple(c16[::1, :], 2)(c16[::1, :], i8)",
     ],
     cache=True,
 )
@@ -311,8 +312,8 @@ def split_matrix_on_eigen_stability(
     stable_slice = slice(None, n - n_unstable)
     unstable_slice = slice(n - n_unstable, None)
 
-    A1 = A[stable_slice]
-    A2 = A[unstable_slice]
+    A1 = np.asfortranarray(A[stable_slice])
+    A2 = np.asfortranarray(A[unstable_slice])
 
     return A1, A2
 
@@ -450,7 +451,9 @@ def gensys(
 
     n, _ = g1.shape
     A, B, Q, Z = linalg.qz(g0, g1, "complex")
-    Q = Q.conj().T  # q is transposed relative to matlab, see scipy docs
+    Q = np.asfortranarray(
+        Q.conj().T
+    )  # q is transposed relative to matlab, see scipy docs
 
     div, n_unstable, zxz = determine_n_unstable(A, B, div, tol)
     n_stable = n - n_unstable
