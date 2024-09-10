@@ -126,7 +126,7 @@ def test_solve_policy_function(
     load_and_cache_model, gcn_file, state_variables, backend
 ):
     mod = load_and_cache_model(gcn_file, backend)
-    steady_state_dict, succes = mod.steady_state()
+    steady_state_dict, success = mod.steady_state()
     A, B, C, D = mod.linearize_model(order=1, steady_state_dict=steady_state_dict)
 
     gensys_results = solve_policy_function_with_gensys(A, B, C, D, 1e-8)

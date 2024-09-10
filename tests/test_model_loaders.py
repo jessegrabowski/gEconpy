@@ -15,7 +15,6 @@ from gEconpy.model.compile import BACKENDS
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.steady_state import (
     compile_model_ss_functions,
-    make_steady_state_shock_dict,
     system_to_steady_state,
 )
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
@@ -130,7 +129,7 @@ EXPECTED_TRYREDUCE = {
     "full_nk": ["Div[]", "TC[]"],
 }
 
-EXPECTED_SS_LEN = {"one_block": 1, "one_block_ss": 9, "one_block_2": 0, "full_nk": 25}
+EXPECTED_SS_LEN = {"one_block": 0, "one_block_ss": 9, "one_block_2": 0, "full_nk": 25}
 
 EXPECTED_VARIABLES = {
     "one_block": ["A", "C", "K", "U", "lambda"],
@@ -291,7 +290,7 @@ def test_create_parameter_function(gcn_path, name, backend):
 )
 def test_all_model_functions_return_arrays(backend: BACKENDS):
     outputs = gcn_to_block_dict(
-        "tests/Test GCNs/One_Block_Simple_1.gcn", simplify_blocks=True
+        "tests/Test GCNs/One_Block_Simple_1_w_Steady_State.gcn", simplify_blocks=True
     )
     block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
 
@@ -346,7 +345,7 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_1.gcn",
+        "One_Block_Simple_1_w_Steady_State.gcn",
         "Open_RBC.gcn",
         "Full_New_Keynesian.gcn",
     ],
@@ -385,3 +384,33 @@ def test_loading_fails_if_extra_parameters():
         model_from_gcn(
             os.path.join("tests/Test GCNs", "Open_RBC_with_extra_params.gcn")
         )
+
+
+def test_build_report(caplog):
+    model_from_gcn(
+        "tests/Test GCNs/Two_Block_RBC_1.gcn",
+        verbose=True,
+        simplify_tryreduce=True,
+        simplify_constants=True,
+        simplify_blocks=True,
+    )
+
+    expected_report = r"""
+                Model Building Complete.
+                Found:
+                    12 equations
+                    12 variables
+                    The following "variables" were defined as constants and have been substituted away:
+                        P_t
+                    1 stochastic shock
+                        0 / 1 has a defined prior.
+                    6 parameters
+                        0 / 6 has a defined prior.
+                    0 parameters to calibrate.m
+                    Model appears well defined and ready to proceed to solving."""
+
+    expected_lines = [x.strip() for x in expected_report.strip().split("\n")]
+    found_lines = [x.strip() for x in caplog.messages[-1].strip().split("\n")]
+
+    for line1, line2 in zip(expected_lines, found_lines, strict=True):
+        assert line1 == line2

@@ -34,7 +34,9 @@ def test_multiple_outputs(
         mode="FAST_COMPILE",
     )
     res = f_func(x=2, y=3, z=4)
-    assert isinstance(res, np.ndarray) if stack_return else isinstance(res, list)
+    assert (
+        isinstance(res, np.ndarray) if stack_return else isinstance(res, list | tuple)
+    )
     assert res.shape == (3,) if stack_return else len(res) == 3
     np.testing.assert_allclose(
         res if stack_return else np.stack(res), np.array([4.0, 9.0, 16.0])
