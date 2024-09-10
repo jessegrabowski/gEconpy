@@ -187,9 +187,7 @@ def compile_to_numba(
     pop_return: bool,
     **kwargs,
 ):
-    f = numba_lambdify(inputs, outputs)
-    if stack_return:
-        f = stack_return_wrapper(f)
+    f = numba_lambdify(inputs, outputs, stack_outputs=stack_return)
     if pop_return:
         f = pop_return_wrapper(f)
     return f, cache
