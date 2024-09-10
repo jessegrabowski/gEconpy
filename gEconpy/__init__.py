@@ -10,6 +10,12 @@ from gEconpy import (
     solvers,
 )
 from gEconpy.model.build import model_from_gcn
+from gEconpy.model.model import (
+    autocovariance_matrix,
+    stationary_covariance_matrix,
+    summarize_perturbation_solution,
+)
+from gEconpy.model.perturbation import check_bk_condition
 from gEconpy.shared import compile_to_statsmodels, make_mod_file
 
 _log = logging.getLogger(__name__)
@@ -24,6 +30,10 @@ if not logging.root.handlers:
 __version__ = "1.2.1"
 __all__ = [
     "model_from_gcn",
+    "summarize_perturbation_solution",
+    "stationary_covariance_matrix",
+    "autocovariance_matrix",
+    "check_bk_condition",
     "classes",
     "estimation",
     "exceptions",
