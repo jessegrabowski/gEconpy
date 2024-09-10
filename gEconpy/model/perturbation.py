@@ -4,6 +4,7 @@ from functools import wraps
 from inspect import signature
 from typing import Literal
 
+import numba as nb
 import numpy as np
 import pandas as pd
 import sympy as sp
@@ -92,7 +93,6 @@ def linearize_model(
     equations: list[sp.Expr],
     shocks: list[sp.Symbol],
     order=1,
-    model_is_linear=False,
 ) -> tuple[list[sp.Matrix, ...], sp.Symbol]:
     r"""
     Log-linearize a model around its steady state.
@@ -208,7 +208,6 @@ def compile_linearized_system(
     deterministic_dict
     calib_dict
     shocks
-    model_is_linear
     backend
     return_symbolic
     cache
@@ -229,9 +228,7 @@ def compile_linearized_system(
     parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
     calib_params = list(calib_dict.to_sympy().keys())
 
-    outputs, not_loglin_var = linearize_model(
-        variables, equations, shocks, model_is_linear=model_is_linear
-    )
+    outputs, not_loglin_var = linearize_model(variables, equations, shocks)
     inputs = ss_variables + calib_params + parameters + [not_loglin_var]
 
     f_linearize, cache = compile_function(
@@ -297,10 +294,19 @@ def solve_policy_function_with_cycle_reduction(
     # a Jacobian matrix is all constants (i.e. dF/d_shocks) -- cast everything to float64 here to avoid
     # a numba warning.
     T, R = None, None
+    T, res, result, log_norm = nb_cycle_reduction(A, B, C, max_iter, tol)
+    T = np.ascontiguousarray(T)
 
-    # A, B, C, D = A.astype('float64'), B.astype('float64'), C.astype('float64'), D.astype('float64')
-
-    T, result, log_norm = nb_cycle_reduction(A, B, C, max_iter, tol, verbose)
+    if verbose:
+        if result == "Optimization successful":
+            _log.info(
+                f"Solution found, sum of squared residuals: {(res ** 2).sum():0.9f}",
+            )
+        else:
+            _log.info(
+                f"Solution not found. Solver returned: {result}\n,"
+                f"Log norm of the solution at the final iteration: {log_norm:0.9f}"
+            )
 
     if T is not None:
         R = nb_solve_shock_matrix(B, C, D, T)
@@ -308,6 +314,7 @@ def solve_policy_function_with_cycle_reduction(
     return T, R, result, log_norm
 
 
+@nb.njit(cache=True)
 def _get_variable_counts(A, D):
     n_eq, n_vars = A.shape
     _, n_shocks = D.shape
@@ -315,30 +322,34 @@ def _get_variable_counts(A, D):
     return n_eq, n_vars, n_shocks
 
 
+@nb.njit(cache=True)
 def _find_lead_variables(C, tol=1e-8):
     return np.where(np.sum(np.abs(C), axis=0) > tol)[0]
 
 
+@nb.njit(cache=True)
 def _gensys_setup(A, B, C, D, tol=1e-8):
     n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
 
     lead_var_idx = _find_lead_variables(C, tol)
-    eqs_and_leads_idx = np.r_[np.arange(n_vars), lead_var_idx + n_vars].tolist()
+    eqs_and_leads_idx = np.concatenate(
+        (np.arange(n_vars), lead_var_idx + n_vars), axis=0
+    )
 
     Gamma_0 = np.vstack(
-        [np.hstack([B, C]), np.hstack([-np.eye(n_eq), np.zeros((n_eq, n_eq))])]
+        (np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq)))))
     )
 
     Gamma_1 = np.vstack(
-        [
-            np.hstack([A, np.zeros((n_eq, n_eq))]),
-            np.hstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)]),
-        ]
+        (
+            np.hstack((A, np.zeros((n_eq, n_eq)))),
+            np.hstack((np.zeros((n_eq, n_eq)), np.eye(n_eq))),
+        )
     )
 
-    Pi = np.vstack([np.zeros((n_eq, n_eq)), np.eye(n_eq)])
+    Pi = np.vstack((np.zeros((n_eq, n_eq)), np.eye(n_eq)))
 
-    Psi = np.vstack([D, np.zeros((n_eq, n_shocks))])
+    Psi = np.vstack((D, np.zeros((n_eq, n_shocks))))
 
     Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
     Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
@@ -360,13 +371,10 @@ def solve_policy_function_with_gensys(
     lead_var_idx = _find_lead_variables(C, tol)
     n_leads = len(lead_var_idx)
 
-    Gamma_0, Gamma_1, Psi, Pi = _gensys_setup(A, B, C, D, tol)
+    neg_g0, g1, psi, pi = _gensys_setup(A, B, C, D, tol)
 
-    g0 = -np.ascontiguousarray(Gamma_0)  # NOTE THE IMPORTANT MINUS SIGN LURKING
-    g1 = np.ascontiguousarray(Gamma_1)
-    c = np.ascontiguousarray(np.zeros(shape=(n_vars + n_leads, 1)))
-    psi = np.ascontiguousarray(Psi)
-    pi = np.ascontiguousarray(Pi)
+    g0 = -neg_g0
+    c = np.asfortranarray(np.zeros(shape=(n_vars + n_leads, 1)))
 
     G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(
         g0, g1, c, psi, pi
@@ -424,8 +432,10 @@ def check_perturbation_solution(A, B, C, D, T, R, tol=1e-8):
     _log.info(f"Norm of stochastic part:    {norm_stochastic:0.9f}")
 
 
+# TODO: Cannot cache this I think because of the call to ordqz -- test if this is true
+@nb.njit(cache=False)
 def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
-    Gamma_0, Gamma_1, *_ = _gensys_setup(A, B, C, D, tol)
+    Gamma_0, Gamma_1, _, _ = _gensys_setup(A, B, C, D, tol)
 
     # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
     # have sign flip relative to qzdiv -- does it matter?
@@ -433,7 +443,7 @@ def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
         -Gamma_0, Gamma_1, sort="ouc", output="complex"
     )
 
-    gev = np.c_[np.diagonal(A), np.diagonal(B)]
+    gev = np.column_stack((np.diag(A), np.diag(B)))
 
     eigenval = gev[:, 1] / (gev[:, 0] + tol)
     pos_idx = np.where(np.abs(eigenval) > 0)
