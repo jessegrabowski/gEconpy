@@ -173,6 +173,7 @@ def numba_lambdify(
     expr: list[sp.Expr] | sp.Matrix | list[sp.Matrix],
     func_signature: str | None = None,
     ravel_outputs=False,
+    stack_outputs=False,
 ) -> Callable:
     """
     Convert a sympy expression into a Numba-compiled function.  Unlike sp.lambdify, the resulting function can be
@@ -196,6 +197,8 @@ def numba_lambdify(
     ravel_outputs: bool, default False
         If true, all outputs of the jitted function will be raveled before they are returned. This is useful for
         removing size-1 dimensions from sympy vectors.
+    stack_outputs: bool, default False
+        If true, stack all return values into a single vector. Otherwise they are returned as a tuple as usual.
 
     Returns
     -------
@@ -304,7 +307,13 @@ def numba_lambdify(
     )
     assignments = re.sub(ZERO_ONE_INDEX_PATTERN, r"\g<3>", assignments)
 
-    returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
+    if len(retvals) > 1:
+        returns = f'({",".join(retvals)})'
+        if stack_outputs:
+            returns = f"np.stack({returns})"
+    else:
+        returns = retvals[0]
+    # returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
     full_code = f"{decorator}\ndef f({input_signature}):\n\n{assignments}\n\n{code}\n\n    return {returns}"
 
     docstring = f"'''Automatically generated code:\n{full_code}'''"
