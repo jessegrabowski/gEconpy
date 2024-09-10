@@ -1,3 +1,5 @@
+import logging
+
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
 from gEconpy.model.perturbation import compile_linearized_system
@@ -13,6 +15,8 @@ from gEconpy.parser.file_loaders import (
     simplify_provided_ss_equations,
     validate_results,
 )
+
+_log = logging.getLogger(__name__)
 
 
 def model_from_gcn(

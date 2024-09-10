@@ -1,3 +1,5 @@
+import logging
+
 from typing import Literal
 from warnings import warn
 
@@ -26,6 +28,7 @@ from gEconpy.parser.parse_equations import single_symbol_to_sympy
 from gEconpy.shared.utilities import unpack_keys_and_values
 
 PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
+_log = logging.getLogger(__name__)
 
 
 def load_gcn(gcn_path: str) -> str:
@@ -521,4 +524,4 @@ def build_report(
         )
         warn(message)
 
-    print(report)
+    _log.info(report)
