@@ -209,7 +209,7 @@ class ParserTestCases(unittest.TestCase):
 
         self.assertEqual(
             list(block_dict.keys()),
-            ["STEADY_STATE", "HOUSEHOLD"],
+            ["HOUSEHOLD"],
         )
 
         self.assertEqual(options, {})

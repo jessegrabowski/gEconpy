@@ -314,6 +314,7 @@ class InsufficientDegreesOfFreedomException(ValueError):
 
 class OrphanParameterError(ValueError):
     def __init__(self, orphans):
+        orphans = set(orphans)
         n = len(orphans)
         verb = "was" if n == 1 else "were"
         message = (
