@@ -1,14 +1,16 @@
 import functools as ft
 import logging
 
+from collections.abc import Sequence
 from copy import deepcopy
-from typing import Callable, Literal, Union
+from typing import Callable, Literal
 
+import numba as nb
 import numpy as np
-import pandas as pd
 import sympy as sp
+import xarray as xr
 
-from scipy import optimize
+from scipy import linalg, optimize
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.optimize_wrapper import (
@@ -20,10 +22,10 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions.exceptions import (
     GensysFailedException,
     ModelUnknownParameterError,
+    PerturbationSolutionNotFoundException,
 )
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.perturbation import (
-    check_bk_condition,
     check_perturbation_solution,
     override_dummy_wrapper,
     residual_norms,
@@ -34,7 +36,7 @@ from gEconpy.model.perturbation import (
 from gEconpy.model.steady_state import system_to_steady_state
 from gEconpy.solvers.gensys import interpret_gensys_output
 
-VariableType = Union[sp.Symbol, TimeAwareSymbol]
+VariableType = sp.Symbol | TimeAwareSymbol
 _log = logging.getLogger(__name__)
 
 
@@ -251,9 +253,7 @@ class Model:
         f_ss_jac: Callable[[np.ndarray, ...], np.ndarray],
         f_ss_error_grad: Callable[[np.ndarray, ...], np.ndarray],
         f_ss_error_hess: Callable[[np.ndarray, ...], np.ndarray],
-        f_linearize: Callable[
-            [np.ndarray, ...], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-        ],
+        f_linearize: Callable,
         backend: BACKENDS = "numpy",
     ) -> None:
         """
@@ -324,20 +324,6 @@ class Model:
         # self.shock_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         # self.hyper_priors: SymbolDictionary[str, Any] = SymbolDictionary()
         # self.observation_noise_priors: SymbolDictionary[str, Any] = SymbolDictionary()
-
-        # Linear representation
-        self.A: pd.DataFrame | None = None
-        self.B: pd.DataFrame | None = None
-        self.C: pd.DataFrame | None = None
-        self.D: pd.DataFrame | None = None
-
-        # Perturbation solution information
-        self.T: pd.DataFrame | None = None
-        self.R: pd.DataFrame | None = None
-        self.P: pd.DataFrame | None = None
-        self.Q: pd.DataFrame | None = None
-        self.R: pd.DataFrame | None = None
-        self.S: pd.DataFrame | None = None
 
     def parameters(self, **updates: float):
         param_dict = self._default_params.copy()
@@ -695,15 +681,26 @@ class Model:
 
     def linearize_model(
         self,
-        order=1,
-        not_loglin_variables=None,
-        steady_state_dict=None,
-        loglin_negative_ss=False,
-        **param_updates,
+        order: Literal[1] = 1,
+        not_loglin_variables: list[str] | None = None,
+        steady_state_dict: dict | None = None,
+        loglin_negative_ss: bool = False,
+        steady_state_kwargs: dict | None = None,
+        verbose=True,
+        **parameter_updates,
     ):
         if order != 1:
             raise NotImplementedError(
                 "Only first order linearization is currently supported."
+            )
+        if steady_state_kwargs is None:
+            steady_state_kwargs = {}
+
+        param_dict = self.parameters(**parameter_updates)
+
+        if steady_state_dict is None:
+            steady_state_dict, success = self.steady_state(
+                **self.parameters(**param_dict), **steady_state_kwargs
             )
 
         if not_loglin_variables is None:
@@ -714,8 +711,6 @@ class Model:
         for i, var in enumerate(self.variables):
             not_loglin_flags[i] = var.base_name in not_loglin_variables
 
-        param_dict = self.parameters(**param_updates)
-
         ss_values = np.array(list(steady_state_dict.values()))
         ss_zeros = np.abs(ss_values) < 1e-8
         ss_negative = ss_values < 0.0
@@ -723,20 +718,22 @@ class Model:
         if np.any(ss_zeros):
             zero_idxs = np.flatnonzero(ss_zeros)
             zero_vars = [self.variables[i] for i in zero_idxs]
-            _log.warning(
-                f"The following variables had steady-state values close to zero and will not be log-linearized:"
-                f"{[x.base_name for x in zero_vars]}"
-            )
+            if verbose:
+                _log.warning(
+                    f"The following variables had steady-state values close to zero and will not be log-linearized:"
+                    f"{[x.base_name for x in zero_vars]}"
+                )
 
             not_loglin_flags[ss_zeros] = 1
 
         if np.any(ss_negative) and not loglin_negative_ss:
             neg_idxs = np.flatnonzero(ss_negative)
             neg_vars = [self.variables[i] for i in neg_idxs]
-            _log.warning(
-                f"The following variables had negative steady-state values and will not be log-linearized:"
-                f"{[x.base_name for x in neg_vars]}"
-            )
+            if verbose:
+                _log.warning(
+                    f"The following variables had negative steady-state values and will not be log-linearized:"
+                    f"{[x.base_name for x in neg_vars]}"
+                )
 
             not_loglin_flags[neg_idxs] = 1
 
@@ -744,25 +741,13 @@ class Model:
             **param_dict, **steady_state_dict, not_loglin_variable=not_loglin_flags
         )
 
-        equation_names = [f"Equation {i}" for i in range(A.shape[0])]
-        self.A = pd.DataFrame(
-            A, index=equation_names, columns=[x.set_t(-1) for x in self.variables]
-        )
-        self.B = pd.DataFrame(
-            B, index=equation_names, columns=[x.set_t(0) for x in self.variables]
-        )
-        self.C = pd.DataFrame(
-            C, index=equation_names, columns=[x.set_t(1) for x in self.variables]
-        )
-        self.D = pd.DataFrame(D, index=equation_names, columns=self.shocks)
-
         return A, B, C, D
 
     def solve_model(
         self,
         solver="cycle_reduction",
         not_loglin_variables: list[str] | None = None,
-        order: int = 1,
+        order: Literal[1] = 1,
         loglin_negative_ss: bool = False,
         steady_state_kwargs: dict | None = None,
         tol: float = 1e-8,
@@ -770,7 +755,7 @@ class Model:
         verbose: bool = True,
         on_failure="error",
         **parameter_updates,
-    ) -> None:
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
         """
         Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
         package by Grzegorz Klima, Karol Podemski, and Kaja Retkiewicz-Wijtiwiak., http://gecon.r-forge.r-project.org/.
@@ -806,9 +791,14 @@ class Model:
 
         Returns
         -------
-        None
-        """
+        T: np.ndarray, optional
+            Transition matrix, approximated to the requested order. Represents the policy function, governing agent's
+            optimal state-conditional actions. If the solver fails, None is returned instead.
 
+        R: np.ndarray, optional
+            Selection matrix, approximated to the requested order. Represents the state- and agent-conditional
+            transmission of stochastic shocks through the economy. If the solver fails, None is returned instead.
+        """
         if on_failure not in ["error", "ignore"]:
             raise ValueError(
                 f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}'
@@ -826,6 +816,8 @@ class Model:
             not_loglin_variables=not_loglin_variables,
             steady_state_dict=ss_dict.to_string(),
             loglin_negative_ss=loglin_negative_ss,
+            verbose=verbose,
+            **parameter_updates,
         )
 
         if solver == "gensys":
@@ -841,12 +833,8 @@ class Model:
                     if verbose:
                         message = interpret_gensys_output(eu)
                         _log.info(message)
-                    self.P = None
-                    self.Q = None
-                    self.R = None
-                    self.S = None
 
-                    return
+                    return None, None
 
             if verbose:
                 message = interpret_gensys_output(eu)
@@ -870,179 +858,346 @@ class Model:
             if T is None:
                 if on_failure == "error":
                     raise GensysFailedException(result)
+                elif on_failure == "ignore":
+                    if verbose:
+                        _log.info(result)
+                    return None, None
         else:
             raise NotImplementedError(
                 'Only "cycle_reduction" and "gensys" are valid values for solver'
             )
 
-        self.T = pd.DataFrame(
-            T,
-            index=[
-                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
-            ],
-            columns=[
-                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
-            ],
-        )
-        self.R = pd.DataFrame(
-            R,
-            index=[
-                x.base_name for x in sorted(self.variables, key=lambda x: x.base_name)
-            ],
-            columns=[
-                x.base_name for x in sorted(self.shocks, key=lambda x: x.base_name)
-            ],
-        )
-
         if verbose:
             check_perturbation_solution(A, B, C, D, T, R, tol=tol)
 
-    def check_bk_condition(
-        self,
-        tol=1e-8,
-        verbose=True,
-        return_value: Literal["dataframe", "bool", None] = "dataframe",
-    ):
-        """
-        Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
-        unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
-        this test suggests timing problems in the definition of the model.
+        return np.ascontiguousarray(T), np.ascontiguousarray(R)
 
-        Parameters
-        ----------
-        verbose: bool, default: True
-            Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
 
-        return_value: string, default: 'dataframe'
-            Controls what is returned by the function. Valid values are 'dataframe', 'bool', and 'none'.
-            If df, a dataframe containing eigenvalues is returned. If 'bool', a boolean indicating whether the BK
-            condition is satisfied. If None, nothing is returned.
+def _maybe_solve_model(
+    model: Model, T: np.ndarray | None, R: np.ndarray | None, **solve_model_kwargs
+):
+    """
+    Solve for the linearized policy matrix of a model if required, or return the provided T and R
 
-        tol: float, 1e-8
-            Tolerance below which numerical values are considered zero
+    Parameters
+    ----------
+    model: Model
+        DSGE Model assoicated with T and R
+    T: np.ndarray, optional
+        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
+        method.
+    R: np.ndarray
+        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
+    **solve_model_kwargs
+        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
 
-        Returns
-        -------
-        None
-            If return_value is 'none'
+    Returns
+    -------
+    T: np.ndarray, optional
+        Transition matrix, approximated to the requested order. Represents the policy function, governing agent's
+        optimal state-conditional actions. If the solver fails, None is returned instead.
 
-        condition_satisfied, bool
-            If return_value is 'bool', returns True if the Blanchard-Kahn condition is satisfied, False otherwise.
+    R: np.ndarray, optional
+        Selection matrix, approximated to the requested order. Represents the state- and agent-conditional
+        transmission of stochastic shocks through the economy. If the solver fails, None is returned instead.
+    """
+    n_matrices = sum(x is not None for x in [T, R])
+    if n_matrices == 1:
+        _log.warning(
+            "Passing only one of T or R will still trigger ``model.solve_model`` (which might be expensive). "
+            "Pass both to avoid this, or None to silence this warning."
+        )
+        T = None
+        R = None
 
-        Eigenvalues, pd.DataFrame
-            If return_value is 'df', returns a dataframe containing the real and imaginary components of the system's
-            eigenvalues, along with their modulus.
-        """
+    if T is None and R is None:
+        T, R = model.solve_model(**solve_model_kwargs)
 
-        A, B, C, D = self.A, self.B, self.C, self.D
-        if any([x is None for x in [A, B, C, D]]):
-            raise ValueError("Model has not been linearized, cannot check BK condition")
-        return check_bk_condition(
-            A.values,
-            B.values,
-            C.values,
-            D.values,
-            tol=tol,
-            return_value=return_value,
-            verbose=verbose,
+    return T, R
+
+
+def _validate_shock_options(shock_std_dict, shock_cov_matrix, shock_std, shocks):
+    n_shocks = len(shocks)
+
+    n_provided = sum(
+        x is not None for x in [shock_std_dict, shock_cov_matrix, shock_std]
+    )
+    if n_provided > 1 or n_provided == 0:
+        raise ValueError(
+            "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. You passed "
+            f"{n_provided}."
         )
 
+    if shock_cov_matrix is not None:
+        if any(s != n_shocks for s in shock_cov_matrix.shape):
+            raise ValueError(
+                f"Incorrect covariance matrix shape. Expected ({n_shocks}, {n_shocks}), "
+                f"found {shock_cov_matrix.shape}"
+            )
+        try:
+            # check that the provided matrix is PSD
+            np.linalg.cholesky(shock_cov_matrix)
+            return shock_cov_matrix
+        except np.linalg.LinAlgError:
+            raise np.linalg.LinAlgError("The provided Q is not positive semi-definite.")
 
-#     def compute_stationary_covariance_matrix(
-#         self,
-#         shock_dict: Optional[dict[str, float]] = None,
-#         shock_cov_matrix: Optional[ArrayLike] = None,
-#     ):
-#         """
-#         Compute the stationary covariance matrix of the solved system by solving the associated discrete lyapunov
-#         equation. In order to construct the shock covariance matrix, exactly one or zero of shock_dict or
-#         shock_cov_matrix should be provided. If neither is provided, the prior means on the shocks will be used. If no
-#         information about a shock is available, the standard deviation will be set to 0.01.
-#
-#         Parameters
-#         ----------
-#         shock_dict, dict of str: float, optional
-#             A dictionary of shock sizes to be used to compute the stationary covariance matrix.
-#         shock_cov_matrix: array, optional
-#             An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
-#
-#         Returns
-#         -------
-#         sigma: DataFrame
-#         """
-#         if not self.perturbation_solved:
-#             raise PerturbationSolutionNotFoundException()
-#         shock_std_priors = get_shock_std_priors_from_hyperpriors(
-#             self.shocks, self.hyper_priors, out_keys="parent"
-#         )
-#
-#         if (
-#             shock_dict is None
-#             and shock_cov_matrix is None
-#             and len(shock_std_priors) < self.n_shocks
-#         ):
-#             unknown_shocks_list = [
-#                 shock.base_name
-#                 for shock in self.shocks
-#                 if shock not in self.shock_priors.to_sympy()
-#             ]
-#             unknown_shocks = ", ".join(unknown_shocks_list)
-#             warn(
-#                 f"No standard deviation provided for shocks {unknown_shocks}. Using default of std = 0.01. Explicity"
-#                 f"pass variance information for these shocks or set their priors to silence this warning."
-#             )
-#
-#         Q = build_Q_matrix(
-#             model_shocks=[x.base_name for x in self.shocks],
-#             shock_dict=shock_dict,
-#             shock_cov_matrix=shock_cov_matrix,
-#             shock_std_priors=shock_std_priors,
-#         )
-#
-#         T, R = self.T, self.R
-#         sigma = linalg.solve_discrete_lyapunov(T.values, R.values @ Q @ R.values.T)
-#
-#         return pd.DataFrame(sigma, index=T.index, columns=T.index)
-#
-#     def compute_autocorrelation_matrix(
-#         self,
-#         shock_dict: Optional[dict[str, float]] = None,
-#         shock_cov_matrix: Optional[ArrayLike] = None,
-#         n_lags=10,
-#     ):
-#         """
-#         Computes autocorrelations for each model variable using the stationary covariance matrix. See doc string for
-#         compute_stationary_covariance_matrix for more information.
-#
-#         In order to construct the shock covariance matrix, exactly one or zero of shock_dict or
-#         shock_cov_matrix should be provided. If neither is provided, the prior means on the shocks will be used. If no
-#         information about a shock is available, the standard deviation will be set to 0.01.
-#
-#         Parameters
-#         ----------
-#         shock_dict, dict of str: float, optional
-#             A dictionary of shock sizes to be used to compute the stationary covariance matrix.
-#         shock_cov_matrix: array, optional
-#             An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
-#         n_lags: int
-#             Number of lags over which to compute the autocorrelation
-#
-#         Returns
-#         -------
-#         acorr_mat: DataFrame
-#         """
-#         if not self.perturbation_solved:
-#             raise PerturbationSolutionNotFoundException()
-#
-#         T, R = self.T, self.R
-#
-#         Sigma = self.compute_stationary_covariance_matrix(
-#             shock_dict=shock_dict, shock_cov_matrix=shock_cov_matrix
-#         )
-#         acorr_mat = compute_autocorrelation_matrix(T.values, Sigma.values, n_lags=n_lags)
-#
-#         return pd.DataFrame(acorr_mat, index=T.index, columns=np.arange(n_lags))
-#
+    if shock_std_dict is not None:
+        if not all(x in shock_std_dict.keys() for x in [x.base_name for x in shocks]):
+            raise ValueError("Shock dictionary keys do not match model shocks")
+        shock_cov_matrix = np.diag([shock_std_dict[x.base_name] for x in shocks])
+
+    return shock_std_dict, shock_cov_matrix, shock_std
+
+
+def build_Q_matrix(
+    model_shocks: list[TimeAwareSymbol],
+    shock_std_dict: dict[str, float] | None = None,
+    shock_cov_matrix: np.ndarray | None = None,
+    shock_std: float | None = None,
+) -> np.array:
+    """
+    Take different options for user input and reconcile them into a covariance matrix. Exactly one or zero of shock_dict
+    or shock_cov_matrix should be provided. Then, proceed according to the following logic:
+
+    - If `shock_cov_matrix` is provided, it is Q. Return it.
+    - If `shock_dict` is provided, insert these into a diagonal matrix at locations according to `model_shocks`.
+
+    For values missing from `shock_dict`, or if neither `shock_dict` nor `shock_cov_matrix` are provided:
+
+    - Fill missing values using the mean of the prior defined in `shock_priors`
+    - If no prior is set, fill the value with `default_value`.
+
+    Note that the only way to get off-diagonal elements is to explicitly pass the entire covariance matrix.
+
+    Parameters
+    ----------
+    model_shocks: list of str
+        List of model shock names, used to infer positions in the covariance matrix
+    shock_std_dict: dict, optional
+        Dictionary of shock names and standard deviations to be used to build Q
+    shock_cov_matrix: array, optional
+        An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
+    shock_std: float, optional
+        Standard deviation of all model shocks.
+
+    Raises
+    ------
+    LinalgError
+        If the provided Q is not positive semi-definite
+    ValueError
+        If both model_shocks and shock_dict are provided
+
+    Returns
+    -------
+    Q: ndarray
+        Shock variance-covariance matrix
+    """
+
+    _validate_shock_options(shock_std_dict, shock_cov_matrix, shock_std, model_shocks)
+
+    if shock_cov_matrix is not None:
+        return shock_cov_matrix
+
+    elif shock_std_dict is not None:
+        shock_names = [x.base_name for x in model_shocks]
+        indices = [shock_names.index(x) for x in shock_std_dict.keys()]
+        Q = np.zeros((len(model_shocks), len(model_shocks)))
+        for i, (key, value) in enumerate(shock_std_dict.items()):
+            Q[indices[i], indices[i]] = value**2
+        return Q
+
+    else:
+        return np.eye(len(model_shocks)) * shock_std**2
+
+
+def stationary_covariance_matrix(
+    model: Model,
+    T: np.ndarray | None = None,
+    R: np.ndarray | None = None,
+    shock_dict: dict[str, float] | None = None,
+    shock_cov_matrix: np.ndarray | None = None,
+    shock_std: float | None = None,
+    **solve_model_kwargs,
+):
+    """
+    Compute the stationary covariance matrix of the solved system by solving the associated discrete lyapunov
+    equation.
+
+    In order to construct the shock covariance matrix, exactly one of shock_dict, shock_cov_matrix, or shock_std should
+    be provided.
+
+    Parameters
+    ----------
+    model: Model
+        DSGE Model assoicated with T and R
+    T: np.ndarray, optional
+        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
+        method.
+    R: np.ndarray
+        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
+    shock_std_dict: dict, optional
+        A dictionary of shock sizes to be used to compute the stationary covariance matrix.
+    shock_cov_matrix: array, optional
+        An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
+    shock_std: float, optional
+        Standard deviation of all model shocks.
+    **solve_model_kwargs
+        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
+
+    Returns
+    -------
+    Sigma: np.ndarray
+        Stationary covariance matrix of the linearized model
+    """
+    shocks = model.shocks
+    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
+    shock_std_dict, shock_cov_matrix, shock_std = _validate_shock_options(
+        shock_dict, shock_cov_matrix, shock_std, shocks
+    )
+
+    Q = build_Q_matrix(
+        model_shocks=shocks,
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+    )
+
+    RQRT = np.linalg.multi_dot([R, Q, R.T])
+    Sigma = linalg.solve_discrete_lyapunov(T, RQRT)
+
+    return Sigma
+
+
+@nb.njit(cache=True)
+def _compute_autocovariance_matrix(T, Sigma, n_lags=5, correlation=True):
+    """Compute the autocorrelation matrix for the given state-space model.
+
+    Parameters
+    ----------
+    T: np.ndarray, optional
+        Transition matrix of the solved system.
+    Sigma: np.ndarray
+        Stationary covariance matrix of the linearized model
+    n_lags : int, optional
+        The number of lags for which to compute the autocorrelation matrices.
+    correlation: bool
+        If True, return the autocorrelation matrices instead of the autocovariance matrices.
+
+    Returns
+    -------
+    acov : ndarray
+        An array of shape (n_lags, n_variables, n_variables) whose (i, j, k)-th entry gives the autocorrelation
+        (or autocovaraince) between variables j and k at lag i.
+    """
+
+    n_vars = T.shape[0]
+    auto_coors = np.empty((n_lags, n_vars, n_vars))
+    std_vec = np.sqrt(np.diag(Sigma))
+
+    if correlation:
+        normalization_factor = np.outer(std_vec, std_vec)
+    else:
+        normalization_factor = np.ones_like(Sigma)
+
+    for i in range(n_lags):
+        auto_coors[i] = np.linalg.matrix_power(T, i) @ Sigma / normalization_factor
+
+    return auto_coors
+
+
+def autocovariance_matrix(
+    model: Model,
+    T: np.ndarray | None = None,
+    R: np.ndarray | None = None,
+    shock_std_dict: dict[str, float] | None = None,
+    shock_cov_matrix: np.ndarray | None = None,
+    shock_std: float | None = None,
+    n_lags: int = 10,
+    correlation=True,
+    **solve_model_kwargs,
+):
+    """
+    Computes the model's autocorrelation matricesusing the stationary covariance matrix.
+
+    In order to construct the shock covariance matrix, exactly one of shock_dict, shock_cov_matrix, or shock_std should
+    be provided.
+
+    Parameters
+    ----------
+    model: Model
+        DSGE Model assoicated with T and R
+    T: np.ndarray, optional
+        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
+        method.
+    R: np.ndarray
+        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
+    shock_std_dict: dict, optional
+        A dictionary of shock sizes to be used to compute the stationary covariance matrix.
+    shock_cov_matrix: array, optional
+        An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
+    shock_std: float, optional
+        Standard deviation of all model shocks.
+    n_lags: int
+        Number of lags of autocorrelation and cross-autocorrelation to compute. Default is 10.
+    **solve_model_kwargs
+        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
+
+    Returns
+    -------
+    acorr_mat: DataFrame
+    """
+    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
+
+    Sigma = stationary_covariance_matrix(
+        model,
+        T=T,
+        R=R,
+        shock_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
+    )
+    result = _compute_autocovariance_matrix(
+        T, Sigma, n_lags=n_lags, correlation=correlation
+    )
+
+    return result
+
+
+def summarize_perturbation_solution(
+    linear_system: Sequence[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    perturbation_solution: Sequence[np.ndarray | None, np.ndarray | None],
+    model: Model,
+):
+    A, B, C, D = linear_system
+    T, R = perturbation_solution
+    if T is None or R is None:
+        raise PerturbationSolutionNotFoundException()
+
+    coords = {
+        "equation": np.arange(A.shape[0]).astype(int),
+        "variable": [x.base_name for x in model.variables],
+        "shock": [x.base_name for x in model.shocks],
+    }
+
+    return xr.Dataset(
+        data_vars={
+            "A": (("equation", "variable"), A),
+            "B": (("equation", "variable"), B),
+            "C": (("equation", "variable"), C),
+            "D": (("equation", "shock"), D),
+            "T": (("equation", "variable"), T),
+            "R": (("equation", "shock"), R),
+        },
+        coords=coords,
+    )
+
+
+# xr.DataArray(data=result,
+#                         dims=('lag', 'variable', 'variable_bis'),
+#                         coords={'lag':np.arange(n_lags).astype(int),
+#                                 'variable':[x.base_name for x in model.variables],
+#                                 'variable_bis': [x.base_name for x in model.variables]}
+#                         )
+
 #     # def fit(
 #     #     self,
 #     #     data,
