@@ -7,7 +7,7 @@ filterwarnings = [
     "error",
     "ignore::DeprecationWarning",
     "ignore::RuntimeWarning"]
-env = ["NUMBA_DISABLE_JIT = 1"]
+env = ["NUMBA_DISABLE_JIT = 0"]
 
 [tool.bumpver]
 current_version = "1.2.1"
