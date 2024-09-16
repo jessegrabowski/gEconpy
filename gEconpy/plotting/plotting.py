@@ -1,5 +1,5 @@
 from itertools import combinations_with_replacement
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -11,6 +11,8 @@ from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from scipy import stats
+
+from gEconpy.model.perturbation import check_bk_condition
 
 
 def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list]:
@@ -53,13 +55,15 @@ def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list]:
     return gs, plot_locs
 
 
-def _plot_single_variable(data, ax, ci=None, cmap=None, fill_color="tab:blue"):
+def _plot_single_variable(
+    data: xr.DataArray, ax, ci=None, cmap=None, fill_color="tab:blue"
+):
     """
     Plot the mean and optionally a confidence interval for a single variable.
 
     Parameters
     ----------
-    data : pd.DataFrame
+    data : xr.DataArray
         A DataFrame with one or more columns containing the data to plot.
     ax : Matplotlib Axes
         The Axes object to plot on.
@@ -76,13 +80,13 @@ def _plot_single_variable(data, ax, ci=None, cmap=None, fill_color="tab:blue"):
     """
 
     if ci is None:
-        data.plot(ax=ax, legend=False, cmap=cmap)
+        data.plot.line(x="time", ax=ax, add_legend=False)
 
     else:
         q_low, q_high = ((1 - ci) / 2), 1 - ((1 - ci) / 2)
         ci_bounds = data.quantile([q_low, q_high], axis=1).T
 
-        data.mean(axis=1).plot(ax=ax, legend=False, cmap=cmap)
+        data.mean(dim="simulation").plot.line(x="time", ax=ax, add_legend=False)
         ci_bounds.plot(ax=ax, ls="--", lw=0.5, color="k", legend=False)
         ax.fill_between(
             ci_bounds.index,
@@ -94,7 +98,7 @@ def _plot_single_variable(data, ax, ci=None, cmap=None, fill_color="tab:blue"):
 
 
 def plot_simulation(
-    simulation: pd.DataFrame,
+    simulation: xr.DataArray,
     vars_to_plot: list[str] | None = None,
     ci: float | None = None,
     n_cols: int | None = None,
@@ -134,20 +138,25 @@ def plot_simulation(
     """
 
     if vars_to_plot is None:
-        vars_to_plot = simulation.index
+        vars_to_plot = simulation.coords["variable"].values.tolist()
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
 
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
+    cycler = None
+    if cmap is not None:
+        cycler = plt.cycler(color=plt.color_sequences[cmap])
+
     fig = plt.figure(figsize=figsize, dpi=dpi)
 
     for idx, variable in enumerate(vars_to_plot):
-        if variable not in simulation.index:
+        if variable not in simulation.coords["variable"]:
             raise ValueError(f"{variable} not found among model variables.")
         axis = fig.add_subplot(gs[plot_locs[idx]])
+        axis.set_prop_cycle(cycler)
 
         _plot_single_variable(
-            simulation.loc[variable].unstack(1),
+            simulation.sel(variable=variable),
             ci=ci,
             ax=axis,
             cmap=cmap,
@@ -163,7 +172,7 @@ def plot_simulation(
 
 
 def plot_irf(
-    irf: pd.DataFrame,
+    irf: xr.DataArray,
     vars_to_plot: list[str] | None = None,
     shocks_to_plot: list[str] | None = None,
     n_cols: int | None = None,
@@ -178,8 +187,8 @@ def plot_irf(
 
     Parameters
     ----------
-    irf : pd.DataFrame
-        A DataFrame with the impulse response functions. The index should contain the variables to plot, and the columns
+    irf : xr.DataArray
+        A DataArray with the impulse response functions. The index should contain the variables to plot, and the columns
         should contain the shocks, with a multi-index for the period and shock type.
     vars_to_plot : list of str, optional
         A list of variables to plot. If not provided, all variables in the DataFrame will be plotted.
@@ -206,11 +215,11 @@ def plot_irf(
     """
 
     if vars_to_plot is None:
-        vars_to_plot = irf.index.values.tolist()
+        vars_to_plot = irf.coords["variable"].values.tolist()
 
     else:
         for var in vars_to_plot:
-            if var not in irf.index:
+            if var not in irf.coords["variable"]:
                 raise ValueError(f"{var} not found among simulated impulse responses.")
 
     if not isinstance(vars_to_plot, list):
@@ -218,7 +227,7 @@ def plot_irf(
             f"Expected list for parameter vars_to_plot, got {vars_to_plot} of type {type(vars_to_plot)}"
         )
 
-    shock_list = irf.columns.get_level_values(1).unique().tolist()
+    shock_list = irf
     if shocks_to_plot is None:
         shocks_to_plot = shock_list
     else:
@@ -430,7 +439,17 @@ def plot_prior_solvability(
 
 
 def plot_eigenvalues(
-    model: Any, figsize: Optional[tuple[float, float]] = None, dpi: Optional[int] = None
+    model: Any,
+    A: np.ndarray | None = None,
+    B: np.ndarray | None = None,
+    C: np.ndarray | None = None,
+    D: np.ndarray | None = None,
+    linearize_model_kwargs: dict | None = None,
+    fig: Optional[plt.Figure] = None,
+    figsize: Optional[tuple[float, float]] = None,
+    dpi: Optional[int] = None,
+    plot_circle: bool = True,
+    **parameter_updates,
 ):
     """
     Plot the eigenvalues of the model solution, along with a unit circle. Eigenvalues with modulus greater than 1 are
@@ -440,11 +459,31 @@ def plot_eigenvalues(
     Parameters
     ----------
     model : gEconModel
-        The model to plot the eigenvalues of.
+        DSGE model object
+    A : np.ndarray, optional
+        Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to variables
+        at t-1. If provided, all of A, B, C and D must be provided.
+    B : np.ndarray, optional
+        Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to variables
+        at t. If provided, all of A, B, C and D must be provided.
+    C : np.ndarray, optional
+        Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to variables
+        at t+1. If provided, all of A, B, C and D must be provided.
+    D : np.ndarray, optional
+        Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to exogenous
+        shocks. If provided, all of A, B, C and D must be provided.
+    linearize_model_kwargs: dict, optional
+        Arguments passed to model.linearize_model. Ignored if A, B, C, D are provided.
+    fig: Matplotlib Figure, optional
+        The figure object to plot on. If not provided, a new figure will be created.
     figsize : tuple[float, float], optional
         The size of the figure to create.
     dpi : int, optional
         The resolution of the figure to create.
+    plot_circle: bool, optional
+        Whether to plot the unit circle. Default is True.
+    parameter_updates
+        A dictionary of parameter at which to linearize the model.
 
     Returns
     -------
@@ -457,15 +496,30 @@ def plot_eigenvalues(
     if dpi is None:
         dpi = 100
 
-    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-    data = model.check_bk_condition(verbose=False)
-    n_infinity = (data.Modulus > 10).sum()
+    if fig is None:
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    else:
+        ax = fig.axes[0]
 
+    if linearize_model_kwargs is None:
+        linearize_model_kwargs = {}
+
+    if not all(x is not None for x in [A, B, C, D]):
+        A, B, C, D = model.linearize_model(
+            **linearize_model_kwargs, **parameter_updates
+        )
+    data = cast(
+        pd.DataFrame,
+        check_bk_condition(A, B, C, D, verbose=False, return_value="dataframe"),
+    )
+
+    n_infinity = (data["Modulus"] > 10).sum()
     data = data[data.Modulus < 10]
 
-    x_circle = np.linspace(-2 * np.pi, 2 * np.pi, 1000)
+    if plot_circle:
+        x_circle = np.linspace(-2 * np.pi, 2 * np.pi, 1000)
+        ax.plot(np.cos(x_circle), np.sin(x_circle), color="k", lw=1)
 
-    ax.plot(np.cos(x_circle), np.sin(x_circle), color="k", lw=1)
     ax.set_aspect("equal")
     colors = ["tab:red" if x > 1.0 else "tab:blue" for x in data.Modulus]
     ax.scatter(data.Real, data.Imaginary, color=colors, s=50, lw=1, edgecolor="k")
