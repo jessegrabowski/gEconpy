@@ -1,6 +1,9 @@
 import numba as nb
 import numpy as np
+import pytensor.tensor as pt
 
+from pytensor.graph.basic import Apply
+from pytensor.graph.op import Op
 from scipy import linalg
 
 # A very small number
@@ -597,3 +600,112 @@ def interpret_gensys_output(eu):
     elif eu[0] == 1 and eu[1] == 1:
         message = "Gensys found a unique solution."
     return message
+
+
+@nb.njit(cache=True)
+def _get_variable_counts(A, D):
+    n_eq, n_vars = A.shape
+    _, n_shocks = D.shape
+
+    return n_eq, n_vars, n_shocks
+
+
+@nb.njit(cache=True)
+def _find_lead_variables(C, tol=1e-8):
+    return np.where(np.sum(np.abs(C), axis=0) > tol)[0]
+
+
+@nb.njit(cache=True)
+def _gensys_setup(A, B, C, D, tol=1e-8):
+    n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
+
+    lead_var_idx = _find_lead_variables(C, tol)
+    eqs_and_leads_idx = np.concatenate(
+        (np.arange(n_vars), lead_var_idx + n_vars), axis=0
+    )
+
+    Gamma_0 = np.vstack(
+        (np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq)))))
+    )
+
+    Gamma_1 = np.vstack(
+        (
+            np.hstack((A, np.zeros((n_eq, n_eq)))),
+            np.hstack((np.zeros((n_eq, n_eq)), np.eye(n_eq))),
+        )
+    )
+
+    Pi = np.vstack((np.zeros((n_eq, n_eq)), np.eye(n_eq)))
+
+    Psi = np.vstack((D, np.zeros((n_eq, n_shocks))))
+
+    Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
+    Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
+    Psi = Psi[eqs_and_leads_idx, :]
+    Pi = Pi[eqs_and_leads_idx, :][:, lead_var_idx]
+
+    return Gamma_0, Gamma_1, Psi, Pi
+
+
+def solve_policy_function_with_gensys(
+    A: np.ndarray,
+    B: np.ndarray,
+    C: np.ndarray,
+    D: np.ndarray,
+    tol: float = 1e-8,
+) -> tuple:
+    n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
+
+    lead_var_idx = _find_lead_variables(C, tol)
+    n_leads = len(lead_var_idx)
+
+    neg_g0, g1, psi, pi = _gensys_setup(A, B, C, D, tol)
+
+    g0 = -neg_g0
+    c = np.asfortranarray(np.zeros(shape=(n_vars + n_leads, 1)))
+
+    G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(
+        g0, g1, c, psi, pi
+    )
+
+    return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
+
+
+class GensysWrapper(Op):
+    def __init__(self, tol=1e-8):
+        self.tol = tol
+        super().__init__()
+
+    def make_node(self, A, B, C, D) -> Apply:
+        inputs = list(map(pt.as_tensor, [A, B, C, D]))
+        n_variables = A.type.shape[0]
+        n_shocks = D.type.shape[1]
+        outputs = [
+            pt.tensor("T", shape=(n_variables, n_variables)),
+            pt.tensor("R", shape=(n_variables, n_shocks)),
+            pt.bscalar("success"),
+        ]
+
+        return Apply(self, inputs, outputs)
+
+    def perform(
+        self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]
+    ) -> None:
+        A, B, C, D = inputs
+        G_1, constant, impact, *_, eu, _ = solve_policy_function_with_gensys(
+            A, B, C, D, tol=self.tol
+        )
+        success = all([x == 1 for x in eu[:2]])
+
+        n_variables = A.shape[0]
+
+        T = G_1[:n_variables, :][:, :n_variables]
+        R = impact[:n_variables, :]
+
+        outputs[0][0] = np.asarray(T)
+        outputs[1][0] = np.asarray(R)
+        outputs[2][0] = np.asarray(success)
+
+
+def gensys_pt(A, B, C, D, tol=1e-8):
+    return GensysWrapper(tol=tol)(A, B, C, D)

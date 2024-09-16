@@ -1,6 +1,5 @@
-import os
-
 import numpy as np
+import pytensor.tensor as pt
 import pytest
 import sympy as sp
 
@@ -11,9 +10,9 @@ from gEconpy.model.perturbation import (
     make_all_variable_time_combinations,
     override_dummy_wrapper,
     solve_policy_function_with_cycle_reduction,
-    solve_policy_function_with_gensys,
 )
 from gEconpy.shared.utilities import eq_to_ss
+from gEconpy.solvers.gensys import gensys_pt, solve_policy_function_with_gensys
 from tests.utilities.shared_fixtures import load_and_cache_model
 
 
@@ -158,3 +157,18 @@ def test_solve_policy_function(
 
     assert_allclose(T_gensys, T, atol=1e-8, rtol=1e-8)
     assert_allclose(R_gensys, R, atol=1e-8, rtol=1e-8)
+
+
+def test_pytensor_gensys():
+    A, B, C, D = (pt.dmatrix(name) for name in list("ABCD"))
+    gensys_results = gensys_pt(A, B, C, D, 1e-8)
+
+    test_point = {
+        "alpha": 0.33,
+        "beta": 0.99,
+        "delta": 0.035,
+        "rho": 0.95,
+        "Theta": 1.00,
+        "sigma_C": 1.5,
+        "sigma_L": 2.0,
+    }

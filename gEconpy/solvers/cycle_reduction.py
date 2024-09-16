@@ -1,5 +1,10 @@
 import numba as nb
 import numpy as np
+import pytensor
+import pytensor.tensor as pt
+
+from pytensor.compile import get_mode
+from pytensor.graph import Apply, Op
 
 
 @nb.jit(cache=True)
@@ -68,7 +73,7 @@ def nb_cycle_reduction(
     idx_0 = np.arange(n)
     idx_1 = idx_0 + n
 
-    for i in range(max_iter):
+    for i in range(int(max_iter)):
         tmp = np.vstack((A0, A2)) @ np.linalg.solve(A1, np.hstack((A0, A2)))
 
         A1 = A1 - tmp[idx_0, :][:, idx_1] - tmp[idx_1, :][:, idx_0]
@@ -129,3 +134,90 @@ def nb_solve_shock_matrix(B, C, D, G_1):
     """
 
     return -np.linalg.solve(C @ G_1 + B, D.astype(C.dtype))
+
+
+class CycleReductionWrapper(Op):
+    def __init__(self, max_iter=1000, tol=1e-9):
+        self.max_iter = int(max_iter)
+        self.tol = tol
+        super().__init__()
+
+    def make_node(self, A, B, C, D) -> Apply:
+        inputs = list(map(pt.as_tensor, [A, B, C, D]))
+        outputs = [pt.dmatrix("T"), pt.dmatrix("R"), pt.dscalar("resid")]
+
+        return Apply(self, inputs, outputs)
+
+    def perform(
+        self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]
+    ) -> None:
+        A, B, C, D = inputs
+        T, res, result, log_norm = nb_cycle_reduction(
+            A, B, C, max_iter=self.max_iter, tol=self.tol
+        )
+        R = nb_solve_shock_matrix(B, C, D, T)
+
+        ss_resid = (res**2).sum()
+
+        outputs[0][0] = np.asarray(T)
+        outputs[1][0] = np.asarray(R)
+        outputs[2][0] = np.asarray(ss_resid)
+
+
+def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
+    return CycleReductionWrapper(max_iter=max_iter, tol=tol)(A, B, C, D)
+
+
+def scan_cycle_reduction(
+    A, B, C, D, max_iter: int = 1000, tol: float = 1e-7, mode=None
+):
+    def noop(A0, A1, A2, A1_hat, norm):
+        return A0, A1, A2, A1_hat, norm
+
+    def cycle_step(A0, A1, A2, A1_hat, idx_0, idx_1):
+        tmp = pt.dot(
+            pt.vertical_stack(A0, A2),
+            pt.linalg.solve(
+                A1, pt.horizontal_stack(A0, A2), assume_a="gen", check_finite=False
+            ),
+        )
+
+        A1 = A1 - tmp[idx_0, :][:, idx_1] - tmp[idx_1, :][:, idx_0]
+        A0 = -tmp[idx_0, :][:, idx_0]
+        A2 = -tmp[idx_1, :][:, idx_1]
+        A1_hat = A1_hat - tmp[idx_1, :][:, idx_0]
+
+        A0_L1_norm = pt.linalg.norm(A0, ord=1)
+
+        return A0, A1, A2, A1_hat, A0_L1_norm
+
+    def step(A0, A1, A2, A1_hat, norm, idx_0, idx_1, tol):
+        state = pytensor.ifelse(
+            norm < tol,
+            noop(A0, A1, A2, A1_hat, norm),
+            cycle_step(A0, A1, A2, A1_hat, idx_0, idx_1),
+        )
+        return state
+
+    n = A.shape[0]
+    idx_0 = pt.arange(n)
+    idx_1 = idx_0 + n
+    norm = np.array(1e9, dtype="float64")
+
+    (*_, A1_hat, norm), updates = pytensor.scan(
+        step,
+        outputs_info=[A, B, C, B, norm],
+        non_sequences=[idx_0, idx_1, tol],
+        n_steps=max_iter,
+        mode=get_mode(mode),
+    )
+    A1_hat = A1_hat[-1]
+
+    T = -pt.linalg.solve(A1_hat, A, assume_a="gen", check_finite=False)
+    R = -pt.linalg.solve(
+        C @ T + B, D.astype(C.dtype), assume_a="gen", check_finite=False
+    )
+
+    res = A + B @ T + C @ T @ T
+
+    return T, R, (res**2).sum()

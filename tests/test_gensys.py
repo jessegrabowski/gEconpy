@@ -367,7 +367,7 @@ class GensysComponentTests(unittest.TestCase):
 
     def test_qzswitch(self):
         # TODO: Find matrices that test conditions (1) and (2) in qzswitch (most will only hit condition 3)
-        A, B, Q, Z = self.unpack_matrices()
+        A, B, Q, Z = list(map(np.asfortranarray, self.unpack_matrices()))
         A, B, Q, Z = qzswitch(2, A, B, Q, Z)
 
         ans_A = np.array(

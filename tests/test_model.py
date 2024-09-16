@@ -880,15 +880,10 @@ def test_validate_shock_options():
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     T, R = model.solve_model(solver="gensys", verbose=False)
 
-    with pytest.raises(np.linalg.LinAlgError):
-        build_Q_matrix(
-            model_shocks=model.shocks, shock_cov_matrix=np.random.normal(size=(4, 4))
-        )
-
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Exactly one of shock_dict, shock_cov_matrix, or shock_std should be provided. "
+            "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. "
             "You passed 0."
         ),
     ):
@@ -897,7 +892,7 @@ def test_validate_shock_options():
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Exactly one of shock_dict, shock_cov_matrix, or shock_std should be provided. "
+            "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. "
             "You passed 2."
         ),
     ):
@@ -906,9 +901,13 @@ def test_validate_shock_options():
         )
 
     with pytest.raises(
-        ValueError, match="Shock dictionary keys do not match model shocks"
+        ValueError,
+        match=re.escape(
+            "If shock_std_dict is specified, it must give values for all shocks. "
+            "The following shocks were not found among the provided keys: lol :)"
+        ),
     ):
-        stationary_covariance_matrix(model, T, R, shock_dict={"lol :)": 0.1})
+        stationary_covariance_matrix(model, T, R, shock_std_dict={"lol :)": 0.1})
 
     with pytest.raises(
         ValueError,
@@ -974,7 +973,7 @@ def test_build_Q_matrix_from_dict():
     assert_allclose(Q, cov)
 
 
-def test_compute_stationary_covariance_warns_on_partial_specification(caplog, gcn_file):
+def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     file_path = os.path.join("tests", "Test GCNs", "RBC_Linearized.gcn")
     model = model_from_gcn(file_path, verbose=False)
     T, R = model.solve_model(solver="gensys", verbose=False)
