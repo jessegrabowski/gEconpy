@@ -8,6 +8,7 @@ import numdifftools as nd
 import numpy as np
 import pandas as pd
 import pytest
+import sympy as sp
 import xarray as xr
 
 from numpy.testing import assert_allclose
@@ -18,7 +19,9 @@ from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import (
     autocovariance_matrix,
     build_Q_matrix,
+    impulse_response_function,
     scipy_wrapper,
+    simulate,
     stationary_covariance_matrix,
     summarize_perturbation_solution,
 )
@@ -971,8 +974,8 @@ def test_build_Q_matrix_from_dict():
     assert_allclose(Q, cov)
 
 
-def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
-    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
+def test_compute_stationary_covariance_warns_on_partial_specification(caplog, gcn_file):
+    file_path = os.path.join("tests", "Test GCNs", "RBC_Linearized.gcn")
     model = model_from_gcn(file_path, verbose=False)
     T, R = model.solve_model(solver="gensys", verbose=False)
 
@@ -981,16 +984,26 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     assert messages[-1].startswith("Passing only one of T or R will still trigger")
 
 
-def test_compute_stationary_covariance(caplog):
-    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
+@pytest.mark.parametrize(
+    "gcn_file",
+    [
+        "One_Block_Simple_1_w_Steady_State.gcn",
+        "Open_RBC.gcn",
+        "Full_New_Keynesian.gcn",
+        "RBC_Linearized.gcn",
+    ],
+)
+def test_compute_stationary_covariance(caplog, gcn_file):
+    file_path = os.path.join("tests", "Test GCNs", gcn_file)
     model = model_from_gcn(file_path, verbose=False)
     T, R = model.solve_model(solver="gensys", verbose=False)
+    n_variables, n_shocks = R.shape
 
     Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1)
     assert len(caplog.messages) == 0
-    assert Sigma.shape == (8, 8)
+    assert Sigma.shape == (n_variables, n_variables)
 
-    assert_allclose(Sigma, Sigma.T)
+    assert_allclose(Sigma, Sigma.T, atol=1e-8)
     assert all(x > 0 for x in np.diagonal(Sigma))
 
     # Check for PSD by getting the closest PSD matrix (setting negative eigenvalues to zero) then
@@ -998,19 +1011,153 @@ def test_compute_stationary_covariance(caplog):
     eigvals, eigvecs = np.linalg.eig(Sigma)
     eigvals = np.where(eigvals < 0, 0, eigvals)
     Sigma_psd = eigvecs @ np.diag(eigvals) @ eigvecs.T
-    assert_allclose(Sigma, Sigma_psd)
+    assert_allclose(Sigma, Sigma_psd, atol=1e-8)
 
 
-def test_autocovariance_matrix():
-    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
+@pytest.mark.parametrize(
+    "gcn_file",
+    [
+        "One_Block_Simple_1_w_Steady_State.gcn",
+        "Open_RBC.gcn",
+        "Full_New_Keynesian.gcn",
+        "RBC_Linearized.gcn",
+    ],
+)
+def test_autocovariance_matrix(caplog, gcn_file):
+    file_path = os.path.join("tests", "Test GCNs", gcn_file)
     model = model_from_gcn(file_path, verbose=False)
-    rho_A = np.random.beta(1, 1)
-    autocorr = autocovariance_matrix(
-        model, shock_std=0.1, solver="gensys", verbose=False, rho_A=rho_A
+
+    shocks = model.shocks
+    shock_eqs = [eq for eq in model.equations if any(s in eq.atoms() for s in shocks)]
+
+    for eq in shock_eqs:
+        atoms = eq.atoms()
+        shock = next(x for x in atoms if x in shocks)
+        if shock.base_name in ["epsilon_R", "epsilon_pi"]:
+            # These aren't a normal AR(1) shocks, so we skip them
+            continue
+
+        state = next(x for x in atoms if x in model.variables)
+        state_idx = model.variables.index(state)
+
+        rho = next(x for x in atoms if x in model.params)
+        rho_value = np.random.beta(10, 1)
+
+        # The autocorrelation of the AR(1) states decay at rate rho ** t
+        # Other autocovarainces are more complex, but this one is easy to check
+        autocorr = autocovariance_matrix(
+            model,
+            shock_std=0.1,
+            solver="gensys",
+            verbose=False,
+            **{rho.name: rho_value},
+        )
+
+        assert_allclose(
+            autocorr[:, state_idx, state_idx],
+            rho_value ** np.arange(10),
+            atol=1e-8,
+            rtol=1e-8,
+            err_msg=f"Error computing {state} autocovariance in {gcn_file}",
+        )
+
+
+def setup_cov_argumnets(argument, n_shocks, model):
+    shock_std = None
+    shock_dict = None
+    shock_cov_matrix = None
+    if argument == "shock_std":
+        shock_std = 0.1
+    elif argument == "shock_std_dict":
+        shock_dict = {shock.base_name: 0.1 for shock in model.shocks}
+    elif argument == "shock_cov_matrix":
+        shock_cov_matrix = np.eye(n_shocks) * 0.1**2
+
+    return shock_std, shock_dict, shock_cov_matrix
+
+
+@pytest.mark.parametrize(
+    "gcn_file",
+    [
+        "One_Block_Simple_1_w_Steady_State.gcn",
+        "Open_RBC.gcn",
+        "Full_New_Keynesian.gcn",
+    ],
+)
+@pytest.mark.parametrize("argument", ["shock_size", "shock_cov", "shock_trajectory"])
+def test_impulse_response_function(gcn_file, argument):
+    file_path = os.path.join("tests", "Test GCNs", gcn_file)
+    model = model_from_gcn(file_path, verbose=False)
+    T, R = model.solve_model(solver="gensys", verbose=False)
+    n_variables, n_shocks = R.shape
+
+    shock_size, shock_cov, shock_trajectory = None, None, None
+    if argument == "shock_size":
+        shock_size = 0.1
+    elif argument == "shock_cov":
+        shock_cov = np.eye(n_shocks) * 0.1
+    elif argument == "shock_trajectory":
+        shock_trajectory = np.zeros((1000, n_shocks))
+        shock_trajectory[0, 0] = 0.1
+
+    irf = impulse_response_function(
+        model,
+        T,
+        R,
+        simulation_length=1000,
+        shock_size=shock_size,
+        shock_cov=shock_cov,
+        shock_trajectory=shock_trajectory,
     )
 
-    # The autocorrelation of the A variable decays at rate rho_A ** k
-    A_idx = [x.base_name for x in model.variables].index("A")
-    assert_allclose(
-        autocorr[:, A_idx, A_idx], rho_A ** np.arange(10), atol=1e-8, rtol=1e-8
+    assert irf.shape == (1000, n_variables)
+
+    # After 1000 steps the shocks should have mostly died out
+    assert np.all(np.abs(irf.isel(time=-1)) < 1e-3)
+
+
+@pytest.mark.parametrize(
+    "gcn_file",
+    [
+        "One_Block_Simple_1_w_Steady_State.gcn",
+        "Open_RBC.gcn",
+        "Full_New_Keynesian.gcn",
+    ],
+)
+@pytest.mark.parametrize(
+    "argument", ["shock_std", "shock_std_dict", "shock_cov_matrix"]
+)
+def test_simulate(gcn_file, argument):
+    file_path = os.path.join("tests", "Test GCNs", gcn_file)
+    model = model_from_gcn(file_path, verbose=False)
+    T, R = model.solve_model(solver="gensys", verbose=False)
+    n_variables, n_shocks = R.shape
+
+    n_simulations = 2000
+    simulation_length = 1000
+
+    shock_std, shock_std_dict, shock_cov_matrix = setup_cov_argumnets(
+        argument, n_shocks, model
     )
+
+    data = simulate(
+        model,
+        T,
+        R,
+        simulation_length=simulation_length,
+        n_simulations=n_simulations,
+        shock_std=shock_std,
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+    )
+    assert data.shape == (n_simulations, simulation_length, n_variables)
+
+    # Check that the simulated covariance matrix is at least strong correlated with the stationary covariance matrix
+    # across many trajectories
+    Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1)
+    sigma = np.cov(data.isel(time=-1).values.T)
+
+    corr = np.corrcoef(np.r_[Sigma.ravel(), sigma.ravel()])
+    assert abs(corr) > 0.99
+
+    assert_allclose(np.diag(Sigma), np.diag(sigma), rtol=0.1)

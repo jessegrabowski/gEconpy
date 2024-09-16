@@ -3,7 +3,7 @@ import logging
 
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import Callable, Literal
+from typing import Callable, Literal, cast
 
 import numba as nb
 import numpy as np
@@ -320,12 +320,12 @@ class Model:
             f_linearize = override_dummy_wrapper(f_linearize, "not_loglin_variable")
         self.f_linearize = f_linearize
 
-        # self.param_priors: SymbolDictionary[str, Any] = SymbolDictionary()
-        # self.shock_priors: SymbolDictionary[str, Any] = SymbolDictionary()
-        # self.hyper_priors: SymbolDictionary[str, Any] = SymbolDictionary()
-        # self.observation_noise_priors: SymbolDictionary[str, Any] = SymbolDictionary()
-
     def parameters(self, **updates: float):
+        # Remove deterministic parameters for updates. These can appear **self.parameters() into a fitting function
+        deterministic_names = [x.name for x in self.deterministic_params]
+        updates = {k: v for k, v in updates.items() if k not in deterministic_names}
+
+        # Check for unknown updates (typos, etc)
         param_dict = self._default_params.copy()
         unknown_updates = set(updates.keys()) - set(param_dict.keys())
         if unknown_updates:
@@ -916,9 +916,13 @@ def _maybe_solve_model(
     return T, R
 
 
-def _validate_shock_options(shock_std_dict, shock_cov_matrix, shock_std, shocks):
+def _validate_shock_options(
+    shock_std_dict: dict[str, float] | None,
+    shock_cov_matrix: np.ndarray | None,
+    shock_std: float | np.ndarray | list | None,
+    shocks: list[TimeAwareSymbol],
+):
     n_shocks = len(shocks)
-
     n_provided = sum(
         x is not None for x in [shock_std_dict, shock_cov_matrix, shock_std]
     )
@@ -934,26 +938,56 @@ def _validate_shock_options(shock_std_dict, shock_cov_matrix, shock_std, shocks)
                 f"Incorrect covariance matrix shape. Expected ({n_shocks}, {n_shocks}), "
                 f"found {shock_cov_matrix.shape}"
             )
-        try:
-            # check that the provided matrix is PSD
-            np.linalg.cholesky(shock_cov_matrix)
-            return shock_cov_matrix
-        except np.linalg.LinAlgError:
-            raise np.linalg.LinAlgError("The provided Q is not positive semi-definite.")
 
     if shock_std_dict is not None:
-        if not all(x in shock_std_dict.keys() for x in [x.base_name for x in shocks]):
-            raise ValueError("Shock dictionary keys do not match model shocks")
-        shock_cov_matrix = np.diag([shock_std_dict[x.base_name] for x in shocks])
+        shock_names = [x.base_name for x in shocks]
+        missing = [x for x in shock_std_dict.keys() if x not in shock_names]
+        extra = [x for x in shock_names if x not in shock_std_dict.keys()]
+        if len(missing) > 0:
+            raise ValueError(
+                f"If shock_std_dict is specified, it must give values for all shocks. The follow shocks were not found"
+                f" among the provided keys: {', '.join(missing)}"
+            )
+        if len(extra) > 0:
+            raise ValueError(
+                f"Unexpected shocks in shock_std_dict. The following names were not found among the model shocks: "
+                f"{', '.join(extra)}"
+            )
 
-    return shock_std_dict, shock_cov_matrix, shock_std
+    if shock_std is not None:
+        if isinstance(shock_std, np.ndarray | list):
+            shock_std = cast(np.ndarray | list, shock_std)
+            if len(shock_std) != n_shocks:
+                raise ValueError(
+                    f"Length of shock_std ({len(shock_std)}) does not match the number of shocks ({n_shocks})"
+                )
+            if not np.all(shock_std > 0):
+                raise ValueError("Shock standard deviations must be positive")
+        elif isinstance(shock_std, (int, float)):
+            if shock_std < 0:
+                raise ValueError("Shock standard deviation must be positive")
+
+
+def _validate_simulation_options(shock_size, shock_cov, shock_trajectory):
+    options = [shock_size, shock_cov, shock_trajectory]
+    n_options = sum(x is not None for x in options)
+
+    if n_options > 1:
+        raise ValueError(
+            "Specify exactly 0 or 1 of shock_size, shock_cov, or shock_trajectory"
+        )
+    elif n_options == 0:
+        # Default is a unit shock on everything
+        shock_size = 1.0
+
+    return shock_size, shock_cov, shock_trajectory
 
 
 def build_Q_matrix(
     model_shocks: list[TimeAwareSymbol],
     shock_std_dict: dict[str, float] | None = None,
     shock_cov_matrix: np.ndarray | None = None,
-    shock_std: float | None = None,
+    shock_std: np.ndarray | list | float | None = None,
 ) -> np.array:
     """
     Take different options for user input and reconcile them into a covariance matrix. Exactly one or zero of shock_dict
@@ -977,8 +1011,9 @@ def build_Q_matrix(
         Dictionary of shock names and standard deviations to be used to build Q
     shock_cov_matrix: array, optional
         An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
-    shock_std: float, optional
-        Standard deviation of all model shocks.
+    shock_std: float or sequence of float, optional
+        Standard deviation of all model shocks. If float, the same value will be used for all shocks. If sequence, the
+        length must match the number of shocks.
 
     Raises
     ------
@@ -993,7 +1028,12 @@ def build_Q_matrix(
         Shock variance-covariance matrix
     """
 
-    _validate_shock_options(shock_std_dict, shock_cov_matrix, shock_std, model_shocks)
+    _validate_shock_options(
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
+        shocks=model_shocks,
+    )
 
     if shock_cov_matrix is not None:
         return shock_cov_matrix
@@ -1014,9 +1054,9 @@ def stationary_covariance_matrix(
     model: Model,
     T: np.ndarray | None = None,
     R: np.ndarray | None = None,
-    shock_dict: dict[str, float] | None = None,
+    shock_std_dict: dict[str, float] | None = None,
     shock_cov_matrix: np.ndarray | None = None,
-    shock_std: float | None = None,
+    shock_std: np.ndarray | list | float | None = None,
     **solve_model_kwargs,
 ):
     """
@@ -1050,15 +1090,20 @@ def stationary_covariance_matrix(
         Stationary covariance matrix of the linearized model
     """
     shocks = model.shocks
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-    shock_std_dict, shock_cov_matrix, shock_std = _validate_shock_options(
-        shock_dict, shock_cov_matrix, shock_std, shocks
+    _validate_shock_options(
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
+        shocks=shocks,
     )
+
+    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
 
     Q = build_Q_matrix(
         model_shocks=shocks,
         shock_std_dict=shock_std_dict,
         shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
     )
 
     RQRT = np.linalg.multi_dot([R, Q, R.T])
@@ -1110,7 +1155,7 @@ def autocovariance_matrix(
     R: np.ndarray | None = None,
     shock_std_dict: dict[str, float] | None = None,
     shock_cov_matrix: np.ndarray | None = None,
-    shock_std: float | None = None,
+    shock_std: np.ndarray | list | float | None = None,
     n_lags: int = 10,
     correlation=True,
     **solve_model_kwargs,
@@ -1138,6 +1183,8 @@ def autocovariance_matrix(
         Standard deviation of all model shocks.
     n_lags: int
         Number of lags of autocorrelation and cross-autocorrelation to compute. Default is 10.
+    correlation: bool
+        If True, return the autocorrelation matrices instead of the autocovariance matrices.
     **solve_model_kwargs
         Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
 
@@ -1191,436 +1238,217 @@ def summarize_perturbation_solution(
     )
 
 
-# xr.DataArray(data=result,
-#                         dims=('lag', 'variable', 'variable_bis'),
-#                         coords={'lag':np.arange(n_lags).astype(int),
-#                                 'variable':[x.base_name for x in model.variables],
-#                                 'variable_bis': [x.base_name for x in model.variables]}
-#                         )
+def impulse_response_function(
+    model: Model,
+    T: np.ndarray | None = None,
+    R: np.ndarray | None = None,
+    simulation_length: int = 40,
+    shock_size: float | np.ndarray | dict[str, float] | None = None,
+    shock_cov: np.ndarray | None = None,
+    shock_trajectory: np.ndarray | None = None,
+    orthogonalize_shocks: bool = False,
+    random_seed: int | np.random.RandomState | None = None,
+    **solve_model_kwargs,
+) -> xr.DataArray:
+    """
+    Generate impulse response functions (IRF) from state space model dynamics.
 
-#     # def fit(
-#     #     self,
-#     #     data,
-#     #     estimate_a0=False,
-#     #     estimate_P0=False,
-#     #     a0_prior=None,
-#     #     P0_prior=None,
-#     #     filter_type="univariate",
-#     #     draws=5000,
-#     #     n_walkers=36,
-#     #     moves=None,
-#     #     emcee_x0=None,
-#     #     verbose=True,
-#     #     return_inferencedata=True,
-#     #     burn_in=None,
-#     #     thin=None,
-#     #     skip_initial_state_check=False,
-#     #     compute_sampler_stats=True,
-#     #     **sampler_kwargs,
-#     # ):
-#     #     """
-#     #     Estimate model parameters via Bayesian inference. Parameter likelihood is computed using the Kalman filter.
-#     #     Posterior distributions are estimated using Markov Chain Monte Carlo (MCMC), specifically the Affine-Invariant
-#     #     Ensemble Sampler algorithm of [1].
-#     #
-#     #     A "traditional" Random Walk Metropolis can be achieved using the moves argument, but by default this function
-#     #     will use a mix of two Differential Evolution (DE) proposal algorithms that have been shown to work well on
-#     #     weakly multi-modal problems. DSGE estimation can be multi-modal in the sense that regions of the posterior
-#     #     space are separated by the constraints on the ability to solve the perturbation problem.
-#     #
-#     #     This function will start all MCMC chains around random draws from the prior distribution. This is in contrast
-#     #     to Dynare and gEcon.estimate, which start MCMC chains around the Maximum Likelihood estimate for parameter
-#     #     values.
-#     #
-#     #     Parameters
-#     #     ----------
-#     #     data: dataframe
-#     #         A pandas dataframe of observed values, with column names corresponding to DSGE model states names.
-#     #     estimate_a0: bool, default: False
-#     #         Whether to estimate the initial values of the DSGE process. If False, x0 will be deterministically set to
-#     #         a vector of zeros, corresponding to the steady state. If True, you must provide a
-#     #     estimate_P0: bool, default: False
-#     #         Whether to estimate the intial covariance matrix of the DSGE process. If False, P0 will be set to the
-#     #         Kalman Filter steady state value by solving the associated discrete Lyapunov equation.
-#     #     a0_prior: dict, optional
-#     #         A dictionary with (variable name, scipy distribution) key-value pairs. If a key "initial_vector" is found,
-#     #         all other keys will be ignored, and the single distribution over all initial states will be used. Otherwise,
-#     #         n_states independent distributions should be included in the dictionary.
-#     #         If estimate_a0 is False, this will be ignored.
-#     #     P0_prior: dict, optional
-#     #         A dictionary with (variable name, scipy distribution) key-value pairs. If a key "initial_covariance" is
-#     #         found, all other keys will be ignored, and this distribution will be taken as over the entire covariance
-#     #         matrix. Otherwise, n_states independent distributions are expected, and are used to construct a diagonal
-#     #         initial covariance matrix.
-#     #     filter_type: string, default: "standard"
-#     #         Select a kalman filter implementation to use. Currently "standard" and "univariate" are supported. Try
-#     #         univariate if you run into errors inverting the P matrix during filtering.
-#     #     draws: integer
-#     #         Number of draws from each MCMC chain, or "walker" in the jargon of emcee.
-#     #     n_walkers: integer
-#     #         The number of "walkers", which roughly correspond to chains in other MCMC packages. Note that one needs
-#     #         many more walkers than chains; [1] recommends as many as possible.
-#     #     cores: integer
-#     #         The number of processing cores, which is passed to Multiprocessing.Pool to do parallel inference. To
-#     #         maintain detailed balance, the pool of walkers must be split, resulting in n_walkers / cores sub-ensembles.
-#     #         Be sure to raise the number of walkers to compensate.
-#     #     moves: List of emcee.moves objects
-#     #         Moves tell emcee how to generate MCMC proposals. See the emcee docs for details.
-#     #     emcee_x0: array
-#     #         An (n_walkers, k_parameters) array of initial values. Emcee will check the condition number of the matrix
-#     #         to ensure all walkers begin in different regions of the parameter space. If MLE estimates are used, they
-#     #         should be jittered to start walkers in a ball around the desired initial point.
-#     #     return_inferencedata: bool, default: True
-#     #         If true, return an Arviz InferenceData object containing posterior samples. If False, the fitted Emcee
-#     #         sampler is returned.
-#     #     burn_in: int, optional
-#     #         Number of initial samples to discard from all chains. This is ignored if return_inferencedata is False.
-#     #     thin: int, optional
-#     #         Return only every n-th sample from each chain. This is done to reduce storage requirements in highly
-#     #         autocorrelated chains by discarding redundant information. Ignored if return_inferencedata is False.
-#     #
-#     #     Returns
-#     #     -------
-#     #     sampler, emcee.Sampler object
-#     #         An emcee.Sampler object with the estimated posterior over model parameters, as well as other diagnotic
-#     #         information.
-#     #
-#     #     References
-#     #     ----------
-#     #     ..[1] Foreman-Mackey, Daniel, et al. “Emcee: The MCMC Hammer.” Publications of the Astronomical Society of the
-#     #           Pacific, vol. 125, no. 925, Mar. 2013, pp. 306-12. arXiv.org, https://doi.org/10.1086/670067.
-#     #     """
-#     #     observed_vars = data.columns.tolist()
-#     #     n_obs = len(observed_vars)
-#     #     n_shocks = self.n_shocks
-#     #     model_var_names = [x.base_name for x in self.variables]
-#     #     n_noise_priors = len(self.observation_noise_priors)
-#     #
-#     #     if n_obs > (n_noise_priors + n_shocks):
-#     #         raise ValueError(
-#     #             f"Number of observed parameters in data ({n_obs}) is greater than the number of sources "
-#     #             f"of stochastic variance - shocks ({n_shocks}) and observation noise ({n_noise_priors}). "
-#     #             f"The model cannot be fit due to stochastic singularity."
-#     #         )
-#     #
-#     #     if burn_in is None:
-#     #         burn_in = 0
-#     #
-#     #     if not all([x in model_var_names for x in observed_vars]):
-#     #         orphans = [x for x in observed_vars if x not in model_var_names]
-#     #         raise ValueError(
-#     #             f"Columns of data must correspond to states of the DSGE model. Found the following columns"
-#     #             f'with no associated model state: {", ".join(orphans)}'
-#     #         )
-#     #
-#     #     # sparse_data = extract_sparse_data_from_model(self)
-#     #     prior_dict = extract_prior_dict(self)
-#     #
-#     #     if estimate_a0 is False:
-#     #         a0 = None
-#     #     else:
-#     #         if a0_prior is None:
-#     #             raise ValueError(
-#     #                 "If estimate_a0 is True, you must provide a dictionary of prior distributions for"
-#     #                 "the initial values of all individual states"
-#     #             )
-#     #         if not all([var in a0_prior.keys() for var in model_var_names]):
-#     #             missing_keys = set(model_var_names) - set(list(a0_prior.keys()))
-#     #             raise ValueError(
-#     #                 "You must provide one key for each state in the model. "
-#     #                 f'No keys found for: {", ".join(missing_keys)}'
-#     #             )
-#     #         for var in model_var_names:
-#     #             prior_dict[f"{var}__initial"] = a0_prior[var]
-#     #
-#     #     moves = moves or [
-#     #         (emcee.moves.DEMove(), 0.6),
-#     #         (emcee.moves.DESnookerMove(), 0.4),
-#     #     ]
-#     #
-#     #     shock_names = [x.base_name for x in self.shocks]
-#     #
-#     #     k_params = len(prior_dict)
-#     #     Z = build_Z_matrix(observed_vars, model_var_names)
-#     #
-#     #     args = [
-#     #         data.values,
-#     #         self.f_ss,
-#     #         self.build_perturbation_matrices,
-#     #         self.free_param_dict,
-#     #         Z,
-#     #         prior_dict,
-#     #         shock_names,
-#     #         observed_vars,
-#     #         filter_type,
-#     #     ]
-#     #
-#     #     arg_names = [
-#     #         "observed_data",
-#     #         "f_ss",
-#     #         "f_pert",
-#     #         "free_params",
-#     #         "Z",
-#     #         "prior_dict",
-#     #         "shock_names",
-#     #         "observed_vars",
-#     #         "filter_type",
-#     #     ]
-#     #
-#     #     if emcee_x0:
-#     #         x0 = emcee_x0
-#     #     else:
-#     #         x0 = np.stack([x.rvs(n_walkers) for x in prior_dict.values()]).T
-#     #
-#     #     param_names = list(prior_dict.keys())
-#     #
-#     #     sampler = emcee.EnsembleSampler(
-#     #         n_walkers,
-#     #         k_params,
-#     #         evaluate_logp2,
-#     #         args=args,
-#     #         moves=moves,
-#     #         parameter_names=param_names,
-#     #         **sampler_kwargs,
-#     #     )
-#     #
-#     #     with catch_warnings():
-#     #         simplefilter("ignore")
-#     #         _ = sampler.run_mcmc(
-#     #             x0,
-#     #             draws + burn_in,
-#     #             progress=verbose,
-#     #             skip_initial_state_check=skip_initial_state_check,
-#     #         )
-#     #
-#     #     if return_inferencedata:
-#     #         idata = az.from_emcee(
-#     #             sampler,
-#     #             var_names=param_names,
-#     #             blob_names=["log_likelihood"],
-#     #             arg_names=arg_names,
-#     #         )
-#     #
-#     #         if compute_sampler_stats:
-#     #             sampler_stats = xr.Dataset(
-#     #                 data_vars=dict(
-#     #                     acceptance_fraction=(["chain"], sampler.acceptance_fraction),
-#     #                     autocorrelation_time=(
-#     #                         ["parameters"],
-#     #                         sampler.get_autocorr_time(discard=burn_in or 0, quiet=True),
-#     #                     ),
-#     #                 ),
-#     #                 coords=dict(chain=np.arange(n_walkers), parameters=param_names),
-#     #             )
-#     #
-#     #             idata["sample_stats"].update(sampler_stats)
-#     #         idata.observed_data = idata.observed_data.drop_vars(["prior_dict"])
-#     #
-#     #         return idata.sel(draw=slice(burn_in, None, thin))
-#     #
-#     #     return sampler
-#
-#     def sample_param_dict_from_prior(self, n_samples=1, seed=None, param_subset=None):
-#         """
-#         Sample parameters from the parameter prior distributions.
-#
-#         Parameters
-#         ----------
-#         n_samples: int, default: 1
-#             Number of samples to draw from the prior distributions.
-#         seed: int, default: None
-#             Seed for the random number generator.
-#         param_subset: list, default: None
-#             List of parameter names to sample. If None, all parameters are sampled.
-#
-#         Returns
-#         -------
-#         new_param_dict: dict
-#             Dictionary of sampled parameters.
-#         """
-#         shock_std_priors = get_shock_std_priors_from_hyperpriors(self.shocks, self.hyper_priors)
-#
-#         all_priors = (
-#             self.param_priors.to_sympy()
-#             | shock_std_priors
-#             | self.observation_noise_priors.to_sympy()
-#         )
-#
-#         if len(all_priors) == 0:
-#             raise ValueError("No model priors found, cannot sample.")
-#
-#         if param_subset is None:
-#             n_variables = len(all_priors)
-#             priors_to_sample = all_priors
-#         else:
-#             n_variables = len(param_subset)
-#             priors_to_sample = SymbolDictionary(
-#                 {k: v for k, v in all_priors.items() if k.name in param_subset}
-#             )
-#
-#         if seed is not None:
-#             seed_sequence = np.random.SeedSequence(seed)
-#             child_seeds = seed_sequence.spawn(n_variables)
-#             streams = [np.random.default_rng(s) for s in child_seeds]
-#         else:
-#             streams = [None] * n_variables
-#
-#         new_param_dict = {}
-#         for i, (key, d) in enumerate(priors_to_sample.items()):
-#             new_param_dict[key] = d.rvs(size=n_samples, random_state=streams[i])
-#
-#         free_param_dict, shock_dict, obs_dict = split_random_variables(
-#             new_param_dict, self.shocks, self.variables
-#         )
-#
-#         return free_param_dict.to_string(), shock_dict.to_string(), obs_dict.to_string()
-#
-#     def impulse_response_function(self, simulation_length: int = 40, shock_size: float = 1.0):
-#         """
-#         Compute the impulse response functions of the model.
-#
-#         Parameters
-#         ----------
-#         simulation_length : int, optional
-#             The number of periods to compute the IRFs over. The default is 40.
-#         shock_size : float, optional
-#             The size of the shock. The default is 1.0.
-#
-#         Returns
-#         -------
-#         pandas.DataFrame
-#             The IRFs for each variable in the model. The DataFrame has a multi-index
-#             with the variable names as the first level and the timestep as the second.
-#             The columns are the shocks.
-#
-#         Raises
-#         ------
-#         PerturbationSolutionNotFoundException
-#             If a perturbation solution has not been found.
-#         """
-#
-#         if not self.perturbation_solved:
-#             raise PerturbationSolutionNotFoundException()
-#
-#         T, R = self.T, self.R
-#
-#         timesteps = simulation_length
-#
-#         data = np.zeros((self.n_variables, timesteps, self.n_shocks))
-#
-#         for i in range(self.n_shocks):
-#             shock_path = np.zeros((self.n_shocks, timesteps))
-#             shock_path[i, 0] = shock_size
-#
-#             for t in range(1, timesteps):
-#                 stochastic = R.values @ shock_path[:, t - 1]
-#                 deterministic = T.values @ data[:, t - 1, i]
-#                 data[:, t, i] = deterministic + stochastic
-#
-#         index = pd.MultiIndex.from_product(
-#             [R.index, np.arange(timesteps), R.columns],
-#             names=["Variables", "Time", "Shocks"],
-#         )
-#
-#         df = (
-#             pd.DataFrame(data.ravel(), index=index, columns=["Values"])
-#             .unstack([1, 2])
-#             .droplevel(axis=1, level=0)
-#             .sort_index(axis=1)
-#         )
-#
-#         return df
-#
-#     def simulate(
-#         self,
-#         simulation_length: int = 40,
-#         n_simulations: int = 100,
-#         shock_dict: Optional[dict[str, float]] = None,
-#         shock_cov_matrix: Optional[ArrayLike] = None,
-#         show_progress_bar: bool = False,
-#     ):
-#         """
-#         Simulate the model over a certain number of time periods.
-#
-#         Parameters
-#         ----------
-#         simulation_length : int, optional(default=40)
-#             The number of time periods to simulate.
-#         n_simulations : int, optional(default=100)
-#             The number of simulations to run.
-#         shock_dict : dict, optional(default=None)
-#             Dictionary of shocks to use.
-#         shock_cov_matrix : arraylike, optional(default=None)
-#             Covariance matrix of shocks to use.
-#         show_progress_bar : bool, optional(default=False)
-#             Whether to show a progress bar for the simulation.
-#
-#         Returns
-#         -------
-#         df : pandas.DataFrame
-#             The simulated data.
-#         """
-#
-#         if not self.perturbation_solved:
-#             raise PerturbationSolutionNotFoundException()
-#
-#         T, R = self.T, self.R
-#         timesteps = simulation_length
-#
-#         n_shocks = R.shape[1]
-#         shock_std_priors = get_shock_std_priors_from_hyperpriors(
-#             self.shocks, self.hyper_priors, out_keys="parent"
-#         )
-#
-#         if (
-#             shock_dict is None
-#             and shock_cov_matrix is None
-#             and len(shock_std_priors) < self.n_shocks
-#         ):
-#             unknown_shocks_list = [
-#                 shock.base_name
-#                 for shock in self.shocks
-#                 if shock not in self.shock_priors.to_sympy()
-#             ]
-#             unknown_shocks = ", ".join(unknown_shocks_list)
-#             warn(
-#                 f"No standard deviation provided for shocks {unknown_shocks}. Using default of std = 0.01. Explicity"
-#                 f"pass variance information for these shocks or set their priors to silence this warning."
-#             )
-#
-#         Q = build_Q_matrix(
-#             model_shocks=[x.base_name for x in self.shocks],
-#             shock_dict=shock_dict,
-#             shock_cov_matrix=shock_cov_matrix,
-#             shock_std_priors=shock_std_priors,
-#         )
-#
-#         d_epsilon = stats.multivariate_normal(mean=np.zeros(n_shocks), cov=Q)
-#         epsilons = np.r_[[d_epsilon.rvs(timesteps) for _ in range(n_simulations)]]
-#
-#         data = np.zeros((self.n_variables, timesteps, n_simulations))
-#         if epsilons.ndim == 2:
-#             epsilons = epsilons[:, :, None]
-#
-#         progress_bar = ProgressBar(timesteps - 1, verb="Sampling")
-#
-#         for t in range(1, timesteps):
-#             progress_bar.start()
-#             stochastic = np.einsum("ij,sj", R.values, epsilons[:, t - 1, :])
-#             deterministic = T.values @ data[:, t - 1, :]
-#             data[:, t, :] = deterministic + stochastic
-#
-#             if show_progress_bar:
-#                 progress_bar.stop()
-#
-#         index = pd.MultiIndex.from_product(
-#             [R.index, np.arange(timesteps), np.arange(n_simulations)],
-#             names=["Variables", "Time", "Simulation"],
-#         )
-#         df = (
-#             pd.DataFrame(data.ravel(), index=index, columns=["Values"])
-#             .unstack([1, 2])
-#             .droplevel(axis=1, level=0)
-#         )
-#
-#         return df
+    An impulse response function represents the dynamic response of the state space model
+    to an instantaneous shock applied to the system. This function calculates the IRF
+    based on either provided shock specifications or the posterior state covariance matrix.
+
+    Parameters
+    ----------
+    model: Model
+        DSGE Model object
+    T: np.ndarray, optional
+        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
+        method.
+    R: np.ndarray, optional
+        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
+    simulation_length : int, optional
+        The number of periods to compute the IRFs over. The default is 40.
+    shock_size : Optional[Union[float, np.ndarray]], default=None
+        The size of the shock applied to the system. If specified, it will create a covariance
+        matrix for the shock with diagonal elements equal to `shock_size`. If float, the diagonal will be filled
+        with `shock_size`. If an array, `shock_size` must match the number of shocks in the state space model.
+
+        Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
+    shock_cov : Optional[np.ndarray], default=None
+        A user-specified covariance matrix for the shocks. It should be a 2D numpy array with
+        dimensions (n_shocks, n_shocks), where n_shocks is the number of shocks in the state space model.
+
+        Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
+    shock_trajectory : Optional[np.ndarray], default=None
+        A pre-defined trajectory of shocks applied to the system. It should be a 2D numpy array
+        with dimensions (n, n_shocks), where n is the number of time steps and k_posdef is the
+        number of shocks in the state space model.
+
+        Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
+    orthogonalize_shocks : bool, default=False
+        If True, orthogonalize the shocks using Cholesky decomposition when generating the impulse
+        response. This option is ignored if `shock_trajectory` or `shock_size` are used.
+    random_seed : int, RandomState or Generator, optional
+        Seed for the random number generator.
+    **solve_model_kwargs
+        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
+
+    Returns
+    -------
+    xr.DataArray
+        The IRFs for each variable in the model.
+    """
+    n_variables = len(model.variables)
+    n_shocks = len(model.shocks)
+    rng = np.random.default_rng(random_seed)
+    Q = None  # No covariance matrix needed if a trajectory is provided. Will be overwritten later if needed.
+
+    shock_size, shock_cov, shock_trajectory = _validate_simulation_options(
+        shock_size, shock_cov, shock_trajectory
+    )
+
+    if shock_trajectory is not None:
+        # Validate the shock trajectory
+        n, k = shock_trajectory.shape
+
+        if k != n_shocks:
+            raise ValueError(
+                "If shock_trajectory is provided, there must be a trajectory provided for each shock. "
+                f"Model has {n_shocks} shocks, but shock_trajectory has only {k} columns"
+            )
+        if simulation_length is not None and simulation_length != n:
+            _log.warning(
+                "Both steps and shock_trajectory were provided but do not agree. Length of "
+                "shock_trajectory will take priority, and steps will be ignored."
+            )
+        simulation_length = n  # Overwrite steps with the length of the shock trajectory
+        shock_trajectory = np.array(shock_trajectory)
+
+    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
+
+    data = np.zeros((n_variables, simulation_length))
+
+    if shock_cov is not None:
+        Q = np.array(shock_cov)
+        if orthogonalize_shocks:
+            Q = linalg.cholesky(Q) / np.diag(Q)[:, None]
+
+    if shock_trajectory is None:
+        shock_trajectory = np.zeros((simulation_length, n_shocks))
+        if Q is not None:
+            init_shock = rng.multivariate_normal(mean=np.zeros(n_shocks), cov=Q)
+        else:
+            # Last remaining possibility is that shock_size was provided
+            if isinstance(shock_size, dict):
+                shock_size = [shock_size.get(x.base_name, 0.0) for x in model.shocks]
+            init_shock = np.array(shock_size)
+        shock_trajectory[0] = init_shock
+
+    else:
+        shock_trajectory = np.array(shock_trajectory)
+
+    for t in range(1, simulation_length):
+        stochastic = R @ shock_trajectory[t - 1]
+        deterministic = T @ data[:, t - 1]
+        data[:, t] = deterministic + stochastic
+
+    variable_names = [x.base_name for x in model.variables]
+
+    irf = xr.DataArray(
+        data.T,
+        dims=["time", "variable"],
+        coords={"time": np.arange(simulation_length), "variable": variable_names},
+    )
+
+    return irf
+
+
+def simulate(
+    model: Model,
+    T: np.ndarray | None = None,
+    R: np.ndarray | None = None,
+    n_simulations: int = 1,
+    simulation_length: int = 40,
+    shock_std_dict: dict[str, float] | None = None,
+    shock_cov_matrix: np.ndarray | None = None,
+    shock_std: np.ndarray | list | float | np.ndarray = None,
+    random_seed: int | np.random.RandomState | None = None,
+    **solve_model_kwargs,
+) -> xr.DataArray:
+    """
+    Simulate the model over a certain number of time periods.
+
+    Parameters
+    ----------
+    model: Model
+        DSGE Model object
+    T: np.ndarray, optional
+        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
+        method.
+    R: np.ndarray, optional
+        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
+    n_simulations : int, optional
+        Number of trajectories to simulate. Default is 1.
+    simulation_length : int, optional
+        Length of each simulated trajectory. Default is 40.
+    shock_std_dict: dict, optional
+        Dictionary of shock names and standard deviations to be used to build Q
+    shock_cov_matrix: array, optional
+        An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
+    shock_std: float or sequence, optional
+        Standard deviation of all model shocks.
+    random_seed : int, RandomState or Generator, optional
+        Seed for the random number generator.
+    **solve_model_kwargs
+        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
+
+    Returns
+    -------
+    xr.DataArray
+        Simulated trajectories.
+    """
+    rng = np.random.default_rng(random_seed)
+    shocks = model.shocks
+    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
+
+    n_variables, n_shocks = R.shape
+
+    _validate_shock_options(
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
+        shocks=shocks,
+    )
+
+    Q = build_Q_matrix(
+        model_shocks=shocks,
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
+    )
+
+    epsilons = rng.multivariate_normal(
+        mean=np.zeros(n_shocks),
+        cov=Q,
+        size=(n_simulations, simulation_length),
+        method="svd",
+    )
+
+    data = np.zeros((n_simulations, simulation_length, n_variables))
+
+    for t in range(1, simulation_length):
+        stochastic = np.einsum("nk,sk->sn", R, epsilons[:, t - 1, :])
+        deterministic = np.einsum("nm,sm->sn", T, data[:, t - 1, :])
+        data[:, t, :] = deterministic + stochastic
+
+    data = xr.DataArray(
+        data,
+        dims=["simulation", "time", "variable"],
+        coords={
+            "variable": [x.base_name for x in model.variables],
+            "simulation": np.arange(n_simulations),
+            "time": np.arange(simulation_length),
+        },
+    )
+
+    return data

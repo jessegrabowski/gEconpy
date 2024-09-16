@@ -180,10 +180,10 @@ class GensysComponentTests(unittest.TestCase):
             ]
         )
 
-        self.A = np.ascontiguousarray(A)
-        self.B = np.ascontiguousarray(B)
-        self.Q = np.ascontiguousarray(Q)
-        self.Z = np.ascontiguousarray(Z)
+        self.A = np.asfortranarray(A)
+        self.B = np.asfortranarray(B)
+        self.Q = np.asfortranarray(Q)
+        self.Z = np.asfortranarray(Z)
 
     def unpack_matrices(self):
         return self.A, self.B, self.Q, self.Z
@@ -549,7 +549,7 @@ class GensysComponentTests(unittest.TestCase):
     def test_determine_n_unstable(self):
         A, B, _, _ = self.unpack_matrices()
 
-        div, n_unstable, zxz = determine_n_unstable(A, B, self.div, realsmall=-6)
+        div, n_unstable, zxz = determine_n_unstable(A, B, self.div, realsmall=1e-6)
 
         self.assertEqual(div, 1.01)
         self.assertEqual(n_unstable, 5)
