@@ -4,6 +4,8 @@ import xarray as xr
 
 from numpy.linalg import LinAlgError
 
+import gEconpy.solvers.gensys
+
 from gEconpy.classes.progress_bar import ProgressBar
 from gEconpy.estimation.estimate import build_Q_and_H, build_Z_matrix
 from gEconpy.estimation.kalman_filter import kalman_filter
@@ -58,7 +60,7 @@ def prior_solvability_check(
                 pert_success = log_norm < 1e-8
 
             elif pert_solver == "gensys":
-                solver = model.perturbation_solver.solve_policy_function_with_gensys
+                solver = gEconpy.solvers.gensys.solve_policy_function_with_gensys
                 G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = solver(
                     A, B, C, D, tol, verbose
                 )

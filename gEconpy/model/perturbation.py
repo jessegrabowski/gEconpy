@@ -16,7 +16,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import BACKENDS, compile_function
 from gEconpy.shared.utilities import eq_to_ss
 from gEconpy.solvers.cycle_reduction import nb_cycle_reduction, nb_solve_shock_matrix
-from gEconpy.solvers.gensys import gensys
+from gEconpy.solvers.gensys import _gensys_setup
 
 _log = logging.getLogger(__name__)
 
@@ -312,75 +312,6 @@ def solve_policy_function_with_cycle_reduction(
         R = nb_solve_shock_matrix(B, C, D, T)
 
     return T, R, result, log_norm
-
-
-@nb.njit(cache=True)
-def _get_variable_counts(A, D):
-    n_eq, n_vars = A.shape
-    _, n_shocks = D.shape
-
-    return n_eq, n_vars, n_shocks
-
-
-@nb.njit(cache=True)
-def _find_lead_variables(C, tol=1e-8):
-    return np.where(np.sum(np.abs(C), axis=0) > tol)[0]
-
-
-@nb.njit(cache=True)
-def _gensys_setup(A, B, C, D, tol=1e-8):
-    n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
-
-    lead_var_idx = _find_lead_variables(C, tol)
-    eqs_and_leads_idx = np.concatenate(
-        (np.arange(n_vars), lead_var_idx + n_vars), axis=0
-    )
-
-    Gamma_0 = np.vstack(
-        (np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq)))))
-    )
-
-    Gamma_1 = np.vstack(
-        (
-            np.hstack((A, np.zeros((n_eq, n_eq)))),
-            np.hstack((np.zeros((n_eq, n_eq)), np.eye(n_eq))),
-        )
-    )
-
-    Pi = np.vstack((np.zeros((n_eq, n_eq)), np.eye(n_eq)))
-
-    Psi = np.vstack((D, np.zeros((n_eq, n_shocks))))
-
-    Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
-    Gamma_1 = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
-    Psi = Psi[eqs_and_leads_idx, :]
-    Pi = Pi[eqs_and_leads_idx, :][:, lead_var_idx]
-
-    return Gamma_0, Gamma_1, Psi, Pi
-
-
-def solve_policy_function_with_gensys(
-    A: np.ndarray,
-    B: np.ndarray,
-    C: np.ndarray,
-    D: np.ndarray,
-    tol: float = 1e-8,
-) -> tuple:
-    n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
-
-    lead_var_idx = _find_lead_variables(C, tol)
-    n_leads = len(lead_var_idx)
-
-    neg_g0, g1, psi, pi = _gensys_setup(A, B, C, D, tol)
-
-    g0 = -neg_g0
-    c = np.asfortranarray(np.zeros(shape=(n_vars + n_leads, 1)))
-
-    G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(
-        g0, g1, c, psi, pi
-    )
-
-    return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
 
 
 def residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime):

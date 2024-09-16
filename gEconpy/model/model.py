@@ -30,11 +30,13 @@ from gEconpy.model.perturbation import (
     override_dummy_wrapper,
     residual_norms,
     solve_policy_function_with_cycle_reduction,
-    solve_policy_function_with_gensys,
     statespace_to_gEcon_representation,
 )
 from gEconpy.model.steady_state import system_to_steady_state
-from gEconpy.solvers.gensys import interpret_gensys_output
+from gEconpy.solvers.gensys import (
+    interpret_gensys_output,
+    solve_policy_function_with_gensys,
+)
 
 VariableType = sp.Symbol | TimeAwareSymbol
 _log = logging.getLogger(__name__)
@@ -945,8 +947,8 @@ def _validate_shock_options(
         extra = [x for x in shock_names if x not in shock_std_dict.keys()]
         if len(missing) > 0:
             raise ValueError(
-                f"If shock_std_dict is specified, it must give values for all shocks. The follow shocks were not found"
-                f" among the provided keys: {', '.join(missing)}"
+                f"If shock_std_dict is specified, it must give values for all shocks. The following shocks were not "
+                f"found among the provided keys: {', '.join(missing)}"
             )
         if len(extra) > 0:
             raise ValueError(
@@ -972,13 +974,10 @@ def _validate_simulation_options(shock_size, shock_cov, shock_trajectory):
     options = [shock_size, shock_cov, shock_trajectory]
     n_options = sum(x is not None for x in options)
 
-    if n_options > 1:
+    if n_options != 1:
         raise ValueError(
-            "Specify exactly 0 or 1 of shock_size, shock_cov, or shock_trajectory"
+            "Specify exactly 1 of shock_size, shock_cov, or shock_trajectory"
         )
-    elif n_options == 0:
-        # Default is a unit shock on everything
-        shock_size = 1.0
 
     return shock_size, shock_cov, shock_trajectory
 

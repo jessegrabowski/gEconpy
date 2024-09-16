@@ -406,7 +406,7 @@ def test_build_report(caplog):
                         0 / 1 has a defined prior.
                     6 parameters
                         0 / 6 has a defined prior.
-                    0 parameters to calibrate.m
+                    0 parameters to calibrate.
                     Model appears well defined and ready to proceed to solving."""
 
     expected_lines = [x.strip() for x in expected_report.strip().split("\n")]
