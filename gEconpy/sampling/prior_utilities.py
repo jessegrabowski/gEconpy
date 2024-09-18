@@ -4,6 +4,7 @@ import xarray as xr
 
 from numpy.linalg import LinAlgError
 
+import gEconpy.solvers.cycle_reduction
 import gEconpy.solvers.gensys
 
 from gEconpy.classes.progress_bar import ProgressBar
@@ -53,9 +54,7 @@ def prior_solvability_check(
             A, B, C, D = model.build_perturbation_matrices(exog, endog)
 
             if pert_solver == "cycle_reduction":
-                solver = (
-                    model.perturbation_solver.solve_policy_function_with_cycle_reduction
-                )
+                solver = gEconpy.solvers.cycle_reduction.solve_policy_function_with_cycle_reduction
                 T, R, result, log_norm = solver(A, B, C, D, max_iter, tol, verbose)
                 pert_success = log_norm < 1e-8
 

@@ -29,10 +29,10 @@ from gEconpy.model.perturbation import (
     check_perturbation_solution,
     override_dummy_wrapper,
     residual_norms,
-    solve_policy_function_with_cycle_reduction,
     statespace_to_gEcon_representation,
 )
 from gEconpy.model.steady_state import system_to_steady_state
+from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 from gEconpy.solvers.gensys import (
     interpret_gensys_output,
     solve_policy_function_with_gensys,
