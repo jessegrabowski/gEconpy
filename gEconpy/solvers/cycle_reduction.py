@@ -6,6 +6,9 @@ import pytensor.tensor as pt
 from pytensor.compile import get_mode
 from pytensor.graph import Apply, Op
 
+from gEconpy.model.perturbation import _log
+from gEconpy.solvers.shared import o1_policy_function_adjoints
+
 
 @nb.jit(cache=True)
 def nb_cycle_reduction(
@@ -142,30 +145,38 @@ class CycleReductionWrapper(Op):
         self.tol = tol
         super().__init__()
 
-    def make_node(self, A, B, C, D) -> Apply:
-        inputs = list(map(pt.as_tensor, [A, B, C, D]))
-        outputs = [pt.dmatrix("T"), pt.dmatrix("R"), pt.dscalar("resid")]
+    def make_node(self, A, B, C) -> Apply:
+        inputs = list(map(pt.as_tensor, [A, B, C]))
+        outputs = [pt.dmatrix("T"), pt.dscalar("resid")]
 
         return Apply(self, inputs, outputs)
 
     def perform(
         self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]
     ) -> None:
-        A, B, C, D = inputs
+        A, B, C = inputs
         T, res, result, log_norm = nb_cycle_reduction(
             A, B, C, max_iter=self.max_iter, tol=self.tol
         )
-        R = nb_solve_shock_matrix(B, C, D, T)
-
-        ss_resid = (res**2).sum()
+        sum_square_resid = (res**2).sum()
 
         outputs[0][0] = np.asarray(T)
-        outputs[1][0] = np.asarray(R)
-        outputs[2][0] = np.asarray(ss_resid)
+        outputs[1][0] = np.asarray(sum_square_resid)
+
+    def L_op(self, inputs, outputs, output_grads):
+        A, B, C = inputs
+        T, resid = outputs
+        T_bar, resid_bar = output_grads
+
+        return o1_policy_function_adjoints(A, B, C, T, T_bar)
 
 
 def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
-    return CycleReductionWrapper(max_iter=max_iter, tol=tol)(A, B, C, D)
+    T, sum_square_resid = CycleReductionWrapper(max_iter=max_iter, tol=tol)(A, B, C)
+    R = -pt.linalg.solve(
+        C @ T + B, D.astype(C.dtype), assume_a="gen", check_finite=False
+    )
+    return T, R, sum_square_resid
 
 
 def scan_cycle_reduction(
@@ -221,3 +232,74 @@ def scan_cycle_reduction(
     res = A + B @ T + C @ T @ T
 
     return T, R, (res**2).sum()
+
+
+def solve_policy_function_with_cycle_reduction(
+    A: np.ndarray,
+    B: np.ndarray,
+    C: np.ndarray,
+    D: np.ndarray,
+    max_iter: int = 1000,
+    tol: float = 1e-8,
+    verbose: bool = True,
+) -> tuple[np.ndarray, np.ndarray, str, float]:
+    """
+    Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
+    obtain the first-order linear approxiate policy matrices T and R.
+
+    Parameters
+    ----------
+    A: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
+        values that are known when decision-making: those with t-1 subscripts.
+    B: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+        are observed when decision-making: those with t subscripts.
+    C: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+        enter in expectation when decision-making: those with t+1 subscripts.
+    D: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
+    max_iter: int, default: 1000
+        Maximum number of iterations to perform before giving up.
+    tol: float, default: 1e-7
+        Floating point tolerance used to detect algorithmic convergence
+    verbose: bool, default: True
+        If true, prints the sum of squared residuals that result when the system is computed used the solution.
+
+    Returns
+    -------
+    T: ArrayLike
+        Transition matrix T in state space jargon. Gives the effect of variable values at time t on the
+        values of the variables at time t+1.
+    R: ArrayLike
+        Selection matrix R in state space jargon. Gives the effect of exogenous shocks at the t on the values of
+        variables at time t+1.
+    result: str
+        String describing result of the cycle reduction algorithm
+    log_norm: float
+        Log L1 matrix norm of the first matrix (A2 -> A1 -> A0) that did not converge.
+    """
+
+    # Sympy gives back integers in the case of x/dx = 1, which can screw up the dtypes when passing to numba if
+    # a Jacobian matrix is all constants (i.e. dF/d_shocks) -- cast everything to float64 here to avoid
+    # a numba warning.
+    T, R = None, None
+    T, res, result, log_norm = nb_cycle_reduction(A, B, C, max_iter, tol)
+    T = np.ascontiguousarray(T)
+
+    if verbose:
+        if result == "Optimization successful":
+            _log.info(
+                f"Solution found, sum of squared residuals: {(res ** 2).sum():0.9f}",
+            )
+        else:
+            _log.info(
+                f"Solution not found. Solver returned: {result}\n,"
+                f"Log norm of the solution at the final iteration: {log_norm:0.9f}"
+            )
+
+    if T is not None:
+        R = nb_solve_shock_matrix(B, C, D, T)
+
+    return T, R, result, log_norm

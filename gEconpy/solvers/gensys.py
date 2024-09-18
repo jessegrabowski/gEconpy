@@ -6,6 +6,8 @@ from pytensor.graph.basic import Apply
 from pytensor.graph.op import Op
 from scipy import linalg
 
+from gEconpy.solvers.shared import o1_policy_function_adjoints
+
 # A very small number
 EPSILON = np.spacing(1)
 
@@ -371,6 +373,7 @@ def gensys(
     pi: np.ndarray,
     div: float | None = None,
     tol: float | None = 1e-8,
+    return_all_matrices: bool = True,
 ) -> tuple:
     """
     Christopher Sim's gensys
@@ -411,6 +414,8 @@ def gensys(
         Threshold value for determining stable and unstable roots.
     tol : float, default: 1e-8
         Level of floating point precision.
+    return_all_matrices: bool, default True
+        Whether to return all matrices or just the policy function.
 
     Returns
     -------
@@ -535,6 +540,10 @@ def gensys(
 
     G_0_inv = linalg.inv(G_0)
     G_1 = G_0_inv @ G_1
+    G_1 = (Z @ G_1 @ Z.conj().T).real
+
+    if not return_all_matrices:
+        return G_1, eu
 
     idx = slice(n_stable, n)
 
@@ -555,7 +564,6 @@ def gensys(
         )
     )
 
-    G_1 = (Z @ G_1 @ Z.conj().T).real
     C = (Z @ C).real
     impact = (Z @ impact).real
     loose = (Z @ loose).real
@@ -623,6 +631,7 @@ def _gensys_setup(A, B, C, D, tol=1e-8):
     eqs_and_leads_idx = np.concatenate(
         (np.arange(n_vars), lead_var_idx + n_vars), axis=0
     )
+    n_leads = len(lead_var_idx)
 
     Gamma_0 = np.vstack(
         (np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq)))))
@@ -644,7 +653,10 @@ def _gensys_setup(A, B, C, D, tol=1e-8):
     Psi = Psi[eqs_and_leads_idx, :]
     Pi = Pi[eqs_and_leads_idx, :][:, lead_var_idx]
 
-    return Gamma_0, Gamma_1, Psi, Pi
+    G0 = -Gamma_0
+    C = np.asfortranarray(np.zeros(shape=(n_vars + n_leads, 1)))
+
+    return G0, Gamma_1, C, Psi, Pi
 
 
 def solve_policy_function_with_gensys(
@@ -653,22 +665,18 @@ def solve_policy_function_with_gensys(
     C: np.ndarray,
     D: np.ndarray,
     tol: float = 1e-8,
+    reutrn_all_matrices: bool = True,
 ) -> tuple:
-    n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
-
-    lead_var_idx = _find_lead_variables(C, tol)
-    n_leads = len(lead_var_idx)
-
-    neg_g0, g1, psi, pi = _gensys_setup(A, B, C, D, tol)
-
-    g0 = -neg_g0
-    c = np.asfortranarray(np.zeros(shape=(n_vars + n_leads, 1)))
-
+    g0, g1, c, psi, pi = _gensys_setup(A, B, C, D, tol)
     G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(
         g0, g1, c, psi, pi
     )
 
-    return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
+    if reutrn_all_matrices:
+        return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
+
+    else:
+        return G_1, eu
 
 
 class GensysWrapper(Op):
@@ -678,12 +686,11 @@ class GensysWrapper(Op):
 
     def make_node(self, A, B, C, D) -> Apply:
         inputs = list(map(pt.as_tensor, [A, B, C, D]))
-        n_variables = A.type.shape[0]
-        n_shocks = D.type.shape[1]
+        n_variables = inputs[0].type.shape[0]
+
         outputs = [
             pt.tensor("T", shape=(n_variables, n_variables)),
-            pt.tensor("R", shape=(n_variables, n_shocks)),
-            pt.bscalar("success"),
+            pt.scalar("success", dtype="bool"),
         ]
 
         return Apply(self, inputs, outputs)
@@ -692,20 +699,32 @@ class GensysWrapper(Op):
         self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]
     ) -> None:
         A, B, C, D = inputs
-        G_1, constant, impact, *_, eu, _ = solve_policy_function_with_gensys(
-            A, B, C, D, tol=self.tol
+        G_1, eu = solve_policy_function_with_gensys(
+            A, B, C, D, tol=self.tol, reutrn_all_matrices=False
         )
+
+        n_vars = A.shape[0]
+        T = G_1[:n_vars, :n_vars]
         success = all([x == 1 for x in eu[:2]])
 
-        n_variables = A.shape[0]
-
-        T = G_1[:n_variables, :][:, :n_variables]
-        R = impact[:n_variables, :]
-
         outputs[0][0] = np.asarray(T)
-        outputs[1][0] = np.asarray(R)
-        outputs[2][0] = np.asarray(success)
+        outputs[1][0] = np.asarray(success)
+
+    def L_op(self, inputs, outputs, output_grads):
+        A, B, C, D = inputs
+        T, success = outputs
+        T_bar, success_bar = output_grads
+
+        A_bar, B_bar, C_bar = o1_policy_function_adjoints(A, B, C, T, T_bar)
+        D_bar = pt.zeros_like(D)
+
+        return [A_bar, B_bar, C_bar, D_bar]
 
 
 def gensys_pt(A, B, C, D, tol=1e-8):
-    return GensysWrapper(tol=tol)(A, B, C, D)
+    T, success = GensysWrapper(tol=tol)(A, B, C, D)
+    R = pt.linalg.solve(
+        C + B @ T, -D.astype(T.dtype), assume_a="gen", check_finite=False
+    )
+
+    return T, R, success

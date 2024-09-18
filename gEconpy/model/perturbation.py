@@ -7,15 +7,17 @@ from typing import Literal
 import numba as nb
 import numpy as np
 import pandas as pd
+import pytensor.tensor as pt
 import sympy as sp
 
+from pytensor.graph.basic import Apply
+from pytensor.graph.op import Op
 from scipy import linalg
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import BACKENDS, compile_function
 from gEconpy.shared.utilities import eq_to_ss
-from gEconpy.solvers.cycle_reduction import nb_cycle_reduction, nb_solve_shock_matrix
 from gEconpy.solvers.gensys import _gensys_setup
 
 _log = logging.getLogger(__name__)
@@ -243,77 +245,6 @@ def compile_linearized_system(
     return f_linearize, cache
 
 
-def solve_policy_function_with_cycle_reduction(
-    A: np.ndarray,
-    B: np.ndarray,
-    C: np.ndarray,
-    D: np.ndarray,
-    max_iter: int = 1000,
-    tol: float = 1e-8,
-    verbose: bool = True,
-) -> tuple[np.ndarray, np.ndarray, str, float]:
-    """
-    Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
-    obtain the first-order linear approxiate policy matrices T and R.
-
-    Parameters
-    ----------
-    A: np.ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
-        values that are known when decision-making: those with t-1 subscripts.
-    B: np.ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-        are observed when decision-making: those with t subscripts.
-    C: np.ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-        enter in expectation when decision-making: those with t+1 subscripts.
-    D: np.ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
-    max_iter: int, default: 1000
-        Maximum number of iterations to perform before giving up.
-    tol: float, default: 1e-7
-        Floating point tolerance used to detect algorithmic convergence
-    verbose: bool, default: True
-        If true, prints the sum of squared residuals that result when the system is computed used the solution.
-
-    Returns
-    -------
-    T: ArrayLike
-        Transition matrix T in state space jargon. Gives the effect of variable values at time t on the
-        values of the variables at time t+1.
-    R: ArrayLike
-        Selection matrix R in state space jargon. Gives the effect of exogenous shocks at the t on the values of
-        variables at time t+1.
-    result: str
-        String describing result of the cycle reduction algorithm
-    log_norm: float
-        Log L1 matrix norm of the first matrix (A2 -> A1 -> A0) that did not converge.
-    """
-
-    # Sympy gives back integers in the case of x/dx = 1, which can screw up the dtypes when passing to numba if
-    # a Jacobian matrix is all constants (i.e. dF/d_shocks) -- cast everything to float64 here to avoid
-    # a numba warning.
-    T, R = None, None
-    T, res, result, log_norm = nb_cycle_reduction(A, B, C, max_iter, tol)
-    T = np.ascontiguousarray(T)
-
-    if verbose:
-        if result == "Optimization successful":
-            _log.info(
-                f"Solution found, sum of squared residuals: {(res ** 2).sum():0.9f}",
-            )
-        else:
-            _log.info(
-                f"Solution not found. Solver returned: {result}\n,"
-                f"Log norm of the solution at the final iteration: {log_norm:0.9f}"
-            )
-
-    if T is not None:
-        R = nb_solve_shock_matrix(B, C, D, T)
-
-    return T, R, result, log_norm
-
-
 def residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime):
     norm_deterministic = linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P)
 
@@ -366,7 +297,7 @@ def check_perturbation_solution(A, B, C, D, T, R, tol=1e-8):
 # TODO: Cannot cache this I think because of the call to ordqz -- test if this is true
 @nb.njit(cache=False)
 def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
-    Gamma_0, Gamma_1, _, _ = _gensys_setup(A, B, C, D, tol)
+    Gamma_0, Gamma_1, _, _, _ = _gensys_setup(A, B, C, D, tol)
 
     # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
     # have sign flip relative to qzdiv -- does it matter?
@@ -470,3 +401,28 @@ def check_bk_condition(
         return eig
     else:
         return ~condition_not_satisfied
+
+
+class BlanchardKahnCondition(Op):
+    def __init__(self, tol=1e-8):
+        self.tol = tol
+        super().__init__()
+
+    def make_node(self, A, B, C, D) -> Apply:
+        inputs = list(map(pt.as_tensor, [A, B, C, D]))
+        outputs = [pt.scalar("bk_flag", dtype=bool)]
+
+        return Apply(self, inputs, outputs)
+
+    def perform(
+        self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]
+    ) -> None:
+        A, B, C, D = inputs
+        bk_flag = check_bk_condition(
+            A, B, C, D, tol=self.tol, verbose=False, return_value="bool"
+        )
+        outputs[0][0] = np.array(bk_flag)
+
+
+def check_bk_condition_pt(A, B, C, D, tol=1e8):
+    return BlanchardKahnCondition(tol=tol)(A, B, C, D)

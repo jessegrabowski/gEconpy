@@ -1,18 +1,26 @@
 import logging
 
 import numpy as np
+import pandas as pd
+import pytensor
 import pytensor.tensor as pt
 import sympy as sp
 
+from pymc.pytensorf import rewrite_pregrad
 from pymc_experimental.statespace.core.statespace import PyMCStateSpace
 from pymc_experimental.statespace.models.utilities import make_default_coords
-from pymc_experimental.statespace.utils.constants import SHOCK_AUX_DIM, SHOCK_DIM
+from pymc_experimental.statespace.utils.constants import (
+    JITTER_DEFAULT,
+    SHOCK_AUX_DIM,
+    SHOCK_DIM,
+)
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
 
 _log = logging.getLogger(__name__)
+floatX = pytensor.config.floatX
 
 
 class DSGEStateSpace(PyMCStateSpace):
@@ -42,6 +50,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self.input_parameters = input_parameters
         self.deterministic_parameters = deterministic_params
         self.caibrated_parameters = calibrated_params
+        self.constant_parameters = None
 
         self.steady_state_solutions = steady_state_solutions
         self.ss_jac = ss_jac
@@ -58,6 +67,9 @@ class DSGEStateSpace(PyMCStateSpace):
         self.error_states = []
         self._solver = "gensys"
         self._mode = None
+
+        self.bk_flag = None
+        self.solver_success = None
 
         if len(calibrated_params) > 0:
             raise NotImplementedError(
@@ -92,17 +104,34 @@ class DSGEStateSpace(PyMCStateSpace):
             return
 
         # Register the existing placeholders with the statespace model
+        constant_replacements = {}
         for parameter in self.input_parameters:
-            self._name_to_variable[parameter.name] = parameter
+            if parameter.name in self.constant_parameters:
+                constant_replacements[parameter] = pt.as_tensor_variable(
+                    np.array(self.param_dict[parameter.name]).astype(floatX),
+                    name=parameter.name,
+                )
+            else:
+                self._name_to_variable[parameter.name] = parameter
 
-        A, B, C, D = self.linearized_system
+        A, B, C, D = pytensor.graph_replace(
+            self.linearized_system, constant_replacements, strict=True
+        )
+        # self.bk_flag = check_bk_condition_pt(A, B, C, D)
 
         if self._solver == "gensys":
             T, R, success = gensys_pt(A, B, C, D)
         elif self._solver == "cycle_reduction":
             T, R, resid = cycle_reduction_pt(A, B, C, D)
+            pt.lt(resid, 1e-8)
         else:
             T, R, resid = scan_cycle_reduction(A, B, C, D, mode=self._mode)
+            pt.lt(resid, 1e-8)
+
+        T = rewrite_pregrad(T)
+        R = rewrite_pregrad(R)
+
+        # self.solver_success = success
 
         self.ssm["transition", :, :] = T
         self.ssm["selection", :, :] = R
@@ -136,6 +165,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self,
         observed_states: list[str],
         measurement_error: list[str] | None = None,
+        constant_params: list[str] | None = None,
         full_shock_covaraince: bool = False,
         solver: str = "gensys",
         mode: str | None = None,
@@ -157,6 +187,18 @@ class DSGEStateSpace(PyMCStateSpace):
                 raise ValueError(
                     f'The following states are not observed, and cannot have measurement error: '
                     f'{", ".join(unknown_states)}'
+                )
+
+        # Validate constant params
+        if constant_params is None:
+            constant_params = []
+        else:
+            input_param_names = [x.name for x in self.input_parameters]
+            unknown_params = [x for x in constant_params if x not in input_param_names]
+            if len(unknown_params) > 0:
+                raise ValueError(
+                    f'The following parameters are unknown to the model and cannot be set as constant: '
+                    f'{", ".join(unknown_params)}'
                 )
 
         # Validate solver argument
@@ -181,6 +223,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self._obs_state_names = observed_states
         self.error_states = measurement_error
+        self.constant_parameters = constant_params
 
         self.full_covariance = full_shock_covaraince
         self._configured = True
@@ -207,6 +250,9 @@ class DSGEStateSpace(PyMCStateSpace):
     @property
     def param_names(self):
         param_names = [x.name for x in self.input_parameters]
+        if self.constant_parameters is not None:
+            param_names = [x for x in param_names if x not in self.constant_parameters]
+
         if self.full_covariance:
             param_names += ["state_cov"]
         else:
@@ -250,7 +296,9 @@ class DSGEStateSpace(PyMCStateSpace):
         if not self._configured:
             return info
 
-        for var, placeholder in self._name_to_variable.items():
+        for var in self.param_names:
+            placeholder = self._name_to_variable[var]
+
             info[var] = {
                 "shape": placeholder.type.shape,
                 "initval": self.param_dict.get(var, None),
@@ -267,3 +315,39 @@ class DSGEStateSpace(PyMCStateSpace):
             info[name]["dims"] = self.param_dims[name]
 
         return info
+
+    def build_statespace_graph(
+        self,
+        data: np.ndarray | pd.DataFrame | pt.TensorVariable,
+        register_data: bool = True,
+        mode: str | None = None,
+        missing_fill_value: float | None = None,
+        cov_jitter: float | None = JITTER_DEFAULT,
+        save_kalman_filter_outputs_in_idata: bool = False,
+    ) -> None:
+        super().build_statespace_graph(
+            data=data,
+            register_data=register_data,
+            missing_fill_value=missing_fill_value,
+            cov_jitter=cov_jitter,
+            save_kalman_filter_outputs_in_idata=save_kalman_filter_outputs_in_idata,
+        )
+
+        # # Insert random variables into success flags
+        # pymc_model = pm.modelcontext(None)
+        # replacement_dict = {var: pymc_model[name] for name, var in self._name_to_variable.items()}
+        #
+        # solver_success, bk_flag = graph_replace([self.solver_success, self.bk_flag],
+        #                                         replace=replacement_dict,
+        #                                         strict=False)
+        #
+        # # Save solver results for prior/posterior analysis
+        # pm.Deterministic('solver_success_flag', solver_success)
+        # pm.Deterministic('bk_flag', bk_flag)
+        #
+        # # Add penalty terms to the likelihood to rule out invalid solutions
+        # pm.Potential('bk_condition_satisfied',
+        #              pt.switch(pt.eq(bk_flag, 1.0), 0.0, -np.inf))
+        #
+        # pm.Potential('solver_success',
+        #                 pt.switch(pt.eq(solver_success, 1.0), 0.0, -np.inf))
