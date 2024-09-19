@@ -313,6 +313,10 @@ class DSGEStateSpace(PyMCStateSpace):
         missing_fill_value: float | None = None,
         cov_jitter: float | None = JITTER_DEFAULT,
         save_kalman_filter_outputs_in_idata: bool = False,
+        add_norm_check: bool = True,
+        add_bk_check: bool = False,
+        add_solver_success_check: bool = False,
+        tol: float = 1e-8,
     ) -> None:
         super().build_statespace_graph(
             data=data,
@@ -333,63 +337,58 @@ class DSGEStateSpace(PyMCStateSpace):
             replace=replacement_dict,
             strict=False,
         )
-
-        tol = 1e-8
-
-        n_vars, n_shocks = R.shape
-        tm1_idx = pt.any(pt.neq(A, 0.0), axis=0)
-        t_idx = pt.any(pt.neq(B, 0.0), axis=0)
-
-        shock_idx = pt.arange(n_shocks)
-        state_var_mask = pt.bitwise_and(tm1_idx, t_idx)
-
-        PP = pt.set_subtensor(T.copy()[pt.where(pt.abs(T) < tol)], 0.0)
-
-        QQ = R.copy()[:n_vars, :]
-        QQ = pt.set_subtensor(QQ[pt.where(pt.abs(QQ) < tol)], 0.0)
-
-        P = PP[state_var_mask, :][:, state_var_mask]
-        Q = QQ[state_var_mask, :][:, shock_idx]
-
-        A_prime = A[:, state_var_mask]
-        R_prime = PP[:, state_var_mask]
-        S_prime = QQ[:, shock_idx]
-
-        norm_deterministic = pm.Deterministic(
-            "deterministic_norm",
-            pt.linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P),
-        )
-        norm_stochastic = pm.Deterministic(
-            "stochastic_norm", pt.linalg.norm(B @ S_prime + C @ R_prime @ Q + D)
+        solver_success, bk_flag = graph_replace(
+            [self.solver_success, self.bk_flag], replace=replacement_dict, strict=False
         )
 
-        # Add penalty terms to the likelihood to rule out invalid solutions
-        pm.Potential(
-            "solution_within_tolerance",
-            pt.switch(
-                pt.bitwise_and(
-                    pt.lt(norm_deterministic, tol), pt.lt(norm_stochastic, tol)
+        if add_norm_check:
+            n_vars, n_shocks = R.shape
+            tm1_idx = pt.any(pt.neq(A, 0.0), axis=0)
+            t_idx = pt.any(pt.neq(B, 0.0), axis=0)
+
+            shock_idx = pt.arange(n_shocks)
+            state_var_mask = pt.bitwise_and(tm1_idx, t_idx)
+
+            PP = pt.set_subtensor(T.copy()[pt.where(pt.abs(T) < tol)], 0.0)
+
+            QQ = R.copy()[:n_vars, :]
+            QQ = pt.set_subtensor(QQ[pt.where(pt.abs(QQ) < tol)], 0.0)
+
+            P = PP[state_var_mask, :][:, state_var_mask]
+            Q = QQ[state_var_mask, :][:, shock_idx]
+
+            A_prime = A[:, state_var_mask]
+            R_prime = PP[:, state_var_mask]
+            S_prime = QQ[:, shock_idx]
+
+            norm_deterministic = pm.Deterministic(
+                "deterministic_norm",
+                pt.linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P),
+            )
+            norm_stochastic = pm.Deterministic(
+                "stochastic_norm", pt.linalg.norm(B @ S_prime + C @ R_prime @ Q + D)
+            )
+
+            # Add penalty terms to the likelihood to rule out invalid solutions
+            pm.Potential(
+                "solution_within_tolerance",
+                pt.switch(
+                    pt.bitwise_and(
+                        pt.lt(norm_deterministic, tol), pt.lt(norm_stochastic, tol)
+                    ),
+                    0.0,
+                    -np.inf,
                 ),
-                0.0,
-                -np.inf,
-            ),
-        )
+            )
 
-        # Insert random variables into success flags
-        # pymc_model = pm.modelcontext(None)
-        # replacement_dict = {var: pymc_model[name] for name, var in self._name_to_variable.items()}
+        if add_bk_check:
+            pm.Deterministic("bk_flag", bk_flag)
+            pm.Potential(
+                "bk_condition_satisfied", pt.switch(pt.eq(bk_flag, 1.0), 0.0, -np.inf)
+            )
 
-        # solver_success, bk_flag = graph_replace([self.solver_success, self.bk_flag],
-        #                                         replace=replacement_dict,
-        #                                         strict=False)
-
-        # Save solver results for prior/posterior analysis
-        # pm.Deterministic('solver_success_flag', solver_success)
-        # pm.Deterministic('bk_flag', bk_flag)
-
-        # Add penalty terms to the likelihood to rule out invalid solutions
-        # pm.Potential('bk_condition_satisfied',
-        #              pt.switch(pt.eq(bk_flag, 1.0), 0.0, -np.inf))
-
-        # pm.Potential('solver_success',
-        #                 pt.switch(pt.eq(solver_success, 1.0), 0.0, -np.inf))
+        if add_solver_success_check:
+            pm.Deterministic("solver_success_flag", solver_success)
+            pm.Potential(
+                "solver_success", pt.switch(pt.eq(solver_success, 1.0), 0.0, -np.inf)
+            )
