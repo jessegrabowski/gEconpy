@@ -1,15 +1,20 @@
 import numba as nb
 import numpy as np
+import pytensor
 import pytensor.tensor as pt
 
 from pytensor.graph.basic import Apply
 from pytensor.graph.op import Op
 from scipy import linalg
 
-from gEconpy.solvers.shared import o1_policy_function_adjoints
+from gEconpy.solvers.shared import (
+    o1_policy_function_adjoints,
+    pt_compute_selection_matrix,
+)
 
 # A very small number
 EPSILON = np.spacing(1)
+floatX = pytensor.config.floatX
 
 
 @nb.njit(cache=True)
@@ -716,15 +721,13 @@ class GensysWrapper(Op):
         T_bar, success_bar = output_grads
 
         A_bar, B_bar, C_bar = o1_policy_function_adjoints(A, B, C, T, T_bar)
-        D_bar = pt.zeros_like(D)
+        D_bar = pt.zeros_like(D).astype(floatX)
 
         return [A_bar, B_bar, C_bar, D_bar]
 
 
 def gensys_pt(A, B, C, D, tol=1e-8):
     T, success = GensysWrapper(tol=tol)(A, B, C, D)
-    R = pt.linalg.solve(
-        C + B @ T, -D.astype(T.dtype), assume_a="gen", check_finite=False
-    )
+    R = pt_compute_selection_matrix(B, C, D, T)
 
     return T, R, success

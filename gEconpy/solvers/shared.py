@@ -3,6 +3,10 @@ import pytensor.tensor as pt
 from pytensor.tensor import TensorVariable
 
 
+def stabilize(x, jitter=1e-16):
+    return x + jitter * pt.eye(x.shape[0])
+
+
 def o1_policy_function_adjoints(
     A: TensorVariable,
     B: TensorVariable,
@@ -51,8 +55,11 @@ def o1_policy_function_adjoints(
     M2 = pt.linalg.kron(eye, T.T @ C.T)
     M3 = pt.linalg.kron(eye, B.T)
 
+    # M_inv = pt.linalg.pinv(M1 + M2 + M3)
+    # vec_S = M_inv @ -vec_T_bar
+
     vec_S = pt.linalg.solve(
-        M1 + M2 + M3, -vec_T_bar, assume_a="gen", check_finite=False
+        stabilize(M1 + M2 + M3), -vec_T_bar, assume_a="gen", check_finite=False
     )
     S = vec_S.reshape((n, n)).T
 
@@ -62,3 +69,9 @@ def o1_policy_function_adjoints(
     C_bar = S @ T.T @ T.T
 
     return [A_bar, B_bar, C_bar]
+
+
+def pt_compute_selection_matrix(B, C, D, T):
+    return -pt.linalg.solve(
+        C @ T + B, D.astype(T.dtype), assume_a="gen", check_finite=False
+    )
