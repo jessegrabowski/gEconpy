@@ -9,7 +9,7 @@ from gEconpy import (
     shared,
     solvers,
 )
-from gEconpy.model.build import model_from_gcn
+from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 from gEconpy.model.model import (
     autocovariance_matrix,
     impulse_response_function,
@@ -32,6 +32,7 @@ if not logging.root.handlers:
 __version__ = "1.2.1"
 __all__ = [
     "model_from_gcn",
+    "statespace_from_gcn",
     "simulate",
     "impulse_response_function",
     "summarize_perturbation_solution",

@@ -10,6 +10,7 @@ from gEconpy.model.compile import (
     BACKENDS,
     compile_function,
     dictionary_return_wrapper,
+    make_return_dict_and_update_cache,
 )
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.shared.utilities import eq_to_ss
@@ -243,18 +244,22 @@ def compile_known_ss(
         list(sorted_solution_dict.keys()),
         list(sorted_solution_dict.values()),
     )
+    if stack_return is None:
+        stack_return = True if not return_symbolic else False
 
     f_ss, cache = compile_function(
         parameters,
         output_exprs,
         backend=backend,
         cache=cache,
-        stack_return=True if stack_return is None else stack_return,
+        stack_return=stack_return,
         return_symbolic=return_symbolic,
         **kwargs,
     )
     if return_symbolic and backend == "pytensor":
-        return f_ss, cache
+        return make_return_dict_and_update_cache(
+            ss_variables, f_ss, cache, TimeAwareSymbol
+        )
 
     return dictionary_return_wrapper(f_ss, output_vars), cache
 

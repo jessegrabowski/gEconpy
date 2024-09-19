@@ -5,6 +5,7 @@ from gEconpy.model.compile import (
     BACKENDS,
     compile_function,
     dictionary_return_wrapper,
+    make_return_dict_and_update_cache,
 )
 
 
@@ -59,10 +60,10 @@ def compile_param_dict_func(
         cache=cache,
         return_symbolic=return_symbolic,
         pop_return=False,
-        stack_return=True,
+        stack_return=not return_symbolic,
     )
 
     if return_symbolic and backend == "pytensor":
-        return f, cache
+        return make_return_dict_and_update_cache(output_params, f, cache)
 
     return dictionary_return_wrapper(f, output_params), cache

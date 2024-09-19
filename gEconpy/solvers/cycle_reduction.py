@@ -7,7 +7,10 @@ from pytensor.compile import get_mode
 from pytensor.graph import Apply, Op
 
 from gEconpy.model.perturbation import _log
-from gEconpy.solvers.shared import o1_policy_function_adjoints
+from gEconpy.solvers.shared import (
+    o1_policy_function_adjoints,
+    pt_compute_selection_matrix,
+)
 
 
 @nb.jit(cache=True)
@@ -173,9 +176,7 @@ class CycleReductionWrapper(Op):
 
 def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
     T, sum_square_resid = CycleReductionWrapper(max_iter=max_iter, tol=tol)(A, B, C)
-    R = -pt.linalg.solve(
-        C @ T + B, D.astype(C.dtype), assume_a="gen", check_finite=False
-    )
+    R = pt_compute_selection_matrix(B, C, D, T)
     return T, R, sum_square_resid
 
 

@@ -230,3 +230,25 @@ def compile_to_pytensor_function(
         f = pop_return_wrapper(f)
 
     return f, cache
+
+
+def make_cache_key(name, cls):
+    return (name, cls, (), "floatX", ())
+
+
+def make_return_dict_and_update_cache(input_symbols, output_tensors, cache, cls=None):
+    if cls is None:
+        cls = sp.Symbol
+    out_dict = {}
+    for symbol, value in zip(input_symbols, output_tensors):
+        cache_key = make_cache_key(symbol.name, cls)
+
+        if cache_key in cache:
+            pt_symbol = cache[cache_key]
+        else:
+            pt_symbol = pytensor.tensor.scalar(name=symbol.name, dtype="floatX")
+            cache[cache_key] = pt_symbol
+
+        out_dict[pt_symbol] = value
+
+    return out_dict, cache

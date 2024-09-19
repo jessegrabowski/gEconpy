@@ -1,10 +1,9 @@
 import logging
 
-from typing import cast
-
 import pytensor.tensor as pt
 
-from pytensor import clone_replace
+from pymc.pytensorf import rewrite_pregrad
+from pytensor import graph_replace
 
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
@@ -213,83 +212,61 @@ def statespace_from_gcn(
 
     variables, shocks, equations = objects
     param_dict, deterministic_dict, calib_dict = dictionaries
+
+    if len(calib_dict) > 0:
+        raise NotImplementedError("Calibration not yet implemented in StateSpace model")
+
     (
-        steady_state_solutions,
+        steady_state_mapping,
         ss_jac,
-        param_vec,
+        parameter_mapping,
         ss_resid,
         ss_error,
         ss_grad,
         ss_hess,
         linearized_matrices,
     ) = functions
+
+    # Check that the entire steady state has been provided
+    if len(steady_state_mapping) != len(variables):
+        raise NotImplementedError(
+            "Numeric steady state not yet implemented in StateSpace model"
+        )
+
     A, B, C, D = linearized_matrices
 
-    # The graphs created by _compile_gcn will have placeholders for intermediate computations like steady-state
-    # values. We want to replace these with user-provided values.
-    input_params = [v for k, v in cache.items() if k[0] in param_dict.keys()]
-    deterministic_params = [
-        v for k, v in cache.items() if k[0] in deterministic_dict.keys()
-    ]
-    calibrated_params = [v for k, v in cache.items() if k[0] in calib_dict.keys()]
-
-    all_inputs_pt = list(cache.values())
-
-    # The last value in the cache is always not_loglin_variables (because linearization is the last step)
-    not_loglin_variables = all_inputs_pt.pop(-1)
-
-    ss_vars_pt = [
-        x
-        for x in all_inputs_pt
-        if x
-        not in input_params
-        + deterministic_params
-        + calibrated_params
-        + [not_loglin_variables]
-    ]
+    not_loglin_variables = next(
+        x for x in cache.values() if x.name == "not_loglin_variable"
+    )
 
     # First replace deterministic variables with functions of input variables in the user-provided steady state
     # expressiong
-    param_replacement_dict = {
-        param: param_vec[i]
-        for i, param in enumerate(input_params + deterministic_params)
-    }
-    steady_state_solutions = cast(
-        pt.TensorVariable, clone_replace(steady_state_solutions, param_replacement_dict)
-    )
-
-    # Then create a mapping from the placeholder steady-state variables to the provided steady-state solutions
-    ss_replacement_dict = {
-        var: steady_state_solutions[i] for i, var in enumerate(ss_vars_pt)
+    steady_state_mapping = {
+        k: graph_replace(v, parameter_mapping, strict=False)
+        for k, v in steady_state_mapping.items()
     }
 
     # TODO: The user might want to choose this. For now its hardcoded.
-    ss_replacement_dict[not_loglin_variables] = pt.gt(
-        steady_state_solutions, 0.0
-    ).astype(float)
+    ss_vec = pt.stack(list(steady_state_mapping.values()))
+    not_loglin_replacement = {not_loglin_variables: pt.le(ss_vec, 0.0).astype(float)}
 
-    replacements = param_replacement_dict | ss_replacement_dict
+    replacements = steady_state_mapping | not_loglin_replacement
 
     # Replace all placeholders with functions of the input parameters
-    ss_resid = cast(pt.TensorVariable, clone_replace(ss_resid, replacements))
-    ss_jac = cast(pt.TensorVariable, clone_replace(ss_jac, replacements))
-    ss_error = cast(pt.TensorVariable, clone_replace(ss_error, replacements))
-    ss_grad = cast(pt.TensorVariable, clone_replace(ss_grad, replacements))
-    ss_hess = cast(pt.TensorVariable, clone_replace(ss_hess, replacements))
-    A = cast(pt.TensorVariable, clone_replace(A, replacements))
-    B = cast(pt.TensorVariable, clone_replace(B, replacements))
-    C = cast(pt.TensorVariable, clone_replace(C, replacements))
-    D = cast(pt.TensorVariable, clone_replace(D, replacements)).astype(float)
+    ss_resid, ss_jac, ss_error, ss_grad, ss_hess = graph_replace(
+        [ss_resid, ss_jac, ss_error, ss_grad, ss_hess], replacements, strict=False
+    )
+    A, B, C, D = rewrite_pregrad(
+        graph_replace([A, B, C, D], replacements, strict=False)
+    )
 
     return DSGEStateSpace(
         variables=variables,
         shocks=shocks,
         equations=equations,
         param_dict=param_dict,
-        input_parameters=input_params,
-        deterministic_params=deterministic_params,
-        calibrated_params=calibrated_params,
-        steady_state_solutions=steady_state_solutions,
+        parameter_mapping=parameter_mapping,
+        steady_state_mapping=steady_state_mapping,
         ss_jac=ss_jac,
         ss_resid=ss_resid,
         ss_error=ss_error,

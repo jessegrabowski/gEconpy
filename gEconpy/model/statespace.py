@@ -2,6 +2,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+import pymc as pm
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
@@ -14,8 +15,10 @@ from pymc_experimental.statespace.utils.constants import (
     SHOCK_AUX_DIM,
     SHOCK_DIM,
 )
+from pytensor import graph_replace
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.model.perturbation import check_bk_condition_pt
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
 
@@ -30,10 +33,8 @@ class DSGEStateSpace(PyMCStateSpace):
         shocks: list[TimeAwareSymbol],
         equations: list[sp.Expr],
         param_dict: dict[str, float],
-        input_parameters: list[pt.TensorVariable],
-        deterministic_params: list[pt.TensorVariable],
-        calibrated_params: list[pt.TensorVariable],
-        steady_state_solutions: pt.TensorVariable,
+        parameter_mapping: dict[pt.TensorVariable, pt.TensorVariable],
+        steady_state_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         ss_jac: pt.TensorVariable,
         ss_resid: pt.TensorVariable,
         ss_error: pt.TensorVariable,
@@ -41,18 +42,15 @@ class DSGEStateSpace(PyMCStateSpace):
         ss_error_hess: pt.TensorVariable,
         linearized_system: list[pt.TensorVariable],
     ):
-        # Store some info
         self.variables = variables
         self.equations = equations
         self.shocks = shocks
         self.param_dict = param_dict
 
-        self.input_parameters = input_parameters
-        self.deterministic_parameters = deterministic_params
-        self.caibrated_parameters = calibrated_params
-        self.constant_parameters = None
+        self.parameter_mapping = parameter_mapping
+        self.steady_state_mapping = steady_state_mapping
+        self.input_parameters = list(parameter_mapping.keys())
 
-        self.steady_state_solutions = steady_state_solutions
         self.ss_jac = ss_jac
         self.ss_resid = ss_resid
         self.ss_error = ss_error
@@ -70,18 +68,6 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self.bk_flag = None
         self.solver_success = None
-
-        if len(calibrated_params) > 0:
-            raise NotImplementedError(
-                "Calibration not yet implemented in StateSpace model"
-            )
-
-        # Check that the entire steady state has been provided
-        n_ss_eqs = steady_state_solutions.type.shape[0]
-        if n_ss_eqs != len(variables):
-            raise NotImplementedError(
-                "Numeric steady state not yet implemented in StateSpace model"
-            )
 
         k_endog = 1  # to be updated later
         k_states = len(variables)
@@ -107,31 +93,34 @@ class DSGEStateSpace(PyMCStateSpace):
         constant_replacements = {}
         for parameter in self.input_parameters:
             if parameter.name in self.constant_parameters:
-                constant_replacements[parameter] = pt.as_tensor_variable(
+                constant_replacements[parameter] = pt.constant(
                     np.array(self.param_dict[parameter.name]).astype(floatX),
                     name=parameter.name,
                 )
             else:
                 self._name_to_variable[parameter.name] = parameter
 
-        A, B, C, D = pytensor.graph_replace(
-            self.linearized_system, constant_replacements, strict=True
+        self.linearized_system_subbed = [A, B, C, D] = pytensor.graph_replace(
+            self.linearized_system, constant_replacements, strict=False
         )
-        # self.bk_flag = check_bk_condition_pt(A, B, C, D)
+
+        self.bk_flag = check_bk_condition_pt(A, B, C, D)
 
         if self._solver == "gensys":
             T, R, success = gensys_pt(A, B, C, D)
         elif self._solver == "cycle_reduction":
             T, R, resid = cycle_reduction_pt(A, B, C, D)
-            pt.lt(resid, 1e-8)
+            success = pt.lt(resid, 1e-8)
         else:
             T, R, resid = scan_cycle_reduction(A, B, C, D, mode=self._mode)
-            pt.lt(resid, 1e-8)
+            success = pt.lt(resid, 1e-8)
 
         T = rewrite_pregrad(T)
         R = rewrite_pregrad(R)
 
-        # self.solver_success = success
+        self.policy_graph = [T, R]
+
+        self.solver_success = success
 
         self.ssm["transition", :, :] = T
         self.ssm["selection", :, :] = R
@@ -331,23 +320,76 @@ class DSGEStateSpace(PyMCStateSpace):
             missing_fill_value=missing_fill_value,
             cov_jitter=cov_jitter,
             save_kalman_filter_outputs_in_idata=save_kalman_filter_outputs_in_idata,
+            mode=mode,
         )
 
-        # # Insert random variables into success flags
+        pymc_model = pm.modelcontext(None)
+
+        replacement_dict = {
+            var: pymc_model[name] for name, var in self._name_to_variable.items()
+        }
+        A, B, C, D, T, R = graph_replace(
+            self.linearized_system_subbed + self.policy_graph,
+            replace=replacement_dict,
+            strict=False,
+        )
+
+        tol = 1e-8
+
+        n_vars, n_shocks = R.shape
+        tm1_idx = pt.any(pt.neq(A, 0.0), axis=0)
+        t_idx = pt.any(pt.neq(B, 0.0), axis=0)
+
+        shock_idx = pt.arange(n_shocks)
+        state_var_mask = pt.bitwise_and(tm1_idx, t_idx)
+
+        PP = pt.set_subtensor(T.copy()[pt.where(pt.abs(T) < tol)], 0.0)
+
+        QQ = R.copy()[:n_vars, :]
+        QQ = pt.set_subtensor(QQ[pt.where(pt.abs(QQ) < tol)], 0.0)
+
+        P = PP[state_var_mask, :][:, state_var_mask]
+        Q = QQ[state_var_mask, :][:, shock_idx]
+
+        A_prime = A[:, state_var_mask]
+        R_prime = PP[:, state_var_mask]
+        S_prime = QQ[:, shock_idx]
+
+        norm_deterministic = pm.Deterministic(
+            "deterministic_norm",
+            pt.linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P),
+        )
+        norm_stochastic = pm.Deterministic(
+            "stochastic_norm", pt.linalg.norm(B @ S_prime + C @ R_prime @ Q + D)
+        )
+
+        # Add penalty terms to the likelihood to rule out invalid solutions
+        pm.Potential(
+            "solution_within_tolerance",
+            pt.switch(
+                pt.bitwise_and(
+                    pt.lt(norm_deterministic, tol), pt.lt(norm_stochastic, tol)
+                ),
+                0.0,
+                -np.inf,
+            ),
+        )
+
+        # Insert random variables into success flags
         # pymc_model = pm.modelcontext(None)
         # replacement_dict = {var: pymc_model[name] for name, var in self._name_to_variable.items()}
-        #
+
         # solver_success, bk_flag = graph_replace([self.solver_success, self.bk_flag],
         #                                         replace=replacement_dict,
         #                                         strict=False)
-        #
-        # # Save solver results for prior/posterior analysis
+
+        # Save solver results for prior/posterior analysis
         # pm.Deterministic('solver_success_flag', solver_success)
         # pm.Deterministic('bk_flag', bk_flag)
-        #
-        # # Add penalty terms to the likelihood to rule out invalid solutions
+
+        # Add penalty terms to the likelihood to rule out invalid solutions
         # pm.Potential('bk_condition_satisfied',
         #              pt.switch(pt.eq(bk_flag, 1.0), 0.0, -np.inf))
-        #
+
         # pm.Potential('solver_success',
         #                 pt.switch(pt.eq(solver_success, 1.0), 0.0, -np.inf))
