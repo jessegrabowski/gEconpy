@@ -1134,6 +1134,8 @@ def stationary_covariance_matrix(
         An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
     shock_std: float, optional
         Standard deviation of all model shocks.
+    return_df: bool
+        If True, return the covariance matrix as a DataFrame
     **solve_model_kwargs
         Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
 

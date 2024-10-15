@@ -18,6 +18,7 @@ from gEconpy.exceptions.exceptions import GensysFailedException, OrphanParameter
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import (
+    autocorrelation_matrix,
     autocovariance_matrix,
     build_Q_matrix,
     impulse_response_function,
@@ -1045,7 +1046,7 @@ def test_autocovariance_matrix(caplog, gcn_file):
 
         # The autocorrelation of the AR(1) states decay at rate rho ** t
         # Other autocovarainces are more complex, but this one is easy to check
-        autocorr = autocovariance_matrix(
+        autocorr = autocorrelation_matrix(
             model,
             shock_std=0.1,
             solver="gensys",
@@ -1123,7 +1124,8 @@ def test_irf_from_shock_size(shock_size, return_individual_shocks):
     # After 1000 steps the shocks should have mostly died out
     assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
 
-    if (n_shocks > 1) and return_individual_shocks:
+    n_test_shocks = 1 if isinstance(shock_size, float | int) else len(shock_size)
+    if (n_shocks > 1) and (n_test_shocks > 1) and return_individual_shocks:
         assert not np.allclose(
             irf.sel(shock="epsilon_A").values, irf.sel(shock="epsilon_B").values
         )
@@ -1210,7 +1212,7 @@ def test_simulate(gcn_file, argument):
 
     # Check that the simulated covariance matrix is at least strong correlated with the stationary covariance matrix
     # across many trajectories
-    Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1, reutrn_df=False)
+    Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1, return_df=False)
     sigma = np.cov(data.isel(time=-1).values.T)
 
     corr = np.corrcoef(np.r_[Sigma.ravel(), sigma.ravel()])
