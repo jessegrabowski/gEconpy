@@ -666,7 +666,7 @@ def test_steady_state_with_parameter_updates(backend):
     beta = rng.beta(1, 1)
     ss_dict, _ = model.steady_state(delta=delta, beta=beta)
 
-    assert ss_dict["r_ss"] == (1 / beta - (1 - delta))
+    assert_allclose(ss_dict["r_ss"], (1 / beta - (1 - delta)))
 
 
 @pytest.mark.parametrize(

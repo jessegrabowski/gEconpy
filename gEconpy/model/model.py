@@ -229,7 +229,7 @@ def validate_user_steady_state_simple(
     invalid_equation_strings = [
         str(eq)
         for eq, subbed_eq in zip(steady_state_system, subbed_system)
-        if (sp.Abs(subbed_eq) < tol) is False
+        if (sp.Abs(subbed_eq) < tol) == False  #  noqa
     ]
 
     if len(invalid_equation_strings) > 0:
