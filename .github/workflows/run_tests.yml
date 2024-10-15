@@ -30,7 +30,7 @@ jobs:
     - uses: actions/cache@v3
       env:
         # Increase this value to reset cache if geconpy_test.yml has not changed
-        CACHE_NUMBER: 1
+        CACHE_NUMBER: 2
       with:
         path: ~/conda_pkgs_dir
         key: ${{ runner.os }}-py${{matrix.python-version}}-conda-${{ env.CACHE_NUMBER }}-${{
@@ -39,7 +39,7 @@ jobs:
       uses: actions/cache@v3
       env:
         # Increase this value to reset cache if requirements.txt has not changed
-        CACHE_NUMBER: 1
+        CACHE_NUMBER: 2
       with:
         path: |
           ~/.cache/pip
