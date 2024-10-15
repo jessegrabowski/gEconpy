@@ -30,7 +30,7 @@ jobs:
     - uses: actions/cache@v3
       env:
         # Increase this value to reset cache if geconpy_test.yml has not changed
-        CACHE_NUMBER: 0
+        CACHE_NUMBER: 1
       with:
         path: ~/conda_pkgs_dir
         key: ${{ runner.os }}-py${{matrix.python-version}}-conda-${{ env.CACHE_NUMBER }}-${{
@@ -39,7 +39,7 @@ jobs:
       uses: actions/cache@v3
       env:
         # Increase this value to reset cache if requirements.txt has not changed
-        CACHE_NUMBER: 0
+        CACHE_NUMBER: 1
       with:
         path: |
           ~/.cache/pip
@@ -55,7 +55,7 @@ jobs:
         activate-environment: geconpy-test
         channel-priority: strict
         environment-file: conda_envs/geconpy_test.yml
-        python-version: 3.12
+        python-version: ${{matrix.python-version}}
         use-mamba: true
         use-only-tar-bz2: false # IMPORTANT: This may break caching of conda packages! See https://github.com/conda-incubator/setup-miniconda/issues/267
 

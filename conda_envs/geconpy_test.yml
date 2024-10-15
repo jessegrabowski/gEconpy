@@ -2,8 +2,6 @@ name: gEconpy
 channels:
 - conda-forge
 dependencies:
-  - python=3.11
-
   # Base dependencies
   - numpy
   - numba
@@ -29,3 +27,4 @@ dependencies:
   - pip:
       - sympytensor
       - better-optimize
+      - pymc-experimental
