@@ -6,7 +6,6 @@ from warnings import warn
 import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.classes.simplification import simplify_constants, simplify_tryreduce
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import (
     DuplicateParameterError,
@@ -16,6 +15,7 @@ from gEconpy.exceptions import (
     OrphanParameterError,
 )
 from gEconpy.model.block import Block
+from gEconpy.model.simplification import simplify_constants, simplify_tryreduce
 from gEconpy.parser.constants import STEADY_STATE_NAMES
 from gEconpy.parser.gEcon_parser import (
     ASSUMPTION_DICT,

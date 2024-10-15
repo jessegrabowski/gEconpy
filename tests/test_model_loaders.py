@@ -331,7 +331,7 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
     )
 
     f_ss_resid, f_ss_jac = resid_funcs
-    f_ss_error, f_ss_grad, f_ss_hess = error_funcs
+    f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp = error_funcs
 
     parameters = f_params(**param_dict)
     ss = f_ss(**parameters)
@@ -340,6 +340,9 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
     for f in [f_ss_resid, f_ss_jac, f_ss_grad, f_ss_hess]:
         result = f(**x0, **parameters)
         assert isinstance(result, np.ndarray)
+
+    result = f_ss_hessp(np.ones(len(variables)), **x0, **parameters)
+    assert isinstance(result, np.ndarray)
 
 
 @pytest.mark.parametrize(

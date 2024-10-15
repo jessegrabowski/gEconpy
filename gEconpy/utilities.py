@@ -1,11 +1,16 @@
+import logging
+
 from collections.abc import Callable
 from copy import copy
 from typing import Any
 
+import numpy as np
 import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary, string_keys_to_sympy
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+
+_log = logging.getLogger(__name__)
 
 
 def flatten_list(items, result_list=None):
@@ -273,3 +278,58 @@ def split_random_variables(param_dict, shock_names, obs_names):
             out_param_dict[k] = v
 
     return out_param_dict, shock_dict, obs_dict
+
+
+def postprocess_optimizer_res(
+    res,
+    res_dict,
+    f_resid,
+    f_jac,
+    tol,
+    verbose=True,
+) -> tuple[SymbolDictionary, bool]:
+    success = res.success
+
+    f_x = np.r_[[x.ravel() for x in f_resid(**res_dict)]]
+    df_dx = f_jac(**res_dict)
+
+    sse = (f_x**2).sum()
+    max_abs_error = np.max(np.abs(f_x))
+    grad_norm = np.linalg.norm(df_dx, ord=2)
+    abs_max_grad = np.max(np.abs(df_dx))
+
+    # Sometimes the optimizer is way too strict and returns success of False even if the point is pretty clearly
+    # minimum.
+    numeric_success = all(
+        condition < tol for condition in [sse, max_abs_error, grad_norm, abs_max_grad]
+    )
+
+    if numeric_success and not success:
+        word = " IS "
+    elif not numeric_success and not success:
+        word = " NOT "
+    else:
+        word = " "
+
+    line_1 = f"Steady state{word}found"
+    if numeric_success and not success:
+        line_1 += (
+            ", although optimizer returned success = False.\n"
+            "This can be ignored, but to silence this message, try reducing the solver-specific tolerance, "
+            "or use a different solution algorithm."
+        )
+
+    msg = (
+        f'{line_1}\n'
+        f'{"-"*80}\n'
+        f"{'Optimizer message':<30}{res.message}\n"
+        f"{'Sum of squared residuals':<30}{sse}\n"
+        f"{'Maximum absoluate error':<30}{max_abs_error}\n"
+        f"{'Gradient L2-norm at solution':<30}{grad_norm}\n"
+        f"{'Max abs gradient at solution':<30}{abs_max_grad}"
+    )
+
+    if verbose:
+        _log.info(msg)
+
+    return res_dict, success | numeric_success

@@ -21,3 +21,4 @@ dependencies:
   - pip:
       - sympytensor
       - gEconpy
+      - better_optimize

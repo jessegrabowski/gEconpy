@@ -28,3 +28,4 @@ dependencies:
       - sympytensor
       - better-optimize
       - pymc-experimental
+      - better_optimize

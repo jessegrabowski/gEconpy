@@ -11,14 +11,10 @@ import pandas as pd
 import sympy as sp
 import xarray as xr
 
-from scipy import linalg, optimize
+from better_optimize import minimize, root
+from scipy import linalg
 
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.classes.optimize_wrapper import (
-    CostFuncWrapper,
-    optimzer_early_stopping_wrapper,
-    postprocess_optimizer_res,
-)
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import (
     GensysFailedException,
@@ -39,6 +35,7 @@ from gEconpy.solvers.gensys import (
     interpret_gensys_output,
     solve_policy_function_with_gensys,
 )
+from gEconpy.utilities import postprocess_optimizer_res
 
 VariableType = sp.Symbol | TimeAwareSymbol
 _log = logging.getLogger(__name__)
@@ -50,30 +47,59 @@ def scipy_wrapper(
     unknown_var_idxs: np.ndarray[int | bool],
     unknown_eq_idxs: np.ndarray[int | bool],
     f_ss: Callable | None = None,
+    include_p=False,
 ) -> Callable:
     if f_ss is not None:
+        if not include_p:
 
-        @ft.wraps(f)
-        def inner(ss_values, param_dict):
-            given_ss = f_ss(**param_dict)
-            ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
-            ss_dict.update(given_ss)
-            res = f(**ss_dict, **param_dict)
+            @ft.wraps(f)
+            def inner(ss_values, param_dict):
+                given_ss = f_ss(**param_dict)
+                ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
+                ss_dict.update(given_ss)
+                res = f(**ss_dict, **param_dict)
 
-            if isinstance(res, float | int):
+                if isinstance(res, float | int):
+                    return res
+                elif res.ndim == 1:
+                    res = res[unknown_eq_idxs]
+                elif res.ndim == 2:
+                    res = res[unknown_eq_idxs, :][:, unknown_var_idxs]
                 return res
-            elif res.ndim == 1:
-                res = res[unknown_eq_idxs]
-            elif res.ndim == 2:
-                res = res[unknown_eq_idxs, :][:, unknown_var_idxs]
-            return res
+        else:
+
+            @ft.wraps(f)
+            def inner(ss_values, p, param_dict):
+                given_ss = f_ss(**param_dict)
+                ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
+                ss_dict.update(given_ss)
+
+                p_full = np.zeros(unknown_eq_idxs.shape[0])
+                p_full[unknown_var_idxs] = p
+
+                res = f(p_full, **ss_dict, **param_dict)
+
+                if isinstance(res, float | int):
+                    return res
+                elif res.ndim == 1:
+                    res = res[unknown_eq_idxs]
+                elif res.ndim == 2:
+                    res = res[unknown_eq_idxs, :][:, unknown_var_idxs]
+                return res
 
     else:
+        if not include_p:
 
-        @ft.wraps(f)
-        def inner(ss_values, param_dict):
-            ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
-            return f(**ss_dict, **param_dict)
+            @ft.wraps(f)
+            def inner(ss_values, param_dict):
+                ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
+                return f(**ss_dict, **param_dict)
+        else:
+
+            @ft.wraps(f)
+            def inner(ss_values, p, param_dict):
+                ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
+                return f(p, **ss_dict, **param_dict)
 
     return inner
 
@@ -257,6 +283,7 @@ class Model:
         f_ss_jac: Callable[[np.ndarray, ...], np.ndarray],
         f_ss_error_grad: Callable[[np.ndarray, ...], np.ndarray],
         f_ss_error_hess: Callable[[np.ndarray, ...], np.ndarray],
+        f_ss_error_hessp: Callable[[np.ndarray, ...], np.ndarray],
         f_linearize: Callable,
         backend: BACKENDS = "numpy",
     ) -> None:
@@ -295,6 +322,11 @@ class Model:
 
             If f_ss_error is not provided, an error will be raised if a gradient function is passed.
 
+        f_ss_error_hessp: Callable, optional
+            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
+            the Hessian-vector product of the error function f_ss_error with respect to the steady-state variable values x_ss
+
+
         f_ss_jac: Callable, optional
 
         f_linearize: Callable, optional
@@ -316,6 +348,7 @@ class Model:
         self.f_ss_error = f_ss_error
         self.f_ss_error_grad = f_ss_error_grad
         self.f_ss_error_hess = f_ss_error_hess
+        self.f_ss_error_hessp = f_ss_error_hessp
 
         self.f_ss = f_ss
         self.f_ss_jac = f_ss_jac
@@ -342,7 +375,8 @@ class Model:
         self,
         how: Literal["analytic", "root", "minimize"] = "analytic",
         use_jac=True,
-        use_hess=True,
+        use_hess=False,
+        use_hessp=True,
         progressbar=True,
         optimizer_kwargs: dict | None = None,
         verbose=True,
@@ -367,9 +401,15 @@ class Model:
             Flag indicating whether to use the Jacobian of the error function when solving for the steady state. Ignored
             if ``how`` is 'analytic'.
 
-        use_hess: bool, default: True
+        use_hess: bool, default: False
             Flag indicating whether to use the Hessian of the error function when solving for the steady state. Ignored
-            if ``how`` is 'analytic'.
+            if ``how`` is not 'minimize'
+
+        use_hessp: bool, default: True
+            Flag indicating whether to use the Hessian-vector product of the error function when solving for the
+            steady state. This should be preferred over ``use_hess`` if your chosen method supports it. For larger
+            problems it is substantially more performant.
+            Ignored if ``how`` not "minimize".
 
         progressbar: bool, default: True
             Flag indicating whether to display a progress bar when solving for the steady state.
@@ -509,6 +549,7 @@ class Model:
                 f_ss=f_ss,
                 use_jac=use_jac,
                 use_hess=use_hess,
+                use_hessp=use_hessp,
                 vars_to_solve=vars_to_solve,
                 unknown_var_idx=unknown_var_idx,
                 unknown_eq_idx=unknown_var_idx,
@@ -584,24 +625,16 @@ class Model:
         f = wrapper(self.f_ss_resid)
         f_jac = wrapper(self.f_ss_jac) if use_jac else None
 
-        objective = CostFuncWrapper(
-            maxeval=maxiter,
-            f=f,
-            f_jac=f_jac,
-            progressbar=progressbar,
-        )
-
-        f_optim = ft.partial(
-            optimize.root,
-            fun=objective,
-            x0=x0,
-            jac=use_jac,
-            args=param_dict,
-            method=method,
-            **optimizer_kwargs,
-        )
         with np.errstate(all="ignore"):
-            res = optimzer_early_stopping_wrapper(f_optim)
+            res = root(
+                f=f,
+                x0=x0,
+                args=(param_dict,),
+                jac=f_jac,
+                method=method,
+                progressbar=progressbar,
+                **optimizer_kwargs,
+            )
 
         return res
 
@@ -609,7 +642,8 @@ class Model:
         self,
         f_ss,
         use_jac: bool = True,
-        use_hess: bool = True,
+        use_hess: bool = False,
+        use_hessp: bool = True,
         vars_to_solve: list[str] | None = None,
         unknown_var_idx: np.ndarray | None = None,
         unknown_eq_idx: np.ndarray | None = None,
@@ -656,32 +690,32 @@ class Model:
             f_ss=f_ss,
         )
 
+        if use_hess and use_hessp:
+            _log.warning(
+                "Both use_hess and use_hessp are set to True. use_hessp will be used."
+            )
+            use_hess = False
+
         f = wrapper(self.f_ss_error)
         f_jac = wrapper(self.f_ss_error_grad) if use_jac else None
         f_hess = wrapper(self.f_ss_error_hess) if use_hess else None
+        f_hessp = wrapper(self.f_ss_error_hessp, include_p=True) if use_hessp else None
 
-        objective = CostFuncWrapper(
-            maxeval=maxiter,
+        res = minimize(
             f=f,
-            f_jac=f_jac,
-            f_hess=f_hess,
-            progressbar=progressbar,
-        )
-
-        f_optim = ft.partial(
-            optimize.minimize,
-            fun=objective,
             x0=x0,
-            jac=use_jac,
+            args=(param_dict,),
+            jac=f_jac,
             hess=f_hess,
-            args=param_dict,
-            callback=objective.callback,
+            hessp=f_hessp,
             method=method,
-            tol=tol,
             bounds=bounds if has_bounds else None,
+            tol=tol,
+            progressbar=progressbar,
             **optimizer_kwargs,
         )
-        return optimzer_early_stopping_wrapper(f_optim)
+
+        return res
 
     def linearize_model(
         self,

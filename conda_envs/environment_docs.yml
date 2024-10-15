@@ -7,7 +7,6 @@ dependencies:
   - pip
   - pymc
   - pytensor
-  - emcee
   - joblib
   - matplotlib
   - numba
