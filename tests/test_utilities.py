@@ -11,16 +11,6 @@ from gEconpy.shared.utilities import (
 )
 
 
-class TestComputeAutocorrelation(unittest.TestCase):
-    def test_compute_autocorrelation_matrix(self):
-        A = np.eye(5)
-        L = np.random.normal(size=(5, 5))
-        Q = L @ L.T
-
-        acorr = autocovariance_matrix(A, Q, n_lags=10, return_xr=False)
-        self.assertEqual(acorr.shape, (5, 10))
-
-
 class TestExtractShockStd(unittest.TestCase):
     def setUp(self):
         self.shocks = ["epsilon_A", "epsilon_B", "epsilon_C"]

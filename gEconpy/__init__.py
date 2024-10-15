@@ -5,12 +5,12 @@ from gEconpy import (
     classes,
     parser,
     plotting,
-    sampling,
     shared,
     solvers,
 )
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 from gEconpy.model.model import (
+    autocorrelation_matrix,
     autocovariance_matrix,
     bk_condition,
     impulse_response_function,
@@ -18,7 +18,7 @@ from gEconpy.model.model import (
     stationary_covariance_matrix,
     summarize_perturbation_solution,
 )
-from gEconpy.shared import compile_to_statsmodels, make_mod_file
+from gEconpy.shared import make_mod_file
 
 _log = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ if not logging.root.handlers:
         _log.addHandler(handler)
 
 
-__version__ = "1.2.1"
+__version__ = "2.0.0"
 __all__ = [
     "model_from_gcn",
     "statespace_from_gcn",
@@ -38,15 +38,13 @@ __all__ = [
     "summarize_perturbation_solution",
     "stationary_covariance_matrix",
     "autocovariance_matrix",
+    "autocorrelation_matrix",
     "bk_condition",
     "classes",
-    "estimation",
     "exceptions",
     "parser",
     "plotting",
-    "sampling",
     "shared",
     "solvers",
-    "compile_to_statsmodels",
     "make_mod_file",
 ]
