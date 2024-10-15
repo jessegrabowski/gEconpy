@@ -161,7 +161,6 @@ class TestSymbolDictionary(unittest.TestCase):
         d = self.d.copy()
 
         d_sorted = d.sort_keys()
-        print(d_sorted)
         self.assertEqual(list(d_sorted.keys()), [self.A, self.C, self.alpha, self.r])
 
         d.sort_keys(inplace=True)
