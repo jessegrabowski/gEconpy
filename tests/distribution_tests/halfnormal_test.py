@@ -4,7 +4,7 @@ from functools import partial
 
 from scipy.stats import halfnorm
 
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     IgnoredCloseMatchWarning,
     MultipleParameterDefinitionException,
     UnusedParameterWarning,

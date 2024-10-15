@@ -18,8 +18,8 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import BACKENDS, compile_function
 from gEconpy.numbaf.overloads import nb_ordqz
-from gEconpy.shared.utilities import eq_to_ss
 from gEconpy.solvers.gensys import _gensys_setup
+from gEconpy.utilities import eq_to_ss
 
 _log = logging.getLogger(__name__)
 

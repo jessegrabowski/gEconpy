@@ -13,7 +13,7 @@ from gEconpy.model.compile import (
     make_return_dict_and_update_cache,
 )
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.shared.utilities import eq_to_ss
+from gEconpy.utilities import eq_to_ss
 
 _log = logging.getLogger(__name__)
 

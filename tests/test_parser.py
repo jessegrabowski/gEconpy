@@ -352,8 +352,8 @@ class ParserTestCases(unittest.TestCase):
             self.assertEqual(expected_result, result)
 
     def test_sympy_rename_time_index(self):
-        x_t, x_t1, x_tL1, x_10t, x_tL10, x_ss = sp.symbols(
-            ["x_t", "x_t1", "x_tL1", "x_t10", "x_tL10", "x_ss"]
+        x_t, x_t1, x_tL1, x_10t, x_tL10, x_ss, x_0 = sp.symbols(
+            ["x_t", "x_t1", "x_tL1", "x_t10", "x_tL10", "x_ss", "x_0"]
         )
         long_name_t, name_with_num = sp.symbols(
             ["This_is_a_variable_with_a_super_long_name_t10000", "alpha_1_t10"]
@@ -366,6 +366,7 @@ class ParserTestCases(unittest.TestCase):
             sp.Eq(x_10t, 0),
             sp.Eq(x_tL10, 0),
             sp.Eq(x_ss, 0),
+            sp.Eq(x_0, 0),
             sp.Eq(long_name_t, 0),
             sp.Eq(name_with_num, 0),
         ]
@@ -377,6 +378,7 @@ class ParserTestCases(unittest.TestCase):
             sp.Symbol("x_{t+10}"),
             sp.Symbol("x_{t-10}"),
             sp.Symbol("x_ss"),
+            sp.Symbol("x_0"),
             sp.Symbol("This_is_a_variable_with_a_super_long_name_{t+10000}"),
             sp.Symbol("alpha_1_{t+10}"),
         ]
@@ -391,7 +393,7 @@ class ParserTestCases(unittest.TestCase):
         )
         eq_answer = sp.Eq(
             answers[0] + answers[1] - answers[2] * answers[3] ** answers[4],
-            answers[5] - answers[6] / answers[7],
+            answers[5] - answers[7] / answers[8],
         )
 
         self.assertEqual(eq_test, eq_answer)

@@ -1,6 +1,6 @@
 import re
 
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     DistributionParsingError,
     MissingParameterValueException,
 )

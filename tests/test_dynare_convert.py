@@ -8,7 +8,7 @@ import sympy as sp
 
 from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.dynare_convert import (
+from gEconpy.dynare_convert import (
     build_hash_table,
     convert_var_timings_to_matlab,
     get_name,
@@ -100,9 +100,6 @@ class TestDynareConvert(unittest.TestCase):
             ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
         )
         model = model_from_gcn(file_path, verbose=False)
-        model.steady_state(verbose=False)
-        model.solve_model(verbose=False)
-
         mod_file = make_mod_file(model)
         self.assertTrue(isinstance(mod_file, str))
 

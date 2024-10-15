@@ -200,7 +200,8 @@ To see how to do simulations, IRFs, and compute moments, see the example noteboo
 Since Dynare is still the gold standard in DSGE modeling, and this is a wacky open source package written by a literally who?, gEconpy has the ability to automatically convert a solved model into a Dynare mod file. This is done as follows:
 
 ```python
-from gEconpy.shared.dynare_convert import make_mod_file
+from gEconpy.dynare_convert import make_mod_file
+
 print(make_mod_file(model))
 ```
 

@@ -5,14 +5,14 @@ import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     ControlVariableNotFoundException,
     DuplicateParameterError,
     DynamicCalibratingEquationException,
     MultipleObjectiveFunctionsException,
     OptimizationProblemNotDefinedException,
 )
-from gEconpy.shared.utilities import (
+from gEconpy.utilities import (
     diff_through_time,
     expand_subs_for_all_times,
     set_equality_equals_zero,

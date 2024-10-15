@@ -6,7 +6,7 @@ from scipy import stats
 
 from gEconpy.model.model import autocovariance_matrix
 from gEconpy.parser.parse_distributions import CompositeDistribution
-from gEconpy.shared.utilities import (
+from gEconpy.utilities import (
     get_shock_std_priors_from_hyperpriors,
 )
 

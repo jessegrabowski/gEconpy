@@ -7,7 +7,7 @@ import numpy as np
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     ControlVariableNotFoundException,
     DynamicCalibratingEquationException,
     MultipleObjectiveFunctionsException,
@@ -15,7 +15,7 @@ from gEconpy.exceptions.exceptions import (
 )
 from gEconpy.model.block import Block
 from gEconpy.parser import constants, file_loaders, gEcon_parser
-from gEconpy.shared.utilities import set_equality_equals_zero, unpack_keys_and_values
+from gEconpy.utilities import set_equality_equals_zero, unpack_keys_and_values
 
 ROOT = Path(__file__).parent.absolute()
 

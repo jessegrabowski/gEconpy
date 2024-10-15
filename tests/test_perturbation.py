@@ -12,13 +12,13 @@ from gEconpy.model.perturbation import (
     make_all_variable_time_combinations,
     override_dummy_wrapper,
 )
-from gEconpy.shared.utilities import eq_to_ss
 from gEconpy.solvers.cycle_reduction import (
     cycle_reduction_pt,
     scan_cycle_reduction,
     solve_policy_function_with_cycle_reduction,
 )
 from gEconpy.solvers.gensys import gensys_pt, solve_policy_function_with_gensys
+from gEconpy.utilities import eq_to_ss
 from tests.utilities.shared_fixtures import load_and_cache_model
 
 

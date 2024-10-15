@@ -17,15 +17,13 @@ from gEconpy.model.model import (
     stationary_covariance_matrix,
 )
 from gEconpy.plotting import (
+    plot_acf,
     plot_covariance_matrix,
     plot_eigenvalues,
+    plot_heatmap,
     plot_irf,
     plot_simulation,
     prepare_gridspec_figure,
-)
-from gEconpy.plotting.plotting import (
-    plot_acf,
-    plot_heatmap,
 )
 
 ROOT = Path(__file__).parent.absolute()

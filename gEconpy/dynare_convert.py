@@ -5,7 +5,7 @@ import sympy as sp
 from sympy.abc import greeks
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.utilities import make_all_var_time_combos
+from gEconpy.utilities import make_all_var_time_combos
 
 OPERATORS = list("+-/*^()=")
 
@@ -222,8 +222,8 @@ def make_mod_file(model) -> str:
 
     Parameters
     ----------
-    model : gEconModel
-        A gEconModel object with solved steady state.
+    model : Model
+        A DSGE model object
 
     Returns
     -------
@@ -242,11 +242,11 @@ def make_mod_file(model) -> str:
         - Check that the steady state has been solved
     """
 
-    var_list = model.variables.copy()
-    param_dict = model.free_param_dict | model.calib_param_dict
+    var_list = model.variables.copy() + model.calibrated_params.copy()
+    param_dict = model.parameters()
 
     shocks = model.shocks
-    ss_value_dict = model.steady_state_dict.copy()
+    ss_value_dict, success = model.steady_state()
 
     var_to_matlab = make_var_to_matlab_sub_dict(
         make_all_var_time_combos(var_list), clash_prefix="var_"
@@ -291,7 +291,7 @@ def make_mod_file(model) -> str:
             matlab_var = var_to_matlab[var]
             file += f"#{matlab_var}_ss = {val:0.4f};\n"
 
-    for eq in model.system_equations:
+    for eq in model.equations:
         matlab_subdict = {}
 
         for atom in eq.atoms():

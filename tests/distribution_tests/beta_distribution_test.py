@@ -2,7 +2,7 @@ import unittest
 
 from functools import partial
 
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     IgnoredCloseMatchWarning,
     InvalidParameterException,
     UnusedParameterWarning,

@@ -7,7 +7,7 @@ import pyparsing as pp
 
 from sympy.core.assumptions import _assume_rules
 
-from gEconpy.exceptions.exceptions import GCNSyntaxError
+from gEconpy.exceptions import GCNSyntaxError
 from gEconpy.parser.constants import (
     DEFAULT_ASSUMPTIONS,
     SYMPY_ASSUMPTIONS,
@@ -26,7 +26,7 @@ from gEconpy.parser.validation import (
     find_typos_and_guesses,
     validate_key,
 )
-from gEconpy.shared.utilities import flatten_list
+from gEconpy.utilities import flatten_list
 
 SPECIAL_BLOCK = Literal["tryreduce", "assumptions", "options"]
 ASSUMPTION_DICT = dict[str, dict[str, bool]]
