@@ -406,9 +406,9 @@ def build_sympy_equations(
         try:
             eq_sympy = sp.parse_expr(eq_str, evaluate=False, local_dict=sub_dict)
         except Exception as e:
-            print(f"Error encountered while parsing {eq_str}")
-            print(e)
-            raise e
+            raise ValueError(
+                f"Error encountered the following error while parsing: {eq_str}\n"
+            ) from e
 
         eq_sympy = sp.Eq(*eq_sympy)
         flags["is_calibrating"] = calibrating_parameter is not None
