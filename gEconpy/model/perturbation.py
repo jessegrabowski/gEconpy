@@ -17,6 +17,7 @@ from scipy import linalg
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import BACKENDS, compile_function
+from gEconpy.numbaf.overloads import nb_ordqz
 from gEconpy.shared.utilities import eq_to_ss
 from gEconpy.solvers.gensys import _gensys_setup
 
@@ -301,9 +302,7 @@ def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
 
     # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
     # have sign flip relative to qzdiv -- does it matter?
-    A, B, alpha, beta, Q, Z = linalg.ordqz(
-        -Gamma_0, Gamma_1, sort="ouc", output="complex"
-    )
+    A, B, alpha, beta, Q, Z = nb_ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
 
     gev = np.column_stack((np.diag(A), np.diag(B)))
 

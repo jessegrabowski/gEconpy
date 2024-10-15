@@ -9,7 +9,7 @@ import sympy as sp
 from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.numba_tools.utilities import numba_lambdify
+from gEconpy.numbaf.utilities import numba_lambdify
 
 BACKENDS = Literal["numpy", "numba", "pytensor"]
 
