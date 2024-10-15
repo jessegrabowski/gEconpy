@@ -11,6 +11,7 @@ import pytest
 import sympy as sp
 import xarray as xr
 
+from numpy.lib.tests.test_type_check import assert_all
 from numpy.testing import assert_allclose
 
 from gEconpy.exceptions.exceptions import GensysFailedException, OrphanParameterError
@@ -1061,7 +1062,7 @@ def test_autocovariance_matrix(caplog, gcn_file):
         )
 
 
-def setup_cov_argumnets(argument, n_shocks, model):
+def setup_cov_arguments(argument, n_shocks, model):
     shock_std = None
     shock_dict = None
     shock_cov_matrix = None
@@ -1076,28 +1077,25 @@ def setup_cov_argumnets(argument, n_shocks, model):
 
 
 @pytest.mark.parametrize(
-    "gcn_file",
+    "shock_size",
     [
-        "One_Block_Simple_1_w_Steady_State.gcn",
-        "Open_RBC.gcn",
-        "Full_New_Keynesian.gcn",
+        0.1,
+        np.array([0.1, 0.1]),
+        {"epsilon_A": 0.1, "epsilon_B": 0.1},
+        {"epsilon_B": 0.1},
     ],
+    ids=["single_float", "array", "dict", "partial_dict"],
 )
-@pytest.mark.parametrize("argument", ["shock_size", "shock_cov", "shock_trajectory"])
-def test_impulse_response_function(gcn_file, argument):
-    file_path = os.path.join("tests", "Test GCNs", gcn_file)
+@pytest.mark.parametrize(
+    "return_individual_shocks", [True, False], ids=["individual_shocks", "joint_shocks"]
+)
+def test_irf_from_shock_size(shock_size, return_individual_shocks):
+    file_path = os.path.join(
+        "tests", "Test GCNs", "One_Block_Simple_1_w_Steady_State_2_shocks.gcn"
+    )
     model = model_from_gcn(file_path, verbose=False)
     T, R = model.solve_model(solver="gensys", verbose=False)
     n_variables, n_shocks = R.shape
-
-    shock_size, shock_cov, shock_trajectory = None, None, None
-    if argument == "shock_size":
-        shock_size = 0.1
-    elif argument == "shock_cov":
-        shock_cov = np.eye(n_shocks) * 0.1
-    elif argument == "shock_trajectory":
-        shock_trajectory = np.zeros((1000, n_shocks))
-        shock_trajectory[0, 0] = 0.1
 
     irf = impulse_response_function(
         model,
@@ -1105,14 +1103,72 @@ def test_impulse_response_function(gcn_file, argument):
         R,
         simulation_length=1000,
         shock_size=shock_size,
-        shock_cov=shock_cov,
-        shock_trajectory=shock_trajectory,
+        return_individual_shocks=return_individual_shocks,
     )
 
-    assert irf.shape == (1000, n_variables)
+    assert "time" in irf.coords
+    assert "variable" in irf.coords
+
+    if return_individual_shocks:
+        assert "shock" in irf.coords
+        if isinstance(shock_size, dict):
+            assert set(irf.coords["shock"].values) == set(shock_size.keys())
+    else:
+        assert "shock" not in irf.coords
+
+    assert len(irf.coords["time"]) == 1000
+    assert len(irf.coords["variable"]) == n_variables
 
     # After 1000 steps the shocks should have mostly died out
-    assert np.all(np.abs(irf.isel(time=-1)) < 1e-3)
+    assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
+
+    if (n_shocks > 1) and return_individual_shocks:
+        assert not np.allclose(
+            irf.sel(shock="epsilon_A").values, irf.sel(shock="epsilon_B").values
+        )
+
+
+@pytest.mark.parametrize(
+    "return_individual_shocks", [True, False], ids=["individual_shocks", "joint_shocks"]
+)
+@pytest.mark.parametrize("n_shocks", [1, 2], ids=["single_shock", "two_shocks"])
+def test_irf_from_trajectory(return_individual_shocks, n_shocks):
+    file_path = os.path.join(
+        "tests", "Test GCNs", "One_Block_Simple_1_w_Steady_State_2_shocks.gcn"
+    )
+    model = model_from_gcn(file_path, verbose=False)
+    T, R = model.solve_model(solver="gensys", verbose=False)
+    n_variables, n_shocks = R.shape
+
+    shock_trajectory = np.zeros((1000, n_shocks))
+    for i in range(n_shocks):
+        shock_trajectory[0, i] = 0.1
+
+    irf = impulse_response_function(
+        model,
+        T,
+        R,
+        simulation_length=1000,
+        shock_trajectory=shock_trajectory,
+        return_individual_shocks=return_individual_shocks,
+    )
+
+    assert "time" in irf.coords
+    assert "variable" in irf.coords
+
+    if return_individual_shocks:
+        assert "shock" in irf.coords
+    else:
+        assert "shock" not in irf.coords
+
+    assert len(irf.coords["time"]) == 1000
+    assert len(irf.coords["variable"]) == n_variables
+    assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
+
+    if (n_shocks == 2) and return_individual_shocks:
+        assert not np.allclose(
+            irf.sel(shock="epsilon_A").values, irf.sel(shock="epsilon_B").values
+        )
 
 
 @pytest.mark.parametrize(
@@ -1135,7 +1191,7 @@ def test_simulate(gcn_file, argument):
     n_simulations = 2000
     simulation_length = 1000
 
-    shock_std, shock_std_dict, shock_cov_matrix = setup_cov_argumnets(
+    shock_std, shock_std_dict, shock_cov_matrix = setup_cov_arguments(
         argument, n_shocks, model
     )
 

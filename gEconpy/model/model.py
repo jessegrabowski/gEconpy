@@ -970,7 +970,7 @@ def _validate_shock_options(
                 raise ValueError("Shock standard deviation must be positive")
 
 
-def _validate_simulation_options(shock_size, shock_cov, shock_trajectory):
+def _validate_simulation_options(shock_size, shock_cov, shock_trajectory) -> None:
     options = [shock_size, shock_cov, shock_trajectory]
     n_options = sum(x is not None for x in options)
 
@@ -978,8 +978,6 @@ def _validate_simulation_options(shock_size, shock_cov, shock_trajectory):
         raise ValueError(
             "Specify exactly 1 of shock_size, shock_cov, or shock_trajectory"
         )
-
-    return shock_size, shock_cov, shock_trajectory
 
 
 def build_Q_matrix(
@@ -1245,6 +1243,7 @@ def impulse_response_function(
     shock_size: float | np.ndarray | dict[str, float] | None = None,
     shock_cov: np.ndarray | None = None,
     shock_trajectory: np.ndarray | None = None,
+    return_individual_shocks: bool | None = None,
     orthogonalize_shocks: bool = False,
     random_seed: int | np.random.RandomState | None = None,
     **solve_model_kwargs,
@@ -1267,10 +1266,14 @@ def impulse_response_function(
         Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
     simulation_length : int, optional
         The number of periods to compute the IRFs over. The default is 40.
-    shock_size : Optional[Union[float, np.ndarray]], default=None
+    shock_size : float, array, or dict; default=None
         The size of the shock applied to the system. If specified, it will create a covariance
-        matrix for the shock with diagonal elements equal to `shock_size`. If float, the diagonal will be filled
-        with `shock_size`. If an array, `shock_size` must match the number of shocks in the state space model.
+        matrix for the shock with diagonal elements equal to `shock_size`:
+            -  If float, the covariance matrix will be the identity matrix, scaled by `shock_size`.
+            -  If array, the covariance matrix will be ``diag(shock_size)``. In this case, the length of the provided array
+            must match the number of shocks in the state space model.
+            -  If dictionary, a diagonal matrix will be created with entries corresponding to the keys in the dictionary.
+               Shocks which are not specified will be set to zero.
 
         Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
     shock_cov : Optional[np.ndarray], default=None
@@ -1284,9 +1287,16 @@ def impulse_response_function(
         number of shocks in the state space model.
 
         Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
+    return_individual_shocks: bool, optional
+        If True, an IRF will be computed separately for each shock in the model. An additional dimension will be added
+        to the output DataArray to show each shock. This is only valid if `shock_size` is a scalar, dictionary, or if
+        the covariance matrix is diagonal.
+
+        If not specified, this will be set to True if ``shock_size`` if the above conditions are met.
     orthogonalize_shocks : bool, default=False
         If True, orthogonalize the shocks using Cholesky decomposition when generating the impulse
-        response. This option is ignored if `shock_trajectory` or `shock_size` are used.
+        response. This option is ignored if `shock_trajectory` or `shock_size` are used, or if the covariance matrix is
+        diagonal.
     random_seed : int, RandomState or Generator, optional
         Seed for the random number generator.
     **solve_model_kwargs
@@ -1297,23 +1307,29 @@ def impulse_response_function(
     xr.DataArray
         The IRFs for each variable in the model.
     """
+    variable_names = [x.base_name for x in model.variables]
+    model_shock_names = [x.base_name for x in model.shocks]
+
     n_variables = len(model.variables)
-    n_shocks = len(model.shocks)
+    n_model_shocks = len(model.shocks)
+
     rng = np.random.default_rng(random_seed)
     Q = None  # No covariance matrix needed if a trajectory is provided. Will be overwritten later if needed.
 
-    shock_size, shock_cov, shock_trajectory = _validate_simulation_options(
-        shock_size, shock_cov, shock_trajectory
+    _validate_simulation_options(shock_size, shock_cov, shock_trajectory)
+
+    return_individual_shocks = (
+        True if return_individual_shocks is None else return_individual_shocks
     )
 
     if shock_trajectory is not None:
-        # Validate the shock trajectory
         n, k = shock_trajectory.shape
 
-        if k != n_shocks:
+        # Validate the shock trajectory
+        if k != n_model_shocks:
             raise ValueError(
                 "If shock_trajectory is provided, there must be a trajectory provided for each shock. "
-                f"Model has {n_shocks} shocks, but shock_trajectory has only {k} columns"
+                f"Model has {n_model_shocks} shocks, but shock_trajectory has only {k} columns"
             )
         if simulation_length is not None and simulation_length != n:
             _log.warning(
@@ -1323,40 +1339,116 @@ def impulse_response_function(
         simulation_length = n  # Overwrite steps with the length of the shock trajectory
         shock_trajectory = np.array(shock_trajectory)
 
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-
-    data = np.zeros((n_variables, simulation_length))
-
     if shock_cov is not None:
         Q = np.array(shock_cov)
+        is_diag = np.all(Q == np.diag(np.diagonal(Q)))
+        return_individual_shocks = is_diag
+
         if orthogonalize_shocks:
             Q = linalg.cholesky(Q) / np.diag(Q)[:, None]
 
-    if shock_trajectory is None:
+    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
+
+    def _simulate(shock_trajectory):
+        data = np.zeros((simulation_length, n_variables))
+
+        for t in range(1, simulation_length):
+            stochastic = R @ shock_trajectory[t - 1]
+            deterministic = T @ data[t - 1]
+            data[t] = deterministic + stochastic
+
+        return data
+
+    def _create_shock_trajectory(
+        n_shocks, shock_names, Q=None, shock_size=None, shock_trajectory=None
+    ):
+        if shock_trajectory is not None:
+            return np.array(shock_trajectory)
+
         shock_trajectory = np.zeros((simulation_length, n_shocks))
+
         if Q is not None:
-            init_shock = rng.multivariate_normal(mean=np.zeros(n_shocks), cov=Q)
+            shock_size = rng.multivariate_normal(
+                mean=np.zeros(n_shocks), cov=Q, size=simulation_length
+            )
+
         else:
-            # Last remaining possibility is that shock_size was provided
+            if isinstance(shock_size, (int, float)):
+                shock_size = np.ones(n_shocks) * shock_size
             if isinstance(shock_size, dict):
-                shock_size = [shock_size.get(x.base_name, 0.0) for x in model.shocks]
-            init_shock = np.array(shock_size)
-        shock_trajectory[0] = init_shock
+                shock_dict = shock_size.copy()
+                shock_size = np.zeros(n_shocks)
+                for i, name in enumerate(shock_names):
+                    if name in shock_dict:
+                        shock_size[i] = shock_dict[name]
+
+        shock_trajectory[0] = shock_size
+
+        return shock_trajectory
+
+    def _make_shock_dict(shocks, shock_size=None, Q=None):
+        if Q is not None:
+            return {x.base_name: np.sqrt(Q[i, i]) for i, x in enumerate(shocks)}
+        if isinstance(shock_size, dict):
+            return shock_size
+        if isinstance(shock_size, (int, float)):
+            return {x.base_name: shock_size for x in shocks}
+        if isinstance(shock_size, (np.ndarray, list)):
+            return {x.base_name: shock_size[i] for i, x in enumerate(shocks)}
+
+    shock_dict = _make_shock_dict(model.shocks, shock_size, Q)
+    shock_names = (
+        list(shock_dict.keys()) if shock_dict is not None else model_shock_names
+    )
+
+    # Sort the shock names to match the order of the model shocks
+    shock_names = [x for x in model_shock_names if x in shock_names]
+    n_shocks = len(shock_names)
+
+    data_shape = (simulation_length, n_variables)
+
+    coords = {"time": np.arange(simulation_length), "variable": variable_names}
+    dims = ["time", "variable"]
+
+    if return_individual_shocks:
+        data_shape = (n_shocks, *data_shape)
+        coords.update({"shock": shock_names})
+        dims = ["shock", "time", "variable"]
+
+    data = np.zeros(data_shape)
+
+    if return_individual_shocks and shock_dict is not None:
+        for i, (shock_name, init_shock) in enumerate(shock_dict.items()):
+            step_dict = {
+                k: shock_dict[k] if k == shock_name else 0.0 for k in shock_dict
+            }
+            traj = _create_shock_trajectory(
+                shock_names=shock_names, n_shocks=n_model_shocks, shock_size=step_dict
+            )
+            data[i] = _simulate(traj)
+
+    elif return_individual_shocks and shock_trajectory is not None:
+        for i, shock_name in enumerate(shock_names):
+            traj = np.zeros_like(shock_trajectory)
+            traj[:i] = shock_trajectory[:i]
+
+            data[i] = _simulate(traj)
 
     else:
-        shock_trajectory = np.array(shock_trajectory)
+        traj = _create_shock_trajectory(
+            shock_names=shock_names,
+            n_shocks=n_model_shocks,
+            Q=Q,
+            shock_trajectory=shock_trajectory,
+            shock_size=shock_size,
+        )
 
-    for t in range(1, simulation_length):
-        stochastic = R @ shock_trajectory[t - 1]
-        deterministic = T @ data[:, t - 1]
-        data[:, t] = deterministic + stochastic
-
-    variable_names = [x.base_name for x in model.variables]
+        data = _simulate(traj)
 
     irf = xr.DataArray(
-        data.T,
-        dims=["time", "variable"],
-        coords={"time": np.arange(simulation_length), "variable": variable_names},
+        data,
+        dims=dims,
+        coords=coords,
     )
 
     return irf

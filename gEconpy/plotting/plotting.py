@@ -15,7 +15,9 @@ from scipy import stats
 from gEconpy.model.perturbation import check_bk_condition
 
 
-def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list]:
+def prepare_gridspec_figure(
+    n_cols: int, n_plots: int, figure: plt.Figure | None = None
+) -> tuple[GridSpec, list]:
     """
      Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
@@ -25,6 +27,8 @@ def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list]:
          The number of columns in the grid.
      n_plots : int
          The number of subplots in the grid.
+    figure : Figure, optional
+        The figure object to use
 
     Returns
     -------
@@ -38,7 +42,7 @@ def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list]:
     has_remainder = remainder > 0
     n_rows = n_plots // n_cols + int(has_remainder)
 
-    gs = GridSpec(2 * n_rows, 2 * n_cols)
+    gs = GridSpec(2 * n_rows, 2 * n_cols, figure=figure)
     plot_locs = []
 
     for i in range(n_rows - int(has_remainder)):
@@ -53,6 +57,14 @@ def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list]:
             plot_locs.append((last_row, col_slice))
 
     return gs, plot_locs
+
+
+def set_axis_cmap(axis, cmap):
+    cycler = None
+    if cmap is not None:
+        color = getattr(plt.cm, cmap)(np.linspace(0, 1, 20))
+        cycler = plt.cycler(color=color)
+    axis.set_prop_cycle(cycler)
 
 
 def _plot_single_variable(
@@ -78,20 +90,33 @@ def _plot_single_variable(
     -------
     None
     """
+    set_axis_cmap(ax, cmap)
 
     if ci is None:
-        data.plot.line(x="time", ax=ax, add_legend=False)
+        hue = "shock" if "shock" in data.coords else None
+        data.plot.line(x="time", ax=ax, add_legend=False, hue=hue)
+        if hue is not None:
+            lines = ax.get_lines()
+            for line, shock in zip(lines, data.coords["shock"].values):
+                line.set_label(shock)
 
     else:
         q_low, q_high = ((1 - ci) / 2), 1 - ((1 - ci) / 2)
-        ci_bounds = data.quantile([q_low, q_high], axis=1).T
+        ci_bounds = data.quantile([q_low, q_high], dim=["simulation"])
 
         data.mean(dim="simulation").plot.line(x="time", ax=ax, add_legend=False)
-        ci_bounds.plot(ax=ax, ls="--", lw=0.5, color="k", legend=False)
+        ci_bounds.plot.line(
+            ax=ax,
+            x="time",
+            hue="quantile",
+            ls="--",
+            lw=0.5,
+            color="k",
+            add_legend=False,
+        )
         ax.fill_between(
-            ci_bounds.index,
-            y1=ci_bounds.iloc[:, 0],
-            y2=ci_bounds.iloc[:, 1],
+            ci_bounds.coords["time"].values,
+            *ci_bounds.transpose("quantile", "time").values,
             color=fill_color,
             alpha=0.25,
         )
@@ -142,25 +167,20 @@ def plot_simulation(
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
 
-    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
-    cycler = None
-    if cmap is not None:
-        cycler = plt.cycler(color=plt.color_sequences[cmap])
-
     fig = plt.figure(figsize=figsize, dpi=dpi)
+    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
 
     for idx, variable in enumerate(vars_to_plot):
         if variable not in simulation.coords["variable"]:
             raise ValueError(f"{variable} not found among model variables.")
         axis = fig.add_subplot(gs[plot_locs[idx]])
-        axis.set_prop_cycle(cycler)
 
         _plot_single_variable(
             simulation.sel(variable=variable),
             ci=ci,
             ax=axis,
-            cmap=cmap,
             fill_color=fill_color,
+            cmap=cmap,
         )
 
         axis.set(title=variable)
@@ -173,8 +193,8 @@ def plot_simulation(
 
 def plot_irf(
     irf: xr.DataArray,
-    vars_to_plot: list[str] | None = None,
-    shocks_to_plot: list[str] | None = None,
+    vars_to_plot: str | list[str] | None = None,
+    shocks_to_plot: str | list[str] | None = None,
     n_cols: int | None = None,
     legend: bool = False,
     cmap: str | Colormap | None = None,
@@ -213,29 +233,36 @@ def plot_irf(
     matplotlib.figure.Figure
         The figure object.
     """
+    if not isinstance(vars_to_plot, str | list | None):
+        raise ValueError(
+            f"Expected strings or list of strings for parameter vars_to_plot, got {vars_to_plot} of "
+            f"type {type(vars_to_plot)}"
+        )
 
     if vars_to_plot is None:
         vars_to_plot = irf.coords["variable"].values.tolist()
+    if isinstance(vars_to_plot, str):
+        vars_to_plot = [vars_to_plot]
 
+    for var in vars_to_plot:
+        if var not in irf.coords["variable"]:
+            raise ValueError(f"{var} not found among simulated impulse responses.")
+
+    if "shock" in irf.coords:
+        shock_list = irf.coords["shock"].values.tolist()
     else:
-        for var in vars_to_plot:
-            if var not in irf.coords["variable"]:
-                raise ValueError(f"{var} not found among simulated impulse responses.")
+        shock_list = None
 
-    if not isinstance(vars_to_plot, list):
-        raise ValueError(
-            f"Expected list for parameter vars_to_plot, got {vars_to_plot} of type {type(vars_to_plot)}"
-        )
-
-    shock_list = irf
     if shocks_to_plot is None:
         shocks_to_plot = shock_list
-    else:
-        for shock in shocks_to_plot:
-            if shock not in shock_list:
-                raise ValueError(
-                    f"{shock} not found among shocks used in impulse response data."
-                )
+    if isinstance(shocks_to_plot, str):
+        shocks_to_plot = [shocks_to_plot]
+
+    for shock in shocks_to_plot:
+        if shock not in shock_list:
+            raise ValueError(
+                f"{shock} not found among shocks used in impulse response data."
+            )
 
     if not isinstance(shocks_to_plot, list):
         raise ValueError(
@@ -246,34 +273,46 @@ def plot_irf(
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
 
-    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
-    fig = plt.figure(figsize=figsize, dpi=dpi)
+    fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True)
+    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
+
+    plot_row_idxs = [x[0].stop // 2 - 1 for x in plot_locs]
+    plot_rows = sorted(list(set(plot_row_idxs)))
+    is_square = all([plot_row_idxs.count(i) == n_cols for i in plot_rows])
+    last_row_idxs = [plot_rows[-1]] if is_square else plot_rows[-2:]
 
     for idx, variable in enumerate(vars_to_plot):
-        axis = fig.add_subplot(gs[plot_locs[idx]])
+        loc = plot_locs[idx]
+        row_idx = plot_row_idxs[idx]
+
+        axis = fig.add_subplot(gs[loc])
+        sel_dict = {"variable": variable}
+        if shocks_to_plot is not None:
+            sel_dict["shock"] = shocks_to_plot
 
         _plot_single_variable(
-            irf.loc[variable, pd.IndexSlice[:, shocks_to_plot]].unstack(1),
+            irf.sel(**sel_dict),
             ax=axis,
             cmap=cmap,
         )
 
         axis.set(title=variable)
+        if row_idx not in last_row_idxs:
+            axis.set(xticklabels=[], xlabel="")
+
         [spine.set_visible(False) for spine in axis.spines.values()]
         axis.grid(ls="--", lw=0.5)
 
-    fig.tight_layout()
-
     if legend:
         if legend_kwargs is None:
+            n_shocks_to_plot = len(shocks_to_plot) if shocks_to_plot is not None else 1
             legend_kwargs = {
-                "ncol": min(4, len(shocks_to_plot)),
-                "loc": "center",
-                "bbox_to_anchor": (0.5, 1.05),
-                "bbox_transform": fig.transFigure,
+                "ncol": min(4, n_shocks_to_plot),
+                "loc": "lower center",
+                "bbox_to_anchor": (0.5, 1.0),
             }
-
-        fig.axes[0].legend(**legend_kwargs)
+        handles = fig.axes[0].get_lines()
+        fig.legend(handles=handles, labels=shocks_to_plot, **legend_kwargs)
 
     return fig
 
