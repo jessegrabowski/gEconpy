@@ -330,7 +330,7 @@ def check_bk_condition(
     verbose=True,
     on_failure: Literal["raise", "ignore"] = "ignore",
     return_value: Literal["dataframe", "bool", None] = "dataframe",
-):
+) -> bool | pd.DataFrame | None:
     """
     Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
     unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
@@ -362,15 +362,13 @@ def check_bk_condition(
 
     Returns
     -------
-    None
-        If return_value is 'none'
-
-    condition_satisfied, bool
-        If return_value is 'bool', returns True if the Blanchard-Kahn condition is satisfied, False otherwise.
-
-    Eigenvalues, pd.DataFrame
-        If return_value is 'df', returns a dataframe containing the real and imaginary components of the system's
-        eigenvalues, along with their modulus.
+    bk_result, bool or pd.DataFrame, optional.
+        Return value requested. Datatype corresponds to what was requested in the ``return_value`` argument:
+        - None, If return_value is 'none'
+        - condition_satisfied, bool, if return_value is 'bool', returns True if the Blanchard-Kahn condition is
+          satisfied, False otherwise.
+        - Eigenvalues, pd.DataFrame, if return_value is 'df', returns a dataframe containing the real and imaginary
+          components of the system's, eigenvalues, along with their modulus.
     """
     if return_value not in ["dataframe", "bool", None]:
         raise ValueError(f'Unknown return type "{return_value}"')

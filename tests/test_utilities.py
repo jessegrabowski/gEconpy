@@ -17,7 +17,7 @@ class TestComputeAutocorrelation(unittest.TestCase):
         L = np.random.normal(size=(5, 5))
         Q = L @ L.T
 
-        acorr = autocovariance_matrix(A, Q, n_lags=10)
+        acorr = autocovariance_matrix(A, Q, n_lags=10, return_xr=False)
         self.assertEqual(acorr.shape, (5, 10))
 
 
