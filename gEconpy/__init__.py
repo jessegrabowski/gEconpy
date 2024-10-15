@@ -1,13 +1,7 @@
 import logging
 import sys
 
-from gEconpy import (
-    classes,
-    parser,
-    plotting,
-    shared,
-    solvers,
-)
+from gEconpy import classes, numbaf, parser, plotting, shared, solvers
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 from gEconpy.model.model import (
     autocorrelation_matrix,
@@ -47,4 +41,5 @@ __all__ = [
     "shared",
     "solvers",
     "make_mod_file",
+    "numbaf",
 ]

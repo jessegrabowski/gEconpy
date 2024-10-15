@@ -1,5 +1,6 @@
+from typing import Callable
+
 import numpy as np
-import scipy
 
 from numba.core import types
 from numba.extending import overload
@@ -11,9 +12,9 @@ from numba.np.linalg import (
 )
 from scipy import linalg
 
-from gEconpy.numba_tools.intrinsics import int_ptr_to_val, val_to_int_ptr
-from gEconpy.numba_tools.LAPACK import _LAPACK
-from gEconpy.numba_tools.utilities import (
+from gEconpy.numbaf.intrinsics import int_ptr_to_val, val_to_int_ptr
+from gEconpy.numbaf.LAPACK import _LAPACK
+from gEconpy.numbaf.utilities import (
     _check_scipy_linalg_matrix,
     _get_underlying_float,
     _iuc,
@@ -24,7 +25,27 @@ from gEconpy.numba_tools.utilities import (
 )
 
 
-@overload(scipy.linalg.solve_triangular)
+def nb_solve_triangular(
+    a: np.ndarray,
+    b: np.ndarray,
+    trans: int | str | None = 0,
+    lower: bool | None = False,
+    unit_diagonal: bool | None = False,
+    overwrite_b: bool | None = False,
+    check_finite: bool | None = True,
+) -> np.ndarray:
+    return linalg.solve_triangular(
+        a,
+        b,
+        trans=trans,
+        lower=lower,
+        unit_diagonal=unit_diagonal,
+        overwrite_b=overwrite_b,
+        check_finite=check_finite,
+    )
+
+
+@overload(nb_solve_triangular)
 def solve_triangular_impl(A, B, trans=0, lower=False, unit_diagonal=False):
     ensure_lapack()
 
@@ -89,7 +110,25 @@ def solve_triangular_impl(A, B, trans=0, lower=False, unit_diagonal=False):
     return impl
 
 
-@overload(scipy.linalg.schur)
+def nb_schur(
+    a: np.ndarray,
+    output: str | None = "real",
+    lwork: int | None = None,
+    overwrite_a: bool | None = False,
+    sort: None | Callable | str = None,
+    check_finite: bool | None = True,
+) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, int]:
+    return linalg.schur(
+        a=a,
+        output=output,
+        lwork=lwork,
+        overwrite_a=overwrite_a,
+        sort=sort,
+        check_finite=check_finite,
+    )
+
+
+@overload(nb_schur)
 def schur_impl(A, output):
     ensure_lapack()
 
@@ -259,7 +298,35 @@ def schur_impl(A, output):
         return real_schur_impl
 
 
-def full_return_qz(A, B, output):
+def nb_qz(
+    A: np.ndarray,
+    B: np.ndarray,
+    output: str | None = "real",
+    lwork: int | None = None,
+    sort: None | Callable | str = None,
+    overwrite_a: bool | None = False,
+    overwrite_b: bool | None = False,
+    check_finite: bool | None = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    return linalg.qz(
+        A=A,
+        B=B,
+        output=output,
+        lwork=lwork,
+        sort=sort,
+        overwrite_a=overwrite_a,
+        overwrite_b=overwrite_b,
+        check_finite=check_finite,
+    )
+
+
+def full_return_qz(
+    A, B, output
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Dummy function to be overloaded below. It's purpose is to match the signature of the underlying LAPACK function,
+    rather than the scipy function.
+    """
     pass
 
 
@@ -483,7 +550,7 @@ def full_return_qz_impl(A, B, output):
         return real_full_return_qz_impl
 
 
-@overload(scipy.linalg.qz)
+@overload(nb_qz)
 def qz_impl(A, B, output):
     """
     scipy.linalg.qz overload. Wraps full_return_qz and returns only A, B, Q ,Z to match the scipy signature.
@@ -508,7 +575,27 @@ def qz_impl(A, B, output):
         return real_qz_impl
 
 
-@overload(scipy.linalg.ordqz)
+def nb_ordqz(
+    A: np.ndarray,
+    B: np.ndarray,
+    sort: Callable | str | None = "lhp",
+    output: str | None = "real",
+    overwrite_a: bool | None = False,
+    overwrite_b: bool | None = False,
+    check_finite: bool | None = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    return linalg.ordqz(
+        A=A,
+        B=B,
+        sort=sort,
+        output=output,
+        overwrite_a=overwrite_a,
+        overwrite_b=overwrite_b,
+        check_finite=check_finite,
+    )
+
+
+@overload(nb_ordqz)
 def ordqz_impl(A, B, sort, output):
     ensure_lapack()
 
@@ -762,7 +849,11 @@ def ordqz_impl(A, B, sort, output):
         return real_ordqz_impl
 
 
-@overload(scipy.linalg.solve_continuous_lyapunov)
+def nb_solve_continuous_lyapunov(a: np.ndarray, q: np.ndarray) -> np.ndarray:
+    return linalg.solve_continuous_lyapunov(a=a, q=q)
+
+
+@overload(nb_solve_continuous_lyapunov)
 def solve_continuous_lyapunov_impl(A, Q):
     ensure_lapack()
 
@@ -844,7 +935,11 @@ def solve_continuous_lyapunov_impl(A, Q):
     return _solve_cont_lyapunov_impl
 
 
-@overload(scipy.linalg.solve_discrete_lyapunov)
+def nb_solve_discrete_lyapunov(a, q, method="auto"):
+    return linalg.solve_discrete_lyapunov(a=a, q=q, method=method)
+
+
+@overload(nb_solve_discrete_lyapunov)
 def solve_discrete_lyapunov_impl(A, Q, method="auto"):
     ensure_lapack()
 
@@ -893,3 +988,13 @@ def solve_discrete_lyapunov_impl(A, Q, method="auto"):
 #     numba_xsysv = _LAPACK().numba_xsysv(dtype)
 #
 #     def impl(A, B, lower, check_finite, transposed):
+
+
+__all__ = [
+    "nb_solve_triangular",
+    "nb_schur",
+    "nb_qz",
+    "nb_ordqz",
+    "nb_solve_discrete_lyapunov",
+    "nb_solve_continuous_lyapunov",
+]
