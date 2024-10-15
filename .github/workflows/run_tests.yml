@@ -49,7 +49,7 @@ jobs:
           hashFiles('requirements.txt') }}
     - uses: conda-incubator/setup-miniconda@v2
       with:
-        miniforge-variant: Mambaforge
+        miniforge-variant: Miniforge
         miniforge-version: latest
         mamba-version: "*"
         activate-environment: geconpy-test
