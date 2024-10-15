@@ -1,6 +1,6 @@
 import logging
 
-from typing import Literal
+from typing import Literal, cast
 
 import sympy as sp
 
@@ -174,6 +174,11 @@ def compile_ss_resid_and_sq_err(
         ]
     )
 
+    n = len(ss_variables)
+    p = sp.IndexedBase("hess_eval_point", shape=n)
+    hessp_loss = cast(sp.Expr, sum([error_grad[i] * p[i] for i in range(n)]))
+    hessp = [faster_simplify(hessp_loss.diff(x), ss_variables) for x in ss_variables]
+
     f_ss_error, cache = compile_function(
         ss_variables + parameters,
         [ss_error],
@@ -209,7 +214,18 @@ def compile_ss_resid_and_sq_err(
         **kwargs,
     )
 
-    return (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess), cache
+    f_ss_hessp, cache = compile_function(
+        [p, *ss_variables, *parameters],
+        hessp,
+        backend=backend,
+        cache=cache,
+        return_symbolic=return_symbolic,
+        stack_return=True,
+        pop_return=False,
+        **kwargs,
+    )
+
+    return (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp), cache
 
 
 def compile_known_ss(
@@ -306,7 +322,7 @@ def compile_model_ss_functions(
         **kwargs,
     )
 
-    (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess), cache = (
+    (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp), cache = (
         compile_ss_resid_and_sq_err(
             steady_state_equations,
             variables,
@@ -323,7 +339,7 @@ def compile_model_ss_functions(
         f_params,
         f_ss,
         (f_ss_resid, f_ss_jac),
-        (f_ss_error, f_ss_grad, f_ss_hess),
+        (f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp),
     ), cache
 
 

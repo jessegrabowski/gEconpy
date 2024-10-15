@@ -89,7 +89,7 @@ def _compile_gcn(
 
     f_params, f_ss, resid_funcs, error_funcs = functions
     f_ss_resid, f_ss_jac = resid_funcs
-    f_ss_error, f_ss_grad, f_ss_hess = error_funcs
+    f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp = error_funcs
 
     f_linearize, cache = compile_linearized_system(
         equations,
@@ -126,6 +126,7 @@ def _compile_gcn(
         f_ss_error,
         f_ss_grad,
         f_ss_hess,
+        f_ss_hessp,
         f_linearize,
     )
 
@@ -165,6 +166,7 @@ def model_from_gcn(
         f_ss_error,
         f_ss_grad,
         f_ss_hess,
+        f_ss_hessp,
         f_linearize,
     ) = functions
 
@@ -182,6 +184,7 @@ def model_from_gcn(
         f_ss_error=f_ss_error,
         f_ss_error_grad=f_ss_grad,
         f_ss_error_hess=f_ss_hess,
+        f_ss_error_hessp=f_ss_hessp,
         f_linearize=f_linearize,
         backend=backend,
     )
@@ -224,6 +227,7 @@ def statespace_from_gcn(
         ss_error,
         ss_grad,
         ss_hess,
+        ss_hessp,
         linearized_matrices,
     ) = functions
 

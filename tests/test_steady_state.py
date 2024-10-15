@@ -13,7 +13,7 @@ from gEconpy.model.steady_state import print_steady_state
 
 def root_and_min_agree_helper(model: Model, **kwargs):
     verbose = kwargs.pop("verbose", False)
-    progressbar = kwargs.pop("progressbar", False)
+    progressbar = kwargs.pop("progressbar", True)
     root_method = kwargs.pop("root_method", None)
     minimize_method = kwargs.pop("minimize_method", None)
     optimizer_kwargs = kwargs.pop("optimizer_kwargs", {})

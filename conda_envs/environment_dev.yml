@@ -54,5 +54,5 @@ dependencies:
 
   - pip:
       - sympytensor
-      - bumpver
       - pymc-experimental
+      - better_optimize
