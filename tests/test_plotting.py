@@ -4,10 +4,12 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from matplotlib import pyplot as plt
 
-from gEconpy import model_from_gcn
+from gEconpy.model.build import model_from_gcn
+from gEconpy.model.model import impulse_response_function, simulate
 from gEconpy.plotting import (
     plot_covariance_matrix,
     plot_eigenvalues,
@@ -50,14 +52,14 @@ class TestPlotSimulation(unittest.TestCase):
     def setUpClass(cls):
         file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
         cls.model = model_from_gcn(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-        cls.data = cls.model.simulate(simulation_length=100, n_simulations=1)
+        cls.data = simulate(
+            cls.model, simulation_length=100, n_simulations=1000, shock_std=0.1
+        )
 
     def test_plot_simulation_defaults(self):
         fig = plot_simulation(self.data)
 
-        self.assertEqual(len(fig.axes), self.model.n_variables)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
         plt.close()
 
     def test_plot_simulation_vars_to_plot(self):
@@ -75,7 +77,7 @@ class TestPlotSimulation(unittest.TestCase):
     def test_plot_simulation_with_ci(self):
         fig = plot_simulation(self.data, ci=0.95)
 
-        self.assertEqual(len(fig.axes), self.model.n_variables)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
         plt.close()
 
     def test_plot_simulation_aesthetic_params(self):
@@ -83,11 +85,10 @@ class TestPlotSimulation(unittest.TestCase):
             self.data, cmap="YlGn", figsize=(14, 4), dpi=100, fill_color="brickred"
         )
 
-        self.assertEqual(len(fig.axes), self.model.n_variables)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
         self.assertEqual(fig.get_dpi(), 100)
         self.assertEqual(fig.get_figwidth(), 14)
         self.assertEqual(fig.get_figheight(), 4)
-
         plt.close()
 
 
@@ -98,33 +99,35 @@ class TestIRFPlot(unittest.TestCase):
         cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
-        cls.irf = cls.model.impulse_response_function(
-            simulation_length=100, shock_size=0.1
+        cls.irf = impulse_response_function(
+            cls.model,
+            simulation_length=100,
+            shock_size=0.1,
+            return_individual_shocks=True,
         )
 
     def test_plot_irf_defaults(self):
-        fig = plot_irf(self.irf)
+        fig = plot_irf(self.irf, legend=True)
 
-        self.assertEqual(len(fig.axes), self.model.n_variables)
-        self.assertEqual(len(fig.axes[0].get_lines()), self.model.n_shocks)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
+        self.assertEqual(len(fig.axes[0].get_lines()), len(self.model.shocks))
+
+        plt.show()
         plt.close()
 
-    def test_plot_irf_one_shock(self):
-        with self.assertRaises(ValueError):
-            fig = plot_irf(self.irf, shocks_to_plot="epsilon_A")
-
-        fig = plot_irf(self.irf, shocks_to_plot=["epsilon_Y"])
-        self.assertEqual(len(fig.axes), self.model.n_variables)
+    @pytest.mark.parameterize(
+        "shocks_to_plot", ["epsilon_Y", ["epsilon_Y"]], ids=["str", "list"]
+    )
+    def test_plot_irf_one_shock(self, shocks_to_plot):
+        fig = plot_irf(self.irf, shocks_to_plot=shocks_to_plot)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
         self.assertEqual(len(fig.axes[0].get_lines()), 1)
         plt.close()
 
     def test_plot_irf_one_variable(self):
-        with self.assertRaises(ValueError):
-            fig = plot_irf(self.irf, vars_to_plot="Y")
-
-        fig = plot_irf(self.irf, vars_to_plot=["Y"])
+        fig = plot_irf(self.irf, vars_to_plot="Y")
         self.assertEqual(len(fig.axes), 1)
-        self.assertEqual(len(fig.axes[0].get_lines()), self.model.n_shocks)
+        self.assertEqual(len(fig.axes[0].get_lines()), len(self.model.shocks))
         plt.close()
 
     def test_var_not_found_raises(self):

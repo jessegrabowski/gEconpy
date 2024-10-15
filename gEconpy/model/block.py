@@ -12,7 +12,6 @@ from gEconpy.exceptions.exceptions import (
     MultipleObjectiveFunctionsException,
     OptimizationProblemNotDefinedException,
 )
-from gEconpy.parser import parse_equations
 from gEconpy.shared.utilities import (
     diff_through_time,
     expand_subs_for_all_times,
@@ -250,6 +249,7 @@ class Block:
         list
             List of Union[TimeAwareSymbols, None].
         """
+        from gEconpy.parser import parse_equations
 
         result, multipliers = [], []
         for eq in equations:
@@ -272,6 +272,8 @@ class Block:
     def _parse_variable_list(
         self, block_dict: dict, key: str, assumptions: Optional[dict] = None
     ) -> list[sp.Symbol] | None:
+        from gEconpy.parser import parse_equations
+
         """
         Two components -- controls and shocks -- expect a simple list of variables, which is a case the
         gEcon_parser.build_sympy_equations cannot handle.
@@ -390,6 +392,8 @@ class Block:
         dict
             A dictionary of sympy equations, indexed by their equation number, or None if the block does not exist.
         """
+        from gEconpy.parser import parse_equations
+
         if not self._validate_key(block_dict, key):
             return
 
