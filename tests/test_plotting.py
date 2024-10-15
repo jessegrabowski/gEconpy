@@ -9,22 +9,24 @@ import pytest
 from matplotlib import pyplot as plt
 
 from gEconpy.model.build import model_from_gcn
-from gEconpy.model.model import impulse_response_function, simulate
+from gEconpy.model.model import (
+    autocorrelation_matrix,
+    bk_condition,
+    impulse_response_function,
+    simulate,
+    stationary_covariance_matrix,
+)
 from gEconpy.plotting import (
     plot_covariance_matrix,
     plot_eigenvalues,
     plot_irf,
-    plot_prior_solvability,
     plot_simulation,
     prepare_gridspec_figure,
 )
 from gEconpy.plotting.plotting import (
     plot_acf,
-    plot_corner,
     plot_heatmap,
-    plot_kalman_filter,
 )
-from gEconpy.sampling import kalman_filter_from_posterior, prior_solvability_check
 
 ROOT = Path(__file__).parent.absolute()
 
@@ -92,122 +94,90 @@ class TestPlotSimulation(unittest.TestCase):
         plt.close()
 
 
-class TestIRFPlot(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keynesian.gcn")
-        cls.model = model_from_gcn(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-        cls.irf = impulse_response_function(
-            cls.model,
-            simulation_length=100,
-            shock_size=0.1,
-            return_individual_shocks=True,
-        )
+@pytest.fixture(scope="session")
+def irf_setup():
+    file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keynesian.gcn")
 
-    def test_plot_irf_defaults(self):
-        fig = plot_irf(self.irf, legend=True)
-
-        self.assertEqual(len(fig.axes), len(self.model.variables))
-        self.assertEqual(len(fig.axes[0].get_lines()), len(self.model.shocks))
-
-        plt.show()
-        plt.close()
-
-    @pytest.mark.parameterize(
-        "shocks_to_plot", ["epsilon_Y", ["epsilon_Y"]], ids=["str", "list"]
+    model = model_from_gcn(file_path, verbose=False)
+    model.steady_state(verbose=False)
+    model.solve_model(verbose=False)
+    irf = impulse_response_function(
+        model,
+        simulation_length=100,
+        shock_size=0.1,
+        return_individual_shocks=True,
     )
-    def test_plot_irf_one_shock(self, shocks_to_plot):
-        fig = plot_irf(self.irf, shocks_to_plot=shocks_to_plot)
-        self.assertEqual(len(fig.axes), len(self.model.variables))
-        self.assertEqual(len(fig.axes[0].get_lines()), 1)
-        plt.close()
 
-    def test_plot_irf_one_variable(self):
-        fig = plot_irf(self.irf, vars_to_plot="Y")
-        self.assertEqual(len(fig.axes), 1)
-        self.assertEqual(len(fig.axes[0].get_lines()), len(self.model.shocks))
-        plt.close()
+    return model, irf
 
-    def test_var_not_found_raises(self):
-        with self.assertRaises(ValueError) as error:
-            plot_irf(self.irf, vars_to_plot=["Y", "C", "Invalid"])
-        error_msg = error.exception
-        self.assertEqual(
-            str(error_msg), "Invalid not found among simulated impulse responses."
+
+def test_plot_irf_defaults(irf_setup):
+    model, irf = irf_setup
+    fig = plot_irf(irf, legend=True)
+
+    assert len(fig.axes) == len(model.variables)
+    assert len(fig.axes[0].get_lines()) == len(model.shocks)
+
+    plt.close()
+
+
+@pytest.mark.parametrize(
+    "shocks_to_plot", ["epsilon_Y", ["epsilon_Y"]], ids=["str", "list"]
+)
+def test_plot_irf_one_shock(irf_setup, shocks_to_plot):
+    model, irf = irf_setup
+    fig = plot_irf(irf, shocks_to_plot=shocks_to_plot)
+
+    assert len(fig.axes) == len(model.variables)
+    assert len(fig.axes[0].get_lines()) == 1
+
+    plt.close()
+
+
+def test_plot_irf_one_variable(irf_setup):
+    model, irf = irf_setup
+    fig = plot_irf(irf, vars_to_plot="Y")
+
+    assert len(fig.axes) == 1
+    assert len(fig.axes[0].get_lines()) == len(model.shocks)
+
+    plt.close()
+
+
+def test_var_not_found_raises(irf_setup):
+    model, irf = irf_setup
+
+    with pytest.raises(
+        ValueError, match="Invalid not found among simulated impulse responses."
+    ):
+        plot_irf(irf, vars_to_plot=["Y", "C", "Invalid"])
+
+    plt.close()
+
+
+def test_shock_not_found_raises(irf_setup):
+    model, irf = irf_setup
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid not found among shocks used in impulse response data.",
+    ):
+        plot_irf(
+            irf,
+            vars_to_plot=["Y", "C"],
+            shocks_to_plot=["epsilon_Y", "Invalid"],
         )
-        plt.close()
-
-    def test_shock_not_found_raises(self):
-        with self.assertRaises(ValueError) as error:
-            plot_irf(
-                self.irf,
-                vars_to_plot=["Y", "C"],
-                shocks_to_plot=["epsilon_Y", "Invalid"],
-            )
-        error_msg = error.exception
-        self.assertEqual(
-            str(error_msg),
-            "Invalid not found among shocks used in impulse response data.",
-        )
-
-    def test_legend(self):
-        fig = plot_irf(
-            self.irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y"], legend=True
-        )
-        self.assertIsNotNone(fig.axes[0].get_legend())
-        self.assertIsNone(fig.axes[1].get_legend())
-        plt.close()
 
 
-class TestPriorSolvabilityPlot(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        file_path = os.path.join(
-            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
-        )
-        cls.model = model_from_gcn(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-        cls.data = prior_solvability_check(cls.model, n_samples=1_000)
+def test_legend(irf_setup):
+    model, irf = irf_setup
 
-    def test_plot_with_defaults(self):
-        fig = plot_prior_solvability(self.data)
-
-        n_priors = len(self.model.param_priors)
-        self.assertTrue(len(fig.axes) == n_priors**2)
-        plot_idxs = np.arange(n_priors**2).reshape((n_priors, n_priors))
-        upper_idxs = plot_idxs[np.triu_indices_from(plot_idxs, 1)]
-        lower_idxs = plot_idxs[np.tril_indices_from(plot_idxs)]
-        for idx in upper_idxs:
-            self.assertTrue(not fig.axes[idx].get_visible())
-        for idx in lower_idxs:
-            self.assertTrue(fig.axes[idx].get_visible())
-        plt.close()
-
-    def test_plot_with_vars_to_plot(self):
-        fig = plot_prior_solvability(self.data, params_to_plot=["alpha", "gamma"])
-        n_priors = 2
-
-        self.assertTrue(len(fig.axes) == n_priors**2)
-        plot_idxs = np.arange(n_priors**2).reshape((n_priors, n_priors))
-        upper_idxs = plot_idxs[np.triu_indices_from(plot_idxs, 1)]
-        lower_idxs = plot_idxs[np.tril_indices_from(plot_idxs)]
-        for idx in upper_idxs:
-            self.assertTrue(not fig.axes[idx].get_visible())
-        for idx in lower_idxs:
-            self.assertTrue(fig.axes[idx].get_visible())
-        plt.close()
-
-    def test_raises_if_param_not_found(self):
-        with self.assertRaises(ValueError) as error:
-            plot_prior_solvability(self.data, params_to_plot=["alpha", "beta"])
-
-        msg = str(error.exception)
-        self.assertEqual(
-            msg, 'Cannot plot parameter "beta", it was not found in the provided data.'
-        )
+    fig = plot_irf(
+        irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y"], legend=True
+    )
+    assert all(axis.get_legend() is None for axis in fig.axes)
+    assert len(fig.figure.legends) == 1
+    plt.close()
 
 
 class TestPlotEigenvalues(unittest.TestCase):
@@ -223,7 +193,7 @@ class TestPlotEigenvalues(unittest.TestCase):
         from matplotlib.collections import PathCollection
 
         scatter_points = fig.axes[0].findobj(PathCollection)[0].get_offsets().data
-        data = self.model.check_bk_condition(return_value="df", verbose=False)
+        data = bk_condition(self.model, return_value="dataframe", verbose=False)
 
         n_finite = (data["Modulus"] < 1.5).sum()
         self.assertEqual(n_finite, scatter_points.shape[0])
@@ -245,8 +215,8 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
         cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
-        cls.cov_matrix = cls.model.compute_stationary_covariance_matrix(
-            shock_cov_matrix=np.eye(1) * 0.01
+        cls.cov_matrix = stationary_covariance_matrix(
+            cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_df=True
         )
 
     def test_plot_with_defaults(self):
@@ -281,18 +251,24 @@ class TestPlotACF(unittest.TestCase):
         cls.model = model_from_gcn(file_path, verbose=False)
         cls.model.steady_state(verbose=False)
         cls.model.solve_model(verbose=False)
-        cls.acf = cls.model.compute_autocorrelation_matrix(
-            shock_cov_matrix=np.eye(1) * 0.01
+        cls.acf = autocorrelation_matrix(
+            cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_xr=True
         )
 
     def test_plot_with_defaults(self):
         fig = plot_acf(self.acf)
-        self.assertEqual(len(fig.axes), self.model.n_variables)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
+        for axis, variable in zip(fig.axes, self.model.variables):
+            assert axis.get_title() == variable.base_name
+
         plt.close()
 
     def test_plot_with_subset(self):
         fig = plot_acf(self.acf, vars_to_plot=["C", "K", "A"])
         self.assertEqual(len(fig.axes), 3)
+        for axis, variable in zip(fig.axes, ["C", "K", "A"]):
+            assert axis.get_title() == variable
+
         plt.close()
 
     def test_invalid_var_raises(self):
@@ -303,64 +279,6 @@ class TestPlotACF(unittest.TestCase):
             msg,
             "Can not plot variable Invalid, it was not found in the provided covariance matrix",
         )
-
-
-class TestPostEstimationPlots(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        file_path = os.path.join(
-            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
-        )
-        cls.model = model_from_gcn(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-
-        cls.data = cls.model.simulate(simulation_length=100, n_simulations=1)
-        cls.data = cls.data.droplevel(axis=1, level=1).T[["C"]]
-
-        cls.idata = cls.model.fit(
-            cls.data,
-            filter_type="univariate",
-            draws=36,
-            n_walkers=36,
-            return_inferencedata=True,
-            burn_in=0,
-            verbose=False,
-            compute_sampler_stats=False,
-        )
-
-    def test_plot_corner_with_defaults(self):
-        fig = plot_corner(self.idata)
-        self.assertIsNotNone(fig)
-        plt.close()
-
-    def test_plot_kalman_with_defaults(self):
-        posterior = self.idata.posterior.stack(sample=["chain", "draw"])
-        conditional_posterior = kalman_filter_from_posterior(
-            self.model, self.data, posterior, n_samples=10
-        )
-
-        fig = plot_kalman_filter(
-            conditional_posterior, self.data, kalman_output="predicted"
-        )
-        self.assertIsNotNone(fig)
-        plt.close()
-
-        fig = plot_kalman_filter(
-            conditional_posterior, self.data, kalman_output="filtered"
-        )
-        self.assertIsNotNone(fig)
-        plt.close()
-
-        fig = plot_kalman_filter(
-            conditional_posterior, self.data, kalman_output="smoothed"
-        )
-        self.assertIsNotNone(fig)
-        plt.close()
-
-    def test_plot_kalman_raises_on_invalid_args(self):
-        with self.assertRaises(ValueError):
-            plot_kalman_filter(self.idata, self.data, kalman_output="invalid")
 
 
 if __name__ == "__main__":

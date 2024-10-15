@@ -11,8 +11,9 @@ from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from scipy import stats
+from xarray_einstats.linalg import diagonal as xr_diagonal
 
-from gEconpy.model.perturbation import check_bk_condition
+from gEconpy.model.model import bk_condition
 
 
 def prepare_gridspec_figure(
@@ -543,13 +544,18 @@ def plot_eigenvalues(
     if linearize_model_kwargs is None:
         linearize_model_kwargs = {}
 
-    if not all(x is not None for x in [A, B, C, D]):
-        A, B, C, D = model.linearize_model(
-            **linearize_model_kwargs, **parameter_updates
-        )
     data = cast(
         pd.DataFrame,
-        check_bk_condition(A, B, C, D, verbose=False, return_value="dataframe"),
+        bk_condition(
+            model,
+            A,
+            B,
+            C,
+            D,
+            verbose=False,
+            return_value="dataframe",
+            **linearize_model_kwargs,
+        ),
     )
 
     n_infinity = (data["Modulus"] > 10).sum()
@@ -763,7 +769,7 @@ def annotate_heatmap(
 
 
 def plot_acf(
-    acorr_matrix: pd.DataFrame,
+    acorr: np.ndarray | xr.DataArray,
     vars_to_plot: list[str] | None = None,
     figsize: tuple[int, int] | None = (14, 4),
     dpi: int | None = 100,
@@ -774,8 +780,8 @@ def plot_acf(
 
     Parameters
     ----------
-    acorr_matrix: pandas.DataFrame
-        Matrix of autocorrelation values. Rows represent variables and columns represent lags.
+    acorr_matrix: DataArray
+        Tensor of correlations.
     vars_to_plot: list of str, optional
         List of variables to plot. If not provided, all variables in `acorr_matrix` will be plotted.
     figsize: tuple, optional
@@ -790,13 +796,13 @@ def plot_acf(
     matplotlib.figure.Figure
         Figure object containing the plots.
     """
-
+    all_variables = acorr.coords["variable"].values
     if vars_to_plot is None:
-        vars_to_plot = acorr_matrix.index
+        vars_to_plot = all_variables
 
     else:
         for var in vars_to_plot:
-            if var not in acorr_matrix.index:
+            if var not in all_variables:
                 raise ValueError(
                     f"Can not plot variable {var}, it was not found in the provided covariance matrix"
                 )
@@ -804,21 +810,23 @@ def plot_acf(
     n_plots = len(vars_to_plot)
     n_cols = min(n_cols, n_plots)
 
-    fig = plt.figure(figsize=figsize, dpi=dpi)
-    gc, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_plots)
+    fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
+    gc, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_plots, figure=fig)
 
-    x_values = acorr_matrix.columns
+    acorr_matrix = xr_diagonal(acorr, dims=["variable", "variable_aux"]).sel(
+        variable=vars_to_plot
+    )
+    x_values = acorr_matrix.coords["lag"]
 
     for variable, plot_loc in zip(vars_to_plot, plot_locs):
         axis = fig.add_subplot(gc[plot_loc])
-        axis.scatter(x_values, acorr_matrix.loc[variable, :])
-        axis.vlines(x_values, 0, acorr_matrix.loc[variable, :])
+        axis.scatter(x_values, acorr_matrix.sel(variable=variable).values)
+        axis.vlines(x_values, 0, acorr_matrix.sel(variable=variable).values)
 
         [spine.set_visible(False) for spine in axis.spines.values()]
         axis.grid(ls="--", lw=0.5)
         axis.set(title=variable)
 
-    fig.tight_layout()
     return fig
 
 

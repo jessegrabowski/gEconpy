@@ -999,7 +999,7 @@ def test_compute_stationary_covariance(caplog, gcn_file):
     T, R = model.solve_model(solver="gensys", verbose=False)
     n_variables, n_shocks = R.shape
 
-    Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1)
+    Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1, return_df=False)
     assert len(caplog.messages) == 0
     assert Sigma.shape == (n_variables, n_variables)
 
@@ -1050,6 +1050,7 @@ def test_autocovariance_matrix(caplog, gcn_file):
             shock_std=0.1,
             solver="gensys",
             verbose=False,
+            return_xr=False,
             **{rho.name: rho_value},
         )
 
@@ -1209,7 +1210,7 @@ def test_simulate(gcn_file, argument):
 
     # Check that the simulated covariance matrix is at least strong correlated with the stationary covariance matrix
     # across many trajectories
-    Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1)
+    Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1, reutrn_df=False)
     sigma = np.cov(data.isel(time=-1).values.T)
 
     corr = np.corrcoef(np.r_[Sigma.ravel(), sigma.ravel()])

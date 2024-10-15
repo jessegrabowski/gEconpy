@@ -12,12 +12,12 @@ from gEconpy import (
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 from gEconpy.model.model import (
     autocovariance_matrix,
+    bk_condition,
     impulse_response_function,
     simulate,
     stationary_covariance_matrix,
     summarize_perturbation_solution,
 )
-from gEconpy.model.perturbation import check_bk_condition
 from gEconpy.shared import compile_to_statsmodels, make_mod_file
 
 _log = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ __all__ = [
     "summarize_perturbation_solution",
     "stationary_covariance_matrix",
     "autocovariance_matrix",
-    "check_bk_condition",
+    "bk_condition",
     "classes",
     "estimation",
     "exceptions",

@@ -7,6 +7,7 @@ from typing import Callable, Literal, cast
 
 import numba as nb
 import numpy as np
+import pandas as pd
 import sympy as sp
 import xarray as xr
 
@@ -26,6 +27,7 @@ from gEconpy.exceptions.exceptions import (
 )
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.perturbation import (
+    check_bk_condition,
     check_perturbation_solution,
     override_dummy_wrapper,
     residual_norms,
@@ -875,6 +877,59 @@ class Model:
         return np.ascontiguousarray(T), np.ascontiguousarray(R)
 
 
+def _maybe_linearize_model(
+    model: Model,
+    A: np.ndarray | None,
+    B: np.ndarray | None,
+    C: np.ndarray | None,
+    D: np.ndarray | None,
+    **linearize_model_kwargs,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Linearize a model if required, or return the provided matrices
+
+    Parameters
+    ----------
+    model: Model
+        DSGE model
+    A: np.ndarray, optional
+        Matrix of partial derivatives of model equations with respect to variables at time t-1, evaluated at the
+        steady-state
+    B: np.ndarray, optional
+        Matrix of partial derivatives of model equations with respect to variables at time t, evaluated at the
+        steady-state
+    C: np.ndarray, optional
+        Matrix of partial derivatives of model equations with respect to variables at time t+1, evaluated at the
+        steady-state
+    D: np.ndarray, optional
+        Matrix of partial derivatives of model equations with respect to stochastic innovations, evaluated at the
+        steady-state
+    linearize_model_kwargs
+        Arguments forwarded to the ``model.linearize_model`` method. Ignored if all of A, B, C, and D are provided.
+
+    Returns
+    -------
+    linear_system: np.ndarray, np.ndarray, np.ndarray, np.ndarray
+    """
+
+    n_matrices = sum(x is not None for x in [A, B, C, D])
+    if n_matrices < 4:
+        _log.warning(
+            f"Passing an incomplete subset of A, B, C, and D (you passed {n_matrices}) will still trigger "
+            f"``model.linearize_model`` (which might be expensive). Pass all to avoid this, or None to silence "
+            f"this warning."
+        )
+        A = None
+        B = None
+        C = None
+        D = None
+
+    if all(x is None for x in [A, B, C, D]):
+        A, B, C, D = model.linearize_model(**linearize_model_kwargs)
+
+    return A, B, C, D
+
+
 def _maybe_solve_model(
     model: Model, T: np.ndarray | None, R: np.ndarray | None, **solve_model_kwargs
 ):
@@ -1054,8 +1109,9 @@ def stationary_covariance_matrix(
     shock_std_dict: dict[str, float] | None = None,
     shock_cov_matrix: np.ndarray | None = None,
     shock_std: np.ndarray | list | float | None = None,
+    return_df: bool = True,
     **solve_model_kwargs,
-):
+) -> np.ndarray | pd.DataFrame:
     """
     Compute the stationary covariance matrix of the solved system by solving the associated discrete lyapunov
     equation.
@@ -1083,8 +1139,9 @@ def stationary_covariance_matrix(
 
     Returns
     -------
-    Sigma: np.ndarray
-        Stationary covariance matrix of the linearized model
+    Sigma: np.ndarray | pd.DataFrame
+        Stationary covariance matrix of the linearized model. Datatype depends on the variable of the ``return_df``
+        argument.
     """
     shocks = model.shocks
     _validate_shock_options(
@@ -1106,7 +1163,79 @@ def stationary_covariance_matrix(
     RQRT = np.linalg.multi_dot([R, Q, R.T])
     Sigma = linalg.solve_discrete_lyapunov(T, RQRT)
 
+    if return_df:
+        variables = [x.base_name for x in model.variables]
+        Sigma = pd.DataFrame(Sigma, index=variables, columns=variables)
+
     return Sigma
+
+
+def bk_condition(
+    model: Model,
+    A: np.ndarray | None = None,
+    B: np.ndarray | None = None,
+    C: np.ndarray | None = None,
+    D: np.ndarray | None = None,
+    tol=1e-8,
+    verbose=True,
+    on_failure: Literal["raise", "ignore"] = "ignore",
+    return_value: Literal["dataframe", "bool", None] = "dataframe",
+    **linearize_model_kwargs,
+) -> bool | pd.DataFrame | None:
+    """
+    Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
+    unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
+    this test suggests timing problems in the definition of the model.
+
+    Parameters
+    ----------
+    model: Model
+        DSGE model
+    A: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
+        values that are known when decision-making: those with t-1 subscripts.
+    B: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+        are observed when decision-making: those with t subscripts.
+    C: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+        enter in expectation when decision-making: those with t+1 subscripts.
+    D: np.ndarray
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
+    verbose: bool, default: True
+        Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
+    on_failure: str, default: 'ignore'
+        Action to take if the Blanchard-Kahn condition is not satisfied. Valid values are 'ignore' and 'raise'.
+    return_value: string, default: 'dataframe'
+        Controls what is returned by the function. Valid values are 'dataframe', 'bool', and 'none'.
+        If df, a dataframe containing eigenvalues is returned. If 'bool', a boolean indicating whether the BK
+        condition is satisfied. If None, nothing is returned.
+    tol: float, 1e-8
+        Tolerance below which numerical values are considered zero
+
+    Returns
+    -------
+    bk_result, bool or pd.DataFrame, optional.
+        Return value requested. Datatype corresponds to what was requested in the ``return_value`` argument:
+        - None, If return_value is 'none'
+        - condition_satisfied, bool, if return_value is 'bool', returns True if the Blanchard-Kahn condition is
+          satisfied, False otherwise.
+        - Eigenvalues, pd.DataFrame, if return_value is 'df', returns a dataframe containing the real and imaginary
+          components of the system's, eigenvalues, along with their modulus.
+    """
+
+    A, B, C, D = _maybe_linearize_model(model, A, B, C, D, **linearize_model_kwargs)
+    bk_result = check_bk_condition(
+        A,
+        B,
+        C,
+        D,
+        tol=tol,
+        verbose=verbose,
+        on_failure=on_failure,
+        return_value=return_value,
+    )
+    return bk_result
 
 
 @nb.njit(cache=True)
@@ -1154,11 +1283,13 @@ def autocovariance_matrix(
     shock_cov_matrix: np.ndarray | None = None,
     shock_std: np.ndarray | list | float | None = None,
     n_lags: int = 10,
-    correlation=True,
+    correlation=False,
+    return_xr=True,
     **solve_model_kwargs,
 ):
     """
-    Computes the model's autocorrelation matricesusing the stationary covariance matrix.
+    Computes the model's autocovariance matrix using the stationary covariance matrix. Alteratively, the autocorrelation
+    matrix can be returned by specifying ``correlation = True``.
 
     In order to construct the shock covariance matrix, exactly one of shock_dict, shock_cov_matrix, or shock_std should
     be provided.
@@ -1179,9 +1310,12 @@ def autocovariance_matrix(
     shock_std: float, optional
         Standard deviation of all model shocks.
     n_lags: int
-        Number of lags of autocorrelation and cross-autocorrelation to compute. Default is 10.
+        Number of lags of auto-covariance and cross-covariance to compute. Default is 10.
     correlation: bool
         If True, return the autocorrelation matrices instead of the autocovariance matrices.
+    return_xr: bool
+        If True, return the covariance matrices as a DataArray with dimensions ["variable", "variable_aux", and "lag"].
+        Otherwise returns a 3d numpy array with shape (lag, variable, variable).
     **solve_model_kwargs
         Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
 
@@ -1198,10 +1332,23 @@ def autocovariance_matrix(
         shock_dict=shock_std_dict,
         shock_cov_matrix=shock_cov_matrix,
         shock_std=shock_std,
+        return_df=False,
     )
     result = _compute_autocovariance_matrix(
         T, Sigma, n_lags=n_lags, correlation=correlation
     )
+
+    if return_xr:
+        variables = [x.base_name for x in model.variables]
+        result = xr.DataArray(
+            result,
+            dims=["lag", "variable", "variable_aux"],
+            coords={
+                "lag": range(n_lags),
+                "variable": variables,
+                "variable_aux": variables,
+            },
+        )
 
     return result
 
@@ -1233,6 +1380,10 @@ def summarize_perturbation_solution(
         },
         coords=coords,
     )
+
+
+autocorrelation_matrix = ft.partial(autocovariance_matrix, correlation=True)
+autocorrelation_matrix.__doc__ = autocovariance_matrix.__doc__
 
 
 def impulse_response_function(
