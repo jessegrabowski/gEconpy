@@ -1,35 +1,11 @@
 from collections.abc import Callable
 from copy import copy
-from enum import EnumMeta
 from typing import Any
 
 import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary, string_keys_to_sympy
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-
-
-class IterEnum(EnumMeta):
-    def __init__(self, *args, **kwargs):
-        self.__idx = 0
-        super().__init__(*args, **kwargs)
-
-    def __contains__(self, item):
-        return item in {v.value for v in self.__members__.values()}
-
-    def __len__(self):
-        return len(self.__members__)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        self.__idx += 1
-        try:
-            return list(self.__members__)[self.__idx - 1]
-        except IndexError:
-            self.__idx = 0
-            raise StopIteration
 
 
 def flatten_list(items, result_list=None):

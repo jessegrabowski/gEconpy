@@ -8,18 +8,15 @@ import numdifftools as nd
 import numpy as np
 import pandas as pd
 import pytest
-import sympy as sp
 import xarray as xr
 
-from numpy.lib.tests.test_type_check import assert_all
 from numpy.testing import assert_allclose
 
-from gEconpy.exceptions.exceptions import GensysFailedException, OrphanParameterError
+from gEconpy.exceptions import GensysFailedException, OrphanParameterError
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import (
     autocorrelation_matrix,
-    autocovariance_matrix,
     build_Q_matrix,
     impulse_response_function,
     scipy_wrapper,

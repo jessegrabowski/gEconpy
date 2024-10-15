@@ -1,6 +1,6 @@
 import unittest
 
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     DistributionParsingError,
     InvalidDistributionException,
     MissingParameterValueException,

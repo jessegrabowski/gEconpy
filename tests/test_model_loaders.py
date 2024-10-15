@@ -5,7 +5,7 @@ from collections import defaultdict
 import numpy as np
 import pytest
 
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     DuplicateParameterError,
     ExtraParameterError,
     OrphanParameterError,

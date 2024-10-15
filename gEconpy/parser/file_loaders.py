@@ -8,7 +8,7 @@ import sympy as sp
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.simplification import simplify_constants, simplify_tryreduce
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     DuplicateParameterError,
     ExtraParameterError,
     ExtraParameterWarning,
@@ -25,7 +25,7 @@ from gEconpy.parser.gEcon_parser import (
 )
 from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary
 from gEconpy.parser.parse_equations import single_symbol_to_sympy
-from gEconpy.shared.utilities import unpack_keys_and_values
+from gEconpy.utilities import unpack_keys_and_values
 
 PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
 _log = logging.getLogger(__name__)

@@ -4,7 +4,7 @@ import numpy as np
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.utilities import (
+from gEconpy.utilities import (
     expand_subs_for_all_times,
     is_variable,
     make_all_var_time_combos,

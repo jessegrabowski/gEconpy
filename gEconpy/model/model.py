@@ -20,7 +20,7 @@ from gEconpy.classes.optimize_wrapper import (
     postprocess_optimizer_res,
 )
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     GensysFailedException,
     ModelUnknownParameterError,
     PerturbationSolutionNotFoundException,

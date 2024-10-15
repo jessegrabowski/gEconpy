@@ -22,7 +22,7 @@ from scipy.stats import (
 from scipy.stats._distn_infrastructure import rv_frozen
 
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     DistributionOverDefinedException,
     IgnoredCloseMatchWarning,
     InsufficientDegreesOfFreedomException,
@@ -33,7 +33,7 @@ from gEconpy.exceptions.exceptions import (
     UnusedParameterWarning,
 )
 from gEconpy.parser.validation import find_typos_and_guesses
-from gEconpy.shared.utilities import is_number
+from gEconpy.utilities import is_number
 
 CANON_NAMES = [
     "normal",
@@ -511,8 +511,9 @@ class NormalDistributionParser(BaseDistributionParser):
                 )
 
                 if not result.success and result.fun > 1e-5:
-                    print(result)
-                    raise ValueError
+                    raise ValueError(
+                        f"Could not optimize {self.d_name}: {result.message}"
+                    )
 
                 loc, scale = result.x
                 param_dict[self.loc_param_name] = loc
@@ -1176,8 +1177,7 @@ def match_first_two_moments(
     )
 
     if not result.success and result.fun > 1e-5:
-        print(result)
-        raise ValueError
+        raise ValueError(f"Could not optimize {dist_object}: {result.message}")
 
     loc, scale = result.x
     return loc, scale
@@ -1336,8 +1336,9 @@ def distribution_factory(
         parser = UniformDistributionParser(variable_name=variable_name)
 
     if parser is None:
-        print(d_name)
-        raise ValueError("How did you even get here?")
+        raise ValueError(
+            "You should not have been able to get here. Open an issue on github."
+        )
 
     d = parser.build_distribution(param_dict, backend=backend, model=model)
     return d
