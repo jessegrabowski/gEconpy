@@ -2,6 +2,7 @@ import os
 import re
 import unittest
 
+from importlib.util import find_spec
 from unittest import mock
 
 import numdifftools as nd
@@ -30,6 +31,8 @@ from gEconpy.model.perturbation import (
 )
 from tests.utilities.expected_matrices import expected_linearization_result
 from tests.utilities.shared_fixtures import load_and_cache_model
+
+JAX_INSTALLED = find_spec("JAX") is not None
 
 
 @pytest.fixture
@@ -307,7 +310,7 @@ def test_variables_parsed(
 def test_model_parameters(
     load_and_cache_model, gcn_path: str, name: str, backend: BACKENDS
 ):
-    model = load_and_cache_model(gcn_path, backend)
+    model = load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED)
 
     # Test default parameters
     params = model.parameters()
@@ -326,7 +329,9 @@ def test_model_parameters(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
 def test_deterministic_model_parameters(load_and_cache_model, backend: BACKENDS):
-    model = load_and_cache_model("One_Block_Simple_2.gcn", backend)
+    model = load_and_cache_model(
+        "One_Block_Simple_2.gcn", backend, use_jax=JAX_INSTALLED
+    )
     params = model.parameters()
 
     # Test numeric expression in calibration block
@@ -345,7 +350,7 @@ def test_deterministic_model_parameters(load_and_cache_model, backend: BACKENDS)
 )
 def test_all_backends_agree_on_parameters(load_and_cache_model, gcn_path):
     models = [
-        load_and_cache_model(gcn_path, backend)
+        load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED)
         for backend in ["numpy", "numba", "pytensor"]
     ]
     params = [np.r_[list(model.parameters().values())] for model in models]
@@ -367,7 +372,10 @@ def test_all_backends_agree_on_parameters(load_and_cache_model, gcn_path):
 )
 def test_all_backends_agree_on_functions(load_and_cache_model, gcn_path, func):
     backends = ["numpy", "numba", "pytensor"]
-    models = [load_and_cache_model(gcn_path, backend) for backend in backends]
+    models = [
+        load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED)
+        for backend in backends
+    ]
     params = models[0].parameters().to_string()
     ss_vars = [x.to_ss().name for x in models[0].variables]
     x0 = dict(zip(ss_vars, np.full(len(models[0].variables), 0.8)))
@@ -393,7 +401,10 @@ def test_all_backends_agree_on_functions(load_and_cache_model, gcn_path, func):
 )
 def test_scipy_wrapped_functions_agree(load_and_cache_model, gcn_path, func):
     backend_names = ["numpy", "numba", "pytensor"]
-    models = [load_and_cache_model(gcn_path, backend) for backend in backend_names]
+    models = [
+        load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED)
+        for backend in backend_names
+    ]
 
     ss_variables = [x.to_ss() for x in models[0].variables]
     known_variables = list(models[0].f_ss(**models[0].parameters()).to_sympy().keys())
@@ -502,7 +513,7 @@ def test_steady_state(
 ):
     n = len(expected_result)
 
-    model = load_and_cache_model(gcn_file, backend)
+    model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
 
     params = model.parameters()
     ss_dict = model.f_ss(**params)
@@ -539,7 +550,7 @@ def test_steady_state(
     ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keynesian.gcn"],
 )
 def test_model_gradient(load_and_cache_model, backend, gcn_file):
-    model = load_and_cache_model(gcn_file, backend)
+    model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
 
     ss_result, success = model.steady_state()
 
@@ -592,7 +603,9 @@ def test_numerical_steady_state(
 ):
     # TODO: I was hitting errors when the models were reused, something about the fixed values was breaking stuff.
     #  Need to track this bug down.
-    model = load_and_cache_model(gcn_file, backend, force_reload=False, use_jax=True)
+    model = load_and_cache_model(
+        gcn_file, backend, force_reload=False, use_jax=JAX_INSTALLED
+    )
     analytic_res, success = model.steady_state()
     analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
 
@@ -685,11 +698,11 @@ def test_steady_state_with_parameter_updates(backend):
 def test_partially_analytical_steady_state(
     load_and_cache_model, backend: BACKENDS, partial_file, analytic_file
 ):
-    analytic_model = load_and_cache_model(analytic_file, backend)
+    analytic_model = load_and_cache_model(analytic_file, backend, use_jax=JAX_INSTALLED)
     analytic_res, success = analytic_model.steady_state()
     analytic_values = np.array(list(analytic_res.values()))
 
-    partial_model = load_and_cache_model(partial_file, backend)
+    partial_model = load_and_cache_model(partial_file, backend, use_jax=JAX_INSTALLED)
     numeric_res, success = partial_model.steady_state(
         how="minimize",
         verbose=False,
@@ -724,7 +737,7 @@ def test_partially_analytical_steady_state(
 )
 @pytest.mark.parametrize("backend", ["numba"], ids=["numba"])
 def test_linearize(load_and_cache_model, gcn_file, name, backend: BACKENDS):
-    model = load_and_cache_model(gcn_file, backend)
+    model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
     steady_state_dict, success = model.steady_state()
     outputs = model.linearize_model(
         loglin_negative_ss=True, steady_state_dict=steady_state_dict
@@ -739,7 +752,9 @@ def test_linearize(load_and_cache_model, gcn_file, name, backend: BACKENDS):
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
 def test_linearize_with_custom_params(load_and_cache_model, backend):
-    model = load_and_cache_model("One_Block_Simple_1_w_Steady_State.gcn", backend)
+    model = load_and_cache_model(
+        "One_Block_Simple_1_w_Steady_State.gcn", backend, use_jax=JAX_INSTALLED
+    )
     params = model.parameters(rho=0.5)
     assert params["rho"] == 0.5
 
@@ -806,7 +821,7 @@ def test_outputs_after_gensys_failure(caplog):
     "Expected matrices are out of date, need to solve these models in gEcon and Dynare and update."
 )
 def test_solve_matches_dynare(load_and_cache_model, backend, gcn_file):
-    model = load_and_cache_model(gcn_file, backend)
+    model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
     expected_outputs = expected_linearization_result[gcn_file]
 
     param_dict = expected_outputs["param_dict"]
@@ -1191,8 +1206,8 @@ def test_simulate(gcn_file, argument):
     T, R = model.solve_model(solver="gensys", verbose=False)
     n_variables, n_shocks = R.shape
 
-    n_simulations = 2000
-    simulation_length = 1000
+    n_simulations = 5000
+    simulation_length = 10_000
 
     shock_std, shock_std_dict, shock_cov_matrix = setup_cov_arguments(
         argument, n_shocks, model
