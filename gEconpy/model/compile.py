@@ -232,14 +232,15 @@ def compile_to_pytensor_function(
 
     f = pytensor.function(input_pt, output_pt, **kwargs)
 
+    # If pytensor is in JAX mode, compiled functions will JAX array objects rather than numpy arrays
+    # Add a wrapper to convert the JAX array to a numpy array
+    if kwargs.get("mode", None) == "JAX":
+        f = array_return_wrapper(f)
+
     # Pytensor never returns a scalar float (it will return a 0d array in this case), so we need to wrap the function
     # in this case
     if len(original_shape) == 1 and original_shape[0] == () and pop_return:
         f = pop_return_wrapper(f)
-    if kwargs.get("mode", None) == "JAX":
-        # If pytensor is in JAX mode, compiled functions will JAX array objects rather than numpy arrays
-        # Add a wrapper to convert the JAX array to a numpy array
-        f = array_return_wrapper(f)
 
     return f, cache
 
