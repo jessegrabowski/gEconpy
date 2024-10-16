@@ -1,6 +1,7 @@
 import os
 
 from collections import defaultdict
+from importlib.util import find_spec
 
 import numpy as np
 import pytest
@@ -29,6 +30,8 @@ from gEconpy.parser.file_loaders import (
     validate_results,
 )
 from gEconpy.parser.gEcon_parser import preprocess_gcn
+
+JAX_INSTALLED = find_spec("jax") is not None
 
 GCN_ROOT = "tests/Test GCNs"
 
@@ -321,7 +324,7 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
 
     kwargs = {}
     if backend == "pytensor":
-        kwargs["mode"] = "JAX"
+        kwargs["mode"] = "JAX" if JAX_INSTALLED else "FAST_RUN"
     (f_params, f_ss, resid_funcs, error_funcs), cache = compile_model_ss_functions(
         steady_state_equations,
         ss_solution_dict,

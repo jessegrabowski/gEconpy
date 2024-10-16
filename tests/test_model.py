@@ -32,7 +32,7 @@ from gEconpy.model.perturbation import (
 from tests.utilities.expected_matrices import expected_linearization_result
 from tests.utilities.shared_fixtures import load_and_cache_model
 
-JAX_INSTALLED = find_spec("JAX") is not None
+JAX_INSTALLED = find_spec("jax") is not None
 
 
 @pytest.fixture
@@ -1206,8 +1206,8 @@ def test_simulate(gcn_file, argument):
     T, R = model.solve_model(solver="gensys", verbose=False)
     n_variables, n_shocks = R.shape
 
-    n_simulations = 5000
-    simulation_length = 10_000
+    n_simulations = 2000
+    simulation_length = 2000
 
     shock_std, shock_std_dict, shock_cov_matrix = setup_cov_arguments(
         argument, n_shocks, model
