@@ -47,6 +47,11 @@ def override_dummy_wrapper(f, param_name="not_loglin_variable"):
     """
     sig = signature(f)
     f_inputs = list(sig.parameters.keys())
+
+    # If the parameter is already in the function signature, we're copacetic and don't need to wrap the function
+    if param_name in f_inputs:
+        return f
+
     dummies = [x for x in f_inputs if x.startswith("_Dummy")]
     assert len(dummies) == 1
 

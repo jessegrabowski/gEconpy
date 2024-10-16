@@ -11,10 +11,10 @@ from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_1_w_Steady_State.gcn",
-        "Open_RBC.gcn",
-        "Full_New_Keynesian.gcn",
-        "RBC_Linearized.gcn",
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        "full_nk.gcn",
+        "rbc_linearized.gcn",
     ],
 )
 def test_statespace_matrices_agree_with_model(gcn_file):

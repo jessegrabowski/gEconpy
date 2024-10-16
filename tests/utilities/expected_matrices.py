@@ -1,7 +1,7 @@
 import numpy as np
 
 expected_linearization_result = {
-    "One_Block_Simple_1_w_Steady_State.gcn": {
+    "one_block_1_ss.gcn": {
         "param_dict": {
             "theta": 0.357,
             "beta": 0.99,
@@ -257,7 +257,7 @@ expected_linearization_result = {
         ),
         "D": np.array([[1.0], [0.0], [0.0], [0.0], [0.0], [0.0], [0.0], [0.0], [0.0]]),
     },
-    "Two_Block_RBC_w_Steady_State.gcn": {
+    "rbc_2_block_ss.gcn": {
         "param_dict": {
             "beta": 0.985,
             "delta": 0.025,
@@ -674,7 +674,7 @@ expected_linearization_result = {
             ]
         ),
     },
-    "Full_New_Keynesian.gcn": {
+    "full_nk.gcn": {
         "param_dict": {
             "delta": 0.025,
             "beta": 0.99,

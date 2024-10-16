@@ -261,7 +261,7 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
 class BlockTestCases(unittest.TestCase):
     def setUp(self):
         test_file = file_loaders.load_gcn(
-            os.path.join(ROOT, "Test GCNs/One_Block_Simple_2.gcn")
+            os.path.join(ROOT, "Test GCNs/one_block_2.gcn")
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict, options, tryreduce, assumptions = (
@@ -318,7 +318,7 @@ class BlockTestCases(unittest.TestCase):
 
         self.block.objective = {0: sp.Eq(PI, P * Y - r * K - w * L)}
         df = self.block._get_discount_factor()
-        self.assertEqual(df, 1)
+        assert np.allclose(float(df), 1.0)
 
     def test_extract_discount_factor_on_lagged_eq(self):
         PI = TimeAwareSymbol("Pi", 0)
@@ -331,7 +331,7 @@ class BlockTestCases(unittest.TestCase):
 
         self.block.objective = {0: sp.Eq(PI, P * Y - r * K - w * L)}
         df = self.block._get_discount_factor()
-        self.assertEqual(df, 1)
+        assert np.allclose(float(df), 1)
 
     def test_household_lagrangian_function(self):
         U = TimeAwareSymbol("U", 1)
@@ -363,7 +363,7 @@ class BlockTestCases(unittest.TestCase):
         )
 
         L = self.block._build_lagrangian()
-        self.assertEqual((L - answer).simplify(), 0)
+        assert (L - answer).simplify().evalf() == 0
 
     def test_Household_FOC(self):
         self.block.solve_optimization(try_simplify=False)
@@ -458,7 +458,7 @@ class BlockTestCases(unittest.TestCase):
 
     def test_firm_block_lagrange_parsing(self):
         test_file = file_loaders.load_gcn(
-            os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
+            os.path.join(ROOT, "Test GCNs/rbc_2_block.gcn")
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict, options, tryreduce, assumptions = (
@@ -485,7 +485,7 @@ class BlockTestCases(unittest.TestCase):
 
     def test_firm_FOC(self):
         test_file = file_loaders.load_gcn(
-            os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
+            os.path.join(ROOT, "Test GCNs/rbc_2_block.gcn")
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict, options, tryreduce, assumptions = (

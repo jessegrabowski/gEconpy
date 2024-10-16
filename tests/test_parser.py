@@ -19,7 +19,7 @@ ROOT = Path(__file__).parent.absolute()
 class ParserDistributionCases(unittest.TestCase):
     def setUp(self):
         self.model = file_loaders.load_gcn(
-            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn")
+            os.path.join(ROOT, "Test GCNs/one_block_1_dist.gcn")
         )
 
     def test_distribution_extraction_simple(self):
@@ -194,7 +194,7 @@ class ParserTestCases(unittest.TestCase):
 
     def test_split_gcn_by_blocks(self):
         test_file = file_loaders.load_gcn(
-            os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+            os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
         )
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
 
@@ -252,7 +252,7 @@ class ParserTestCases(unittest.TestCase):
         )
 
         test_file = file_loaders.load_gcn(
-            os.path.join(ROOT, "Test GCNs/Two_Block_RBC_1.gcn")
+            os.path.join(ROOT, "Test GCNs/rbc_2_block.gcn")
         )
         parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
         block_dict, *_ = gEcon_parser.split_gcn_into_dictionaries(parser_output)

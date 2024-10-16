@@ -50,7 +50,7 @@ class TestUtilities(unittest.TestCase):
 class TestPlotSimulation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/rbc_linearized.gcn")
         cls.model = model_from_gcn(file_path, verbose=False)
         cls.data = simulate(
             cls.model, simulation_length=100, n_simulations=1000, shock_std=0.1
@@ -73,6 +73,7 @@ class TestPlotSimulation(unittest.TestCase):
             plot_simulation(self.data, vars_to_plot=["Y", "C", "Invalid"])
         error_msg = error.exception
         self.assertEqual(str(error_msg), "Invalid not found among model variables.")
+        plt.close()
 
     def test_plot_simulation_with_ci(self):
         fig = plot_simulation(self.data, ci=0.95)
@@ -94,7 +95,7 @@ class TestPlotSimulation(unittest.TestCase):
 
 @pytest.fixture(scope="session")
 def irf_setup():
-    file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keynesian.gcn")
+    file_path = os.path.join(ROOT, "Test GCNs/full_nk.gcn")
 
     model = model_from_gcn(file_path, verbose=False)
     model.steady_state(verbose=False)
@@ -142,7 +143,7 @@ def test_plot_irf_one_variable(irf_setup):
     plt.close()
 
 
-def test_var_not_found_raises(irf_setup):
+def test_plot_irf_raises_if_var_not_found(irf_setup):
     model, irf = irf_setup
 
     with pytest.raises(
@@ -153,7 +154,7 @@ def test_var_not_found_raises(irf_setup):
     plt.close()
 
 
-def test_shock_not_found_raises(irf_setup):
+def test_plot_irf_raises_if_shock_not_found(irf_setup):
     model, irf = irf_setup
 
     with pytest.raises(
@@ -165,9 +166,10 @@ def test_shock_not_found_raises(irf_setup):
             vars_to_plot=["Y", "C"],
             shocks_to_plot=["epsilon_Y", "Invalid"],
         )
+    plt.close()
 
 
-def test_legend(irf_setup):
+def test_plot_irf_legend(irf_setup):
     model, irf = irf_setup
 
     fig = plot_irf(
@@ -181,10 +183,8 @@ def test_legend(irf_setup):
 class TestPlotEigenvalues(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
         cls.model = model_from_gcn(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
 
     def test_plot_with_defaults(self):
         fig = plot_eigenvalues(self.model)
@@ -209,12 +209,10 @@ class TestPlotEigenvalues(unittest.TestCase):
 class TestPlotCovarianceMatrix(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
         cls.model = model_from_gcn(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
         cls.cov_matrix = stationary_covariance_matrix(
-            cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_df=True
+            cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_df=True, verbose=False
         )
 
     def test_plot_with_defaults(self):
@@ -245,12 +243,10 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
 class TestPlotACF(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
         cls.model = model_from_gcn(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
         cls.acf = autocorrelation_matrix(
-            cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_xr=True
+            cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_xr=True, verbose=False
         )
 
     def test_plot_with_defaults(self):
@@ -277,6 +273,7 @@ class TestPlotACF(unittest.TestCase):
             msg,
             "Can not plot variable Invalid, it was not found in the provided covariance matrix",
         )
+        plt.close()
 
 
 if __name__ == "__main__":

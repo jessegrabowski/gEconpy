@@ -1,3 +1,5 @@
+from importlib.util import find_spec
+
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
@@ -19,7 +21,10 @@ from gEconpy.solvers.cycle_reduction import (
 )
 from gEconpy.solvers.gensys import gensys_pt, solve_policy_function_with_gensys
 from gEconpy.utilities import eq_to_ss
+from tests.test_model import JAX_INSTALLED
 from tests.utilities.shared_fixtures import load_and_cache_model
+
+JAX_INSTALLED = find_spec("jax") is not None
 
 
 def linearize_method_2(variables, equations, shocks, not_loglin_variables=None):
@@ -45,8 +50,10 @@ def linearize_method_2(variables, equations, shocks, not_loglin_variables=None):
 
 
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
-def test_variables_to_all_times(load_and_cache_model, backend):
-    mod = load_and_cache_model("One_Block_Simple_1.gcn", backend)
+def test_variables_to_all_times(backend):
+    mod = load_and_cache_model(
+        "one_block_1.gcn", backend=backend, use_jax=JAX_INSTALLED
+    )
     variables = mod.variables
     lags, now, leads = make_all_variable_time_combinations(variables)
 
@@ -60,11 +67,11 @@ def test_variables_to_all_times(load_and_cache_model, backend):
 
 @pytest.mark.parametrize(
     "gcn_file",
-    ["One_Block_Simple_1.gcn", "Two_Block_RBC_1.gcn", "Full_New_Keynesian.gcn"],
+    ["one_block_1.gcn", "rbc_2_block.gcn", "full_nk.gcn"],
 )
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
-def test_log_linearize_model(load_and_cache_model, gcn_file, backend):
-    mod = load_and_cache_model(gcn_file, backend)
+def test_log_linearize_model(gcn_file, backend):
+    mod = load_and_cache_model(gcn_file, backend=backend, use_jax=JAX_INSTALLED)
     (A, B, C, D), not_loglin_variable = linearize_model(
         mod.variables, mod.equations, mod.shocks
     )
@@ -107,10 +114,10 @@ def test_log_linearize_model(load_and_cache_model, gcn_file, backend):
 @pytest.mark.parametrize(
     "gcn_file, state_variables",
     [
-        ("One_Block_Simple_1_w_Steady_State.gcn", ["K", "A"]),
-        ("Open_RBC.gcn", ["A", "K", "IIP"]),
+        ("one_block_1_ss.gcn", ["K", "A"]),
+        ("open_rbc.gcn", ["A", "K", "IIP"]),
         (
-            "Full_New_Keynesian.gcn",
+            "full_nk.gcn",
             [
                 "K",
                 "C",
@@ -127,10 +134,8 @@ def test_log_linearize_model(load_and_cache_model, gcn_file, backend):
     ],
 )
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
-def test_solve_policy_function(
-    load_and_cache_model, gcn_file, state_variables, backend
-):
-    mod = load_and_cache_model(gcn_file, backend)
+def test_solve_policy_function(gcn_file, state_variables, backend):
+    mod = load_and_cache_model(gcn_file, backend=backend, use_jax=JAX_INSTALLED)
     steady_state_dict, success = mod.steady_state()
     A, B, C, D = mod.linearize_model(order=1, steady_state_dict=steady_state_dict)
 
@@ -165,8 +170,8 @@ def test_solve_policy_function(
     assert_allclose(R_gensys, R, atol=1e-8, rtol=1e-8)
 
 
-def test_cycle_reduction_gradients(load_and_cache_model):
-    mod = load_and_cache_model("Full_New_Keynesian.gcn", backend="numpy")
+def test_cycle_reduction_gradients():
+    mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     A, B, C, D = mod.linearize_model()
 
     A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in list("ABCD"))
@@ -203,8 +208,8 @@ def test_cycle_reduction_gradients(load_and_cache_model):
     assert_allclose(C_bar_1, C_bar_2, atol=1e-8, rtol=1e-8)
 
 
-def test_pytensor_gensys(load_and_cache_model):
-    mod = load_and_cache_model("Full_New_Keynesian.gcn", backend="numpy")
+def test_pytensor_gensys():
+    mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     A, B, C, D = mod.linearize_model()
 
     A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in list("ABCD"))

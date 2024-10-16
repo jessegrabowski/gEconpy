@@ -86,6 +86,14 @@ def pop_return_wrapper(f: Callable) -> Callable:
     return inner
 
 
+def array_return_wrapper(f: Callable) -> Callable:
+    @wraps(f)
+    def inner(*args, **kwargs):
+        return np.array(f(*args, **kwargs))
+
+    return inner
+
+
 def _configue_pytensor_kwargs(kwargs: dict) -> dict:
     if "on_unused_input" not in kwargs:
         kwargs["on_unused_input"] = "ignore"
@@ -223,6 +231,11 @@ def compile_to_pytensor_function(
         return output_pt, cache
 
     f = pytensor.function(input_pt, output_pt, **kwargs)
+
+    # If pytensor is in JAX mode, compiled functions will JAX array objects rather than numpy arrays
+    # Add a wrapper to convert the JAX array to a numpy array
+    if kwargs.get("mode", None) == "JAX":
+        f = array_return_wrapper(f)
 
     # Pytensor never returns a scalar float (it will return a 0d array in this case), so we need to wrap the function
     # in this case
