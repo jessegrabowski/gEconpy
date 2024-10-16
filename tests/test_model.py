@@ -592,7 +592,7 @@ def test_numerical_steady_state(
 ):
     # TODO: I was hitting errors when the models were reused, something about the fixed values was breaking stuff.
     #  Need to track this bug down.
-    model = load_and_cache_model(gcn_file, backend, force_reload=True)
+    model = load_and_cache_model(gcn_file, backend, force_reload=False, use_jax=True)
     analytic_res, success = model.steady_state()
     analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
 
@@ -612,9 +612,12 @@ def test_numerical_steady_state(
         }
     else:
         fixed_values = None
+
     numeric_res, success = model.steady_state(
         how=how,
         verbose=False,
+        use_hess=True,
+        use_hessp=False,
         optimizer_kwargs={
             "maxiter": 50_000,
             "method": "hybr" if how == "root" else "Newton-CG",

@@ -86,6 +86,14 @@ def pop_return_wrapper(f: Callable) -> Callable:
     return inner
 
 
+def array_return_wrapper(f: Callable) -> Callable:
+    @wraps(f)
+    def inner(*args, **kwargs):
+        return np.array(f(*args, **kwargs))
+
+    return inner
+
+
 def _configue_pytensor_kwargs(kwargs: dict) -> dict:
     if "on_unused_input" not in kwargs:
         kwargs["on_unused_input"] = "ignore"
@@ -228,6 +236,10 @@ def compile_to_pytensor_function(
     # in this case
     if len(original_shape) == 1 and original_shape[0] == () and pop_return:
         f = pop_return_wrapper(f)
+    if kwargs.get("mode", None) == "JAX":
+        # If pytensor is in JAX mode, compiled functions will JAX array objects rather than numpy arrays
+        # Add a wrapper to convert the JAX array to a numpy array
+        f = array_return_wrapper(f)
 
     return f, cache
 

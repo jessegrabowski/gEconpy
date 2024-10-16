@@ -319,6 +319,9 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
     validate_results(equations, param_dict, calib_dict, deterministic_dict)
     steady_state_equations = system_to_steady_state(equations, shocks)
 
+    kwargs = {}
+    if backend == "pytensor":
+        kwargs["mode"] = "JAX"
     (f_params, f_ss, resid_funcs, error_funcs), cache = compile_model_ss_functions(
         steady_state_equations,
         ss_solution_dict,
@@ -328,6 +331,7 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
         calib_dict,
         error_func="squared",
         backend=backend,
+        **kwargs,
     )
 
     f_ss_resid, f_ss_jac = resid_funcs
