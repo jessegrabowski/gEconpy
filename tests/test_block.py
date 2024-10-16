@@ -363,7 +363,7 @@ class BlockTestCases(unittest.TestCase):
         )
 
         L = self.block._build_lagrangian()
-        assert (L - answer).simplify().evalf() == 0.0
+        assert (L - answer).simplify().evalf() == 0
 
     def test_Household_FOC(self):
         self.block.solve_optimization(try_simplify=False)

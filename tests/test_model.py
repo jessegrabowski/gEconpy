@@ -1223,6 +1223,7 @@ def test_simulate(gcn_file, argument):
         shock_std_dict=shock_std_dict,
         shock_cov_matrix=shock_cov_matrix,
     )
+
     assert data.shape == (n_simulations, simulation_length, n_variables)
 
     # Check that the simulated covariance matrix is at least strong correlated with the stationary covariance matrix
