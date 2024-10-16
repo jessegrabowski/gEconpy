@@ -36,10 +36,10 @@ JAX_INSTALLED = find_spec("jax") is not None
 GCN_ROOT = "tests/Test GCNs"
 
 TEST_GCN_FILES = [
-    "One_Block_Simple_1.gcn",
-    "One_Block_Simple_1_w_Steady_State.gcn",
-    "One_Block_Simple_2.gcn",
-    "Full_New_Keynesian.gcn",
+    "one_block_1.gcn",
+    "one_block_1_ss.gcn",
+    "one_block_2.gcn",
+    "full_nk.gcn",
 ]
 
 TEST_NAMES = ["one_block", "one_block_ss", "one_block_2", "full_nk"]
@@ -221,8 +221,8 @@ def test_block_dict_to_variables_and_shocks(gcn_path, name):
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_with_duplicate_param_1.gcn",
-        "One_Block_Simple_with_duplicate_param_2.gcn",
+        "one_block_1_duplicate_params.gcn",
+        "one_block_1_duplicate_params_2.gcn",
     ],
     ids=["within_block", "between_blocks"],
 )
@@ -257,8 +257,8 @@ EXPECTED_PARAM_DICT = {
 @pytest.mark.parametrize(
     "gcn_path, name",
     [
-        ("One_Block_Simple_1.gcn", "one_block_simple"),
-        ("One_Block_Simple_2.gcn", "one_block_simple_2"),
+        ("one_block_1.gcn", "one_block_simple"),
+        ("one_block_2.gcn", "one_block_simple_2"),
     ],
     ids=["one_block_simple", "one_block_simple_2"],
 )
@@ -293,7 +293,7 @@ def test_create_parameter_function(gcn_path, name, backend):
 )
 def test_all_model_functions_return_arrays(backend: BACKENDS):
     outputs = gcn_to_block_dict(
-        "tests/Test GCNs/One_Block_Simple_1_w_Steady_State.gcn", simplify_blocks=True
+        "tests/Test GCNs/one_block_1_ss.gcn", simplify_blocks=True
     )
     block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
 
@@ -355,9 +355,9 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_1_w_Steady_State.gcn",
-        "Open_RBC.gcn",
-        "Full_New_Keynesian.gcn",
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        "full_nk.gcn",
     ],
     ids=["one_block_simple", "open_rbc", "full_nk"],
 )
@@ -384,21 +384,17 @@ def test_load_gcn(gcn_file):
 
 def test_loading_fails_if_orphan_parameters():
     with pytest.raises(OrphanParameterError):
-        model_from_gcn(
-            os.path.join("tests/Test GCNs", "Open_RBC_with_orphan_params.gcn")
-        )
+        model_from_gcn(os.path.join("tests/Test GCNs", "open_rbc_orphan_params.gcn"))
 
 
 def test_loading_fails_if_extra_parameters():
     with pytest.raises(ExtraParameterError):
-        model_from_gcn(
-            os.path.join("tests/Test GCNs", "Open_RBC_with_extra_params.gcn")
-        )
+        model_from_gcn(os.path.join("tests/Test GCNs", "open_rbc_extra_params.gcn"))
 
 
 def test_build_report(caplog):
     model_from_gcn(
-        "tests/Test GCNs/Two_Block_RBC_1.gcn",
+        "tests/Test GCNs/rbc_2_block.gcn",
         verbose=True,
         simplify_tryreduce=True,
         simplify_constants=True,

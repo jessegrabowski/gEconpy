@@ -50,7 +50,7 @@ class TestUtilities(unittest.TestCase):
 class TestPlotSimulation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/rbc_linearized.gcn")
         cls.model = model_from_gcn(file_path, verbose=False)
         cls.data = simulate(
             cls.model, simulation_length=100, n_simulations=1000, shock_std=0.1
@@ -95,7 +95,7 @@ class TestPlotSimulation(unittest.TestCase):
 
 @pytest.fixture(scope="session")
 def irf_setup():
-    file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keynesian.gcn")
+    file_path = os.path.join(ROOT, "Test GCNs/full_nk.gcn")
 
     model = model_from_gcn(file_path, verbose=False)
     model.steady_state(verbose=False)
@@ -183,7 +183,7 @@ def test_plot_irf_legend(irf_setup):
 class TestPlotEigenvalues(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
         cls.model = model_from_gcn(file_path, verbose=False)
 
     def test_plot_with_defaults(self):
@@ -209,7 +209,7 @@ class TestPlotEigenvalues(unittest.TestCase):
 class TestPlotCovarianceMatrix(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
         cls.model = model_from_gcn(file_path, verbose=False)
         cls.cov_matrix = stationary_covariance_matrix(
             cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_df=True, verbose=False
@@ -243,7 +243,7 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
 class TestPlotACF(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
+        file_path = os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
         cls.model = model_from_gcn(file_path, verbose=False)
         cls.acf = autocorrelation_matrix(
             cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_xr=True, verbose=False

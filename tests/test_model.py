@@ -252,13 +252,13 @@ nk_shocks = ["epsilon_R", "epsilon_pi", "epsilon_Y", "epsilon_preference"]
     "gcn_path, expected_variables, expected_params, expected_shocks",
     [
         (
-            "One_Block_Simple_1_w_Steady_State.gcn",
+            "one_block_1_ss.gcn",
             simple_vars,
             simple_params,
             simple_shocks,
         ),
-        ("Open_RBC.gcn", open_vars, open_params, open_shocks),
-        ("Full_New_Keynesian.gcn", nk_vars, nk_params, nk_shocks),
+        ("open_rbc.gcn", open_vars, open_params, open_shocks),
+        ("full_nk.gcn", nk_vars, nk_params, nk_shocks),
     ],
 )
 def test_variables_parsed(
@@ -298,9 +298,9 @@ def test_variables_parsed(
 @pytest.mark.parametrize(
     "gcn_path, name",
     [
-        ("One_Block_Simple_1_w_Distributions.gcn", "one_block_prior"),
-        ("One_Block_Simple_1_w_Steady_State.gcn", "one_block_ss"),
-        ("Full_New_Keynesian.gcn", "full_nk"),
+        ("one_block_1_dist.gcn", "one_block_prior"),
+        ("one_block_1_ss.gcn", "one_block_ss"),
+        ("full_nk.gcn", "full_nk"),
     ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
@@ -327,9 +327,7 @@ def test_model_parameters(gcn_path: str, name: str, backend: BACKENDS):
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
 def test_deterministic_model_parameters(backend: BACKENDS):
-    model = load_and_cache_model(
-        "One_Block_Simple_2.gcn", backend, use_jax=JAX_INSTALLED
-    )
+    model = load_and_cache_model("one_block_2.gcn", backend, use_jax=JAX_INSTALLED)
     params = model.parameters()
 
     # Test numeric expression in calibration block
@@ -343,7 +341,7 @@ def test_deterministic_model_parameters(backend: BACKENDS):
 
 @pytest.mark.parametrize(
     "gcn_path",
-    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keynesian.gcn"],
+    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn"],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
 def test_all_backends_agree_on_parameters(gcn_path):
@@ -360,7 +358,7 @@ def test_all_backends_agree_on_parameters(gcn_path):
 
 @pytest.mark.parametrize(
     "gcn_path",
-    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keynesian.gcn"],
+    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn"],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
 @pytest.mark.parametrize(
@@ -389,8 +387,8 @@ def test_all_backends_agree_on_functions(gcn_path, func):
 @pytest.mark.parametrize(
     "gcn_path",
     [
-        "Two_Block_RBC_w_Partial_Steady_State.gcn",
-        "Full_New_Keynesian_w_Partial_Steady_state.gcn",
+        "rbc_2_block_partial_ss.gcn",
+        "full_nk_partial_ss.gcn",
     ],
     ids=["two_block", "full_nk"],
 )
@@ -441,7 +439,7 @@ def test_scipy_wrapped_functions_agree(gcn_path, func):
     ("gcn_file", "expected_result"),
     [
         (
-            "One_Block_Simple_1_w_Steady_State.gcn",
+            "one_block_1_ss.gcn",
             {
                 "A_ss": 1.0,
                 "C_ss": 0.91982617,
@@ -455,7 +453,7 @@ def test_scipy_wrapped_functions_agree(gcn_path, func):
             },
         ),
         (
-            "Open_RBC.gcn",
+            "open_rbc.gcn",
             {
                 "A_ss": 1.00000000e00,
                 "CA_ss": 0.00000000e00,
@@ -475,7 +473,7 @@ def test_scipy_wrapped_functions_agree(gcn_path, func):
             },
         ),
         (
-            "Full_New_Keynesian.gcn",
+            "full_nk.gcn",
             {
                 "C_ss": 1.50620761e00,
                 "Div_ss": 6.69069052e-01,
@@ -543,7 +541,7 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
 )
 @pytest.mark.parametrize(
     "gcn_file",
-    ["One_Block_Simple_1_w_Steady_State.gcn", "Open_RBC.gcn", "Full_New_Keynesian.gcn"],
+    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn"],
 )
 def test_model_gradient(backend, gcn_file):
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
@@ -586,9 +584,9 @@ def test_model_gradient(backend, gcn_file):
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_1_w_Steady_State.gcn",
-        "Open_RBC.gcn",
-        "Full_New_Keynesian.gcn",
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        "full_nk.gcn",
     ],
 )
 @pytest.mark.parametrize(
@@ -606,7 +604,7 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
     f_ss = model.f_ss
     model.f_ss = None
 
-    if gcn_file == "Full_New_Keynesian.gcn":
+    if gcn_file == "full_nk.gcn":
         fixed_values = {
             "shock_technology_ss": 1.0,
             "shock_preference_ss": 1.0,
@@ -643,7 +641,7 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
 
 
 def test_numerical_steady_state_with_calibrated_params():
-    file_path = "One_Block_Simple_2_without_Extra_Params.gcn"
+    file_path = "one_block_2_no_extra.gcn"
     model = load_and_cache_model(file_path, "numpy", use_jax=JAX_INSTALLED)
 
     res, success = model.steady_state(
@@ -660,7 +658,7 @@ def test_numerical_steady_state_with_calibrated_params():
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
 def test_steady_state_with_parameter_updates(backend):
-    file_path = "Two_Block_RBC_w_Steady_State.gcn"
+    file_path = "rbc_2_block_ss.gcn"
     model = load_and_cache_model(file_path, "numpy", use_jax=JAX_INSTALLED)
 
     rng = np.random.default_rng()
@@ -678,10 +676,10 @@ def test_steady_state_with_parameter_updates(backend):
     "partial_file, analytic_file",
     [
         (
-            "Two_Block_RBC_w_Partial_Steady_State.gcn",
-            "Two_Block_RBC_w_Steady_State.gcn",
+            "rbc_2_block_partial_ss.gcn",
+            "rbc_2_block_ss.gcn",
         ),
-        ("Full_New_Keynesian_w_Partial_Steady_State.gcn", "Full_New_Keynesian.gcn"),
+        ("full_nk_partial_ss.gcn", "full_nk.gcn"),
     ],
 )
 def test_partially_analytical_steady_state(
@@ -718,9 +716,9 @@ def test_partially_analytical_steady_state(
 @pytest.mark.parametrize(
     "gcn_file, name",
     [
-        ("One_Block_Simple_1_w_Steady_State.gcn", "one_block_ss"),
-        ("Two_Block_RBC_w_Steady_State.gcn", "two_block_ss"),
-        ("Full_New_Keynesian.gcn", "full_nk"),
+        ("one_block_1_ss.gcn", "one_block_ss"),
+        ("rbc_2_block_ss.gcn", "two_block_ss"),
+        ("full_nk.gcn", "full_nk"),
     ],
     ids=["one_block_ss", "two_block_ss", "full_nk"],
 )
@@ -741,9 +739,7 @@ def test_linearize(gcn_file, name, backend: BACKENDS):
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
 def test_linearize_with_custom_params(backend):
-    model = load_and_cache_model(
-        "One_Block_Simple_1_w_Steady_State.gcn", backend, use_jax=JAX_INSTALLED
-    )
+    model = load_and_cache_model("one_block_1_ss.gcn", backend, use_jax=JAX_INSTALLED)
     params = model.parameters(rho=0.5)
     assert params["rho"] == 0.5
 
@@ -759,7 +755,7 @@ def test_linearize_with_custom_params(backend):
 
 
 def test_invalid_solver_raises():
-    file_path = "tests/Test GCNs/One_Block_Simple_1_w_Steady_State.gcn"
+    file_path = "tests/Test GCNs/one_block_1_ss.gcn"
     model = model_from_gcn(file_path, verbose=False)
     model.steady_state(verbose=False)
 
@@ -800,9 +796,9 @@ def test_outputs_after_gensys_failure(caplog):
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_1_w_Steady_State.gcn",
-        "Two_Block_RBC_w_Steady_State.gcn",
-        "Full_New_Keynesian.gcn",
+        "one_block_1_ss.gcn",
+        "rbc_2_block_ss.gcn",
+        "full_nk.gcn",
     ],
     ids=["one_block", "two_block", "nk"],
 )
@@ -827,7 +823,7 @@ def test_solve_matches_dynare(backend, gcn_file):
 
 
 def test_outputs_after_pert_success(caplog):
-    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
+    file_path = "tests/Test GCNs/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(solver="gensys", verbose=True)
 
@@ -842,7 +838,7 @@ def test_outputs_after_pert_success(caplog):
 
 
 def test_bad_argument_to_bk_condition_raises():
-    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
+    file_path = "tests/Test GCNs/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
 
     A, B, C, D = model.linearize_model()
@@ -851,7 +847,7 @@ def test_bad_argument_to_bk_condition_raises():
 
 
 def test_check_bk_condition():
-    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
+    file_path = "tests/Test GCNs/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     A, B, C, D = model.linearize_model()
 
@@ -868,7 +864,7 @@ def test_check_bk_condition():
 
 
 def test_summarize_perturbation_solution():
-    file_path = "tests/Test GCNs/RBC_Linearized.gcn"
+    file_path = "tests/Test GCNs/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     linear_system = [A, B, C, D] = model.linearize_model()
     policy_function = [T, R] = model.solve_model(solver="gensys", verbose=False)
@@ -882,7 +878,7 @@ def test_summarize_perturbation_solution():
 
 
 def test_validate_shock_options():
-    file_path = "tests/Test GCNs/Full_New_Keynesian.gcn"
+    file_path = "tests/Test GCNs/full_nk.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     T, R = model.solve_model(solver="gensys", verbose=False)
 
@@ -925,7 +921,7 @@ def test_validate_shock_options():
 
 
 def test_build_Q_matrix():
-    file_path = "tests/Test GCNs/Full_New_Keynesian.gcn"
+    file_path = "tests/Test GCNs/full_nk.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     shocks = model.shocks
 
@@ -964,7 +960,7 @@ def test_build_Q_matrix():
 
 
 def test_build_Q_matrix_from_dict():
-    file_path = "Full_New_Keynesian.gcn"
+    file_path = "full_nk.gcn"
     model = load_and_cache_model(file_path, "numpy", use_jax=JAX_INSTALLED)
     shocks = model.shocks
 
@@ -980,7 +976,7 @@ def test_build_Q_matrix_from_dict():
 
 
 def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
-    model = load_and_cache_model("RBC_Linearized.gcn", "numpy", use_jax=JAX_INSTALLED)
+    model = load_and_cache_model("rbc_linearized.gcn", "numpy", use_jax=JAX_INSTALLED)
     T, R = model.solve_model(solver="gensys", verbose=False)
 
     stationary_covariance_matrix(model, T, shock_std=0.1, verbose=False)
@@ -991,10 +987,10 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_1_w_Steady_State.gcn",
-        "Open_RBC.gcn",
-        "Full_New_Keynesian.gcn",
-        "RBC_Linearized.gcn",
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        "full_nk.gcn",
+        "rbc_linearized.gcn",
     ],
 )
 def test_compute_stationary_covariance(caplog, gcn_file):
@@ -1020,10 +1016,10 @@ def test_compute_stationary_covariance(caplog, gcn_file):
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_1_w_Steady_State.gcn",
-        "Open_RBC.gcn",
-        "Full_New_Keynesian.gcn",
-        "RBC_Linearized.gcn",
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        "full_nk.gcn",
+        "rbc_linearized.gcn",
     ],
 )
 def test_autocovariance_matrix(caplog, gcn_file):
@@ -1093,7 +1089,7 @@ def setup_cov_arguments(argument, n_shocks, model):
     "return_individual_shocks", [True, False], ids=["individual_shocks", "joint_shocks"]
 )
 def test_irf_from_shock_size(shock_size, return_individual_shocks):
-    file_path = "One_Block_Simple_1_w_Steady_State_2_shocks.gcn"
+    file_path = "one_block_1_ss_2shock.gcn"
     model = load_and_cache_model(file_path, backend="numpy", use_jax=JAX_INSTALLED)
     T, R = model.solve_model(solver="gensys", verbose=False)
     n_variables, n_shocks = R.shape
@@ -1135,7 +1131,7 @@ def test_irf_from_shock_size(shock_size, return_individual_shocks):
 )
 @pytest.mark.parametrize("n_shocks", [1, 2], ids=["single_shock", "two_shocks"])
 def test_irf_from_trajectory(return_individual_shocks, n_shocks):
-    file_path = "One_Block_Simple_1_w_Steady_State_2_shocks.gcn"
+    file_path = "one_block_1_ss_2shock.gcn"
     model = load_and_cache_model(file_path, backend="numpy", use_jax=JAX_INSTALLED)
     T, R = model.solve_model(solver="gensys", verbose=False)
     n_variables, n_shocks = R.shape
@@ -1174,9 +1170,9 @@ def test_irf_from_trajectory(return_individual_shocks, n_shocks):
 @pytest.mark.parametrize(
     "gcn_file",
     [
-        "One_Block_Simple_1_w_Steady_State.gcn",
-        "Open_RBC.gcn",
-        "Full_New_Keynesian.gcn",
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        "full_nk.gcn",
     ],
 )
 @pytest.mark.parametrize(

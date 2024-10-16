@@ -96,9 +96,7 @@ class TestDynareConvert(unittest.TestCase):
         self.assertTrue(all([len(x.strip()) <= 51 for x in file_lines]))
 
     def test_make_mod_file(self):
-        file_path = os.path.join(
-            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
-        )
+        file_path = os.path.join(ROOT, "Test GCNs/one_block_1_dist.gcn")
         model = model_from_gcn(file_path, verbose=False)
         mod_file = make_mod_file(model)
         self.assertTrue(isinstance(mod_file, str))

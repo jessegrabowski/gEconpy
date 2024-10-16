@@ -52,7 +52,7 @@ def linearize_method_2(variables, equations, shocks, not_loglin_variables=None):
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
 def test_variables_to_all_times(backend):
     mod = load_and_cache_model(
-        "One_Block_Simple_1.gcn", backend=backend, use_jax=JAX_INSTALLED
+        "one_block_1.gcn", backend=backend, use_jax=JAX_INSTALLED
     )
     variables = mod.variables
     lags, now, leads = make_all_variable_time_combinations(variables)
@@ -67,7 +67,7 @@ def test_variables_to_all_times(backend):
 
 @pytest.mark.parametrize(
     "gcn_file",
-    ["One_Block_Simple_1.gcn", "Two_Block_RBC_1.gcn", "Full_New_Keynesian.gcn"],
+    ["one_block_1.gcn", "rbc_2_block.gcn", "full_nk.gcn"],
 )
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
 def test_log_linearize_model(gcn_file, backend):
@@ -114,10 +114,10 @@ def test_log_linearize_model(gcn_file, backend):
 @pytest.mark.parametrize(
     "gcn_file, state_variables",
     [
-        ("One_Block_Simple_1_w_Steady_State.gcn", ["K", "A"]),
-        ("Open_RBC.gcn", ["A", "K", "IIP"]),
+        ("one_block_1_ss.gcn", ["K", "A"]),
+        ("open_rbc.gcn", ["A", "K", "IIP"]),
         (
-            "Full_New_Keynesian.gcn",
+            "full_nk.gcn",
             [
                 "K",
                 "C",
@@ -171,9 +171,7 @@ def test_solve_policy_function(gcn_file, state_variables, backend):
 
 
 def test_cycle_reduction_gradients():
-    mod = load_and_cache_model(
-        "Full_New_Keynesian.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     A, B, C, D = mod.linearize_model()
 
     A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in list("ABCD"))
@@ -211,9 +209,7 @@ def test_cycle_reduction_gradients():
 
 
 def test_pytensor_gensys():
-    mod = load_and_cache_model(
-        "Full_New_Keynesian.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     A, B, C, D = mod.linearize_model()
 
     A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in list("ABCD"))

@@ -52,7 +52,7 @@ def root_and_min_agree_helper(model: Model, **kwargs):
 
 def test_solve_ss_with_partial_user_solution():
     model_1 = load_and_cache_model(
-        "One_Block_Simple_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
     res, success = model_1.steady_state()
     assert success
@@ -60,7 +60,7 @@ def test_solve_ss_with_partial_user_solution():
 
 def test_wrong_user_solutions_raises():
     model_1 = load_and_cache_model(
-        "One_Block_Simple_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
 
     expected_msg = (
@@ -74,7 +74,7 @@ def test_wrong_user_solutions_raises():
 
 def test_print_steady_state_report_solver_successful(caplog):
     model_1 = load_and_cache_model(
-        "One_Block_Simple_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
     res, success = model_1.steady_state(verbose=False, progressbar=False)
 
@@ -98,7 +98,7 @@ def test_print_steady_state_report_solver_successful(caplog):
 
 def test_print_steady_state_report_solver_fails(caplog):
     model_1 = load_and_cache_model(
-        "One_Block_Simple_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
     result, _ = model_1.steady_state(verbose=False, progressbar=False)
 
@@ -123,7 +123,7 @@ def test_print_steady_state_report_solver_fails(caplog):
 
 def test_incomplete_ss_relationship_raises_with_root():
     model_1 = load_and_cache_model(
-        "One_Block_Simple_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
     expected_msg = (
         'Solving a partially provided steady state with how = "root" is only allowed if applying the given '
@@ -140,7 +140,7 @@ def test_incomplete_ss_relationship_raises_with_root():
 
 def test_wrong_and_incomplete_ss_relationship_fails_with_minimize():
     model_1 = load_and_cache_model(
-        "One_Block_Simple_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
     res, success = model_1.steady_state(
         verbose=False, progressbar=False, fixed_values={"K_ss": 3.0}
@@ -150,14 +150,14 @@ def test_wrong_and_incomplete_ss_relationship_fails_with_minimize():
 
 def test_numerical_solvers_suceed_and_agree():
     model_1 = load_and_cache_model(
-        "One_Block_Simple_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
     root_and_min_agree_helper(model_1)
 
 
 def test_steady_state_matches_analytic():
     model_1 = load_and_cache_model(
-        "One_Block_Simple_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
     param_dict = model_1.parameters().to_sympy()
     alpha, beta, delta, gamma, rho = list(param_dict.keys())
@@ -191,7 +191,7 @@ def test_steady_state_matches_analytic():
 
 def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
     model_2 = load_and_cache_model(
-        "One_Block_Simple_2_without_Extra_Params.gcn",
+        "one_block_2_no_extra.gcn",
         backend="numpy",
         use_jax=JAX_INSTALLED,
     )
@@ -200,7 +200,7 @@ def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
 
 def test_steady_state_matches_analytic_w_calibrated_params():
     model_2 = load_and_cache_model(
-        "One_Block_Simple_2_without_Extra_Params.gcn",
+        "one_block_2_no_extra.gcn",
         backend="numpy",
         use_jax=JAX_INSTALLED,
     )
@@ -264,14 +264,14 @@ def test_steady_state_matches_analytic_w_calibrated_params():
 
 def test_numerical_solvers_succeed_and_agree_RBC():
     model_3 = load_and_cache_model(
-        "Two_Block_RBC_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
     root_and_min_agree_helper(model_3)
 
 
 def test_RBC_steady_state_matches_analytic():
     model_3 = load_and_cache_model(
-        "Two_Block_RBC_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
     param_dict = model_3.parameters().to_sympy()
 
@@ -330,11 +330,11 @@ def test_RBC_steady_state_matches_analytic():
 
 def test_numerical_solvers_succeed_and_agree_NK():
     model_4 = load_and_cache_model(
-        "Full_New_Keynesian_no_Steady_State.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
 
     # This model's SS can't be solved without some help, so we provide the "obvious" solutions
-    # This is almost equivalent to the Full_New_Keynesian_w_Partial_Steady_State.gcn, with a bit less info
+    # This is almost equivalent to the full_nk_partial_ss.gcn, with a bit less info
     # (No solution for mc_ss, r_G, and r)
     root_and_min_agree_helper(
         model_4,
@@ -354,7 +354,7 @@ def test_numerical_solvers_succeed_and_agree_NK():
 
 def test_steady_state_matches_analytic_NK():
     model_4 = load_and_cache_model(
-        "Full_New_Keynesian_no_Steady_State.gcn", backend="numpy", use_jax=JAX_INSTALLED
+        "full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
 
     param_dict = model_4.parameters().to_sympy()
