@@ -5,34 +5,9 @@ import sympy as sp
 from sympy.abc import greeks
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.utilities import make_all_var_time_combos
+from gEconpy.utilities import get_name, make_all_var_time_combos
 
 OPERATORS = list("+-/*^()=")
-
-
-def get_name(x: str | sp.Symbol) -> str:
-    """
-    Return the name of a string, TimeAwareSymbol, or sp.Symbol object.
-
-    Parameters
-    ----------
-    x : str, or sp.Symbol
-        The object whose name is to be returned. If str, x is directly returned.
-
-    Returns
-    -------
-    name: str
-        The name of the object.
-    """
-
-    if isinstance(x, str):
-        return x
-
-    elif isinstance(x, TimeAwareSymbol):
-        return x.safe_name
-
-    elif isinstance(x, sp.Symbol):
-        return x.name
 
 
 def build_hash_table(

@@ -186,24 +186,24 @@ class TestSymbolDictionary(unittest.TestCase):
         d_sp = d.float_to_values()
         values = list(d_sp.values())
         self.assertTrue(
-            all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values])
+            all([isinstance(x, sp.core.Number | ComplexElement) for x in values])
         )
 
         d_np = d_sp.values_to_float()
         values = list(d_np.values())
-        self.assertTrue(all([isinstance(x, (int, float, complex)) for x in values]))
+        self.assertTrue(all([isinstance(x, int | float | complex) for x in values]))
 
     def test_convert_values_inplace(self):
         d = self.d.copy()
         d.float_to_values(inplace=True)
         values = list(d.values())
         self.assertTrue(
-            all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values])
+            all([isinstance(x, sp.core.Number | ComplexElement) for x in values])
         )
 
         d.values_to_float(inplace=True)
         values = list(d.values())
-        self.assertTrue(all([isinstance(x, (int, float, complex)) for x in values]))
+        self.assertTrue(all([isinstance(x, int | float | complex) for x in values]))
 
     def test_not_inplace_update_is_not_persistent(self):
         d = self.d

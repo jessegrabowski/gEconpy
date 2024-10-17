@@ -11,12 +11,12 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.dynare_convert import (
     build_hash_table,
     convert_var_timings_to_matlab,
-    get_name,
     make_mod_file,
     make_var_to_matlab_sub_dict,
     substitute_equation_from_dict,
     write_lines_from_list,
 )
+from gEconpy.utilities import get_name
 
 ROOT = Path(__file__).parent.absolute()
 

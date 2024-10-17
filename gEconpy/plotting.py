@@ -1,5 +1,5 @@
 from itertools import combinations_with_replacement
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -485,9 +485,9 @@ def plot_eigenvalues(
     C: np.ndarray | None = None,
     D: np.ndarray | None = None,
     linearize_model_kwargs: dict | None = None,
-    fig: Optional[plt.Figure] = None,
-    figsize: Optional[tuple[float, float]] = None,
-    dpi: Optional[int] = None,
+    fig: plt.Figure | None = None,
+    figsize: tuple[float, float] | None = None,
+    dpi: int | None = None,
     plot_circle: bool = True,
     **parameter_updates,
 ):
@@ -738,7 +738,7 @@ def annotate_heatmap(
         the text labels.
     """
 
-    if not isinstance(data, (list, np.ndarray)):
+    if not isinstance(data, list | np.ndarray):
         data = im.get_array()
 
     # Normalize the threshold to the images color range.

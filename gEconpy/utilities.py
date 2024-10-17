@@ -112,7 +112,7 @@ def substitute_all_equations(eqs, *sub_dicts):
         for key in eqs:
             result[key] = (
                 eqs[key]
-                if isinstance(eqs[key], (int, float))
+                if isinstance(eqs[key], int | float)
                 else eqs[key].subs(sub_dict)
             )
         return result
@@ -175,7 +175,7 @@ def reduce_system_via_substitution(system, sub_dict):
 
 
 def merge_dictionaries(*dicts):
-    if not isinstance(dicts, (list, tuple)):
+    if not isinstance(dicts, list | tuple):
         return dicts
 
     result = {}
@@ -333,3 +333,28 @@ def postprocess_optimizer_res(
         _log.info(msg)
 
     return res_dict, success | numeric_success
+
+
+def get_name(x: str | sp.Symbol) -> str:
+    """
+    Return the name of a string, TimeAwareSymbol, or sp.Symbol object.
+
+    Parameters
+    ----------
+    x : str, or sp.Symbol
+        The object whose name is to be returned. If str, x is directly returned.
+
+    Returns
+    -------
+    name: str
+        The name of the object.
+    """
+
+    if isinstance(x, str):
+        return x
+
+    elif isinstance(x, TimeAwareSymbol):
+        return x.safe_name
+
+    elif isinstance(x, sp.Symbol):
+        return x.name

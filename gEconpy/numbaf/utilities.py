@@ -40,7 +40,7 @@ def _check_scipy_linalg_matrix(a, func_name):
     if not a.ndim == 2:
         msg = f"{prefix}.{func_name} only supported on 2-D arrays."
         raise TypingError(msg, highlighting=False)
-    if not isinstance(a.dtype, (types.Float, types.Complex)):
+    if not isinstance(a.dtype, types.Float | types.Complex):
         msg = f"{prefix}.{func_name} only supported on " "float and complex arrays."
         raise TypingError(msg, highlighting=False)
 
@@ -233,7 +233,7 @@ def numba_lambdify(
         # Need to make the float substitutions so that numba can correctly interpret everything, but we have to handle
         # several cases:
         # Case 1: expr is just a single Sympy thing
-        if isinstance(expr, (sp.Matrix, sp.Expr)):
+        if isinstance(expr, sp.Matrix | sp.Expr):
             expr = expr.subs(FLOAT_SUBS)
 
         # Case 2: expr is a list. Items in the list are either lists of expressions (systems of equations),
@@ -242,17 +242,17 @@ def numba_lambdify(
             new_expr = []
             for item in expr:
                 # Case 2a: It's a simple list of sympy things
-                if isinstance(item, (sp.Matrix, sp.Expr)):
+                if isinstance(item, sp.Matrix | sp.Expr):
                     new_expr.append(item.subs(FLOAT_SUBS))
                 # Case 2b: It's a system of equations, List[List[sp.Expr]]
                 elif isinstance(item, list):
-                    if all([isinstance(x, (sp.Matrix, sp.Expr)) for x in item]):
+                    if all([isinstance(x, sp.Matrix | sp.Expr) for x in item]):
                         new_expr.append([x.subs(FLOAT_SUBS) for x in item])
                     else:
                         raise ValueError("Unexpected input type for expr")
 
                 # Case 2c: It's a constant -- just pass it along unchanged.
-                elif isinstance(item, (int, float)):
+                elif isinstance(item, int | float):
                     new_expr.append(item)
                 else:
                     raise ValueError(f"Unexpected input type for expr: {expr}")
