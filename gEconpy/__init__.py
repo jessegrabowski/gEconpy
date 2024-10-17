@@ -2,6 +2,7 @@ import logging
 import sys
 
 from gEconpy import classes, numbaf, parser, plotting, solvers, utilities
+from gEconpy._version import get_versions
 from gEconpy.dynare_convert import make_mod_file
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 from gEconpy.model.model import (
@@ -23,7 +24,8 @@ if not logging.root.handlers:
         _log.addHandler(handler)
 
 
-__version__ = "2.0.0"
+__version__ = get_versions()["version"]
+
 __all__ = [
     "model_from_gcn",
     "statespace_from_gcn",

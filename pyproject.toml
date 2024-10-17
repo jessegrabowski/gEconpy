@@ -1,3 +1,92 @@
+[build-system]
+requires = ["setuptools", "versioneer[toml]"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "gEconpy"
+dynamic = ['version']
+requires-python = ">=3.10, <3.13"
+authors = [{name="Jesse Grabowski", email='jessegrabowski@gmail.com'}]
+description = "A package for solving, estimating, and analyzing DSGE models"
+readme = 'README.md'
+license = { file = 'LICENSE.txt'}
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python",
+  "Topic :: Scientific/Engineering",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX",
+  "Operating System :: Unix",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+keywords = [
+    "dynamic stochastic general equlibrium",
+    "economics",
+    "macroeconomics",
+    "numerical",
+    "simulation",
+    "autodiff",
+    "bayesian statistics"
+]
+
+
+dependencies = [
+    "matplotlib",
+    "numba",
+    "numpy",
+    "pandas",
+    "pymc",
+    "pyparsing",
+    "pytensor",
+    "scipy",
+    "setuptools",
+    "sympy<1.13",
+    "sympytensor",
+    "xarray",
+  ]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "versioneer",
+    "numdifftools"
+]
+
+docs = [
+  "ipython",
+  "jupyter-sphinx",
+  "myst-nb",
+  "numpydoc",
+  "pre-commit",
+  "sphinx>=5",
+  "sphinx-copybutton",
+  "sphinx-design",
+  "sphinx-notfound-page",
+  "sphinx-sitemap",
+  "sphinx-codeautolink",
+  "sphinxcontrib-bibtex",
+  "pydata-sphinx-theme",
+  "watermark",
+]
+
+
+[tool.versioneer]
+VCS = "git"
+style = "pep440"
+versionfile_source = "gEconpy/_version.py"
+versionfile_build = "gEconpy/_version.py"
+tag_prefix = 'v'
+
+
 [tool.pytest.ini_options]
 minversion = "6.0"
 xfail_strict=true
@@ -8,21 +97,6 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::RuntimeWarning"]
 env = ["NUMBA_DISABLE_JIT = 0"]
-
-[tool.bumpver]
-current_version = "1.2.1"
-version_pattern = "MAJOR.MINOR.PATCH"
-commit_message  = "Bump version {old_version} -> {new_version}"
-commit          = true
-tag             = true
-push            = false
-
-[tool.bumpver.file_patterns]
-"pyproject.toml" = ['current_version = "{version}"']
-"setup.cfg" = ['version = {version}']
-"gEconpy/__init__.py" = ["{version}"]
-"docs/source/conf.py" = ["release = {version}"]
-
 
 [tool.ruff.lint]
 select = ["D", "E", "F", "I", "UP", "W", "RUF"]
