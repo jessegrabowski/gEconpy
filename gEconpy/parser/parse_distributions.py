@@ -104,7 +104,7 @@ class CompositeDistribution:
         defined_params = {
             param: value
             for param, value in parameters.items()
-            if isinstance(value, (int, float))
+            if isinstance(value, int | float)
         }
 
         self.rv_params = {
@@ -1397,7 +1397,7 @@ def split_out_composite_distributions(
 def fetch_rv_params(param_dict, model):
     return_dict = {}
     for k, v in param_dict.items():
-        if isinstance(v, (float, int)):
+        if isinstance(v, float | int):
             return_dict[k] = v
         elif isinstance(v, str):
             return_dict[k] = model[v]

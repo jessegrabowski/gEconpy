@@ -79,7 +79,7 @@ def sympy_number_values_to_floats(d: dict[sp.Symbol, Any]):
 
 def float_values_to_sympy_float(d: dict[sp.Symbol, Any]):
     for var, value in d.items():
-        if isinstance(value, (float, int)):
+        if isinstance(value, float | int):
             d[var] = sp.Float(value)
         elif isinstance(value, complex):
             d[var] = sp.CC(value)
@@ -117,7 +117,7 @@ class SymbolDictionary(dict):
         self._is_variable: dict = {}
 
         keys = list(self.keys())
-        if any([not isinstance(x, (sp.Symbol, str)) for x in keys]):
+        if any([not isinstance(x, sp.Symbol | str) for x in keys]):
             raise KeyError("All keys should be either string or Sympy symbols")
 
         if len(keys) > 0:

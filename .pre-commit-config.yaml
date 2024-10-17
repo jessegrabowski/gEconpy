@@ -24,6 +24,9 @@ repos:
   hooks:
     - id: no-print-statements
       types: [python]
+      exclude: |
+        (?x)^
+        |gEconpy/_version.py
 
 - repo: https://github.com/MarcoGorelli/absolufy-imports
   rev: v0.3.1

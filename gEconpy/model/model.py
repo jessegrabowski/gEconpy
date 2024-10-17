@@ -1,9 +1,9 @@
 import functools as ft
 import logging
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from copy import deepcopy
-from typing import Callable, Literal, cast
+from typing import Literal, cast
 
 import numba as nb
 import numpy as np
@@ -35,7 +35,7 @@ from gEconpy.solvers.gensys import (
     interpret_gensys_output,
     solve_policy_function_with_gensys,
 )
-from gEconpy.utilities import postprocess_optimizer_res
+from gEconpy.utilities import get_name, postprocess_optimizer_res
 
 VariableType = sp.Symbol | TimeAwareSymbol
 _log = logging.getLogger(__name__)
@@ -744,10 +744,12 @@ class Model:
         if not_loglin_variables is None:
             not_loglin_variables = []
 
-        n_variables = len(self.variables)
+        vars_and_calibrated = self.variables + self.calibrated_params
+        n_variables = len(vars_and_calibrated)
         not_loglin_flags = np.zeros(n_variables)
-        for i, var in enumerate(self.variables):
-            not_loglin_flags[i] = var.base_name in not_loglin_variables
+
+        for i, var in enumerate(vars_and_calibrated):
+            not_loglin_flags[i] = get_name(var) in not_loglin_variables
 
         ss_values = np.array(list(steady_state_dict.values()))
         ss_zeros = np.abs(ss_values) < 1e-8
@@ -755,22 +757,22 @@ class Model:
 
         if np.any(ss_zeros):
             zero_idxs = np.flatnonzero(ss_zeros)
-            zero_vars = [self.variables[i] for i in zero_idxs]
+            zero_vars = [vars_and_calibrated[i] for i in zero_idxs]
             if verbose:
                 _log.warning(
                     f"The following variables had steady-state values close to zero and will not be log-linearized:"
-                    f"{[x.base_name for x in zero_vars]}"
+                    f"{[get_name(x) for x in zero_vars]}"
                 )
 
             not_loglin_flags[ss_zeros] = 1
 
         if np.any(ss_negative) and not loglin_negative_ss:
             neg_idxs = np.flatnonzero(ss_negative)
-            neg_vars = [self.variables[i] for i in neg_idxs]
+            neg_vars = [vars_and_calibrated[i] for i in neg_idxs]
             if verbose:
                 _log.warning(
                     f"The following variables had negative steady-state values and will not be log-linearized:"
-                    f"{[x.base_name for x in neg_vars]}"
+                    f"{[get_name(x) for x in neg_vars]}"
                 )
 
             not_loglin_flags[neg_idxs] = 1
@@ -1054,7 +1056,7 @@ def _validate_shock_options(
                 )
             if not np.all(shock_std > 0):
                 raise ValueError("Shock standard deviations must be positive")
-        elif isinstance(shock_std, (int, float)):
+        elif isinstance(shock_std, int | float):
             if shock_std < 0:
                 raise ValueError("Shock standard deviation must be positive")
 
@@ -1560,7 +1562,7 @@ def impulse_response_function(
             )
 
         else:
-            if isinstance(shock_size, (int, float)):
+            if isinstance(shock_size, int | float):
                 shock_size = np.ones(n_shocks) * shock_size
             if isinstance(shock_size, dict):
                 shock_dict = shock_size.copy()
@@ -1578,9 +1580,9 @@ def impulse_response_function(
             return {x.base_name: np.sqrt(Q[i, i]) for i, x in enumerate(shocks)}
         if isinstance(shock_size, dict):
             return shock_size
-        if isinstance(shock_size, (int, float)):
+        if isinstance(shock_size, int | float):
             return {x.base_name: shock_size for x in shocks}
-        if isinstance(shock_size, (np.ndarray, list)):
+        if isinstance(shock_size, np.ndarray | list):
             return {x.base_name: shock_size[i] for i, x in enumerate(shocks)}
 
     shock_dict = _make_shock_dict(model.shocks, shock_size, Q)

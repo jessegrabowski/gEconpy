@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import Optional
 
 import sympy as sp
 
@@ -270,7 +269,7 @@ class Block:
         return result, multipliers
 
     def _parse_variable_list(
-        self, block_dict: dict, key: str, assumptions: Optional[dict] = None
+        self, block_dict: dict, key: str, assumptions: dict | None = None
     ) -> list[sp.Symbol] | None:
         from gEconpy.parser import parse_equations
 
