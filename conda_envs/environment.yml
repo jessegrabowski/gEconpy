@@ -16,8 +16,9 @@ dependencies:
   - scipy
   - setuptools
   - statsmodels
-  - sympy
+  - sympy<1.13
 
   - pip:
       - sympytensor
       - gEconpy
+      - better_optimize

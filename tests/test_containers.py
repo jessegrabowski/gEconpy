@@ -1,6 +1,7 @@
 import unittest
 
 import sympy as sp
+
 from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -48,6 +49,13 @@ class TestSymbolDictionary(unittest.TestCase):
 
         self.d = SymbolDictionary({C: 1, A: -1, r: 2j, alpha: 0.3})
 
+    def test_is_variable(self):
+        assert list(self.d._is_variable.keys()) == ["C", "A", "r", "alpha"]
+        assert self.d._is_variable["C"]
+        assert self.d._is_variable["A"]
+        assert self.d._is_variable["r"]
+        assert not self.d._is_variable["alpha"]
+
     def test_convert_to_string(self):
         d = self.d.to_string()
         self.assertEqual(list(d.keys()), ["C_t", "A_tp1", "r_tm1", "alpha"])
@@ -62,6 +70,24 @@ class TestSymbolDictionary(unittest.TestCase):
         d = SymbolDictionary(dict(a=2, b=3)).to_sympy()
         self.assertEqual(list(d.keys()), [sp.Symbol("a"), sp.Symbol("b")])
         self.assertTrue(d.is_sympy)
+
+    def test_ambiguous_new_key(self):
+        # Test that when we add something in string mode, it gets "duck typed"
+        d = self.d.to_string()
+        d["F_ss"] = 3
+
+        d.to_sympy(inplace=True)
+        F_ss = TimeAwareSymbol("F", "ss")
+        assert F_ss in d.keys()
+
+        # But when we add in symbol mode, the original type (Symbol vs TimeAwareSymbol) is preserved
+        d = self.d.copy()
+        F_ss2 = sp.Symbol("F_ss")
+        d[F_ss2] = 3
+        d.to_string(inplace=True)
+        assert "F_ss" in d.keys()
+        d.to_sympy(inplace=True)
+        assert F_ss2 in d.keys()
 
     def test_copy(self):
         d_copy = self.d.copy()
@@ -91,7 +117,11 @@ class TestSymbolDictionary(unittest.TestCase):
         new_d.sort_keys(inplace=True)
 
         self.assertEqual(list(new_d.keys()), [self.A, self.C, F, self.alpha, self.r])
-        self.assertEqual(self.d._assumptions, d1._assumptions | d2._assumptions)
+        self.assertEqual(
+            self.d._assumptions,
+            d1._assumptions | d2._assumptions,
+            d1._is_variable | d2._is_variable,
+        )
 
     def test_step_forward(self):
         d_tp1 = self.d.step_forward().to_string()
@@ -156,24 +186,24 @@ class TestSymbolDictionary(unittest.TestCase):
         d_sp = d.float_to_values()
         values = list(d_sp.values())
         self.assertTrue(
-            all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values])
+            all([isinstance(x, sp.core.Number | ComplexElement) for x in values])
         )
 
         d_np = d_sp.values_to_float()
         values = list(d_np.values())
-        self.assertTrue(all([isinstance(x, (int, float, complex)) for x in values]))
+        self.assertTrue(all([isinstance(x, int | float | complex) for x in values]))
 
     def test_convert_values_inplace(self):
         d = self.d.copy()
         d.float_to_values(inplace=True)
         values = list(d.values())
         self.assertTrue(
-            all([isinstance(x, (sp.core.Number, ComplexElement)) for x in values])
+            all([isinstance(x, sp.core.Number | ComplexElement) for x in values])
         )
 
         d.values_to_float(inplace=True)
         values = list(d.values())
-        self.assertTrue(all([isinstance(x, (int, float, complex)) for x in values]))
+        self.assertTrue(all([isinstance(x, int | float | complex) for x in values]))
 
     def test_not_inplace_update_is_not_persistent(self):
         d = self.d

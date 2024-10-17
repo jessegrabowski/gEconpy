@@ -1,9 +1,10 @@
 import unittest
+
 from functools import partial
 
 import numpy as np
 
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     IgnoredCloseMatchWarning,
     MultipleParameterDefinitionException,
     UnusedParameterWarning,

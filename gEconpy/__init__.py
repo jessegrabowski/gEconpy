@@ -1,26 +1,47 @@
-from gEconpy import (
-    classes,
-    estimation,
-    parser,
-    plotting,
-    sampling,
-    shared,
-    solvers,
-)
-from gEconpy.classes import gEconModel
-from gEconpy.shared import compile_to_statsmodels, make_mod_file
+import logging
+import sys
 
-__version__ = "1.2.1"
+from gEconpy import classes, numbaf, parser, plotting, solvers, utilities
+from gEconpy._version import get_versions
+from gEconpy.dynare_convert import make_mod_file
+from gEconpy.model.build import model_from_gcn, statespace_from_gcn
+from gEconpy.model.model import (
+    autocorrelation_matrix,
+    autocovariance_matrix,
+    bk_condition,
+    impulse_response_function,
+    simulate,
+    stationary_covariance_matrix,
+    summarize_perturbation_solution,
+)
+
+_log = logging.getLogger(__name__)
+
+if not logging.root.handlers:
+    _log.setLevel(logging.INFO)
+    if len(_log.handlers) == 0:
+        handler = logging.StreamHandler(sys.stderr)
+        _log.addHandler(handler)
+
+
+__version__ = get_versions()["version"]
+
 __all__ = [
-    "gEconModel",
+    "model_from_gcn",
+    "statespace_from_gcn",
+    "simulate",
+    "impulse_response_function",
+    "summarize_perturbation_solution",
+    "stationary_covariance_matrix",
+    "autocovariance_matrix",
+    "autocorrelation_matrix",
+    "bk_condition",
     "classes",
-    "estimation",
     "exceptions",
     "parser",
     "plotting",
-    "sampling",
-    "shared",
+    "utilities",
     "solvers",
     "make_mod_file",
-    "compile_to_statsmodels",
+    "numbaf",
 ]

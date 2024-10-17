@@ -1,0 +1,103 @@
+block STEADY_STATE
+{
+    identities
+    {
+        A[ss] = 1;
+		IIP[ss] = IIPbar;
+        r[ss] = rstar;
+		r_given[ss] = r[ss];
+        KtoN[ss] = (alpha/(r[ss]+delta))^(1/(1-alpha));
+        N[ss] = ((1-alpha)*(KtoN[ss])^alpha)^(1/(omega-1));
+        K[ss] = KtoN[ss]*N[ss];
+        Y[ss] = A[ss] * K[ss] ^ alpha * N[ss] ^ (1 - alpha);
+        I[ss] = delta * K[ss];
+		C[ss] = r[ss]*IIP[ss]+Y[ss]-I[ss];
+        u[ss] = 1/(1-gamma)*((C[ss]-1/omega*N[ss]^omega)^(1-gamma)-1);
+        U[ss] = 1 / (1 - beta) * u[ss];
+        Cadjcost[ss] = 0;
+        TB[ss] = Y[ss] - C[ss] - I[ss] - Cadjcost[ss];
+        TBtoY[ss] = TB[ss] / Y[ss];
+		CA[ss] = TB[ss] + r[ss]*IIP[ss];
+		lambda[ss] = (C[ss] - N[ss] ^ omega / omega) ^ (-gamma);
+    };
+};
+
+
+block HOUSEHOLD
+{
+	definitions
+	{
+		u[] = 1/(1-gamma)*((C[] - 1 / omega * N[] ^ omega) ^ (1 - gamma) - 1);
+		I[] = K[] - (1 - delta) * K[-1];
+		Cadjcost[] = psi/2*(K[] - K[-1])^2;
+		Y[] = A[] * K[-1] ^ alpha * N[] ^ (1 - alpha);
+	};
+
+	controls
+	{
+		C[], N[], K[], IIP[];
+	};
+
+	objective
+	{
+		U[] = u[] + beta * E[][U[1]];
+	};
+
+	constraints
+	{
+		C[] + I[] + Cadjcost[] + IIP[] = Y[] + (1+r_given[-1])*IIP[-1] : lambda[];
+	};
+
+	identities
+	{
+		TB[] = Y[] - C[] - I[] - Cadjcost[];
+		KtoN[] = K[] / N[];
+		TBtoY[] = TB[] / Y[];
+		CA[] = TB[] + r[-1]*IIP[-1];
+		r[] = rstar + psi2*(exp(IIPbar-IIP[])-1);
+		r_given[] = r[];
+	};
+
+	calibration
+	{
+		beta = 0.990099;
+		delta = 0.025;
+        gamma = 2;
+        omega = 1.455;
+        psi2 = 0.000742;
+        psi = 0.028;
+        alpha = 0.32;
+        rstar = 1 - 1 / beta;
+		IIPbar = 0;
+		extra_param = 123;
+	};
+};
+
+
+block TECHNOLOGY_SHOCKS
+{
+    identities
+    {
+        log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+    };
+
+	calibration
+	{
+		rho_A = 0.42;
+		sigma_epsilon_A = 0.01;
+	};
+
+    shocks
+    {
+        epsilon_A[];
+    };
+};
+
+block EQULIBRIUM
+{
+	identities
+	{
+		I[] = K[] - (1 - delta) * K[-1];
+		Y[] = A[] * K[-1] ^ alpha * N[] ^ (1 - alpha);
+	};
+};

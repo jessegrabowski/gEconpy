@@ -8,16 +8,16 @@ import base64
 import json
 import os
 import shutil
+
 from glob import glob
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import sphinx
 
 from matplotlib import image
-
-import sphinx
 
 logger = sphinx.util.logging.getLogger(__name__)
 
@@ -112,7 +112,6 @@ class NotebookGenerator:
     def gen_previews(self):
         preview = self.extract_preview_pic()
         if preview is not None:
-            print(self.png_path)
             with open(self.png_path, "wb") as buff:
                 buff.write(preview)
         else:

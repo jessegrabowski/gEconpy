@@ -1,13 +1,15 @@
 import re
+
 from collections import defaultdict
+from typing import Literal, cast
 
 import pyparsing as pp
+
 from sympy.core.assumptions import _assume_rules
 
-from gEconpy.exceptions.exceptions import GCNSyntaxError
+from gEconpy.exceptions import GCNSyntaxError
 from gEconpy.parser.constants import (
     DEFAULT_ASSUMPTIONS,
-    SPECIAL_BLOCK_NAMES,
     SYMPY_ASSUMPTIONS,
 )
 from gEconpy.parser.parse_equations import rebuild_eqs_from_parser_output
@@ -24,7 +26,15 @@ from gEconpy.parser.validation import (
     find_typos_and_guesses,
     validate_key,
 )
-from gEconpy.shared.utilities import flatten_list
+from gEconpy.utilities import flatten_list
+
+SPECIAL_BLOCK = Literal["tryreduce", "assumptions", "options"]
+ASSUMPTION_DICT = dict[str, dict[str, bool]]
+SPECIAL_BLOCK_DEFAULT = {
+    "tryreduce": [],
+    "assumptions": defaultdict(lambda: DEFAULT_ASSUMPTIONS),
+    "options": {},
+}
 
 
 def block_to_clean_list(block: str) -> list[str]:
@@ -38,7 +48,7 @@ def block_to_clean_list(block: str) -> list[str]:
 
     Returns
     -------
-    List[str]
+    block: list of str
         The processed list of strings.
     """
 
@@ -56,12 +66,12 @@ def extract_assumption_sub_blocks(block_str) -> dict[str, list[str]]:
 
     Parameters
     ----------
-    block : List[str]
+    block: list of str
         The block of text to process.
 
     Returns
     -------
-    Dict[str, List[str]]
+    assumptions, dict
         A dictionary containing assumptions and variables, with the assumption names as keys and associated variables
         as values.
     """
@@ -126,13 +136,13 @@ def create_assumption_kwargs(
 
     Parameters
     ----------
-    assumption_dicts : Dict[str, List[str]]
+    assumption_dicts: dict
         A dictionary containing assumptions and variables, with the assumption names as keys and associated variables
         as values.
 
     Returns
     -------
-    Dict[str, Dict[str, bool]]
+    assumptions: dict
         A dictionary of flags and values keyed by variable names.
     """
 
@@ -180,8 +190,11 @@ def preprocess_gcn(gcn_raw: str) -> tuple[str, dict[str, str]]:
 
     Returns
     -------
-    Tuple[str, Dict[str, str]]
-        Model file with basic preprocessing and prior distributions, respectively.
+    gcn_processed: str
+        Model file with basic preprocessing applied
+
+    prior_dict: dict
+        Dictionary of variables and associated prior distributions
     """
 
     gcn_processed = remove_comments(gcn_raw)
@@ -203,7 +216,7 @@ def parse_options_flags(options: str) -> dict[str, bool] | None:
 
     Returns
     -------
-    Optional[Dict[str, bool]]
+    Optional[dict[str, bool]]
         A dictionary of flags and values if they exist, or None if no options were found.
 
     Notes
@@ -258,13 +271,13 @@ def extract_special_block(text: str, block_name: str) -> dict[str, list[str]]:
     }
 
     if block_name not in text:
-        return result
+        return result[block_name]
 
     block = re.search(block_name + " {.*?" + "};", text)[0]
     block = block.replace(block_name, "")
 
     if block_is_empty(block):
-        return result
+        return result[block_name]
 
     elif block_name == "options":
         block = parse_options_flags(block)
@@ -277,14 +290,50 @@ def extract_special_block(text: str, block_name: str) -> dict[str, list[str]]:
         validate_assumptions(block)
         block = create_assumption_kwargs(block)
 
-    result[block_name] = block
-
-    return result
+    return block
 
 
-def split_gcn_into_block_dictionary(text: str) -> dict[str, str]:
+def process_special_block_text(
+    text: str, name: SPECIAL_BLOCK
+) -> tuple[str, dict | list]:
     """
-    Split the preprocessed GCN text by block and stores the results in a dictionary.
+    Extract special blocks from a preprocessed GCN text string. Modifies the GCN text string in-place by deleting
+    the special block.
+
+    Parameters
+    ----------
+    text: str
+        Preprocessed GCN string
+    name: str
+        Name of special block. One of "tryreduce", "assumptions", "options"
+
+    Returns
+    -------
+    text: str
+        Preprocessed GCN file, with special block text removed
+
+    result: list or dict
+        Special block data. "tryreduce" returns a list, otherwise a dictionary
+    """
+    name = name.lower()
+    result = extract_special_block(text, name)
+    text = delete_block(text, name)
+
+    if result is None:
+        result = SPECIAL_BLOCK_DEFAULT[name]
+
+    return text, result
+
+
+def split_gcn_into_dictionaries(
+    text: str,
+) -> tuple[dict[str, str], dict[str, str], list[str], ASSUMPTION_DICT]:
+    """
+    Split the preprocessed GCN text by blocks.
+
+    Currently there are three special blocks: "options", "tryreduce", and "assumptions". These are extracted from
+    the text and removed from the main text block. The remaining blocks are organized into a dictionary with the
+    block name as the key and the (raw) block text as the value.
 
     Parameters
     ----------
@@ -294,31 +343,41 @@ def split_gcn_into_block_dictionary(text: str) -> dict[str, str]:
 
     Returns
     -------
-    Dict[str, str]
+    block_dict: dict[str, str]
         A "block dictionary" with key, value pairs of block_name:block_text. Special blocks are processed first
         (currently "options" and "tryreduce"), then deleted. Normal model blocks are assumed to follow a standard format
         of block NAME { component_1 { Equations }; component_2 { ... }; };
 
-    TODO: Add checks that model blocks follow the correct format and fail more helpfully.
+    options: dict[str, str]
+        A dictionary of flags and values from the "options" block.
+
+    tryreduce: list[str]
+        A list of variables to attempt to reduce.
+
+    assumptions: dict[str, dict[str, bool]]
+        Dictionary of assumption flags for each variable in the model. Keys are variable names, values are dictionaries
+        of assumption flags and values. If no assumptions are provided, the default assumptions are used. For more
+        details, see the Sympy documentation.
     """
-    results = dict()
 
-    for name in SPECIAL_BLOCK_NAMES:
-        name = name.lower()
-        result = extract_special_block(text, name)
-        results.update(result)
-        text = delete_block(text, name)
+    # TODO: Add checks that model blocks follow the correct format and fail more helpfully.
 
-    if "assumptions" not in results:
-        results["assumptions"] = defaultdict(lambda x: DEFAULT_ASSUMPTIONS)
+    block_dict = dict()
+    text, tryreduce = process_special_block_text(text, "tryreduce")
+    text, options = process_special_block_text(text, "options")
+    text, assumptions = process_special_block_text(text, "assumptions")
+
+    assumptions = cast(ASSUMPTION_DICT, assumptions)
+    tryreduce = cast(list[str], tryreduce)
+    options = cast(dict[str, str], options)
 
     gcn_blocks = [block for block in text.split("block") if len(block) > 0]
     for block in gcn_blocks:
         tokens = block.strip().split()
-        name = tokens[0]
-        results[name] = " ".join(tokens[1:])
+        name = tokens.pop(0)
+        block_dict[name] = " ".join(tokens)
 
-    return results
+    return block_dict, options, tryreduce, assumptions
 
 
 def parsed_block_to_dict(block: str) -> dict[str, list[list[str]]]:
@@ -332,18 +391,22 @@ def parsed_block_to_dict(block: str) -> dict[str, list[list[str]]]:
 
     Returns
     -------
-    Dict[str, List[List[str]]]
-        A defaultdict of lists, containing lists of equation tokens. Keys are the block components found
+    block_dict: dict[str, list[list[str]]]
+        A dict of lists, containing lists of equation tokens. Keys are the block components found
         in the block string. Equations are represented as lists of tokens, while sub-blocks are lists of equation lists.
 
-    Example:
+    Example
+    -------
+
+    .. code::python
+
     >> Input: {definition { u[] = log ( C[] ) + log( L[] ); }; objective { U[] = u[] + beta * E[][U[1]] ;} };
     >> Output: dict("definition" = ["u[]", "=", "log", "(", "C[]", ")", "+", "log", "(", "L[]", ")", ";"],
                     "objective" = ["U[]", "=", "u[]", "+", "beta", "*", "E[][U[1]]", ";"])
     """
     block_dict = defaultdict(list)
-    parsed_block = pp.nestedExpr("{", "};").parseString(block).asList()[0]
-    current_key = parsed_block[0]
+    parsed_block = next(iter(pp.nestedExpr("{", "};").parseString(block).asList()))
+    current_key = parsed_block.pop(0)
 
     if isinstance(current_key, list):
         # block[0] is an equation, should not be possible
@@ -351,7 +414,7 @@ def parsed_block_to_dict(block: str) -> dict[str, list[list[str]]]:
 
     validate_key(key=current_key, block_name=block)
 
-    for element in parsed_block[1:]:
+    for element in parsed_block:
         if isinstance(element, str):
             current_key = element
             validate_key(key=current_key, block_name=block)

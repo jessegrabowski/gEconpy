@@ -1,3 +1,19 @@
+block STEADY_STATE
+{
+    identities
+    {
+		A[ss] = 1;
+		R[ss] = (1 / beta - (1 - delta));
+		W[ss] = (1 - alpha) ^ (1 / (1 - alpha)) * (alpha / R[ss]) ^ (alpha / (1 - alpha));
+		Y[ss] = (R[ss] / (R[ss] - delta * alpha)) ^ (sigma / (sigma + phi)) *
+			   ((1 - alpha) ^ (-phi) * (W[ss]) ^ (1 + phi)) ^ (1 / (sigma + phi));
+		K[ss] = alpha * Y[ss] / R[ss];
+		I[ss] = delta * K[ss];
+		C[ss] = Y[ss] - I[ss];
+		L[ss] = (1 - alpha) * Y[ss] / W[ss];
+    };
+};
+
 block SYSTEM_EQUATIONS
 {
 	identities
@@ -6,7 +22,7 @@ block SYSTEM_EQUATIONS
 		W[] = sigma * C[] + phi * L[];
 
 		#2. Euler Equation
-		sigma / beta * (E[][C[1]] - C[]) = R_ss * E[][R[1]];
+		sigma / beta * (E[][C[1]] - C[]) = R[ss] * E[][R[1]];
 
 		#3. Law of motion of capital -- Timings have been changed to cause Gensys to fail
 		K[] = (1 - delta) * K[] + delta * I[];
@@ -21,7 +37,7 @@ block SYSTEM_EQUATIONS
 		W[] = Y[] - L[];
 
 		#7. Equlibrium Condition
-		Y_ss * Y[] = C_ss * C[] + I_ss * I[];
+		Y[ss] * Y[] = C[ss] * C[] + I[ss] * I[];
 
 		#8. Productivity Shock
 		A[] = rho_A * A[-1] + epsilon_A[];
@@ -41,16 +57,6 @@ block SYSTEM_EQUATIONS
 		beta = 0.985;
 		delta = 0.025;
 		rho_A = 0.95;
-
-		#P_ss = 1;
-		R_ss = (1 / beta - (1 - delta));
-		W_ss = (1 - alpha) ^ (1 / (1 - alpha)) * (alpha / R_ss) ^ (alpha / (1 - alpha));
-		Y_ss = (R_ss / (R_ss - delta * alpha)) ^ (sigma / (sigma + phi)) *
-			   ((1 - alpha) ^ (-phi) * (W_ss) ^ (1 + phi)) ^ (1 / (sigma + phi));
-		K_ss = alpha * Y_ss / R_ss;
-		I_ss = delta * K_ss;
-		C_ss = Y_ss - I_ss;
-		L_ss = (1 - alpha) * Y_ss / W_ss;
 	};
 
 };

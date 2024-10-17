@@ -1,4 +1,4 @@
-from gEconpy.exceptions.exceptions import InvalidComponentNameException
+from gEconpy.exceptions import InvalidComponentNameException
 from gEconpy.parser.constants import BLOCK_COMPONENTS
 
 

@@ -1,6 +1,7 @@
 import re
 
 import sympy as sp
+
 from sympy.abc import _clash1, _clash2
 
 LOCAL_DICT = {}

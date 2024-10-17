@@ -1,21 +1,22 @@
 import os
 import unittest
+
 from pathlib import Path
 
 import numpy as np
 import sympy as sp
 
-from gEconpy import gEconModel
+from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.dynare_convert import (
+from gEconpy.dynare_convert import (
     build_hash_table,
     convert_var_timings_to_matlab,
-    get_name,
     make_mod_file,
     make_var_to_matlab_sub_dict,
     substitute_equation_from_dict,
     write_lines_from_list,
 )
+from gEconpy.utilities import get_name
 
 ROOT = Path(__file__).parent.absolute()
 
@@ -95,13 +96,8 @@ class TestDynareConvert(unittest.TestCase):
         self.assertTrue(all([len(x.strip()) <= 51 for x in file_lines]))
 
     def test_make_mod_file(self):
-        file_path = os.path.join(
-            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
-        )
-        model = gEconModel(file_path, verbose=False)
-        model.steady_state(verbose=False)
-        model.solve_model(verbose=False)
-
+        file_path = os.path.join(ROOT, "Test GCNs/one_block_1_dist.gcn")
+        model = model_from_gcn(file_path, verbose=False)
         mod_file = make_mod_file(model)
         self.assertTrue(isinstance(mod_file, str))
 

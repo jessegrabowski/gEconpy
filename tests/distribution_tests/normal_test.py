@@ -1,10 +1,12 @@
 import unittest
+
 from functools import partial
 
 import numpy as np
+
 from scipy.stats import truncnorm
 
-from gEconpy.exceptions.exceptions import (
+from gEconpy.exceptions import (
     IgnoredCloseMatchWarning,
     MultipleParameterDefinitionException,
     UnusedParameterWarning,

@@ -1,4 +1,5 @@
 import re
+
 from collections import defaultdict
 
 import sympy as sp
@@ -185,12 +186,12 @@ def convert_to_python_operator(token: str) -> str:
         A string representing a mathematical operation.
 
     Returns
-    ---------
+    -------
     str
         A string representing the same operation in python syntax.
 
     Notes
-    ----------
+    -----
     The syntax of a gEcon GCN file is slightly different from what SymPy expects, this function resolves the
     differences. In particular:
         1. Exponents are marked with a caret "^" in the GCN file, and must be converted to python's **
@@ -308,7 +309,7 @@ def single_symbol_to_sympy(
     ----------
     variable : str
         A gEcon variable or parameter.
-    assumptions : Optional[Dict]
+    assumptions : dict, optional
         Assumptions for the symbol.
 
     Returns
@@ -405,9 +406,9 @@ def build_sympy_equations(
         try:
             eq_sympy = sp.parse_expr(eq_str, evaluate=False, local_dict=sub_dict)
         except Exception as e:
-            print(f"Error encountered while parsing {eq_str}")
-            print(e)
-            raise e
+            raise ValueError(
+                f"Error encountered the following error while parsing: {eq_str}\n"
+            ) from e
 
         eq_sympy = sp.Eq(*eq_sympy)
         flags["is_calibrating"] = calibrating_parameter is not None

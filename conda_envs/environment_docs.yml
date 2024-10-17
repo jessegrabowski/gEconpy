@@ -7,7 +7,6 @@ dependencies:
   - pip
   - pymc
   - pytensor
-  - emcee
   - joblib
   - matplotlib
   - numba
@@ -17,7 +16,7 @@ dependencies:
   - scipy
   - setuptools
   - statsmodels
-  - sympy
+  - sympy<1.13
 
   # Extra dependencies for docs build
   - ipython

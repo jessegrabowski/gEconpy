@@ -21,8 +21,6 @@ coverage:
 
 ignore:
   - "gEconpy/tests/*"
-  - "gEconpy/examples/*"
-  - "gEconpy/GCN FIles/*"
 
 comment:
   layout: "reach, diff, flags, files"
