@@ -20,6 +20,7 @@ from gEconpy.exceptions import (
     GensysFailedException,
     ModelUnknownParameterError,
     PerturbationSolutionNotFoundException,
+    SteadyStateNotFoundError,
 )
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.perturbation import (
@@ -458,13 +459,43 @@ class Model:
 
         if fixed_values is None:
             f_ss = self.f_ss
+
         else:
+
+            def to_ss(x):
+                if isinstance(x, TimeAwareSymbol):
+                    return x.to_ss()
+                return x
+
+            def _var_name_in_list(var, list_to_check):
+                # User can just pass the base name ("x") or with the steady-state suffix ("x_ss")
+                return (
+                    get_name(var) in list_to_check or to_ss(var).name in list_to_check
+                )
+
             fixed_vars = [
-                x for x in self.variables if x.to_ss().name in fixed_values.keys()
+                x
+                for x in self.variables + self.calibrated_params
+                if _var_name_in_list(x, fixed_values.keys())
             ]
+            fixed_var_names = [get_name(x) for x in fixed_vars]
+
+            extra_vars = [
+                x
+                for x in fixed_values.keys()
+                if not _var_name_in_list(x, fixed_var_names)
+            ]
+
+            if len(extra_vars) > 0:
+                raise ValueError(
+                    f"The following variables or calibrated parameters were given fixed steady state values but are "
+                    f"unknown to the model: {', '.join(extra_vars)}"
+                )
+
             fixed_dict = SymbolDictionary(
-                {x.to_ss(): fixed_values[x.to_ss().name] for x in fixed_vars}
+                {to_ss(x): fixed_values[to_ss(x).name] for x in fixed_vars}
             ).to_string()
+
             f_ss = add_more_ss_values_wrapper(self.f_ss, fixed_dict)
 
         # This logic could be made a lot of complex by looking into solver-specific arguments passed via
@@ -789,6 +820,7 @@ class Model:
         not_loglin_variables: list[str] | None = None,
         order: Literal[1] = 1,
         loglin_negative_ss: bool = False,
+        steady_state: dict | None = None,
         steady_state_kwargs: dict | None = None,
         tol: float = 1e-8,
         max_iter: int = 1000,
@@ -807,9 +839,15 @@ class Model:
             Following Dynare, cycle_reduction is the default, but note that gEcon uses gensys.
         not_loglin_variables: list of strings, optional
             Variables to not log linearize when solving the model. Variables with steady state values close to zero
-            will be automatically selected to not log linearize.
+            (or negative) will be automatically selected to not log linearize.
         order: int, default: 1
             Order of taylor expansion to use to solve the model. Currently only 1st order approximation is supported.
+        steady_state: dict, optional
+            Dictionary of steady-state solutions. If not provided, the steady state will be solved for using the
+            ``steady_state`` method.
+        steady_state_kwargs: dict, optional
+            Keyword arguments passed to the `steady_state` method. Ignored if a steady-state solution is provided
+            via the steady_state argument, Default is None.
         loglin_negative_ss: bool, default is False
             Whether to force log-linearization of variable with negative steady-state. This is impossible in principle
             (how can :math:`exp(x_ss)` be negative?), but can still be done; see the docstring for
@@ -823,8 +861,6 @@ class Model:
         on_failure: str, one of ['error', 'ignore'], default: 'error'
             Instructions on what to do if the algorithm to find a linearized policy matrix. "Error" will raise an error,
             while "ignore" will return None. "ignore" is useful when repeatedly solving the model, e.g. when sampling.
-        steady_state_kwargs: dict, optional
-            Keyword arguments passed to the `steady_state` method. Default is None.
         parameter_updates: dict
             New parameter values at which to solve the model. Unspecified values will be taken from the initial values
             set in the GCN file.
@@ -846,8 +882,8 @@ class Model:
         if steady_state_kwargs is None:
             steady_state_kwargs = {}
 
-        ss_dict, success = self.steady_state(
-            **self.parameters(**parameter_updates), **steady_state_kwargs
+        ss_dict, success = _maybe_solve_steady_state(
+            self, steady_state, steady_state_kwargs, parameter_updates
         )
         n_variables = len(self.variables)
 
@@ -911,6 +947,29 @@ class Model:
             check_perturbation_solution(A, B, C, D, T, R, tol=tol)
 
         return np.ascontiguousarray(T), np.ascontiguousarray(R)
+
+
+def _maybe_solve_steady_state(
+    model: Model,
+    steady_state: dict | None,
+    steady_state_kwargs: dict | None,
+    parameter_updates: dict | None,
+):
+    if steady_state is None:
+        return model.steady_state(
+            **model.parameters(**parameter_updates), **steady_state_kwargs
+        )
+
+    ss_resid = model.f_ss_resid(**steady_state, **model.parameters(**parameter_updates))
+    unsatisfied_flags = np.abs(ss_resid) > 1e-8
+    unsatisfied_eqs = [
+        f"Equation {i}" for i, flag in enumerate(unsatisfied_flags) if flag
+    ]
+
+    if np.any(unsatisfied_flags):
+        raise SteadyStateNotFoundError(unsatisfied_eqs)
+
+    return steady_state, True
 
 
 def _maybe_linearize_model(
