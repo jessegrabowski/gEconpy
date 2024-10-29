@@ -358,3 +358,56 @@ def get_name(x: str | sp.Symbol) -> str:
 
     elif isinstance(x, sp.Symbol):
         return x.name
+
+
+def substitute_repeatedly(
+    expr: sp.Expr, sub_dict: dict[sp.Expr, sp.Expr], max_subs: int = 10
+) -> sp.Expr:
+    """
+    Repeatedly call ``expr = expr.sub(sub_dict)``. Useful when substitutions in ``sub_dict`` themselves require
+    substitution.
+
+    Parameters
+    ----------
+    expr: sp.Expr
+        Expression to substitute into
+    sub_dict: dict of sp.Expr, sp.Expr
+        Dictionary of substitutions
+    max_subs: int
+        Maximum number of substitutions to make. If the number of substitutions exceeds this number, the function
+        will return the expression as is.
+
+    Returns
+    -------
+    substituted_expr: sp.Expr
+        The expression with all substitutions made.
+    """
+    for i in range(max_subs):
+        new_expr = expr.subs(sub_dict)
+        if not any([new_expr.has(x) for x in sub_dict.keys()]):
+            return new_expr
+        expr = new_expr
+
+    return expr
+
+
+def simplify_matrix(A: sp.MutableMatrix):
+    """
+    Call ``sp.simplify`` on all cells of a matrix.
+
+    Parameters
+    ----------
+    A: sp.MutableMatrix
+        Matrix to simplify
+
+    Returns
+    -------
+    A: sp.MutableMatrix
+        Simplified matrix
+    """
+
+    for i in range(A.rows):
+        for j in range(A.cols):
+            A[i, j] = sp.simplify(A[i, j])
+
+    return A

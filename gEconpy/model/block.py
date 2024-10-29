@@ -15,6 +15,7 @@ from gEconpy.utilities import (
     diff_through_time,
     expand_subs_for_all_times,
     set_equality_equals_zero,
+    substitute_repeatedly,
     unpack_keys_and_values,
 )
 
@@ -335,7 +336,7 @@ class Block:
             eq for eqs_list in [objective, constraints, identities] for eq in eqs_list
         ]
         for eq in all_equations:
-            eq = eq.subs(sub_dict)
+            eq = substitute_repeatedly(eq, sub_dict)
             atoms = eq.atoms()
             variables = [x for x in atoms if isinstance(x, TimeAwareSymbol)]
             for variable in variables:

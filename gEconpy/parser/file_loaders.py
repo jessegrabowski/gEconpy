@@ -25,7 +25,7 @@ from gEconpy.parser.gEcon_parser import (
 )
 from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary
 from gEconpy.parser.parse_equations import single_symbol_to_sympy
-from gEconpy.utilities import unpack_keys_and_values
+from gEconpy.utilities import substitute_repeatedly, unpack_keys_and_values
 
 PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
 _log = logging.getLogger(__name__)
@@ -98,12 +98,12 @@ def get_provided_ss_equations(
     if block.identities is not None:
         _, identities = unpack_keys_and_values(block.identities)
         for eq in identities:
-            subbed_rhs = eq.rhs.subs(sub_dict)
+            subbed_rhs = substitute_repeatedly(eq.rhs, sub_dict)
             steady_state_dict[eq.lhs] = subbed_rhs
             sub_dict[eq.lhs] = subbed_rhs
 
     for k, eq in steady_state_dict.items():
-        steady_state_dict[k] = eq.subs(steady_state_dict)
+        steady_state_dict[k] = substitute_repeatedly(eq, steady_state_dict)
 
     provided_ss_equations = steady_state_dict.sort_keys().to_string().values_to_float()
 
@@ -131,7 +131,7 @@ def simplify_provided_ss_equations(
     for var, eq in simplified_ss_dict.items():
         if not hasattr(eq, "subs"):
             continue
-        simplified_ss_dict[var] = eq.subs(extra_equations)
+        simplified_ss_dict[var] = substitute_repeatedly(eq, extra_equations)
 
     return simplified_ss_dict
 
