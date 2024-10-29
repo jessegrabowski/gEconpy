@@ -323,8 +323,12 @@ def single_symbol_to_sympy(
     if "[" not in variable and "]" not in variable:
         return sp.Symbol(variable, **assumptions[variable])
 
-    variable_name, time_part = variable.split("[")
-    time_part = time_part.replace("]", "")
+    try:
+        variable_name, time_part = variable.split("[")
+        time_part = time_part.replace("]", "")
+    except Exception as e:
+        raise ValueError(f"Error encountered while parsing: {variable}") from e
+
     if time_part == "ss":
         return TimeAwareSymbol(variable_name, 0).to_ss()
     else:

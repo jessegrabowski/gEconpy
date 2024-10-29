@@ -597,22 +597,26 @@ def interpret_gensys_output(eu):
         A message describing the existence and uniqueness of the solution based on the values in `eu`.
     """
 
-    message = ""
+    message = (
+        f"Gensys return codes: {' '.join(map(str, eu))}, with the following meaning:\n"
+    )
     if eu[0] == -2 and eu[1] == -2:
-        message = "Coincident zeros.  Indeterminacy and/or nonexistence. Check that your system is correctly defined."
+        message += "Coincident zeros.  Indeterminacy and/or nonexistence. Check that your system is correctly defined."
     elif eu[0] == -1:
-        message = (
+        message += (
             f"System is indeterminate. There are {eu[2]} loose endogenous variables."
         )
     elif eu[1] == -1:
-        message = "Solution exists, but it is not unique -- sunspots."
+        message += "Solution exists, but it is not unique -- sunspots."
     elif eu[0] == 0 and eu[1] == 0:
-        message = "Solution does not exist."
+        message += "Solution does not exist."
     elif eu[0] == 1 and eu[1] == 0:
-        message = "Solution exists, but is not unique."
+        message += "Solution exists, but is not unique."
     elif eu[0] == 1 and eu[1] == 1:
-        message = "Gensys found a unique solution."
-    return message
+        message += "Gensys found a unique solution."
+    else:
+        message += "Unknown return code. Check the gensys documentation."
+    return message.strip()
 
 
 @nb.njit(cache=True)

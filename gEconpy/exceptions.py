@@ -134,21 +134,22 @@ class ModelUnknownParameterError(ValueError):
         super().__init__(message)
 
 
-class SteadyStateNotSolvedError(ValueError):
-    def __init__(self):
-        message = (
-            "The system cannot be solved before the steady-state has been found! Call the .steady_state() method"
-            "to solve for the steady state."
-        )
-
-        super().__init__(message)
-
-
 class PerturbationSolutionNotFoundException(ValueError):
     def __init__(self):
         message = (
             "This operation cannot be completed until the model has a solved perturbation solution. Please "
             "call the .solve() method to solve for the policy function."
+        )
+
+        super().__init__(message)
+
+
+class SteadyStateNotFoundError(ValueError):
+    def __init__(self, equations):
+        message = (
+            "The provided steady-state values did not result in zero residuals for the following equations:\n"
+            f"{', '.join(equations)}\n\nIf you used custom parameter values to compute the provided steady state, "
+            f"you must also provide these parameter values to ``solve_model``."
         )
 
         super().__init__(message)
