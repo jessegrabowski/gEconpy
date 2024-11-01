@@ -36,7 +36,7 @@ def _compile_gcn(
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters="raise",
     **kwargs,
-) -> tuple[tuple, tuple, tuple, dict]:
+) -> tuple[tuple, tuple, tuple, dict, tuple]:
     outputs = gcn_to_block_dict(gcn_path, simplify_blocks=simplify_blocks)
     block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
 
@@ -49,6 +49,7 @@ def _compile_gcn(
         shocks,
         param_priors,
         shock_priors,
+        hyper_priors_final,
         reduced_vars,
         singletons,
     ) = block_dict_to_model_primitives(
@@ -129,8 +130,9 @@ def _compile_gcn(
         f_ss_hessp,
         f_linearize,
     )
+    priors = (param_priors, shock_priors, hyper_priors_final)
 
-    return objects, dictionaries, functions, cache
+    return objects, dictionaries, functions, cache, priors
 
 
 def model_from_gcn(
@@ -144,7 +146,7 @@ def model_from_gcn(
     on_unused_parameters="raise",
     **kwargs,
 ) -> Model:
-    objects, dictionaries, functions, _ = _compile_gcn(
+    objects, dictionaries, functions, cache, priors = _compile_gcn(
         gcn_path,
         simplify_blocks=simplify_blocks,
         simplify_tryreduce=simplify_tryreduce,
@@ -158,6 +160,7 @@ def model_from_gcn(
 
     variables, shocks, equations = objects
     param_dict, deterministic_dict, calib_dict = dictionaries
+
     (
         f_ss,
         f_ss_jac,
@@ -187,6 +190,7 @@ def model_from_gcn(
         f_ss_error_hessp=f_ss_hessp,
         f_linearize=f_linearize,
         backend=backend,
+        priors=priors,
     )
 
 
@@ -200,7 +204,7 @@ def statespace_from_gcn(
     on_unused_parameters="raise",
     **kwargs,
 ):
-    objects, dictionaries, functions, cache = _compile_gcn(
+    objects, dictionaries, functions, cache, priors = _compile_gcn(
         gcn_path,
         simplify_blocks=simplify_blocks,
         simplify_tryreduce=simplify_tryreduce,
@@ -215,6 +219,7 @@ def statespace_from_gcn(
 
     variables, shocks, equations = objects
     param_dict, deterministic_dict, calib_dict = dictionaries
+    param_priors, shock_priors, hyper_priors = priors
 
     if len(calib_dict) > 0:
         raise NotImplementedError("Calibration not yet implemented in StateSpace model")

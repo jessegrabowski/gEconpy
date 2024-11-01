@@ -416,6 +416,7 @@ def block_dict_to_model_primitives(
         shocks,
         param_priors,
         shock_priors,
+        hyper_priors_final,
         eliminated_variables,
         singletons,
     )
