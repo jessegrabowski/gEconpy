@@ -277,6 +277,7 @@ class Model:
         param_dict: SymbolDictionary,
         deterministic_dict: SymbolDictionary,
         calib_dict: SymbolDictionary,
+        priors: tuple | None,
         f_params: Callable[[np.ndarray, ...], SymbolDictionary],
         f_ss_resid: Callable[[np.ndarray, ...], float],
         f_ss: Callable[[np.ndarray, ...], SymbolDictionary],
@@ -341,6 +342,7 @@ class Model:
 
         self.deterministic_params = list(deterministic_dict.to_sympy().keys())
         self.calibrated_params = list(calib_dict.to_sympy().keys())
+        self.priors = priors
 
         self._default_params = param_dict.copy()
         self.f_params = f_params
@@ -755,7 +757,7 @@ class Model:
         steady_state_dict: dict | None = None,
         loglin_negative_ss: bool = False,
         steady_state_kwargs: dict | None = None,
-        verbose=True,
+        verbose: bool = True,
         **parameter_updates,
     ):
         if order != 1:
@@ -978,6 +980,7 @@ def _maybe_linearize_model(
     B: np.ndarray | None,
     C: np.ndarray | None,
     D: np.ndarray | None,
+    verbose: bool = True,
     **linearize_model_kwargs,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -999,6 +1002,8 @@ def _maybe_linearize_model(
     D: np.ndarray, optional
         Matrix of partial derivatives of model equations with respect to stochastic innovations, evaluated at the
         steady-state
+    verbose: bool, default: True
+        Flag indicating whether to print details about the linearization process to the console
     linearize_model_kwargs
         Arguments forwarded to the ``model.linearize_model`` method. Ignored if all of A, B, C, and D are provided.
 
@@ -1008,7 +1013,7 @@ def _maybe_linearize_model(
     """
 
     n_matrices = sum(x is not None for x in [A, B, C, D])
-    if n_matrices < 4:
+    if n_matrices < 4 and n_matrices > 0 and verbose:
         _log.warning(
             f"Passing an incomplete subset of A, B, C, and D (you passed {n_matrices}) will still trigger "
             f"``model.linearize_model`` (which might be expensive). Pass all to avoid this, or None to silence "
@@ -1020,7 +1025,7 @@ def _maybe_linearize_model(
         D = None
 
     if all(x is None for x in [A, B, C, D]):
-        A, B, C, D = model.linearize_model(**linearize_model_kwargs)
+        A, B, C, D = model.linearize_model(verbose=verbose, **linearize_model_kwargs)
 
     return A, B, C, D
 
@@ -1269,6 +1274,7 @@ def stationary_covariance_matrix(
 
 def bk_condition(
     model: Model,
+    *,
     A: np.ndarray | None = None,
     B: np.ndarray | None = None,
     C: np.ndarray | None = None,
@@ -1321,7 +1327,9 @@ def bk_condition(
           components of the system's, eigenvalues, along with their modulus.
     """
 
-    A, B, C, D = _maybe_linearize_model(model, A, B, C, D, **linearize_model_kwargs)
+    A, B, C, D = _maybe_linearize_model(
+        model, A, B, C, D, verbose=verbose, **linearize_model_kwargs
+    )
     bk_result = check_bk_condition(
         A,
         B,
@@ -1671,7 +1679,9 @@ def impulse_response_function(
                 k: shock_dict[k] if k == shock_name else 0.0 for k in shock_dict
             }
             traj = _create_shock_trajectory(
-                shock_names=shock_names, n_shocks=n_model_shocks, shock_size=step_dict
+                shock_names=model_shock_names,
+                n_shocks=n_model_shocks,
+                shock_size=step_dict,
             )
             data[i] = _simulate(traj)
 
@@ -1679,17 +1689,17 @@ def impulse_response_function(
         for i, shock_name in enumerate(shock_names):
             traj = np.zeros_like(shock_trajectory)
             traj[:i] = shock_trajectory[:i]
-
             data[i] = _simulate(traj)
 
     else:
         traj = _create_shock_trajectory(
-            shock_names=shock_names,
+            shock_names=model_shock_names,
             n_shocks=n_model_shocks,
             Q=Q,
             shock_trajectory=shock_trajectory,
             shock_size=shock_size,
         )
+        print(traj)
 
         data = _simulate(traj)
 
@@ -1791,3 +1801,57 @@ def simulate(
     )
 
     return data
+
+
+def matrix_to_dataframe(
+    matrix, model, dim1: str | None = None, dim2: str | None = None
+) -> pd.DataFrame:
+    """
+    Convert a matrix to a DataFrame with variable names as columns and rows.
+
+
+    Parameters
+    ----------
+    matrix: np.ndarray
+        DSGE matrix to convert to a DataFrame. Each dimension should have shape n_variables or n_shocks.
+    model: Model
+        DSGE model object
+    dim1: str, Optional
+        Name of the first dimension of the matrix. Must be one of "variable" or "shock". If None, the function will
+        guess based on the shape of the matrix. In the event that the model has exactly as many variables as shocks,
+        it will guess "variable", so be careful!
+    dim2: str, Optional
+        Name of the second dimension of the matrix. Must be one of "variable" or "shock". If None, the function will
+        guess based on the shape of the matrix.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with variable names as columns and rows.
+    """
+    var_names = [x.base_name for x in model.variables]
+    shock_names = [x.base_name for x in model.shocks]
+
+    n_variables = len(var_names)
+    n_shocks = len(shock_names)
+
+    if matrix.ndim != 2:
+        raise ValueError("Matrix must be 2-dimensional")
+
+    for i, ordinal in enumerate(["First", "Secoond"]):
+        if matrix.shape[i] not in [n_variables, n_shocks]:
+            raise ValueError(
+                f"{ordinal} dimension of the matrix must match the number of variables or shocks "
+                f"in the model"
+            )
+
+    if dim1 is None:
+        dim1 = "variable" if matrix.shape[0] == n_variables else "shock"
+    if dim2 is None:
+        dim2 = "variable" if matrix.shape[1] == n_variables else "shock"
+
+    return pd.DataFrame(
+        matrix,
+        index=var_names if dim1 == "variable" else shock_names,
+        columns=var_names if dim2 == "variable" else shock_names,
+    )
