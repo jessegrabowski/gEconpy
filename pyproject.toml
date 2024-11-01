@@ -43,6 +43,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pymc",
+    "preliz",
     "pyparsing",
     "pytensor",
     "scipy",
