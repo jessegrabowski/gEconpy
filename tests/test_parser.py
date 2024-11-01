@@ -27,7 +27,7 @@ class ParserDistributionCases(unittest.TestCase):
         line, prior_dict = parse_plaintext.extract_distributions(test_str)
         self.assertEqual(line, "alpha = 0.5;")
         self.assertEqual(list(prior_dict.keys()), ["alpha"])
-        self.assertEqual(list(prior_dict.values()), ["Normal(0, 1)"])
+        self.assertEqual(list(prior_dict.values()), ["Normal(0, 1) = 0.5"])
 
     def test_remove_distributions_and_normal_parse(self):
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(self.model)
@@ -627,8 +627,8 @@ class ParserTestCases(unittest.TestCase):
         dists = [
             "Normal(mu=0, sd=sigma_1)",
             "Normal(mu=0, sd=sigma_2)",
-            "Invgamma(a=0.1, b=0.2)",
-            "Invgamma(a=0.1, b=0.2)",
+            "Invgamma(a=0.1, b=0.2) = 0.1",
+            "Invgamma(a=0.1, b=0.2) = 0.2",
         ]
 
         for value, d in zip(prior_dict.values(), dists):

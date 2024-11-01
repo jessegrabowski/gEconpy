@@ -611,7 +611,6 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
             "pi_ss": 1.0,
             "pi_star_ss": 1.0,
             "pi_obj_ss": 1.0,
-            "B_ss": 0.0,
         }
     else:
         fixed_values = None

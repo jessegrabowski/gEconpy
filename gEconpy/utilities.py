@@ -48,6 +48,16 @@ def eq_to_ss(eq: sp.Expr, shocks: list[TimeAwareSymbol] | None = None):
     return eq.subs(to_ss_subs).subs(shock_subs)
 
 
+def safe_to_ss(x: sp.Symbol):
+    """
+    Convert ``x`` to steady-state if it is TimeAware, or return it unchanged otherwise.
+    """
+
+    if isinstance(x, TimeAwareSymbol):
+        return x.to_ss()
+    return x
+
+
 def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]):
     result = {}
     for lhs, rhs in sub_dict.items():
@@ -339,7 +349,7 @@ def postprocess_optimizer_res(
     return res_dict, success | numeric_success
 
 
-def get_name(x: str | sp.Symbol) -> str:
+def get_name(x: str | sp.Symbol, base_name=False) -> str:
     """
     Return the name of a string, TimeAwareSymbol, or sp.Symbol object.
 
@@ -347,6 +357,8 @@ def get_name(x: str | sp.Symbol) -> str:
     ----------
     x : str, or sp.Symbol
         The object whose name is to be returned. If str, x is directly returned.
+    base_name: bool
+        If True, return TimeAwareSymbol base name (the name without any time suffix)
 
     Returns
     -------
@@ -358,7 +370,7 @@ def get_name(x: str | sp.Symbol) -> str:
         return x
 
     elif isinstance(x, TimeAwareSymbol):
-        return x.safe_name
+        return x.safe_name if not base_name else x.base_name
 
     elif isinstance(x, sp.Symbol):
         return x.name

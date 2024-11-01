@@ -1,3 +1,4 @@
+import difflib
 import functools as ft
 import logging
 
@@ -36,7 +37,7 @@ from gEconpy.solvers.gensys import (
     interpret_gensys_output,
     solve_policy_function_with_gensys,
 )
-from gEconpy.utilities import get_name, postprocess_optimizer_res
+from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
 
 VariableType = sp.Symbol | TimeAwareSymbol
 _log = logging.getLogger(__name__)
@@ -342,6 +343,18 @@ class Model:
 
         self.deterministic_params = list(deterministic_dict.to_sympy().keys())
         self.calibrated_params = list(calib_dict.to_sympy().keys())
+
+        self._all_names_to_symbols = {
+            get_name(x, base_name=True): x
+            for x in (
+                self.variables
+                + self.params
+                + self.calibrated_params
+                + self.deterministic_params
+                + self.shocks
+            )
+        }
+
         self.priors = priors
 
         self._default_params = param_dict.copy()
@@ -373,6 +386,51 @@ class Model:
         param_dict.update(updates)
 
         return self.f_params(**param_dict).to_string()
+
+    def get(self, name: str) -> sp.Symbol:
+        """
+        Get a variable or parameter by name
+        """
+        ss_requested = name.endswith("_ss")
+        name = name.removesuffix("_ss")
+
+        result = self._all_names_to_symbols.get(name)
+        if result is None:
+            close_match = difflib.get_close_matches(
+                name, [get_name(x) for x in self._all_names_to_symbols.keys()], n=1
+            )[0]
+            raise IndexError(
+                f"Did not find {name} among model objects. Did you mean {close_match}?"
+            )
+        if ss_requested:
+            return result.to_ss()
+        return result
+
+    def _validate_provided_steady_state_variables(
+        self, user_fixed_variables: Sequence[str]
+    ):
+        # User is allowed to pass the variable name either with or without the _ss suffix. Begin by normalizing the
+        # inputs
+        fixed_variables_normed = [x.removesuffix("_ss") for x in user_fixed_variables]
+
+        # Check for duplicated values. This should only be possible if the user passed both `x` and `x_ss`.
+        counts = [fixed_variables_normed.count(x) for x in fixed_variables_normed]
+        duplicates = [x for x, c in zip(fixed_variables_normed, counts) if c > 1]
+        if len(duplicates) > 0:
+            raise ValueError(
+                'The following variables were provided twice (once with a _ss prefix and once without):\n'
+                f'{", ".join(duplicates)}'
+            )
+
+        # Check that all variables are in the model
+        model_variable_names = [x.base_name for x in self.variables]
+        unknown_fixed = set(fixed_variables_normed) - set(model_variable_names)
+
+        if len(unknown_fixed) > 0:
+            raise ValueError(
+                f"The following variables or calibrated parameters were given fixed steady state values but are "
+                f"unknown to the model: {', '.join(unknown_fixed)}"
+            )
 
     def steady_state(
         self,
@@ -463,39 +521,14 @@ class Model:
             f_ss = self.f_ss
 
         else:
-
-            def to_ss(x):
-                if isinstance(x, TimeAwareSymbol):
-                    return x.to_ss()
-                return x
-
-            def _var_name_in_list(var, list_to_check):
-                # User can just pass the base name ("x") or with the steady-state suffix ("x_ss")
-                return (
-                    get_name(var) in list_to_check or to_ss(var).name in list_to_check
-                )
-
-            fixed_vars = [
-                x
-                for x in self.variables + self.calibrated_params
-                if _var_name_in_list(x, fixed_values.keys())
-            ]
-            fixed_var_names = [get_name(x) for x in fixed_vars]
-
-            extra_vars = [
-                x
-                for x in fixed_values.keys()
-                if not _var_name_in_list(x, fixed_var_names)
-            ]
-
-            if len(extra_vars) > 0:
-                raise ValueError(
-                    f"The following variables or calibrated parameters were given fixed steady state values but are "
-                    f"unknown to the model: {', '.join(extra_vars)}"
-                )
+            self._validate_provided_steady_state_variables(list(fixed_values.keys()))
+            fixed_symbols = [safe_to_ss(self.get(x)) for x in fixed_values.keys()]
 
             fixed_dict = SymbolDictionary(
-                {to_ss(x): fixed_values[to_ss(x).name] for x in fixed_vars}
+                {
+                    symbol: value
+                    for symbol, value in zip(fixed_symbols, fixed_values.values())
+                },
             ).to_string()
 
             f_ss = add_more_ss_values_wrapper(self.f_ss, fixed_dict)

@@ -51,7 +51,7 @@ class TestBetaDistributionParser(unittest.TestCase):
         self.parser._parse_std_constraint({"std": "2"})
         self.assertEqual(self.parser.std_constraint, 2)
 
-        parsed_dict = self.parse_scale_parameter({"beta": "1"})
+        parsed_dict = self.parse_scale_parameter({"theta": "1"})
         self.assertEqual(parsed_dict, {"scale": 1})
 
     def test_typo_in_scale_parameter(self):
@@ -86,7 +86,7 @@ class TestBetaDistributionParser(unittest.TestCase):
 
     def test_distribution_from_scale_and_shape(self):
         parser = self.parser
-        d = parser.build_distribution({"alpha": "0.5", "beta": "2"})
+        d = parser.build_distribution({"alpha": "0.5", "theta": "2"})
 
         self.assertAlmostEqual(d.mean(), 0.5 * 2)
         self.assertAlmostEqual(d.std(), np.sqrt(0.5 * 2**2))
