@@ -69,7 +69,7 @@ def set_axis_cmap(axis, cmap):
 
 
 def _plot_single_variable(
-    data: xr.DataArray, ax, ci=None, cmap=None, fill_color="tab:blue"
+    data: xr.DataArray, ax, ci=None, cmap=None, fill_color="tab:blue", **line_kwargs
 ):
     """
     Plot the mean and optionally a confidence interval for a single variable.
@@ -86,6 +86,8 @@ def _plot_single_variable(
         The color map to use for the data.
     fill_color : str, optional
         The color to use to fill the confidence interval.
+    line_kwargs: optional
+        Additional keyword arguments to pass to the line plot.
 
     Returns
     -------
@@ -95,7 +97,7 @@ def _plot_single_variable(
 
     if ci is None:
         hue = "shock" if "shock" in data.coords else None
-        data.plot.line(x="time", ax=ax, add_legend=False, hue=hue)
+        data.plot.line(x="time", ax=ax, add_legend=False, hue=hue, **line_kwargs)
         if hue is not None:
             lines = ax.get_lines()
             for line, shock in zip(lines, data.coords["shock"].values):
@@ -105,7 +107,9 @@ def _plot_single_variable(
         q_low, q_high = ((1 - ci) / 2), 1 - ((1 - ci) / 2)
         ci_bounds = data.quantile([q_low, q_high], dim=["simulation"])
 
-        data.mean(dim="simulation").plot.line(x="time", ax=ax, add_legend=False)
+        data.mean(dim="simulation").plot.line(
+            x="time", ax=ax, add_legend=False, **line_kwargs
+        )
         ci_bounds.plot.line(
             ax=ax,
             x="time",
@@ -193,7 +197,7 @@ def plot_simulation(
 
 
 def plot_irf(
-    irf: xr.DataArray,
+    irf: xr.DataArray | list[xr.DataArray] | dict[str, xr.DataArray],
     vars_to_plot: str | list[str] | None = None,
     shocks_to_plot: str | list[str] | None = None,
     n_cols: int | None = None,
@@ -208,9 +212,10 @@ def plot_irf(
 
     Parameters
     ----------
-    irf : xr.DataArray
+    irf : xr.DataArray, list of xr.DataArray, or dict of xr.DataArray
         A DataArray with the impulse response functions. The index should contain the variables to plot, and the columns
-        should contain the shocks, with a multi-index for the period and shock type.
+        should contain the shocks, with a multi-index for the period and shock type. When plotting multiple scenarios,
+        provide a list of DataArrays or a dictionary with the scenario names as keys.
     vars_to_plot : list of str, optional
         A list of variables to plot. If not provided, all variables in the DataFrame will be plotted.
     shocks_to_plot : list of str, optional
@@ -240,17 +245,24 @@ def plot_irf(
             f"type {type(vars_to_plot)}"
         )
 
+    if isinstance(irf, xr.DataArray):
+        irf = {"": irf}
+    elif isinstance(irf, list):
+        irf = {f"Scenario {i}": irf[i] for i in range(len(irf))}
+
+    coords = irf[next(iter(irf.keys()))].coords
+
     if vars_to_plot is None:
-        vars_to_plot = irf.coords["variable"].values.tolist()
+        vars_to_plot = coords["variable"].values.tolist()
     if isinstance(vars_to_plot, str):
         vars_to_plot = [vars_to_plot]
 
     for var in vars_to_plot:
-        if var not in irf.coords["variable"]:
+        if var not in coords["variable"]:
             raise ValueError(f"{var} not found among simulated impulse responses.")
 
-    if "shock" in irf.coords:
-        shock_list = irf.coords["shock"].values.tolist()
+    if "shock" in coords:
+        shock_list = coords["shock"].values.tolist()
     else:
         shock_list = None
 
@@ -274,6 +286,9 @@ def plot_irf(
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
 
+    markers = ["-", "--", "-.", ":"]
+    scenario_names = list(irf.keys())
+
     fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True)
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
 
@@ -291,11 +306,17 @@ def plot_irf(
         if shocks_to_plot is not None:
             sel_dict["shock"] = shocks_to_plot
 
-        _plot_single_variable(
-            irf.sel(**sel_dict),
-            ax=axis,
-            cmap=cmap,
-        )
+        for scenario_idx, (scenario, irf_data) in enumerate(irf.items()):
+            _plot_single_variable(
+                irf_data.sel(**sel_dict),
+                ax=axis,
+                cmap=cmap,
+                ls=markers[scenario_idx % 4],
+            )
+
+        if (idx == 0) and len(scenario_names) > 1 and scenario_names[0] != "":
+            lines = axis.get_lines()
+            axis.legend(handles=lines, labels=scenario_names)
 
         axis.set(title=variable)
         if row_idx not in last_row_idxs:
@@ -548,10 +569,10 @@ def plot_eigenvalues(
         pd.DataFrame,
         bk_condition(
             model,
-            A,
-            B,
-            C,
-            D,
+            A=A,
+            B=B,
+            C=C,
+            D=D,
             verbose=False,
             return_value="dataframe",
             **linearize_model_kwargs,
