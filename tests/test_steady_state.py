@@ -347,7 +347,6 @@ def test_numerical_solvers_succeed_and_agree_NK():
             "pi_ss": 1.0,
             "pi_star_ss": 1.0,
             "pi_obj_ss": 1.0,
-            "B_ss": 0.0,
         },
     )
 
@@ -475,7 +474,6 @@ def test_steady_state_matches_analytic_NK():
             "pi_ss": 1.0,
             "pi_star_ss": 1.0,
             "pi_obj_ss": 1.0,
-            "B_ss": 0.0,
         },
         verbose=False,
         progressbar=False,

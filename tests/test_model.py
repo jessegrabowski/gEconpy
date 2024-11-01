@@ -784,7 +784,10 @@ def test_outputs_after_gensys_failure(caplog):
     T, R = model.solve_model(solver="gensys", on_failure="ignore", verbose=True)
 
     captured_message = caplog.messages[-1]
-    assert captured_message == "Solution exists, but is not unique."
+    assert captured_message == (
+        "Gensys return codes: 1 0 2, with the following meaning:\n"
+        "Solution exists, but is not unique."
+    )
     assert T is None
     assert R is None
 

@@ -40,10 +40,10 @@ class ParserDistributionCases(unittest.TestCase):
             list(prior_dict.values()),
             [
                 "N(mean=0, sd=sigma_epsilon)",
-                "Beta(mean=0.5, sd=0.1)",
-                "Beta(mean=0.95, sd=0.04)",
-                "HalfNormal(sigma=1)",
-                "Inv_Gamma(mean=0.1, sd=0.01)",
+                "Beta(mean=0.5, sd=0.1) = 0.4",
+                "Beta(mean=0.95, sd=0.04) = 0.95",
+                "HalfNormal(sigma=1) = 1.5",
+                "Inv_Gamma(mean=0.1, sd=0.01) = 0.01",
             ],
         )
 
