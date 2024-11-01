@@ -1,5 +1,3 @@
-import re
-
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import partial, reduce
@@ -8,6 +6,7 @@ from warnings import warn
 
 import numpy as np
 
+from pyparsing import ParseException
 from scipy import optimize
 from scipy.stats import (
     beta,
@@ -32,6 +31,7 @@ from gEconpy.exceptions import (
     RepeatedParameterException,
     UnusedParameterWarning,
 )
+from gEconpy.parser.dist_syntax import dist_syntax, evaluate_expression
 from gEconpy.parser.validation import find_typos_and_guesses
 from gEconpy.utilities import is_number
 
@@ -86,7 +86,8 @@ BETA_SHAPE_ALIASES_1 = ["a", "alpha"]
 BETA_SHAPE_ALIASES_2 = ["b", "beta"]
 
 GAMMA_SHAPE_ALIASES = ["a", "alpha", "k", "shape"]
-GAMMA_SCALE_ALIASES = ["b", "beta", "theta", "scale"]
+GAMMA_SCALE_ALIASES = ["theta", "scale"]
+GAMMA_RATE_ALIASES = ["b", "beta", "rate"]
 
 DIST_ALIAS_LIST = [
     NORMAL_ALIASES,
@@ -191,6 +192,7 @@ class BaseDistributionParser(ABC):
         loc_param_name: str | None,
         scale_param_name: str,
         shape_param_name: str | None,
+        rate_param_name: str | None,
         upper_bound_param_name: str | None,
         lower_bound_param_name: str | None,
         n_params: int,
@@ -201,6 +203,8 @@ class BaseDistributionParser(ABC):
         self.loc_param_name = loc_param_name
         self.scale_param_name = scale_param_name
         self.shape_param_name = shape_param_name
+        self.rate_param_name = rate_param_name
+
         self.upper_bound_param_name = upper_bound_param_name
         self.lower_bound_param_name = lower_bound_param_name
         self.n_params = n_params
@@ -209,6 +213,7 @@ class BaseDistributionParser(ABC):
         self.used_parameters = []
         self.mean_constraint = None
         self.std_constraint = None
+        self.initial_value = None
 
     @abstractmethod
     def build_distribution(self, param_dict: dict[str, str]) -> rv_continuous:
@@ -383,6 +388,7 @@ class NormalDistributionParser(BaseDistributionParser):
             loc_param_name="loc",
             scale_param_name="scale",
             shape_param_name=None,
+            rate_param_name=None,
             lower_bound_param_name="a",
             upper_bound_param_name="b",
             n_params=2,
@@ -390,12 +396,17 @@ class NormalDistributionParser(BaseDistributionParser):
         )
 
     def build_distribution(
-        self, param_dict: dict[str, str], backend="scipy", model=None
+        self,
+        param_dict: dict[str, str],
+        backend="scipy",
+        model=None,
+        initial_value=None,
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
 
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
+        self.initial_value = initial_value
 
         if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
@@ -585,6 +596,7 @@ class HalfNormalDistributionParser(BaseDistributionParser):
             loc_param_name="loc",
             scale_param_name="scale",
             shape_param_name=None,
+            rate_param_name=None,
             upper_bound_param_name=None,
             lower_bound_param_name=None,
             n_params=2,
@@ -592,11 +604,16 @@ class HalfNormalDistributionParser(BaseDistributionParser):
         )
 
     def build_distribution(
-        self, param_dict: dict[str, str], backend="scipy", model=None
+        self,
+        param_dict: dict[str, str],
+        backend="scipy",
+        model=None,
+        initial_value=None,
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
+        self.initial_value = initial_value
 
         if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
@@ -663,6 +680,7 @@ class UniformDistributionParser(BaseDistributionParser):
             loc_param_name="loc",
             scale_param_name="scale",
             shape_param_name=None,
+            rate_param_name=None,
             lower_bound_param_name="a",
             upper_bound_param_name="b",
             n_params=2,
@@ -676,11 +694,16 @@ class UniformDistributionParser(BaseDistributionParser):
         )
 
     def build_distribution(
-        self, param_dict: dict[str, str], backend="scipy", model=None
+        self,
+        param_dict: dict[str, str],
+        backend="scipy",
+        model=None,
+        initial_value=None,
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
+        self.initial_value = initial_value
 
         if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
@@ -788,6 +811,7 @@ class InverseGammaDistributionParser(BaseDistributionParser):
             loc_param_name="loc",
             scale_param_name="scale",
             shape_param_name="a",
+            rate_param_name=None,
             upper_bound_param_name=None,
             lower_bound_param_name=None,
             n_params=3,
@@ -797,11 +821,16 @@ class InverseGammaDistributionParser(BaseDistributionParser):
         )
 
     def build_distribution(
-        self, param_dict: dict[str, str], backend="scipy", model=None
+        self,
+        param_dict: dict[str, str],
+        backend="scipy",
+        model=None,
+        initial_value=None,
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
+        self.initial_value = initial_value
 
         if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
@@ -897,6 +926,7 @@ class BetaDistributionParser(BaseDistributionParser):
             loc_param_name="loc",
             scale_param_name="scale",
             shape_param_name=None,
+            rate_param_name=None,
             upper_bound_param_name=None,
             lower_bound_param_name=None,
             n_params=2,
@@ -910,11 +940,16 @@ class BetaDistributionParser(BaseDistributionParser):
         self.shape_param_name_2 = "b"
 
     def build_distribution(
-        self, param_dict: dict[str, str], backend="scipy", model=None
+        self,
+        param_dict: dict[str, str],
+        backend="scipy",
+        model=None,
+        initial_value=None,
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
+        self.initial_value = initial_value
 
         if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
@@ -1054,21 +1089,28 @@ class GammaDistributionParser(BaseDistributionParser):
             loc_param_name="loc",
             scale_param_name="scale",
             shape_param_name="a",
+            rate_param_name="b",
             lower_bound_param_name=None,
             upper_bound_param_name=None,
             n_params=3,
             all_valid_parameters=GAMMA_SHAPE_ALIASES
             + GAMMA_SCALE_ALIASES
+            + GAMMA_RATE_ALIASES
             + MOMENTS
             + ["loc"],
         )
 
     def build_distribution(
-        self, param_dict: dict[str, str], backend="scipy", model=None
+        self,
+        param_dict: dict[str, str],
+        backend="scipy",
+        model=None,
+        initial_value=None,
     ) -> rv_continuous:
         parsed_param_dict = self._parse_parameters(param_dict)
         self._warn_about_unused_parameters(param_dict)
         self._verify_distribution_parameterization(parsed_param_dict)
+        self.initial_value = initial_value
 
         if backend == "scipy":
             parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
@@ -1085,6 +1127,11 @@ class GammaDistributionParser(BaseDistributionParser):
             canon_name=self.scale_param_name,
             aliases=GAMMA_SCALE_ALIASES,
         )
+        parse_rate_parameter = partial(
+            self._parse_parameter,
+            canon_name=self.rate_param_name,
+            aliases=GAMMA_RATE_ALIASES,
+        )
         parse_shape_parameter = partial(
             self._parse_parameter,
             canon_name=self.shape_param_name,
@@ -1097,6 +1144,7 @@ class GammaDistributionParser(BaseDistributionParser):
             parse_loc_parameter,
             parse_scale_parameter,
             parse_shape_parameter,
+            parse_rate_parameter,
         ]
 
         parsed_param_dict = {}
@@ -1110,6 +1158,20 @@ class GammaDistributionParser(BaseDistributionParser):
 
         user_passed_scale = self.scale_param_name in parameters
         user_passed_shape = self.shape_param_name in parameters
+        user_passed_rate = self.rate_param_name in parameters
+
+        if user_passed_scale and user_passed_rate:
+            raise MultipleParameterDefinitionException(
+                self.variable_name,
+                self.d_name,
+                "scale",
+                [self.scale_param_name, self.rate_param_name],
+            )
+
+        elif user_passed_rate:
+            param_dict[self.scale_param_name] = 1 / param_dict[self.rate_param_name]
+            user_passed_scale = True
+            param_dict.pop(self.rate_param_name)
 
         if self._has_mean_constraint() and self._has_std_constraint():
             mean, std = self.mean_constraint, self.std_constraint
@@ -1214,45 +1276,67 @@ def preprocess_distribution_string(
     """
     name_to_canon_dict = build_alias_to_canon_dict(DIST_ALIAS_LIST, CANON_NAMES)
 
-    # digit_pattern = r" ?\d*\.?\d* ?"
-    general_pattern = r" ?[\w\.]* ?"
+    # # digit_pattern = r" ?\d*\.?\d* ?"
+    # general_pattern = r" ?[\w\.]* ?"
+    #
+    # # The not last args have a comma, while the last arg does not.
+    # dist_name_pattern = r"(\w+)"
+    # not_last_arg_pattern = rf"(\w+ ?={general_pattern}, ?)"
+    # last_arg_pattern = rf"(\w+ ?={general_pattern})"
+    # valid_pattern = (
+    #     rf"{dist_name_pattern}\({not_last_arg_pattern}*?{last_arg_pattern}\),?$"
+    # )
+    #
+    # # TODO: sort out where the typo is and tell the user.
+    # if re.search(valid_pattern, d_string) is None:
+    #     raise InvalidDistributionException(variable_name, d_string)
+    #
+    # d_name, params_string = d_string.split("(")
+    # d_name = d_name.lower()
+    #
+    # if d_name not in name_to_canon_dict.keys():
+    #     raise InvalidDistributionException(variable_name, d_string)
+    #
+    # params = [x.strip() for x in params_string.replace(")", "").split(",")]
+    # params = [x for x in params if len(x) > 0]
+    #
+    # new_params = []
+    # for p in params:
+    #     chunks = p.split("=")
+    #     new_p = "=".join([chunks[0].lower(), chunks[1]])
+    #     new_params.append(new_p)
+    #
+    # params = new_params
+    #
+    # param_dict = {}
+    # for param in params:
+    #     key, value = (x.strip() for x in param.split("="))
+    #     if key in param_dict.keys():
+    #         raise RepeatedParameterException(variable_name, d_name, key)
+    #
+    #     param_dict[key] = value
 
-    # The not last args have a comma, while the last arg does not.
-    dist_name_pattern = r"(\w+)"
-    not_last_arg_pattern = rf"(\w+ ?={general_pattern}, ?)"
-    last_arg_pattern = rf"(\w+ ?={general_pattern})"
-    valid_pattern = (
-        rf"{dist_name_pattern}\({not_last_arg_pattern}*?{last_arg_pattern}\),?$"
-    )
+    try:
+        parsed_result = dist_syntax.parseString(d_string)
+    except ParseException as e:
+        raise InvalidDistributionException(variable_name, d_string) from e
 
-    # TODO: sort out where the typo is and tell the user.
-    if re.search(valid_pattern, d_string) is None:
-        raise InvalidDistributionException(variable_name, d_string)
-
-    d_name, params_string = d_string.split("(")
-    d_name = d_name.lower()
-
+    d_name = parsed_result["dist_name"].strip().lower()
     if d_name not in name_to_canon_dict.keys():
         raise InvalidDistributionException(variable_name, d_string)
 
-    params = [x.strip() for x in params_string.replace(")", "").split(",")]
-    params = [x for x in params if len(x) > 0]
-
-    new_params = []
-    for p in params:
-        chunks = p.split("=")
-        new_p = "=".join([chunks[0].lower(), chunks[1]])
-        new_params.append(new_p)
-
-    params = new_params
-
     param_dict = {}
-    for param in params:
-        key, value = (x.strip() for x in param.split("="))
+
+    for param in parsed_result["kwargs"]:
+        key, value = param[0], param[1]
         if key in param_dict.keys():
             raise RepeatedParameterException(variable_name, d_name, key)
 
-        param_dict[key] = value
+        param_dict[key.strip().lower()] = evaluate_expression(value)
+
+    param_dict["initial_value"] = evaluate_expression(parsed_result["initial_value"])
+    if variable_name.endswith("[]") and param_dict["initial_value"] is not None:
+        raise InvalidDistributionException(variable_name, d_string)
 
     return name_to_canon_dict[d_name], param_dict
 
@@ -1317,7 +1401,7 @@ def distribution_factory(
 
     parser = None
 
-    if d_name == "normal":
+    if d_name in ["normal", "truncnorm"]:
         parser = NormalDistributionParser(variable_name=variable_name)
 
     elif d_name == "halfnormal":
@@ -1335,12 +1419,18 @@ def distribution_factory(
     elif d_name == "uniform":
         parser = UniformDistributionParser(variable_name=variable_name)
 
-    if parser is None:
-        raise ValueError(
-            "You should not have been able to get here. Open an issue on github."
+    elif d_name == "":
+        parser = NormalDistributionParser(variable_name=variable_name)
+
+    else:
+        raise NotImplementedError(
+            f'Unknown distribution "{d_name}". Expected one of {CANON_NAMES}'
         )
 
-    d = parser.build_distribution(param_dict, backend=backend, model=model)
+    initial_value = param_dict.pop("initial_value", None)
+    d = parser.build_distribution(
+        param_dict, backend=backend, model=model, initial_value=initial_value
+    )
     return d
 
 
@@ -1386,7 +1476,7 @@ def split_out_composite_distributions(
     composite_distributions = {}
 
     for variable_name, d_name, param_dict in zip(variable_names, d_names, param_dicts):
-        if all([is_number(x) for x in param_dict.values()]):
+        if all([is_number(x) or x is None for x in param_dict.values()]):
             basic_distributions[variable_name] = (d_name, param_dict)
         else:
             composite_distributions[variable_name] = (d_name, param_dict)

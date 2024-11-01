@@ -136,8 +136,12 @@ def is_number(x: str):
 
     A small extension to the .isnumeric() string built-in method, to allow float values with "." to pass.
     """
-
-    return all([c in set("0123456789.") for c in x])
+    if isinstance(x, float | int):
+        return True
+    elif isinstance(x, str):
+        return all([c in set("0123456789.") for c in x])
+    else:
+        return False
 
 
 def sequential(x: Any, funcs: list[Callable]) -> Any:

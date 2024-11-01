@@ -136,14 +136,16 @@ def extract_distributions(text: str) -> tuple[str, dict[str, str]]:
             # This is a parameter definition, but it might be missing a default value
             else:
                 # Extract the distribution declaration
-                *dist_info, param_value = other.split("=")
+                dist_info = other.replace(";", "").split("=")
+                param_value = dist_info[-1]
+
                 dist_info = "=".join(dist_info)
 
                 # This should only happen in the user didn't give a default value
                 if ")" in param_value:
                     raise MissingParameterValueException(param_name)
 
-                new_line = f"{param_name.strip()} = {param_value.strip()}"
+                new_line = f"{param_name.strip()} = {param_value.strip()};"
             output.append(new_line)
             prior_dict[param_name.strip()] = dist_info.strip()
         else:
