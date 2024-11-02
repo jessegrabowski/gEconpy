@@ -1,0 +1,177 @@
+assumptions
+{
+	positive
+	{
+		Y[], K[], C_NR[], C_R[],
+		w[], r[], mc_L[],
+		L[], L_NR[], L_R[],
+		TFP[],
+		alpha, alpha_L, beta, sigma_C, sigma_L, delta;
+	};
+};
+
+tryreduce
+{
+	U_NR[], U_R[], TC[];
+};
+
+block STEADY_STATE
+{
+	definitions
+	{
+		f1[ss] = (r[ss] / (r[ss] - alpha * delta));
+		f2[ss] = (alpha_L * (1 - alpha_L) * (1 - alpha)) ^ (-sigma_L / sigma_C);
+		f3[ss] = alpha_L ^ (sigma_L / sigma_C) +
+				 (1 - alpha_L) ^ (sigma_L / sigma_C);
+
+	};
+	identities
+	{
+		TFP[ss] = 1.0;
+		shock_beta_R[ss] = 1.0;
+
+		r[ss] = 1 / beta - (1 - delta);
+		w[ss] = (1 - alpha) * alpha_L ^ alpha_L * (1 - alpha_L) ^ (1 - alpha_L) *
+				(r[ss] / alpha) ^ (alpha / (alpha - 1));
+		mc_L[ss] = w[ss] / alpha_L ^ alpha_L / (1 - alpha_L) ^ (1 - alpha_L);
+		Y[ss] =  (f1[ss] * f2[ss] * f3[ss] * w[ss] ^ ((1 + sigma_L) / sigma_C)) ^
+					(sigma_C / (sigma_L + sigma_C));
+
+		L[ss] = (1 - alpha) * Y[ss] / mc_L[ss];
+
+		L_R[ss] = alpha_L * L[ss] * mc_L[ss] / w[ss];
+		L_NR[ss] = (1 - alpha_L) * L[ss] * mc_L[ss] / w[ss];
+
+		C_R[ss] = w[ss] ^ (1/sigma_C) * L_R[ss] ^ (-sigma_L / sigma_C);
+		C_NR[ss] = w[ss] ^ (1/sigma_C) * L_NR[ss] ^ (-sigma_L / sigma_C);
+
+		K[ss] = alpha * Y[ss] / r[ss];
+		I[ss] = delta * K[ss];
+
+		lambda_R[ss] = C_R[ss] ^ -sigma_C;
+		q[ss] = lambda_R[ss];
+		lambda_NR[ss] = C_NR[ss] ^ -sigma_C;
+
+	};
+};
+
+block RICARDIAN_HOUSEHOLD
+{
+	definitions
+	{
+		u_R[] = shock_beta_R[] * (C_R[] ^ (1 - sigma_C) / (1 - sigma_C) -
+								  L_R[] ^ (1 + sigma_L) / (1 + sigma_L));
+	};
+
+	controls
+	{
+		C_R[], L_R[], I[], K[];
+	};
+
+	objective
+	{
+		U_R[] = u_R[] + beta * E[][U_R[1]];
+	};
+
+	constraints
+	{
+		@exclude
+		C_R[] + I[] = r[] * K[-1] + w[] * L_R[] : lambda_R[];
+
+		K[] = (1 - delta) * K[-1] + I[]: q[];
+	};
+
+	identities
+	{
+		log(shock_beta_R[]) = rho_beta_R * log(shock_beta_R[-1]) + epsilon_beta_R[];
+	};
+
+	shocks
+	{
+		epsilon_beta_R[];
+	};
+
+	calibration
+	{
+		beta = 0.99;
+		delta = 0.02;
+		sigma_C = 1.5;
+		sigma_L = 2.0;
+		rho_beta_R = 0.95;
+	};
+};
+
+block NON_RICARDIAN_HOUSEHOLD
+{
+	definitions
+	{
+		u_NR[] = (C_NR[] ^ (1 - sigma_C) / (1 - sigma_C) -
+				  L_NR[] ^ (1 + sigma_L) / (1 + sigma_L));
+	};
+
+	controls
+	{
+		C_NR[], L_NR[];
+	};
+
+	objective
+	{
+		U_NR[] = u_NR[] + beta * E[][U_NR[1]];
+	};
+
+	constraints
+	{
+		@exclude
+		C_NR[] = w[] * L_NR[]: lambda_NR[];
+	};
+};
+
+
+block FIRM
+{
+    controls
+    {
+        K[-1], L[], L_R[], L_NR[];
+    };
+
+    objective
+    {
+        TC[] = -(r[] * K[-1] + w[] * L_R[] + w[] * L_NR[]);
+    };
+
+    constraints
+    {
+        L[] = L_R[] ^ alpha_L * L_NR[] ^ (1 - alpha_L) : mc_L[];
+		Y[] = TFP[] * K[-1] ^ alpha * L[] ^ (1 - alpha) : mc[];
+    };
+
+    identities
+    {
+        # Perfect competition
+        mc[] = 1;
+
+		# Exogenous technology process
+		log(TFP[]) = rho_TFP * log(TFP[-1]) + epsilon_TFP[];
+    };
+
+    shocks
+    {
+        epsilon_TFP[];
+    };
+
+    calibration
+    {
+        alpha = 0.35;
+		alpha_L = 0.5;
+
+		rho_TFP = 0.95;
+    };
+};
+
+block EQULIBRIUM
+{
+	identities
+	{
+		Y[] = C_R[] + C_NR[] + I[];
+	};
+};
