@@ -583,11 +583,7 @@ def test_model_gradient(backend, gcn_file):
 @pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
 @pytest.mark.parametrize(
     "gcn_file",
-    [
-        "one_block_1_ss.gcn",
-        "open_rbc.gcn",
-        "full_nk.gcn",
-    ],
+    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn", "rbc_with_excluded.gcn"],
 )
 @pytest.mark.parametrize(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]

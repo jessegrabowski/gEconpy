@@ -205,6 +205,37 @@ class Block:
                 if not control_found:
                     raise ControlVariableNotFoundException(self.name, control)
 
+        # Validate equation flags
+        # - the "is_calibrating" key can only occur in the calibration block
+        # - the "exclude" key can only occur in the constraints block
+        valid_flags = {
+            "is_calibrating": ["calibration"],
+            "exclude": ["constraints"],
+        }
+
+        for name, eq_block in zip(
+            ["definitions", "objective", "constraints", "identities"],
+            [self.definitions, self.objective, self.constraints, self.identities],
+        ):
+            if eq_block is not None:
+                for key, eq in eq_block.items():
+                    if (
+                        self.equation_flags[key].get("is_calibrating", False)
+                        and name not in valid_flags["is_calibrating"]
+                    ):
+                        raise ValueError(
+                            f"Equation {eq} in {name} block of {self.name} has an invalid decorator: is_calibrating. "
+                            f"This flag should only appear in the calibration block."
+                        )
+                    if (
+                        self.equation_flags[key].get("exclude", False)
+                        and name not in valid_flags["exclude"]
+                    ):
+                        raise ValueError(
+                            f"Equation {eq} in {name} block of {self.name} has an invalid decorator: exclude. "
+                            f"This flag should only appear in the constraints block."
+                        )
+
         return True
 
     def _validate_key(self, block_dict: dict, key: str) -> bool:
@@ -268,6 +299,46 @@ class Block:
                 multipliers.append(None)
 
         return result, multipliers
+
+    def _extract_decorators(
+        self, equations: list[list[str]], assumptions: dict
+    ) -> tuple[list[list[str]], list[dict[str, bool]]]:
+        """
+        Extract decorators from the equations in the block. Decorators are flags that indicate special properties of the
+        equation, such as whether it should be excluded from the final system of equations.
+
+        Parameters
+        ----------
+        equations : list
+            A list of lists of strings, each list representing a model equation. Created by the
+            gEcon_parser.parsed_block_to_dict function.
+
+        assumptions : dict
+            Assumptions for the model.
+
+        Returns
+        -------
+        equations: list
+            List of lists of strings. All decorator strings have been removed.
+
+        flags: dict
+            A dictionary of flags for each equation, indexed by equation number.
+        """
+
+        result, decorator_flags = [], []
+        for i, eq in enumerate(equations):
+            new_eq = []
+            flags = {}
+            for token in eq:
+                if token.startswith("@"):
+                    decorator = token.removeprefix("@")
+                    flags[decorator] = True
+                else:
+                    new_eq.append(token)
+            result.append(new_eq)
+            decorator_flags.append(flags)
+
+        return result, decorator_flags
 
     def _parse_variable_list(
         self, block_dict: dict, key: str, assumptions: dict | None = None
@@ -401,8 +472,10 @@ class Block:
         equations, lagrange_multipliers = self._extract_lagrange_multipliers(
             equations, assumptions
         )
+        equations, decorators = self._extract_decorators(equations, assumptions)
 
         parser_output = parse_equations.build_sympy_equations(equations, assumptions)
+
         if len(parser_output) > 0:
             equations, flags = list(zip(*parser_output))
         else:
@@ -412,10 +485,13 @@ class Block:
 
         equations = dict(zip(equation_numbers, equations))
         flags = dict(zip(equation_numbers, flags))
+        decorator_flags = dict(zip(equation_numbers, decorators))
 
         lagrange_multipliers = dict(zip(equation_numbers, lagrange_multipliers))
         self.multipliers.update(lagrange_multipliers)
-        self.equation_flags.update(flags)
+        for k in equation_numbers:
+            self.equation_flags[k] = flags[k]
+            self.equation_flags[k].update(decorator_flags[k])
 
         return equations
 
@@ -677,11 +753,12 @@ class Block:
                 )
 
         if self.constraints is not None:
-            _, constraints = unpack_keys_and_values(self.constraints)
-            for eq in constraints:
-                self.system_equations.append(
-                    set_equality_equals_zero(eq.subs(sub_dict))
-                )
+            eq_idx, constraints = unpack_keys_and_values(self.constraints)
+            for idx, eq in zip(eq_idx, constraints):
+                if not self.equation_flags[idx].get("exclude", False):
+                    self.system_equations.append(
+                        set_equality_equals_zero(eq.subs(sub_dict))
+                    )
 
         if self.controls is None and self.objective is None:
             return

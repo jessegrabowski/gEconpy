@@ -1,9 +1,11 @@
 import os
+import re
 import unittest
 
 from pathlib import Path
 
 import numpy as np
+import pytest
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -15,6 +17,7 @@ from gEconpy.exceptions import (
 )
 from gEconpy.model.block import Block
 from gEconpy.parser import constants, file_loaders, gEcon_parser
+from gEconpy.parser.file_loaders import block_dict_to_equation_list
 from gEconpy.utilities import set_equality_equals_zero, unpack_keys_and_values
 
 ROOT = Path(__file__).parent.absolute()
@@ -256,6 +259,38 @@ class IncompleteBlockDefinitionTests(unittest.TestCase):
 
         with self.assertRaises(NotImplementedError):
             block.solve_optimization()
+
+
+def test_invalid_decorator_raises():
+    test_file = """
+        block HOUSEHOLD
+        {
+            objective
+            {
+                @exclude
+                U[] = u[] + beta * E[][U[1]] : lambda[];
+            };
+
+            controls
+            {
+                u[];
+            };
+        };
+        """
+
+    parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+    block_dict, options, tryreduce, assumptions = (
+        gEcon_parser.split_gcn_into_dictionaries(parser_output)
+    )
+    block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "Equation Eq(U_t, beta*U_t+1 + u_t) in objective block of HOUSEHOLD "
+            "has an invalid decorator: exclude."
+        ),
+    ):
+        Block("HOUSEHOLD", block_dict)
 
 
 class BlockTestCases(unittest.TestCase):
@@ -586,6 +621,25 @@ class BlockTestCases(unittest.TestCase):
             {"A", "C", "I", "K", "L", "U", "Y", "lambda", "q", "lambda__H_1"},
         )
         self.assertEqual({x.base_name for x in self.block.shocks}, {"epsilon"})
+
+
+def test_block_with_exlcuded_equation():
+    test_file = file_loaders.load_gcn(
+        os.path.join(ROOT, "Test GCNs/rbc_with_excluded.gcn")
+    )
+
+    parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+    block_dict, options, tryreduce, assumptions = (
+        gEcon_parser.split_gcn_into_dictionaries(parser_output)
+    )
+
+    block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+
+    block = Block("HOUSEHOLD", block_dict)
+    block.solve_optimization()
+
+    # 6 equations are 4 controls, 1 objective, 1 constraint (excluding the excluded equation)
+    assert len(block.system_equations) == 6
 
 
 if __name__ == "__main__":
