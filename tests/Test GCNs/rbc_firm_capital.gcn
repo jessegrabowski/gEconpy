@@ -1,0 +1,81 @@
+tryreduce
+{
+	Pi[], U[];
+};
+
+block HOUSEHOLD
+{
+	definitions
+	{
+		u[] = log(C[]) - Theta * L[];
+	};
+
+	objective
+	{
+		U[] = u[] + beta * E[][U[1]];
+	};
+
+	controls
+	{
+		C[], L[];
+	};
+
+	constraints
+	{
+		C[] = w[] * L[] + Pi[] : lambda[];
+	};
+
+	calibration
+	{
+		beta = 0.99;
+		Theta = 1;
+	};
+};
+
+block FIRM
+{
+	definitions
+	{
+		pi[] = Y[] - (w[] * L[] + I[]);
+	};
+
+	objective
+	{
+		Pi[] = pi[] + beta * E[][lambda[1] / lambda[] * Pi[1]];
+	};
+
+	controls
+	{
+		Y[], L[], K[], I[];
+	};
+
+	constraints
+	{
+		Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha);
+		K[] = (1 - delta) * K[-1] + I[];
+	};
+
+	calibration
+	{
+		delta = 0.035;
+		alpha = 0.33;
+	};
+};
+
+block EXOGENOUS
+{
+	identities
+	{
+		log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+	};
+
+	shocks
+	{
+		epsilon_A[];
+	};
+
+	calibration
+	{
+		rho_A = 0.95;
+	};
+};

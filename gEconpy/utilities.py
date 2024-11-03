@@ -103,6 +103,7 @@ def diff_through_time(eq, dx, discount_factor=1):
     while next_dydx != 0:
         next_dydx = eq.diff(dx)
         eq = step_equation_forward(eq) * discount_factor
+        discount_factor = step_equation_forward(discount_factor)
         total_dydx += next_dydx
 
     return total_dydx

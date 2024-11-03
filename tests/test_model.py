@@ -1210,3 +1210,18 @@ def test_simulate(gcn_file, argument):
     assert abs(corr) > 0.99
 
     assert_allclose(np.diag(Sigma), np.diag(sigma), rtol=0.1)
+
+
+def test_objective_with_complex_discount_factor():
+    gcn_file = "rbc_firm_capital.gcn"
+    model = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
+
+    ss_res, success = model.steady_state(verbose=False, how="minimize")
+    assert success
+
+    bk_success = check_bk_condition(
+        *model.linearize_model(steady_state_dict=ss_res),
+        return_value="bool",
+        verbose=False,
+    )
+    assert bk_success

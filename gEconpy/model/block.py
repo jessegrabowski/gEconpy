@@ -649,20 +649,29 @@ class Block:
 
         variables = [x for x in objective.atoms() if isinstance(x, TimeAwareSymbol)]
 
-        # Return 1 if there is no continuation value
+        # Return 1 if there is no continuation value -- static optimization
         if all([x.time_index in [0, -1] for x in variables]):
             return sp.Float(1.0)
 
         else:
-            continuation_value = [x for x in variables if x.time_index == 1]
-            if len(continuation_value) > 1:
+            # We expect a bellman equation of the form X[] = a[] + E[][f(a[1]]. Step one is to identify a[], the
+            # instantaneous value function at time t. It should be a term isolated on the RHS of the equation.
+            current_value = objective.lhs
+            continuation_value = [
+                x for x in objective.rhs.args if x.has(current_value.set_t(1))
+            ]
+
+            # continuation_value = [x for x in variables if x.time_index == 1 and x.set_t(0) in variables]
+            if len(continuation_value) == 0:
                 raise ValueError(
-                    f"Block {self.name} has multiple t+1 variables in the Bellman equation, this is not "
-                    f"currently supported. Rewrite the equation in the form X[] = a[] + b * E[][X[1]], "
-                    f"where a[] is the instantaneous value function at time t, defined in the "
-                    f'"definitions" component of the block.'
+                    f"Block {self.name} did not find the continuation value of the current state value in the following"
+                    f"objective function: {objective}. Objectives should be written in the form "
+                    f"``V[t] = f(x[t]) + b[t] * E[V[t+1]]``, where V[t] is the current state value, f(x[t]) is the "
+                    f"instantaneous value function, and b[t] is the discount factor."
                 )
-            discount_factor = objective.rhs.coeff(continuation_value[0])
+
+            continuation_value = continuation_value[0]
+            discount_factor = continuation_value.subs({current_value.set_t(1): 1})
             return discount_factor
 
     def simplify_system_equations(self) -> None:
