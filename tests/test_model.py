@@ -1216,7 +1216,9 @@ def test_objective_with_complex_discount_factor():
     gcn_file = "rbc_firm_capital.gcn"
     model = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
 
-    ss_res, success = model.steady_state(verbose=False, how="minimize")
+    ss_res, success = model.steady_state(
+        verbose=False, how="minimize", optimizer_kwargs={"method": "Newton-CG"}
+    )
     assert success
 
     bk_success = check_bk_condition(
@@ -1225,3 +1227,14 @@ def test_objective_with_complex_discount_factor():
         verbose=False,
     )
     assert bk_success
+
+    gcn_file = "rbc_firm_capital_comparison.gcn"
+    model_2 = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
+
+    ss_res_2, success = model_2.steady_state(verbose=False)
+    assert success
+
+    assert_allclose(ss_res["Y_ss"], ss_res_2["Y_ss"], rtol=1e-8, atol=1e-8)
+    assert_allclose(ss_res["K_ss"], ss_res_2["K_ss"], rtol=1e-8, atol=1e-8)
+    assert_allclose(ss_res["L_ss"], ss_res_2["L_ss"], rtol=1e-8, atol=1e-8)
+    assert_allclose(ss_res["I_ss"], ss_res_2["I_ss"], rtol=1e-8, atol=1e-8)

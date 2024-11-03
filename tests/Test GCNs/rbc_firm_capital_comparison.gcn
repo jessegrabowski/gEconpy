@@ -1,11 +1,10 @@
 tryreduce
 {
-	Pi[], U[];
+	Pi[], U[], TC[];
 };
 
 block STEADYSTATE
 {
-
     definitions
     {
 		# Capital/Labor Ratio
@@ -15,11 +14,14 @@ block STEADYSTATE
 
     identities
     {
-        A[ss] = 1.0;
-        Pi[ss] = 0.0;
-        L[ss] = (1 - alpha) / Theta / (1 - delta * N[ss] ^ (1 - alpha));
+        A[ss] = 1;
+        P[ss] = 1;
+        Pi[ss] = 0;
+
+		L[ss] = (1 - alpha) / Theta / (1 - delta * N[ss] ^ (1 - alpha));
 		K[ss] = N[ss] * L[ss];
 
+		r[ss] = 1 / beta - (1 - delta);
 		w[ss] = (1 - alpha) * N[ss] ^ alpha;
 
 		Y[ss] = A[ss] * K[ss] ^ alpha * L[ss] ^ (1 - alpha);
@@ -27,7 +29,8 @@ block STEADYSTATE
 		C[ss] = Y[ss] - I[ss];
 
 		U[ss] = (1 / (1 - beta)) * (log(C[ss]) - Theta * L[ss]);
-        lambda[ss] = 1 / C[ss];
+        lambda[ss] = 1 / (C[ss] * P[ss]);
+        TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);
     };
 };
 
@@ -45,67 +48,56 @@ block HOUSEHOLD
 
 	controls
 	{
-		C[], L[];
+		C[], L[], I[], K[];
 	};
 
 	constraints
 	{
-	    @exclude
-		C[] = w[] * L[] + Pi[] : lambda[];
+		C[] + I[] = w[] * L[] + r[] * K[-1] + Pi[] : lambda[];
+		K[] = (1 - delta) * K[-1] + I[];
 	};
 
 	calibration
 	{
 		beta = 0.99;
 		Theta = 1;
+        delta = 0.035;
 	};
 };
+
 
 block FIRM
 {
-	definitions
-	{
-		pi[] = Y[] - (w[] * L[] + I[]);
-	};
-
-	objective
-	{
-		Pi[] = pi[] + beta * E[][lambda[1] / lambda[] * Pi[1]];
-	};
-
 	controls
 	{
-		Y[], L[], K[], I[];
+		K[-1], L[];
 	};
 
-	constraints
-	{
-		Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha);
-		K[] = (1 - delta) * K[-1] + I[];
-	};
+    objective
+    {
+		TC[] = -(w[] * L[] + r[] * K[-1]);
+    };
+
+    constraints
+    {
+		Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha) : P[];
+    };
 
 	identities
-    {
-        log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
-    };
+	{
+		log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+		P[] = 1;
+		Pi[] = P[] * Y[] + TC[];
+	};
 
 	shocks
-    {
-        epsilon_A[];
-    };
-
-	calibration
 	{
-		delta = 0.035;
+		epsilon_A[];
+	};
+
+    calibration
+    {
 		alpha = 0.35;
 		rho_A = 0.95;
-	};
-};
-
-block EQUILIBRIUM
-{
-    identities
-    {
-        Y[] = C[] + I[];
     };
 };
