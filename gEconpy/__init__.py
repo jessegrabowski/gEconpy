@@ -15,6 +15,7 @@ from gEconpy.model.model import (
     stationary_covariance_matrix,
     summarize_perturbation_solution,
 )
+from gEconpy.model.steady_state import print_steady_state
 
 _log = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ __all__ = [
     "autocorrelation_matrix",
     "bk_condition",
     "matrix_to_dataframe",
+    "print_steady_state",
     "classes",
     "exceptions",
     "parser",

@@ -136,8 +136,8 @@ def test_log_linearize_model(gcn_file, backend):
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
 def test_solve_policy_function(gcn_file, state_variables, backend):
     mod = load_and_cache_model(gcn_file, backend=backend, use_jax=JAX_INSTALLED)
-    steady_state_dict, success = mod.steady_state()
-    A, B, C, D = mod.linearize_model(order=1, steady_state_dict=steady_state_dict)
+    steady_state_dict = mod.steady_state()
+    A, B, C, D = mod.linearize_model(order=1, steady_state=steady_state_dict)
 
     gensys_results = solve_policy_function_with_gensys(A, B, C, D, 1e-8)
     G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results

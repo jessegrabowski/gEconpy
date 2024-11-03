@@ -1,6 +1,7 @@
 import logging
 
 import pytensor.tensor as pt
+import sympy as sp
 
 from pymc.pytensorf import rewrite_pregrad
 from pytensor import graph_replace
@@ -62,6 +63,9 @@ def _compile_gcn(
     )
 
     ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
+    steady_state_relationships = [
+        sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()
+    ]
 
     validate_results(
         equations,
@@ -117,7 +121,7 @@ def _compile_gcn(
             singletons,
         )
 
-    objects = (variables, shocks, equations)
+    objects = (variables, shocks, equations, steady_state_relationships)
     dictionaries = (param_dict, deterministic_dict, calib_dict)
     functions = (
         f_ss,
@@ -158,7 +162,7 @@ def model_from_gcn(
         **kwargs,
     )
 
-    variables, shocks, equations = objects
+    variables, shocks, equations, ss_relationships = objects
     param_dict, deterministic_dict, calib_dict = dictionaries
 
     (
@@ -177,6 +181,7 @@ def model_from_gcn(
         variables=variables,
         shocks=shocks,
         equations=equations,
+        steady_state_relationships=ss_relationships,
         param_dict=param_dict,
         deterministic_dict=deterministic_dict,
         calib_dict=calib_dict,
@@ -217,7 +222,7 @@ def statespace_from_gcn(
         **kwargs,
     )
 
-    variables, shocks, equations = objects
+    variables, shocks, equations, ss_relationships = objects
     param_dict, deterministic_dict, calib_dict = dictionaries
     param_priors, shock_priors, hyper_priors = priors
 

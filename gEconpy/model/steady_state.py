@@ -4,7 +4,7 @@ from typing import Literal, cast
 
 import sympy as sp
 
-from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
     BACKENDS,
@@ -343,9 +343,9 @@ def compile_model_ss_functions(
     ), cache
 
 
-def print_steady_state(ss_dict, success):
+def print_steady_state(ss_dict: SteadyStateResults):
     output = []
-    if not success:
+    if not ss_dict.success:
         output.append(
             "Values come from the latest solver iteration but are NOT a valid steady state."
         )

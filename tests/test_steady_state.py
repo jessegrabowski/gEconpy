@@ -25,7 +25,7 @@ def root_and_min_agree_helper(model: Model, **kwargs):
     if root_method:
         optimizer_kwargs["method"] = root_method
 
-    ss_root, root_success = model.steady_state(
+    ss_root = model.steady_state(
         how="root",
         verbose=verbose,
         progressbar=progressbar,
@@ -35,7 +35,7 @@ def root_and_min_agree_helper(model: Model, **kwargs):
 
     if minimize_method:
         optimizer_kwargs["method"] = minimize_method
-    ss_minimize, minimize_success = model.steady_state(
+    ss_minimize = model.steady_state(
         how="minimize",
         verbose=verbose,
         progressbar=progressbar,
@@ -43,8 +43,8 @@ def root_and_min_agree_helper(model: Model, **kwargs):
         **kwargs,
     )
 
-    assert root_success
-    assert minimize_success
+    assert ss_root.success
+    assert ss_minimize.success
 
     for k in ss_root.keys():
         assert_allclose(ss_root[k], ss_minimize[k], err_msg=k)
@@ -54,8 +54,8 @@ def test_solve_ss_with_partial_user_solution():
     model_1 = load_and_cache_model(
         "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
-    res, success = model_1.steady_state()
-    assert success
+    res = model_1.steady_state()
+    assert res.success
 
 
 def test_wrong_user_solutions_raises():
@@ -76,7 +76,7 @@ def test_print_steady_state_report_solver_successful(caplog):
     model_1 = load_and_cache_model(
         "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
-    res, success = model_1.steady_state(verbose=False, progressbar=False)
+    res = model_1.steady_state(verbose=False, progressbar=False)
 
     expected_output = """A_ss               1.000
                          C_ss               4.119
@@ -87,7 +87,7 @@ def test_print_steady_state_report_solver_successful(caplog):
     expected_output = re.sub("[\t\n]", " ", expected_output)
     expected_output = re.sub(" +", " ", expected_output)
 
-    print_steady_state(res, success)
+    print_steady_state(res)
     emitted_message = caplog.messages[-1]
 
     emitted_message = re.sub("[\t\n]", " ", emitted_message)
@@ -100,11 +100,11 @@ def test_print_steady_state_report_solver_fails(caplog):
     model_1 = load_and_cache_model(
         "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
-    result, _ = model_1.steady_state(verbose=False, progressbar=False)
+    result = model_1.steady_state(verbose=False, progressbar=False)
 
     # Spoof a failed solving attempt
-    success = False
-    print_steady_state(result, success)
+    result.success = False
+    print_steady_state(result)
     expected_output = """Values come from the latest solver iteration but are NOT a valid steady state.
                          A_ss               1.000
                          C_ss               4.119
@@ -142,10 +142,10 @@ def test_wrong_and_incomplete_ss_relationship_fails_with_minimize():
     model_1 = load_and_cache_model(
         "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
-    res, success = model_1.steady_state(
+    res = model_1.steady_state(
         verbose=False, progressbar=False, fixed_values={"K_ss": 3.0}
     )
-    assert not success
+    assert not res.success
 
 
 def test_numerical_solvers_suceed_and_agree():
@@ -174,15 +174,13 @@ def test_steady_state_matches_analytic():
         for k, v in zip(ss_var, [A_ss, C_ss, K_ss, U_ss, lambda_ss])
     }
 
-    root_ss_dict, success = model_1.steady_state(
-        verbose=False, progressbar=False, how="root"
-    )
-    assert success
+    root_ss_dict = model_1.steady_state(verbose=False, progressbar=False, how="root")
+    assert root_ss_dict.success
 
-    minimize_ss_dict, success = model_1.steady_state(
+    minimize_ss_dict = model_1.steady_state(
         verbose=False, progressbar=False, how="minimize"
     )
-    assert success
+    assert minimize_ss_dict.success
 
     for k in ss_dict:
         assert_allclose(ss_dict[k], root_ss_dict[k])
@@ -250,8 +248,8 @@ def test_steady_state_matches_analytic_w_calibrated_params():
         "alpha": res.root,
     }
 
-    numerical_ss_dict, success = model_2.steady_state(verbose=False, progressbar=False)
-    assert success
+    numerical_ss_dict = model_2.steady_state(verbose=False, progressbar=False)
+    assert numerical_ss_dict.success
 
     # Test calibration of alpha --> L_ss / K_ss = 0.36
     assert_allclose(numerical_ss_dict["L_ss"] / numerical_ss_dict["K_ss"], 0.36)
@@ -320,7 +318,7 @@ def test_RBC_steady_state_matches_analytic():
         "w_ss": w_ss,
     }
 
-    numerical_ss_dict, success = model_3.steady_state(verbose=False, progressbar=False)
+    numerical_ss_dict = model_3.steady_state(verbose=False, progressbar=False)
     ss_vars = [x.to_ss() for x in model_3.variables]
 
     for k in ss_vars:
@@ -466,7 +464,7 @@ def test_steady_state_matches_analytic_NK():
         "w_ss": w_ss,
     }
 
-    numerical_ss_dict, success = model_4.steady_state(
+    numerical_ss_dict = model_4.steady_state(
         how="root",
         fixed_values={
             "shock_technology_ss": 1.0,
@@ -478,7 +476,7 @@ def test_steady_state_matches_analytic_NK():
         verbose=False,
         progressbar=False,
     )
-    assert success
+    assert numerical_ss_dict.success
 
     ss_vars = [x.to_ss() for x in model_4.variables]
     for k in ss_vars:

@@ -275,6 +275,7 @@ class Model:
         variables: list[TimeAwareSymbol],
         shocks: list[TimeAwareSymbol],
         equations: list[sp.Expr],
+        steady_state_relationships: list[sp.Expr],
         param_dict: SymbolDictionary,
         deterministic_dict: SymbolDictionary,
         calib_dict: SymbolDictionary,
@@ -343,6 +344,8 @@ class Model:
 
         self.deterministic_params = list(deterministic_dict.to_sympy().keys())
         self.calibrated_params = list(calib_dict.to_sympy().keys())
+
+        self.steady_state_relationships = steady_state_relationships
 
         self._all_names_to_symbols = {
             get_name(x, base_name=True): x
@@ -789,7 +792,7 @@ class Model:
         self,
         order: Literal[1] = 1,
         not_loglin_variables: list[str] | None = None,
-        steady_state_dict: dict | None = None,
+        steady_state: dict | None = None,
         loglin_negative_ss: bool = False,
         steady_state_kwargs: dict | None = None,
         verbose: bool = True,
@@ -804,8 +807,8 @@ class Model:
 
         param_dict = self.parameters(**parameter_updates)
 
-        if steady_state_dict is None:
-            steady_state_dict = self.steady_state(
+        if steady_state is None:
+            steady_state = self.steady_state(
                 **self.parameters(**param_dict), **steady_state_kwargs
             )
 
@@ -819,7 +822,7 @@ class Model:
         for i, var in enumerate(vars_and_calibrated):
             not_loglin_flags[i] = get_name(var) in not_loglin_variables
 
-        ss_values = np.array(list(steady_state_dict.values()))
+        ss_values = np.array(list(steady_state.values()))
         ss_zeros = np.abs(ss_values) < 1e-8
         ss_negative = ss_values < 0.0
 
@@ -846,7 +849,7 @@ class Model:
             not_loglin_flags[neg_idxs] = 1
 
         A, B, C, D = self.f_linearize(
-            **param_dict, **steady_state_dict, not_loglin_variable=not_loglin_flags
+            **param_dict, **steady_state, not_loglin_variable=not_loglin_flags
         )
 
         return A, B, C, D
@@ -927,7 +930,7 @@ class Model:
         A, B, C, D = self.linearize_model(
             order=order,
             not_loglin_variables=not_loglin_variables,
-            steady_state_dict=ss_dict.to_string(),
+            steady_state=ss_dict.to_string(),
             loglin_negative_ss=loglin_negative_ss,
             verbose=verbose,
             **parameter_updates,
@@ -1005,8 +1008,9 @@ def _maybe_solve_steady_state(
 
     if np.any(unsatisfied_flags):
         raise SteadyStateNotFoundError(unsatisfied_eqs)
+    steady_state.success = True
 
-    return steady_state, True
+    return steady_state
 
 
 def _maybe_linearize_model(
@@ -1839,7 +1843,11 @@ def simulate(
 
 
 def matrix_to_dataframe(
-    matrix, model, dim1: str | None = None, dim2: str | None = None
+    matrix,
+    model,
+    dim1: str | None = None,
+    dim2: str | None = None,
+    round: None | int = None,
 ) -> pd.DataFrame:
     """
     Convert a matrix to a DataFrame with variable names as columns and rows.
@@ -1852,12 +1860,14 @@ def matrix_to_dataframe(
     model: Model
         DSGE model object
     dim1: str, Optional
-        Name of the first dimension of the matrix. Must be one of "variable" or "shock". If None, the function will
-        guess based on the shape of the matrix. In the event that the model has exactly as many variables as shocks,
-        it will guess "variable", so be careful!
+        Name of the first dimension of the matrix. Must be one of "variable", "equation",  or "shock". If None, the
+        function will guess based on the shape of the matrix. In the event that the model has exactly as many
+        variables as shocks, it will guess "variable", so be careful!
     dim2: str, Optional
-        Name of the second dimension of the matrix. Must be one of "variable" or "shock". If None, the function will
-        guess based on the shape of the matrix.
+        Name of the second dimension of the matrix. Must be one of "variable", "equation", or "shock". If None, the
+        function will guess based on the shape of the matrix.
+    round: int, Optional
+        Number of decimal places to round the values in the DataFrame. If None, values will not be rounded.
 
     Returns
     -------
@@ -1866,6 +1876,9 @@ def matrix_to_dataframe(
     """
     var_names = [x.base_name for x in model.variables]
     shock_names = [x.base_name for x in model.shocks]
+    equation_names = [f"Equation {i}" for i in range(len(model.equations))]
+
+    coords = {"variable": var_names, "shock": shock_names, "equation": equation_names}
 
     n_variables = len(var_names)
     n_shocks = len(shock_names)
@@ -1885,8 +1898,13 @@ def matrix_to_dataframe(
     if dim2 is None:
         dim2 = "variable" if matrix.shape[1] == n_variables else "shock"
 
-    return pd.DataFrame(
+    df = pd.DataFrame(
         matrix,
-        index=var_names if dim1 == "variable" else shock_names,
-        columns=var_names if dim2 == "variable" else shock_names,
+        index=coords[dim1],
+        columns=coords[dim2],
     )
+
+    if round is not None:
+        return df.round(round)
+
+    return df

@@ -221,7 +221,7 @@ def make_mod_file(model) -> str:
     param_dict = model.parameters()
 
     shocks = model.shocks
-    ss_value_dict, success = model.steady_state()
+    ss_value_dict = model.steady_state()
 
     var_to_matlab = make_var_to_matlab_sub_dict(
         make_all_var_time_combos(var_list), clash_prefix="var_"

@@ -722,7 +722,7 @@ def test_linearize(gcn_file, name, backend: BACKENDS):
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
     steady_state_dict = model.steady_state()
     outputs = model.linearize_model(
-        loglin_negative_ss=True, steady_state_dict=steady_state_dict
+        loglin_negative_ss=True, steady_state=steady_state_dict
     )
 
     for mat_name, out in zip(["A", "B", "C", "D"], outputs):
@@ -1222,7 +1222,7 @@ def test_objective_with_complex_discount_factor():
     assert ss_res.success
 
     bk_success = check_bk_condition(
-        *model.linearize_model(steady_state_dict=ss_res),
+        *model.linearize_model(steady_state=ss_res),
         return_value="bool",
         verbose=False,
     )

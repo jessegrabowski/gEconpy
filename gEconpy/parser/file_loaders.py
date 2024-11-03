@@ -116,7 +116,7 @@ def simplify_provided_ss_equations(
     ss_solution_dict: SymbolDictionary, variables: list[TimeAwareSymbol]
 ) -> SymbolDictionary:
     if not ss_solution_dict:
-        return ss_solution_dict
+        return SymbolDictionary()
 
     ss_variables = [x.to_ss() for x in variables]
     extra_equations = SymbolDictionary(
