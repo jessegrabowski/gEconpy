@@ -7,7 +7,13 @@ from typing import Any
 import numpy as np
 import sympy as sp
 
-from gEconpy.classes.containers import SymbolDictionary, string_keys_to_sympy
+from scipy.optimize import OptimizeResult
+
+from gEconpy.classes.containers import (
+    SteadyStateResults,
+    SymbolDictionary,
+    string_keys_to_sympy,
+)
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 
 _log = logging.getLogger(__name__)
@@ -296,13 +302,13 @@ def split_random_variables(param_dict, shock_names, obs_names):
 
 
 def postprocess_optimizer_res(
-    res,
-    res_dict,
-    f_resid,
-    f_jac,
-    tol,
-    verbose=True,
-) -> tuple[SymbolDictionary, bool]:
+    res: OptimizeResult,
+    res_dict: SteadyStateResults,
+    f_resid: Callable[..., np.ndarray],
+    f_jac: Callable[..., np.ndarray],
+    tol: float = 1e-6,
+    verbose: bool = True,
+) -> SteadyStateResults:
     success = res.success
 
     f_x = np.r_[[x.ravel() for x in f_resid(**res_dict)]]
@@ -346,8 +352,8 @@ def postprocess_optimizer_res(
 
     if verbose:
         _log.info(msg)
-
-    return res_dict, success | numeric_success
+    res_dict.success = success | numeric_success
+    return res_dict
 
 
 def get_name(x: str | sp.Symbol, base_name=False) -> str:

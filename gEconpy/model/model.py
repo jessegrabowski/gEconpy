@@ -15,7 +15,7 @@ import xarray as xr
 from better_optimize import minimize, root
 from scipy import linalg
 
-from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import (
     GensysFailedException,
@@ -445,7 +445,7 @@ class Model:
         fixed_values: dict[str, float] | None = None,
         jitter_x0: bool = False,
         **updates: float,
-    ) -> tuple[SymbolDictionary[str, float], bool]:
+    ) -> SteadyStateResults:
         """
         Solve for the deterministic steady state of the DSGE model
 
@@ -509,10 +509,9 @@ class Model:
 
         Returns
         -------
-        steady_state: SymbolDictionary
+        steady_state: SteadyStateResults
             Dictionary of steady-state values
-        success: bool
-            Flag indicating whether the steady state was successfully solved
+
         """
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
@@ -538,7 +537,7 @@ class Model:
         tol = optimizer_kwargs.get("tol", 1e-8)
 
         param_dict = self.parameters(**updates)
-        ss_dict = SymbolDictionary()
+        ss_dict = SteadyStateResults()
         ss_system = system_to_steady_state(self.equations, self.shocks)
         unknown_eq_idx = np.full(len(ss_system), True)
 
@@ -574,7 +573,8 @@ class Model:
             elif len(ss_dict) == len(self.variables):
                 resid = self.f_ss_resid(**param_dict, **ss_dict)
                 success = np.allclose(resid, 0.0, atol=1e-8)
-                return ss_dict, success
+                ss_dict.success = success
+                return ss_dict
 
         # Quick and dirty check of user-provided steady-state validity. This is NOT robust at all.
         validate_user_steady_state_simple(
@@ -633,7 +633,9 @@ class Model:
             {var: res.x[i] for i, var in enumerate(vars_to_solve)}
         )
         res_dict = optimizer_results | provided_ss_values
-        res_dict = SymbolDictionary({x: res_dict[x] for x in ss_variables}).to_string()
+        res_dict = SteadyStateResults(
+            {x: res_dict[x] for x in ss_variables}
+        ).to_string()
 
         return postprocess_optimizer_res(
             res=res,
@@ -803,7 +805,7 @@ class Model:
         param_dict = self.parameters(**parameter_updates)
 
         if steady_state_dict is None:
-            steady_state_dict, success = self.steady_state(
+            steady_state_dict = self.steady_state(
                 **self.parameters(**param_dict), **steady_state_kwargs
             )
 
@@ -917,7 +919,7 @@ class Model:
         if steady_state_kwargs is None:
             steady_state_kwargs = {}
 
-        ss_dict, success = _maybe_solve_steady_state(
+        ss_dict = _maybe_solve_steady_state(
             self, steady_state, steady_state_kwargs, parameter_updates
         )
         n_variables = len(self.variables)

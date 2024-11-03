@@ -333,3 +333,9 @@ class SymbolDictionary(dict):
             return
 
         return d
+
+
+class SteadyStateResults(SymbolDictionary):
+    def __init__(self, *args, **kwargs):
+        self.success = False
+        super().__init__(*args, **kwargs)

@@ -546,7 +546,7 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
 def test_model_gradient(backend, gcn_file):
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
 
-    ss_result, success = model.steady_state()
+    ss_result = model.steady_state()
 
     np.testing.assert_allclose(
         model.f_ss_error_grad(**ss_result, **model.parameters()),
@@ -592,7 +592,7 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
     # TODO: I was hitting errors when the models were reused, something about the fixed values was breaking stuff.
     #  Need to track this bug down.
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
-    analytic_res, success = model.steady_state()
+    analytic_res = model.steady_state()
     analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
 
     # Overwrite the f_ss function with None to trigger numerical optimization
@@ -611,7 +611,7 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
     else:
         fixed_values = None
 
-    numeric_res, success = model.steady_state(
+    numeric_res = model.steady_state(
         how=how,
         verbose=False,
         use_hess=True,
@@ -639,7 +639,7 @@ def test_numerical_steady_state_with_calibrated_params():
     file_path = "one_block_2_no_extra.gcn"
     model = load_and_cache_model(file_path, "numpy", use_jax=JAX_INSTALLED)
 
-    res, success = model.steady_state(
+    res = model.steady_state(
         how="minimize",
         verbose=False,
         optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 100_000}},
@@ -659,7 +659,7 @@ def test_steady_state_with_parameter_updates(backend):
     rng = np.random.default_rng()
     delta = rng.beta(1, 1)
     beta = rng.beta(1, 1)
-    ss_dict, _ = model.steady_state(delta=delta, beta=beta)
+    ss_dict = model.steady_state(delta=delta, beta=beta)
 
     assert_allclose(ss_dict["r_ss"], (1 / beta - (1 - delta)))
 
@@ -681,11 +681,11 @@ def test_partially_analytical_steady_state(
     backend: BACKENDS, partial_file, analytic_file
 ):
     analytic_model = load_and_cache_model(analytic_file, backend, use_jax=JAX_INSTALLED)
-    analytic_res, success = analytic_model.steady_state()
+    analytic_res = analytic_model.steady_state()
     analytic_values = np.array(list(analytic_res.values()))
 
     partial_model = load_and_cache_model(partial_file, backend, use_jax=JAX_INSTALLED)
-    numeric_res, success = partial_model.steady_state(
+    numeric_res = partial_model.steady_state(
         how="minimize",
         verbose=False,
         optimizer_kwargs={"method": "trust-ncg", "options": {"gtol": 1e-24}},
@@ -720,7 +720,7 @@ def test_partially_analytical_steady_state(
 @pytest.mark.parametrize("backend", ["numba"], ids=["numba"])
 def test_linearize(gcn_file, name, backend: BACKENDS):
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
-    steady_state_dict, success = model.steady_state()
+    steady_state_dict = model.steady_state()
     outputs = model.linearize_model(
         loglin_negative_ss=True, steady_state_dict=steady_state_dict
     )
@@ -1216,10 +1216,10 @@ def test_objective_with_complex_discount_factor():
     gcn_file = "rbc_firm_capital.gcn"
     model = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
 
-    ss_res, success = model.steady_state(
+    ss_res = model.steady_state(
         verbose=False, how="minimize", optimizer_kwargs={"method": "Newton-CG"}
     )
-    assert success
+    assert ss_res.success
 
     bk_success = check_bk_condition(
         *model.linearize_model(steady_state_dict=ss_res),
@@ -1231,8 +1231,8 @@ def test_objective_with_complex_discount_factor():
     gcn_file = "rbc_firm_capital_comparison.gcn"
     model_2 = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
 
-    ss_res_2, success = model_2.steady_state(verbose=False)
-    assert success
+    ss_res_2 = model_2.steady_state(verbose=False)
+    assert ss_res_2.success
 
     assert_allclose(ss_res["Y_ss"], ss_res_2["Y_ss"], rtol=1e-8, atol=1e-8)
     assert_allclose(ss_res["K_ss"], ss_res_2["K_ss"], rtol=1e-8, atol=1e-8)

@@ -8,7 +8,7 @@ import sympy as sp
 
 from sympytensor import as_tensor
 
-from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.numbaf.utilities import numba_lambdify
 
 BACKENDS = Literal["numpy", "numba", "pytensor"]
@@ -56,7 +56,7 @@ def dictionary_return_wrapper(f: Callable, outputs: list[sp.Symbol]) -> Callable
     @wraps(f)
     def inner(*args, **kwargs):
         values = f(*args, **kwargs)
-        return SymbolDictionary(zip(outputs, values)).to_string()
+        return SteadyStateResults(zip(outputs, values)).to_string()
 
     return inner
 
