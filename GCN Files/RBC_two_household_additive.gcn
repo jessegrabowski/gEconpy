@@ -6,7 +6,7 @@ assumptions
 		w[], r[], mc_L[],
 		L[], L_NR[], L_R[],
 		TFP[],
-		alpha, alpha_L, beta, sigma_C, sigma_L, delta, omega;
+		alpha, alpha_L, beta, sigma_C, sigma_L, delta;
 	};
 };
 
@@ -15,54 +15,45 @@ tryreduce
 	U_NR[], U_R[], TC[];
 };
 
-# block STEADY_STATE
-# {
-	# definitions
-	# {
-		# f1[ss] = (r[ss] / (r[ss] - alpha * delta));
-		# f2[ss] = (alpha_L * (1 - alpha_L) * (1 - alpha)) ^ (-sigma_L / sigma_C);
-		# f3[ss] = alpha_L ^ (sigma_L / sigma_C) +
-				 # (1 - alpha_L) ^ (sigma_L / sigma_C);
+block STEADY_STATE
+{
+	definitions
+	{
+	    # Capital/Labor ratio, N = K/L
+		N[ss] = (alpha * TFP[ss] / r[ss]) ^ (1 / (1 - alpha));
 
-	# };
-	# identities
-	# {
-		# TFP[ss] = 1.0;
-		# shock_beta_R[ss] = 1.0;
+	};
+	identities
+	{
+		TFP[ss] = 1.0;
+		shock_beta_R[ss] = 1.0;
 
-		# r[ss] = 1 / beta - (1 - delta);
-		# w[ss] = (1 - alpha) * alpha_L ^ alpha_L * (1 - alpha_L) ^ (1 - alpha_L) *
-				# (r[ss] / alpha) ^ (alpha / (alpha - 1));
-		# mc_L[ss] = w[ss] / alpha_L ^ alpha_L / (1 - alpha_L) ^ (1 - alpha_L);
-		# Y[ss] =  (f1[ss] * f2[ss] * f3[ss] * w[ss] ^ ((1 + sigma_L) / sigma_C)) ^
-					# (sigma_C / (sigma_L + sigma_C));
+		r[ss] = 1 / beta - (1 - delta);
+		w[ss] = (1 - alpha) * N[ss] ^ alpha;
 
-		# L[ss] = (1 - alpha) * Y[ss] / mc_L[ss];
+		C_R[ss] = (w[ss] / Theta_R) ^ (1 / sigma_R);
+		C_NR[ss] = (w[ss] / Theta_N) ^ (1 / sigma_N);
 
-		# L_R[ss] = alpha_L * L[ss] * mc_L[ss] / w[ss];
-		# L_NR[ss] = (1 - alpha_L) * L[ss] * mc_L[ss] / w[ss];
+		C[ss] = omega * C_R[ss] + (1 - omega) * C_NR[ss];
+        L[ss] = C[ss] / (N[ss] ^ alpha - delta * N[ss]);
+        L_NR[ss] = C_NR[ss] / w[ss];
+        L_R[ss] = (L[ss] - (1 - omega) * L_NR[ss]) / omega;
 
-		# C_R[ss] = w[ss] ^ (1/sigma_C) * L_R[ss] ^ (-sigma_L / sigma_C);
-		# C_NR[ss] = w[ss] ^ (1/sigma_C) * L_NR[ss] ^ (-sigma_L / sigma_C);
+        K[ss] = N[ss] * L[ss];
+        I[ss] = delta * K[ss];
+        Y[ss] = C[ss] + I[ss];
 
-		# K[ss] = alpha * Y[ss] / r[ss];
-		# I[ss] = delta * K[ss];
-
-		# lambda_R[ss] = C_R[ss] ^ -sigma_C;
-		# q[ss] = lambda_R[ss];
-		# lambda_NR[ss] = C_NR[ss] ^ -sigma_C;
-
-	# };
-# };
+		lambda_R[ss] = C_R[ss] ^ -sigma_R;
+		lambda_NR[ss] = C_NR[ss] ^ -sigma_N;
+		q[ss] = lambda_R[ss];
+	};
+};
 
 block RICARDIAN_HOUSEHOLD
 {
 	definitions
 	{
-		u_R[] = shock_beta_R[] * (C_R[] ^ (1 - sigma_C) / (1 - sigma_C) -
-								  L_R[] ^ (1 + sigma_L) / (1 + sigma_L));
-
-		Phi_I[] = (1 - gamma_I / 2 * (I[] / I[-1] - 1) ^ 2);
+		u_R[] = shock_beta_R[] * (C_R[] ^ (1 - sigma_R) / (1 - sigma_R) - Theta_R * L_R[]);
 	};
 
 	controls
@@ -80,7 +71,7 @@ block RICARDIAN_HOUSEHOLD
 		@exclude
 		C_R[] + I[] = r[] * K[-1] + w[] * L_R[] : lambda_R[];
 
-		K[] = (1 - delta) * K[-1] + Phi_I[] * I[]: q[];
+		K[] = (1 - delta) * K[-1] + I[]: q[];
 	};
 
 	identities
@@ -97,10 +88,9 @@ block RICARDIAN_HOUSEHOLD
 	{
 		beta = 0.99;
 		delta = 0.02;
-		sigma_C = 1.5;
-		sigma_L = 2.0;
+		sigma_R = 1.5;
+		Theta_R = 1.0;
 		rho_beta_R = 0.95;
-		gamma_I = 5;
 	};
 };
 
@@ -108,8 +98,7 @@ block NON_RICARDIAN_HOUSEHOLD
 {
 	definitions
 	{
-		u_NR[] = (C_NR[] ^ (1 - sigma_C) / (1 - sigma_C) -
-				  L_NR[] ^ (1 + sigma_L) / (1 + sigma_L));
+		u_NR[] = C_NR[] ^ (1 - sigma_N) / (1 - sigma_N) - Theta_N * L_NR[];
 	};
 
 	controls
@@ -125,6 +114,12 @@ block NON_RICARDIAN_HOUSEHOLD
 	constraints
 	{
 		C_NR[] = w[] * L_NR[]: lambda_NR[];
+	};
+
+	calibration
+	{
+	    Theta_N = 1.0;
+        sigma_N = 1.5;
 	};
 };
 
@@ -171,13 +166,13 @@ block EQULIBRIUM
 {
 	identities
 	{
+		Y[] = C[] + I[];
 		L[] = omega * L_R[] + (1 - omega) * L_NR[];
 		C[] = omega * C_R[] + (1 - omega) * C_NR[];
-		Y[] = C[] + I[];
 	};
 
 	calibration
 	{
-		omega = 0.5;
+	    omega = 0.5;
 	};
 };
