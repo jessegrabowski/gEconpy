@@ -59,6 +59,7 @@ SYMPY_ASSUMPTIONS = [
     "antihermitian",
     "algebraic",
     "transcendental",
+    "unit",
 ]
 
 DEFAULT_ASSUMPTIONS = {"real": True}

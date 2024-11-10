@@ -88,8 +88,24 @@ def make_steady_state_variables(variables):
 
 
 def system_to_steady_state(system, shocks):
+    parameters = [
+        x
+        for x in set().union(*[eq.free_symbols for eq in system])
+        if not x.is_number and not isinstance(x, TimeAwareSymbol)
+    ]
     shock_dict = make_steady_state_shock_dict(shocks)
-    steady_state_system = [eq_to_ss(eq).subs(shock_dict).simplify() for eq in system]
+    # Simplify expressions further by using the simplify method.
+
+    unit_params = [x for x in parameters if x._assumptions0.get("unit", False)]
+    unit_subs = {
+        1 - x: sp.Symbol(f"__TEMP_SUB__{i}") for i, x in enumerate(unit_params)
+    }
+    r_unit_subs = {v: k for k, v in unit_subs.items()}
+
+    steady_state_system = [
+        (eq_to_ss(eq).subs(shock_dict).subs(unit_subs).simplify().subs(r_unit_subs))
+        for eq in system
+    ]
 
     return steady_state_system
 

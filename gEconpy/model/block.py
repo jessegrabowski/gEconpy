@@ -709,13 +709,25 @@ class Block:
                     break
 
         simplified_system = [eq for eq in simplified_system if eq != 0]
-
-        self.system_equations = simplified_system
         self.eliminated_variables = eliminated_variables
 
         for key, value in self.multipliers.items():
             if value in eliminated_variables:
                 self.multipliers[key] = None
+
+        # Simplify expressions further by using the simplify method.
+        unit_params = [
+            x for x in self.param_dict.keys() if x._assumptions0.get("unit", False)
+        ]
+        unit_subs = {
+            1 - x: sp.Symbol(f"__TEMP_SUB__{i}") for i, x in enumerate(unit_params)
+        }
+        r_unit_subs = {v: k for k, v in unit_subs.items()}
+
+        simplified_system = [
+            eq.subs(unit_subs).simplify().subs(r_unit_subs) for eq in simplified_system
+        ]
+        self.system_equations = simplified_system
 
     def solve_optimization(self, try_simplify: bool = True) -> None:
         r"""
