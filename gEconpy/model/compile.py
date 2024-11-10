@@ -179,7 +179,7 @@ def compile_to_numpy(
     pop_return: bool,
     **kwargs,
 ):
-    f = sp.lambdify(inputs, outputs, cse=True)
+    f = sp.lambdify(inputs, outputs)
     if stack_return:
         f = stack_return_wrapper(f)
     if pop_return:
