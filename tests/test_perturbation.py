@@ -170,42 +170,42 @@ def test_solve_policy_function(gcn_file, state_variables, backend):
     assert_allclose(R_gensys, R, atol=1e-8, rtol=1e-8)
 
 
-def test_cycle_reduction_gradients():
+@pytest.mark.parametrize(
+    "op",
+    [cycle_reduction_pt, scan_cycle_reduction],
+    ids=["cycle_reduction", "scan_cycle_reduction"],
+)
+def test_cycle_reduction_gradients(op):
     mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     A, B, C, D = mod.linearize_model()
 
-    A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in list("ABCD"))
-    T1, R1, _ = cycle_reduction_pt(A_pt, B_pt, C_pt, D_pt)
-    T2, R2, _ = scan_cycle_reduction(A_pt, B_pt, C_pt, D_pt)
+    A_pt, B_pt, C_pt, D_pt = (
+        pt.tensor(name=name, shape=x.shape)
+        for name, x in zip(list("ABCD"), [A, B, C, D])
+    )
 
-    T1_grad = pt.grad(T1.sum(), [A_pt, B_pt, C_pt])
-    T2_grad = pt.grad(T2.sum(), [A_pt, B_pt, C_pt])
+    T, R = op(A_pt, B_pt, C_pt, D_pt)
+    T_grad = pt.grad(T.sum(), [A_pt, B_pt, C_pt])
 
     f = pytensor.function(
         [A_pt, B_pt, C_pt, D_pt],
-        [T1, T2, R1, R2, *T1_grad, *T2_grad],
+        [T, R, *T_grad],
         on_unused_input="raise",
-        mode="FAST_RUN",
+        mode="JAX" if JAX_INSTALLED and op is scan_cycle_reduction else "FAST_RUN",
     )
 
-    T1_np, T2_np, R1_np, R2_np, A_bar_1, B_bar_1, C_bar_1, A_bar_2, B_bar_2, C_bar_2 = (
-        f(A, B, C, D)
-    )
+    T_np, R_np, A_bar, B_bar, C_bar = f(A, B, C, D)
 
-    assert_allclose(T1_np, T2_np, atol=1e-8, rtol=1e-8)
-    assert_allclose(R1_np, R2_np, atol=1e-8, rtol=1e-8)
+    resid = A + B @ T_np + C @ T_np @ T_np
+    assert_allclose(resid, 0.0, atol=1e-8, rtol=1e-8)
 
     def cycle_func(A, B, C, D):
-        T, R, _ = cycle_reduction_pt(A, B, C, D)
-        return T.sum() + R.sum()
+        T, R = op(A, B, C, D)
+        return T.sum()
 
     verify_grad(
         cycle_func, pt=[A, B, C, D.astype("float64")], rng=np.random.default_rng()
     )
-
-    assert_allclose(A_bar_1, A_bar_2, atol=1e-8, rtol=1e-8)
-    assert_allclose(B_bar_1, B_bar_2, atol=1e-8, rtol=1e-8)
-    assert_allclose(C_bar_1, C_bar_2, atol=1e-8, rtol=1e-8)
 
 
 def test_pytensor_gensys():
@@ -213,7 +213,7 @@ def test_pytensor_gensys():
     A, B, C, D = mod.linearize_model()
 
     A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in list("ABCD"))
-    T1, R1, _ = cycle_reduction_pt(A_pt, B_pt, C_pt, D_pt)
+    T1, R1 = cycle_reduction_pt(A_pt, B_pt, C_pt, D_pt)
     T1_grad = pt.grad(T1.sum(), [A_pt, B_pt, C_pt])
 
     T2, R2, success = gensys_pt(A_pt, B_pt, C_pt, D_pt, 1e-8)

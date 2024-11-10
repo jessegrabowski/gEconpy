@@ -4,6 +4,7 @@ import pytensor
 import pytensor.tensor as pt
 
 from pytensor.compile import get_mode
+from pytensor.compile.builders import OpFromGraph
 from pytensor.graph import Apply, Op
 
 from gEconpy.model.perturbation import _log
@@ -142,6 +143,14 @@ def nb_solve_shock_matrix(B, C, D, G_1):
     return -np.linalg.solve(C @ G_1 + B, D.astype(C.dtype))
 
 
+def _linear_policy_jvp(inputs, outputs, output_grads):
+    A, B, C = inputs
+    [T] = outputs
+    [T_bar] = output_grads
+
+    return o1_policy_function_adjoints(A, B, C, T, T_bar)
+
+
 class CycleReductionWrapper(Op):
     def __init__(self, max_iter=1000, tol=1e-9):
         self.max_iter = int(max_iter)
@@ -150,7 +159,7 @@ class CycleReductionWrapper(Op):
 
     def make_node(self, A, B, C) -> Apply:
         inputs = list(map(pt.as_tensor, [A, B, C]))
-        outputs = [pt.dmatrix("T"), pt.dscalar("resid")]
+        outputs = [pt.dmatrix("T")]
 
         return Apply(self, inputs, outputs)
 
@@ -161,28 +170,22 @@ class CycleReductionWrapper(Op):
         T, res, result, log_norm = nb_cycle_reduction(
             A, B, C, max_iter=self.max_iter, tol=self.tol
         )
-        sum_square_resid = (res**2).sum()
 
         outputs[0][0] = np.asarray(T)
-        outputs[1][0] = np.asarray(sum_square_resid)
 
     def L_op(self, inputs, outputs, output_grads):
-        A, B, C = inputs
-        T, resid = outputs
-        T_bar, resid_bar = output_grads
-
-        return o1_policy_function_adjoints(A, B, C, T, T_bar)
+        return _linear_policy_jvp(inputs, outputs, output_grads)
 
 
 def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
-    T, sum_square_resid = CycleReductionWrapper(max_iter=max_iter, tol=tol)(A, B, C)
+    T = CycleReductionWrapper(max_iter=max_iter, tol=tol)(A, B, C)
     R = pt_compute_selection_matrix(B, C, D, T)
-    return T, R, sum_square_resid
+    return T, R
 
 
-def scan_cycle_reduction(
-    A, B, C, D, max_iter: int = 1000, tol: float = 1e-7, mode=None
-):
+def _scan_cycle_reduction(
+    A, B, C, max_iter: int = 1000, tol: float = 1e-7, mode=None
+) -> pt.Variable:
     def noop(A0, A1, A2, A1_hat, norm):
         return A0, A1, A2, A1_hat, norm
 
@@ -226,13 +229,37 @@ def scan_cycle_reduction(
     A1_hat = A1_hat[-1]
 
     T = -pt.linalg.solve(A1_hat, A, assume_a="gen", check_finite=False)
-    R = -pt.linalg.solve(
-        C @ T + B, D.astype(C.dtype), assume_a="gen", check_finite=False
+
+    return T
+
+
+def scan_cycle_reduction(
+    A: pt.TensorLike,
+    B: pt.TensorLike,
+    C: pt.TensorLike,
+    D: pt.TensorLike,
+    max_iter: int = 1000,
+    tol: float = 1e-7,
+):
+    A = pt.as_tensor_variable(A, name="A")
+    B = pt.as_tensor_variable(B, name="B")
+    C = pt.as_tensor_variable(C, name="C")
+    D = pt.as_tensor_variable(D, name="D")
+
+    output = _scan_cycle_reduction(A, B, C, max_iter, tol)
+
+    ScanCycleReducation = OpFromGraph(
+        inputs=[A, B, C],
+        outputs=[output],
+        lop_overrides=_linear_policy_jvp,
+        name="ScanCycleReduction",
+        inline=True,
     )
 
-    res = A + B @ T + C @ T @ T
+    T = ScanCycleReducation(A, B, C)
+    R = pt_compute_selection_matrix(B, C, D, T)
 
-    return T, R, (res**2).sum()
+    return T, R
 
 
 def solve_policy_function_with_cycle_reduction(
