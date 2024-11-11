@@ -11,6 +11,7 @@ from gEconpy.model.perturbation import _log
 from gEconpy.solvers.shared import (
     o1_policy_function_adjoints,
     pt_compute_selection_matrix,
+    stabilize,
 )
 
 
@@ -193,7 +194,10 @@ def _scan_cycle_reduction(
         tmp = pt.dot(
             pt.vertical_stack(A0, A2),
             pt.linalg.solve(
-                A1, pt.horizontal_stack(A0, A2), assume_a="gen", check_finite=False
+                stabilize(A1),
+                pt.horizontal_stack(A0, A2),
+                assume_a="gen",
+                check_finite=False,
             ),
         )
 
@@ -228,7 +232,7 @@ def _scan_cycle_reduction(
     )
     A1_hat = A1_hat[-1]
 
-    T = -pt.linalg.solve(A1_hat, A, assume_a="gen", check_finite=False)
+    T = -pt.linalg.solve(stabilize(A1_hat), A, assume_a="gen", check_finite=False)
 
     return [T, n_steps[-1]]
 
@@ -238,7 +242,7 @@ def scan_cycle_reduction(
     B: pt.TensorLike,
     C: pt.TensorLike,
     D: pt.TensorLike,
-    max_iter: int = 1000,
+    max_iter: int = 100,
     tol: float = 1e-7,
     mode: str | None = None,
     use_adjoint_gradients: bool = True,

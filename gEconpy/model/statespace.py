@@ -351,7 +351,6 @@ class DSGEStateSpace(PyMCStateSpace):
         self,
         data: np.ndarray | pd.DataFrame | pt.TensorVariable,
         register_data: bool = True,
-        mode: str | None = None,
         missing_fill_value: float | None = None,
         cov_jitter: float | None = JITTER_DEFAULT,
         save_kalman_filter_outputs_in_idata: bool = False,
@@ -359,7 +358,7 @@ class DSGEStateSpace(PyMCStateSpace):
         add_bk_check: bool = False,
         add_solver_success_check: bool = False,
         add_steady_state_penalty: bool = True,
-        tol: float = 1e-8,
+        resid_penalty: float = 1.0,
     ) -> None:
         super().build_statespace_graph(
             data=data,
@@ -367,7 +366,7 @@ class DSGEStateSpace(PyMCStateSpace):
             missing_fill_value=missing_fill_value,
             cov_jitter=cov_jitter,
             save_kalman_filter_outputs_in_idata=save_kalman_filter_outputs_in_idata,
-            mode=mode,
+            mode=self._mode,
         )
 
         pymc_model = pm.modelcontext(None)
@@ -415,10 +414,6 @@ class DSGEStateSpace(PyMCStateSpace):
             shock_idx = pt.arange(n_shocks)
             state_var_mask = pt.bitwise_and(tm1_idx, t_idx)
 
-            # PP = T[pt.abs(T) < tol].set(0.0)
-            # PP = T.copy()
-            # QQ = QQ[pt.abs(QQ) < tol].set(0.0)
-
             QQ = R[:n_vars, :]
             P = T[state_var_mask, :][:, state_var_mask]
             Q = QQ[state_var_mask, :][:, shock_idx]
@@ -438,14 +433,7 @@ class DSGEStateSpace(PyMCStateSpace):
             # Add penalty terms to the likelihood to rule out invalid solutions
             pm.Potential(
                 "solution_norm_penalty",
-                -(norm_deterministic + norm_stochastic),
-                # pt.switch(
-                #     pt.bitwise_and(
-                #         pt.lt(norm_deterministic, tol), pt.lt(norm_stochastic, tol)
-                #     ),
-                #     0.0,
-                #     -np.inf,
-                # ),
+                -resid_penalty * (norm_deterministic + norm_stochastic),
             )
 
         if add_bk_check:
@@ -456,11 +444,11 @@ class DSGEStateSpace(PyMCStateSpace):
 
         if add_solver_success_check:
             policy_resid = pm.Deterministic("policy_resid", policy_resid)
-            pm.Potential("policy_resid_penalty", -policy_resid)
+            pm.Potential("policy_resid_penalty", -resid_penalty * policy_resid)
 
         if add_steady_state_penalty:
             ss_resid = pm.Deterministic("ss_resid", ss_resid)
-            pm.Potential("steady_state_resid_penalty", -ss_resid)
+            pm.Potential("steady_state_resid_penalty", -resid_penalty * ss_resid)
 
     def priors_to_preliz(self):
         priors = self.priors[0]

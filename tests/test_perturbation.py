@@ -184,7 +184,7 @@ def test_cycle_reduction_gradients(op):
         for name, x in zip(list("ABCD"), [A, B, C, D])
     )
 
-    T, R = op(A_pt, B_pt, C_pt, D_pt)
+    T, R, *_ = op(A_pt, B_pt, C_pt, D_pt)
     T_grad = pt.grad(T.sum(), [A_pt, B_pt, C_pt])
 
     f = pytensor.function(
