@@ -423,7 +423,7 @@ class DSGEStateSpace(PyMCStateSpace):
             # Add penalty terms to the likelihood to rule out invalid solutions
             pm.Potential(
                 "solution_norm_penalty",
-                -1 / tol * (norm_deterministic + norm_stochastic),
+                -(norm_deterministic + norm_stochastic),
                 # pt.switch(
                 #     pt.bitwise_and(
                 #         pt.lt(norm_deterministic, tol), pt.lt(norm_stochastic, tol)
@@ -441,11 +441,11 @@ class DSGEStateSpace(PyMCStateSpace):
 
         if add_solver_success_check:
             policy_resid = pm.Deterministic("policy_resid", policy_resid)
-            pm.Potential("policy_resid_penalty", -1 / tol * policy_resid)
+            pm.Potential("policy_resid_penalty", -policy_resid)
 
         if add_steady_state_penalty:
             ss_resid = pm.Deterministic("ss_resid", ss_resid)
-            pm.Potential("steady_state_resid_penalty", -1 / tol * ss_resid)
+            pm.Potential("steady_state_resid_penalty", -ss_resid)
 
     def priors_to_preliz(self):
         priors = self.priors[0]
