@@ -11,10 +11,6 @@ tryreduce
 
 block STEADY_STATE
 {
-    definitions
-    {
-    };
-
     identities
     {
         A[ss] = 1;

@@ -1,13 +1,26 @@
-options
-{
-	output logfile = FALSE;
-	output LaTeX = FALSE;
-};
-
 tryreduce
 {
 	U[], TC[];
 };
+
+block STEADY_STATE
+{
+    identities
+    {
+        A[ss] = 1;
+        r[ss] = (1 / beta - (1 - delta));
+        w[ss] = (1 - alpha) * (alpha / r[ss]) ^ (alpha / (1 - alpha));
+        Y[ss] = (r[ss] / (r[ss] - delta * alpha)) ^ (sigma_C / (sigma_C + sigma_L)) *
+            (w[ss] * (w[ss] /  (1 - alpha)) ^ sigma_L) ^ (1 / (sigma_C + sigma_L));
+
+        I[ss] = (delta * alpha / r[ss]) * Y[ss];
+        C[ss] = Y[ss] ^ (-sigma_L / sigma_C) * ((1 - alpha) ^ (-sigma_L) * w[ss] ^ (1 + sigma_L)) ^ (1 / sigma_C);
+        K[ss] = alpha * Y[ss] / r[ss];
+        L[ss] = (1 - alpha) * Y[ss]  / w[ss];
+        lambda[ss] = C[ss] ^ (-sigma_C);
+    };
+};
+
 
 block HOUSEHOLD
 {
