@@ -55,9 +55,6 @@ def o1_policy_function_adjoints(
     M2 = pt.linalg.kron(eye, T.T @ C.T)
     M3 = pt.linalg.kron(eye, B.T)
 
-    # M_inv = pt.linalg.pinv(M1 + M2 + M3)
-    # vec_S = M_inv @ -vec_T_bar
-
     vec_S = pt.linalg.solve(
         stabilize(M1 + M2 + M3), -vec_T_bar, assume_a="gen", check_finite=False
     )
