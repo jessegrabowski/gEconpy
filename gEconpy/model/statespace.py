@@ -134,13 +134,14 @@ class DSGEStateSpace(PyMCStateSpace):
         )
 
         self._bk_flag = check_bk_condition_pt(A, B, C, D)
+        n_steps = None
 
         if self._solver == "gensys":
             T, R, success = gensys_pt(A, B, C, D, **self._solver_kwargs)
         elif self._solver == "cycle_reduction":
             T, R = cycle_reduction_pt(A, B, C, D, **self._solver_kwargs)
         else:
-            T, R = scan_cycle_reduction(
+            T, R, n_steps = scan_cycle_reduction(
                 A, B, C, D, mode=self._mode, **self._solver_kwargs
             )
 
@@ -157,6 +158,7 @@ class DSGEStateSpace(PyMCStateSpace):
         ss_resid = rewrite_pregrad(ss_resid)
 
         self._policy_graph = [T, R]
+        self._n_steps = n_steps
         self._policy_resid = resid
         self._ss_resid = ss_resid
 
@@ -373,11 +375,19 @@ class DSGEStateSpace(PyMCStateSpace):
         replacement_dict = {
             var: pymc_model[name] for name, var in self._name_to_variable.items()
         }
+
         A, B, C, D, T, R = graph_replace(
             self._linearized_system_subbed + self._policy_graph,
             replace=replacement_dict,
             strict=False,
         )
+
+        if self._n_steps is not None:
+            n_steps = graph_replace(
+                self._n_steps, replace=replacement_dict, strict=False
+            )
+            pm.Deterministic("n_cycle_steps", n_steps)
+
         policy_resid, bk_flag, ss_resid = graph_replace(
             [self._policy_resid, self._bk_flag, self._ss_resid],
             replace=replacement_dict,

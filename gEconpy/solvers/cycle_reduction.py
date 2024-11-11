@@ -186,10 +186,10 @@ def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
 def _scan_cycle_reduction(
     A, B, C, max_iter: int = 1000, tol: float = 1e-7, mode=None
 ) -> pt.Variable:
-    def noop(A0, A1, A2, A1_hat, norm):
-        return A0, A1, A2, A1_hat, norm
+    def noop(A0, A1, A2, A1_hat, norm, step_num):
+        return A0, A1, A2, A1_hat, norm, step_num
 
-    def cycle_step(A0, A1, A2, A1_hat, idx_0, idx_1):
+    def cycle_step(A0, A1, A2, A1_hat, step_num, idx_0, idx_1):
         tmp = pt.dot(
             pt.vertical_stack(A0, A2),
             pt.linalg.solve(
@@ -204,13 +204,13 @@ def _scan_cycle_reduction(
 
         A0_L1_norm = pt.linalg.norm(A0, ord=1)
 
-        return A0, A1, A2, A1_hat, A0_L1_norm
+        return A0, A1, A2, A1_hat, A0_L1_norm, step_num + 1
 
-    def step(A0, A1, A2, A1_hat, norm, idx_0, idx_1, tol):
+    def step(A0, A1, A2, A1_hat, norm, step_num, idx_0, idx_1, tol):
         state = pytensor.ifelse(
             norm < tol,
-            noop(A0, A1, A2, A1_hat, norm),
-            cycle_step(A0, A1, A2, A1_hat, idx_0, idx_1),
+            noop(A0, A1, A2, A1_hat, norm, step_num),
+            cycle_step(A0, A1, A2, A1_hat, step_num, idx_0, idx_1),
         )
         return state
 
@@ -218,10 +218,10 @@ def _scan_cycle_reduction(
     idx_0 = pt.arange(n)
     idx_1 = idx_0 + n
     norm = np.array(1e9, dtype="float64")
-
-    (*_, A1_hat, norm), updates = pytensor.scan(
+    step_num = pt.zeros((), dtype="int32")
+    (*_, A1_hat, norm, n_steps), updates = pytensor.scan(
         step,
-        outputs_info=[A, B, C, B, norm],
+        outputs_info=[A, B, C, B, norm, step_num],
         non_sequences=[idx_0, idx_1, tol],
         n_steps=max_iter,
         mode=get_mode(mode),
@@ -230,7 +230,7 @@ def _scan_cycle_reduction(
 
     T = -pt.linalg.solve(A1_hat, A, assume_a="gen", check_finite=False)
 
-    return T
+    return [T, n_steps[-1]]
 
 
 def scan_cycle_reduction(
@@ -252,16 +252,16 @@ def scan_cycle_reduction(
 
     ScanCycleReducation = OpFromGraph(
         inputs=[A, B, C],
-        outputs=[output],
+        outputs=output,
         lop_overrides=_linear_policy_jvp if use_adjoint_gradients else None,
         name="ScanCycleReduction",
         inline=True,
     )
 
-    T = ScanCycleReducation(A, B, C)
+    T, n_steps = ScanCycleReducation(A, B, C)
     R = pt_compute_selection_matrix(B, C, D, T)
 
-    return T, R
+    return T, R, n_steps
 
 
 def solve_policy_function_with_cycle_reduction(
