@@ -2,6 +2,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+import preliz as pz
 import pymc as pm
 import pytensor
 import pytensor.tensor as pt
@@ -16,6 +17,16 @@ from pymc_experimental.statespace.utils.constants import (
     SHOCK_DIM,
 )
 from pytensor import graph_replace
+from scipy.stats._continuous_distns import (
+    beta_gen,
+    gamma_gen,
+    halfnorm_gen,
+    invgamma_gen,
+    norm_gen,
+    truncnorm_gen,
+    uniform_gen,
+)
+from scipy.stats.distributions import rv_frozen
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perturbation import check_bk_condition_pt
@@ -26,6 +37,17 @@ _log = logging.getLogger(__name__)
 floatX = pytensor.config.floatX
 
 
+SCIPY_TO_PRELIZ = {
+    norm_gen: pz.Normal,
+    halfnorm_gen: pz.HalfNormal,
+    truncnorm_gen: pz.TruncatedNormal,
+    uniform_gen: pz.Uniform,
+    beta_gen: pz.Beta,
+    gamma_gen: pz.Gamma,
+    invgamma_gen: pz.InverseGamma,
+}
+
+
 class DSGEStateSpace(PyMCStateSpace):
     def __init__(
         self,
@@ -33,6 +55,7 @@ class DSGEStateSpace(PyMCStateSpace):
         shocks: list[TimeAwareSymbol],
         equations: list[sp.Expr],
         param_dict: dict[str, float],
+        priors: list[dict[str, rv_frozen]],
         parameter_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         steady_state_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         ss_jac: pt.TensorVariable,
@@ -45,6 +68,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self.variables = variables
         self.equations = equations
         self.shocks = shocks
+        self.priors = priors
         self.param_dict = param_dict
 
         self.parameter_mapping = parameter_mapping
@@ -60,14 +84,18 @@ class DSGEStateSpace(PyMCStateSpace):
         self.linearized_system = linearized_system
 
         self.full_covariance = False
+        self.constant_parameters = []
         self._configured = False
         self._obs_state_names = None
         self.error_states = []
         self._solver = "gensys"
         self._mode = None
+        self._linearized_system_subbed: list | None = None
+        self._policy_graph: list | None = None
+        self._ss_resid: pt.TensorVariable | None = None
 
-        self.bk_flag = None
-        self.solver_success = None
+        self._bk_flag = None
+        self._policy_resid = None
 
         k_endog = 1  # to be updated later
         k_states = len(variables)
@@ -100,27 +128,34 @@ class DSGEStateSpace(PyMCStateSpace):
             else:
                 self._name_to_variable[parameter.name] = parameter
 
-        self.linearized_system_subbed = [A, B, C, D] = pytensor.graph_replace(
+        self._linearized_system_subbed = [A, B, C, D] = pytensor.graph_replace(
             self.linearized_system, constant_replacements, strict=False
         )
 
-        self.bk_flag = check_bk_condition_pt(A, B, C, D)
+        self._bk_flag = check_bk_condition_pt(A, B, C, D)
 
         if self._solver == "gensys":
             T, R, success = gensys_pt(A, B, C, D)
         elif self._solver == "cycle_reduction":
-            T, R, resid = cycle_reduction_pt(A, B, C, D)
-            success = pt.lt(resid, 1e-8)
+            T, R = cycle_reduction_pt(A, B, C, D)
         else:
-            T, R, resid = scan_cycle_reduction(A, B, C, D, mode=self._mode)
-            success = pt.lt(resid, 1e-8)
+            T, R = scan_cycle_reduction(A, B, C, D, mode=self._mode)
+
+        resid = pt.square(A + B @ T + C @ T @ T).sum()
+
+        ss_resid = pytensor.graph_replace(
+            self.ss_resid, constant_replacements, strict=False
+        )
+        ss_resid = pt.square(ss_resid).sum()
 
         T = rewrite_pregrad(T)
         R = rewrite_pregrad(R)
+        resid = rewrite_pregrad(resid)
+        ss_resid = rewrite_pregrad(ss_resid)
 
-        self.policy_graph = [T, R]
-
-        self.solver_success = success
+        self._policy_graph = [T, R]
+        self._policy_resid = resid
+        self._ss_resid = ss_resid
 
         self.ssm["transition", :, :] = T
         self.ssm["selection", :, :] = R
@@ -316,6 +351,7 @@ class DSGEStateSpace(PyMCStateSpace):
         add_norm_check: bool = True,
         add_bk_check: bool = False,
         add_solver_success_check: bool = False,
+        add_steady_state_penalty: bool = True,
         tol: float = 1e-8,
     ) -> None:
         super().build_statespace_graph(
@@ -333,32 +369,47 @@ class DSGEStateSpace(PyMCStateSpace):
             var: pymc_model[name] for name, var in self._name_to_variable.items()
         }
         A, B, C, D, T, R = graph_replace(
-            self.linearized_system_subbed + self.policy_graph,
+            self._linearized_system_subbed + self._policy_graph,
             replace=replacement_dict,
             strict=False,
         )
-        solver_success, bk_flag = graph_replace(
-            [self.solver_success, self.bk_flag], replace=replacement_dict, strict=False
+        policy_resid, bk_flag, ss_resid = graph_replace(
+            [self._policy_resid, self._bk_flag, self._ss_resid],
+            replace=replacement_dict,
+            strict=False,
         )
 
         if add_norm_check:
             n_vars, n_shocks = R.shape
-            tm1_idx = pt.any(pt.neq(A, 0.0), axis=0)
-            t_idx = pt.any(pt.neq(B, 0.0), axis=0)
+            tm1_grid = np.array(
+                [
+                    [eq.has(var.set_t(-1)) for var in self.variables]
+                    for eq in self.equations
+                ]
+            )
+            t_grid = np.array(
+                [
+                    [eq.has(var.set_t(0)) for var in self.variables]
+                    for eq in self.equations
+                ]
+            )
+
+            tm1_idx = np.any(tm1_grid, axis=0)
+            t_idx = np.any(t_grid, axis=0)
 
             shock_idx = pt.arange(n_shocks)
             state_var_mask = pt.bitwise_and(tm1_idx, t_idx)
 
-            PP = pt.set_subtensor(T.copy()[pt.where(pt.abs(T) < tol)], 0.0)
+            # PP = T[pt.abs(T) < tol].set(0.0)
+            # PP = T.copy()
+            # QQ = QQ[pt.abs(QQ) < tol].set(0.0)
 
-            QQ = R.copy()[:n_vars, :]
-            QQ = pt.set_subtensor(QQ[pt.where(pt.abs(QQ) < tol)], 0.0)
-
-            P = PP[state_var_mask, :][:, state_var_mask]
+            QQ = R[:n_vars, :]
+            P = T[state_var_mask, :][:, state_var_mask]
             Q = QQ[state_var_mask, :][:, shock_idx]
 
             A_prime = A[:, state_var_mask]
-            R_prime = PP[:, state_var_mask]
+            R_prime = T[:, state_var_mask]
             S_prime = QQ[:, shock_idx]
 
             norm_deterministic = pm.Deterministic(
@@ -371,14 +422,15 @@ class DSGEStateSpace(PyMCStateSpace):
 
             # Add penalty terms to the likelihood to rule out invalid solutions
             pm.Potential(
-                "solution_within_tolerance",
-                pt.switch(
-                    pt.bitwise_and(
-                        pt.lt(norm_deterministic, tol), pt.lt(norm_stochastic, tol)
-                    ),
-                    0.0,
-                    -np.inf,
-                ),
+                "solution_norm_penalty",
+                -1 / tol * (norm_deterministic + norm_stochastic),
+                # pt.switch(
+                #     pt.bitwise_and(
+                #         pt.lt(norm_deterministic, tol), pt.lt(norm_stochastic, tol)
+                #     ),
+                #     0.0,
+                #     -np.inf,
+                # ),
             )
 
         if add_bk_check:
@@ -388,7 +440,42 @@ class DSGEStateSpace(PyMCStateSpace):
             )
 
         if add_solver_success_check:
-            pm.Deterministic("solver_success_flag", solver_success)
-            pm.Potential(
-                "solver_success", pt.switch(pt.eq(solver_success, 1.0), 0.0, -np.inf)
-            )
+            policy_resid = pm.Deterministic("policy_resid", policy_resid)
+            pm.Potential("policy_resid_penalty", -1 / tol * policy_resid)
+
+        if add_steady_state_penalty:
+            ss_resid = pm.Deterministic("ss_resid", ss_resid)
+            pm.Potential("steady_state_resid_penalty", -1 / tol * ss_resid)
+
+    def priors_to_preliz(self):
+        priors = self.priors[0]
+        pz_priors = {}
+
+        for name, rv in priors.items():
+            dist_type = type(rv.dist)
+            pz_dist = SCIPY_TO_PRELIZ[dist_type]
+
+            match rv.dist:
+                case norm_gen():
+                    pz_priors[name] = pz_dist(mu=rv.kwds["loc"], sigma=rv.kwds["scale"])
+                case truncnorm_gen():
+                    loc, scale, a, b = (rv.kwds[x] for x in ["loc", "scale", "a", "b"])
+                    lower = loc + scale * a
+                    upper = loc + scale * b
+                    pz_priors[name] = pz_dist(
+                        mu=loc, sigma=scale, lower=lower, upper=upper
+                    )
+                case halfnorm_gen():
+                    pz_priors[name] = pz_dist(sigma=rv.kwds["scale"])
+                case gamma_gen():
+                    pz_priors[name] = pz_dist(
+                        alpha=rv.kwds["a"], beta=1 / rv.kwds["scale"]
+                    )
+                case beta_gen():
+                    pz_priors[name] = pz_dist(alpha=rv.kwds["a"], beta=rv.kwds["b"])
+                case uniform_gen():
+                    pz_priors[name] = pz_dist(lower=rv.kwds["a"], upper=rv.kwds["b"])
+                case invgamma_gen():
+                    pz_priors[name] = pz_dist(alpha=rv.kwds["a"], beta=rv.kwds["scale"])
+
+        return pz_priors

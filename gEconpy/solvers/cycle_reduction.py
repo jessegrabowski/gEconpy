@@ -240,13 +240,14 @@ def scan_cycle_reduction(
     D: pt.TensorLike,
     max_iter: int = 1000,
     tol: float = 1e-7,
+    mode: str | None = None,
 ):
     A = pt.as_tensor_variable(A, name="A")
     B = pt.as_tensor_variable(B, name="B")
     C = pt.as_tensor_variable(C, name="C")
     D = pt.as_tensor_variable(D, name="D")
 
-    output = _scan_cycle_reduction(A, B, C, max_iter, tol)
+    output = _scan_cycle_reduction(A, B, C, max_iter, tol, mode=mode)
 
     ScanCycleReducation = OpFromGraph(
         inputs=[A, B, C],

@@ -279,6 +279,7 @@ def statespace_from_gcn(
         shocks=shocks,
         equations=equations,
         param_dict=param_dict,
+        priors=priors,
         parameter_mapping=parameter_mapping,
         steady_state_mapping=steady_state_mapping,
         ss_jac=ss_jac,
