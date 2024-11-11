@@ -241,6 +241,7 @@ def scan_cycle_reduction(
     max_iter: int = 1000,
     tol: float = 1e-7,
     mode: str | None = None,
+    use_adjoint_gradients: bool = True,
 ):
     A = pt.as_tensor_variable(A, name="A")
     B = pt.as_tensor_variable(B, name="B")
@@ -252,7 +253,7 @@ def scan_cycle_reduction(
     ScanCycleReducation = OpFromGraph(
         inputs=[A, B, C],
         outputs=[output],
-        lop_overrides=_linear_policy_jvp,
+        lop_overrides=_linear_policy_jvp if use_adjoint_gradients else None,
         name="ScanCycleReduction",
         inline=True,
     )

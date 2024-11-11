@@ -89,6 +89,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self._obs_state_names = None
         self.error_states = []
         self._solver = "gensys"
+        self._solver_kwargs: dict | None = None
         self._mode = None
         self._linearized_system_subbed: list | None = None
         self._policy_graph: list | None = None
@@ -135,11 +136,13 @@ class DSGEStateSpace(PyMCStateSpace):
         self._bk_flag = check_bk_condition_pt(A, B, C, D)
 
         if self._solver == "gensys":
-            T, R, success = gensys_pt(A, B, C, D)
+            T, R, success = gensys_pt(A, B, C, D, **self._solver_kwargs)
         elif self._solver == "cycle_reduction":
-            T, R = cycle_reduction_pt(A, B, C, D)
+            T, R = cycle_reduction_pt(A, B, C, D, **self._solver_kwargs)
         else:
-            T, R = scan_cycle_reduction(A, B, C, D, mode=self._mode)
+            T, R = scan_cycle_reduction(
+                A, B, C, D, mode=self._mode, **self._solver_kwargs
+            )
 
         resid = pt.square(A + B @ T + C @ T @ T).sum()
 
@@ -193,6 +196,7 @@ class DSGEStateSpace(PyMCStateSpace):
         full_shock_covaraince: bool = False,
         solver: str = "gensys",
         mode: str | None = None,
+        **solver_kwargs,
     ):
         # Set up observed states
         unknown_states = [x for x in observed_states if x not in self.state_names]
@@ -252,6 +256,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self.full_covariance = full_shock_covaraince
         self._configured = True
         self._solver = solver
+        self._solver_kwargs = solver_kwargs
         self._mode = mode
 
         # Rebuild the internal statespace representation and kalman filters with the newly resized matrices
