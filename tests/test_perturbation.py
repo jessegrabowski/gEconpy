@@ -200,7 +200,7 @@ def test_cycle_reduction_gradients(op):
     assert_allclose(resid, 0.0, atol=1e-8, rtol=1e-8)
 
     def cycle_func(A, B, C, D):
-        T, R = op(A, B, C, D)
+        T, R, *_ = op(A, B, C, D)
         return T.sum()
 
     verify_grad(

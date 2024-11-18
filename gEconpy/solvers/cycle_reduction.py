@@ -242,7 +242,7 @@ def scan_cycle_reduction(
     B: pt.TensorLike,
     C: pt.TensorLike,
     D: pt.TensorLike,
-    max_iter: int = 100,
+    max_iter: int = 50,
     tol: float = 1e-7,
     mode: str | None = None,
     use_adjoint_gradients: bool = True,
@@ -273,7 +273,7 @@ def solve_policy_function_with_cycle_reduction(
     B: np.ndarray,
     C: np.ndarray,
     D: np.ndarray,
-    max_iter: int = 1000,
+    max_iter: int = 100,
     tol: float = 1e-8,
     verbose: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, str, float]:
