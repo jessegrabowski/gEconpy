@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.model import (
     autocorrelation_matrix,
-    bk_condition,
+    check_bk_condition,
     impulse_response_function,
     simulate,
     stationary_covariance_matrix,
@@ -191,7 +191,7 @@ class TestPlotEigenvalues(unittest.TestCase):
         from matplotlib.collections import PathCollection
 
         scatter_points = fig.axes[0].findobj(PathCollection)[0].get_offsets().data
-        data = bk_condition(self.model, return_value="dataframe", verbose=False)
+        data = check_bk_condition(self.model, return_value="dataframe", verbose=False)
 
         n_finite = (data["Modulus"] < 1.5).sum()
         self.assertEqual(n_finite, scatter_points.shape[0])

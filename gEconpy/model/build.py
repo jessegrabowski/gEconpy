@@ -22,6 +22,7 @@ from gEconpy.parser.file_loaders import (
     simplify_provided_ss_equations,
     validate_results,
 )
+from gEconpy.utilities import get_name
 
 _log = logging.getLogger(__name__)
 
@@ -207,6 +208,7 @@ def statespace_from_gcn(
     verbose: bool = True,
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters="raise",
+    not_loglin_variables: list[str] | None = None,
     **kwargs,
 ):
     objects, dictionaries, functions, cache, priors = _compile_gcn(
@@ -249,7 +251,7 @@ def statespace_from_gcn(
 
     A, B, C, D = linearized_matrices
 
-    not_loglin_variables = next(
+    not_loglin_flags = next(
         x for x in cache.values() if x.name == "not_loglin_variable"
     )
 
@@ -262,7 +264,23 @@ def statespace_from_gcn(
 
     # TODO: The user might want to choose this. For now its hardcoded.
     ss_vec = pt.stack(list(steady_state_mapping.values()))
-    not_loglin_replacement = {not_loglin_variables: pt.le(ss_vec, 0.0).astype(float)}
+    if not_loglin_variables is None:
+        not_loglin_variables = []
+
+    var_names = [get_name(x, base_name=True) for x in variables]
+    unknown_not_login = set(not_loglin_variables) - set(var_names)
+
+    if len(unknown_not_login) > 0:
+        raise ValueError(
+            f"The following variables were requested not to be log-linearized, but are unknown to the model: "
+            f"{', '.join(unknown_not_login)}"
+        )
+
+    not_loglin_mask = pt.as_tensor([x in not_loglin_variables for x in var_names])
+    not_loglin_values = pt.le(ss_vec, 0.0).astype(float)
+    not_loglin_values = not_loglin_values[not_loglin_mask].set(1.0)
+
+    not_loglin_replacement = {not_loglin_flags: not_loglin_values}
 
     replacements = steady_state_mapping | not_loglin_replacement
 

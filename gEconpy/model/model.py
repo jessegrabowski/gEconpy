@@ -24,9 +24,10 @@ from gEconpy.exceptions import (
     SteadyStateNotFoundError,
 )
 from gEconpy.model.compile import BACKENDS
+from gEconpy.model.perturbation import check_bk_condition as _check_bk_condition
 from gEconpy.model.perturbation import (
-    check_bk_condition,
     check_perturbation_solution,
+    make_not_loglin_flags,
     override_dummy_wrapper,
     residual_norms,
     statespace_to_gEcon_representation,
@@ -812,41 +813,14 @@ class Model:
                 **self.parameters(**param_dict), **steady_state_kwargs
             )
 
-        if not_loglin_variables is None:
-            not_loglin_variables = []
-
-        vars_and_calibrated = self.variables + self.calibrated_params
-        n_variables = len(vars_and_calibrated)
-        not_loglin_flags = np.zeros(n_variables)
-
-        for i, var in enumerate(vars_and_calibrated):
-            not_loglin_flags[i] = get_name(var) in not_loglin_variables
-
-        ss_values = np.array(list(steady_state.values()))
-        ss_zeros = np.abs(ss_values) < 1e-8
-        ss_negative = ss_values < 0.0
-
-        if np.any(ss_zeros):
-            zero_idxs = np.flatnonzero(ss_zeros)
-            zero_vars = [vars_and_calibrated[i] for i in zero_idxs]
-            if verbose:
-                _log.warning(
-                    f"The following variables had steady-state values close to zero and will not be log-linearized:"
-                    f"{[get_name(x) for x in zero_vars]}"
-                )
-
-            not_loglin_flags[ss_zeros] = 1
-
-        if np.any(ss_negative) and not loglin_negative_ss:
-            neg_idxs = np.flatnonzero(ss_negative)
-            neg_vars = [vars_and_calibrated[i] for i in neg_idxs]
-            if verbose:
-                _log.warning(
-                    f"The following variables had negative steady-state values and will not be log-linearized:"
-                    f"{[get_name(x) for x in neg_vars]}"
-                )
-
-            not_loglin_flags[neg_idxs] = 1
+        not_loglin_flags = make_not_loglin_flags(
+            variables=self.variables,
+            calibrated_params=self.calibrated_params,
+            steady_state=steady_state,
+            not_loglin_variables=not_loglin_variables,
+            loglin_negative_ss=loglin_negative_ss,
+            verbose=verbose,
+        )
 
         A, B, C, D = self.f_linearize(
             **param_dict, **steady_state, not_loglin_variable=not_loglin_flags
@@ -1311,7 +1285,7 @@ def stationary_covariance_matrix(
     return Sigma
 
 
-def bk_condition(
+def check_bk_condition(
     model: Model,
     *,
     A: np.ndarray | None = None,
@@ -1369,7 +1343,7 @@ def bk_condition(
     A, B, C, D = _maybe_linearize_model(
         model, A, B, C, D, verbose=verbose, **linearize_model_kwargs
     )
-    bk_result = check_bk_condition(
+    bk_result = _check_bk_condition(
         A,
         B,
         C,
@@ -1722,13 +1696,12 @@ def impulse_response_function(
                 n_shocks=n_model_shocks,
                 shock_size=step_dict,
             )
+            print(np.nonzero(traj))
             data[i] = _simulate(traj)
 
     elif return_individual_shocks and shock_trajectory is not None:
         for i, shock_name in enumerate(shock_names):
-            traj = np.zeros_like(shock_trajectory)
-            traj[:i] = shock_trajectory[:i]
-            data[i] = _simulate(traj)
+            data[i] = _simulate(shock_trajectory[i])
 
     else:
         traj = _create_shock_trajectory(

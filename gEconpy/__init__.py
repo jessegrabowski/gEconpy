@@ -8,7 +8,7 @@ from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 from gEconpy.model.model import (
     autocorrelation_matrix,
     autocovariance_matrix,
-    bk_condition,
+    check_bk_condition,
     impulse_response_function,
     matrix_to_dataframe,
     simulate,
@@ -37,7 +37,7 @@ __all__ = [
     "stationary_covariance_matrix",
     "autocovariance_matrix",
     "autocorrelation_matrix",
-    "bk_condition",
+    "check_bk_condition",
     "matrix_to_dataframe",
     "print_steady_state",
     "classes",

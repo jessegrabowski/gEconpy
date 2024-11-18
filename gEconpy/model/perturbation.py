@@ -19,7 +19,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import BACKENDS, compile_function
 from gEconpy.numbaf.overloads import nb_ordqz
 from gEconpy.solvers.gensys import _gensys_setup
-from gEconpy.utilities import eq_to_ss
+from gEconpy.utilities import eq_to_ss, get_name, simplify_matrix
 
 _log = logging.getLogger(__name__)
 
@@ -181,6 +181,7 @@ def linearize_model(
 
     eq_vec = sp.Matrix(equations)
     A, B, C = (eq_to_ss(eq_vec.jacobian(var_group)) for var_group in [lags, now, leads])
+    A, B, C = (simplify_matrix(x) for x in [A, B, C])
     D = eq_to_ss(eq_vec.jacobian(shocks)) if shocks else sp.ZeroMatrix(*eq_vec.shape)
 
     not_loglin_var = sp.IndexedBase("not_loglin_variable", shape=(len(variables),))
@@ -189,7 +190,70 @@ def linearize_model(
     )
 
     Fs = [A @ T, B @ T, C @ T, D]
+
     return Fs, not_loglin_var
+
+
+def make_not_loglin_flags(
+    variables: list[TimeAwareSymbol],
+    calibrated_params: list[sp.Symbol],
+    steady_state: SymbolDictionary[str, float],
+    not_loglin_variables: list[str] | None = None,
+    loglin_negative_ss: bool = False,
+    verbose: bool = True,
+):
+    if not_loglin_variables is None:
+        not_loglin_variables = []
+
+    vars_and_calibrated = variables + calibrated_params
+    var_names = [get_name(x, base_name=True) for x in vars_and_calibrated]
+    unknown_not_login = set(not_loglin_variables) - set(var_names)
+
+    if len(unknown_not_login) > 0:
+        raise ValueError(
+            f"The following variables were requested not to be log-linearized, but are unknown to the model: "
+            f"{', '.join(unknown_not_login)}"
+        )
+
+    if verbose and len(not_loglin_variables) > 0:
+        _log.warning(
+            "The following variables will not be log-linearized at the user's request: "
+            f"{not_loglin_variables}"
+        )
+
+    n_variables = len(vars_and_calibrated)
+    not_loglin_flags = np.zeros(n_variables)
+
+    for i, name in enumerate(var_names):
+        not_loglin_flags[i] = name in not_loglin_variables
+
+    ss_values = np.array(list(steady_state.values()))
+    ss_zeros = np.abs(ss_values) < 1e-8
+    ss_negative = ss_values < 0.0
+
+    if np.any(ss_zeros):
+        zero_idxs = np.flatnonzero(ss_zeros)
+        zero_vars = [vars_and_calibrated[i] for i in zero_idxs]
+        if verbose:
+            _log.warning(
+                f"The following variables had steady-state values close to zero and will not be log-linearized:"
+                f"{[get_name(x) for x in zero_vars]}"
+            )
+
+        not_loglin_flags[ss_zeros] = 1
+
+    if np.any(ss_negative) and not loglin_negative_ss:
+        neg_idxs = np.flatnonzero(ss_negative)
+        neg_vars = [vars_and_calibrated[i] for i in neg_idxs]
+        if verbose:
+            _log.warning(
+                f"The following variables had negative steady-state values and will not be log-linearized:"
+                f"{[get_name(x) for x in neg_vars]}"
+            )
+
+        not_loglin_flags[neg_idxs] = 1
+
+    return not_loglin_flags
 
 
 def compile_linearized_system(
@@ -383,13 +447,21 @@ def check_bk_condition(
         columns=["Modulus", "Real", "Imaginary"],
     )
     n_greater_than_one = (eig["Modulus"] > 1).sum()
-    condition_not_satisfied = n_forward > n_greater_than_one
+    condition_not_satisfied = n_forward != n_greater_than_one
 
     message = (
         f'Model solution has {n_greater_than_one} eigenvalues greater than one in modulus and {n_forward} '
         f'forward-looking variables. '
         f'\nBlanchard-Kahn condition is{" NOT" if condition_not_satisfied else ""} satisfied.'
     )
+
+    if condition_not_satisfied:
+        if n_greater_than_one > n_forward:
+            reason = "No stable solution (More unstable eigenvalues than forward-looking variables)"
+        else:
+            reason = "No unique solution (More forward-looking variables than unstable eigenvalues)"
+
+        message += " " + reason
 
     if condition_not_satisfied and on_failure == "raise":
         raise ValueError(message)

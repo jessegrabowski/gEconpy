@@ -431,6 +431,7 @@ def simplify_matrix(A: sp.MutableMatrix):
 
     for i in range(A.rows):
         for j in range(A.cols):
-            A[i, j] = sp.simplify(A[i, j])
+            expr = A[i, j]
+            A[i, j] = sp.simplify(expr)
 
     return A

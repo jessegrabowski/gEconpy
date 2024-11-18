@@ -13,7 +13,7 @@ from matplotlib.gridspec import GridSpec
 from scipy import stats
 from xarray_einstats.linalg import diagonal as xr_diagonal
 
-from gEconpy.model.model import bk_condition
+from gEconpy.model.model import check_bk_condition
 
 
 def prepare_gridspec_figure(
@@ -567,7 +567,7 @@ def plot_eigenvalues(
 
     data = cast(
         pd.DataFrame,
-        bk_condition(
+        check_bk_condition(
             model,
             A=A,
             B=B,
