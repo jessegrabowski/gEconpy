@@ -70,6 +70,7 @@ def _compile_gcn(
 
     validate_results(
         equations,
+        steady_state_relationships,
         param_dict,
         calib_dict,
         deterministic_dict,

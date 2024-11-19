@@ -1696,7 +1696,7 @@ def impulse_response_function(
                 n_shocks=n_model_shocks,
                 shock_size=step_dict,
             )
-            print(np.nonzero(traj))
+
             data[i] = _simulate(traj)
 
     elif return_individual_shocks and shock_trajectory is not None:
@@ -1711,7 +1711,6 @@ def impulse_response_function(
             shock_trajectory=shock_trajectory,
             shock_size=shock_size,
         )
-        print(traj)
 
         data = _simulate(traj)
 

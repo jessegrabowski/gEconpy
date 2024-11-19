@@ -5,6 +5,7 @@ from importlib.util import find_spec
 
 import numpy as np
 import pytest
+import sympy as sp
 
 from gEconpy.exceptions import (
     DuplicateParameterError,
@@ -319,8 +320,16 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
     )
 
     ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
-
-    validate_results(equations, param_dict, calib_dict, deterministic_dict)
+    steady_state_relationships = [
+        sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()
+    ]
+    validate_results(
+        equations,
+        steady_state_relationships,
+        param_dict,
+        calib_dict,
+        deterministic_dict,
+    )
     steady_state_equations = system_to_steady_state(equations, shocks)
 
     kwargs = {}

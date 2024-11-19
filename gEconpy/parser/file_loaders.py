@@ -376,11 +376,18 @@ def apply_simplifications(
 
 
 def validate_results(
-    equations, param_dict, calib_dict, deterministic_dict, on_unused_parameters="raise"
+    equations,
+    steady_state_relationships,
+    param_dict,
+    calib_dict,
+    deterministic_dict,
+    on_unused_parameters="raise",
 ):
     joint_dict = param_dict | calib_dict | deterministic_dict
-    check_for_orphan_params(equations, joint_dict)
-    check_for_extra_params(equations, joint_dict, on_unused_parameters)
+    check_for_orphan_params(equations + steady_state_relationships, joint_dict)
+    check_for_extra_params(
+        equations + steady_state_relationships, joint_dict, on_unused_parameters
+    )
 
 
 def block_dict_to_model_primitives(
