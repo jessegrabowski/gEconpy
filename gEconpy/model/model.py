@@ -1701,7 +1701,9 @@ def impulse_response_function(
 
     elif return_individual_shocks and shock_trajectory is not None:
         for i, shock_name in enumerate(shock_names):
-            data[i] = _simulate(shock_trajectory[i])
+            traj = np.zeros_like(shock_trajectory)
+            traj[i] = shock_trajectory[i]
+            data[i] = _simulate(traj)
 
     else:
         traj = _create_shock_trajectory(
