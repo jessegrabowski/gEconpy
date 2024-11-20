@@ -263,7 +263,6 @@ def statespace_from_gcn(
         for k, v in steady_state_mapping.items()
     }
 
-    # TODO: The user might want to choose this. For now its hardcoded.
     ss_vec = pt.stack(list(steady_state_mapping.values()))
     if not_loglin_variables is None:
         not_loglin_variables = []

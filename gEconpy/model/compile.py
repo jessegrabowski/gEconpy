@@ -47,8 +47,9 @@ def sp_to_pt_from_cache(symbol_list: list[sp.Symbol], cache: dict) -> SymbolDict
 
 
 def output_to_tensor(x, cache):
-    if isinstance(x, int | float):
+    if isinstance(x, int | float | sp.Float | sp.Integer):
         return pytensor.tensor.constant(x, dtype=pytensor.config.floatX)
+
     return as_tensor(x, cache)
 
 
@@ -216,6 +217,7 @@ def compile_to_pytensor_function(
     outputs = [outputs] if not isinstance(outputs, list) else outputs
     input_pt = [as_tensor(x, cache) for x in inputs]
     output_pt = [output_to_tensor(x, cache) for x in outputs]
+
     original_shape = [x.type.shape for x in output_pt]
 
     if stack_return:
