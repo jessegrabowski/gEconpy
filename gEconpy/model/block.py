@@ -84,6 +84,8 @@ class Block:
             assumptions = defaultdict(dict)
 
         self.initialize_from_dictionary(block_dict, assumptions)
+        self._consolidate_definitions()
+
         self._get_variable_list()
         self._get_param_dict_and_calibrating_equations()
 
@@ -255,6 +257,24 @@ class Block:
         bool
         """
         return key in block_dict and hasattr(self, key) and block_dict[key] is not None
+
+    def _consolidate_definitions(self):
+        """
+        Combine definitions that refer to other definitions via subsitution
+        """
+        if self.definitions is None:
+            return
+
+        sub_dict = {eq.lhs: eq.rhs for eq in self.definitions.values()}
+
+        for var, eq in sub_dict.items():
+            if not hasattr(eq, "subs"):
+                continue
+            sub_dict[var] = substitute_repeatedly(eq, sub_dict)
+
+        self.definitions = {
+            k: sp.Eq(v.lhs, v.rhs.subs(sub_dict)) for k, v in self.definitions.items()
+        }
 
     def _extract_lagrange_multipliers(
         self, equations: list[list[str]], assumptions: dict
