@@ -73,7 +73,9 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self.parameter_mapping = parameter_mapping
         self.steady_state_mapping = steady_state_mapping
-        self.input_parameters = list(parameter_mapping.keys())
+        self.input_parameters = [
+            x for x in parameter_mapping.keys() if x.name in param_dict
+        ]
 
         self.ss_jac = ss_jac
         self.ss_resid = ss_resid

@@ -282,7 +282,7 @@ def statespace_from_gcn(
 
     not_loglin_replacement = {not_loglin_flags: not_loglin_values}
 
-    replacements = steady_state_mapping | not_loglin_replacement
+    replacements = parameter_mapping | steady_state_mapping | not_loglin_replacement
 
     # Replace all placeholders with functions of the input parameters
     ss_resid, ss_jac, ss_error, ss_grad, ss_hess = graph_replace(
