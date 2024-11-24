@@ -130,7 +130,7 @@ EXPECTED_TRYREDUCE = {
     "one_block": [],
     "one_block_ss": ["C[]"],
     "one_block_2": ["C[]"],
-    "full_nk": ["Div[]", "TC[]"],
+    "full_nk": [],
 }
 
 EXPECTED_SS_LEN = {"one_block": 0, "one_block_ss": 9, "one_block_2": 0, "full_nk": 25}

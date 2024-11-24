@@ -334,6 +334,8 @@ def check_for_orphan_params(
     equations: list[sp.Expr], param_dict: SymbolDictionary
 ) -> None:
     parameters = list(param_dict.to_sympy().keys())
+    param_equations = [x for x in param_dict.values() if isinstance(x, sp.Expr)]
+
     orphans = [
         atom
         for eq in equations
@@ -342,6 +344,7 @@ def check_for_orphan_params(
             isinstance(atom, sp.Symbol)
             and not isinstance(atom, TimeAwareSymbol)
             and atom not in parameters
+            and not any(eq.has(atom) for eq in param_equations)
         )
     ]
 
