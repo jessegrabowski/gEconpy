@@ -145,6 +145,21 @@ def block_dict_to_equation_list(block_dict: dict[str, Block]) -> list[sp.Expr]:
     return equations
 
 
+def block_dict_to_sub_dict(
+    block_dict: dict[str, Block],
+) -> dict[TimeAwareSymbol, sp.Expr]:
+    sub_dict = {}
+    block_names, blocks = unpack_keys_and_values(block_dict)
+    for block in blocks:
+        for group in ["identities", "objective", "constraints"]:
+            if getattr(block, group) is not None:
+                _, equations = unpack_keys_and_values(getattr(block, group))
+                for eq in equations:
+                    sub_dict[eq.lhs] = eq.rhs
+
+    return sub_dict
+
+
 def block_dict_to_param_dict(
     block_dict: dict[str, Block], dict_name: PARAM_DICTS = "param_dict"
 ) -> SymbolDictionary:
@@ -354,6 +369,7 @@ def apply_simplifications(
     try_reduce_vars: list[TimeAwareSymbol],
     equations: list[sp.Expr],
     variables: list[TimeAwareSymbol],
+    tryreduce_sub_dict: dict[TimeAwareSymbol, sp.Expr] | None = None,
     do_simplify_tryreduce: bool = True,
     do_simplify_constants: bool = True,
 ) -> tuple[
@@ -367,8 +383,9 @@ def apply_simplifications(
 
     if do_simplify_tryreduce:
         equations, variables, eliminated_variables = simplify_tryreduce(
-            try_reduce_vars, equations, variables
+            try_reduce_vars, equations, variables, tryreduce_sub_dict
         )
+
     if do_simplify_constants:
         equations, variables, singletons = simplify_constants(equations, variables)
 
@@ -406,10 +423,14 @@ def block_dict_to_model_primitives(
     param_priors, shock_priors, hyper_priors_final = prior_info_to_prior_dict(
         prior_info, assumptions, param_dict
     )
+
+    tryreduce_sub_dict = block_dict_to_sub_dict(block_dict)
+
     equations, variables, eliminated_variables, singletons = apply_simplifications(
         try_reduce_vars,
         equations,
         variables,
+        tryreduce_sub_dict,
         do_simplify_tryreduce=simplify_tryreduce,
         do_simplify_constants=simplify_constants,
     )
@@ -503,11 +524,11 @@ def build_report(
 
     if reduced_vars:
         report += "\tThe following variables were eliminated at user request:\n"
-        report += "\t\t" + ",".join([x.name for x in reduced_vars]) + "\n"
+        report += "\t\t" + ", ".join([x.name for x in reduced_vars]) + "\n"
 
     if singletons:
         report += '\tThe following "variables" were defined as constants and have been substituted away:\n'
-        report += "\t\t" + ",".join([x.name for x in singletons]) + "\n"
+        report += "\t\t" + ", ".join([x.name for x in singletons]) + "\n"
 
     report += f"\t{n_shocks} stochastic {shock_str}\n"
     report += (

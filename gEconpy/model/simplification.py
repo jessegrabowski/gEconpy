@@ -43,6 +43,7 @@ def simplify_tryreduce(
     try_reduce_vars: list[TimeAwareSymbol],
     equations: list[sp.Expr],
     variables: list[TimeAwareSymbol],
+    tryreduce_sub_dict: dict[TimeAwareSymbol, sp.Expr] | None = None,
 ) -> tuple[list[sp.Expr], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     """
     Attempt to reduce the number of equations in the system by removing equations requested in the `tryreduce`
@@ -60,6 +61,8 @@ def simplify_tryreduce(
         "Simplification via a tryreduce block", n_equations, n_variables
     ):
         return equations, variables, []
+    if tryreduce_sub_dict is None:
+        tryreduce_sub_dict = {}
 
     occurrence_matrix = np.zeros((n_variables, n_variables))
     reduced_equations = []
@@ -70,13 +73,33 @@ def simplify_tryreduce(
                 occurrence_matrix[i, j] += 1
 
     # Columns with a sum of 1 are variables that appear only in a single equations; these equations can be deleted
-    # without consequence w.r.t solving the system.
+    # without consequence w.r.t solving the system, with no further checking required.
     isolated_variables = np.array(variables)[occurrence_matrix.sum(axis=0) == 1]
     to_remove = set(isolated_variables).intersection(set(try_reduce_vars))
 
     for eq in equations:
         if not any([var in eq.atoms() for var in to_remove]):
             reduced_equations.append(eq)
+
+    # Next use the user-supplied equations to reduce the system further, seeking to eliminate variables via direct
+    # substitution.
+    for reduction_variable in try_reduce_vars:
+        if reduction_variable not in tryreduce_sub_dict:
+            continue
+        sub_dict = {reduction_variable: tryreduce_sub_dict[reduction_variable]}
+        reduction_candidate = substitute_all_equations(reduced_equations, sub_dict)
+        reduction_candidate = [eq.simplify() for eq in reduction_candidate]
+
+        # To be a valid reduction, there should be exactly one zero in reduction_candidates, and the reduced variable
+        # should no longer appear in the system.
+        if reduction_candidate.count(0) == 1 and not any(
+            [
+                x in eq.atoms()
+                for eq in reduction_candidate
+                for x in make_all_var_time_combos([reduction_variable])
+            ]
+        ):
+            reduced_equations = [eq for eq in reduction_candidate if eq != 0]
 
     reduced_variables, eliminated_vars = reduce_variable_list(
         reduced_equations, variables
