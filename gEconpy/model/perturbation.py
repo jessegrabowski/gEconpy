@@ -484,7 +484,11 @@ class BlanchardKahnCondition(Op):
 
     def make_node(self, A, B, C, D) -> Apply:
         inputs = list(map(pt.as_tensor, [A, B, C, D]))
-        outputs = [pt.scalar("bk_flag", dtype=bool)]
+        outputs = [
+            pt.scalar("bk_flag", dtype=bool),
+            pt.scalar("n_forward", dtype=int),
+            pt.scalar("n_greater_than_one", dtype=int),
+        ]
 
         return Apply(self, inputs, outputs)
 
@@ -492,11 +496,19 @@ class BlanchardKahnCondition(Op):
         self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]
     ) -> None:
         A, B, C, D = inputs
-        bk_flag = check_bk_condition(
-            A, B, C, D, tol=self.tol, verbose=False, return_value="bool"
+        eig = check_bk_condition(
+            A, B, C, D, tol=self.tol, verbose=False, return_value="dataframe"
         )
-        outputs[0][0] = np.array(bk_flag)
+
+        n_forward = (np.abs(C).sum(axis=0) > 1e-8).sum().astype(int)
+        n_greater_than_one = (eig["Modulus"] > 1).sum()
+
+        condition_not_satisfied = n_forward != n_greater_than_one
+
+        outputs[0][0] = np.array(condition_not_satisfied)
+        outputs[1][0] = np.array(n_forward)
+        outputs[2][0] = np.array(n_greater_than_one)
 
 
-def check_bk_condition_pt(A, B, C, D, tol=1e8):
+def check_bk_condition_pt(A, B, C, D, tol=1e-8):
     return BlanchardKahnCondition(tol=tol)(A, B, C, D)

@@ -97,7 +97,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self._policy_graph: list | None = None
         self._ss_resid: pt.TensorVariable | None = None
 
-        self._bk_flag = None
+        self._bk_output = None
         self._policy_resid = None
 
         k_endog = 1  # to be updated later
@@ -135,7 +135,7 @@ class DSGEStateSpace(PyMCStateSpace):
             self.linearized_system, constant_replacements, strict=False
         )
 
-        self._bk_flag = check_bk_condition_pt(A, B, C, D)
+        self._bk_output = check_bk_condition_pt(A, B, C, D)
         n_steps = None
 
         if self._solver == "gensys":
@@ -389,11 +389,13 @@ class DSGEStateSpace(PyMCStateSpace):
             )
             pm.Deterministic("n_cycle_steps", n_steps)
 
-        policy_resid, bk_flag, ss_resid = graph_replace(
-            [self._policy_resid, self._bk_flag, self._ss_resid],
+        policy_resid, *bk_output, ss_resid = graph_replace(
+            [self._policy_resid, *self._bk_output, self._ss_resid],
             replace=replacement_dict,
             strict=False,
         )
+
+        bk_flag, n_forward, n_gt_one = bk_output
 
         if add_norm_check:
             n_vars, n_shocks = R.shape
