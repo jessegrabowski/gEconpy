@@ -356,7 +356,9 @@ def check_for_extra_params(
     equations: list[sp.Expr], param_dict: SymbolDictionary, on_unused_parameters="raise"
 ):
     parameters = list(param_dict.to_sympy().keys())
-    all_atoms = {atom for eq in equations for atom in eq.atoms()}
+    param_equations = [x for x in param_dict.values() if isinstance(x, sp.Expr)]
+
+    all_atoms = {atom for eq in equations + param_equations for atom in eq.atoms()}
     extras = [parameter for parameter in parameters if parameter not in all_atoms]
 
     if len(extras) > 0:
@@ -462,6 +464,7 @@ def build_report(
     param_priors: SymbolDictionary,
     shock_priors: SymbolDictionary,
     reduced_vars: list[TimeAwareSymbol],
+    reduced_params: list[sp.Symbol],
     singletons: list[TimeAwareSymbol],
 ) -> None:
     """
@@ -487,6 +490,10 @@ def build_report(
 
     reduced_vars: list[TimeAwareSymbol]
         A list of variables reduced by the `try_reduce` method. Used to print the names of eliminated variables.
+
+    reduced_params: list of Symbol
+        A list of "deterministic" parameters eliminated via substitution. These are parameters that are only used
+        in the definiton of other parameters.
 
     singletons: list[TimeAwareSymbol]
         A list of "singleton" variables -- those defined as time-invariant constants. Used ot print the sames of
@@ -526,12 +533,12 @@ def build_report(
     report += f"\t{n_variables} {var_str}\n"
 
     if reduced_vars:
-        report += "\tThe following variables were eliminated at user request:\n"
-        report += "\t\t" + ", ".join([x.name for x in reduced_vars]) + "\n"
+        report += "\t\tThe following variables were eliminated at user request:\n"
+        report += "\t\t\t" + ", ".join([x.name for x in reduced_vars]) + "\n"
 
     if singletons:
-        report += '\tThe following "variables" were defined as constants and have been substituted away:\n'
-        report += "\t\t" + ", ".join([x.name for x in singletons]) + "\n"
+        report += '\t\tThe following "variables" were defined as constants and have been substituted away:\n'
+        report += "\t\t\t" + ", ".join([x.name for x in singletons]) + "\n"
 
     report += f"\t{n_shocks} stochastic {shock_str}\n"
     report += (
@@ -540,10 +547,15 @@ def build_report(
     )
 
     report += f"\t{n_params} {free_par_str}\n"
+    if reduced_params:
+        report += "\t\tThe following parameters were eliminated via substitution into other parameters:\n"
+        report += "\t\t\t" + ", ".join([x.name for x in reduced_params]) + "\n"
+
     report += (
-        f'\t\t {len(param_priors)} / {n_params} {"have" if len(param_priors) == 1 else "has"} '
+        f'\t\t {len(param_priors)} / {n_params} parameters {"have" if len(param_priors) == 1 else "has"} '
         f"a defined prior. \n"
     )
+
     report += f"\t{n_params_to_calibrate} {calib_par_str} to calibrate.\n"
 
     if n_equations == n_variables:

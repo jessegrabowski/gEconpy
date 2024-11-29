@@ -22,7 +22,7 @@ from gEconpy.parser.file_loaders import (
     simplify_provided_ss_equations,
     validate_results,
 )
-from gEconpy.utilities import get_name
+from gEconpy.utilities import get_name, substitute_repeatedly
 
 _log = logging.getLogger(__name__)
 
@@ -67,6 +67,24 @@ def _compile_gcn(
     steady_state_relationships = [
         sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()
     ]
+
+    # TODO: Move this to a separate function
+    # TODO: Add option to not eliminate deterministic parameters (the user might be interested in them)
+
+    deterministic_dict.to_sympy(inplace=True)
+    for param, expr in deterministic_dict.items():
+        deterministic_dict[param] = substitute_repeatedly(expr, deterministic_dict)
+
+    # If a deterministic parameter is only used in other parameters, it will now have been completely substituted away
+    # and can be removed
+    reduced_params = []
+    final_deterministics = deterministic_dict.copy()
+    for param in deterministic_dict.keys():
+        if not any(eq.has(param) for eq in equations + steady_state_relationships):
+            reduced_params.append(param)
+            del final_deterministics[param]
+
+    deterministic_dict = final_deterministics.to_string()
 
     validate_results(
         equations,
@@ -120,6 +138,7 @@ def _compile_gcn(
             param_priors,
             shock_priors,
             reduced_vars,
+            reduced_params,
             singletons,
         )
 
