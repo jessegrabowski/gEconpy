@@ -421,7 +421,7 @@ def test_build_report(caplog):
                     1 stochastic shock
                         0 / 1 has a defined prior.
                     6 parameters
-                        0 / 6 has a defined prior.
+                        0 / 6 parameters has a defined prior.
                     0 parameters to calibrate.
                     Model appears well defined and ready to proceed to solving."""
 
