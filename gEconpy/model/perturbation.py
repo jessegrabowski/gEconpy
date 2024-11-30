@@ -373,15 +373,13 @@ def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
     # have sign flip relative to qzdiv -- does it matter?
     A, B, alpha, beta, Q, Z = nb_ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
 
-    gev = np.column_stack((np.diag(A), np.diag(B)))
+    eigenval = np.diag(B) / (np.diag(A) + tol)
+    n_eigs = len(eigenval)
 
-    eigenval = gev[:, 1] / (gev[:, 0] + tol)
-    pos_idx = np.where(np.abs(eigenval) > 0)
-
-    eig = np.empty(((np.abs(eigenval) > 0).sum(), 3))
-    eig[:, 0] = np.abs(eigenval)[pos_idx]
-    eig[:, 1] = np.real(eigenval)[pos_idx]
-    eig[:, 2] = np.imag(eigenval)[pos_idx]
+    eig = np.empty((n_eigs, 3))
+    eig[:, 0] = np.abs(eigenval)
+    eig[:, 1] = np.real(eigenval)
+    eig[:, 2] = np.imag(eigenval)
 
     sorted_idx = np.argsort(eig[:, 0])
     eig = eig[sorted_idx, :]
