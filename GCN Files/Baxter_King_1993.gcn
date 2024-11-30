@@ -1,0 +1,143 @@
+block STEADY_STATE
+{
+	identities
+	{
+		tau[ss] = tau_bar;
+		G_B[ss] = G_B_bar;
+		I_G[ss] = I_G_bar;
+		K_G[ss] = I_G[ss] / delta;
+
+		r_G[ss] = 1 / beta;
+		r[ss] = (1 / beta - (1 - delta)) / (1 - tau[ss]);
+		w[ss] = (1 - theta_K) * (A_bar * K_G[ss] ^ theta_G) ^ (1 / (1 - theta_K)) *
+			(theta_K / r[ss]) ^ (theta_K / (1 - theta_K));
+		Y[ss] = ((1 - tau[ss]) * w[ss] / theta_L + G_B[ss] + I_G[ss]) /
+				(1 + (1 - theta_K) / theta_L * (1 - tau[ss]) - delta * theta_K / r[ss]);
+		K[ss] = theta_K * Y[ss] / r[ss];
+		N[ss] = (1 - theta_K) * Y[ss] / w[ss];
+
+		I[ss] = delta * theta_K * Y[ss] / r[ss];
+		C[ss] = (1 - tau[ss]) / theta_L * (w[ss] - (1 - theta_K) * Y[ss]);
+		L[ss] = 1 - N[ss];
+
+		U[ss] = (1 / (1 - beta)) * (log(C[ss]) + theta_L * log(L[ss]));
+        lambda[ss] = 1 / C[ss];
+		lambda_L[ss] = w[ss] * (1 - tau[ss]) / C[ss];
+
+		TC[ss] = -(w[ss] * N[ss] + r[ss] * K[ss]);
+		Div[ss] = Y[ss] + TC[ss];
+		TR[ss] = tau[ss] * (w[ss] * N[ss] + r[ss] * K[ss]) - G_B[ss] - I_G[ss];
+	};
+};
+
+block HOUSEHOLD
+{
+	definitions
+	{
+		u[] = log(C[]) + theta_L * log(L[]);
+	};
+
+	objective
+	{
+		U[] = u[] + beta * E[][U[1]];
+	};
+
+	controls
+	{
+		C[], I[], K[], L[], N[], B[];
+	};
+
+	constraints
+	{
+		C[] + I[] + B[] / r_G[] = (1 - tau[]) * (w[] * N[] + r[] * K[-1])
+			+ B[-1] + Div[] + TR[] : lambda[];
+		N[] + L[] = 1 : lambda_L[];
+		K[] = (1 - delta) * K[-1] + I[];
+	};
+
+	calibration
+	{
+		# Real rate = 6.5%
+		r_G[ss] = 1.065 -> beta;
+		delta = 0.025;
+		N[ss] = 1/3 -> theta_L;
+	};
+};
+
+
+block FIRM
+{
+	objective
+	{
+		TC[] = -(w[] * N[] + r[] * K[-1]);
+	};
+
+	controls
+	{
+		N[], K[-1];
+	};
+
+	constraints
+	{
+		Y[] = A_bar * K[-1] ^ theta_K * N[] ^ (1 - theta_K) * K_G[] ^ theta_G: mc[];
+	};
+
+	identities
+	{
+		mc[] = 1;
+		Div[] = Y[] + TC[];
+	};
+
+	calibration
+	{
+		Y[ss] = 1 -> A_bar;
+		w[ss] = 2 -> theta_K;
+		theta_G = 0.1;
+	};
+};
+
+block FISCAL_AUTHORITY
+{
+	definitions
+	{
+		spending[] = G_B[] + I_G[] + B[-1];
+		income[] = tau[] * (w[] * N[] + r[] * K[-1]) + B[] / r_G[];
+	};
+	identities
+	{
+		# Fiscal policy rules
+		G_B[] - G_B_bar = rho_G_B * (G_B[-1] - G_B_bar) + epsilon_GB[];
+		I_G[] - I_G_bar = rho_I_G * (I_G[-1] - I_G_bar) + epsilon_IG[];
+		log(tau[] / tau_bar) = rho_tau * log(tau[-1] / tau_bar) + epsilon_tau[];
+
+		# Government budget constraint
+		TR[] = income[] - spending[];
+
+		# # Law of motion of public capital
+		K_G[] = (1 - delta) * K_G[-1] + I_G[];
+
+		# Zero net supply of bonds
+		B[] = 0;
+	};
+
+	shocks
+	{
+		epsilon_GB[],
+		epsilon_IG[],
+		epsilon_tau[];
+	};
+
+	calibration
+	{
+		rho_G_B = 0.75;
+		rho_tau = 0.75;
+		rho_I_G = 0.75;
+
+		# Y_ss is normalized to 1, so govt spending is 0.2 + 0.22 = 0.22
+		# and Y[] = -TC[] = w[] * N[] + r[] * K[-1] = 1, so 0.22 taxes balances the budget.
+		G_B_bar = 0.2;
+		I_G_bar = 0.02;
+		tau_bar = 0.22;
+
+	};
+};
