@@ -1,196 +1,254 @@
-import re
+from functools import reduce
+from typing import TYPE_CHECKING
 
-import sympy as sp
-
-from sympy.abc import greeks
+from sympy.core import Mul, Pow, Rational, S
+from sympy.core.mul import _keep_coeff
+from sympy.core.numbers import equal_valued
+from sympy.printing.octave import OctaveCodePrinter, precedence
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.utilities import get_name, make_all_var_time_combos
+
+if TYPE_CHECKING:
+    from gEconpy.model.model import Model
 
 OPERATORS = list("+-/*^()=")
 
 
-def build_hash_table(
-    items_to_hash: list[str | sp.Symbol],
-) -> tuple[dict[str, str], dict[str, str]]:
-    """
-    Build a pair of hash tables, one mapping variable names to hash values
-    and the other mapping hash values to variable names.
+class DynareCodePrinter(OctaveCodePrinter):
+    def __init__(self, settings=None):
+        settings = {} if settings is None else settings
+        super().__init__(settings)
 
-    To safely distinguish between numeric values, variables, parameters, and time-indices
-    when converting sympy code to a Dynare model, all variables are first hashed to
-    strictly positive int64 objects using the square of the built-in `hash` function.
+    def _print_Mul(self, expr):
+        # print complex numbers nicely in Octave
+        if expr.is_number and expr.is_imaginary and (S.ImaginaryUnit * expr).is_Integer:
+            return f"{self._print(-S.ImaginaryUnit * expr)}i"
 
-    Parameters
-    ----------
-    items_to_hash : str or sp.Symbol
-        A list of variables to be hashed. Can contain strings or sp.Symbol objects.
+        # cribbed from str.py
+        prec = precedence(expr)
 
-    Returns
-    -------
-    tuple of (dict, dict)
-        A tuple containing two dictionaries: the first maps variable names to
-         hash values, and the second maps hash values to variable names.
-    """
-
-    var_to_hash = {}
-    hash_to_var = {}
-    name_list = [get_name(x) for x in items_to_hash]
-    for thing in sorted(name_list, key=len, reverse=True):
-        # ensure the hash value is positive so the minus sign isn't confused as part of the equation
-        hashkey = str(hash(thing) ** 2)
-        var_to_hash[thing] = hashkey
-        hash_to_var[hashkey] = thing
-
-    return var_to_hash, hash_to_var
-
-
-def substitute_equation_from_dict(eq_str: str, hash_dict: dict[str, str]) -> str:
-    """
-    Substitute variables in an equation string with their corresponding values from a dictionary.
-
-    Parameters
-    ----------
-    eq_str : str
-        The equation string containing variables to be replaced.
-    hash_dict : dict[str, str]
-        A dictionary mapping variables to their corresponding values.
-
-    Returns
-    -------
-    str
-        The equation string with the variables replaced by their values.
-    """
-    # tokens = eq_str.split()
-    # hash_tokens = [hash_dict.get(x) for x in tokens]
-    # return ' '.join(hash_tokens)
-
-    for key, value in hash_dict.items():
-        eq_str = eq_str.replace(key, value)
-    return eq_str
-
-
-def make_var_to_matlab_sub_dict(
-    var_list: list[str | TimeAwareSymbol | sp.Symbol], clash_prefix: str = "a"
-) -> dict[str | TimeAwareSymbol | sp.Symbol, str]:
-    """
-    Build a dictionary that maps variables to their corresponding names that can be used in a Matlab script.
-
-    Parameters
-    ----------
-    var_list : list of either strings or Symbols
-        A list of variables to be mapped. Can contain strings, TimeAwareSymbol objects,
-         or sp.Symbol objects.
-    clash_prefix : str, optional
-        A prefix to add to the names of variables that might clash with Matlab keywords
-        (e.g. greek letters). Default is 'a'.
-
-    Returns
-    -------
-    sub_dict: dict
-        A dictionary mapping the variables in `var_list` to their corresponding
-        names that can be used in a Matlab script.
-
-    Examples
-    --------
-    .. code-block:: py
-        make_var_to_matlab_sub_dict([sp.Symbol('beta')])
-        # {sp.Symbol('beta'): 'abeta'}
-    """
-
-    sub_dict = {}
-
-    for var in var_list:
-        if isinstance(var, str):
-            var_name = var if var.lower() not in greeks else clash_prefix + var
-        elif isinstance(var, TimeAwareSymbol):
-            var_name = (
-                var.base_name
-                if var.base_name.lower() not in greeks
-                else clash_prefix + var.base_name
-            )
-            time_index = var.safe_name.split("_")[-1]
-            var_name += f"_{time_index}"
-        elif isinstance(var, sp.Symbol):
-            var_name = (
-                var.name if var.name.lower() not in greeks else clash_prefix + var.name
-            )
+        c, e = expr.as_coeff_Mul()
+        if c < 0:
+            expr = _keep_coeff(-c, e)
+            sign = "-"
         else:
-            raise ValueError(
-                "var_list should contain only strings, symbols, or TimeAwareSymbols"
-            )
+            sign = ""
 
-        sub_dict[var] = var_name
+        a = []  # items in the numerator
+        b = []  # items that are in the denominator (if any)
 
-    return sub_dict
+        pow_paren = []  # Will collect all pow with more than one base element and exp = -1
+
+        if self.order not in ("old", "none"):
+            args = expr.as_ordered_factors()
+        else:
+            # use make_args in case expr was something like -x -> x
+            args = Mul.make_args(expr)
+
+        # Gather args for numerator/denominator
+        for item in args:
+            if (
+                item.is_commutative
+                and item.is_Pow
+                and item.exp.is_Rational
+                and item.exp.is_negative
+            ):
+                if item.exp != -1:
+                    b.append(Pow(item.base, -item.exp, evaluate=False))
+                else:
+                    if len(item.args[0].args) != 1 and isinstance(
+                        item.base, Mul
+                    ):  # To avoid situations like #14160
+                        pow_paren.append(item)
+                    b.append(Pow(item.base, -item.exp))
+            elif item.is_Rational and item is not S.Infinity:
+                if item.p != 1:
+                    a.append(Rational(item.p))
+                if item.q != 1:
+                    b.append(Rational(item.q))
+            else:
+                a.append(item)
+
+        a = a or [S.One]
+
+        a_str = [self.parenthesize(x, prec) for x in a]
+        b_str = [self.parenthesize(x, prec) for x in b]
+
+        # To parenthesize Pow with exp = -1 and having more than one Symbol
+        for item in pow_paren:
+            if item.base in b:
+                b_str[b.index(item.base)] = f"({b_str[b.index(item.base)]})"
+
+        def multjoin(a, a_str):
+            # here we probably are assuming the constants will come first
+            r = a_str[0]
+            for i in range(1, len(a)):
+                mulsym = "*"
+                r = r + mulsym + a_str[i]
+            return r
+
+        if not b:
+            return sign + multjoin(a, a_str)
+        elif len(b) == 1:
+            divsym = "/"
+            return sign + multjoin(a, a_str) + divsym + b_str[0]
+        else:
+            divsym = "/"
+            return sign + multjoin(a, a_str) + divsym + f"({multjoin(b, b_str)})"
+
+    def _print_Pow(self, expr):
+        powsymbol = "^"
+
+        PREC = precedence(expr)
+
+        if equal_valued(expr.exp, 0.5):
+            return f"sqrt({self._print(expr.base)})"
+
+        if expr.is_commutative:
+            if equal_valued(expr.exp, -0.5):
+                sym = "/" if expr.base.is_number else "./"
+                return "1" + sym + f"sqrt({self._print(expr.base)})"
+            if equal_valued(expr.exp, -1):
+                sym = "/" if expr.base.is_number else "./"
+                return "1" + sym + f"{self.parenthesize(expr.base, PREC)}"
+
+        return f"{self.parenthesize(expr.base, PREC)}{powsymbol}{self.parenthesize(expr.exp, PREC)}"
+
+    def _print_TimeAwareSymbol(self, expr):
+        name = expr.base_name
+        t = expr.time_index
+
+        if t == "ss":
+            return f"{name}_{t}"
+        elif t == 0:
+            return f"{name}"
+        elif t > 0:
+            return f"{name}(+{t})"
+
+        return f"{name}({t})"
 
 
-def convert_var_timings_to_matlab(var_list: list[str]) -> list[str]:
-    """
-    Convert the timing notation in a list of variable names to a form that can be used in a Dynare mod file.
-
-    Parameters
-    ----------
-    var_list : list of str
-        A list of variable names with "mathematical" timing notation (e.g. '_t+1', '_t-1', '_t').
-
-    Returns
-    -------
-    list of str
-        A list of variable names with the timing notation converted to a
-        form that can be used in a Dynare mod file (e.g. '(1)', '(-1)', '').
-    """
-    matlab_var_list = [
-        var.replace("_t+1", "(1)").replace("_t-1", "(-1)").replace("_t", "")
-        for var in var_list
-    ]
-
-    return matlab_var_list
-
-
-def write_lines_from_list(
-    items_to_write: list[str], file: str, line_start: str = "", line_max: int = 50
-) -> str:
-    """
-    Write a list of items to a string, inserting line breaks at a specified maximum line length.
-
-    Parameters
-    ----------
-    items_to_write : list of strings
-        A list of items to be written to the string.
-    file : str
-        A string to which the items will be appended.
-    line_start : str, optional
-        A string to be prepended to each line. Default is an empty string.
-    line_max : int, optional
-        The maximum line length. Default is 50.
-
-    Returns
-    -------
-    str
-        The modified `file` string with the items from `l` appended to it.
-    """
-
+def write_lines_from_list(items_to_write, linewidth=100, line_start=""):
+    lines = []
     line = line_start
-    for item in sorted(items_to_write):
-        line += f" {item},"
-        if len(line) > line_max:
-            line = line[:-1]
-            line = line + ";\n"
-            file += line
-            line = line_start
 
-    if line != line_start:
-        line = line[:-1]
-        file += line + ";\n"
+    for item in items_to_write:
+        addition = f", {item}" if line != line_start else f" {item}"
+        if len(line) + len(addition) > linewidth:
+            lines.append(line + ";")  # Add semicolon to complete the line
+            line = f"{line_start} {item}"
+        else:
+            line += addition
 
-    return file
+    lines.append(line + ";")  # Add the final line with a semicolon
+    return "\n".join(lines)
 
 
-UNDER_T_PATTERN = r"_t(?=[^\w]|$)"
+def write_variable_declarations(mod: "Model", linewidth=100):
+    var_names = [var.base_name for var in mod.variables]
+    return write_lines_from_list(var_names, linewidth=linewidth, line_start="var")
 
 
-def make_mod_file(model) -> str:
+def write_shock_declarations(mod: "Model", linewidth=100):
+    shock_names = [shock.base_name for shock in mod.shocks]
+    return write_lines_from_list(shock_names, linewidth=linewidth, line_start="varexo")
+
+
+def write_values_from_dict(d, round: int = 3):
+    out = ""
+    for name, value in d.items():
+        out += f"{name} = {value:0.{round}f};\n"
+    return out
+
+
+def write_parameter_declarations(mod: "Model", linewidth=100):
+    param_names = [param.name for param in mod.params]
+    param_string = write_lines_from_list(
+        param_names, linewidth=linewidth, line_start="parameters"
+    )
+    param_string += "\n\n"
+    param_string += write_values_from_dict(mod.parameters().to_string())
+
+    return param_string
+
+
+def find_ss_variables(mod: "Model"):
+    variables = reduce(
+        lambda s, eq: s.union(set(eq.free_symbols)), mod.equations, set()
+    )
+
+    return sorted(
+        [
+            x
+            for x in variables
+            if isinstance(x, TimeAwareSymbol) and (x.time_index == "ss")
+        ],
+        key=lambda x: x.base_name,
+    )
+
+
+def write_model_equations(mod: "Model"):
+    printer = DynareCodePrinter()
+
+    required_ss_values = find_ss_variables(mod)
+    defined_ss_values = [x.lhs for x in mod.steady_state_relationships]
+
+    if not all(ss_var in defined_ss_values for ss_var in required_ss_values):
+        ss_values = mod.steady_state(verbose=False, progressbar=False).to_sympy()
+        ss_dict = {k.name: v for k, v in ss_values.items() if k in required_ss_values}
+    else:
+        ss_dict = {
+            eq.lhs: eq.rhs
+            for eq in mod.steady_state_relationships
+            if eq.lhs in required_ss_values
+        }
+        ss_dict = {k.name: printer.doprint(v) for k, v in ss_dict.items()}
+
+    model_block = "model;\n\n"
+    for k, v in ss_dict.items():
+        model_block += f"#{k} = {v};\n"
+
+    model_block += "\n".join([printer.doprint(eq) + ";" for eq in mod.equations])
+    model_block += "\n\nend;"
+
+    return model_block
+
+
+def write_steady_state(mod: "Model"):
+    printer = DynareCodePrinter()
+
+    # Check for a full analytic steady state. If available, we can write a
+    # steady_state_model block
+    if len(mod.steady_state_relationships) == len(mod.variables):
+        out = "steady_state_model;\n"
+        for eq in mod.steady_state_relationships:
+            out += f"{eq.lhs.base_name} = {printer.doprint(eq.rhs)};\n"
+        out += "\n\nend;"
+
+    # Otherwise solve for a numeric steady state and use that as initial values to Dynare
+    else:
+        out = "initval;\n"
+        steady_state = mod.steady_state(verbose=False, progressbar=False)
+        ss_dict = {k.base_name: v for k, v in steady_state.to_sympy().items()}
+        out += write_values_from_dict(ss_dict)
+        out += "\nend;"
+
+    out += "\n\nsteady;\nresid;"
+    return out
+
+
+def write_shock_std(mod: "Model"):
+    out = "shocks;\n"
+    shock_names = [shock.base_name for shock in mod.shocks]
+
+    for shock in shock_names:
+        out += f"var {shock};\nstderr 0.01;\n\n"
+
+    out += "end;"
+    return out
+
+
+def make_mod_file(model: "Model", linewidth=100, out_path=None) -> None:
     """
     Generate a string representation of a Dynare model file for a dynamic stochastic general equilibrium (DSGE) model.
     For more information, see [1].
@@ -199,6 +257,10 @@ def make_mod_file(model) -> str:
     ----------
     model : Model
         A DSGE model object
+    linewidth: int, default 100
+        Maximum number of characters per line before a break is instered
+    out_path: str, optional
+        If None, the generated mod file is printed to the terminal. Otherwise, it is written to ``out_path``.
 
     Returns
     -------
@@ -208,140 +270,24 @@ def make_mod_file(model) -> str:
     References
     ----------
     ..[1] Adjemian, Stéphane, et al. "Dynare: Reference manual, version 4." (2011).
-
-    TODO: This function needs a lot of work, including:
-        - Output deterministics as # declarations
-        - Output priors
-        - Add a flag for linear models
-        - Output user-provided steady state equations
-        - Check that the steady state has been solved
     """
 
-    var_list = model.variables.copy() + model.calibrated_params.copy()
-    param_dict = model.parameters()
+    mod_blocks = [
+        write_variable_declarations(model, linewidth=linewidth),
+        write_shock_declarations(model, linewidth=linewidth),
+        write_parameter_declarations(model, linewidth=linewidth),
+        write_model_equations(model),
+        write_steady_state(model),
+        "check(qz_zero_threshold=1e-20);",
+        write_shock_std(model),
+        "stoch_simul(order=1, irf=100, qz_zero_threshold=1e-20);",
+    ]
 
-    shocks = model.shocks
-    ss_value_dict = model.steady_state()
+    mod_file = "\n\n".join(mod_blocks)
 
-    var_to_matlab = make_var_to_matlab_sub_dict(
-        make_all_var_time_combos(var_list), clash_prefix="var_"
-    )
-    par_to_matlab = make_var_to_matlab_sub_dict(
-        param_dict.keys(), clash_prefix="param_"
-    )
-    shock_to_matlab = make_var_to_matlab_sub_dict(shocks, clash_prefix="exog_")
+    if out_path is None:
+        print(mod_file)
+        return
 
-    items_to_hash = (
-        list(var_to_matlab.keys())
-        + list(par_to_matlab.keys())
-        + list(shock_to_matlab.keys())
-    )
-
-    file = ""
-    file = write_lines_from_list(
-        [re.sub(UNDER_T_PATTERN, "", var_to_matlab[x]) for x in model.variables],
-        file,
-        line_start="var",
-    )
-    file = write_lines_from_list(
-        [re.sub(UNDER_T_PATTERN, "", x) for x in shock_to_matlab.values()],
-        file,
-        line_start="varexo",
-    )
-    file += "\n"
-    file = write_lines_from_list(
-        list(par_to_matlab.values()), file, line_start="parameters"
-    )
-    file += "\n"
-
-    for model_param in sorted(param_dict.keys()):
-        matlab_param = par_to_matlab[model_param]
-        value = param_dict[model_param]
-        file += f"{matlab_param} = {value};\n"
-
-    file += "\n"
-    file += "model;\n"
-    for var, val in ss_value_dict.items():
-        if var in var_to_matlab.keys():
-            matlab_var = var_to_matlab[var]
-            file += f"#{matlab_var}_ss = {val:0.4f};\n"
-
-    for eq in model.equations:
-        matlab_subdict = {}
-
-        for atom in eq.atoms():
-            if not isinstance(atom, TimeAwareSymbol) and isinstance(
-                atom, sp.core.Symbol
-            ):
-                if atom in par_to_matlab.keys():
-                    matlab_subdict[atom] = sp.Symbol(par_to_matlab[atom])
-            elif isinstance(atom, TimeAwareSymbol):
-                if atom in var_to_matlab.keys():
-                    matlab_subdict[atom] = var_to_matlab[atom]
-                elif atom in shock_to_matlab.keys():
-                    matlab_subdict[atom] = shock_to_matlab[atom]
-
-        eq_str = eq.subs(matlab_subdict)
-        eq_str = str(eq_str)
-        prepare_eq = eq_str.replace("**", "^")
-        var_to_hash, hash_to_var = build_hash_table(items_to_hash)
-
-        hash_eq = substitute_equation_from_dict(prepare_eq, var_to_hash)
-
-        for operator in OPERATORS:
-            hash_eq = hash_eq.replace(operator, " " + operator + " ")
-        hash_eq = re.sub(" +", " ", hash_eq)
-        hash_eq = hash_eq.strip()
-        final_eq = substitute_equation_from_dict(hash_eq, hash_to_var)
-
-        matlab_eq = final_eq.replace("_tp1", "(1)").replace("_tm1", "(-1)")
-        split_eq = matlab_eq.split(" ")
-
-        new_eq = []
-        for atom in split_eq:
-            if atom in par_to_matlab.keys():
-                atom = par_to_matlab[atom]
-            elif atom in var_to_matlab.keys():
-                atom = var_to_matlab[atom]
-            elif atom in shock_to_matlab.keys():
-                atom = shock_to_matlab[atom]
-
-            new_eq.append(atom)
-
-        matlab_eq = ""
-        for i, atom in enumerate(new_eq):
-            if i == 0:
-                matlab_eq += atom
-            elif i == 1 and new_eq[0] == "-":
-                matlab_eq += atom
-            else:
-                if atom in "()":
-                    matlab_eq += atom
-                elif new_eq[i - 1] in "(":
-                    matlab_eq += atom
-                else:
-                    matlab_eq += " " + atom
-        matlab_eq += " = 0;"
-        matlab_eq = re.sub(UNDER_T_PATTERN, "", matlab_eq)
-
-        file += matlab_eq + "\n"
-
-    file += "end;\n\n"
-
-    file += "initval;\n"
-    for var, val in ss_value_dict.to_sympy().items():
-        matlab_var = var_to_matlab[var].replace("_ss", "")
-        file += f"{matlab_var} = {val:0.4f};\n"
-
-    file += "end;\n\n"
-    file += "steady;\n"
-    file += "check(qz_zero_threshold=1e-20);\n\n"
-
-    file += "shocks;\n"
-    for shock in shocks:
-        file += "var " + re.sub(UNDER_T_PATTERN, "", shock_to_matlab[shock]) + ";\n"
-        file += "stderr 0.01;\n"
-    file += "end;\n\n"
-    file += "stoch_simul(order=1, irf=100, qz_zero_threshold=1e-20);"
-
-    return file
+    with open(out_path, "w") as f:
+        f.write(mod_file)
