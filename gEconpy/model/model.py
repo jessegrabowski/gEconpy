@@ -276,7 +276,7 @@ class Model:
         variables: list[TimeAwareSymbol],
         shocks: list[TimeAwareSymbol],
         equations: list[sp.Expr],
-        steady_state_relationships: list[sp.Expr],
+        steady_state_relationships: list[sp.Eq],
         param_dict: SymbolDictionary,
         deterministic_dict: SymbolDictionary,
         calib_dict: SymbolDictionary,
@@ -792,6 +792,7 @@ class Model:
     def linearize_model(
         self,
         order: Literal[1] = 1,
+        log_linearize: bool = True,
         not_loglin_variables: list[str] | None = None,
         steady_state: dict | None = None,
         loglin_negative_ss: bool = False,
@@ -817,6 +818,7 @@ class Model:
             variables=self.variables,
             calibrated_params=self.calibrated_params,
             steady_state=steady_state,
+            log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
             loglin_negative_ss=loglin_negative_ss,
             verbose=verbose,
@@ -831,6 +833,7 @@ class Model:
     def solve_model(
         self,
         solver="cycle_reduction",
+        log_linearize: bool = True,
         not_loglin_variables: list[str] | None = None,
         order: Literal[1] = 1,
         loglin_negative_ss: bool = False,
@@ -851,9 +854,11 @@ class Model:
         solver: str, default: 'cycle_reduction'
             Name of the algorithm to solve the linear solution. Currently "cycle_reduction" and "gensys" are supported.
             Following Dynare, cycle_reduction is the default, but note that gEcon uses gensys.
+        log_linearize: bool, default: True
+            Whether to log-linearize the model. If False, the model will be solved in levels.
         not_loglin_variables: list of strings, optional
             Variables to not log linearize when solving the model. Variables with steady state values close to zero
-            (or negative) will be automatically selected to not log linearize.
+            (or negative) will be automatically selected to not log linearize. Ignored if log_linearize is False.
         order: int, default: 1
             Order of taylor expansion to use to solve the model. Currently only 1st order approximation is supported.
         steady_state: dict, optional
@@ -865,7 +870,8 @@ class Model:
         loglin_negative_ss: bool, default is False
             Whether to force log-linearization of variable with negative steady-state. This is impossible in principle
             (how can :math:`exp(x_ss)` be negative?), but can still be done; see the docstring for
-            :fun:`perturbation.linearize_model` for details. Use with caution, as results will not correct.
+            :fun:`perturbation.linearize_model` for details. Use with caution, as results will not correct. Ignored if
+            log_linearize is False.
         tol: float, default 1e-8
             Desired level of floating point accuracy in the solution
         max_iter: int, default: 1000
@@ -903,6 +909,7 @@ class Model:
 
         A, B, C, D = self.linearize_model(
             order=order,
+            log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
             steady_state=ss_dict.to_string(),
             loglin_negative_ss=loglin_negative_ss,

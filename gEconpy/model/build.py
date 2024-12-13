@@ -228,6 +228,7 @@ def statespace_from_gcn(
     verbose: bool = True,
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters="raise",
+    log_linearize: bool = True,
     not_loglin_variables: list[str] | None = None,
     **kwargs,
 ):
@@ -264,7 +265,7 @@ def statespace_from_gcn(
     ) = functions
 
     # Check that the entire steady state has been provided
-    if len(steady_state_mapping) != len(variables):
+    if steady_state_mapping is None or len(steady_state_mapping) != len(variables):
         raise NotImplementedError(
             "Numeric steady state not yet implemented in StateSpace model"
         )
@@ -295,9 +296,12 @@ def statespace_from_gcn(
             f"{', '.join(unknown_not_login)}"
         )
 
-    not_loglin_mask = pt.as_tensor([x in not_loglin_variables for x in var_names])
-    not_loglin_values = pt.le(ss_vec, 0.0).astype(float)
-    not_loglin_values = not_loglin_values[not_loglin_mask].set(1.0)
+    if log_linearize:
+        not_loglin_mask = pt.as_tensor([x in not_loglin_variables for x in var_names])
+        not_loglin_values = pt.le(ss_vec, 0.0).astype(float)
+        not_loglin_values = not_loglin_values[not_loglin_mask].set(1.0)
+    else:
+        not_loglin_values = pt.ones(ss_vec.shape[0])
 
     not_loglin_replacement = {not_loglin_flags: not_loglin_values}
 

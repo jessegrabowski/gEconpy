@@ -198,12 +198,15 @@ def make_not_loglin_flags(
     variables: list[TimeAwareSymbol],
     calibrated_params: list[sp.Symbol],
     steady_state: SymbolDictionary[str, float],
+    log_linearize: bool = True,
     not_loglin_variables: list[str] | None = None,
     loglin_negative_ss: bool = False,
     verbose: bool = True,
 ):
     if not_loglin_variables is None:
         not_loglin_variables = []
+    if not log_linearize:
+        return np.ones(len(variables))
 
     vars_and_calibrated = variables + calibrated_params
     var_names = [get_name(x, base_name=True) for x in vars_and_calibrated]
