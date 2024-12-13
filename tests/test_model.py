@@ -20,6 +20,7 @@ from gEconpy.model.model import (
     autocorrelation_matrix,
     build_Q_matrix,
     impulse_response_function,
+    matrix_to_dataframe,
     scipy_wrapper,
     simulate,
     stationary_covariance_matrix,
@@ -30,6 +31,7 @@ from gEconpy.model.perturbation import (
     statespace_to_gEcon_representation,
 )
 from tests.utilities.expected_matrices import expected_linearization_result
+from tests.utilities.load_dynare import load_dynare_outputs
 from tests.utilities.shared_fixtures import load_and_cache_model
 
 JAX_INSTALLED = find_spec("jax") is not None
@@ -792,32 +794,33 @@ def test_outputs_after_gensys_failure(caplog):
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )
 @pytest.mark.parametrize(
-    "gcn_file",
+    "model_name, log_linearize",
     [
-        "one_block_1_ss.gcn",
-        "rbc_2_block_ss.gcn",
-        "full_nk.gcn",
+        ("one_block_1_ss", False),
+        ("rbc_2_block_ss", False),
+        ("full_nk", False),
+        ("basic_rbc", False),
+        ("basic_rbc", True),
     ],
-    ids=["one_block", "two_block", "nk"],
+    ids=lambda x: str(x),
 )
-@pytest.mark.skip(
-    "Expected matrices are out of date, need to solve these models in gEcon and Dynare and update."
-)
-def test_solve_matches_dynare(backend, gcn_file):
+def test_solve_matches_dynare(backend, model_name, log_linearize):
+    gcn_file = model_name + ".gcn"
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
-    expected_outputs = expected_linearization_result[gcn_file]
-
-    param_dict = expected_outputs["param_dict"]
-    A, B, C, D = model.linearize_model(**param_dict)
-    T, R = model.solve_model(solver="gensys", **param_dict)
-    P, Q, R, S, A_prime, R_prime, S_prime = statespace_to_gEcon_representation(
-        A, T, R, 1e-8
+    T, R = model.solve_model(
+        solver="gensys", verbose=False, log_linearize=log_linearize
     )
 
-    assert_allclose(P, expected_outputs["P"], rtol=1e-6, atol=1e-6)
-    assert_allclose(Q, expected_outputs["Q"], rtol=1e-6, atol=1e-6)
-    assert_allclose(R, expected_outputs["R"], rtol=1e-6, atol=1e-6)
-    assert_allclose(S, expected_outputs["S"], rtol=1e-6, atol=1e-6)
+    if log_linearize:
+        model_name = model_name + "_loglinear"
+
+    dynare_T, dynare_R = load_dynare_outputs(model_name).values()
+
+    T = matrix_to_dataframe(T, model).reindex_like(dynare_T)
+    R = matrix_to_dataframe(R, model).reindex_like(dynare_R)
+
+    assert_allclose(T[dynare_T.columns], dynare_T, atol=1e-5, rtol=1e-5)
+    assert_allclose(R[dynare_R.columns], dynare_R, atol=1e-5, rtol=1e-5)
 
 
 def test_outputs_after_pert_success(caplog):

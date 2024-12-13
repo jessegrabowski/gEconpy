@@ -86,11 +86,11 @@ block RICARDIAN_HOUSEHOLD
 
 	calibration
 	{
-		beta = 0.99;
-		delta = 0.02;
-		sigma_R = 1.5;
-		Theta_R = 1.0;
-		rho_beta_R = 0.95;
+		beta  ~ Beta(alpha=70, beta=4) = 0.99;
+		delta ~ Beta(alpha=2, beta=42) = 0.02;
+		sigma_R ~ Gamma(alpha=7, beta=3) = 1.5;
+		Theta_R ~ Gamma(alpha=7, beta=3) = 1.0;
+		rho_beta_R  ~ Beta(mean=0.95, sd=0.04) = 0.95;
 	};
 };
 
@@ -118,8 +118,8 @@ block NON_RICARDIAN_HOUSEHOLD
 
 	calibration
 	{
-	    Theta_N = 1.0;
-        sigma_N = 1.5;
+	    Theta_N ~ Gamma(alpha=7, beta=3) = 1.0;
+        sigma_N ~ Gamma(alpha=7, beta=3) = 1.5;
 	};
 };
 
@@ -157,8 +157,8 @@ block FIRM
 
     calibration
     {
-        alpha = 0.35;
-		rho_TFP = 0.95;
+        alpha ~ Beta(alpha=2, beta=5) = 0.35;
+		rho_TFP ~ Beta(mean=0.95, sd=0.04) = 0.95;
     };
 };
 
@@ -173,6 +173,6 @@ block EQULIBRIUM
 
 	calibration
 	{
-	    omega = 0.5;
+	    omega ~ Beta(alpha=2, beta=2) = 0.5;
 	};
 };

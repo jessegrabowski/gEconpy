@@ -1,6 +1,6 @@
 tryreduce
 {
-	U[], TC[], Div[];
+	U[], TC[];
 };
 
 
@@ -23,7 +23,6 @@ block STEADY_STATE
         U[ss] = (1 / (1 - beta)) * (C[ss] ^ (1 - sigma_C) / (1 - sigma_C) - L[ss] ^ (1 + sigma_L) / (1 + sigma_L));
         lambda[ss] = C[ss] ^ (-sigma_C);
         TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);
-        Div[ss] = 0;
     };
 };
 
@@ -53,11 +52,11 @@ block HOUSEHOLD
 
 	calibration
 	{
-		beta  = 0.99;
-		delta = 0.02;
+		beta ~ Beta(alpha=70, beta=4)       = 0.99;
+		delta  ~ Beta(alpha=2, beta=42)     = 0.02;
 
-		sigma_C ~ N(loc=2.0, scale=2.0, lower=1.0) = 1.5;
-		sigma_L ~ N(loc=2.0, scale=2.0, lower=1.0) = 2.0;
+		sigma_C ~ Gamma(alpha=7, beta=3)    = 1.5;
+		sigma_L	~ Gamma(alpha=7, beta=3)    = 2.0;
 	};
 };
 
