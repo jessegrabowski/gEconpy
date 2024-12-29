@@ -16,6 +16,7 @@ dependencies:
   - statsmodels
   - pymc
   - pytensor
+  - preliz
 
   # Testing dependencies
   - pre-commit

@@ -97,7 +97,7 @@ filterwarnings = [
     "error",
     "ignore::DeprecationWarning",
     "ignore::RuntimeWarning"]
-env = ["NUMBA_DISABLE_JIT = 0"]
+env = ["NUMBA_DISABLE_JIT = 1"]
 
 [tool.ruff.lint]
 select = ["D", "E", "F", "I", "UP", "W", "RUF"]
