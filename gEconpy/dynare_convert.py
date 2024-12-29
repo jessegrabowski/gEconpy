@@ -1,6 +1,8 @@
 from functools import reduce
 from typing import TYPE_CHECKING
 
+import sympy as sp
+
 from sympy.core import Mul, Pow, Rational, S
 from sympy.core.mul import _keep_coeff
 from sympy.core.numbers import equal_valued
@@ -83,21 +85,21 @@ class DynareCodePrinter(OctaveCodePrinter):
             # here we probably are assuming the constants will come first
             r = a_str[0]
             for i in range(1, len(a)):
-                mulsym = "*"
+                mulsym = " * " if not expr.is_Matrix else " .* "
                 r = r + mulsym + a_str[i]
             return r
 
         if not b:
             return sign + multjoin(a, a_str)
         elif len(b) == 1:
-            divsym = "/"
+            divsym = " / " if not expr.is_Matrix else " ./ "
             return sign + multjoin(a, a_str) + divsym + b_str[0]
         else:
-            divsym = "/"
+            divsym = " / " if not expr.is_Matrix else " ./ "
             return sign + multjoin(a, a_str) + divsym + f"({multjoin(b, b_str)})"
 
     def _print_Pow(self, expr):
-        powsymbol = "^"
+        powsymbol = " ^ "
 
         PREC = precedence(expr)
 
@@ -106,10 +108,10 @@ class DynareCodePrinter(OctaveCodePrinter):
 
         if expr.is_commutative:
             if equal_valued(expr.exp, -0.5):
-                sym = "/" if expr.base.is_number else "./"
+                sym = " / " if not expr.is_Matrix else " ./ "
                 return "1" + sym + f"sqrt({self._print(expr.base)})"
             if equal_valued(expr.exp, -1):
-                sym = "/" if expr.base.is_number else "./"
+                sym = " / " if not expr.is_Matrix else " ./ "
                 return "1" + sym + f"{self.parenthesize(expr.base, PREC)}"
 
         return f"{self.parenthesize(expr.base, PREC)}{powsymbol}{self.parenthesize(expr.exp, PREC)}"
@@ -134,7 +136,9 @@ def write_lines_from_list(items_to_write, linewidth=100, line_start=""):
 
     for item in items_to_write:
         addition = f", {item}" if line != line_start else f" {item}"
-        if len(line) + len(addition) > linewidth:
+
+        # Add 1 to account for the final semicolon
+        if (len(line) + len(addition) + 1) > linewidth:
             lines.append(line + ";")  # Add semicolon to complete the line
             line = f"{line_start} {item}"
         else:
@@ -161,11 +165,17 @@ def write_values_from_dict(d, round: int = 3):
     return out
 
 
-def write_parameter_declarations(mod: "Model", linewidth=100):
+def write_param_names(mod: "Model", linewidth=100):
     param_names = [param.name for param in mod.params]
     param_string = write_lines_from_list(
         param_names, linewidth=linewidth, line_start="parameters"
     )
+
+    return param_string
+
+
+def write_parameter_declarations(mod: "Model", linewidth=100):
+    param_string = write_param_names(mod, linewidth=linewidth)
     param_string += "\n\n"
     param_string += write_values_from_dict(mod.parameters().to_string())
 
@@ -214,15 +224,22 @@ def write_model_equations(mod: "Model"):
     return model_block
 
 
-def write_steady_state(mod: "Model"):
+def write_steady_state(mod: "Model", use_cse=True):
     printer = DynareCodePrinter()
 
     # Check for a full analytic steady state. If available, we can write a
     # steady_state_model block
     if len(mod.steady_state_relationships) == len(mod.variables):
         out = "steady_state_model;\n"
-        for eq in mod.steady_state_relationships:
+        eqs = mod.steady_state_relationships
+        if use_cse:
+            cse, eqs = sp.cse(eqs)
+            for var, expr in cse:
+                out += f"{var} = {printer.doprint(expr)};\n"
+            out += "\n\n"
+        for eq in eqs:
             out += f"{eq.lhs.base_name} = {printer.doprint(eq.rhs)};\n"
+
         out += "\n\nend;"
 
     # Otherwise solve for a numeric steady state and use that as initial values to Dynare
@@ -248,7 +265,9 @@ def write_shock_std(mod: "Model"):
     return out
 
 
-def make_mod_file(model: "Model", linewidth=100, out_path=None) -> None:
+def make_mod_file(
+    model: "Model", linewidth=100, use_cse: bool = True, out_path=None
+) -> str | None:
     """
     Generate a string representation of a Dynare model file for a dynamic stochastic general equilibrium (DSGE) model.
     For more information, see [1].
@@ -258,7 +277,11 @@ def make_mod_file(model: "Model", linewidth=100, out_path=None) -> None:
     model : Model
         A DSGE model object
     linewidth: int, default 100
-        Maximum number of characters per line before a break is instered
+        Maximum number of characters per line before a break is insterted
+    use_cse: bool, default True
+        If True, use ``sp.cse`` to identify common sub expressions in the analytic steady state and rewrite equations
+        in terms of these sub expressions. This can make the steady state block more readable and provide modest
+        performance increase for large models.
     out_path: str, optional
         If None, the generated mod file is printed to the terminal. Otherwise, it is written to ``out_path``.
 
@@ -277,7 +300,7 @@ def make_mod_file(model: "Model", linewidth=100, out_path=None) -> None:
         write_shock_declarations(model, linewidth=linewidth),
         write_parameter_declarations(model, linewidth=linewidth),
         write_model_equations(model),
-        write_steady_state(model),
+        write_steady_state(model, use_cse=use_cse),
         "check(qz_zero_threshold=1e-20);",
         write_shock_std(model),
         "stoch_simul(order=1, irf=100, qz_zero_threshold=1e-20);",
@@ -286,8 +309,7 @@ def make_mod_file(model: "Model", linewidth=100, out_path=None) -> None:
     mod_file = "\n\n".join(mod_blocks)
 
     if out_path is None:
-        print(mod_file)
-        return
+        return mod_file
 
     with open(out_path, "w") as f:
         f.write(mod_file)

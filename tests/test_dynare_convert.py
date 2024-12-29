@@ -1,106 +1,245 @@
-import os
-import unittest
-
-from pathlib import Path
+import re
 
 import numpy as np
+import pytest
 import sympy as sp
 
 from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.dynare_convert import (
-    build_hash_table,
-    convert_var_timings_to_matlab,
+    DynareCodePrinter,
+    find_ss_variables,
     make_mod_file,
-    make_var_to_matlab_sub_dict,
-    substitute_equation_from_dict,
-    write_lines_from_list,
+    write_model_equations,
+    write_param_names,
+    write_parameter_declarations,
+    write_shock_declarations,
+    write_shock_std,
+    write_steady_state,
+    write_variable_declarations,
 )
-from gEconpy.utilities import get_name
-
-ROOT = Path(__file__).parent.absolute()
+from gEconpy.parser.constants import LOCAL_DICT
 
 
-class TestDynareConvert(unittest.TestCase):
-    def test_get_name(self):
-        cases = [sp.Symbol("x"), TimeAwareSymbol("y", 1), "test"]
-        responses = ["x", "y_tp1", "test"]
-        for case, answer in zip(cases, responses):
-            self.assertEqual(answer, get_name(case))
+@pytest.mark.parametrize("op", ["*", "/"], ids=["multiplication", "division"])
+def test_print_multiplication(op):
+    printer = DynareCodePrinter()
+    expr = sp.parse_expr(f"a {op} x - 4", transformations="all")
+    out = printer.doprint(expr)
 
-    def test_build_hash_table_from_strings(self):
-        test_list = ["4", "*", "y", "+", "x", "=", "-4"]
-        var_to_hash, hash_to_var = build_hash_table(test_list)
-        self.assertTrue(all([x in var_to_hash for x in test_list]))
+    assert out == f"a {op} x - 4"
 
-        hashed_string = "_".join([var_to_hash.get(x) for x in test_list])
-        unhashed_string = "_".join(
-            [hash_to_var.get(x) for x in hashed_string.split("_")]
-        )
-
-        self.assertEqual("_".join(test_list), unhashed_string)
-
-    def test_build_hash_table_from_symbols(self):
-        test_list = ["4", "*", sp.Symbol("y"), "+", sp.Symbol("x"), "=", "-4"]
-        var_to_hash, hash_to_var = build_hash_table(test_list)
-        self.assertTrue(all([get_name(x) in var_to_hash for x in test_list]))
-
-        hashed_list = [var_to_hash.get(get_name(x)) for x in test_list]
-        unhashed_list = [hash_to_var.get(x) for x in hashed_list]
-
-        self.assertEqual([get_name(x) for x in test_list], unhashed_list)
-
-    def test_replace_equations_with_hashes(self):
-        eq_str = "2 * y + 3 * x ^ 2 = -23"
-        tokens = ["y", "x"]
-        var_to_hash, hash_to_var = build_hash_table(tokens)
-
-        hashed_eq = substitute_equation_from_dict(eq_str, var_to_hash)
-        unhashed_eq = substitute_equation_from_dict(hashed_eq, hash_to_var)
-
-        self.assertEqual(unhashed_eq, eq_str)
-
-    def test_make_var_to_matlab_sub_dict(self):
-        variables = [sp.Symbol("beta"), TimeAwareSymbol("gamma", 0), "lambda"]
-
-        clash_sub_dict = make_var_to_matlab_sub_dict(variables, clash_prefix="param_")
-
-        self.assertTrue(all([x in clash_sub_dict for x in variables]))
-        self.assertTrue(
-            all([get_name(x).startswith("param_") for x in clash_sub_dict.values()])
-        )
-
-        valid_variables = [sp.Symbol("Y"), TimeAwareSymbol("C", 1), "shocks"]
-        clash_sub_dict = make_var_to_matlab_sub_dict(
-            valid_variables, clash_prefix="param_"
-        )
-
-        self.assertTrue(all([get_name(k) == v for k, v in clash_sub_dict.items()]))
-
-    def test_convert_var_timings_to_matlab(self):
-        test_list = ["C_t+1", "C_t", "C_t-1"]
-        answers = ["C(1)", "C", "C(-1)"]
-        converted = convert_var_timings_to_matlab(test_list)
-
-        for x, ans in zip(converted, answers):
-            self.assertEqual(x, ans)
-
-    def test_write_lines_from_list(self):
-        from string import ascii_letters
-
-        file = ""
-        items = np.random.choice(list(ascii_letters), size=1000, replace=True).tolist()
-        file = write_lines_from_list(items, file, line_max=50)
-
-        file_lines = file.split("\n")
-        self.assertTrue(all([len(x.strip()) <= 51 for x in file_lines]))
-
-    def test_make_mod_file(self):
-        file_path = os.path.join(ROOT, "Test GCNs/one_block_1_dist.gcn")
-        model = model_from_gcn(file_path, verbose=False)
-        mod_file = make_mod_file(model)
-        self.assertTrue(isinstance(mod_file, str))
+    expr = sp.parse_expr(
+        f"alpha {op} (beta {op} gamma + 1) - sigma",
+        transformations="all",
+        local_dict=LOCAL_DICT,
+    )
+    out = printer.doprint(expr)
+    assert out == f"alpha {op} (beta {op} gamma + 1) - sigma"
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_print_power():
+    printer = DynareCodePrinter()
+    expr = sp.parse_expr("a ** 2 - 4", transformations="all")
+    out = printer.doprint(expr)
+
+    assert out == "a ^ 2 - 4"
+
+    expr = sp.parse_expr(
+        "alpha ** (beta ** gamma) - sigma", transformations="all", local_dict=LOCAL_DICT
+    )
+    out = printer.doprint(expr)
+    assert out == "alpha ^ (beta ^ gamma) - sigma"
+
+    expr = sp.parse_expr("x ** 0.5")
+    out = printer.doprint(expr)
+    assert out == "sqrt(x)"
+
+    expr = sp.parse_expr("zeta ** (-1)", local_dict=LOCAL_DICT)
+    out = printer.doprint(expr)
+    assert out == "1 / zeta"
+
+    expr = sp.parse_expr("(omega * eta) ** (-0.5)", local_dict=LOCAL_DICT)
+    out = printer.doprint(expr)
+
+    # It alphabetizes?
+    assert out == "1 / sqrt(eta * omega)"
+
+
+@pytest.mark.parametrize("name", ["a", "alpha", "x", "beta", "a_name_with_underscores"])
+@pytest.mark.parametrize("time_index", [0, 1, -1, "ss"])
+def test_print_time_aware_symbol(name, time_index):
+    printer = DynareCodePrinter()
+    expr = TimeAwareSymbol(name, time_index)
+    out = printer.doprint(expr)
+
+    if time_index == 0:
+        assert out == name
+    elif time_index == -1:
+        assert out == f"{name}({time_index})"
+    elif time_index == 1:
+        assert out == f"{name}(+{time_index})"
+    elif time_index == "ss":
+        assert out == f"{name}_ss"
+
+
+@pytest.fixture()
+def model():
+    return model_from_gcn("tests/Test GCNs/one_block_1_dist.gcn", verbose=False)
+
+
+@pytest.fixture()
+def ss_model():
+    return model_from_gcn("tests/Test GCNs/one_block_1_ss.gcn", verbose=False)
+
+
+@pytest.fixture()
+def nk_model():
+    return model_from_gcn("tests/Test GCNs/full_nk.gcn", verbose=False)
+
+
+def test_write_variable_declarations(model):
+    out = write_variable_declarations(model)
+    assert out.startswith("var")
+
+    tokens = out.replace("\n", " ").replace(";", " ").replace(",", " ")
+    tokens = re.sub(" +", " ", tokens).split(" ")
+
+    assert all(x.base_name in tokens for x in model.variables)
+
+
+def test_write_shock_declarations(model):
+    out = write_shock_declarations(model)
+    assert out.startswith("varexo")
+
+    tokens = out.replace("\n", " ").replace(";", " ").replace(",", " ")
+    tokens = re.sub(" +", " ", tokens).split(" ")
+
+    assert all(x.base_name in tokens for x in model.shocks)
+
+
+def test_write_param_names(model):
+    out = write_param_names(model)
+
+    assert out.startswith("parameters")
+
+    tokens = out.replace("\n", " ").replace(";", " ").replace(",", " ")
+    tokens = re.sub(" +", " ", tokens).split(" ")
+
+    assert all(x.name in tokens for x in model.params)
+
+
+def test_write_parameter_declarations(model):
+    out = write_parameter_declarations(model)
+    lines = [
+        line
+        for line in out.split("\n")
+        if not line.startswith("parameters") and len(line) > 0
+    ]
+    for line in lines:
+        line = line.replace(" ", "").replace(";", "")
+        name, value = line.split("=")
+        assert model.parameters()[name] == float(value)
+
+
+def test_find_ss_variables(nk_model):
+    ss_vars = [x.name for x in find_ss_variables(nk_model)]
+    assert all(x in ss_vars for x in ["pi_ss", "r_G_ss"])
+
+
+def test_write_model_equations(nk_model):
+    out = write_model_equations(nk_model)
+
+    assert out.startswith("model;")
+    assert out.endswith("end;")
+
+    lines = [
+        line
+        for line in out.split("\n")
+        if line not in ["model;", "end;"] and len(line) > 0
+    ]
+    count = 0
+    expect_ss_definition = True
+
+    for line in lines:
+        line = line.replace(" ", "").replace(";", "")
+        if line.startswith("#"):
+            assert "=" in line
+            assert (
+                expect_ss_definition
+            )  # All the ss definitions should be at the beginning and all together
+            line = line.replace(" ", "").replace(";", "")
+            name, value = line.split("=")
+            assert name.endswith("_ss")
+
+        else:
+            expect_ss_definition = False
+            count += 1
+
+    assert len(nk_model.equations) == count
+
+
+def test_write_steady_state(model):
+    out = write_steady_state(model)
+    assert out.startswith("initval;")
+    assert out.endswith("end;\n\nsteady;\nresid;")
+    lines = [
+        line
+        for line in out.split("\n")
+        if line not in ["initval;", "end;", "steady;", "resid;"] and len(line) > 0
+    ]
+    ss_dict = {}
+    for line in lines:
+        name, value = line.replace(";", "").replace(" ", "").split("=")
+        ss_dict[f"{name}_ss"] = float(value)
+
+    np.testing.assert_allclose(
+        model.f_ss_resid(**ss_dict, **model.parameters()),
+        np.zeros(len(ss_dict)),
+        atol=1e-3,
+        rtol=1e-3,
+    )
+
+
+def test_write_analytical_steady_state(ss_model):
+    out = write_steady_state(ss_model)
+    assert out.startswith("steady_state_model;")
+    lines = [
+        line.replace(" ", "").replace(";", "")
+        for line in out.split("\n")
+        if "=" in line and len(line) > 0
+    ]
+    names, exprs = zip(*[line.split("=") for line in lines])
+    n_vars = len(ss_model.variables)
+
+    assert all(x.base_name in names[-n_vars:] for x in ss_model.variables)
+
+
+def test_write_shock_std(model):
+    out = write_shock_std(model)
+    assert out.startswith("shocks;")
+    assert out.endswith("end;")
+    lines = [
+        line
+        for line in out.split("\n")
+        if line not in ["shocks;", "end;"] and len(line) > 0
+    ]
+    assert all(line.startswith("var") for line in lines[::2])
+    assert all(line.startswith("stderr") for line in lines[1::2])
+
+
+@pytest.mark.parametrize("linewidth", [100, 50], ids=["long_lines", "short_lines"])
+def test_make_mod_file(linewidth, nk_model):
+    out = make_mod_file(nk_model, linewidth=linewidth)
+    assert isinstance(out, str)
+
+    lines = out.split("\n")
+
+    # Model equations don't respect the line length -- filter them out
+    eq_start_idx = lines.index("model;")
+    eq_end_idx = lines.index("end;", eq_start_idx)
+
+    lines = lines[:eq_start_idx] + lines[eq_end_idx:]
+    lines = [line for line in lines if "=" not in line]
+
+    assert max([len(x) for x in lines]) <= linewidth
