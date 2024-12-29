@@ -16,6 +16,7 @@ dependencies:
   - scipy
   - setuptools
   - statsmodels
+  - preliz
   - sympy<1.13
 
   # Extra dependencies for docs build
