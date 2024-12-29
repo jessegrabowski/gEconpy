@@ -19,6 +19,7 @@ from pymc_experimental.statespace.utils.constants import (
 from pytensor import graph_replace
 from scipy.stats._continuous_distns import (
     beta_gen,
+    expon_gen,
     gamma_gen,
     halfnorm_gen,
     invgamma_gen,
@@ -45,6 +46,7 @@ SCIPY_TO_PRELIZ = {
     beta_gen: pz.Beta,
     gamma_gen: pz.Gamma,
     invgamma_gen: pz.InverseGamma,
+    expon_gen: pz.Exponential,
 }
 
 
@@ -387,7 +389,7 @@ class DSGEStateSpace(PyMCStateSpace):
             n_steps = graph_replace(
                 self._n_steps, replace=replacement_dict, strict=False
             )
-            pm.Deterministic("n_cycle_steps", n_steps)
+            pm.Deterministic("n_cycle_steps", n_steps.astype(int))
 
         policy_resid, *bk_output, ss_resid = graph_replace(
             [self._policy_resid, *self._bk_output, self._ss_resid],
@@ -484,5 +486,7 @@ class DSGEStateSpace(PyMCStateSpace):
                     pz_priors[name] = pz_dist(lower=rv.kwds["a"], upper=rv.kwds["b"])
                 case invgamma_gen():
                     pz_priors[name] = pz_dist(alpha=rv.kwds["a"], beta=rv.kwds["scale"])
+                case expon_gen():
+                    pz_priors[name] = pz_dist(lam=1 / rv.kwds["scale"])
 
         return pz_priors

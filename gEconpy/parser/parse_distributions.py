@@ -10,6 +10,7 @@ from pyparsing import ParseException
 from scipy import optimize
 from scipy.stats import (
     beta,
+    expon,
     gamma,
     halfnorm,
     invgamma,
@@ -43,7 +44,9 @@ CANON_NAMES = [
     "inv_gamma",
     "uniform",
     "beta",
+    "exponential",
 ]
+
 NAME_TO_DIST_SCIPY_FUNC = dict(
     zip(CANON_NAMES, [norm, truncnorm, halfnorm, gamma, invgamma, uniform, beta])
 )
@@ -65,6 +68,7 @@ INVERSE_GAMMA_ALIASES = [
 ]
 UNIFORM_ALIASES = ["u", "uniform", "uni", "unif"]
 BETA_ALIASES = ["beta", "b"]
+EXPONENTIAL_ALIASES = ["expon", "exponential"]
 
 # Moment parameter names
 MEAN_ALIASES = ["mean"]
@@ -89,6 +93,8 @@ GAMMA_SHAPE_ALIASES = ["a", "alpha", "k", "shape"]
 GAMMA_SCALE_ALIASES = ["theta", "scale"]
 GAMMA_RATE_ALIASES = ["b", "beta", "rate"]
 
+EXPONENTIAL_RATE_ALIASES = ["lambda", "rate"]
+
 DIST_ALIAS_LIST = [
     NORMAL_ALIASES,
     TRUNCNORM_ALIASES,
@@ -97,6 +103,7 @@ DIST_ALIAS_LIST = [
     INVERSE_GAMMA_ALIASES,
     UNIFORM_ALIASES,
     BETA_ALIASES,
+    EXPONENTIAL_ALIASES,
 ]
 
 
@@ -1212,6 +1219,126 @@ class GammaDistributionParser(BaseDistributionParser):
         return param_dict
 
 
+class ExponentialDistributionParser(BaseDistributionParser):
+    def __init__(self, variable_name: str):
+        super().__init__(
+            variable_name=variable_name,
+            d_name="exponential",
+            loc_param_name="loc",
+            scale_param_name="scale",
+            shape_param_name=None,
+            rate_param_name="lambda",
+            lower_bound_param_name=None,
+            upper_bound_param_name=None,
+            n_params=2,
+            all_valid_parameters=EXPONENTIAL_RATE_ALIASES + MOMENTS + ["loc", "scale"],
+        )
+
+    def build_distribution(
+        self,
+        param_dict: dict[str, str],
+        backend="scipy",
+        model=None,
+        initial_value=None,
+    ) -> rv_continuous:
+        parsed_param_dict = self._parse_parameters(param_dict)
+        self._warn_about_unused_parameters(param_dict)
+        self._verify_distribution_parameterization(parsed_param_dict)
+        self.initial_value = initial_value
+
+        if backend == "scipy":
+            parsed_param_dict = self._postprocess_parameters(parsed_param_dict)
+            return expon(**parsed_param_dict)
+
+    def _parse_parameters(self, param_dict: dict[str, str]) -> dict[str, float]:
+        parse_loc_parameter = partial(
+            self._parse_parameter,
+            canon_name=self.loc_param_name,
+            aliases=[self.loc_param_name],
+        )
+        parse_scale_parameter = partial(
+            self._parse_parameter,
+            canon_name=self.scale_param_name,
+            aliases=["scale"],
+        )
+        parse_rate_parameter = partial(
+            self._parse_parameter,
+            canon_name=self.rate_param_name,
+            aliases=EXPONENTIAL_RATE_ALIASES,
+        )
+
+        parsing_functions = [
+            self._parse_mean_constraint,
+            self._parse_std_constraint,
+            parse_loc_parameter,
+            parse_scale_parameter,
+            parse_rate_parameter,
+        ]
+
+        parsed_param_dict = {}
+        for f in parsing_functions:
+            parsed_param_dict.update(f(param_dict))
+
+        return parsed_param_dict
+
+    def _postprocess_parameters(self, param_dict: dict[str, float]) -> dict[str, float]:
+        parameters = list(param_dict.keys())
+        user_passed_rate = self.rate_param_name in parameters
+        user_passed_scale = self.scale_param_name in parameters
+
+        if user_passed_scale and user_passed_rate:
+            raise MultipleParameterDefinitionException(
+                self.variable_name,
+                self.d_name,
+                "scale",
+                [self.scale_param_name, self.rate_param_name],
+            )
+
+        elif user_passed_rate:
+            param_dict[self.scale_param_name] = 1 / param_dict[self.rate_param_name]
+            user_passed_scale = True
+            param_dict.pop(self.rate_param_name)
+
+        elif user_passed_scale:
+            param_dict[self.rate_param_name] = param_dict[self.scale_param_name]
+
+        if self._has_mean_constraint() and self._has_std_constraint():
+            mean, std = self.mean_constraint, self.std_constraint
+            if mean < 0:
+                raise InvalidParameterException(
+                    self.variable_name, self.d_name, "mean", "mean", "mean >= 0"
+                )
+            if std <= 0:
+                raise InvalidParameterException(
+                    self.variable_name, self.d_name, "std", "std", "std >= 0"
+                )
+
+            param_dict[self.scale_param_name] = 1 / std
+            param_dict[self.loc_param_name] = mean - 1 / std
+
+        elif self._has_mean_constraint():
+            mean = self.mean_constraint
+            if user_passed_scale:
+                param_dict[self.loc_param_name] = (
+                    mean - param_dict[self.scale_param_name]
+                )
+            else:
+                param_dict[self.scale_param_name] = 1 / mean
+
+        elif self._has_std_constraint():
+            std = self.std_constraint
+            if user_passed_scale:
+                raise MultipleParameterDefinitionException(
+                    self.variable_name,
+                    self.d_name,
+                    "scale",
+                    [self.scale_param_name, "std"],
+                )
+            param_dict[self.scale_param_name] = 1 / std
+
+        return param_dict
+
+
 def match_first_two_moments(
     target_mean: float, target_std: float, dist_object: rv_continuous
 ) -> tuple[float, float]:
@@ -1275,46 +1402,6 @@ def preprocess_distribution_string(
     distribution parameters (e.g. loc, scale, shape, and bounds).
     """
     name_to_canon_dict = build_alias_to_canon_dict(DIST_ALIAS_LIST, CANON_NAMES)
-
-    # # digit_pattern = r" ?\d*\.?\d* ?"
-    # general_pattern = r" ?[\w\.]* ?"
-    #
-    # # The not last args have a comma, while the last arg does not.
-    # dist_name_pattern = r"(\w+)"
-    # not_last_arg_pattern = rf"(\w+ ?={general_pattern}, ?)"
-    # last_arg_pattern = rf"(\w+ ?={general_pattern})"
-    # valid_pattern = (
-    #     rf"{dist_name_pattern}\({not_last_arg_pattern}*?{last_arg_pattern}\),?$"
-    # )
-    #
-    # # TODO: sort out where the typo is and tell the user.
-    # if re.search(valid_pattern, d_string) is None:
-    #     raise InvalidDistributionException(variable_name, d_string)
-    #
-    # d_name, params_string = d_string.split("(")
-    # d_name = d_name.lower()
-    #
-    # if d_name not in name_to_canon_dict.keys():
-    #     raise InvalidDistributionException(variable_name, d_string)
-    #
-    # params = [x.strip() for x in params_string.replace(")", "").split(",")]
-    # params = [x for x in params if len(x) > 0]
-    #
-    # new_params = []
-    # for p in params:
-    #     chunks = p.split("=")
-    #     new_p = "=".join([chunks[0].lower(), chunks[1]])
-    #     new_params.append(new_p)
-    #
-    # params = new_params
-    #
-    # param_dict = {}
-    # for param in params:
-    #     key, value = (x.strip() for x in param.split("="))
-    #     if key in param_dict.keys():
-    #         raise RepeatedParameterException(variable_name, d_name, key)
-    #
-    #     param_dict[key] = value
 
     try:
         parsed_result = dist_syntax.parseString(d_string)
@@ -1419,8 +1506,8 @@ def distribution_factory(
     elif d_name == "uniform":
         parser = UniformDistributionParser(variable_name=variable_name)
 
-    elif d_name == "":
-        parser = NormalDistributionParser(variable_name=variable_name)
+    elif d_name == "exponential":
+        parser = ExponentialDistributionParser(variable_name=variable_name)
 
     else:
         raise NotImplementedError(
