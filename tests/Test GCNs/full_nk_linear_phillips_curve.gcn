@@ -1,0 +1,251 @@
+tryreduce
+{
+    U[], TC[];
+};
+
+assumptions
+{
+	positive
+	{
+		shock_technology[], shock_preference[], pi[], pi_star[], pi_obj[], r[], r_G[], mc[], w[], w_star[],
+		Y[], C[], I[], K[], L[],
+		delta, beta, sigma_C, sigma_L, gamma_I, phi_H;
+	};
+};
+
+block STEADY_STATE
+{
+    identities
+    {
+        # Steady state values
+        shock_technology[ss] = 1;
+        shock_preference[ss] = 1;
+        pi[ss] = 1;
+        pi_w[ss] = 1;
+        pi_obj[ss] = 1;
+        B[ss] = 0;
+
+        r[ss] = 1 / beta - (1 - delta);
+        r_G[ss] = 1 / beta;
+
+        mc[ss] = 1 / (1 + psi_p);
+        w[ss] = (1 - alpha) * mc[ss] ** (1 / (1 - alpha)) * (alpha / r[ss]) ** (alpha / (1 - alpha));
+
+        Y[ss] = (
+            w[ss] ** ((sigma_L + 1) / (sigma_C + sigma_L))
+            * ((-beta * phi_H + 1) / (psi_w + 1)) ** (1 / (sigma_C + sigma_L))
+            * (r[ss] / ((1 - phi_H) * (-alpha * delta * mc[ss] + r[ss])))
+            ** (sigma_C / (sigma_C + sigma_L))
+            / (mc[ss] * (1 - alpha)) ** (sigma_L / (sigma_C + sigma_L))
+        );
+
+        C[ss] = (
+            w[ss] ** ((1 + sigma_L) / sigma_C)
+            * (1 / (1 - phi_H))
+            * ((1 - beta * phi_H) / (1 + psi_w)) ** (1 / sigma_C)
+            * ((1 - alpha) * mc[ss]) ** (-sigma_L / sigma_C)
+            * Y[ss] ** (-sigma_L / sigma_C)
+        );
+
+        lambda[ss] = (1 - beta * phi_H) * ((1 - phi_H) * C[ss]) ** (-sigma_C);
+        q[ss] = lambda[ss];
+        I[ss] = delta * alpha * mc[ss] * Y[ss] / r[ss];
+        K[ss] = alpha * mc[ss] * Y[ss] / r[ss];
+        L[ss] = (1 - alpha) * Y[ss] * mc[ss] / w[ss];
+
+        U[ss] = (
+            1
+            / (1 - beta)
+            * (
+                ((1 - phi_H) * C[ss]) ** (1 - sigma_C) / (1 - sigma_C)
+                - L[ss] ** (1 + sigma_L) / (1 + sigma_L)
+            )
+        );
+
+        TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);
+        Div[ss] = Y[ss] + TC[ss];
+    };
+
+};
+
+
+block HOUSEHOLD
+{
+    definitions
+    {
+        u[] = shock_preference[] * (
+				(C[] - phi_H * C[-1]) ^ (1 - sigma_C) / (1 - sigma_C) -
+			    L[] ^ (1 + sigma_L) / (1 + sigma_L));
+    };
+    controls
+    {
+		C[], I[], K[], B[];
+    };
+
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
+
+    constraints
+    {
+        C[] + I[] + B[] / r_G[]  =
+			  r[] * K[-1] +
+			  w[] * L[] +
+			  B[-1] / pi[] +
+			  Div[] : lambda[];
+
+		K[] = (1 - delta) * K[-1] +
+			I[] * (1 - gamma_I / 2 * (I[] / I[-1] - 1) ^ 2) : q[];
+    };
+
+    calibration
+    {
+        delta   ~ Beta(alpha=2, beta=42) = 0.025;
+        beta    ~ Beta(alpha=70, beta=4) = 0.99;
+
+        sigma_C ~ Gamma(alpha=7, beta=3) = 2;
+        sigma_L ~ Gamma(alpha=7, beta=3) = 1.5;
+
+		gamma_I ~ Gamma(alpha=9, beta=1.4) = 10;
+		phi_H ~ Beta(alpha=5, beta=2) = 0.5;
+    };
+};
+
+block WAGE_SETTING
+{
+	identities
+	{
+	    pi_w[] = w[] / w[-1] * pi[];
+	    log(pi_w[]) = (1 - eta_w) * (1 - eta_w * beta) / (eta_w * (1 + psi_w * sigma_L))
+	        * (sigma_L * log(L[] / L[ss]) - log(w[] / w[ss]) - log(lambda[] / lambda[ss]))
+	        + beta * E[][log(pi_w[1])];
+	};
+
+	calibration
+	{
+		psi_w ~ Exponential(lambda=1) 	= 0.782;	# Markup parameter -> psi_w = 1 / (elasticity - 1)
+		                                            # 0 -> perfect substitutes, oo -> Cobb Douglas
+		eta_w ~ Beta(alpha=4, beta=1)  	= 0.75;		# Probability of not receiving the update signal
+	};
+};
+
+block PREFERENCE_SHOCKS
+{
+	identities
+	{
+		log(shock_preference[]) = rho_preference * log(shock_preference[-1]) + epsilon_preference[];
+	};
+
+	shocks
+	{
+		epsilon_preference[];
+	};
+
+	calibration
+	{
+		rho_preference ~ Beta(alpha=25, beta=3) = 0.95;
+	};
+};
+
+
+block FIRM
+{
+    controls
+    {
+        K[-1], L[];
+    };
+
+    objective
+    {
+        TC[] = -(L[] * w[] + K[-1] * r[]);
+    };
+
+    constraints
+    {
+        Y[] = shock_technology[] * K[-1] ^ alpha *
+					L[] ^ (1 - alpha) :  mc[];
+    };
+
+	identities
+	{
+		Div[] = Y[] + TC[];
+	};
+
+    calibration
+    {
+        alpha ~ Beta(alpha=5.65, beta=7) = 0.35;
+    };
+};
+
+
+block TECHNOLOGY_SHOCKS
+{
+    identities
+    {
+        log(shock_technology[]) = rho_technology * log(shock_technology[-1]) + epsilon_Y[];
+    };
+    shocks
+    {
+        epsilon_Y[];
+    };
+    calibration
+    {
+        rho_technology ~ Beta(alpha=25, beta=3) = 0.95;
+    };
+};
+
+
+block FIRM_PRICE_SETTING_PROBLEM
+{
+	identities
+	{
+        log(pi[]) = (1 - eta_p) * (1 - eta_p * beta) / eta_p * log(mc[] / mc[ss]) + beta * E[][log(pi[1])];
+	};
+
+	calibration
+	{
+		psi_p ~ Exponential(lambda=1)  = 0.6; #Markup parameter: 0 -> perfect substitutes, oo -> Cobb Douglas
+		eta_p ~ Beta(alpha=13, beta=2)  = 0.75;
+	};
+};
+
+block MONETARY_POLICY
+{
+	identities
+	{
+		log(r_G[] / r_G[ss]) = rho_r_G * log(r_G[-1] / r_G[ss]) +
+			(1 - rho_r_G) * log(pi_obj[]) +
+			(1 - rho_r_G) * phi_pi * log(pi[] / pi[ss] - log(pi_obj[])) +
+			(1 - rho_r_G) * phi_Y * log(Y[] / Y[-1]) +
+			epsilon_R[];
+
+		log(pi_obj[]) = (1 - rho_pi_dot) * log(phi_pi_obj) +
+			rho_pi_dot * log(pi_obj[-1]) + epsilon_pi[];
+	};
+
+	shocks
+	{
+		epsilon_R[], epsilon_pi[];f
+	};
+
+
+	calibration
+	{
+		rho_r_G ~ Beta(alpha=25, beta=3)  = 0.9;
+		phi_pi ~ Gamma(alpha=30, beta=20) = 1.5;
+		phi_Y ~ Gamma(alpha=3, beta=30) = 0.05;
+        phi_pi_obj = 1;
+		rho_pi_dot ~ Beta(alpha=25, beta=3)	= 0.95;
+	};
+};
+
+
+
+block EQUILIBRIUM
+{
+    identities
+    {
+		B[] = 0;
+    };
+};

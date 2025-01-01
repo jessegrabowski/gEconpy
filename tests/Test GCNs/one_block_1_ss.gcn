@@ -71,12 +71,12 @@ block HOUSEHOLD
 	calibration
 	{
 		# L[ss] / K[ss] = 0.36 -> alpha;
-		alpha = 0.35;
-		theta = 0.357;
-		beta = 0.99;
-		delta = 0.02;
-		tau = 2;
-		rho = 0.95;
+		alpha ~ Beta(alpha=1, beta=1) = 0.35;
+		theta ~ Beta(alpha=1, beta=1) = 0.357;
+		beta  ~ Beta(alpha=1, beta=1) = 0.99;
+		delta ~ Beta(alpha=1, beta=1) = 0.02;
+		tau   ~ Gamma(alpha=2, beta=1) = 2;
+		rho   ~ Beta(alpha=1, beta=1) = 0.95;
 	};
 
 

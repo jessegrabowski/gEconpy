@@ -70,11 +70,13 @@ block HOUSEHOLD
 	{
 		beta = 0.990099;
 		delta = 0.025;
-        gamma = 2;
-        omega = 1.455;
+        gamma_rv ~ HalfNormal(sigma=5) = 1;
+        omega_rv ~ HalfNormal(sigma=5) = 0.455;
+        gamma = 1 + gamma_rv;
+        omega = 1 + omega_rv;
         psi2 = 0.000742;
         psi = 0.028;
-        alpha = 0.32;
+        alpha ~ Beta(alpha=5, beta=5) = 0.32;
         rstar = 1 / beta - 1;
 		IIPbar = 0;
 	};
@@ -90,7 +92,7 @@ block TECHNOLOGY_SHOCKS
 
 	calibration
 	{
-		rho_A = 0.42;
+		rho_A ~ Beta(alpha=3, beta=1) = 0.42;
 	};
 
     shocks
