@@ -27,7 +27,6 @@ dependencies:
   - pip
   - pip:
       - sympytensor
-      - better-optimize
-      - pymc-experimental
+      - pymc_extras
       - better_optimize
       - numdifftools

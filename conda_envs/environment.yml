@@ -22,3 +22,4 @@ dependencies:
       - sympytensor
       - gEconpy
       - better_optimize
+      - pymc_extras

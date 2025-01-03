@@ -9,9 +9,9 @@ import pytensor.tensor as pt
 import sympy as sp
 
 from pymc.pytensorf import rewrite_pregrad
-from pymc_experimental.statespace.core.statespace import PyMCStateSpace
-from pymc_experimental.statespace.models.utilities import make_default_coords
-from pymc_experimental.statespace.utils.constants import (
+from pymc_extras.statespace.core.statespace import PyMCStateSpace
+from pymc_extras.statespace.models.utilities import make_default_coords
+from pymc_extras.statespace.utils.constants import (
     JITTER_DEFAULT,
     SHOCK_AUX_DIM,
     SHOCK_DIM,
