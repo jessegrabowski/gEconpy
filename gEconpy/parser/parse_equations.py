@@ -141,18 +141,16 @@ def extract_time_index(token: str) -> str:
     >>> # Out: 't'
     """
 
-    if has_num_index(token) and "-" not in token:
-        lead = re.findall(r"\d+", token)[0]
-        time_index = "t" + lead
-    elif has_num_index(token) and "-" in token:
-        lag = re.findall(r"\d+", token)[0]
-        time_index = "tL" + lag
-    elif "[ss]" in token:
-        time_index = "ss"
-    else:
-        time_index = "t"
-
-    return time_index
+    match = re.search(r"\[(.*?)\]", token)
+    if match:
+        index = match.group(1)
+        if index == "ss":
+            return "ss"
+        elif index.startswith("-"):
+            return f"tL{index[1:]}"
+        else:
+            return f"t{index}"
+    return "t"
 
 
 def remove_timing_information(token: str) -> str:
@@ -392,6 +390,11 @@ def build_sympy_equations(
                 time_index = extract_time_index(token)
                 token_base = remove_timing_information(token)
                 token = token_base + "_" + time_index
+
+                if time_index not in TIME_INDEX_DICT:
+                    raise ValueError(
+                        f"Invalid time index {time_index} associated with token {token} from equation: {eq}"
+                    )
 
                 symbol = TimeAwareSymbol(
                     token_base, TIME_INDEX_DICT[time_index], **assumptions[token_base]

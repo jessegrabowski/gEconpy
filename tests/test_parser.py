@@ -340,6 +340,7 @@ def test_token_classification(case, expected_result):
         ("A[-2]", "tL2"),
         ("HAPPY[-10]", "tL10"),
         ("alpha_1[-1]", "tL1"),
+        ("h1[2]", "t2"),
         ("A[ss]", "ss"),
     ],
     ids=[
@@ -350,6 +351,7 @@ def test_token_classification(case, expected_result):
         "t-2",
         "t-10",
         "numerical_suffix",
+        "numerica_suffix_no_underscore",
         "steady_state",
     ],
 )
