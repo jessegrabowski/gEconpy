@@ -1,0 +1,168 @@
+tryreduce
+{
+    TC[], U[], Y_j[], T[], D[];
+};
+
+
+block STEADY_STATE
+{
+    identities
+    {
+        A[ss] = 1;
+        g_M[ss] = g_M;
+
+        pi[ss] = exp(g_M);
+        SDF[ss] = beta;
+
+        i[ss] = pi[ss] / beta - 1;
+
+        P_reset[ss] = ((1 - phi * pi[ss] ^ (epsilon - 1)) / (1 - phi)) ^ (1 / (1 - epsilon));
+
+        mc[ss] = (epsilon - 1) / epsilon  * P_reset[ss] *
+            (1 - phi * beta * pi[ss] ^ epsilon) / (1 - phi * beta * pi[ss] ^ (epsilon - 1));
+        w[ss] = mc[ss] * A[ss];
+
+        nu_p[ss] = (1 - phi) * P_reset[ss] ^ (-epsilon) / (1 - phi * pi[ss] ^ epsilon);
+
+        N[ss] = (nu_p[ss] ^ sigma * mc[ss] / theta) ^ (1 / (sigma + chi));
+        Y[ss] = N[ss] / nu_p[ss];
+        C[ss] = Y[ss];
+        lambda[ss] = C[ss] ^ (-sigma);
+        m[ss] = psi * ((1 + i[ss]) / i[ss]) * C[ss] ^ sigma;
+        # m[ss] = psi * C[ss] ^ sigma * ((1 + i[ss]) / i[ss]);
+
+        X_hat_1[ss] = mc[ss] * Y[ss] / (1 - phi * beta * pi[ss] ^ epsilon);
+        X_hat_2[ss] = Y[ss] / (1 - beta * phi * pi[ss] ^ (epsilon - 1));
+    };
+};
+
+block HOUSEHOLD
+{
+
+    definitions
+    {
+        u[] = C[] ^ (1 - sigma) / (1 - sigma) - theta * N[] ^ (1 + chi) / (1 + chi) + psi * log(m[]);
+    };
+
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
+
+    controls
+    {
+        C[], N[], m[], B[];
+    };
+
+    constraints
+    {
+        @exclude
+        C[] + B[] + m[] - m[-1] / pi[] = w[] * N[] + (1 + i[-1]) * B[-1] / pi[] - T[] + D[]: lambda[];
+    };
+
+    identities
+    {
+        SDF[] = beta * lambda[] / lambda[-1];
+    };
+
+    calibration
+    {
+        beta = 0.99;
+        sigma = 3;
+        theta = 1.0;
+        chi = 1.0;
+        psi = 1.0;
+    };
+
+};
+
+block INTERMEDIATE_FIRM
+{
+    objective
+    {
+        TC[] = -(w[] * N[]);
+    };
+
+    controls
+    {
+        N[];
+    };
+
+    constraints
+    {
+        Y_j[] = A[] * N[] : mc[];
+    };
+
+    identities
+    {
+        D[] = Y_j[] + TC[];
+        log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+    };
+
+    shocks
+    {
+        epsilon_A[];
+    };
+
+    calibration
+    {
+        rho_A = 0.9;
+    };
+
+};
+
+block FINAL_GOODS
+{
+    identities
+    {
+        # Reset price
+        P_reset[] = epsilon / (epsilon - 1) * X_hat_1[] / X_hat_2[];
+        X_hat_1[] = mc[] * Y[] + phi * E[][SDF[1] * pi[1] ^ epsilon * X_hat_1[1]];
+        X_hat_2[] = Y[] + phi * E[][SDF[1] * pi[1] ^ (epsilon - 1) * X_hat_2[1]];
+
+        # Price index
+        1 = (1 - phi) * P_reset[] ^ (1 - epsilon) + phi * pi[] ^ (epsilon - 1);
+
+        # Price distortion index
+        nu_p[] = (1 - phi) * P_reset[] ^ (-epsilon) + phi * pi[] ^ epsilon * nu_p[-1];
+
+        # Aggregate production
+        Y_j[] = nu_p[] * Y[];
+    };
+
+    calibration
+    {
+        phi = 3/4;
+        epsilon = 11;
+    };
+};
+
+block GOVERNMENT
+{
+    identities
+    {
+        g_M[] = (1 - rho_M) * g_M + rho_M * g_M[-1] + epsilon_M[];
+        g_M[] = log(m[]) - log(m[-1]) + log(pi[]);
+        i[-1] * B[-1] = T[] + m[] - m[-1] + B[] - B[-1];
+        B[] = 0;
+    };
+
+    shocks
+    {
+        epsilon_M[];
+    };
+
+    calibration
+    {
+        g_M = 0.0;
+        rho_M = 0.5;
+    };
+};
+
+block EQULIBRIUM
+{
+    identities
+    {
+        Y[] = C[];
+    };
+};

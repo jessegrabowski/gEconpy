@@ -17,9 +17,9 @@ dependencies:
   - statsmodels
   - preliz
   - sympy<1.13
+  - pymc_extras
+  - better_optimize
 
   - pip:
       - sympytensor
       - gEconpy
-      - better_optimize
-      - pymc_extras

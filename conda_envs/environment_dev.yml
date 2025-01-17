@@ -24,8 +24,7 @@ dependencies:
 
   # JAX, optional for now
   - jax
-  - numpyro
-  - blackjax
+  - jaxlib=*=*cuda*
 
   # For building docs
   - ipython
@@ -49,8 +48,9 @@ dependencies:
   - pytest-env
   - pytest-cov
 
+  - pymc-extras
+  - better-optimize
+
   - pip:
       - sympytensor
-      - pymc_extras
-      - better_optimize
-      - numdifftools
+      - -e .
