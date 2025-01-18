@@ -191,6 +191,8 @@ open_params = [
     "delta",
     "gamma",
     "omega",
+    "gamma_rv",
+    "omega_rv",
     "psi2",
     "psi",
     "alpha",

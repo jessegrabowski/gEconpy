@@ -184,7 +184,9 @@ class DSGEStateSpace(PyMCStateSpace):
 
         if self.measurement_error:
             for i, state in enumerate(self.error_states):
-                sigma = self.make_and_register_variable(f"sigma_{state}", shape=())
+                sigma = self.make_and_register_variable(
+                    f"error_sigma_{state}", shape=()
+                )
                 self.ssm["obs_cov", i, i] = sigma**2
 
         self.ssm["initial_state", :] = pt.zeros(self.k_states)
@@ -294,7 +296,7 @@ class DSGEStateSpace(PyMCStateSpace):
             param_names += [f"sigma_{shock.base_name}" for shock in self.shocks]
 
         if self.measurement_error:
-            param_names += [f"sigma_{state}" for state in self.error_states]
+            param_names += [f"error_sigma_{state}" for state in self.error_states]
 
         return param_names
 

@@ -5,6 +5,8 @@ import pymc as pm
 import pytensor
 import pytest
 
+from numpy.testing import assert_allclose
+
 from tests.utilities.shared_fixtures import (
     load_and_cache_model,
     load_and_cache_statespace,
@@ -22,7 +24,7 @@ from tests.utilities.shared_fixtures import (
 )
 def test_statespace_matrices_agree_with_model(gcn_file):
     ss_mod = load_and_cache_statespace(gcn_file)
-    model = load_and_cache_model(gcn_file, verbose=False)
+    model = load_and_cache_model(gcn_file, "numpy", use_jax=False)
 
     inputs = pm.inputvars(ss_mod.linearized_system)
     input_names = [x.name for x in inputs]
@@ -53,3 +55,19 @@ def test_priors_to_preliz(gcn_file):
     for name, prior in ss_mod.priors[0].items():
         d = ss_mod.priors[0][name]
         pz_d = pz_priors[name]
+
+        assert_allclose(d.mean() - d.kwds.get("loc", 0), pz_d.mean(), err_msg=name)
+        assert_allclose(d.std(), pz_d.std(), err_msg=name)
+
+
+@pytest.mark.parametrize(
+    "gcn_file",
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        "full_nk.gcn",
+        "rbc_linearized.gcn",
+    ],
+)
+def test_model_config(gcn_file):
+    ss_mod = load_and_cache_statespace(gcn_file)
