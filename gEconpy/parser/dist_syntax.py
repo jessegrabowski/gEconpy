@@ -15,8 +15,64 @@ def evaluate_expression(parsed_expr):
     return parsed_expr
 
 
+preliz_dists = [
+    "AsymmetricLaplace",
+    "Bernoulli",
+    "Beta",
+    "BetaBinomial",
+    "BetaScaled",
+    "Binomial",
+    "Categorical",
+    "Cauchy",
+    "ChiSquared",
+    "Dirichlet",
+    "DiscreteUniform",
+    "DiscreteWeibull",
+    "ExGaussian",
+    "Exponential",
+    "Gamma",
+    "Geometric",
+    "Gumbel",
+    "HalfCauchy",
+    "HalfNormal",
+    "HalfStudentT",
+    "HyperGeometric",
+    "InverseGamma",
+    "Kumaraswamy",
+    "Laplace",
+    "LogLogistic",
+    "LogNormal",
+    "Logistic",
+    "LogitNormal",
+    "Moyal",
+    "MvNormal",
+    "NegativeBinomial",
+    "Normal",
+    "Pareto",
+    "Poisson",
+    "Rice",
+    "SkewNormal",
+    "SkewStudentT",
+    "StudentT",
+    "Triangular",
+    "TruncatedNormal",
+    "Uniform",
+    "VonMises",
+    "Wald",
+    "Weibull",
+    "ZeroInflatedBinomial",
+    "ZeroInflatedNegativeBinomial",
+    "ZeroInflatedPoisson",
+]
+
+
+wrapper_keywords = pp.MatchFirst(
+    [pp.Keyword("maxent"), pp.Keyword("Truncated"), pp.Keyword("Censored")]
+)("wrapper_func")
+
+dist_name = pp.MatchFirst([pp.Keyword(dist) for dist in preliz_dists])
 var_name = pp.Word(pp.alphas, pp.alphanums + "_")
-dist_name = pp.Word(pp.alphas, pp.alphanums + "_")
+
 equals = pp.Literal("=").suppress()
 
 number = pp.pyparsing_common.number
@@ -35,12 +91,25 @@ value = numeric_expr | var_name
 key = pp.Word(pp.alphas, pp.alphanums + "_")
 key_value_pair = pp.Group(key + equals + value)
 
-args = (
-    pp.Suppress("(") + pp.Optional(pp.delimitedList(key_value_pair)) + pp.Suppress(")")
-)
-initial_value = pp.Optional(equals + numeric_expr, default=None)("initial_value")
+args = pp.Optional(
+    pp.nestedExpr("(", ")", content=pp.delimitedList(key_value_pair)), default=None
+)("dist_kwargs")
+inner_dist_syntax = dist_name("dist_name") + args
 
-dist_syntax = dist_name("dist_name") + args("kwargs") + initial_value + pp.StringEnd()
+wrapper_args = pp.Optional(
+    pp.Suppress(",") + pp.delimitedList(key_value_pair), default=None
+)("wrapper_kwargs")
+
+dist_syntax = (
+    pp.Optional(wrapper_keywords, default=None)("wrapper_func")
+    + pp.Optional(pp.Suppress("("))
+    + inner_dist_syntax("distribution")
+    + wrapper_args
+    + pp.Optional(pp.Suppress(")"))
+    + pp.Optional(equals)
+    + pp.Optional(numeric_expr, default=None)("initial_value")
+    + pp.StringEnd()
+)
 
 
 __all__ = ["dist_syntax", "evaluate_expression"]

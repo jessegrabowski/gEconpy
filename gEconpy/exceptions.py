@@ -260,15 +260,10 @@ class UnusedParameterError(ValueError):
 
 
 class InvalidParameterException(ValueError):
-    def __init__(
-        self, variable_name, d_name, canon_param_name, param_name, constraints
-    ):
+    def __init__(self, var_name, dist_name, param_name, valid_params):
         message = (
-            f'The {canon_param_name} of the {d_name.upper()} distribution associated with "{variable_name}" '
-            f"(passed as {param_name}) is invalid. It should respect the following constraints: {constraints}."
-            f"\nIf you defined the distribution using moment conditions, you can avoid this error by"
-            f" passing the parameters of the distribution directly instead (but you will need to work out what"
-            f" the resulting moments will be yourself)."
+            f'Unknown parameter {param_name} passed to distribution {dist_name} associated with {var_name}. Valid '
+            f'parameters for this distribution are: {", ".join(valid_params)}'
         )
 
         super().__init__(message)
