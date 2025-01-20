@@ -8,42 +8,10 @@ import sympy as sp
 
 from sympytensor import as_tensor
 
-from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
+from gEconpy.classes.containers import SteadyStateResults
 from gEconpy.numbaf.utilities import numba_lambdify
 
 BACKENDS = Literal["numpy", "numba", "pytensor"]
-
-
-def sp_to_pt_from_cache(symbol_list: list[sp.Symbol], cache: dict) -> SymbolDictionary:
-    """
-    Look up a list of symbols in a Sympy PytensorPrinter cache and return a SymbolDictionary mapping each symbol
-    to its corresponding tensor variable on the compute graph.
-
-    Parameters
-    ----------
-    symbol_list: list[sp.Symbol]
-        List of sympy symbols to look up in the cache
-
-    cache: dict
-        Dictionary created by SympyTensor during printing.
-
-    Returns
-    -------
-    sp_to_pt: SymbolDictionary
-        Mapping from sympy symbols to their pytensor Variables
-    """
-
-    sp_to_pt = {}
-    cached_names = [x[0] for x in cache.keys()]
-    cached_tensors = list(cache.values())
-    for symbol in symbol_list:
-        if symbol.name in cached_names:
-            idx = cached_names.index(symbol.name)
-            sp_to_pt[symbol] = cached_tensors[idx]
-        else:
-            raise ValueError(f"{symbol} not found in the provided cache")
-
-    return SymbolDictionary(sp_to_pt)
 
 
 def output_to_tensor(x, cache):

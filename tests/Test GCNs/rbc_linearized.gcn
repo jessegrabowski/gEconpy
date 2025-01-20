@@ -50,18 +50,18 @@ block SYSTEM_EQUATIONS
 
 	shocks
 	{
-		epsilon_A[] ~ Normal(loc=0, scale=sigma_A);
+		epsilon_A[] ~ Normal(mu=0, sigma=sigma_A);
 	};
 
 	calibration
 	{
-		sigma   ~ Gamma(a=2, scale=0.25, loc=1) = 2;
-		phi     ~ Gamma(a=2, scale=0.25, loc=1) = 1.5;
-		alpha   ~ Beta(a=5, b=9) = 0.35;
-		beta    ~ Beta(a=10, b=1) = 0.985;
-		delta   ~ Beta(a=1, b=10) = 0.025;
-		rho_A   ~ Beta(a=1, b=5) = 0.95;
-		sigma_A ~ Gamma(a=2, scale=0.005) = 0.01;
+		sigma   ~ maxent(Gamma(), lower=1.5, upper=3.0) = 2;
+		phi     ~ maxent(Gamma(), lower=1.0, upper=5.0) = 1.5;
+		alpha   ~ Beta(alpha=5, beta=9) = 0.35;
+		beta    ~ Beta(alpha=10, beta=1) = 0.985;
+		delta   ~ Beta(alpha=1, beta=10) = 0.025;
+		rho_A   ~ Beta(alpha=1, beta=5) = 0.95;
+		sigma_A ~ maxent(Gamma(), lower=0.001, upper=0.1) = 0.01;
 	};
 
 };

@@ -22,7 +22,6 @@ from matplotlib import image
 logger = sphinx.util.logging.getLogger(__name__)
 
 DOC_SRC = os.path.dirname(os.path.abspath(__file__))
-# DEFAULT_IMG_LOC = os.path.join(os.path.dirname(DOC_SRC), "_static", "PyMC.png")
 
 DEFAULT_IMG_LOC = None
 external_nbs = {}

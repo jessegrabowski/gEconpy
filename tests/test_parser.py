@@ -42,11 +42,11 @@ def test_remove_distributions_and_normal_parse(model):
     ]
     assert list(prior_dict.values()) == (
         [
-            "N(mean=0, sd=sigma_epsilon)",
-            "Beta(mean=0.5, sd=0.1) = 0.4",
-            "Beta(mean=0.95, sd=0.04) = 0.95",
+            "Normal(mu=0, sigma=sigma_epsilon)",
+            "Beta(mu=0.5, sigma=0.1) = 0.4",
+            "Beta(mu=0.95, sigma=0.04) = 0.95",
             "HalfNormal(sigma=1) = 1.5",
-            "Inv_Gamma(mean=0.1, sd=0.01) = 0.01",
+            "InverseGamma(mu=0.1, sigma=0.01) = 0.01",
         ]
     )
 
@@ -585,22 +585,6 @@ def test_parse_equations_to_sympy():
 
         assert ((eq1.lhs - eq1.rhs) - (eq2.lhs - eq2.rhs)).simplify() == 0
         assert not flags[0]["is_calibrating"] if i < 2 else flags[0]["is_calibrating"]
-
-
-def test_composite_distribution():
-    sigma_epsilon = invgamma(a=20)
-    mu_epsilon = norm(loc=1, scale=0.1)
-
-    d = CompositeDistribution(norm, loc=mu_epsilon, scale=sigma_epsilon)
-    assert d.rv_params["loc"].mean() == mu_epsilon.mean()
-    assert d.rv_params["loc"].std() == mu_epsilon.std()
-    assert d.rv_params["scale"].mean() == sigma_epsilon.mean()
-    assert d.rv_params["scale"].std() == sigma_epsilon.std()
-
-    point_dict = {"loc": 0.1, "scale": 1, "epsilon": 1}
-    assert d.logpdf(point_dict) == mu_epsilon.logpdf(0.1) + sigma_epsilon.logpdf(
-        1
-    ) + norm(loc=0.1, scale=1).logpdf(1)
 
 
 def test_shock_block_with_multiple_distributions():

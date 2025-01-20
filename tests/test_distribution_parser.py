@@ -1,4 +1,7 @@
+from string import Template
+
 import numpy as np
+import preliz as pz
 import pytest
 
 from gEconpy.exceptions import (
@@ -21,85 +24,87 @@ test_strings = [
     "maxent(Normal(), lower=1, upper=3)",
     "maxent(Normal(), lower=1, upper=3) = 42",
     "Truncated(Normal(), lower=0, upper=5)",
-    "Censored(Beta(a=2, b=5), threshold=0.1)",
+    "Censored(Beta(alpha=2, beta=5), lower=0.1, upper=None)",
+    "maxent(StudentT(nu=7), lower=3, upper=7) = 18 / 10",
 ]
 
 expected_results = [
     {
-        "wrapper_func": None,
+        "wrapper_name": None,
         "wrapper_kwargs": {},
         "dist_name": "Normal",
         "dist_kwargs": {"mu": 3, "sigma": 1},
         "initial_value": None,
     },
     {
-        "wrapper_func": None,
+        "wrapper_name": None,
         "wrapper_kwargs": {},
         "dist_name": "Gamma",
         "dist_kwargs": {"alpha": 2, "beta": 1},
         "initial_value": 2.1,
     },
     {
-        "wrapper_func": None,
+        "wrapper_name": None,
         "wrapper_kwargs": {},
         "dist_name": "Exponential",
         "dist_kwargs": {"lam": [1, "/", 100]},
         "initial_value": 0.01,
     },
     {
-        "wrapper_func": "maxent",
+        "wrapper_name": "maxent",
         "wrapper_kwargs": {},
         "dist_name": "Normal",
         "dist_kwargs": {},
         "initial_value": None,
     },
     {
-        "wrapper_func": "maxent",
+        "wrapper_name": "maxent",
         "wrapper_kwargs": {"lower": 1, "upper": 3},
         "dist_name": "Normal",
         "dist_kwargs": {},
         "initial_value": None,
     },
     {
-        "wrapper_func": "maxent",
+        "wrapper_name": "maxent",
         "wrapper_kwargs": {"lower": 1, "upper": 3},
         "dist_name": "Normal",
         "dist_kwargs": {},
         "initial_value": 42,
     },
     {
-        "wrapper_func": "Truncated",
+        "wrapper_name": "Truncated",
         "wrapper_kwargs": {"lower": 0, "upper": 5},
         "dist_name": "Normal",
         "dist_kwargs": {},
         "initial_value": None,
     },
     {
-        "wrapper_func": "Censored",
-        "wrapper_kwargs": {"threshold": 0.1},
+        "wrapper_name": "Censored",
+        "wrapper_kwargs": {"lower": 0.1, "upper": "None"},
         "dist_name": "Beta",
-        "dist_kwargs": {"a": 2, "b": 5},
+        "dist_kwargs": {"alpha": 2, "beta": 5},
         "initial_value": None,
+    },
+    {
+        "wrapper_name": "maxent",
+        "wrapper_kwargs": {"lower": 3, "upper": 7},
+        "dist_name": "StudentT",
+        "dist_kwargs": {"nu": 7},
+        "initial_value": [18, "/", 10],
     },
 ]
 
 
 @pytest.mark.parametrize("case, expected_results", zip(test_strings, expected_results))
 def test_distribution_parser(case, expected_results):
-    results = dist_syntax.parseString(case)
-    assert results["wrapper_func"] == expected_results["wrapper_func"]
+    [results] = dist_syntax.parse_string(case, parse_all=True)
+
+    assert results["wrapper_name"] == expected_results["wrapper_name"]
     assert results["dist_name"] == expected_results["dist_name"]
     assert results["initial_value"] == expected_results["initial_value"]
 
-    dist_kwargs = {
-        key_value[0]: key_value[1] for key_value in results["dist_kwargs"].as_list()[0]
-    }
-    assert dist_kwargs == expected_results["dist_kwargs"]
-
-    wrapper_kwargs = {
-        key_value[0]: key_value[1] for key_value in results["wrapper_kwargs"].as_list()
-    }
-    assert wrapper_kwargs == expected_results["wrapper_kwargs"]
+    assert results["dist_kwargs"] == expected_results["dist_kwargs"]
+    assert results["wrapper_kwargs"] == expected_results["wrapper_kwargs"]
 
 
 @pytest.fixture
@@ -186,22 +191,11 @@ missing_common = """
         };
 """
 
-shock_with_starting_value = """
-        Block TEST
-        {
-            shocks
-            {
-                epsilon[] ~ Normal(mu = 0, sigma = 1) = 0.5;
-            };
-        };
-"""
-
 typo_cases = [
     extra_parenthesis_start,
     extra_parenthesis_end,
     extra_equals,
     missing_common,
-    shock_with_starting_value,
 ]
 
 case_names = [
@@ -209,7 +203,6 @@ case_names = [
     "extra_parenthesis_end",
     "extra_equals",
     "missing_comma",
-    "shock_with_starting_value",
 ]
 
 
@@ -242,6 +235,94 @@ def test_catch_repeated_parameter_definition(file):
             )
 
 
+@pytest.mark.parametrize("mu", ["1.0", "mu_epsilon"], ids=["number", "hyper_param"])
+def test_non_zero_shock_mean_raises(mu):
+    test_case = Template("""
+    Block TEST
+    {
+        shocks
+        {
+            epsilon[] ~ Normal(mu=$mu, sigma=3)
+        };
+
+        calibration
+        {
+            mu_epsilon ~ Normal(mu=0, sigma=1) = 0.5;
+        };
+    };
+    """).safe_substitute(mu=mu)
+
+    model, raw_prior_dict = preprocess_gcn(test_case)
+
+    msg = (
+        "Currently, the mean of all shocks must be zero"
+        if mu == "1.0"
+        else "Currently, only shock variance parameters can be assigned hyper-priors."
+    )
+    with pytest.raises(NotImplementedError, match=msg):
+        create_prior_distribution_dictionary(raw_prior_dict)
+
+
+@pytest.mark.parametrize("wrapper", ["maxent", "Truncated"], ids=str)
+def test_wrapper_on_shock_raises(wrapper):
+    test_case = Template("""
+    Block TEST
+    {
+        shocks
+        {
+            epsilon[] ~ $wrapper(Normal(mu=1, sigma=3), lower=0.1, upper=1.0);
+        };
+    };
+    """).safe_substitute(wrapper=wrapper)
+
+    model, raw_prior_dict = preprocess_gcn(test_case)
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Wrapper functions are not allowed on shock distributions",
+    ):
+        create_prior_distribution_dictionary(raw_prior_dict)
+
+
+@pytest.mark.parametrize("dist", ["Gamma", "InverseGamma"], ids=str)
+def test_non_normal_shock_dist_raises(dist):
+    test_case = Template("""
+    Block TEST
+    {
+        shocks
+        {
+            epsilon[] ~ $dist(mu=1, sigma=3);
+        };
+    };
+    """).safe_substitute(dist=dist)
+
+    model, raw_prior_dict = preprocess_gcn(test_case)
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Only Normal distributions are currently allowed on shocks",
+    ):
+        create_prior_distribution_dictionary(raw_prior_dict)
+
+
+def test_initial_value_on_shock_raises():
+    test_case = """
+           Block TEST
+           {
+               shocks
+               {
+                   epsilon[] ~ Normal(mu = 0, sigma = 1) = 0.5;
+               };
+           };
+   """
+    model, raw_prior_dict = preprocess_gcn(test_case)
+
+    with pytest.raises(
+        ValueError, match="Initial value not allowed on shock distributions"
+    ):
+        create_prior_distribution_dictionary(raw_prior_dict)
+
+
 def test_parameter_parsing_simple(file):
     model, prior_dict = preprocess_gcn(file)
 
@@ -266,28 +347,6 @@ def test_parameter_parsing_simple(file):
         assert wrapper_dict == wrapper_dicts[i]
 
 
-def test_parse_compound_distributions(file):
-    compound_distribution = """Block TEST
-            {
-                calibration
-                {
-                    sigma_alpha ~ inv_gamma(a=20, scale=1) = 0.01;
-                    mu_alpha ~ N(mean = 1, scale=1) = 0.01;
-                    alpha ~ N(mean = mu_alpha, sd = sigma_alpha) = 0.5;
-                };
-            };"""
-
-    model, raw_prior_dict = preprocess_gcn(compound_distribution)
-    prior_dict, _ = create_prior_distribution_dictionary(raw_prior_dict)
-
-    d = prior_dict["alpha"]
-
-    assert d.rv_params["loc"].mean() == 1
-    assert d.rv_params["loc"].std() == 1
-    assert d.rv_params["scale"].mean() == 1 / (20 - 1)
-    assert d.rv_params["scale"].var() == 1**2 / (20 - 1) ** 2 / (20 - 2)
-
-
 def test_multiple_shocks():
     compound_distribution = """Block TEST
             {
@@ -299,33 +358,58 @@ def test_multiple_shocks():
 
                 shocks
                 {
-                    epsilon_A[] ~ N(mean=0, sd=sigma_epsilon_A);
-                    epsilon_B[] ~ N(mean=0, sd=sigma_epsilon_B);
+                    epsilon_A[] ~ Normal(mu=0, sigma=sigma_epsilon_A);
+                    epsilon_B[] ~ Normal(mu=0, sigma=sigma_epsilon_B);
+                    epsilon_C[] ~ Normal(mu=0, sigma=1);
                 };
 
                 calibration
                 {
-                    rho_A ~ Beta(mean=0.95, sd=0.04) = 0.95;
-                    rho_B ~ Beta(mean=0.95, sd=0.04) = 0.95;
+                    rho_A ~ Beta(mu=0.95, sigma=0.04) = 0.95;
+                    rho_B ~ Beta(mu=0.95, sigma=0.04) = 0.95;
 
                     sigma_epsilon_A ~ Gamma(alpha=1, beta=0.1) = 0.01;
-                    sigma_epsilon_B ~ Gamma(alpha=1, beta=0.1) = 0.01;
+                    sigma_epsilon_B ~ Gamma(alpha=10, beta=7) = 0.01;
                 };
             };"""
 
-    model, raw_prior_dict = preprocess_gcn(compound_distribution)
-    prior_dict, _ = create_prior_distribution_dictionary(raw_prior_dict)
+    _, raw_prior_dict = preprocess_gcn(compound_distribution)
+    param_priors, shock_priors = create_prior_distribution_dictionary(raw_prior_dict)
 
-    epsilon_A = prior_dict["epsilon_A[]"]
-    epsilon_B = prior_dict["epsilon_B[]"]
+    expected_names = ["rho_A", "rho_B"]
+    expected_shock_names = ["epsilon_A", "epsilon_B", "epsilon_C"]
 
-    assert len(epsilon_A.rv_params) == 1
-    assert len(epsilon_B.rv_params) == 1
+    expected_dists = {
+        "rho_A": pz.Beta(mu=0.95, sigma=0.04),
+        "rho_B": pz.Beta(mu=0.95, sigma=0.04),
+        "sigma_epsilon_A": pz.Gamma(alpha=1, beta=0.1),
+        "sigma_epsilon_B": pz.Gamma(alpha=10, beta=7),
+    }
 
-    # self.assertEqual(d.rv_params['loc'].mean(), 1)
-    # self.assertEqual(d.rv_params['loc'].std(), 1)
-    # self.assertEqual(d.rv_params['scale'].mean(), 1 / (20 - 1))
-    # self.assertEqual(d.rv_params['scale'].var(), 1 ** 2 / (20 - 1) ** 2 / (20 - 2))
+    assert list(param_priors.keys()) == expected_names
+    assert list(shock_priors.keys()) == expected_shock_names
+
+    for name in expected_names:
+        dist = expected_dists[name]
+        assert dist.mean() == expected_dists[name].mean()
+        assert dist.std() == expected_dists[name].std()
+
+    for name in expected_shock_names[:-1]:
+        assert shock_priors[name].fixed_params == {"mu": 0.0}
+
+        dists = shock_priors[name].hyper_param_dict.values()
+        expected_shock_dists = [expected_dists[f"sigma_{name}"]]
+
+        assert all(
+            d.mean() == expected_d.mean()
+            for d, expected_d in zip(dists, expected_shock_dists)
+        )
+        assert all(
+            d.std() == expected_d.std()
+            for d, expected_d in zip(dists, expected_shock_dists)
+        )
+
+    assert shock_priors["epsilon_C"].fixed_params == {"mu": 0.0, "sigma": 1.0}
 
 
 def test_parse_distributions():
@@ -334,7 +418,7 @@ def test_parse_distributions():
         {
             shocks
             {
-                epsilon[] ~ N(mean=0, std=0.1);
+                epsilon[] ~ Normal(mean=0, std=0.1);
             };
 
             calibration

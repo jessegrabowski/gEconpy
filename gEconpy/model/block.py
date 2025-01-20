@@ -35,8 +35,6 @@ class Block:
         name: str,
         block_dict: dict[str, list[list[str]]],
         assumptions: dict[str, dict] | None = None,
-        solution_hints: dict[str, str] | None = None,
-        allow_incomplete_initialization: bool = False,
     ) -> None:
         """
         Initialize a block object
@@ -47,11 +45,6 @@ class Block:
             The name of the block
         block_dict: dict
             Dictionary of component:list[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
-        solution_hints: dict, optional
-            If not None, a dictionary of flags that help the solve_optimization method combine
-            the FoC into the "expected" solution. Currently unused.
-        allow_incomplete_initialization: bool, optional
-            If True, the block will not raise an exception if an error in the block's implementation is encountered.
         """
 
         self.name = name

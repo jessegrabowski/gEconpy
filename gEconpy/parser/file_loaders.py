@@ -23,7 +23,10 @@ from gEconpy.parser.gEcon_parser import (
     preprocess_gcn,
     split_gcn_into_dictionaries,
 )
-from gEconpy.parser.parse_distributions import create_prior_distribution_dictionary
+from gEconpy.parser.parse_distributions import (
+    CompositeDistribution,
+    create_prior_distribution_dictionary,
+)
 from gEconpy.parser.parse_equations import single_symbol_to_sympy
 from gEconpy.utilities import substitute_repeatedly, unpack_keys_and_values
 
@@ -202,12 +205,45 @@ def block_dict_to_variables_and_shocks(
     return variables, shocks
 
 
+def remove_hyper_parameters(
+    param_dict: SymbolDictionary[str, float],
+    shock_prior: SymbolDictionary[str, CompositeDistribution],
+) -> SymbolDictionary[str, float]:
+    """
+    Remove shock hyper parameters from the parameter dictionary.
+
+    Parameters
+    ----------
+    param_dict: SymbolDictionary
+        Dictionary of initial parameter values
+
+    shock_prior: SymbolDictionary
+        Dictionary of shock priors
+
+    Returns
+    -------
+    param_dict: SymbolDictionary
+        Dictionary of initial parameter values with shock hyper parameters removed.
+    """
+
+    new_param_dict = param_dict.copy()
+    all_hyper_params = [
+        param
+        for dist in shock_prior.values()
+        for param in dist.param_name_to_hyper_name.values()
+    ]
+
+    for param in all_hyper_params:
+        if param in new_param_dict:
+            del new_param_dict[param]
+
+    return new_param_dict
+
+
 def prior_info_to_prior_dict(
     prior_info: dict[str, str],
     assumptions: dict[str, dict[str, bool]],
-    param_dict: SymbolDictionary,
-    backend: Literal["scipy", "pymc"] = "scipy",
-) -> tuple[SymbolDictionary, SymbolDictionary, SymbolDictionary]:
+) -> tuple[SymbolDictionary, SymbolDictionary]:
     """
     Parse prior information extracted from GCN file and return dictionaries of parameter and shock priors.
 
@@ -219,46 +255,29 @@ def prior_info_to_prior_dict(
     assumptions: dict[str, dict[str, bool]]
         Dictionary of assumptions about model parameters, with keys corresponding to variable names and values
         corresponding to dictionaries of assumptions about the variable. See sympy documentation for more details.
-    param_dict: SymbolDictionary
-        Dictionary of model parameters.
-    backend: Literal["scipy", "pymc"]
-        The backend into which the priors should be parsed.
 
     Returns
     -------
     param_priors: SymbolDictionary
         Dictionary of parameter priors
-    shock_priors: SymbolDictionary
-        Dictionary of shock priors
-    hyper_priors_final: SymbolDictionary
-        Dictionary of hyperparameter priors
     """
-    priors, hyper_priors = create_prior_distribution_dictionary(prior_info)
-    hyper_parameters = set(prior_info.keys()) - set(priors.keys())
-
-    # Remove hyperparameters from the free parameters
-    for parameter in hyper_parameters:
-        del param_dict[parameter]
-
+    params, shocks = create_prior_distribution_dictionary(prior_info)
     param_priors = SymbolDictionary()
     shock_priors = SymbolDictionary()
-    hyper_priors_final = SymbolDictionary()
 
-    for key, value in priors.items():
-        sympy_key = single_symbol_to_sympy(key, assumptions=assumptions)
-        if isinstance(sympy_key, TimeAwareSymbol):
-            shock_priors[sympy_key.base_name] = value
-        else:
-            param_priors[sympy_key.name] = value
+    for param_name, dist in params.items():
+        sympy_key = single_symbol_to_sympy(param_name, assumptions=assumptions)
+        param_priors[sympy_key.name] = dist
 
-    for key, value in hyper_priors.items():
-        parent_rv, param_type, dist = value
-        parent_key = single_symbol_to_sympy(parent_rv, assumptions=assumptions)
-        param_key = single_symbol_to_sympy(key, assumptions=assumptions)
+    for shock_name, dist in shocks.items():
+        if not shock_name.endswith("[]"):
+            # Add the [] back to the end of the shock name, because single_symbol_to_sympy uses it to decide
+            # whether to create a time-aware symbol or a regular symbol
+            shock_name = shock_name + "[]"
+        sympy_key = single_symbol_to_sympy(shock_name, assumptions=assumptions)
+        shock_priors[sympy_key.name] = dist
 
-        hyper_priors_final[param_key] = (parent_key, param_type, dist)
-
-    return param_priors, shock_priors, hyper_priors_final
+    return param_priors, shock_priors
 
 
 def parsed_model_to_data(
@@ -425,11 +444,10 @@ def block_dict_to_model_primitives(
     calib_dict = block_dict_to_param_dict(block_dict, "calib_dict")
     deterministic_dict = block_dict_to_param_dict(block_dict, "deterministic_dict")
     variables, shocks = block_dict_to_variables_and_shocks(block_dict)
-    param_priors, shock_priors, hyper_priors_final = prior_info_to_prior_dict(
-        prior_info, assumptions, param_dict
-    )
+    param_priors, shock_priors = prior_info_to_prior_dict(prior_info, assumptions)
 
     tryreduce_sub_dict = block_dict_to_sub_dict(block_dict)
+    param_dict = remove_hyper_parameters(param_dict, shock_priors)
 
     equations, variables, eliminated_variables, singletons = apply_simplifications(
         try_reduce_vars,
@@ -449,7 +467,6 @@ def block_dict_to_model_primitives(
         shocks,
         param_priors,
         shock_priors,
-        hyper_priors_final,
         eliminated_variables,
         singletons,
     )

@@ -37,18 +37,18 @@ block HOUSEHOLD
 
 	shocks
 	{
-		epsilon[] ~ N(mean=0, sd=sigma_epsilon);
+		epsilon[] ~ Normal(mu=0, sigma=sigma_epsilon);
 	};
 
 	calibration
 	{
-		alpha ~ Beta(mean=0.5, sd=0.1) = 0.4;
+		alpha ~ Beta(mu=0.5, sigma=0.1) = 0.4;
 		beta  = 0.99;
 		delta = 0.02;
-		rho ~ Beta(mean=0.95, sd=0.04) = 0.95;
+		rho ~ Beta(mu=0.95, sigma=0.04) = 0.95;
 		gamma ~ HalfNormal(sigma=1) = 1.5;
 
-		sigma_epsilon ~ Inv_Gamma(mean=0.1, sd=0.01) = 0.01;
+		sigma_epsilon ~ InverseGamma(mu=0.1, sigma=0.01) = 0.01;
 	};
 
 

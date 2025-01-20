@@ -1,11 +1,7 @@
-import os
-
 import numpy as np
 import pymc as pm
 import pytensor
 import pytest
-
-from numpy.testing import assert_allclose
 
 from tests.utilities.shared_fixtures import (
     load_and_cache_model,
@@ -47,17 +43,21 @@ def test_statespace_matrices_agree_with_model(gcn_file):
         "rbc_linearized.gcn",
     ],
 )
-def test_priors_to_preliz(gcn_file):
+def test_model_to_pymc(gcn_file):
     ss_mod = load_and_cache_statespace(gcn_file)
-    pz_priors = ss_mod.priors_to_preliz()
+    with pm.Model() as m:
+        ss_mod.to_pymc()
+    rv_names = [rv.name for rv in m.free_RVs]
 
-    assert all(prior in pz_priors for prior in ss_mod.priors[0])
-    for name, prior in ss_mod.priors[0].items():
-        d = ss_mod.priors[0][name]
-        pz_d = pz_priors[name]
+    assert all(name in rv_names for name in ss_mod.param_priors.keys())
 
-        assert_allclose(d.mean() - d.kwds.get("loc", 0), pz_d.mean(), err_msg=name)
-        assert_allclose(d.std(), pz_d.std(), err_msg=name)
+    hyper_prior_names = [
+        name
+        for dist in ss_mod.shock_priors.values()
+        for name in dist.param_name_to_hyper_name.values()
+    ]
+
+    assert all(name in rv_names for name in hyper_prior_names)
 
 
 @pytest.mark.parametrize(

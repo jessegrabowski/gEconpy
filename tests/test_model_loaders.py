@@ -307,7 +307,6 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
         shocks,
         param_priors,
         shock_priors,
-        hyper_priors_final,
         reduced_vars,
         singletons,
     ) = block_dict_to_model_primitives(

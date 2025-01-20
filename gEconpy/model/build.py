@@ -51,7 +51,6 @@ def _compile_gcn(
         shocks,
         param_priors,
         shock_priors,
-        hyper_priors_final,
         reduced_vars,
         singletons,
     ) = block_dict_to_model_primitives(
@@ -155,7 +154,7 @@ def _compile_gcn(
         f_ss_hessp,
         f_linearize,
     )
-    priors = (param_priors, shock_priors, hyper_priors_final)
+    priors = (param_priors, shock_priors)
 
     return objects, dictionaries, functions, cache, priors
 
@@ -247,7 +246,7 @@ def statespace_from_gcn(
 
     variables, shocks, equations, ss_relationships = objects
     param_dict, deterministic_dict, calib_dict = dictionaries
-    param_priors, shock_priors, hyper_priors = priors
+    param_priors, shock_priors = priors
 
     if len(calib_dict) > 0:
         raise NotImplementedError("Calibration not yet implemented in StateSpace model")
@@ -320,7 +319,8 @@ def statespace_from_gcn(
         shocks=shocks,
         equations=equations,
         param_dict=param_dict,
-        priors=priors,
+        param_priors=param_priors,
+        shock_priors=shock_priors,
         parameter_mapping=parameter_mapping,
         steady_state_mapping=steady_state_mapping,
         ss_jac=ss_jac,

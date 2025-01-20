@@ -4,12 +4,12 @@ from typing import Literal, get_args
 
 import numpy as np
 import pandas as pd
-import preliz as pz
 import pymc as pm
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
 
+from preliz.distributions.distributions import Distribution
 from pymc.pytensorf import rewrite_pregrad
 from pymc_extras.statespace.core.statespace import PyMCStateSpace
 from pymc_extras.statespace.models.utilities import make_default_coords
@@ -19,37 +19,16 @@ from pymc_extras.statespace.utils.constants import (
     SHOCK_DIM,
 )
 from pytensor import graph_replace
-from scipy.stats._continuous_distns import (
-    beta_gen,
-    expon_gen,
-    gamma_gen,
-    halfnorm_gen,
-    invgamma_gen,
-    norm_gen,
-    truncnorm_gen,
-    uniform_gen,
-)
-from scipy.stats.distributions import rv_frozen
 
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perturbation import check_bk_condition_pt
+from gEconpy.parser.parse_distributions import CompositeDistribution
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
 
 _log = logging.getLogger(__name__)
 floatX = pytensor.config.floatX
-
-
-SCIPY_TO_PRELIZ = {
-    norm_gen: pz.Normal,
-    halfnorm_gen: pz.HalfNormal,
-    truncnorm_gen: pz.TruncatedNormal,
-    uniform_gen: pz.Uniform,
-    beta_gen: pz.Beta,
-    gamma_gen: pz.Gamma,
-    invgamma_gen: pz.InverseGamma,
-    expon_gen: pz.Exponential,
-}
 
 SolverType = Literal["gensys", "cycle_reduction", "scan_cycle_reduction"]
 valid_solvers = get_args(SolverType)
@@ -62,7 +41,8 @@ class DSGEStateSpace(PyMCStateSpace):
         shocks: list[TimeAwareSymbol],
         equations: list[sp.Expr],
         param_dict: dict[str, float],
-        priors: list[dict[str, rv_frozen]],
+        param_priors: SymbolDictionary[str, Distribution],
+        shock_priors: SymbolDictionary[str, CompositeDistribution],
         parameter_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         steady_state_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         ss_jac: pt.TensorVariable,
@@ -75,7 +55,8 @@ class DSGEStateSpace(PyMCStateSpace):
         self.variables = variables
         self.equations = equations
         self.shocks = shocks
-        self.priors = priors
+        self.param_priors = param_priors
+        self.shock_priors = shock_priors
         self.param_dict = param_dict
 
         self.parameter_mapping = parameter_mapping
@@ -463,37 +444,13 @@ class DSGEStateSpace(PyMCStateSpace):
             ss_resid = pm.Deterministic("ss_resid", ss_resid)
             pm.Potential("steady_state_resid_penalty", -resid_penalty * ss_resid)
 
-    def priors_to_preliz(self):
-        priors = self.priors[0]
-        pz_priors = {}
+    def to_pymc(self, exclude_priors: list[str] | None = None):
+        if exclude_priors is None:
+            exclude_priors = []
 
-        for name, rv in priors.items():
-            dist_type = type(rv.dist)
-            pz_dist = SCIPY_TO_PRELIZ[dist_type]
+        with pm.modelcontext(None):
+            for prior, dist in self.param_priors.items():
+                dist.to_pymc(name=prior)
 
-            match rv.dist:
-                case norm_gen():
-                    pz_priors[name] = pz_dist(mu=rv.kwds["loc"], sigma=rv.kwds["scale"])
-                case truncnorm_gen():
-                    loc, scale, a, b = (rv.kwds[x] for x in ["loc", "scale", "a", "b"])
-                    lower = loc + scale * a
-                    upper = loc + scale * b
-                    pz_priors[name] = pz_dist(
-                        mu=loc, sigma=scale, lower=lower, upper=upper
-                    )
-                case halfnorm_gen():
-                    pz_priors[name] = pz_dist(sigma=rv.kwds["scale"])
-                case gamma_gen():
-                    pz_priors[name] = pz_dist(
-                        alpha=rv.kwds["a"], beta=1 / rv.kwds["scale"]
-                    )
-                case beta_gen():
-                    pz_priors[name] = pz_dist(alpha=rv.kwds["a"], beta=rv.kwds["b"])
-                case uniform_gen():
-                    pz_priors[name] = pz_dist(lower=rv.kwds["a"], upper=rv.kwds["b"])
-                case invgamma_gen():
-                    pz_priors[name] = pz_dist(alpha=rv.kwds["a"], beta=rv.kwds["scale"])
-                case expon_gen():
-                    pz_priors[name] = pz_dist(lam=1 / rv.kwds["scale"])
-
-        return pz_priors
+            for prior, dist in self.shock_priors.items():
+                dist.to_pymc()

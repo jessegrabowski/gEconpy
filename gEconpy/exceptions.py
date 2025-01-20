@@ -192,20 +192,10 @@ class InvalidDistributionException(ValueError):
         super().__init__(message)
 
 
-class DistributionNotFoundException(ValueError):
-    def __init__(self, d_str: str, best_guess: str, best_guess_canon: str):
-        message = (
-            f'Distribution "{d_str}" not recoginized, did you mean {best_guess}, implying the '
-            f" {best_guess_canon} distribution?"
-        )
-
-        super().__init__(message)
-
-
 class RepeatedParameterException(ValueError):
-    def __init__(self, variable_name: str, d_str: str, parameter: str):
+    def __init__(self, d_str: str, parameter: str):
         message = (
-            f'In the {d_str} distribution associated with "{variable_name}", the parameter "{parameter}"was '
+            f'In {d_str}, the parameter "{parameter}" was '
             f"declared multiple times. Please check the GCN file for typos."
         )
 
@@ -260,9 +250,9 @@ class UnusedParameterError(ValueError):
 
 
 class InvalidParameterException(ValueError):
-    def __init__(self, var_name, dist_name, param_name, valid_params):
+    def __init__(self, dist_name, param_name, valid_params):
         message = (
-            f'Unknown parameter {param_name} passed to distribution {dist_name} associated with {var_name}. Valid '
+            f'Unknown parameter {param_name} passed to distribution {dist_name}. Valid '
             f'parameters for this distribution are: {", ".join(valid_params)}'
         )
 
@@ -294,17 +284,6 @@ class DistributionOverDefinedException(ValueError):
             f"{dist_n_params} free parameters, but you passed {n_params_passed} plus {n_constraints} moment "
             f"conditions."
         )
-        super().__init__(message)
-
-
-class InsufficientDegreesOfFreedomException(ValueError):
-    def __init__(self, variable_name, d_name):
-        message = (
-            f'The {d_name} distribution associated with model variable "{variable_name}" has only one parameter,'
-            f"and cannot meet two moment conditions. Please only pass either a mean or a std if you wish to match "
-            f"a moment, or use the loc and scale parameters directly."
-        )
-
         super().__init__(message)
 
 
@@ -361,11 +340,3 @@ class DuplicateParameterError(ValueError):
         )
 
         super().__init__(message)
-
-
-class IgnoredCloseMatchWarning(UserWarning):
-    pass
-
-
-class UnusedParameterWarning(UserWarning):
-    pass
