@@ -1,5 +1,7 @@
 import logging
 
+from typing import Literal, get_args
+
 import numpy as np
 import pandas as pd
 import preliz as pz
@@ -48,6 +50,9 @@ SCIPY_TO_PRELIZ = {
     invgamma_gen: pz.InverseGamma,
     expon_gen: pz.Exponential,
 }
+
+SolverType = Literal["gensys", "cycle_reduction", "scan_cycle_reduction"]
+valid_solvers = get_args(SolverType)
 
 
 class DSGEStateSpace(PyMCStateSpace):
@@ -202,7 +207,7 @@ class DSGEStateSpace(PyMCStateSpace):
         measurement_error: list[str] | None = None,
         constant_params: list[str] | None = None,
         full_shock_covaraince: bool = False,
-        solver: str = "gensys",
+        solver: SolverType = "gensys",
         mode: str | None = None,
         **solver_kwargs,
     ):
@@ -238,7 +243,7 @@ class DSGEStateSpace(PyMCStateSpace):
                 )
 
         # Validate solver argument
-        if solver not in ["gensys", "cycle_reduction", "scan_cycle_reduction"]:
+        if solver not in valid_solvers:
             raise ValueError(
                 f'Unknown solver {solver}, expected one of "gensys", "cycle_reduction", '
                 f'or "scan_cycle_reduction"'
