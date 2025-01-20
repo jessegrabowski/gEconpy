@@ -1,6 +1,9 @@
-from itertools import combinations_with_replacement
-from typing import Any, cast
+import warnings
 
+from itertools import combinations_with_replacement
+from typing import TYPE_CHECKING, Any, cast
+
+import arviz as az
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,6 +17,9 @@ from scipy import stats
 from xarray_einstats.linalg import diagonal as xr_diagonal
 
 from gEconpy.model.model import check_bk_condition
+
+if TYPE_CHECKING:
+    from gEconpy.model.statespace import DSGEStateSpace
 
 
 def prepare_gridspec_figure(
@@ -197,7 +203,7 @@ def plot_simulation(
 
 
 def plot_irf(
-    irf: xr.DataArray | list[xr.DataArray] | dict[str, xr.DataArray],
+    irf: az.InferenceData | list[az.InferenceData] | dict[str, az.InferenceData],
     vars_to_plot: str | list[str] | None = None,
     shocks_to_plot: str | list[str] | None = None,
     n_cols: int | None = None,
@@ -988,7 +994,7 @@ def plot_corner(
 
 
 def plot_kalman_filter(
-    idata: xr.Dataset,
+    idata: az.InferenceData,
     data: pd.DataFrame,
     kalman_output: str = "predicted",
     n_cols: int | None = None,
@@ -996,7 +1002,7 @@ def plot_kalman_filter(
     fig: Figure | None = None,
     figsize: tuple[int, int] = (14, 6),
     dpi: int = 144,
-    cmap: str | None = None,
+    observed=False,
 ):
     """
     Plot Kalman filter, prediction or smoothed series for variables in idata.
@@ -1033,61 +1039,93 @@ def plot_kalman_filter(
         raise ValueError(
             f'kalman_output must be one of "filtered", "predicted", "smoothed". Found {kalman_output}.'
         )
-    kalman_output = kalman_output.capitalize()
 
     if fig is None:
-        fig = plt.figure(figsize=figsize, dpi=dpi)
+        fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
 
+    state_name = "state" if not observed else "observed_state"
     if vars_to_plot is None:
-        vars_to_plot = idata.coords["variable"].values
+        vars_to_plot = idata.coords[state_name].values
 
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
-
-    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
-    time_idx = idata.coords["time"]
-    time_slice = (
-        slice(None, None, None)
-        if kalman_output.lower() == "predicted"
-        else slice(1, None, None)
+    output_name = (
+        f"{kalman_output}_posterior"
+        if not observed
+        else f"{kalman_output}_posterior_observed"
     )
+
+    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
+    time_idx = idata.coords["time"]
+
+    means = (
+        idata[output_name].sel(**{state_name: vars_to_plot}).mean(dim=["chain", "draw"])
+    )
+    hdis = az.hdi(idata[output_name].sel(**{state_name: vars_to_plot}), hdi_prob=0.95)[
+        output_name
+    ]
 
     for idx, variable in enumerate(vars_to_plot):
         axis = fig.add_subplot(gs[plot_locs[idx]])
 
-        mu = idata[f"{kalman_output}_State"].dropna(dim="time").sel(variable=variable)
-
-        q05, q50, q95 = mu.quantile([0.05, 0.5, 0.95], dim="sample")
-
-        sigma = (
-            idata[f"{kalman_output}_Cov"]
-            .dropna(dim="time")
-            .sel(variable=variable, variable2=variable)
-        )
-        s05, s95 = sigma.quantile([0.05, 0.95], dim="sample")
-
-        top_ci = mu + 1.98 * np.sqrt(s05 + 1e-6)
-        bot_ci = mu - 1.98 * np.sqrt(s95 + 1e-6)
-
-        axis.plot(time_idx[time_slice], q50.values, color="tab:red")
-        axis.fill_between(time_idx[time_slice], q05, q95, color="tab:blue", alpha=1)
+        axis.plot(time_idx, means.sel(**{state_name: variable}), color="tab:red")
         axis.fill_between(
-            time_idx[time_slice],
-            top_ci.max(dim=["sample"]),
-            bot_ci.min(dim=["sample"]),
-            color="0.5",
+            time_idx,
+            *hdis.sel(**{state_name: variable}).values.T,
+            color="tab:blue",
             alpha=0.5,
         )
 
         if variable in data.columns:
-            data[variable].plot(ax=axis, color="k", ls="--", lw=2)
+            axis.plot(time_idx, data[variable].values, color="k", ls="--")
 
         axis.set(title=variable, xlabel=None, ylabel="% Deviation from SS")
         axis.tick_params(axis="x", rotation=45)
         [spine.set_visible(False) for spine in axis.spines.values()]
         axis.grid(ls="--", lw=0.5)
 
-    fig.tight_layout()
+    return fig
+
+
+def plot_priors(
+    statespace_model: "DSGEStateSpace",
+    var_names: list[str] | None = None,
+    figsize: tuple[int, int] | None = None,
+    dpi: int = 144,
+    n_cols: int = 6,
+    mark_initial_value: bool = True,
+):
+    pz_priors = statespace_model.priors_to_preliz()
+    if var_names is None:
+        var_names = pz_priors.keys()
+
+    priors = {k: pz_priors[k] for k in var_names}
+    n_params = len(priors)
+
+    if figsize is None:
+        n_rows = n_params // n_cols
+        figsize = (14, 2 * n_rows)
+
+    fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
+    gs, locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_params, figure=fig)
+
+    for (name, prior), loc in zip(pz_priors.items(), locs):
+        axis = fig.add_subplot(gs[loc])
+        with warnings.catch_warnings(action="ignore"):
+            prior.plot_pdf(
+                ax=axis,
+                interval="hdi",
+                legend="title",
+                pointinterval=True,
+                levels=[0.025, 0.975],
+            )
+
+        dist_text = axis.get_title()
+        axis.set_title(name + "\n" + dist_text)
+
+        if mark_initial_value:
+            axis.axvline(statespace_model.param_dict[name], ls="--", c="k")
+
     return fig
 
 
