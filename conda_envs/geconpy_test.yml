@@ -25,10 +25,9 @@ dependencies:
   - pytest-env
 
   - pip
-  - pymc_extras
-  - better_optimize
+  - pymc-extras
+  - better-optimize
 
   - pip:
       - sympytensor
-      - gEconpy
       - numdifftools

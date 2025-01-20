@@ -15,6 +15,7 @@ dependencies:
   - numpy
   - pandas
   - pyparsing
+  - preliz
   - scipy
   - setuptools
   - statsmodels
