@@ -190,7 +190,10 @@ class DSGEStateSpace(PyMCStateSpace):
         full_shock_covaraince: bool = False,
         solver: SolverType = "gensys",
         mode: str | None = None,
-        **solver_kwargs,
+        verbose=True,
+        max_iter: int = 50,
+        tol: float = 1e-6,
+        use_adjoint_gradients: bool = True,
     ):
         # Set up observed states
         unknown_states = [x for x in observed_states if x not in self.state_names]
@@ -243,6 +246,17 @@ class DSGEStateSpace(PyMCStateSpace):
                 f"variation (by adding measurement error or structural shocks)"
             )
 
+        if solver == "gensys":
+            solver_kwargs = {"tol": tol}
+        elif solver == "cycle_reduction":
+            solver_kwargs = {"tol": tol, "max_iter": max_iter}
+        else:
+            solver_kwargs = {
+                "tol": tol,
+                "max_iter": max_iter,
+                "use_adjoint_gradients": use_adjoint_gradients,
+            }
+
         self._obs_state_names = observed_states
         self.error_states = measurement_error
         self.constant_parameters = constant_params
@@ -259,7 +273,7 @@ class DSGEStateSpace(PyMCStateSpace):
             self.k_states,
             self.k_posdef,
             measurement_error=len(measurement_error) > 0,
-            verbose=True,
+            verbose=verbose,
         )
 
     def _make_design_matrix(self):
