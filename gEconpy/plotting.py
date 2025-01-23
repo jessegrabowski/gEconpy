@@ -1,7 +1,7 @@
 import warnings
 
 from itertools import combinations_with_replacement
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import arviz as az
 import matplotlib
@@ -222,6 +222,8 @@ def plot_irf(
         A DataArray with the impulse response functions. The index should contain the variables to plot, and the columns
         should contain the shocks, with a multi-index for the period and shock type. When plotting multiple scenarios,
         provide a list of DataArrays or a dictionary with the scenario names as keys.
+    group: str, optional
+        The group from the InferenceData to plot. Must be one of "prior" or "posterior". Default is 'posterior'.
     vars_to_plot : list of str, optional
         A list of variables to plot. If not provided, all variables in the DataFrame will be plotted.
     shocks_to_plot : list of str, optional
@@ -996,7 +998,8 @@ def plot_corner(
 def plot_kalman_filter(
     idata: az.InferenceData,
     data: pd.DataFrame,
-    kalman_output: str = "predicted",
+    kalman_output: Literal["predicted", "filtered", "smoothed"] = "predicted",
+    group: Literal["prior", "posterior"] = "posterior",
     n_cols: int | None = None,
     vars_to_plot: list[str] | None = None,
     fig: Figure | None = None,
@@ -1016,6 +1019,8 @@ def plot_kalman_filter(
     kalman_output : str, optional
         String indicating whether to plot filtered, predicted, or smoothed series.
         Must be one of 'filtered', 'predicted', or 'smoothed'.
+    group: str, optional
+        idata group to plot. One of "prior" or "posterior". Default is 'posterior'.
     n_cols : int, optional
         Number of columns in the plot.
     vars_to_plot : list of str, optional
@@ -1050,9 +1055,9 @@ def plot_kalman_filter(
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
     output_name = (
-        f"{kalman_output}_posterior"
+        f"{kalman_output}_{group}"
         if not observed
-        else f"{kalman_output}_posterior_observed"
+        else f"{kalman_output}_{group}_observed"
     )
 
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
@@ -1095,7 +1100,7 @@ def plot_priors(
     n_cols: int = 6,
     mark_initial_value: bool = True,
 ):
-    pz_priors = statespace_model.priors_to_preliz()
+    pz_priors = statespace_model.param_priors | statespace_model.shock_priors
     if var_names is None:
         var_names = pz_priors.keys()
 
