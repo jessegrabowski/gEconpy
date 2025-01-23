@@ -99,7 +99,7 @@ def make_all_variable_time_combinations(
 def linearize_model(
     variables: list[TimeAwareSymbol],
     equations: list[sp.Expr],
-    shocks: list[sp.Symbol],
+    shocks: list[TimeAwareSymbol],
     order=1,
 ) -> tuple[list[sp.Matrix, ...], sp.Symbol]:
     r"""
@@ -113,7 +113,7 @@ def linearize_model(
     equations: List[sp.Expr]
         List of equations that define the model.
 
-    shocks: List[sp.Symbol]
+    shocks: List[TimeAwareSymbol]
         List of exogenous shocks in the model.
 
     order: int, default 1
@@ -188,6 +188,10 @@ def linearize_model(
     T = sp.diag(
         *[ss_var ** (1 - not_loglin_var[i]) for i, ss_var in enumerate(ss_variables)]
     )
+
+    if shocks:
+        shock_subs = {x.to_ss(): 0 for x in shocks}
+        A, B, C, D = (x.subs(shock_subs) for x in [A, B, C, D])
 
     Fs = [A @ T, B @ T, C @ T, D]
 
