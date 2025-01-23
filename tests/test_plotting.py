@@ -1,14 +1,14 @@
-import os
 import unittest
+import warnings
 
-from pathlib import Path
-
+import arviz as az
 import numpy as np
+import pandas as pd
+import pymc as pm
 import pytest
 
 from matplotlib import pyplot as plt
 
-from gEconpy.model.build import model_from_gcn
 from gEconpy.model.model import (
     autocorrelation_matrix,
     check_bk_condition,
@@ -16,17 +16,21 @@ from gEconpy.model.model import (
     simulate,
     stationary_covariance_matrix,
 )
+from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.plotting import (
     plot_acf,
     plot_covariance_matrix,
     plot_eigenvalues,
     plot_heatmap,
     plot_irf,
+    plot_kalman_filter,
     plot_simulation,
     prepare_gridspec_figure,
 )
-
-ROOT = Path(__file__).parent.absolute()
+from tests.utilities.shared_fixtures import (
+    load_and_cache_model,
+    load_and_cache_statespace,
+)
 
 
 class TestUtilities(unittest.TestCase):
@@ -50,8 +54,7 @@ class TestUtilities(unittest.TestCase):
 class TestPlotSimulation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/rbc_linearized.gcn")
-        cls.model = model_from_gcn(file_path, verbose=False)
+        cls.model = load_and_cache_model("rbc_linearized.gcn", backend="numpy")
         cls.data = simulate(
             cls.model, simulation_length=100, n_simulations=1000, shock_std=0.1
         )
@@ -95,9 +98,7 @@ class TestPlotSimulation(unittest.TestCase):
 
 @pytest.fixture(scope="session")
 def irf_setup():
-    file_path = os.path.join(ROOT, "Test GCNs/full_nk.gcn")
-
-    model = model_from_gcn(file_path, verbose=False)
+    model = load_and_cache_model("full_nk.gcn", backend="numpy")
     model.steady_state(verbose=False)
     model.solve_model(verbose=False)
     irf = impulse_response_function(
@@ -183,8 +184,7 @@ def test_plot_irf_legend(irf_setup):
 class TestPlotEigenvalues(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
-        cls.model = model_from_gcn(file_path, verbose=False)
+        cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
 
     def test_plot_with_defaults(self):
         fig = plot_eigenvalues(self.model)
@@ -209,8 +209,8 @@ class TestPlotEigenvalues(unittest.TestCase):
 class TestPlotCovarianceMatrix(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
-        cls.model = model_from_gcn(file_path, verbose=False)
+        cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
+
         cls.cov_matrix = stationary_covariance_matrix(
             cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_df=True, verbose=False
         )
@@ -243,8 +243,8 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
 class TestPlotACF(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/one_block_1.gcn")
-        cls.model = model_from_gcn(file_path, verbose=False)
+        cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
+
         cls.acf = autocorrelation_matrix(
             cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_xr=True, verbose=False
         )
@@ -274,6 +274,79 @@ class TestPlotACF(unittest.TestCase):
             "Can not plot variable Invalid, it was not found in the provided covariance matrix",
         )
         plt.close()
+
+
+@pytest.fixture(scope="session")
+def ss_mod() -> DSGEStateSpace:
+    model = load_and_cache_statespace("rbc_linearized.gcn")
+    model.configure(
+        observed_states=["Y", "C", "L"],
+        measurement_error=["Y", "C", "L"],
+        full_shock_covaraince=False,
+        solver="gensys",
+        mode="FAST_RUN",
+    )
+
+    return model
+
+
+@pytest.fixture(scope="session")
+@pytest.mark.filterwarnings("ignore")
+def pm_mod(ss_mod) -> pm.Model:
+    with pm.Model(coords=ss_mod.coords) as pm_mod:
+        ss_mod.to_pymc()
+        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+
+        for var_name in ss_mod.observed_states:
+            pm.Gamma(f"error_sigma_{var_name}", alpha=2, beta=100)
+
+        with warnings.catch_warnings(action="ignore"):
+            ss_mod.build_statespace_graph(np.full((100, 3), np.nan))
+
+    return pm_mod
+
+
+@pytest.fixture(scope="session")
+def prior_idata(pm_mod, ss_mod) -> tuple[az.InferenceData, pd.DataFrame]:
+    with warnings.catch_warnings(action="ignore"):
+        with pm_mod:
+            prior = pm.sample_prior_predictive(25)
+
+        unconditional_prior = ss_mod.sample_unconditional_prior(prior)
+
+        prior["unconditional_prior"] = unconditional_prior
+        fake_data = (
+            unconditional_prior["prior_observed"]
+            .sel(observed_state=["Y", "C", "L"], chain=0, draw=0)
+            .to_dataframe()["prior_observed"]
+            .unstack("observed_state")
+        )
+        fake_data.index = pd.RangeIndex(0, 100)
+
+        with pm_mod:
+            pm.set_data({"data": fake_data})
+            ss_mod._fit_data = fake_data
+
+        conditional_prior = ss_mod.sample_conditional_prior(prior)
+        prior["conditional_prior"] = conditional_prior
+
+    return (prior, fake_data)
+
+
+@pytest.mark.parametrize("kalman_output", ["predicted", "filtered", "smoothed"])
+@pytest.mark.parametrize("vars_to_plot", [["Y"], ["Y", "C"], ["Y", "C", "L"]])
+def test_plot_kalman_filter(ss_mod, prior_idata, kalman_output, vars_to_plot):
+    idata, fake_data = prior_idata
+    fig = plot_kalman_filter(
+        idata["conditional_prior"],
+        fake_data,
+        kalman_output=kalman_output,
+        group="prior",
+        vars_to_plot=vars_to_plot,
+    )
+
+    assert len(fig.axes) == len(vars_to_plot)
+    assert all(axis.get_title() in vars_to_plot for axis in fig.axes)
 
 
 if __name__ == "__main__":
