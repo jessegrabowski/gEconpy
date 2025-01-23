@@ -578,6 +578,10 @@ class Model:
                 resid = self.f_ss_resid(**param_dict, **ss_dict)
                 success = np.allclose(resid, 0.0, atol=1e-8)
                 ss_dict.success = success
+                if not success:
+                    _log.warning(
+                        f"Steady State was not found. Sum of square residuals: {np.square(resid).sum()}"
+                    )
                 return ss_dict
 
         # Quick and dirty check of user-provided steady-state validity. This is NOT robust at all.
@@ -1889,3 +1893,31 @@ def matrix_to_dataframe(
         return df.round(round)
 
     return df
+
+
+def check_steady_state(
+    model: Model,
+    stead_state: SteadyStateResults | None = None,
+    steady_state_kwargs: dict | None = None,
+    **parameter_updates,
+) -> None:
+    if steady_state_kwargs is None:
+        steady_state_kwargs = {}
+
+    ss_dict = _maybe_solve_steady_state(
+        model, stead_state, steady_state_kwargs, parameter_updates
+    )
+    if ss_dict.success:
+        _log.warning("Steady state successfully found!")
+        return
+
+    parameters = model.parameters(**parameter_updates)
+    residuals = model.f_ss_resid(**ss_dict, **parameters)
+    _log.warning(
+        "Steady state NOT successful. The following equations have non-zero residuals:"
+    )
+
+    for resid, eq in zip(residuals, model.equations):
+        if np.abs(resid) > 1e-6:
+            _log.warning(eq)
+            _log.warning(f"Residual: {resid:0.4f}")
