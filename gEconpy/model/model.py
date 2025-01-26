@@ -832,9 +832,12 @@ class Model:
         param_dict = self.parameters(**parameter_updates)
 
         if steady_state is None:
-            steady_state = self.steady_state(
-                **self.parameters(**param_dict), **steady_state_kwargs
-            )
+            if self.is_linear:
+                steady_state = self.f_ss(**self.parameters(**param_dict))
+            else:
+                steady_state = self.steady_state(
+                    **self.parameters(**param_dict), **steady_state_kwargs
+                )
 
         not_loglin_flags = make_not_loglin_flags(
             variables=self.variables,
@@ -999,6 +1002,9 @@ def _maybe_solve_steady_state(
     parameter_updates: dict | None,
 ):
     if steady_state is None:
+        if model.is_linear:
+            return model.f_ss(**model.parameters(**parameter_updates))
+
         return model.steady_state(
             **model.parameters(**parameter_updates), **steady_state_kwargs
         )
@@ -1684,23 +1690,29 @@ def impulse_response_function(
 
         return shock_trajectory
 
-    def _make_shock_dict(shocks, shock_size=None, Q=None):
+    def _make_shock_dict(
+        shock_names: list[str],
+        shock_size: dict | int | float | list[float] | np.ndarray | None = None,
+        Q: np.ndarray | None = None,
+    ):
         if Q is not None:
-            return {x.base_name: np.sqrt(Q[i, i]) for i, x in enumerate(shocks)}
-        if isinstance(shock_size, dict):
-            return shock_size
-        if isinstance(shock_size, int | float):
-            return {x.base_name: shock_size for x in shocks}
-        if isinstance(shock_size, np.ndarray | list):
-            return {x.base_name: shock_size[i] for i, x in enumerate(shocks)}
+            return {name: np.sqrt(Q[i, i]) for i, name in enumerate(shock_names)}
+        elif isinstance(shock_size, dict):
+            # Sort the keys so they match the ordering in the model
+            return {
+                name: shock_size[name] for name in shock_names if name in shock_size
+            }
+        elif isinstance(shock_size, int | float):
+            return {name: shock_size for name in shock_names}
+        elif isinstance(shock_size, np.ndarray | list):
+            return {name: shock_size[i] for i, name in enumerate(shock_names)}
+        else:
+            ValueError()
 
-    shock_dict = _make_shock_dict(model.shocks, shock_size, Q)
+    shock_dict = _make_shock_dict(model_shock_names, shock_size, Q)
     shock_names = (
         list(shock_dict.keys()) if shock_dict is not None else model_shock_names
     )
-
-    # Sort the shock names to match the order of the model shocks
-    shock_names = [x for x in model_shock_names if x in shock_names]
     n_shocks = len(shock_names)
 
     data_shape = (simulation_length, n_variables)
