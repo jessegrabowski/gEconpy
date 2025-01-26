@@ -436,6 +436,17 @@ def test_scipy_wrapped_functions_agree(gcn_path, func):
             )
 
 
+def test_linear_model():
+    mod = load_and_cache_model("rbc_linearized.gcn", "numpy", use_jax=JAX_INSTALLED)
+    params = mod.parameters()
+    ss = mod.steady_state()
+
+    assert all(x == 0 for x in ss.values())
+    assert_allclose(mod.f_ss_error(**params, **ss), 0.0)
+
+    assert not all(x == 0 for x in mod.f_ss(**mod.parameters()))
+
+
 @pytest.mark.parametrize(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
 )

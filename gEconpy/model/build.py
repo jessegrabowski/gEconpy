@@ -38,7 +38,7 @@ def _compile_gcn(
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters="raise",
     **kwargs,
-) -> tuple[tuple, tuple, tuple, dict, tuple]:
+) -> tuple[tuple, tuple, tuple, dict, tuple, dict]:
     outputs = gcn_to_block_dict(gcn_path, simplify_blocks=simplify_blocks)
     block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
 
@@ -78,6 +78,7 @@ def _compile_gcn(
     # and can be removed
     reduced_params = []
     final_deterministics = deterministic_dict.copy()
+
     for param in deterministic_dict.keys():
         if not any(eq.has(param) for eq in equations + steady_state_relationships):
             reduced_params.append(param)
@@ -156,7 +157,7 @@ def _compile_gcn(
     )
     priors = (param_priors, shock_priors)
 
-    return objects, dictionaries, functions, cache, priors
+    return objects, dictionaries, functions, cache, priors, options
 
 
 def model_from_gcn(
@@ -170,7 +171,7 @@ def model_from_gcn(
     on_unused_parameters="raise",
     **kwargs,
 ) -> Model:
-    objects, dictionaries, functions, cache, priors = _compile_gcn(
+    objects, dictionaries, functions, cache, priors, options = _compile_gcn(
         gcn_path,
         simplify_blocks=simplify_blocks,
         simplify_tryreduce=simplify_tryreduce,
@@ -216,6 +217,7 @@ def model_from_gcn(
         f_linearize=f_linearize,
         backend=backend,
         priors=priors,
+        is_linear=options.get("linear", False),
     )
 
 
@@ -231,7 +233,7 @@ def statespace_from_gcn(
     not_loglin_variables: list[str] | None = None,
     **kwargs,
 ):
-    objects, dictionaries, functions, cache, priors = _compile_gcn(
+    objects, dictionaries, functions, cache, priors, options = _compile_gcn(
         gcn_path,
         simplify_blocks=simplify_blocks,
         simplify_tryreduce=simplify_tryreduce,
@@ -294,6 +296,9 @@ def statespace_from_gcn(
             f"The following variables were requested not to be log-linearized, but are unknown to the model: "
             f"{', '.join(unknown_not_login)}"
         )
+
+    if options.get("linear", False):
+        log_linearize = False
 
     if log_linearize:
         not_loglin_mask = pt.as_tensor([x in not_loglin_variables for x in var_names])

@@ -287,6 +287,9 @@ def substitute_repeatedly(
     substituted_expr: sp.Expr
         The expression with all substitutions made.
     """
+    if isinstance(expr, int | float):
+        return expr
+
     for i in range(max_subs):
         new_expr = expr.subs(sub_dict)
         if not any([new_expr.has(x) for x in sub_dict.keys()]):

@@ -291,6 +291,7 @@ class Model:
         f_ss_error_hessp: Callable[[np.ndarray, ...], np.ndarray],
         f_linearize: Callable,
         backend: BACKENDS = "numpy",
+        is_linear: bool = False,
     ) -> None:
         """
         A Dynamic Stochastic General Equlibrium (DSGE) Model
@@ -342,6 +343,7 @@ class Model:
         self.shocks = shocks
         self.equations = equations
         self.params = list(param_dict.to_sympy().keys())
+        self.is_linear = is_linear
 
         self.deterministic_params = list(deterministic_dict.to_sympy().keys())
         self.calibrated_params = list(calib_dict.to_sympy().keys())
@@ -553,7 +555,19 @@ class Model:
             # If we have at least some user information, check if its is complete. If it's not, we will minimize
             # with the user-provided values fixed.
             ss_dict = f_ss(**param_dict) if f_ss is not None else ss_dict
+            if self.is_linear:
+                # TODO: This is a hack, but if we're a linear model, we need to set all the steady state values
+                #  to zero. But we don't want to modify the underlying f_ss function, so modify it here.
+                ss_dict = SteadyStateResults(
+                    {x.to_ss(): 0 for x in self.variables}
+                ).to_string()
+
             if len(ss_dict) != 0 and len(ss_dict) != len(self.variables):
+                if self.is_linear:
+                    raise ValueError(
+                        "If a model is declared linear, the steady state must be provided for "
+                        "all variables."
+                    )
                 if how == "root":
                     zero_eq_mask = get_known_equation_mask(
                         steady_state_system=ss_system,
@@ -810,6 +824,10 @@ class Model:
             )
         if steady_state_kwargs is None:
             steady_state_kwargs = {}
+
+        if self.is_linear:
+            # If the model is linear, the linearization is already done; don't do it again
+            log_linearize = False
 
         param_dict = self.parameters(**parameter_updates)
 
