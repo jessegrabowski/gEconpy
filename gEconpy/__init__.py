@@ -1,7 +1,14 @@
 import logging
 import sys
 
-from gEconpy import classes, numbaf, parser, plotting, solvers, utilities
+from gEconpy import (
+    classes,
+    numbaf,  #  noqa: F401
+    parser,
+    plotting,
+    solvers,
+    utilities,
+)
 from gEconpy._version import get_versions
 from gEconpy.dynare_convert import make_mod_file
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
@@ -16,6 +23,7 @@ from gEconpy.model.model import (
     stationary_covariance_matrix,
     summarize_perturbation_solution,
 )
+from gEconpy.model.statespace import data_from_prior
 from gEconpy.model.steady_state import print_steady_state
 
 _log = logging.getLogger(__name__)
@@ -49,5 +57,5 @@ __all__ = [
     "utilities",
     "solvers",
     "make_mod_file",
-    "numbaf",
+    "data_from_prior",
 ]
