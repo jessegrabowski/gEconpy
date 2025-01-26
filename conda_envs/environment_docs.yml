@@ -18,10 +18,12 @@ dependencies:
   - statsmodels
   - preliz
   - sympy<1.13
+  - pymc-extras
+  - better-optimize
+  - jax
 
   # Extra dependencies for docs build
   - ipython
-  - jax
   - jupyter-sphinx
   - myst-nb
   - numpydoc
