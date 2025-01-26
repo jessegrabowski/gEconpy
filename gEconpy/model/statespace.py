@@ -1,4 +1,5 @@
 import logging
+import warnings
 
 from typing import Literal, get_args
 
@@ -468,3 +469,79 @@ class DSGEStateSpace(PyMCStateSpace):
 
             for prior, dist in self.shock_priors.items():
                 dist.to_pymc()
+
+
+def data_from_prior(
+    statepace_mod: DSGEStateSpace,
+    pymc_model: pm.Model,
+    index: pd.DatetimeIndex | None = None,
+    n_samples: int = 500,
+    pct_missing: float = 0,
+) -> tuple:
+    """
+    Generate artificial data from prior predictive samples. Also modifies the pymc model and the statespace model
+    in-place to act as if build_statespace_graph has been called with the new data.
+
+    Parameters
+    ----------
+    statepace_mod: DSGEStateSpace
+    pymc_model: pm.Model
+    index: pd.DatetimeIndex
+    n_samples: int
+    pct_missing: float
+
+    Returns
+    -------
+    true_parameters: xr.Dataset
+    data: pd.DataFrame
+
+    """
+
+    if index is None:
+        index = pd.date_range(start="1980-01-01", end="2024-11-01", freq="QS-OCT")
+    dummy_data = pd.DataFrame(
+        np.nan, index=index, columns=statepace_mod.observed_states
+    )
+    dummy_data.index.freq = dummy_data.index.inferred_freq
+
+    with pymc_model:
+        if "data" not in pymc_model:
+            statepace_mod.build_statespace_graph(
+                dummy_data,
+                add_bk_check=False,
+                add_solver_success_check=True,
+                add_norm_check=True,
+                add_steady_state_penalty=True,
+            )
+        else:
+            pm.set_data({"data": dummy_data.fillna(-9999)})
+
+        with warnings.catch_warnings(action="ignore"):
+            prior = pm.sample_prior_predictive(n_samples)
+
+    with warnings.catch_warnings(action="ignore"):
+        prior_trajectories = statepace_mod.sample_unconditional_prior(prior)
+
+    idx = np.random.choice(prior.prior.coords["draw"].values)
+
+    true_params = prior.prior.isel(chain=0, draw=idx)
+    data = prior_trajectories.isel(chain=0, draw=idx).prior_observed
+    data = (
+        data.to_dataframe()
+        .drop(columns=["chain", "draw"])
+        .unstack("observed_state")
+        .droplevel(axis=1, level=0)
+    )
+
+    data.index.freq = data.index.inferred_freq
+    if pct_missing > 0:
+        n_missing = int(data.shape[0] * pct_missing)
+        for col in data:
+            missing_idxs = np.random.choice(data.index, size=(n_missing), replace=False)
+            data.loc[missing_idxs, col] = np.nan
+
+    with pymc_model:
+        pm.set_data({"data": data.fillna(-9999)})
+        statepace_mod._fit_data = data
+
+    return true_params, data
