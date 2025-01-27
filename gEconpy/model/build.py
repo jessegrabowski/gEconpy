@@ -6,6 +6,7 @@ import sympy as sp
 from pymc.pytensorf import rewrite_pregrad
 from pytensor import graph_replace
 
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
 from gEconpy.model.perturbation import compile_linearized_system
@@ -22,9 +23,48 @@ from gEconpy.parser.file_loaders import (
     simplify_provided_ss_equations,
     validate_results,
 )
+from gEconpy.parser.parse_distributions import CompositeDistribution
 from gEconpy.utilities import get_name, substitute_repeatedly
 
 _log = logging.getLogger(__name__)
+
+
+def split_out_hyper_params(
+    param_dict: SymbolDictionary[str, float],
+    shock_prior: SymbolDictionary[str, CompositeDistribution],
+) -> SymbolDictionary[str, float]:
+    """
+    Remove shock hyper parameters from the parameter dictionary.
+
+    Parameters
+    ----------
+    param_dict: SymbolDictionary
+        Dictionary of initial parameter values
+
+    shock_prior: SymbolDictionary
+        Dictionary of shock priors
+
+    Returns
+    -------
+    param_dict: SymbolDictionary
+        Dictionary of initial parameter values with shock hyper parameters removed.
+    """
+
+    new_param_dict = param_dict.copy()
+    hyper_param_dict = SymbolDictionary()
+
+    all_hyper_params = [
+        param
+        for dist in shock_prior.values()
+        for param in dist.param_name_to_hyper_name.values()
+    ]
+
+    for param in all_hyper_params:
+        if param in new_param_dict:
+            del new_param_dict[param]
+            hyper_param_dict[param] = param_dict[param]
+
+    return new_param_dict, hyper_param_dict
 
 
 def _compile_gcn(
@@ -37,6 +77,7 @@ def _compile_gcn(
     return_symbolic: bool = False,
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters="raise",
+    remove_hyperpriors_from_param_dict=True,
     **kwargs,
 ) -> tuple[tuple, tuple, tuple, dict, tuple, dict]:
     outputs = gcn_to_block_dict(gcn_path, simplify_blocks=simplify_blocks)
@@ -61,6 +102,8 @@ def _compile_gcn(
         simplify_tryreduce=simplify_tryreduce,
         simplify_constants=simplify_constants,
     )
+
+    param_dict, hyper_param_dict = split_out_hyper_params(param_dict, shock_priors)
 
     ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
     steady_state_relationships = [
@@ -143,7 +186,7 @@ def _compile_gcn(
         )
 
     objects = (variables, shocks, equations, steady_state_relationships)
-    dictionaries = (param_dict, deterministic_dict, calib_dict)
+    dictionaries = (param_dict, hyper_param_dict, deterministic_dict, calib_dict)
     functions = (
         f_ss,
         f_ss_jac,
@@ -184,7 +227,7 @@ def model_from_gcn(
     )
 
     variables, shocks, equations, ss_relationships = objects
-    param_dict, deterministic_dict, calib_dict = dictionaries
+    param_dict, hyper_param_dict, deterministic_dict, calib_dict = dictionaries
 
     (
         f_ss,
@@ -204,6 +247,7 @@ def model_from_gcn(
         equations=equations,
         steady_state_relationships=ss_relationships,
         param_dict=param_dict,
+        hyper_param_dict=hyper_param_dict,
         deterministic_dict=deterministic_dict,
         calib_dict=calib_dict,
         f_ss=f_ss,
@@ -247,7 +291,7 @@ def statespace_from_gcn(
     )
 
     variables, shocks, equations, ss_relationships = objects
-    param_dict, deterministic_dict, calib_dict = dictionaries
+    param_dict, hyper_param_dict, deterministic_dict, calib_dict = dictionaries
     param_priors, shock_priors = priors
 
     if len(calib_dict) > 0:
@@ -325,6 +369,7 @@ def statespace_from_gcn(
         equations=equations,
         param_dict=param_dict,
         param_priors=param_priors,
+        hyper_param_dict=hyper_param_dict,
         shock_priors=shock_priors,
         parameter_mapping=parameter_mapping,
         steady_state_mapping=steady_state_mapping,

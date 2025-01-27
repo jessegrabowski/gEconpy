@@ -274,7 +274,9 @@ def create_prior_distribution_dictionary(
         )
 
     for variable_name, (outer_dist, hyper_param_dict) in raw_shock_dict.items():
-        clean_name = variable_name[:-2]  # remove trailing []
+        clean_name = variable_name[
+            :-2
+        ]  # remove trailing [] from the variable name (e.g. Y[] -> Y)
         shock_priors[clean_name] = create_composite_distribution(
             clean_name, outer_dist, hyper_param_dict
         )

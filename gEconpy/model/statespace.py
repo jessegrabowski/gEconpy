@@ -42,6 +42,7 @@ class DSGEStateSpace(PyMCStateSpace):
         shocks: list[TimeAwareSymbol],
         equations: list[sp.Expr],
         param_dict: dict[str, float],
+        hyper_param_dict: dict[str, float],
         param_priors: SymbolDictionary[str, Distribution],
         shock_priors: SymbolDictionary[str, CompositeDistribution],
         parameter_mapping: dict[pt.TensorVariable, pt.TensorVariable],
@@ -59,6 +60,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self.param_priors = param_priors
         self.shock_priors = shock_priors
         self.param_dict = param_dict
+        self.hyper_param_dict = hyper_param_dict
 
         self.parameter_mapping = parameter_mapping
         self.steady_state_mapping = steady_state_mapping
@@ -465,9 +467,13 @@ class DSGEStateSpace(PyMCStateSpace):
 
         with pm.modelcontext(None):
             for prior, dist in self.param_priors.items():
+                if prior in exclude_priors:
+                    continue
                 dist.to_pymc(name=prior)
 
             for prior, dist in self.shock_priors.items():
+                if prior in exclude_priors:
+                    continue
                 dist.to_pymc()
 
 
@@ -517,14 +523,14 @@ def data_from_prior(
             pm.set_data({"data": dummy_data.fillna(-9999)})
 
         with warnings.catch_warnings(action="ignore"):
-            prior = pm.sample_prior_predictive(n_samples)
+            prior_idata = pm.sample_prior_predictive(n_samples)
 
     with warnings.catch_warnings(action="ignore"):
-        prior_trajectories = statepace_mod.sample_unconditional_prior(prior)
+        prior_trajectories = statepace_mod.sample_unconditional_prior(prior_idata)
 
-    idx = np.random.choice(prior.prior.coords["draw"].values)
+    idx = np.random.choice(prior_idata.prior.coords["draw"].values)
 
-    true_params = prior.prior.isel(chain=0, draw=idx)
+    true_params = prior_idata.prior.isel(chain=0, draw=idx)
     data = prior_trajectories.isel(chain=0, draw=idx).prior_observed
     data = (
         data.to_dataframe()
@@ -537,11 +543,11 @@ def data_from_prior(
     if pct_missing > 0:
         n_missing = int(data.shape[0] * pct_missing)
         for col in data:
-            missing_idxs = np.random.choice(data.index, size=(n_missing), replace=False)
+            missing_idxs = np.random.choice(data.index, size=n_missing, replace=False)
             data.loc[missing_idxs, col] = np.nan
 
     with pymc_model:
         pm.set_data({"data": data.fillna(-9999)})
         statepace_mod._fit_data = data
 
-    return true_params, data
+    return true_params, data, prior_idata

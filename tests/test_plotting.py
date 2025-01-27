@@ -2,12 +2,11 @@ import unittest
 import warnings
 
 import arviz as az
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pymc as pm
 import pytest
-
-from matplotlib import pyplot as plt
 
 from gEconpy.model.model import (
     autocorrelation_matrix,
@@ -24,6 +23,7 @@ from gEconpy.plotting import (
     plot_heatmap,
     plot_irf,
     plot_kalman_filter,
+    plot_priors,
     plot_simulation,
     prepare_gridspec_figure,
 )
@@ -347,6 +347,12 @@ def test_plot_kalman_filter(ss_mod, prior_idata, kalman_output, vars_to_plot):
 
     assert len(fig.axes) == len(vars_to_plot)
     assert all(axis.get_title() in vars_to_plot for axis in fig.axes)
+
+
+def test_plot_priors(ss_mod):
+    fig = plot_priors(ss_mod)
+    titles = [ax.get_title() for ax in fig.axes]
+    assert len(titles) == len(ss_mod.shock_priors | ss_mod.param_priors)
 
 
 if __name__ == "__main__":

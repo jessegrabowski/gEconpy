@@ -1100,7 +1100,18 @@ def plot_priors(
     n_cols: int = 6,
     mark_initial_value: bool = True,
 ):
-    pz_priors = statespace_model.param_priors | statespace_model.shock_priors
+    pz_priors = statespace_model.param_priors
+    hyper_priors = {}
+
+    if statespace_model.shock_priors:
+        hyper_priors = {
+            shock.param_name_to_hyper_name[name]: hyper_prior
+            for shock in statespace_model.shock_priors.values()
+            for name, hyper_prior in shock.hyper_param_dict.items()
+        }
+
+    pz_priors = pz_priors | hyper_priors
+
     if var_names is None:
         var_names = pz_priors.keys()
 
@@ -1113,6 +1124,8 @@ def plot_priors(
 
     fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
     gs, locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_params, figure=fig)
+
+    all_params = statespace_model.param_dict | statespace_model.hyper_param_dict
 
     for (name, prior), loc in zip(pz_priors.items(), locs):
         axis = fig.add_subplot(gs[loc])
@@ -1127,9 +1140,10 @@ def plot_priors(
 
         dist_text = axis.get_title()
         axis.set_title(name + "\n" + dist_text)
+        value = all_params.get(name, None)
 
-        if mark_initial_value:
-            axis.axvline(statespace_model.param_dict[name], ls="--", c="k")
+        if mark_initial_value and value:
+            axis.axvline(value, ls="--", c="k")
 
     return fig
 

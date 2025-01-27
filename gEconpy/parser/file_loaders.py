@@ -24,7 +24,6 @@ from gEconpy.parser.gEcon_parser import (
     split_gcn_into_dictionaries,
 )
 from gEconpy.parser.parse_distributions import (
-    CompositeDistribution,
     create_prior_distribution_dictionary,
 )
 from gEconpy.parser.parse_equations import single_symbol_to_sympy
@@ -203,41 +202,6 @@ def block_dict_to_variables_and_shocks(
         key=lambda x: x.name,
     )
     return variables, shocks
-
-
-def remove_hyper_parameters(
-    param_dict: SymbolDictionary[str, float],
-    shock_prior: SymbolDictionary[str, CompositeDistribution],
-) -> SymbolDictionary[str, float]:
-    """
-    Remove shock hyper parameters from the parameter dictionary.
-
-    Parameters
-    ----------
-    param_dict: SymbolDictionary
-        Dictionary of initial parameter values
-
-    shock_prior: SymbolDictionary
-        Dictionary of shock priors
-
-    Returns
-    -------
-    param_dict: SymbolDictionary
-        Dictionary of initial parameter values with shock hyper parameters removed.
-    """
-
-    new_param_dict = param_dict.copy()
-    all_hyper_params = [
-        param
-        for dist in shock_prior.values()
-        for param in dist.param_name_to_hyper_name.values()
-    ]
-
-    for param in all_hyper_params:
-        if param in new_param_dict:
-            del new_param_dict[param]
-
-    return new_param_dict
 
 
 def prior_info_to_prior_dict(
@@ -447,7 +411,6 @@ def block_dict_to_model_primitives(
     param_priors, shock_priors = prior_info_to_prior_dict(prior_info, assumptions)
 
     tryreduce_sub_dict = block_dict_to_sub_dict(block_dict)
-    param_dict = remove_hyper_parameters(param_dict, shock_priors)
 
     equations, variables, eliminated_variables, singletons = apply_simplifications(
         try_reduce_vars,

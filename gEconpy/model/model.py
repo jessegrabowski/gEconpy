@@ -278,6 +278,7 @@ class Model:
         equations: list[sp.Expr],
         steady_state_relationships: list[sp.Eq],
         param_dict: SymbolDictionary,
+        hyper_param_dict: SymbolDictionary,
         deterministic_dict: SymbolDictionary,
         calib_dict: SymbolDictionary,
         priors: tuple | None,
@@ -306,6 +307,8 @@ class Model:
             List of equations in the model
         param_dict: SymbolDictionary
             Dictionary of parameters in the model
+        hyper_param_dict: SymbolDictionary
+            Dictionary of parameters used by shock distributions
         f_params: Callable
             Function that returns a dictionary of parameter values given a dictionary of parameter values
         f_ss_resid: Callable
@@ -345,6 +348,7 @@ class Model:
         self.params = list(param_dict.to_sympy().keys())
         self.is_linear = is_linear
 
+        self.hyper_params = list(hyper_param_dict.to_sympy().keys())
         self.deterministic_params = list(deterministic_dict.to_sympy().keys())
         self.calibrated_params = list(calib_dict.to_sympy().keys())
 
