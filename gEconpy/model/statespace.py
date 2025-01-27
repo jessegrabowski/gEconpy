@@ -3,12 +3,14 @@ import warnings
 
 from typing import Literal, get_args
 
+import arviz as az
 import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
+import xarray as xr
 
 from preliz.distributions.distributions import Distribution
 from pymc.pytensorf import rewrite_pregrad
@@ -483,7 +485,7 @@ def data_from_prior(
     index: pd.DatetimeIndex | None = None,
     n_samples: int = 500,
     pct_missing: float = 0,
-) -> tuple:
+) -> tuple[xr.Dataset, pd.DataFrame, az.InferenceData]:
     """
     Generate artificial data from prior predictive samples. Also modifies the pymc model and the statespace model
     in-place to act as if build_statespace_graph has been called with the new data.
@@ -491,16 +493,25 @@ def data_from_prior(
     Parameters
     ----------
     statepace_mod: DSGEStateSpace
+        Statespace model to generate data from. Must have been configured with the .configure method.
     pymc_model: pm.Model
+        PyMC model with priors on expected DSGE parameters. It should **not** have a Kalman Filter added via
+        build_statespace_graph.
     index: pd.DatetimeIndex
+        Index to use for the generated data. If None, a quarterly index from 1980-01-01 to 2024-11-01 is used.
     n_samples: int
+        Number of prior predictive samples to draw.
     pct_missing: float
+        Percentage of missing data to introduce into the generated data. Must be between 0 and 1.
 
     Returns
     -------
     true_parameters: xr.Dataset
+        True parameters used to generate the data.
     data: pd.DataFrame
-
+        Generated data.
+    prior_idata: az.InferenceData
+        Draws from the prior predictive distribution, plus conditional prior predictive samples.
     """
 
     if index is None:
@@ -528,9 +539,13 @@ def data_from_prior(
     with warnings.catch_warnings(action="ignore"):
         prior_trajectories = statepace_mod.sample_unconditional_prior(prior_idata)
 
+    prior_idata["conditional_prior"] = prior_trajectories
+
     idx = np.random.choice(prior_idata.prior.coords["draw"].values)
 
     true_params = prior_idata.prior.isel(chain=0, draw=idx)
+    true_params["param_idx"] = idx
+
     data = prior_trajectories.isel(chain=0, draw=idx).prior_observed
     data = (
         data.to_dataframe()
