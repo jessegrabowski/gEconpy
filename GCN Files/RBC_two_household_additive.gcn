@@ -27,6 +27,8 @@ block STEADY_STATE
 	{
 		TFP[ss] = 1.0;
 		shock_beta_R[ss] = 1.0;
+		Theta_R[ss] = Theta_R;
+		Theta_N[ss] = Theta_N;
 
 		r[ss] = 1 / beta - (1 - delta);
 		w[ss] = (1 - alpha) * N[ss] ^ alpha;
@@ -53,7 +55,7 @@ block RICARDIAN_HOUSEHOLD
 {
 	definitions
 	{
-		u_R[] = shock_beta_R[] * (C_R[] ^ (1 - sigma_R) / (1 - sigma_R) - Theta_R * L_R[]);
+		u_R[] = shock_beta_R[] * (C_R[] ^ (1 - sigma_R) / (1 - sigma_R) - Theta_R[] * L_R[]);
 	};
 
 	controls
@@ -77,20 +79,22 @@ block RICARDIAN_HOUSEHOLD
 	identities
 	{
 		log(shock_beta_R[]) = rho_beta_R * log(shock_beta_R[-1]) + epsilon_beta_R[];
+		log(Theta_R[]) = (1 - rho_Theta_R) * log(Theta_R) + rho_Theta_R * log(Theta_R[-1]) + epsilon_Theta_R[];
 	};
 
 	shocks
 	{
-		epsilon_beta_R[];
+		epsilon_beta_R[], epsilon_Theta_R[];
 	};
 
 	calibration
 	{
-		beta  ~ Beta(alpha=70, beta=4) = 0.99;
-		delta ~ Beta(alpha=2, beta=42) = 0.02;
-		sigma_R ~ Gamma(alpha=7, beta=3) = 1.5;
-		Theta_R ~ Gamma(alpha=7, beta=3) = 1.0;
-		rho_beta_R  ~ Beta(mean=0.95, sd=0.04) = 0.95;
+		beta  ~ maxent(Beta(), lower=0.90, upper=0.99) = 0.99;
+		delta ~ maxent(Beta(), lower=0.01, upper=0.05) = 0.02;
+		sigma_R ~ maxent(Gamma(), lower=1.1, upper=3.0) = 1.5;
+		Theta_R ~ maxent(Gamma(), lower=0.1, upper=5.0) = 1.0;
+		rho_beta_R  ~ maxent(Beta(), lower=0.5, upper=0.99) = 0.95;
+        rho_Theta_R  ~ maxent(Beta(), lower=0.5, upper=0.99) = 0.95;
 	};
 };
 
@@ -98,7 +102,7 @@ block NON_RICARDIAN_HOUSEHOLD
 {
 	definitions
 	{
-		u_NR[] = C_NR[] ^ (1 - sigma_N) / (1 - sigma_N) - Theta_N * L_NR[];
+		u_NR[] = C_NR[] ^ (1 - sigma_N) / (1 - sigma_N) - Theta_N[] * L_NR[];
 	};
 
 	controls
@@ -116,10 +120,22 @@ block NON_RICARDIAN_HOUSEHOLD
 		C_NR[] = w[] * L_NR[]: lambda_NR[];
 	};
 
+	identities
+	{
+	    log(Theta_N[]) = (1 - rho_Theta_N) * log(Theta_N) + rho_Theta_N * log(Theta_N[-1]) + epsilon_Theta_N[];
+	};
+
+	shocks
+	{
+	    epsilon_Theta_N[];
+	};
+
 	calibration
 	{
-	    Theta_N ~ Gamma(alpha=7, beta=3) = 1.0;
-        sigma_N ~ Gamma(alpha=7, beta=3) = 1.5;
+	    Theta_N ~ maxent(Gamma(), lower=0.1, upper=5.0) = 1.0;
+        sigma_N ~ maxent(Gamma(), lower=1.1, upper=3.0) = 1.5;
+
+        rho_Theta_N ~ maxent(Beta(), lower=0.5, upper=0.99) = 0.95;
 	};
 };
 
@@ -157,8 +173,8 @@ block FIRM
 
     calibration
     {
-        alpha ~ Beta(alpha=2, beta=5) = 0.35;
-		rho_TFP ~ Beta(mean=0.95, sd=0.04) = 0.95;
+        alpha   ~ maxent(Beta(), lower=0.3, upper=0.6) = 0.35;
+		rho_TFP ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.95;
     };
 };
 
@@ -173,6 +189,6 @@ block EQULIBRIUM
 
 	calibration
 	{
-	    omega ~ Beta(alpha=2, beta=2) = 0.5;
+	    omega ~ maxent(Beta(), lower=0.6, upper=0.99) = 0.66;
 	};
 };
