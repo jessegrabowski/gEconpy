@@ -1148,6 +1148,38 @@ def plot_priors(
     return fig
 
 
+def plot_posterior_with_prior(
+    idata, var_names, prior_dict, true_values=None, n_cols=5, figsize=None
+):
+    if true_values is None:
+        ref_val = None
+    else:
+        ref_val = np.r_[
+            *[true_values[name].values.ravel() for name in var_names]
+        ].tolist()
+
+    if figsize is None:
+        figsize = (14, 9)
+
+    fig = plt.figure(figsize=figsize, dpi=144)
+    gs, locs = prepare_gridspec_figure(
+        n_cols=n_cols, n_plots=len(var_names), figure=fig
+    )
+    [fig.add_subplot(gs[loc]) for loc in locs]
+
+    axes = az.plot_posterior(
+        idata, var_names=var_names, ref_val=ref_val, ax=np.array(fig.axes)
+    )
+
+    for axis in axes.ravel():
+        var_name, *coords = axis.get_title().split("\n")
+
+        if var_name in prior_dict:
+            prior_dict[var_name].plot_pdf(ax=axis, legend=False, color="tab:orange")
+
+    return fig
+
+
 __all__ = [
     "prepare_gridspec_figure",
     "plot_simulation",
@@ -1158,4 +1190,5 @@ __all__ = [
     "plot_acf",
     "plot_corner",
     "plot_kalman_filter",
+    "plot_posterior_with_prior",
 ]
