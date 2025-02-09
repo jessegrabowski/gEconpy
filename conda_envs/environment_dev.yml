@@ -22,10 +22,11 @@ dependencies:
   - sympy<1.13
   - preliz
   - pip
+  - notebook<7
 
   # JAX, optional for now
   - jax
-  - jaxlib=*=*cuda*
+#  - jaxlib=*=*cuda*
 
   # For building docs
   - ipython
@@ -54,4 +55,6 @@ dependencies:
 
   - pip:
       - sympytensor
-      - -e .
+      - git+https://github.com/aseyboldt/nutpie.git@transforms
+      - git+https://github.com/aseyboldt/flowjax.git@add-bijections
+      - -e ../.

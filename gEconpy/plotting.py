@@ -1066,9 +1066,9 @@ def plot_kalman_filter(
     means = (
         idata[output_name].sel(**{state_name: vars_to_plot}).mean(dim=["chain", "draw"])
     )
-    hdis = az.hdi(idata[output_name].sel(**{state_name: vars_to_plot}), hdi_prob=0.95)[
-        output_name
-    ]
+    hdis = az.hdi(
+        idata[output_name].sel(**{state_name: vars_to_plot}), hdi_prob=0.95, skipna=True
+    )[output_name]
 
     for idx, variable in enumerate(vars_to_plot):
         axis = fig.add_subplot(gs[plot_locs[idx]])
