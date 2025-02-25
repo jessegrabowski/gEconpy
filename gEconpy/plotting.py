@@ -16,8 +16,6 @@ from matplotlib.gridspec import GridSpec
 from scipy import stats
 from xarray_einstats.linalg import diagonal as xr_diagonal
 
-from gEconpy.model.model import check_bk_condition
-
 if TYPE_CHECKING:
     from gEconpy.model.statespace import DSGEStateSpace
 
@@ -559,6 +557,7 @@ def plot_eigenvalues(
     Matplotlib Figure
         The figure object containing the plot.
     """
+    from gEconpy.model.model import check_bk_condition
 
     if figsize is None:
         figsize = (5, 5)
@@ -1149,8 +1148,14 @@ def plot_priors(
 
 
 def plot_posterior_with_prior(
-    idata, var_names, prior_dict, true_values=None, n_cols=5, figsize=None
-):
+    idata,
+    var_names,
+    prior_dict,
+    true_values=None,
+    n_cols=5,
+    fig_kwargs=None,
+    plot_posterior_kwargs=None,
+) -> plt.Figure:
     if true_values is None:
         ref_val = None
     else:
@@ -1158,17 +1163,24 @@ def plot_posterior_with_prior(
             *[true_values[name].values.ravel() for name in var_names]
         ].tolist()
 
-    if figsize is None:
-        figsize = (14, 9)
+    if fig_kwargs is None:
+        n_rows = len(var_names) // n_cols
+        fig_kwargs = {"figsize": (14, n_rows * 3), "dpi": 144, "layout": "constrained"}
+    if plot_posterior_kwargs is None:
+        plot_posterior_kwargs = {"textsize": 10}
 
-    fig = plt.figure(figsize=figsize, dpi=144)
+    fig = plt.figure(**fig_kwargs)
     gs, locs = prepare_gridspec_figure(
         n_cols=n_cols, n_plots=len(var_names), figure=fig
     )
     [fig.add_subplot(gs[loc]) for loc in locs]
 
     axes = az.plot_posterior(
-        idata, var_names=var_names, ref_val=ref_val, ax=np.array(fig.axes)
+        idata,
+        var_names=var_names,
+        ref_val=ref_val,
+        ax=np.array(fig.axes),
+        **plot_posterior_kwargs,
     )
 
     for axis in axes.ravel():
