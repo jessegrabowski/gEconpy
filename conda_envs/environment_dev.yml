@@ -55,6 +55,6 @@ dependencies:
 
   - pip:
       - sympytensor
-      - git+https://github.com/aseyboldt/nutpie.git@transforms
-      - git+https://github.com/aseyboldt/flowjax.git@add-bijections
-      - -e ../.
+      - git+https://github.com/aseyboldt/nutpie.git@ccc87dfea93b430ca6517370ce9d733a68e441a5
+      - git+https://github.com/aseyboldt/flowjax.git@add-mvscale
+      - -e .
