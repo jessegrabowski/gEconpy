@@ -38,6 +38,11 @@ valid_solvers = get_args(SolverType)
 
 
 class DSGEStateSpace(PyMCStateSpace):
+    """
+    Core class for estimating DSGE models using PyMC.
+
+    """
+
     def __init__(
         self,
         variables: list[TimeAwareSymbol],
@@ -56,6 +61,48 @@ class DSGEStateSpace(PyMCStateSpace):
         ss_error_hess: pt.TensorVariable,
         linearized_system: list[pt.TensorVariable],
     ):
+        """
+        Create a :class:`pmx.statespace.PyMCStateSpace` model representing a linearized DSGE
+
+        Users should not create this class direction, and should instead use
+        :func:`gEconpy.model.build.statespace_from_gcn` to compile a statespace model from a gcn file.
+
+        Parameters
+        ----------
+        variables: list of TimeAwareSymbol
+            List of variables in the model
+        shocks: list of TimeAwareSymbol
+            List of shocks in the model
+        equations: list of sympy.Expr
+            List of equations in the model
+        param_dict: dict
+            Dictionary of default parameter values, as defined in the model file
+        hyper_param_dict: dict
+            Dictionary of default hyperparameter values, as defined in the model file
+        param_priors: dict
+            Dictionary of preliz parameter priors
+        shock_priors: dict
+            Dictionary of preliz shock priors
+        parameter_mapping: dict
+            Symbolic function mapping input parameters to the full vector of parameters, including
+            deterministic.
+        steady_state_mapping: dict
+            Symbolic function mapping input parameters to the steady state values of the model
+        ss_jac: pt.TensorVariable
+            Symbolic Jacobian of the steady state equations
+        ss_resid: pt.TensorVariable
+            Symbolic vector of (signed) residuals of the steady state equations
+        ss_error: pt.TensorVariable
+            Symbolic scalar-valued error function used to minimize the steady state residuals.
+        ss_error_grad: pt.TensorVariable
+            Symbolic gradient of the steady state error function
+        ss_error_hess: pt.TensorVariable
+            Symbolic hessian of the steady state error function
+        linearized_system: list of pt.TensorVariable
+            List of four symbolic expressions representing the linearized system of equations as partial
+            jacobians of the model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with
+            respect to exogenous shocks (D), each evaluated at the (symbolic) steady state.
+        """
         self.variables = variables
         self.equations = equations
         self.shocks = shocks
@@ -539,7 +586,7 @@ def data_from_prior(
     with warnings.catch_warnings(action="ignore"):
         prior_trajectories = statepace_mod.sample_unconditional_prior(prior_idata)
 
-    prior_idata["conditional_prior"] = prior_trajectories
+    prior_idata["unconditional_prior"] = prior_trajectories
 
     idx = np.random.choice(prior_idata.prior.coords["draw"].values)
 

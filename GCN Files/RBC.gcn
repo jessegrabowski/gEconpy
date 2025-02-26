@@ -3,21 +3,26 @@ tryreduce
 	U[], TC[];
 };
 
+
 block STEADY_STATE
 {
     identities
     {
         A[ss] = 1;
+        mc[ss] = 1;
         r[ss] = (1 / beta - (1 - delta));
         w[ss] = (1 - alpha) * (alpha / r[ss]) ^ (alpha / (1 - alpha));
         Y[ss] = (r[ss] / (r[ss] - delta * alpha)) ^ (sigma_C / (sigma_C + sigma_L)) *
-            (w[ss] * (w[ss] /  (1 - alpha)) ^ sigma_L) ^ (1 / (sigma_C + sigma_L));
+            (w[ss] * (w[ss] / (1 - alpha)) ^ sigma_L) ^ (1 / (sigma_C + sigma_L));
 
         I[ss] = (delta * alpha / r[ss]) * Y[ss];
         C[ss] = Y[ss] ^ (-sigma_L / sigma_C) * ((1 - alpha) ^ (-sigma_L) * w[ss] ^ (1 + sigma_L)) ^ (1 / sigma_C);
-        K[ss] = alpha * Y[ss] / r[ss];
-        L[ss] = (1 - alpha) * Y[ss]  / w[ss];
+        K[ss] = alpha * Y[ss] * mc[ss] / r[ss];
+        L[ss] = (1 - alpha) * Y[ss] * mc[ss] / w[ss];
+
+        U[ss] = (1 / (1 - beta)) * (C[ss] ^ (1 - sigma_C) / (1 - sigma_C) - L[ss] ^ (1 + sigma_L) / (1 + sigma_L));
         lambda[ss] = C[ss] ^ (-sigma_C);
+        TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);
     };
 };
 
@@ -26,7 +31,7 @@ block HOUSEHOLD
 {
 	definitions
 	{
-		u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) - L[] ^ (1 + sigma_L) / (1 + sigma_L);
+		u[] = (C[] ^ (1 - sigma_C) / (1 - sigma_C) - L[] ^ (1 + sigma_L) / (1 + sigma_L));
 	};
 
 	controls
@@ -47,11 +52,11 @@ block HOUSEHOLD
 
 	calibration
 	{
-		beta  = 0.99;
-		delta = 0.02;
+		beta ~ Beta(alpha=70, beta=4)       = 0.99;
+		delta  ~ Beta(alpha=2, beta=42)     = 0.02;
 
-		sigma_C ~ N(loc=1.5, scale=0.1, lower=1.0) = 1.5;
-		sigma_L ~ N(loc=2.0, scale=0.1, lower=1.0) = 2.0;
+		sigma_C ~ Gamma(alpha=7, beta=3)    = 1.5;
+		sigma_L	~ Gamma(alpha=7, beta=3)    = 2.0;
 	};
 };
 
@@ -80,7 +85,7 @@ block FIRM
 
     calibration
     {
-		alpha ~ Beta(mean=0.5, sd=0.1) = 0.35;
+		alpha ~ Beta(alpha=2, beta=5) = 0.35;
     };
 };
 
@@ -93,12 +98,11 @@ block TECHNOLOGY_SHOCKS
 
     shocks
     {
-        epsilon_A[] ~ N(mean=0, sd=sigma_epsilon);
+        epsilon_A[];
     };
 
     calibration
     {
-		rho_A ~ Beta(mean=0.95, sd=0.04) = 0.95;
-		sigma_epsilon ~ Inv_Gamma(mean=0.1, sd=0.01) = 0.01;
+		rho_A ~ Beta(mu=0.95, sigma=0.04) = 0.95;
     };
 };

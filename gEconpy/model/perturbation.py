@@ -12,6 +12,7 @@ import sympy as sp
 
 from pytensor.graph.basic import Apply
 from pytensor.graph.op import Op
+from pytensor.tensor import TensorVariable
 from scipy import linalg
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -406,7 +407,7 @@ def check_bk_condition(
 ) -> bool | pd.DataFrame | None:
     """
     Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
-    unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
+    unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of forward-looking variables. Failing
     this test suggests timing problems in the definition of the model.
 
     Parameters
@@ -437,6 +438,7 @@ def check_bk_condition(
     -------
     bk_result, bool or pd.DataFrame, optional.
         Return value requested. Datatype corresponds to what was requested in the ``return_value`` argument:
+
         - None, If return_value is 'none'
         - condition_satisfied, bool, if return_value is 'bool', returns True if the Blanchard-Kahn condition is
           satisfied, False otherwise.
@@ -515,5 +517,44 @@ class BlanchardKahnCondition(Op):
         outputs[2][0] = np.array(n_greater_than_one)
 
 
-def check_bk_condition_pt(A, B, C, D, tol=1e-8):
+def check_bk_condition_pt(
+    A: TensorVariable,
+    B: TensorVariable,
+    C: TensorVariable,
+    D: TensorVariable,
+    tol: float = 1e-8,
+):
+    """
+    Check the Blanchard-Kahn condition for a model
+
+    Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
+    unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of forward-looking variables. Failing
+    this test suggests timing problems in the definition of the model.
+
+    Parameters
+    ----------
+    A: TensorVariable
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
+        values that are known when decision-making: those with t-1 subscripts.
+    B: TensorVariable
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+        are observed when decision-making: those with t subscripts.
+    C: TensorVariable
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
+        enter in expectation when decision-making: those with t+1 subscripts.
+    D: TensorVariable
+        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
+    tol: float, optional
+        Tolerance below which numerical values are considered zero. Default is 1e-8.
+
+    Returns
+    -------
+    bk_flag: bool
+        True if the Blanchard-Kahn condition is satisfied, False otherwise.
+    n_forward: int
+        Number of forward-looking variables in the model.
+    n_greater_than_one: int
+        Number of eigenvalues greater than one in modulus.
+    """
+
     return BlanchardKahnCondition(tol=tol)(A, B, C, D)

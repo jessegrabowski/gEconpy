@@ -11,6 +11,7 @@ import pandas as pd
 import xarray as xr
 
 from matplotlib.colors import Colormap
+from matplotlib.dates import DateFormatter, YearLocator
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from scipy import stats
@@ -18,6 +19,24 @@ from xarray_einstats.linalg import diagonal as xr_diagonal
 
 if TYPE_CHECKING:
     from gEconpy.model.statespace import DSGEStateSpace
+
+
+def set_matplotlib_style():
+    config = {
+        "figure.figsize": (14, 4),
+        "figure.dpi": 144,
+        "figure.facecolor": "white",
+        "axes.grid": True,
+        "grid.linestyle": "--",
+        "grid.linewidth": 0.5,
+        "axes.spines.top": False,
+        "axes.spines.bottom": False,
+        "axes.spines.left": False,
+        "axes.spines.right": False,
+        "figure.constrained_layout.use": True,
+    }
+
+    plt.rcParams.update(config)
 
 
 def prepare_gridspec_figure(
@@ -129,6 +148,60 @@ def _plot_single_variable(
             color=fill_color,
             alpha=0.25,
         )
+
+
+def plot_timeseries(
+    df: pd.DataFrame,
+    vars_to_plot: list[str] | None = None,
+    n_cols: int | None = None,
+    fig_kwargs: dict | None = None,
+    **line_kwargs,
+) -> plt.Figure:
+    """
+    Plot a DataFrame of time series data.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        A DataFrame with one or more columns containing the data to plot. The columns should be the variables to plot
+        and the index should be the time.
+    vars_to_plot : list of str, optional
+        A list of the variables to plot. If not provided, all variables in the DataFrame will be plotted.
+    n_cols : int, optional
+        The number of columns of plots to show. If not provided, the minimum of (4, number of columns in df) will be
+        used.
+    fig_kwargs: dict, optional
+        Additional keyword arguments to pass to the figure creation.
+    line_kwargs: optional
+        Additional keyword arguments to pass to the line plot.
+
+    Returns
+    -------
+    figure: plt.Figure
+        The Matplotlib Figure object containing the plots.
+    """
+
+    if fig_kwargs is None:
+        fig_kwargs = {}
+    if n_cols is None:
+        n_cols = min(4, len(df.columns))
+    if vars_to_plot is None:
+        vars_to_plot = df.columns
+
+    figure = plt.figure(**fig_kwargs)
+    gs, plot_locs = prepare_gridspec_figure(n_cols, len(vars_to_plot), figure=figure)
+
+    for var, loc in zip(vars_to_plot, plot_locs):
+        axis = figure.add_subplot(gs[loc])
+        axis.plot(df.index, df[var], **line_kwargs)
+
+        axis.xaxis.set_major_locator(YearLocator(10))
+        axis.xaxis.set_minor_locator(YearLocator(1))
+        axis.xaxis.set_major_formatter(DateFormatter("%Y"))
+
+        axis.set(title=var)
+
+    return figure
 
 
 def plot_simulation(
@@ -860,13 +933,13 @@ def plot_acf(
 
 def plot_corner(
     idata: Any,
+    group: str = "posterior",
     var_names: list[str] | None = None,
-    figsize: tuple[int, int] = (14, 14),
-    dpi: int = 144,
-    hist_bins: int = 200,
-    rug_bins: int = 50,
+    figure_kwargs: dict | None = None,
+    hist_bins: int = 100,
+    rug_bins: int = 20,
     rug_levels: int = 6,
-    fontsize: int = 8,
+    fontsize: int = 6,
     show_marginal_modes: bool = True,
 ) -> None:
     """
@@ -878,12 +951,12 @@ def plot_corner(
     ----------
     idata : arviz.InferenceData
         An arviz idata object with a posterior group.
+    group: str, one of "prior" or "posterior"
+        The group from the InferenceData to plot.
     var_names : list of str, optional
         A list of strings specifying the variables to plot. If not provided, all variables in `idata` will be plotted.
-    figsize : tuple, optional
-        The size of the figure in inches. Default is (14, 14).
-    dpi : int, optional
-        The resolution of the figure in dots per inch. Default is 144.
+    figure_kwargs: dict, optional
+        Additional keyword arguments to pass to the figure creation.
     hist_bins : int, optional
         The number of bins to use for the histograms on the diagonal panels. Default is 200.
     rug_bins : int, optional
@@ -901,36 +974,44 @@ def plot_corner(
         Figure object containing the plots.
     """
 
-    if not hasattr(idata, "posterior"):
+    if not hasattr(idata, group):
         raise ValueError(
-            "Argument idata should be an arviz idata object with a posterior group"
+            f"Argument idata should be an arviz idata object with a {group} group"
         )
 
-    var_names = var_names or list(idata.posterior.data_vars)
+    if figure_kwargs is None:
+        figure_kwargs = {}
+
+    var_names = var_names or list(idata[group].data_vars)
     k_params = len(var_names)
 
-    fig, ax = plt.subplots(k_params, k_params, figsize=figsize, dpi=dpi)
+    fig, axes = plt.subplots(k_params, k_params, **figure_kwargs)
 
-    for i, axis in enumerate(fig.axes):
-        row = i // k_params
-        col = i % k_params
+    for row in range(k_params):
+        for col in range(k_params):
+            axis = axes[row, col]
 
-        axis.ticklabel_format(axis="both", style="sci")
-        axis.yaxis.major.formatter.set_powerlimits((-2, 2))
-        axis.yaxis.offsetText.set_fontsize(fontsize)
-        axis.xaxis.major.formatter.set_powerlimits((-2, 2))
-        axis.xaxis.offsetText.set_fontsize(fontsize)
-        if col <= row:
+            axis.ticklabel_format(axis="both", style="sci")
+            axis.yaxis.major.formatter.set_powerlimits((-2, 2))
+            axis.yaxis.offsetText.set_fontsize(fontsize)
+            axis.xaxis.major.formatter.set_powerlimits((-2, 2))
+            axis.xaxis.offsetText.set_fontsize(fontsize)
+
+            if col > row:
+                axis.set(xticks=[], yticks=[], xlabel="", ylabel="")
+                axis.set_visible(False)
+                continue
+
             if col == row:
+                # Make a histogram on the diagonal
                 v = var_names[col]
                 axis.hist(
-                    idata.posterior[v].values.ravel(),
+                    idata[group][v].values.ravel(),
                     bins=hist_bins,
                     histtype="step",
                     density=True,
                 )
                 axis.set_yticklabels([])
-                axis.set_title(v, fontsize=fontsize)
                 axis.tick_params(
                     axis="both",
                     left=False,
@@ -942,30 +1023,26 @@ def plot_corner(
                     axis.tick_params(axis="x", which="both", bottom=False)
 
             else:
+                # Make the rugplot
                 x = var_names[col]
                 y = var_names[row]
 
-                data_x = idata.posterior[x].values.ravel()
-                data_y = idata.posterior[y].values.ravel()
-
-                # x_hist, edges = np.histogram(data_x, bins=hist_bins)
-                # x_mode = edges[np.argmax(x_hist)]
-                #
-                # y_hist, edges = np.histogram(data_y, bins=hist_bins)
-                # y_mode = edges[np.argmax(y_hist)]
+                data_x = idata[group][x].values.ravel()
+                data_y = idata[group][y].values.ravel()
 
                 H, y_edges, x_edges = np.histogram2d(data_y, data_x, bins=rug_bins)
-
                 ymax_idx, xmax_idx = np.where(H == H.max())
+
                 x_mode = x_edges[xmax_idx]
                 y_mode = y_edges[ymax_idx]
+
                 if len(x_mode) > 1:
                     x_mode = x_mode[0]
                 if len(y_mode) > 1:
                     y_mode = y_mode[0]
 
                 axis.contourf(
-                    x_edges[1:], y_edges[1:], H, cmap="Blues", levels=rug_levels
+                    x_edges[:-1], y_edges[:-1], H, cmap="Blues", levels=rug_levels
                 )
 
                 if show_marginal_modes:
@@ -986,11 +1063,8 @@ def plot_corner(
                     axis.set_xlabel(x, fontsize=fontsize)
 
                 axis.tick_params(axis="both", which="both", labelsize=fontsize)
-        else:
-            axis.set(xticks=[], yticks=[], xlabel="", ylabel="")
-            axis.set_visible(False)
 
-    fig.tight_layout(h_pad=0.1, w_pad=0.5)
+    fig.get_layout_engine().set(h_pad=0.0, w_pad=0.0, wspace=0.05, hspace=0.05)
     return fig
 
 

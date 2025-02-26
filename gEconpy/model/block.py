@@ -733,12 +733,20 @@ class Block:
     def solve_optimization(self, try_simplify: bool = True) -> None:
         r"""
         Solve the optimization problem implied by the block structure:
-           max  Sum_{t=0}^\infty [Objective] subject to [Constraints]
-        [Controls]
+
+        .. math::
+
+            \begin{aligned}
+            \max_{\text{[Controls]}} \quad & \sum_{t=0}^{\infty} \text{[Objective]} \\
+            \text{subject to} \quad & \text{[Constraints]}
+            \end{aligned}
 
         By setting up the following Lagrangian:
+
         ..math::
-            L = Sum_{t=0}^\infty Objective - lagrange_multiplier[1] * constraint[1] - ... - lagrange_multiplier[n] * constraint[n]
+
+            L = Sum_{t=0}^\infty \text{Objective} - lambda_1 * \text{constraint}_1 - ... - \lambda_n * \text{constraint}_n
+
         And taking the derivative with respect to each control variable in turn.
 
         Parameters

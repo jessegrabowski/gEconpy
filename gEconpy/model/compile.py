@@ -6,6 +6,7 @@ import numpy as np
 import pytensor
 import sympy as sp
 
+from pytensor.tensor import TensorVariable
 from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SteadyStateResults
@@ -22,6 +23,24 @@ def output_to_tensor(x, cache):
 
 
 def dictionary_return_wrapper(f: Callable, outputs: list[sp.Symbol]) -> Callable:
+    """
+    Wrap a function that returns a numpy array to instead return a SymbolDictionary object, with keys
+    corresponding to the output symbols.
+
+
+    Parameters
+    ----------
+    f: Callable
+        The function to wrap
+    outputs: list[sp.Symbol]
+        The output symbols of the function, in the same order as the outputs of the function.
+
+    Returns
+    -------
+    inner: Callable
+        The wrapped function
+    """
+
     @wraps(f)
     def inner(*args, **kwargs):
         values = f(*args, **kwargs)
@@ -31,6 +50,24 @@ def dictionary_return_wrapper(f: Callable, outputs: list[sp.Symbol]) -> Callable
 
 
 def stack_return_wrapper(f: Callable) -> Callable:
+    """
+    Wrap a function that returns a list of numpy arrays to instead return a single numpy array with all outputs stacked
+    into a single flat array.
+
+    This is useful when working with the output of :func:`sympy.lambdify`, which returns one numpy array per equation
+    in the outputs. Scipy optimize routines, on the other hand, expect a single numpy array with all outputs stacked.
+
+    Parameters
+    ----------
+    f: Callable
+        The function to wrap
+
+    Returns
+    -------
+    inner: Callable
+        The wrapped function
+    """
+
     @wraps(f)
     def inner(*args, **kwargs):
         values = f(*args, **kwargs)
@@ -44,6 +81,23 @@ def stack_return_wrapper(f: Callable) -> Callable:
 
 
 def pop_return_wrapper(f: Callable) -> Callable:
+    """
+    Wrap a function that (potentially) returns a list of numpy arrays to instead return the 0th element of the output.
+
+    When the output of a function created by :func:`sympy.lambdify` is a single value, it is still returned as a list of
+    one element. This wrapper removes the list wrapper around scalar outputs.
+
+    Parameters
+    ----------
+    f: Callable
+        The function to wrap
+
+    Returns
+    -------
+    inner: Callable
+        The wrapped function
+    """
+
     @wraps(f)
     def inner(*args, **kwargs):
         values = np.array(f(*args, **kwargs))
@@ -56,6 +110,23 @@ def pop_return_wrapper(f: Callable) -> Callable:
 
 
 def array_return_wrapper(f: Callable) -> Callable:
+    """
+    Wrap a function to convert the output to a numpy array.
+
+    When working with compiled JAX functions, the output will be a JAX array. This wrapper converts the JAX array to a
+    numpy array, which is expected by e.g. scipy.optimize routines.
+
+    Parameters
+    ----------
+    f: Callable
+        The function to wrap
+
+    Returns
+    -------
+    inner: Callable
+        The wrapped function
+    """
+
     @wraps(f)
     def inner(*args, **kwargs):
         return np.array(f(*args, **kwargs))
@@ -148,6 +219,35 @@ def compile_to_numpy(
     pop_return: bool,
     **kwargs,
 ):
+    """
+    Convert a sympy function to a numpy function using :func:`sympy.lambdify`.
+
+    Parameters
+    ----------
+    inputs: list[sp.Symbol]
+        The inputs to the function.
+    outputs: list[Union[sp.Symbol, sp.Expr]]
+        The outputs of the function.
+    cache: dict
+        Mapping between sympy variables and pytensor variables. Ignored by this function; included for compatibility
+        with other compile functions.
+    stack_return: bool
+        If True, the function will return a single numpy array with all outputs. Otherwise it will return a list
+        of numpy arrays.
+    pop_return: bool
+        If True, the function will return only the 0th element of the output. Used to remove the list wrapper around
+        single-output functions.
+    kwargs: dict
+        Ignored, included for compatibility with other compile functions.
+
+    Returns
+    -------
+    f: Callable
+        The compiled function.
+    cache: dict
+        Pytensor caching information.
+    """
+
     f = sp.lambdify(inputs, outputs)
     if stack_return:
         f = stack_return_wrapper(f)
@@ -164,6 +264,34 @@ def compile_to_numba(
     pop_return: bool,
     **kwargs,
 ):
+    """
+    Convert a sympy function to a numba njit function using :func:`numba_lambdify`.
+
+    Parameters
+    ----------
+    inputs: list[sp.Symbol]
+        The inputs to the function.
+    outputs: list[Union[sp.Symbol, sp.Expr]]
+        The outputs of the function.
+    cache: dict
+        Mapping between sympy variables and pytensor variables. Ignored by this function; included for compatibility
+        with other compile functions.
+    stack_return: bool
+        If True, the function will return a single numpy array with all outputs. Otherwise it will return a list
+        of numpy arrays.
+    pop_return: bool
+        If True, the function will return only the 0th element of the output. Used to remove the list wrapper around
+        single-output functions.
+    kwargs: dict
+        Ignored, included for compatibility with other compile functions
+
+    Returns
+    -------
+    f: Callable
+        The compiled function.
+    cache: dict
+        Pytensor caching information.
+    """
     f = numba_lambdify(inputs, outputs, stack_outputs=stack_return)
     if pop_return:
         f = pop_return_wrapper(f)
@@ -179,6 +307,36 @@ def compile_to_pytensor_function(
     return_symbolic: bool,
     **kwargs,
 ):
+    """
+    Convert a sympy function to a pytensor function using :func:`pytensor.function`.
+
+    Parameters
+    ----------
+    inputs: list[sp.Symbol]
+        The inputs to the function.
+    outputs: list[Union[sp.Symbol, sp.Expr]]
+        The outputs of the function.
+    cache: dict
+        Dictionary mapping sympy symbols to pytensor symbols. Used to maintain namespace scope between different
+        compiled functions.
+    stack_return: bool
+        If True, the function will return a single numpy array with all outputs. Otherwise it will return a list
+        of numpy arrays.
+    pop_return: bool
+        If True, the function will return only the 0th element of the output. Used to remove the list wrapper around
+        single-output functions.
+    return_symbolic: bool
+        If True, the function will return a symbolic pytensor computation graph instead of a compiled function.
+    kwargs: dict
+        Additional keyword arguments to pass to :func:`pytensor.function`. Ignored if return_symbolic is True.
+
+    Returns
+    -------
+    f: Callable
+        The compiled function.
+    cache: dict
+        Pytensor caching information.
+    """
     kwargs = _configue_pytensor_kwargs(kwargs)
     cache = {} if cache is None else cache
 
@@ -215,11 +373,56 @@ def compile_to_pytensor_function(
     return f, cache
 
 
-def make_cache_key(name, cls):
-    return (name, cls, (), "floatX", ())
+def make_cache_key(name: str, cls: sp.Symbol) -> tuple:
+    """
+    Create a cache key for a sympy symbol.
+
+    Used by sympytensor to map sympy symbols to pytensor symbols without creating duplicate mappings.
+
+    Parameters
+    ----------
+    name: str
+        The name of the sympy symbol.
+    cls: sp.Symbol
+        Type of sympy symbol (e.g. sp.Symbol, sp.Idx, TimeAwareSymbol, etc)
+
+    Returns
+    -------
+    key: tuple
+        A tuple containing information about the sympy symbol.
+    """
+    return name, cls, (), "floatX", ()
 
 
-def make_return_dict_and_update_cache(input_symbols, output_tensors, cache, cls=None):
+def make_return_dict_and_update_cache(
+    input_symbols: list[sp.Symbol],
+    output_tensors: TensorVariable | list[TensorVariable],
+    cache: dict[tuple, TensorVariable],
+    cls: sp.Symbol | None = None,
+) -> tuple[dict, dict]:
+    """
+    Create a dictionary mapping from input symbols to output tensors, and update the cache.
+
+    Parameters
+    ----------
+    input_symbols: list[sp.Symbol]
+        Symbolic inputs to the function being compiled
+    output_tensors: TensorVariable | list[TensorVariable]
+        Output tensors of the function being compiled
+    cache: dict
+        Dictionary mapping sympy symbols to pytensor symbols, used to maintain a consistent namespace between
+        compiled functions
+    cls: sp.Symbol, optional
+        The type of the sympy symbol (e.g. sp.Symbol, sp.Idx, sp.IndexedBase, TimeAwareSymbol, etc). Default is sp.Symbol
+
+    Returns
+    -------
+    out_dict: dict
+        Dictionary mapping from input symbols to output tensors
+    cache: dict
+        Updated cache dictionary
+    """
+
     if cls is None:
         cls = sp.Symbol
     out_dict = {}

@@ -41,6 +41,7 @@ If you use gEconpy in your research, please cite the package using the following
 .. toctree::
    :maxdepth: 1
    :hidden:
+   :titlesonly:
 
    get_started/index
    user_guide/index

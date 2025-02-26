@@ -4,6 +4,27 @@ from sympy.core.cache import cacheit
 
 
 class TimeAwareSymbol(sp.Symbol):
+    """
+    Subclass of :class:`sympy.Symbol` with a time index.
+
+    A TimeAwareSymbol is identical to a :class:`symPy.Symbol` in all respects, except that it has a
+    time index property that is used when determining equality and hashability. Two symbols with the same name,
+    assumptions, and time index evaluate to equal.
+
+    Examples
+    --------
+
+    .. code-block:: python
+
+        from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+        x1 = TimeAwareSymbol("x", time_index=1)
+        x2 = TimeAwareSymbol("x", time_index=2)
+
+        print(x1 == x2)  # False, time indexes are different
+        print(x1 == x2.set_t(1))  # True, time indexes are the same
+        print(x1.step_forward() == x2)  # True, time indexes are the same
+    """
+
     __slots__ = ("time_index", "base_name", "__dict__")
     time_index: int | str
     base_name: str
@@ -69,21 +90,48 @@ class TimeAwareSymbol(sp.Symbol):
         )
 
     def step_forward(self):
+        """
+        Increment the time index by one.
+        """
         obj = TimeAwareSymbol(self.base_name, self.time_index + 1, **self.assumptions0)
         return obj
 
     def step_backward(self):
+        """
+        Decrement the time index by one.
+        """
         obj = TimeAwareSymbol(self.base_name, self.time_index - 1, **self.assumptions0)
         return obj
 
     def to_ss(self):
+        """
+        Set the time index to steady state.
+
+        Once in the steady state, :meth:`step_forward` and :meth:`step_backward` will not change the time index.
+        """
         obj = TimeAwareSymbol(self.base_name, "ss", **self.assumptions0)
         return obj
 
     def exit_ss(self):
-        obj = TimeAwareSymbol(self.base_name, 0, **self.assumptions0)
+        """
+        Set the time index to zero if in the steady state, otherwise do nothing.
+        """
+        if self.time_index == "ss":
+            obj = TimeAwareSymbol(self.base_name, 0, **self.assumptions0)
+        else:
+            obj = self
         return obj
 
     def set_t(self, t):
+        """
+        Set the time index to a specific value.
+
+        Parameters
+        ----------
+        t: int | str
+            The time index to set. If str, must be "ss" .
+        """
+        if isinstance(t, str) and t != "ss":
+            raise ValueError("Time index must be an integer or 'ss'.")
         obj = TimeAwareSymbol(self.base_name, t, **self.assumptions0)
         return obj

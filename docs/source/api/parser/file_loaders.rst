@@ -6,5 +6,3 @@ File Loaders
 
 .. autosummary::
     :toctree: generated
-
-    load_gcn

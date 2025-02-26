@@ -13,6 +13,7 @@ import sympy as sp
 import xarray as xr
 
 from better_optimize import minimize, root
+from preliz.distributions.distributions import Distribution
 from scipy import linalg
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
@@ -271,6 +272,14 @@ def validate_user_steady_state_simple(
 
 
 class Model:
+    """
+    A Dynamic Stochastic General Equlibrium (DSGE) Model
+
+    A ``Model`` is a container class for a DSGE model. It has two primary functions: to store all model primitives
+    (variables, parameters, shocks, equations, etc.), and to store compiled functions used to solve the model.
+
+    """
+
     def __init__(
         self,
         variables: list[TimeAwareSymbol],
@@ -281,7 +290,7 @@ class Model:
         hyper_param_dict: SymbolDictionary,
         deterministic_dict: SymbolDictionary,
         calib_dict: SymbolDictionary,
-        priors: tuple | None,
+        priors: dict[str, Distribution],
         f_params: Callable[[np.ndarray, ...], SymbolDictionary],
         f_ss_resid: Callable[[np.ndarray, ...], float],
         f_ss: Callable[[np.ndarray, ...], SymbolDictionary],
@@ -295,7 +304,10 @@ class Model:
         is_linear: bool = False,
     ) -> None:
         """
-        A Dynamic Stochastic General Equlibrium (DSGE) Model
+        Container class for DSGE model primitives and compiled functions.
+
+        In general, users should not need to instantiate this class directly. Instead, use
+         :func:`gEconpy.model.build.model_from_gcn` to create a model from a GCN file.
 
         Parameters
         ----------
@@ -309,6 +321,14 @@ class Model:
             Dictionary of parameters in the model
         hyper_param_dict: SymbolDictionary
             Dictionary of parameters used by shock distributions
+        deterministic_dict: SymbolDictionary
+            Dictionary of parameters defined as deterministic functions of other parameters, mapping the
+            deterministic parameter Symbols to the expressions defining them.
+        calib_dict: SymbolDictionary
+            Dictionary of parameters defined as functions of steady-state variables, mapping the calibrated parameter
+            Symbols to the expressions defining them.
+        priors: dict[str, Distribution]
+            Dictionary of prior distributions for the model parameters
         f_params: Callable
             Function that returns a dictionary of parameter values given a dictionary of parameter values
         f_ss_resid: Callable
@@ -335,24 +355,27 @@ class Model:
             Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
             the Hessian-vector product of the error function f_ss_error with respect to the steady-state variable values x_ss
 
-
         f_ss_jac: Callable, optional
+            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
+            the Jacobian of the system of model equations f(x_ss, theta) = 0 with respect to the steady-state variable
+            values x_ss.
 
         f_linearize: Callable, optional
-
+            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
+            the first-order approximation of the model around the steady state.
         """
 
-        self.variables = variables
-        self.shocks = shocks
-        self.equations = equations
-        self.params = list(param_dict.to_sympy().keys())
+        self._variables = variables
+        self._shocks = shocks
+        self._equations = equations
+        self._params = list(param_dict.to_sympy().keys())
         self.is_linear = is_linear
 
-        self.hyper_params = list(hyper_param_dict.to_sympy().keys())
-        self.deterministic_params = list(deterministic_dict.to_sympy().keys())
-        self.calibrated_params = list(calib_dict.to_sympy().keys())
+        self._hyper_params = list(hyper_param_dict.to_sympy().keys())
+        self._deterministic_params = list(deterministic_dict.to_sympy().keys())
+        self._calibrated_params = list(calib_dict.to_sympy().keys())
 
-        self.steady_state_relationships = steady_state_relationships
+        self._steady_state_relationships = steady_state_relationships
 
         self._all_names_to_symbols = {
             get_name(x, base_name=True): x
@@ -365,7 +388,7 @@ class Model:
             )
         }
 
-        self.priors = priors
+        self._priors = priors
 
         self._default_params = param_dict.copy()
         self.f_params = f_params
@@ -383,7 +406,110 @@ class Model:
             f_linearize = override_dummy_wrapper(f_linearize, "not_loglin_variable")
         self.f_linearize = f_linearize
 
-    def parameters(self, **updates: float):
+    @property
+    def variables(self) -> list[TimeAwareSymbol]:
+        """
+        List of variables in the model, stored as Sympy symbols.
+
+        Variables are associated with the model;s endogenous states, identified by the presence of a time subscript.
+        """
+        return self._variables
+
+    @property
+    def shocks(self) -> list[TimeAwareSymbol]:
+        """
+        List of shocks in the model, stored as Sympy symbols.
+
+        Shocks are exogenous variables in the model, and the source of stochasticity in the model.
+        """
+        return self._shocks
+
+    @property
+    def equations(self) -> list[sp.Expr]:
+        """
+        List of equations in the model, stored as Sympy expressions.
+        """
+        return self._equations
+
+    @property
+    def params(self) -> list[sp.Symbol]:
+        """
+        List of parameters in the model, stored as Sympy ``Symbol``s.
+
+        Parameters are fixed values in the model, associated with the structural equations of the model. These are
+        sometimes called "deep parameters" because of their (supposed) microeconomic foundations.
+        """
+        return self._params
+
+    @property
+    def hyper_params(self) -> list[sp.Symbol]:
+        """
+        List of hyperparameters in the model, stored as Sympy ``Symbol``s.
+
+        Hyperparameters are parameters associated with the distribution of shocks in the model, for example the
+        standard deviation of a normally distributed shock.
+        """
+        return self._hyper_params
+
+    @property
+    def deterministic_params(self) -> list[sp.Symbol]:
+        """
+        List of deterministic parameters in the model, stored as Sympy ``Symbol``s.
+
+        Deterministic parameters are parameters defined as functions of other parameters in the model. They are
+        not directly calibrated, but are instead derived deterministically from other parameters.
+        """
+        return self._deterministic_params
+
+    @property
+    def priors(self) -> dict[str, Distribution]:
+        """
+        Dictionary of prior distributions for the model parameters.
+
+        The dictionary keys are parameter names, and the values are instances of a subclass of ``Distribution``.
+        """
+        return self._priors
+
+    @property
+    def calibrated_params(self) -> list[sp.Symbol]:
+        """
+        List of calibrated parameters in the model, stored as Sympy ``Symbol``s.
+
+        Calibrated parameters are pseudo-parameters whose values are an implicit function of the model parameters.
+        Each calibrated parameter must be associated with a function of steady-state variables. This function is added
+        to the model equations when solving for the steady state, and the calibrated parameter is then solved for
+        numerically.
+        """
+        return self._calibrated_params
+
+    @property
+    def steady_state_relationships(self) -> list[sp.Eq]:
+        """
+        List of model equations, evaluated at the deterministic steady state
+        """
+
+        return self._steady_state_relationships
+
+    def parameters(self, **updates: float) -> SymbolDictionary[str, float]:
+        """
+        Compute the full set of free parameters for the model, including deterministic parameters.
+
+        Calibrated parameters are not returned by this function. These are computed as part of the steady-state
+        solution.
+
+        If a parameter is not provided in the updates, the default value (as defined in the model GCN file) is used.
+
+        Parameters
+        ----------
+        updates: float
+            Parameters to update. These are passed as keyword arguments, with the parameter name as the keyword and the
+            new value as the value.
+
+        Returns
+        -------
+        SymbolDictionary
+            Dictionary of parameter names and values.
+        """
         # Remove deterministic parameters for updates. These can appear **self.parameters() into a fitting function
         deterministic_names = [x.name for x in self.deterministic_params]
         updates = {k: v for k, v in updates.items() if k not in deterministic_names}
@@ -399,7 +525,20 @@ class Model:
 
     def get(self, name: str) -> sp.Symbol:
         """
-        Get a variable or parameter by name
+        Get a model variable or parameter by name.
+
+        Variables are returned as TimeAwareSymbols, and parameters are returned as regular Sympy Symbols. If the name
+        ends with "_ss", the steady-state version of the variable is returned.
+
+        Parameters
+        ----------
+        name: str
+            Name of the variable or parameter to retrieve
+
+        Returns
+        -------
+        sp.Symbol
+            The requested variable or parameter.
         """
         ss_requested = name.endswith("_ss")
         name = name.removesuffix("_ss")
@@ -456,9 +595,21 @@ class Model:
         jitter_x0: bool = False,
         **updates: float,
     ) -> SteadyStateResults:
-        """
+        r"""
         Solve for the deterministic steady state of the DSGE model
 
+        A steady state is defined as the fixed point in the system of  nonlinear equations that describe the model's
+        equilibrium. Given a system of model equations :math:`F(x_{t+1}, x_t, x_{t-1}, \varepsilon_t)`, the steady state
+        is defined as a state vector :math:`\bar{x}` such that
+
+        .. math::
+
+            F(\bar{x}, \bar{x}, \bar{x}, 0) = 0
+
+        where :math:`0` is the zero vector. At the point :math:`\bar{x}`, the system will not change, absent an
+        exogenous shock.
+
+        The steady state is a key concept in DSGE modeling, as it is the point around which the model is linearized.
 
         Parameters
         ----------
@@ -822,6 +973,118 @@ class Model:
         verbose: bool = True,
         **parameter_updates,
     ):
+        r"""
+        Linearize the model around the deterministic steady state.
+
+        Parameters
+        ----------
+        order: int, default: 1
+            Order of the Taylor expansion to use. Currently only first order linearization is supported.
+        log_linearize: bool, default: True
+            If True, all variables are log-linearized. If False, all variables are left in levels.
+        not_loglin_variables: list of strings, optional
+            List of variables to not log-linearize. If provided, these variables will be left in levels, while all
+            others will be log-linearized. Ignored if log_linearize is False.
+        steady_state: dict, optional
+            Dictionary of steady-state values. If provided, these values will be used to linearize the model. If not
+            provided, the steady state will be solved for using the ``steady_state`` method.
+        loglin_negative_ss: bool, default: False
+            If True, variables with negative steady-state values will be log-linearized. While technically possible,
+            this is not recommended, as it can lead to incorrect results. Ignored if log_linearize is False.
+        steady_state_kwargs: dict, optional
+            Keyword arguments passed to the ``steady_state`` method. Ignored if a steady-state solution is provided
+        verbose: bool, default: True
+            Flag indicating whether to print the linearization results to the terminal.
+        parameter_updates: dict
+            New parameter values at which to linearize the model. Unspecified values will be taken from the initial
+            values set in the GCN file.
+
+            .. warning::
+
+                If a steady state is provided, these values will *not* be used to update that solution! This can lead
+                to an inconsistent linearization. The user is responsible for ensuring consistency in this case.
+
+        Returns
+        -------
+        A: np.ndarray
+            Jacobian matrix of the model with respect to :math:`x_{t+1}` evaluated at the steady state, right-multiplied
+            by the diagonal matrix :math:`T`.
+        B: np.ndarray
+            Jacobian matrix of the model with respect to :math:`x_t` evaluated at the steady state, right-multiplied
+            by the diagonal matrix :math:`T`.
+        C: np.ndarray
+            Jacobian matrix of the model with respect to :math:`x_{t-1}` evaluated at the steady state, right-multiplied
+            by the diagonal matrix :math:`T`.
+        D: np.ndarray
+            Jacobian matrix of the model with respect to :math:`\varepsilon_t` evaluated at the steady state.
+
+        Examples
+        --------
+        Given a DSGE model of the form:
+
+        .. math::
+
+            F(x_{t+1}, x_t, x_{t-1}, \varepsilon_t) = 0
+
+        The "solution" to the model would be a policy function :math:`g(x_t, \varepsilon_t)`, such that:
+
+        .. math::
+
+            x_{t+1} = g(x_t, \varepsilon_t)
+
+        With the exception of toy models, this policy function is not available in closed form. Instead, the model is
+        linearized around the deterministic steady state, which is a fixed point in the system of equations. The linear
+        approximation to the model is then used to approximate the policy function. Let :math:`\bar{x}` denote the
+        deterministic steady state such that:
+
+        .. math::
+
+            F(\bar{x}, \bar{x}, \bar{x}, 0) = 0.
+
+        A first-order Taylor expansion about (:math:`\bar{x}`, :math:`\bar{x}`, :math:`\bar{x}`, 0) yields
+
+        .. math::
+
+            A (x_{t+1} - \bar{x}) + B (x_t - \bar{x}) + C (x_{t-1} - \bar{x}) + D \varepsilon_t = 0,
+
+        where the Jacobian matrices evaluated at the steady state are
+
+        .. math::
+
+            A = \left .\ frac{\partial F}{\partial x_{t+1}} \right |_{(\bar{x},\bar{x},\bar{x},0)}, \quad
+            B = \left .\ frac{\partial F}{\partial x_t} \right |_{(\bar{x},\bar{x},\bar{x},0)}, \quad
+            C = \left .\ frac{\partial F}{\partial x_{t-1}} \right|_{(\bar{x},\bar{x},\bar{x},0)}, \quad
+            D = \left .\ frac{\partial F}{\partial \varepsilon_t} \right|_{(\bar{x},\bar{x},\bar{x},0)}
+
+        It is common to perform a change of variables to log-linearize the model. Define a log-state vector,
+        :math:`\tilde{x}_t = \log(x_t)`, with steady state :math:`\tilde{x}_{ss} = \log(\bar{x})`. We get back to the
+        original variables by exponentiating the log-state vector.
+
+        .. math::
+
+            F(\exp(\tilde{x}_{t+1}), \exp(\tilde{x}_t), \exp(\tilde{x}_{t-1}), \varepsilon_t) = 0
+
+        Taking derivaties with respect to :math:`\tilde{x}_t`, the linearized model is then:
+
+        .. math::
+
+            A \exp(\tilde{x}_{ss}) (\tilde{x}_{t+1} - \tilde{x}_{ss}) + B \exp(\tilde{x}_{ss}) (\tilde{x}_t - \tilde{x}_{ss}) + C \exp(\tilde{x}_{ss}) (\tilde{x}_{t-1} - \tilde{x}_{ss}) + D \varepsilon_t = 0
+
+        Note that :math:`\tilde{x} - \tilde{x}_{ss} = \log(x - \bar{x}) = \log \left (\frac{x}{\bar{x}} \right )` is
+        the approximate percent deviation of the variable from its steady state.
+
+        The above derivation holds on a variable-by-variable basis. Some variables can be logged and others left in
+        levels, all that is required is right-multiplication by a diagonal matrix of the form:
+
+        .. math::
+
+            T = \text{Diagonal}(\{h(x_1), h(x_2), \ldots, h(x_n)\})
+
+        Where :math:`h(x_i) = 1` if the variable is left in levels, and :math:`h(x_i) = \exp(\tilde{x}_{ss})` if the
+        variable is logged. This function returns the matrices :math:`AT`, :math:`BT`, :math:`CT`, and :math:`D`.
+
+
+        """
         if order != 1:
             raise NotImplementedError(
                 "Only first order linearization is currently supported."
@@ -874,9 +1137,8 @@ class Model:
         on_failure="error",
         **parameter_updates,
     ) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """
-        Solve for the linear approximation to the policy function via perturbation. Adapted from R code in the gEcon
-        package by Grzegorz Klima, Karol Podemski, and Kaja Retkiewicz-Wijtiwiak., http://gecon.r-forge.r-project.org/.
+        r"""
+        Solve for the linear approximation to the policy function via perturbation.
 
         Parameters
         ----------
@@ -899,7 +1161,7 @@ class Model:
         loglin_negative_ss: bool, default is False
             Whether to force log-linearization of variable with negative steady-state. This is impossible in principle
             (how can :math:`exp(x_ss)` be negative?), but can still be done; see the docstring for
-            :fun:`perturbation.linearize_model` for details. Use with caution, as results will not correct. Ignored if
+            :func:`perturbation.linearize_model` for details. Use with caution, as results will not correct. Ignored if
             log_linearize is False.
         tol: float, default 1e-8
             Desired level of floating point accuracy in the solution
@@ -923,6 +1185,122 @@ class Model:
         R: np.ndarray, optional
             Selection matrix, approximated to the requested order. Represents the state- and agent-conditional
             transmission of stochastic shocks through the economy. If the solver fails, None is returned instead.
+
+        Examples
+        --------
+        This method solves the model by linearizing it around the deterministic steady state, and then solving for the
+        policy function using a perturbation method. We begin with a model defined as a function of the form:
+
+        .. math::
+            \mathbb{E} \left [ F(x_{t+1}, x_t, x_{t-1}, \varepsilon_t) \right ] = 0
+
+        The linear approximation is then given by the matrices :math:`A`, :math:`B`, :math:`C`, and :math:`D`, as:
+
+        .. math::
+
+            A \hat{x}_{t+1} + B \hat{x}_t + C \hat{x}_{t-1} + D \varepsilon_t = 0
+
+        where :math:`\hat{x}_t = x_t - \bar{x}` is the deviation of the state vector from its steady state (again,
+        potentially in logs). A solution to the model seeks a function:
+
+        .. math::
+
+            x_t = g(x_{t-1}, \varepsilon_t)
+
+        This implies that :math:`x_{t+1} = g(x_t, \varepsilon_{t+1})`, allowing us to write the model as:
+
+        .. math::
+
+            F_g(x_{t-1}, \varepsilon_t, \varepsilon_{t+1}) = f(g(g(x_{t-1}, \varepsilon_t), \varepsilon_{t+1}), g(x_{t-1}, \varepsilon_t), x_{t-1}, \varepsilon_t) = 0
+
+        To lighten notation, define:
+
+        .. math::
+
+            u = \varepsilon_t, \quad u_+ = \varepsilon_{t+1}, \quad \hat{x} = x_{t-1} - \bar{x} \\
+            f_{x_+} = \left. \frac{\partial F_g}{\partial x_{t+1}} \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \quad f_x = \left. \frac{\partial F_g}{\partial x_t}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \\
+            f_{x_-} = \left. \frac{\partial F_g}{\partial x_{t-1}}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \quad f_u = \left. \frac{\partial F_g}{\partial u}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0} \\
+            g_x = \left. \frac{\partial g}{\partial x_{t-1}}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \quad g_u = \left. \frac{\partial g}{\partial \varepsilon_t}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}
+
+        Under this new notation, the system is:
+
+        .. math::
+            F_g(x_-, u, u_+) = f(g(g(x_-, u), u_+), g(x, u), x_-, u) = 0
+
+        The function :math:`g` is unknown, but is implicitly defined by this expression, and can be approximated by a
+        first order Taylor expansion around the steady state. The linearized system is then:
+
+        .. math::
+
+            0 \approx F_g(x_-, u, u_+) = f_{x_+} (g_x (g_x \hat{x} + g_u u) + g_u u_+) + f_x (g_x \hat{x} + g_u u) + f_{x_-} \hat{x} + f_u u
+
+        The Jacobian matrices :math:`f_{x_+}`, :math:`f_x`, :math:`f_{x_-}`, and :math:`f_u` are the matrices :math:`A`,
+        :math:`B`, :math:`C`, and :math:`D` respectively, evaluated at the steady state, and are thus known. The task
+        is then to solve for unknown matrices :math:`g_x` and :math:`g_u`, which will give a linear approximation to the
+        optimal policy function.
+
+        Take expectations, and impose that :math:`\mathbb{E}_t[u_+] = 0`:
+
+        .. math::
+            \begin{align}
+            0 \approx & f_{x_+} (g_x(g_x \hat{x} + g_u u) + g_u \mathbb{E}_t[u_+]) + f_x (g_x \hat{x} + g_u u) + f_{x_-} \hat{x} + f_u u \\
+            \approx & (f_{x_+} g_x g_x + f_x g_x + f_{x_-})\hat{x} + (f_{x_+} g_x g_u + f_x g_u + f_u) u
+            \end{align}
+
+        For the system to be equal to zero, both coefficient matrices must be zero, which gives us two linear equations
+        in the unknowns :math:`g_x` and :math:`g_u`:
+
+        .. math::
+
+            \begin{align}
+            (f_{x_+} g_x g_x + f_x g_x + f_{x_-}) \hat{x} &= 0 \\
+            (f_{x_+} g_x g_u + f_x g_u + f_u) u &= 0
+            \end{align}
+
+        Assuming :math:`g_x` has been solved for, the coefficient in the second equation can be directly solved for,
+        giving:
+
+        .. math::
+            g_u = -(f_{x_+} g_x + f_x)^{-1} f_u = 0
+
+        The first equation, on the other hand, is a quadratic in :math:`g_x`, and cannot be solved for directly. Instead,
+        we employ trickery. Then the equation can be re-written as a linear system in two states:
+
+        .. math::
+            \begin{align}
+            \begin{bmatrix} 0 & f_{x_+} \\ I & 0 \end{bmatrix} \begin{bmatrix} g_x g_x \\ g_x \end{bmatrix} \hat{x} &= \begin{bmatrix} -f_x & -f_{x_-} \\ I & 0 \end{bmatrix} \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x} \\
+            D \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x} &= E \begin{matrix} g_x \\ I \end{matrix} \hat{x} \\
+            QTZ \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x} &= QSZ \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x} \\
+            TZ \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x} &= SZ \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x}
+            \end{align}
+
+        The last two lines use the QZ decomposition of the pencil :math:`<D, E>` into upper triangular matrix :math:`T` and
+        quasi-upper triangular matrix :math:`S`, and the orthogonal matrices :math:`Z` and :math:`Q`. :math:`T` and
+        :math:`S` have structure that can be exploited. In particular, they are arranged so that the eigenvalues of the
+        pencil :math:`<D, E>` are sorted in modulus from smallest (stable) to largest (unstable).
+
+        Partitioning the rows of the matrices by eign-stability, and the columns by the size of :math:`g_x`, we get:
+
+        .. math::
+
+            \begin{bmatrix} T_{11} & T_{12} \\ 0 & T_{22} \end{bmatrix} \begin{bmatrix} Z_{11} & Z_{12} \\ Z_{21} & Z_{22} \end{bmatrix} \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x} = \begin{bmatrix} S_{11} & S_{12} \\ 0 & S_{22} \end{bmatrix} \begin{bmatrix} Z_{11} & Z_{12} \\ Z_{21} & Z_{22} \end{bmatrix} \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x}
+
+        For the system to the stable, we require that:
+
+        .. math::
+
+            Z_{21} + Z_{22} g_x = 0
+
+        And thus:
+
+        .. math::
+
+            g_x = -Z_{22}^{-1} Z_{21}
+
+        This requires that -Z_{22} is square and invertible, which are known as the *rank* and *stability* conditions of
+        Blanchard and Kahn (1980). If these conditions are not met, the model is indeterminate, and a solution is not
+        possible.
+
         """
         if on_failure not in ["error", "ignore"]:
             raise ValueError(
@@ -1339,7 +1717,7 @@ def check_bk_condition(
 ) -> bool | pd.DataFrame | None:
     """
     Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
-    unstable eigenvalues (|v| > 1) should not be greater than the number of forward-looking variables. Failing
+    unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of forward-looking variables. Failing
     this test suggests timing problems in the definition of the model.
 
     Parameters
@@ -1372,11 +1750,12 @@ def check_bk_condition(
     -------
     bk_result, bool or pd.DataFrame, optional.
         Return value requested. Datatype corresponds to what was requested in the ``return_value`` argument:
+
         - None, If return_value is 'none'
-        - condition_satisfied, bool, if return_value is 'bool', returns True if the Blanchard-Kahn condition is
+        - condition_satisfied, bool;  if return_value is 'bool', returns True if the Blanchard-Kahn condition is
           satisfied, False otherwise.
         - Eigenvalues, pd.DataFrame, if return_value is 'df', returns a dataframe containing the real and imaginary
-          components of the system's, eigenvalues, along with their modulus.
+          components of the system's eigenvalues, along with their modulus.
     """
 
     A, B, C, D = _maybe_linearize_model(
@@ -1577,11 +1956,12 @@ def impulse_response_function(
     shock_size : float, array, or dict; default=None
         The size of the shock applied to the system. If specified, it will create a covariance
         matrix for the shock with diagonal elements equal to `shock_size`:
-            -  If float, the covariance matrix will be the identity matrix, scaled by `shock_size`.
-            -  If array, the covariance matrix will be ``diag(shock_size)``. In this case, the length of the provided array
-            must match the number of shocks in the state space model.
-            -  If dictionary, a diagonal matrix will be created with entries corresponding to the keys in the dictionary.
-               Shocks which are not specified will be set to zero.
+
+            - If float, the covariance matrix will be the identity matrix scaled by `shock_size`.
+            - If array, the covariance matrix will be ``diag(shock_size)``. In this case, the length of the
+              provided array must match the number of shocks in the state space model.
+            - If dictionary, a diagonal matrix will be created with entries corresponding to the keys in the
+              dictionary. Shocks that are not specified will be set to zero.
 
         Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
     shock_cov : Optional[np.ndarray], default=None

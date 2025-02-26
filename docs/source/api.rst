@@ -5,12 +5,14 @@ API
 
 .. toctree::
     :maxdepth: 1
+    :titlesonly:
 
     api/classes
-    api/parser
-    api/estimation
-    api/solvers
-    api/sampling
-    api/plotting
-    api/shared
+    api/dynare_convert
     api/exceptions
+    api/model
+    api/numbaf
+    api/parser
+    api/plotting
+    api/solvers
+    api/utilities

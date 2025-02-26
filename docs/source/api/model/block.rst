@@ -2,7 +2,7 @@
 Block
 *****
 
-.. automodule:: gEconpy.classes.block
+.. automodule:: gEconpy.model.block
 
 .. autosummary::
     :toctree: generated/

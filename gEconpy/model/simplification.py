@@ -47,13 +47,30 @@ def simplify_tryreduce(
 ) -> tuple[list[sp.Expr], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     """
     Attempt to reduce the number of equations in the system by removing equations requested in the `tryreduce`
-    block of the GCN file. Equations are considered safe to remove if they are "self-contained" that is, if
+    block of the GCN file.
+
+    Equations are considered safe to remove if they are "self-contained" that is, if
     no other variables depend on their values.
+
+    Parameters
+    ----------
+    try_reduce_vars : list
+        The list of variables to try to reduce.
+    equations : list
+        The list of equations to simplify.
+    variables : list
+        The list of all variables in the system.
+    tryreduce_sub_dict : dict, optional
+        A dictionary of substitutions to use when attempting to reduce the system. The default is None.
 
     Returns
     -------
-    list
-        The names of the variables that were removed. If reduction was not possible, None is returned.
+    reduced_equations: list of sp.Expr
+        The simplified list of equations.
+    reduced_variables: list of sp.Symbol
+        The variables that remain in the system.
+    eliminated_vars: list of :class:`sympy.Symbol`
+        The variables that were removed.
     """
     n_equations = len(equations)
     n_variables = len(variables)
@@ -111,17 +128,28 @@ def simplify_constants(
     equations: list[sp.Expr], variables: list[TimeAwareSymbol]
 ) -> tuple[list[sp.Expr], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     """
-    Simplify the system by removing variables that are deterministically defined as a known value. Common examples
-    include P[] = 1, setting the price level of the economy as the numeraire, or B[] = 0, putting the bond market
-    in net-zero supply.
+    Simplify the system by removing variables that are deterministically defined as a known value.
 
-    In these cases, the variable can be replaced by the deterministic value after all FoC
-    have been computed.
+    Common examples include ``P[] = 1``, setting the price level of the economy as the numeraire, or ``B[] = 0``,
+    putting the bond market in net-zero supply. In these cases, the variable can be replaced by the deterministic
+    value after all FoC have been computed.
+
+    Parameters
+    ----------
+    equations : list
+        The list of equations to simplify.
+    variables : list
+        The list of all variables in the system.
 
     Returns
     -------
-    eliminated_vars : List[str]
-        The names of the variables that were removed.
+    reduced_equations: list of sp.Expr
+        The simplified list of equations.
+    reduced_variables: list of sp.Symbol
+        The variables that remain in the system.
+    eliminated_vars: list of :class:`sp.Symbol`
+        The variables that were removed.
+
     """
     n_equations = len(equations)
     n_variables = len(variables)
