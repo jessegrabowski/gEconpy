@@ -15,7 +15,7 @@ dependencies:
   - arviz
   - statsmodels
   - pymc
-  - pytensor
+  - pytensor<2.28
   - preliz
 
   # Testing dependencies
