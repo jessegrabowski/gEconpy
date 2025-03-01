@@ -13,6 +13,7 @@ import sympy as sp
 import xarray as xr
 
 from preliz.distributions.distributions import Distribution
+from pymc.model.transform.optimization import freeze_dims_and_data
 from pymc.pytensorf import rewrite_pregrad
 from pymc_extras.statespace.core.statespace import PyMCStateSpace
 from pymc_extras.statespace.models.utilities import make_default_coords
@@ -532,6 +533,7 @@ def data_from_prior(
     index: pd.DatetimeIndex | None = None,
     n_samples: int = 500,
     pct_missing: float = 0,
+    random_seed: np.random.Generator | int | None = None,
 ) -> tuple[xr.Dataset, pd.DataFrame, az.InferenceData]:
     """
     Generate artificial data from prior predictive samples. Also modifies the pymc model and the statespace model
@@ -550,6 +552,8 @@ def data_from_prior(
         Number of prior predictive samples to draw.
     pct_missing: float
         Percentage of missing data to introduce into the generated data. Must be between 0 and 1.
+    random_seed: np.random.Generator or int, optional
+        Random number generator to use for sampling. If None, the default numpy random number generator is used.
 
     Returns
     -------
@@ -560,6 +564,7 @@ def data_from_prior(
     prior_idata: az.InferenceData
         Draws from the prior predictive distribution, plus conditional prior predictive samples.
     """
+    rng = np.random.default_rng(random_seed)
 
     if index is None:
         index = pd.date_range(start="1980-01-01", end="2024-11-01", freq="QS-OCT")
@@ -568,8 +573,11 @@ def data_from_prior(
     )
     dummy_data.index.freq = dummy_data.index.inferred_freq
 
-    with pymc_model:
-        if "data" not in pymc_model:
+    # Copy the model so the original model is unchanged
+    new_model = pymc_model.copy()
+
+    with new_model:
+        if "data" not in new_model:
             statepace_mod.build_statespace_graph(
                 dummy_data,
                 add_bk_check=False,
@@ -580,15 +588,20 @@ def data_from_prior(
         else:
             pm.set_data({"data": dummy_data.fillna(-9999)})
 
-        with warnings.catch_warnings(action="ignore"):
-            prior_idata = pm.sample_prior_predictive(n_samples)
+    with warnings.catch_warnings(action="ignore"):
+        with freeze_dims_and_data(new_model):
+            prior_idata = pm.sample_prior_predictive(
+                n_samples, compile_kwargs={"mode": "JAX"}, random_seed=rng
+            )
 
     with warnings.catch_warnings(action="ignore"):
-        prior_trajectories = statepace_mod.sample_unconditional_prior(prior_idata)
+        prior_trajectories = statepace_mod.sample_unconditional_prior(
+            prior_idata, random_seed=rng
+        )
 
     prior_idata["unconditional_prior"] = prior_trajectories
 
-    idx = np.random.choice(prior_idata.prior.coords["draw"].values)
+    idx = rng.choice(prior_idata.prior.coords["draw"].values)
 
     true_params = prior_idata.prior.isel(chain=0, draw=idx)
     true_params["param_idx"] = idx
@@ -605,11 +618,12 @@ def data_from_prior(
     if pct_missing > 0:
         n_missing = int(data.shape[0] * pct_missing)
         for col in data:
-            missing_idxs = np.random.choice(data.index, size=n_missing, replace=False)
+            missing_idxs = rng.choice(data.index, size=n_missing, replace=False)
             data.loc[missing_idxs, col] = np.nan
 
-    with pymc_model:
-        pm.set_data({"data": data.fillna(-9999)})
-        statepace_mod._fit_data = data
+    # Reset the statespace model so the user can call build_statespace_graph with the new data
+    statepace_mod._fit_data = None
+    statepace_mod._fit_dims = None
+    statepace_mod._fit_coords = None
 
     return true_params, data, prior_idata
