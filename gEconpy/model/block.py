@@ -826,3 +826,52 @@ class Block:
 
         # Update the variable list
         self._get_variable_list()
+
+    def __html_repr__(self) -> str:
+        """
+        Return an HTML representation of the block.
+
+        The block is rendered as a collapsible section with collapsible sub-sections for each component (definitions,
+        controls, objective, constraints, identities, shocks, calibration).
+        """
+
+        html_parts = []
+        html_parts.append(
+            f"<details class='block-info'><summary class='block-title'>Block: {self.name}</summary>"
+        )
+        html_parts.append("<div class='block-content'>")
+        prop_names = [
+            "definitions",
+            "controls",
+            "objective",
+            "constraints",
+            "identities",
+            "shocks",
+            "calibration",
+        ]
+        properties = {}
+        for prop in prop_names:
+            value = getattr(self, prop)
+            prop = prop.title()
+            if value is None:
+                continue
+            elif isinstance(value, list):
+                properties[prop] = [sp.Set([sp.cancel(x) for x in value])]
+            elif isinstance(value, dict):
+                properties[prop] = [sp.cancel(x) for x in value.values()]
+            else:
+                raise ValueError(f"Unexpected type for property {prop}")
+
+        for prop_label, prop in properties.items():
+            html_parts.append(
+                f"<details class='property-details'><summary>{prop_label}</summary>"
+            )
+            for item in prop:
+                latex_repr = f"\\({sp.latex(item)}\\)"
+                html_parts.append(f"<p>{latex_repr}</p>")
+            html_parts.append("</details>")
+
+        html_parts.append("</div>")  # close block-content
+        html_parts.append("</details>")  # close block-info
+
+        return "\n".join(html_parts)

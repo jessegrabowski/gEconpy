@@ -56,7 +56,7 @@ def load_gcn(gcn_path: str) -> str:
 def get_provided_ss_equations(
     raw_blocks: dict[str, str],
     assumptions: ASSUMPTION_DICT = None,
-) -> dict[str, sp.Expr]:
+) -> tuple[Block, dict[str, sp.Expr]]:
     """
     Extract user-provided steady state equations from the `raw_blocks` dictionary and store the resulting
     relationships in self.steady_state_relationships.
@@ -111,7 +111,7 @@ def get_provided_ss_equations(
 
     del raw_blocks[ss_key]
 
-    return provided_ss_equations
+    return block, provided_ss_equations
 
 
 def simplify_provided_ss_equations(
@@ -245,7 +245,7 @@ def prior_info_to_prior_dict(
 
 
 def parsed_model_to_data(
-    parsed_model: str, simplify_blocks: bool
+    parsed_model: str, simplify_blocks: bool, include_ss_block: bool = False
 ) -> tuple[
     dict[str, Block], ASSUMPTION_DICT, dict[str, str], list[str], dict[str, sp.Expr]
 ]:
@@ -258,11 +258,15 @@ def parsed_model_to_data(
         The GCN model as a string.
     simplify_blocks : bool
         Whether to try to simplify equations or not.
+    include_ss_block: bool
+        If True, the user-provided steady-state are included among the model blocks. Otherwise, the raw block
+        is discarded. Default is False.
 
     Returns
     -------
     blocks: dict[str, Block]
-        Dictionary of block names and block objects.
+        Dictionary of block names and block objects. If `include_ss_block` is True, the steady-state block is
+        included in the dictionary.
     assumptions: dict[str, dict[str, bool]]
         Dictionary of Sympy assumptions about model variables and parameters. Default is that variables are real, with
         unknown sign. See Sympy documentation for more details.
@@ -279,7 +283,10 @@ def parsed_model_to_data(
     raw_blocks, options, tryreduce, assumptions = split_gcn_into_dictionaries(
         parsed_model
     )
-    provided_ss_equations = get_provided_ss_equations(raw_blocks, assumptions)
+    ss_block, provided_ss_equations = get_provided_ss_equations(raw_blocks, assumptions)
+
+    if include_ss_block and ss_block:
+        block_dict[ss_block.name] = ss_block
 
     for block_name, block_content in raw_blocks.items():
         parsed_block_dict = parsed_block_to_dict(block_content)
@@ -293,7 +300,7 @@ def parsed_model_to_data(
 
 
 def gcn_to_block_dict(
-    gcn_path: str, simplify_blocks: bool
+    gcn_path: str, simplify_blocks: bool, include_ss_block=False
 ) -> tuple[
     dict[str, Block],
     ASSUMPTION_DICT,
@@ -305,7 +312,11 @@ def gcn_to_block_dict(
     raw_model = load_gcn(gcn_path)
     parsed_model, prior_dict = preprocess_gcn(raw_model)
     block_dict, assumptions, options, tryreduce, ss_solution_dict = (
-        parsed_model_to_data(parsed_model, simplify_blocks)
+        parsed_model_to_data(
+            parsed_model,
+            simplify_blocks=simplify_blocks,
+            include_ss_block=include_ss_block,
+        )
     )
 
     tryreduce = [single_symbol_to_sympy(x, assumptions) for x in tryreduce]

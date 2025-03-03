@@ -25,6 +25,7 @@ from gEconpy.model.model import (
 )
 from gEconpy.model.statespace import data_from_prior
 from gEconpy.model.steady_state import print_steady_state
+from gEconpy.parser.html import print_gcn_file
 
 _log = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ __version__ = get_versions()["version"]
 __all__ = [
     "model_from_gcn",
     "statespace_from_gcn",
+    "print_gcn_file",
     "simulate",
     "impulse_response_function",
     "summarize_perturbation_solution",

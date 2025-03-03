@@ -17,7 +17,6 @@ from gEconpy.exceptions import (
 )
 from gEconpy.model.block import Block
 from gEconpy.parser import constants, file_loaders, gEcon_parser
-from gEconpy.parser.file_loaders import block_dict_to_equation_list
 from gEconpy.utilities import set_equality_equals_zero, unpack_keys_and_values
 
 ROOT = Path(__file__).parent.absolute()
@@ -281,6 +280,16 @@ class BlockTestCases(unittest.TestCase):
             f"{self.block.initialized}, "
             f"solved: {self.block.system_equations is not None}",
         )
+
+    def test_html_repr(self):
+        html_string = self.block.__html_repr__()
+        self.assertIn("Block: HOUSEHOLD", html_string)
+        self.assertIn("<summary>Definitions</summary>", html_string)
+        self.assertIn("<summary>Identities</summary>", html_string)
+        self.assertIn("<summary>Objective</summary>", html_string)
+        self.assertIn("<summary>Controls</summary>", html_string)
+        self.assertIn("<summary>Calibration</summary>", html_string)
+        self.assertIn("class='block-info'", html_string)
 
     def test_attributes_present(self):
         for component in constants.BLOCK_COMPONENTS:
