@@ -51,6 +51,7 @@ dependencies = [
     "setuptools",
     "sympy<1.13",
     "sympytensor",
+    "ipython",
     "xarray",
   ]
 
