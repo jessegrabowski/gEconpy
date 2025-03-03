@@ -20,7 +20,10 @@ dependencies:
   - pymc-extras
   - better-optimize
   - preliz
+  - ipython
 
   - pip:
       - sympytensor
-      - gEconpy
+      - git+https://github.com/aseyboldt/nutpie.git@ccc87dfea93b430ca6517370ce9d733a68e441a5
+      - git+https://github.com/aseyboldt/flowjax.git@add-mvscale
+      - -e .

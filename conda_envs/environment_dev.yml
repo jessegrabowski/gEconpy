@@ -22,10 +22,12 @@ dependencies:
   - sympy<1.13
   - preliz
   - pip
+  - ipython
   - notebook<7
 
   # JAX, optional for now
   - jax
+  - blackjax
 #  - jaxlib=*=*cuda*
 
   # For building docs
@@ -49,12 +51,12 @@ dependencies:
   - pytest
   - pytest-env
   - pytest-cov
-
-  - pymc-extras
-  - better-optimize
+  - pandas-datareader
 
   - pip:
       - sympytensor
+      - numdifftools
       - git+https://github.com/aseyboldt/nutpie.git@ccc87dfea93b430ca6517370ce9d733a68e441a5
       - git+https://github.com/aseyboldt/flowjax.git@add-mvscale
-      - -e .
+      - git+https://github.com/pymc-devs/pymc-extras.git
+      - -e ../.

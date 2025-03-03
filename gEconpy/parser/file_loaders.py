@@ -56,7 +56,7 @@ def load_gcn(gcn_path: str) -> str:
 def get_provided_ss_equations(
     raw_blocks: dict[str, str],
     assumptions: ASSUMPTION_DICT = None,
-) -> tuple[Block, dict[str, sp.Expr]]:
+) -> tuple[Block | None, dict[str, sp.Expr]]:
     """
     Extract user-provided steady state equations from the `raw_blocks` dictionary and store the resulting
     relationships in self.steady_state_relationships.
@@ -80,7 +80,7 @@ def get_provided_ss_equations(
     n_ss_blocks = len(ss_block_names)
 
     if n_ss_blocks == 0:
-        return {}
+        return None, {}
     if n_ss_blocks > 1:
         raise MultipleSteadyStateBlocksException(ss_block_names)
 
