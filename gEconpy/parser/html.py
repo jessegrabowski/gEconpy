@@ -25,9 +25,6 @@ def get_css() -> str:
             margin: 0;
             padding: 0;
         }
-        .MathJax, .mjx-container {
-            font-size: 18px !important;
-        }
         /* The outer details element that makes the block collapsible */
         details.block-info {
             border: 1px solid #ddd;
