@@ -25,22 +25,30 @@ def get_css() -> str:
             margin: 0;
             padding: 0;
         }
-        /* The outer details element that makes the block collapsible */
-        details.block-info {
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            margin: 10px 0;
-            background-color: #f9f9f9;
-            /* Remove default padding so the background is unbroken */
+        /* Container for all model blocks */
+        .model-blocks {
             padding: 0;
         }
+        /* Top-level blocks inside the model-blocks container */
+        .model-blocks > details.block-info {
+            border: none;
+            padding: 0;
+            margin: 0;
+        }
+        .model-blocks > details.block-info:not(:last-child) {
+            border-bottom: 1px solid #ddd;
+        }
+        .model-blocks > details {
+            background-color: #f9f9f9;
+        }
+        /* Block title styling: make it span the full width and inherit background */
         details.block-info > summary.block-title {
             font-weight: bold;
             cursor: pointer;
             padding: 10px;
-            background-color: #f9f9f9;
-            border-bottom: 1px solid #ddd;
+            background-color: inherit;
             list-style: none;
+            margin: 0;
         }
         details.block-info > summary.block-title:hover {
             background-color: #e9e9e9;
@@ -114,8 +122,10 @@ def generate_html(blocks: list["Block"]) -> HTML:
     html_parts.append(get_css())
     html_parts.append("</head><body>")
 
+    html_parts.append("<div class='model-blocks'>")
     for block in blocks:
         html_parts.append(block.__html_repr__())
+    html_parts.append("</div>")
 
     html_parts.append("</body></html>")
 
