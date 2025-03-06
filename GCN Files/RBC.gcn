@@ -52,11 +52,11 @@ block HOUSEHOLD
 
 	calibration
 	{
-		beta ~ Beta(alpha=70, beta=4)       = 0.99;
-		delta  ~ Beta(alpha=2, beta=42)     = 0.02;
+		beta    ~ maxent(Beta(), lower=0.95, upper=0.999, mass=0.99)     = 0.99;
+		delta   ~ maxent(Beta(), lower=0.01, upper=0.05, mass=0.99)      = 0.02;
 
-		sigma_C ~ Gamma(alpha=7, beta=3)    = 1.5;
-		sigma_L	~ Gamma(alpha=7, beta=3)    = 2.0;
+		sigma_C ~ maxent(Gamma(), lower=1.01, upper=10.0, mass=0.99)    = 1.5;
+		sigma_L ~ maxent(Gamma(), lower=1.000, upper=10.0, mass=0.99)   = 2.0;
 	};
 };
 
@@ -85,7 +85,7 @@ block FIRM
 
     calibration
     {
-		alpha ~ Beta(alpha=2, beta=5) = 0.35;
+		alpha ~ maxent(Beta(), lower=0.2, upper=0.5, mass=0.99) = 0.35;
     };
 };
 
@@ -103,6 +103,6 @@ block TECHNOLOGY_SHOCKS
 
     calibration
     {
-		rho_A ~ Beta(mu=0.95, sigma=0.04) = 0.95;
+		rho_A ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.95;
     };
 };
