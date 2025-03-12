@@ -3,7 +3,7 @@ assumptions
 	positive
 	{
 		Y[], K[], C_NR[], C_R[],
-		w[], r[], mc_L[],
+		w[], r[],
 		L[], L_NR[], L_R[],
 		TFP[],
 		alpha, alpha_L, beta, sigma_C, sigma_L, delta;
