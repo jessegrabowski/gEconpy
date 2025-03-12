@@ -1,6 +1,6 @@
 import warnings
 
-from itertools import combinations_with_replacement
+from itertools import combinations_with_replacement, product
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import arviz as az
@@ -1262,6 +1262,46 @@ def plot_posterior_with_prior(
 
         if var_name in prior_dict:
             prior_dict[var_name].plot_pdf(ax=axis, legend=False, color="tab:orange")
+
+    return fig
+
+
+def plot_estimated_matrix(
+    idata,
+    dsge_mod,
+    matrix_name="state_chol_corr",
+    subplot_kwargs=None,
+    symmetrical: bool = True,
+):
+    n_shocks = dsge_mod.k_posdef
+    subplot_kwargs = subplot_kwargs or {}
+
+    fig, ax = plt.subplots(n_shocks, n_shocks, **subplot_kwargs)
+
+    mu = idata.posterior[matrix_name].mean(dim=["chain", "draw"])
+    hdi = az.hdi(idata.posterior[matrix_name]).state_chol_corr
+    ax[0, 0].set(xlim=(-1.05, 1.05), ylim=(-1.05, 1.05))
+
+    for i, j in product(range(n_shocks), range(n_shocks)):
+        axis = ax[i, j]
+        if i <= j and symmetrical:
+            axis.set_visible(False)
+            continue
+
+        y_var = dsge_mod.shocks[i].base_name
+        x_var = dsge_mod.shocks[j].base_name
+
+        axis.scatter(mu.values[i, j], 0, s=10)
+        axis.hlines(0, *hdi.values[i, j])
+        axis.axvline(0, ls="--", c="k", lw=0.5)
+
+        axis.set_ylabel(y_var.replace("epsilon_", "") if j == 0 else "", fontsize=6)
+        axis.set_xlabel(
+            x_var.replace("epsilon_", "") if i == (n_shocks - 1) else "", fontsize=6
+        )
+
+        axis.set_yticklabels([])
+        axis.tick_params(axis="x", labelsize=6)
 
     return fig
 
