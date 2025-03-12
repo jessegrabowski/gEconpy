@@ -26,9 +26,10 @@ dependencies:
   - pytest-env
 
   - pip
-  - pymc-extras
   - better-optimize
+  - nutpie
 
   - pip:
       - sympytensor
       - numdifftools
+      - git+https://github.com/pymc-devs/pymc-extras.git

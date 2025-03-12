@@ -21,9 +21,9 @@ dependencies:
   - better-optimize
   - preliz
   - ipython
+  - nutpie
 
   - pip:
       - sympytensor
-      - git+https://github.com/aseyboldt/nutpie.git@ccc87dfea93b430ca6517370ce9d733a68e441a5
-      - git+https://github.com/aseyboldt/flowjax.git@add-mvscale
-      - -e .
+      - flowjax
+      - git+https://github.com/pymc-devs/pymc-extras.git

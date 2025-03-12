@@ -21,6 +21,7 @@ dependencies:
   - pymc-extras
   - better-optimize
   - jax
+  - nutpie
 
   # Extra dependencies for docs build
   - ipython
@@ -37,3 +38,7 @@ dependencies:
   - sphinxcontrib-bibtex
   - pydata-sphinx-theme
   - watermark
+
+  - pip:
+      - sympytensor
+      - git+https://github.com/pymc-devs/pymc-extras.git
