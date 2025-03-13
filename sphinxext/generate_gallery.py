@@ -132,8 +132,10 @@ class NotebookGenerator:
 def main(app):
     logger.info("Starting thumbnail extractor.")
 
-    working_dir = Path.cwd()
     os.chdir(app.builder.srcdir)
+    working_dir = Path.cwd()
+
+    logger.info(f"Current working directory: {working_dir}")
 
     file = [HEAD]
 
@@ -144,7 +146,7 @@ def main(app):
             )
         )
 
-        thumbnail_dir = working_dir / "source" / "_thumbnails" / folder
+        thumbnail_dir = working_dir / "_thumbnails" / folder
         if not thumbnail_dir.exists():
             Path.mkdir(thumbnail_dir, parents=True)
 
