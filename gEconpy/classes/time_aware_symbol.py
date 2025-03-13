@@ -25,7 +25,7 @@ class TimeAwareSymbol(sp.Symbol):
         print(x1.step_forward() == x2)  # True, time indexes are the same
     """
 
-    __slots__ = ("time_index", "base_name", "__dict__")
+    __slots__ = ("__dict__", "base_name", "time_index")
     time_index: int | str
     base_name: str
     safe_name: str

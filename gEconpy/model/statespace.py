@@ -252,8 +252,8 @@ class DSGEStateSpace(PyMCStateSpace):
         unknown_states = [x for x in observed_states if x not in self.state_names]
         if len(unknown_states) > 0:
             raise ValueError(
-                f'The following states are unknown to the model and cannot be set as observed: '
-                f'{", ".join(unknown_states)}'
+                f"The following states are unknown to the model and cannot be set as observed: "
+                f"{', '.join(unknown_states)}"
             )
 
         # Set up measurement errors
@@ -263,8 +263,8 @@ class DSGEStateSpace(PyMCStateSpace):
             unknown_states = [x for x in measurement_error if x not in observed_states]
             if len(unknown_states) > 0:
                 raise ValueError(
-                    f'The following states are not observed, and cannot have measurement error: '
-                    f'{", ".join(unknown_states)}'
+                    f"The following states are not observed, and cannot have measurement error: "
+                    f"{', '.join(unknown_states)}"
                 )
 
         # Validate constant params
@@ -275,8 +275,8 @@ class DSGEStateSpace(PyMCStateSpace):
             unknown_params = [x for x in constant_params if x not in input_param_names]
             if len(unknown_params) > 0:
                 raise ValueError(
-                    f'The following parameters are unknown to the model and cannot be set as constant: '
-                    f'{", ".join(unknown_params)}'
+                    f"The following parameters are unknown to the model and cannot be set as constant: "
+                    f"{', '.join(unknown_params)}"
                 )
 
         # Validate solver argument

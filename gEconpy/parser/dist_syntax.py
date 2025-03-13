@@ -175,4 +175,4 @@ def dist_parse_action(tokens):
 dist_syntax.add_parse_action(dist_parse_action)
 
 
-__all__ = ["dist_syntax", "evaluate_expression", "PRELIZ_DISTS", "PRELIZ_DIST_WRAPPERS"]
+__all__ = ["PRELIZ_DISTS", "PRELIZ_DIST_WRAPPERS", "dist_syntax", "evaluate_expression"]

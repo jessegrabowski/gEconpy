@@ -457,9 +457,9 @@ def check_bk_condition(
     condition_not_satisfied = n_forward != n_greater_than_one
 
     message = (
-        f'Model solution has {n_greater_than_one} eigenvalues greater than one in modulus and {n_forward} '
-        f'forward-looking variables. '
-        f'\nBlanchard-Kahn condition is{" NOT" if condition_not_satisfied else ""} satisfied.'
+        f"Model solution has {n_greater_than_one} eigenvalues greater than one in modulus and {n_forward} "
+        f"forward-looking variables. "
+        f"\nBlanchard-Kahn condition is{' NOT' if condition_not_satisfied else ''} satisfied."
     )
 
     if condition_not_satisfied:

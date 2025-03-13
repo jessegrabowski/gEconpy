@@ -325,7 +325,7 @@ def solve_policy_function_with_cycle_reduction(
     if verbose:
         if result == "Optimization successful":
             _log.info(
-                f"Solution found, sum of squared residuals: {(res ** 2).sum():0.9f}",
+                f"Solution found, sum of squared residuals: {(res**2).sum():0.9f}",
             )
         else:
             _log.info(

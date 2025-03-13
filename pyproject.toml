@@ -99,7 +99,7 @@ filterwarnings = [
     "error",
     "ignore::DeprecationWarning",
     "ignore::RuntimeWarning"]
-env = ["NUMBA_DISABLE_JIT = 1"]
+
 
 [tool.ruff.lint]
 select = ["D", "E", "F", "I", "UP", "W", "RUF"]
@@ -142,4 +142,7 @@ lines-between-types = 1
   'F811',  # Redefine while unused -- this check fails on imported fixtures
   'F841', # Unused variable warning for test files -- common in pymc model declarations
   'D106'  # Missing docstring for public method -- unittest test subclasses don't need docstrings
+]
+'docs/source/examples/case_study/*.ipynb' = [
+    'F821' # Notebooks uses direct assignment to globals, so ruff thinks variables are not declared
 ]

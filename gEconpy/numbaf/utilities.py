@@ -41,7 +41,7 @@ def _check_scipy_linalg_matrix(a, func_name):
         msg = f"{prefix}.{func_name} only supported on 2-D arrays."
         raise TypingError(msg, highlighting=False)
     if not isinstance(a.dtype, types.Float | types.Complex):
-        msg = f"{prefix}.{func_name} only supported on " "float and complex arrays."
+        msg = f"{prefix}.{func_name} only supported on float and complex arrays."
         raise TypingError(msg, highlighting=False)
 
 
@@ -308,7 +308,7 @@ def numba_lambdify(
     assignments = re.sub(ZERO_ONE_INDEX_PATTERN, r"\g<3>", assignments)
 
     if len(retvals) > 1:
-        returns = f'({",".join(retvals)})'
+        returns = f"({','.join(retvals)})"
         if stack_outputs:
             returns = f"np.stack({returns})"
     else:

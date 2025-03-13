@@ -567,8 +567,8 @@ class Model:
         duplicates = [x for x, c in zip(fixed_variables_normed, counts) if c > 1]
         if len(duplicates) > 0:
             raise ValueError(
-                'The following variables were provided twice (once with a _ss prefix and once without):\n'
-                f'{", ".join(duplicates)}'
+                "The following variables were provided twice (once with a _ss prefix and once without):\n"
+                f"{', '.join(duplicates)}"
             )
 
         # Check that all variables are in the model
@@ -734,9 +734,9 @@ class Model:
                         n_eliminated = sum(zero_eq_mask)
                         raise ValueError(
                             'Solving a partially provided steady state with how = "root" is only allowed if applying '
-                            f'the given values results in a new square system.\n'
-                            f'Found: {len(ss_dict)} provided steady state value{"s" if len(ss_dict) != 1 else ""}\n'
-                            f'Eliminated: {n_eliminated} equation{"s" if n_eliminated != 1 else ""}.'
+                            f"the given values results in a new square system.\n"
+                            f"Found: {len(ss_dict)} provided steady state value{'s' if len(ss_dict) != 1 else ''}\n"
+                            f"Eliminated: {n_eliminated} equation{'s' if n_eliminated != 1 else ''}."
                         )
                     unknown_eq_idx = ~zero_eq_mask
                 else:

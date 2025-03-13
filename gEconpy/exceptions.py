@@ -11,9 +11,9 @@ class GCNSyntaxError(ValueError):
         self.key = key
 
         message = (
-            f'While parsing block {block_name}, found {" ".join(key)} outside of a block component. All '
+            f"While parsing block {block_name}, found {' '.join(key)} outside of a block component. All "
             f"equations must be inside components with one of valid component names:"
-            f' {", ".join(BLOCK_COMPONENTS)}'
+            f" {', '.join(BLOCK_COMPONENTS)}"
         )
 
         super().__init__(message)
@@ -252,8 +252,8 @@ class UnusedParameterError(ValueError):
 class InvalidParameterException(ValueError):
     def __init__(self, dist_name, param_name, valid_params):
         message = (
-            f'Unknown parameter {param_name} passed to distribution {dist_name}. Valid '
-            f'parameters for this distribution are: {", ".join(valid_params)}'
+            f"Unknown parameter {param_name} passed to distribution {dist_name}. Valid "
+            f"parameters for this distribution are: {', '.join(valid_params)}"
         )
 
         super().__init__(message)
@@ -293,8 +293,8 @@ class OrphanParameterError(ValueError):
         n = len(orphans)
         verb = "was" if n == 1 else "were"
         message = (
-            f'The following parameter{"s" if n > 1 else ""} {verb} found among model equations but did not appear in '
-            f'any calibration block: {", ".join([x.name for x in orphans])}'
+            f"The following parameter{'s' if n > 1 else ''} {verb} found among model equations but did not appear in "
+            f"any calibration block: {', '.join([x.name for x in orphans])}"
         )
 
         super().__init__(message)
@@ -305,9 +305,9 @@ class ExtraParameterError(ValueError):
         n = len(extras)
         verb = "was" if n == 1 else "were"
         message = (
-            f'The following parameter{"s" if n > 1 else ""} {verb} were given initial values in calibration blocks but '
-            f'were not used in model equations: {", ".join([x.name for x in extras])} \n'
-            f'Verify your model equations, or remove these parameters if they are not needed.'
+            f"The following parameter{'s' if n > 1 else ''} {verb} were given initial values in calibration blocks but "
+            f"were not used in model equations: {', '.join([x.name for x in extras])} \n"
+            f"Verify your model equations, or remove these parameters if they are not needed."
         )
 
         super().__init__(message)
@@ -318,9 +318,9 @@ class ExtraParameterWarning(UserWarning):
         n = len(extras)
         verb = "was" if n == 1 else "were"
         message = (
-            f'The following parameter{"s" if n > 1 else ""} {verb} were given initial values in calibration blocks but '
-            f'were not used in model equations: {", ".join([x.name for x in extras])} \n'
-            f'Verify your model equations, or remove these parameters if they are not needed.'
+            f"The following parameter{'s' if n > 1 else ''} {verb} were given initial values in calibration blocks but "
+            f"were not used in model equations: {', '.join([x.name for x in extras])} \n"
+            f"Verify your model equations, or remove these parameters if they are not needed."
         )
 
         super().__init__(message)
@@ -334,9 +334,9 @@ class DuplicateParameterError(ValueError):
         if block is not None:
             location = f"in {block} calibration block"
         message = (
-            f'The following parameter{"s" if n > 1 else ""} {verb} were given initial values in {location} more '
-            f'than once: {", ".join([x.name for x in extras])} \n'
-            f'Model parameters should be declared only once. Check your GCN file and remove one of the declarations.'
+            f"The following parameter{'s' if n > 1 else ''} {verb} were given initial values in {location} more "
+            f"than once: {', '.join([x.name for x in extras])} \n"
+            f"Model parameters should be declared only once. Check your GCN file and remove one of the declarations."
         )
 
         super().__init__(message)

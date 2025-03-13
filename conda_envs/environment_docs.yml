@@ -18,7 +18,7 @@ dependencies:
   - statsmodels
   - preliz
   - sympy<1.13
-  - pymc-extras
+#  - pymc-extras
   - better-optimize
   - jax
   - nutpie

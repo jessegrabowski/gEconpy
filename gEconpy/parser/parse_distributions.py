@@ -121,8 +121,8 @@ def preprocess_distribution_string(
 
     if wrapper_name not in PRELIZ_DIST_WRAPPERS:
         raise ValueError(
-            f'Unknown distribution wrapper {wrapper_name}. Valid functions are '
-            f'{", ".join(PRELIZ_DIST_WRAPPERS.keys())} '
+            f"Unknown distribution wrapper {wrapper_name}. Valid functions are "
+            f"{', '.join(PRELIZ_DIST_WRAPPERS.keys())} "
         )
 
     return (dist_name, dist_kwargs), (wrapper_name, wrapper_kwargs)

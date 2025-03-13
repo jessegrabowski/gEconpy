@@ -223,8 +223,8 @@ def postprocess_optimizer_res(
         )
 
     msg = (
-        f'{line_1}\n'
-        f'{"-"*80}\n'
+        f"{line_1}\n"
+        f"{'-' * 80}\n"
         f"{'Optimizer message':<30}{res.message}\n"
         f"{'Sum of squared residuals':<30}{sse}\n"
         f"{'Maximum absoluate error':<30}{max_abs_error}\n"

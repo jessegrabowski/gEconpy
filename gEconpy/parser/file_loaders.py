@@ -533,7 +533,7 @@ def build_report(
 
     report += f"\t{n_shocks} stochastic {shock_str}\n"
     report += (
-        f'\t\t {len(shock_priors)} / {n_shocks} {"have" if len(shock_priors) == 1 else "has"}'
+        f"\t\t {len(shock_priors)} / {n_shocks} {'have' if len(shock_priors) == 1 else 'has'}"
         f" a defined prior. \n"
     )
 
@@ -543,7 +543,7 @@ def build_report(
         report += "\t\t\t" + ", ".join([x.name for x in reduced_params]) + "\n"
 
     report += (
-        f'\t\t {len(param_priors)} / {n_params} parameters {"have" if len(param_priors) == 1 else "has"} '
+        f"\t\t {len(param_priors)} / {n_params} parameters {'have' if len(param_priors) == 1 else 'has'} "
         f"a defined prior. \n"
     )
 
