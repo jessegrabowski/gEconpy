@@ -34,6 +34,7 @@ from gEconpy.model.perturbation import (
     statespace_to_gEcon_representation,
 )
 from gEconpy.model.steady_state import system_to_steady_state
+from gEconpy.parser.parse_distributions import CompositeDistribution
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 from gEconpy.solvers.gensys import (
     interpret_gensys_output,
@@ -462,13 +463,22 @@ class Model:
         return self._deterministic_params
 
     @property
-    def priors(self) -> dict[str, Distribution]:
+    def param_priors(self) -> dict[str, Distribution]:
         """
         Dictionary of prior distributions for the model parameters.
 
-        The dictionary keys are parameter names, and the values are instances of a subclass of ``Distribution``.
+        The dictionary keys are parameter names, and the values are instances of a subclass of ``preliz.Distribution``.
         """
-        return self._priors
+        return self._priors[0]
+
+    @property
+    def shock_priors(self) -> dict[str, CompositeDistribution]:
+        """
+        Dictionary of prior distributions for the model shocks.
+
+        The dictionary keys are shock names, and the values are instances of a subclass of ``preliz.Distribution``.
+        """
+        return self._priors[1]
 
     @property
     def calibrated_params(self) -> list[sp.Symbol]:
@@ -2154,6 +2164,7 @@ def simulate(
     model: Model,
     T: np.ndarray | None = None,
     R: np.ndarray | None = None,
+    use_param_priors: bool = False,
     n_simulations: int = 1,
     simulation_length: int = 40,
     shock_std_dict: dict[str, float] | None = None,
@@ -2171,9 +2182,14 @@ def simulate(
         DSGE Model object
     T: np.ndarray, optional
         Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
-        method.
+        method. Ignored if ``use_param_priors`` is True.
     R: np.ndarray, optional
         Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
+        Ignored if ``use_param_priors`` is True.
+    use_param_priors: bool, optional
+        If True, each simulation will be generated using a different random draw from the model's
+        prior distributions. Default is False, in which case a fixed T and R matrix will be used for each simulation.
+        If True, T and R are ignored.
     n_simulations : int, optional
         Number of trajectories to simulate. Default is 1.
     simulation_length : int, optional
@@ -2196,9 +2212,7 @@ def simulate(
     """
     rng = np.random.default_rng(random_seed)
     shocks = model.shocks
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-
-    n_variables, n_shocks = R.shape
+    n_shocks = len(shocks)
 
     _validate_shock_options(
         shock_std_dict=shock_std_dict,
@@ -2221,7 +2235,8 @@ def simulate(
         method="svd",
     )
 
-    data = np.zeros((n_simulations, simulation_length, n_variables))
+    data = np.zeros((n_simulations, simulation_length, len(model.variables)))
+    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
 
     for t in range(1, simulation_length):
         stochastic = np.einsum("nk,sk->sn", R, epsilons[:, t - 1, :])
