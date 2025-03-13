@@ -38,8 +38,8 @@ jobs:
     - uses: actions/checkout@v3
     - uses: actions/cache@v3
       env:
-        # Increase this value to reset cache if geconpy_test.yml has not changed
-        CACHE_NUMBER: 2
+        # Increase this value to reset cache if geconpy_test.yml has changed
+        CACHE_NUMBER: 3
       with:
         path: ~/conda_pkgs_dir
         key: ${{ runner.os }}-py${{matrix.python-version}}-conda-${{ env.CACHE_NUMBER }}-${{
@@ -47,8 +47,8 @@ jobs:
     - name: Cache multiple paths
       uses: actions/cache@v3
       env:
-        # Increase this value to reset cache if requirements.txt has not changed
-        CACHE_NUMBER: 2
+        # Increase this value to reset cache if requirements.txt has changed
+        CACHE_NUMBER: 3
       with:
         path: |
           ~/.cache/pip
