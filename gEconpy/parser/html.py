@@ -136,18 +136,18 @@ def generate_html(blocks: list["Block"]) -> HTML:
     html_parts.append("</div>")
     html_parts.append("</div>")
 
-    # html_parts.append("""
-    # <script>
-    #   function reprocessMath() {
-    #     if (window.MathJax && window.MathJax.Hub) {
-    #       MathJax.Hub.Queue(["Typeset", MathJax.Hub, document.getElementById("model-container")]);
-    #     } else {
-    #       setTimeout(reprocessMath, 100);
-    #     }
-    #   }
-    #   reprocessMath();
-    # </script>
-    # """)
+    html_parts.append("""
+    <script>
+      function reprocessMath() {
+        if (window.MathJax && window.MathJax.Hub) {
+          MathJax.Hub.Queue(["Typeset", MathJax.Hub, document.getElementById("model-container")]);
+        } else {
+          setTimeout(reprocessMath, 100);
+        }
+      }
+      reprocessMath();
+    </script>
+    """)
 
     final_html = "\n".join(html_parts)
     return HTML(final_html)
