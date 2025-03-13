@@ -1,7 +1,7 @@
 import warnings
 
 from itertools import combinations_with_replacement, product
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, Union
 
 import arviz as az
 import matplotlib
@@ -17,8 +17,8 @@ from matplotlib.gridspec import GridSpec
 from scipy import stats
 from xarray_einstats.linalg import diagonal as xr_diagonal
 
-if TYPE_CHECKING:
-    from gEconpy.model.statespace import DSGEStateSpace
+from gEconpy.model.statespace import DSGEStateSpace
+from gEconpy.model.model import Model
 
 
 def set_matplotlib_style():
@@ -935,12 +935,14 @@ def plot_corner(
     idata: Any,
     group: str = "posterior",
     var_names: list[str] | None = None,
+    colorby: str | None = None,
     figure_kwargs: dict | None = None,
     hist_bins: int = 100,
     rug_bins: int = 20,
     rug_levels: int = 6,
     fontsize: int = 6,
     show_marginal_modes: bool = True,
+    scatter_kwargs: dict | None = None,
 ) -> None:
     """
     Produces a corner plot, also known as a scatterplot matrix, of the posterior distributions of a set of variables.
@@ -1029,6 +1031,16 @@ def plot_corner(
 
                 data_x = idata[group][x].values.ravel()
                 data_y = idata[group][y].values.ravel()
+
+                if colorby is not None:
+                    defaults = {"zorder": 100, "cmap": "viridis", "s": 10, "alpha": 0.5}
+
+                    if scatter_kwargs is not None:
+                        defaults.update(scatter_kwargs)
+
+                    scatter_kwargs = defaults
+                    color_data = idata[group][colorby].values.ravel()
+                    axis.scatter(data_x, data_y, c=color_data, **scatter_kwargs)
 
                 H, y_edges, x_edges = np.histogram2d(data_y, data_x, bins=rug_bins)
                 ymax_idx, xmax_idx = np.where(H == H.max())
@@ -1166,20 +1178,20 @@ def plot_kalman_filter(
 
 
 def plot_priors(
-    statespace_model: "DSGEStateSpace",
+    model: Model | DSGEStateSpace,
     var_names: list[str] | None = None,
     figsize: tuple[int, int] | None = None,
     dpi: int = 144,
     n_cols: int = 6,
     mark_initial_value: bool = True,
 ):
-    pz_priors = statespace_model.param_priors
+    pz_priors = model.param_priors
     hyper_priors = {}
 
-    if statespace_model.shock_priors:
+    if model.shock_priors:
         hyper_priors = {
             shock.param_name_to_hyper_name[name]: hyper_prior
-            for shock in statespace_model.shock_priors.values()
+            for shock in model.shock_priors.values()
             for name, hyper_prior in shock.hyper_param_dict.items()
         }
 
@@ -1198,7 +1210,10 @@ def plot_priors(
     fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
     gs, locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_params, figure=fig)
 
-    all_params = statespace_model.param_dict | statespace_model.hyper_param_dict
+    if isinstance(model, DSGEStateSpace):
+        all_params = model.param_dict | model.hyper_param_dict
+    else:
+        all_params = model.parameters()
 
     for (name, prior), loc in zip(pz_priors.items(), locs):
         axis = fig.add_subplot(gs[loc])
