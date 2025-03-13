@@ -25,7 +25,9 @@ def test_statespace_matrices_agree_with_model(gcn_file):
     inputs = pm.inputvars(ss_mod.linearized_system)
     input_names = [x.name for x in inputs]
     f = pytensor.function(inputs, ss_mod.linearized_system, on_unused_input="ignore")
-    mod_matrices = model.linearize_model()
+    mod_matrices = model.linearize_model(
+        verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False}
+    )
 
     param_dict = model.parameters()
     ss_matrices = f(**{k: param_dict[k] for k in input_names})

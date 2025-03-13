@@ -1,5 +1,6 @@
 import unittest
 import warnings
+from typing import Literal
 
 import arviz as az
 import matplotlib.pyplot as plt
@@ -56,7 +57,13 @@ class TestPlotSimulation(unittest.TestCase):
     def setUpClass(cls):
         cls.model = load_and_cache_model("rbc_linearized.gcn", backend="numpy")
         cls.data = simulate(
-            cls.model, simulation_length=100, n_simulations=1000, shock_std=0.1
+            cls.model,
+            simulation_length=100,
+            n_simulations=1000,
+            shock_std=0.1,
+            solver="gensys",
+            verbose=False,
+            steady_state_kwargs={"verbose": False, "progressbar": False},
         )
 
     def test_plot_simulation_defaults(self):
@@ -100,9 +107,11 @@ class TestPlotSimulation(unittest.TestCase):
 def irf_setup():
     model = load_and_cache_model("full_nk.gcn", backend="numpy")
     model.steady_state(verbose=False)
-    model.solve_model(verbose=False)
+    T, R = model.solve_model(verbose=False, solver="gensys")
     irf = impulse_response_function(
         model,
+        T=T,
+        R=R,
         simulation_length=100,
         shock_size=0.1,
         return_individual_shocks=True,
@@ -187,18 +196,38 @@ class TestPlotEigenvalues(unittest.TestCase):
         cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
 
     def test_plot_with_defaults(self):
-        fig = plot_eigenvalues(self.model)
         from matplotlib.collections import PathCollection
 
+        fig = plot_eigenvalues(
+            self.model,
+            linearize_model_kwargs={
+                "verbose": False,
+                "steady_state_kwargs": {"progressbar": False, "verbose": False},
+            },
+        )
+
         scatter_points = fig.axes[0].findobj(PathCollection)[0].get_offsets().data
-        data = check_bk_condition(self.model, return_value="dataframe", verbose=False)
+        data = check_bk_condition(
+            self.model,
+            return_value="dataframe",
+            verbose=False,
+            steady_state_kwargs={"progressbar": False, "verbose": False},
+        )
 
         n_finite = (data["Modulus"] < 1.5).sum()
         self.assertEqual(n_finite, scatter_points.shape[0])
         plt.close()
 
     def test_plot_with_aesthetic_params(self):
-        fig = plot_eigenvalues(self.model, dpi=144, figsize=(2, 2))
+        fig = plot_eigenvalues(
+            self.model,
+            dpi=144,
+            figsize=(2, 2),
+            linearize_model_kwargs={
+                "verbose": False,
+                "steady_state_kwargs": {"progressbar": False, "verbose": False},
+            },
+        )
 
         self.assertEqual(fig.get_figwidth(), 2)
         self.assertEqual(fig.get_figheight(), 2)
@@ -212,7 +241,11 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
         cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
 
         cls.cov_matrix = stationary_covariance_matrix(
-            cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_df=True, verbose=False
+            cls.model,
+            shock_cov_matrix=np.eye(1) * 0.01,
+            return_df=True,
+            verbose=False,
+            steady_state_kwargs={"progressbar": False, "verbose": False},
         )
 
     def test_plot_with_defaults(self):
@@ -246,7 +279,11 @@ class TestPlotACF(unittest.TestCase):
         cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
 
         cls.acf = autocorrelation_matrix(
-            cls.model, shock_cov_matrix=np.eye(1) * 0.01, return_xr=True, verbose=False
+            cls.model,
+            shock_cov_matrix=np.eye(1) * 0.01,
+            return_xr=True,
+            verbose=False,
+            steady_state_kwargs={"progressbar": False, "verbose": False},
         )
 
     def test_plot_with_defaults(self):
@@ -285,6 +322,7 @@ def ss_mod() -> DSGEStateSpace:
         full_shock_covaraince=False,
         solver="gensys",
         mode="FAST_RUN",
+        verbose=False,
     )
 
     return model
@@ -312,7 +350,9 @@ def prior_idata(pm_mod, ss_mod) -> tuple[az.InferenceData, pd.DataFrame]:
         with pm_mod:
             prior = pm.sample_prior_predictive(25)
 
-        unconditional_prior = ss_mod.sample_unconditional_prior(prior)
+        unconditional_prior = ss_mod.sample_unconditional_prior(
+            prior, progressbar=False
+        )
 
         prior["unconditional_prior"] = unconditional_prior
         fake_data = (
@@ -327,7 +367,7 @@ def prior_idata(pm_mod, ss_mod) -> tuple[az.InferenceData, pd.DataFrame]:
             pm.set_data({"data": fake_data})
             ss_mod._fit_data = fake_data
 
-        conditional_prior = ss_mod.sample_conditional_prior(prior)
+        conditional_prior = ss_mod.sample_conditional_prior(prior, progressbar=False)
         prior["conditional_prior"] = conditional_prior
 
     return (prior, fake_data)
@@ -335,7 +375,12 @@ def prior_idata(pm_mod, ss_mod) -> tuple[az.InferenceData, pd.DataFrame]:
 
 @pytest.mark.parametrize("kalman_output", ["predicted", "filtered", "smoothed"])
 @pytest.mark.parametrize("vars_to_plot", [["Y"], ["Y", "C"], ["Y", "C", "L"]])
-def test_plot_kalman_filter(ss_mod, prior_idata, kalman_output, vars_to_plot):
+def test_plot_kalman_filter(
+    ss_mod,
+    prior_idata,
+    kalman_output: Literal["predicted", "filtered", "smoothed"],
+    vars_to_plot,
+):
     idata, fake_data = prior_idata
     fig = plot_kalman_filter(
         idata["conditional_prior"],

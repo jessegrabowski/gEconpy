@@ -61,6 +61,7 @@ class DSGEStateSpace(PyMCStateSpace):
         ss_error_grad: pt.TensorVariable,
         ss_error_hess: pt.TensorVariable,
         linearized_system: list[pt.TensorVariable],
+        verbose: bool = True,
     ):
         """
         Create a :class:`pmx.statespace.PyMCStateSpace` model representing a linearized DSGE
@@ -103,6 +104,8 @@ class DSGEStateSpace(PyMCStateSpace):
             List of four symbolic expressions representing the linearized system of equations as partial
             jacobians of the model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with
             respect to exogenous shocks (D), each evaluated at the (symbolic) steady state.
+        verbose: bool
+            If True, show diagnostic messages.
         """
         self.variables = variables
         self.equations = equations
@@ -141,6 +144,8 @@ class DSGEStateSpace(PyMCStateSpace):
         self._bk_output = None
         self._policy_resid = None
 
+        self.verbose = verbose
+
         k_endog = 1  # to be updated later
         k_states = len(variables)
         k_posdef = len(shocks)
@@ -156,9 +161,10 @@ class DSGEStateSpace(PyMCStateSpace):
 
     def make_symbolic_graph(self):
         if not self._configured:
-            _log.info(
-                "Statespace model construction complete, but call the .configure method to finalize."
-            )
+            if self.verbose:
+                _log.info(
+                    "Statespace model construction complete, but call the .configure method to finalize."
+                )
             return
 
         # Register the existing placeholders with the statespace model

@@ -15,7 +15,7 @@ from gEconpy.solvers.shared import (
 )
 
 
-@nb.jit(cache=True)
+# @nb.njit(cache=True)
 def nb_cycle_reduction(
     A0: np.ndarray,
     A1: np.ndarray,
@@ -113,7 +113,7 @@ def nb_cycle_reduction(
     return X, res, result, log_norm
 
 
-@nb.njit(cache=True)
+# @nb.njit(cache=True)
 def nb_solve_shock_matrix(B, C, D, G_1):
     """
     Given the partial solution to the linear approximate policy function G_1, solve for the remaining component of the

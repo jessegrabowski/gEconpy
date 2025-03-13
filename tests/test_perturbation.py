@@ -21,8 +21,8 @@ from gEconpy.solvers.cycle_reduction import (
 )
 from gEconpy.solvers.gensys import gensys_pt, solve_policy_function_with_gensys
 from gEconpy.utilities import eq_to_ss
-from tests.test_model import JAX_INSTALLED
 from tests.utilities.shared_fixtures import load_and_cache_model
+
 
 JAX_INSTALLED = find_spec("jax") is not None
 
@@ -73,7 +73,9 @@ def test_variables_to_all_times(backend):
 def test_log_linearize_model(gcn_file, backend):
     mod = load_and_cache_model(gcn_file, backend=backend, use_jax=JAX_INSTALLED)
     (A, B, C, D), not_loglin_variable = linearize_model(
-        mod.variables, mod.equations, mod.shocks
+        mod.variables,
+        mod.equations,
+        mod.shocks,
     )
     lags, now, leads = make_all_variable_time_combinations(mod.variables)
 
@@ -137,7 +139,14 @@ def test_log_linearize_model(gcn_file, backend):
 def test_solve_policy_function(gcn_file, state_variables, backend):
     mod = load_and_cache_model(gcn_file, backend=backend, use_jax=JAX_INSTALLED)
     steady_state_dict = mod.steady_state()
-    A, B, C, D = mod.linearize_model(order=1, steady_state=steady_state_dict)
+    A, B, C, D = mod.linearize_model(
+        order=1,
+        steady_state=steady_state_dict,
+        verbose=False,
+        steady_state_kwargs={"verbose": False, "progressbar": False},
+    )
+
+    A, B, C, D = [np.ascontiguousarray(x, dtype="float64") for x in [A, B, C, D]]
 
     gensys_results = solve_policy_function_with_gensys(A, B, C, D, 1e-8)
     G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
@@ -177,7 +186,10 @@ def test_solve_policy_function(gcn_file, state_variables, backend):
 )
 def test_cycle_reduction_gradients(op):
     mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
-    A, B, C, D = mod.linearize_model()
+    A, B, C, D = mod.linearize_model(
+        verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False}
+    )
+    A, B, C, D = [np.ascontiguousarray(x, dtype="float64") for x in [A, B, C, D]]
 
     A_pt, B_pt, C_pt, D_pt = (
         pt.tensor(name=name, shape=x.shape)
@@ -210,7 +222,9 @@ def test_cycle_reduction_gradients(op):
 
 def test_pytensor_gensys():
     mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
-    A, B, C, D = mod.linearize_model()
+    A, B, C, D = mod.linearize_model(
+        verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False}
+    )
 
     A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in list("ABCD"))
     T1, R1 = cycle_reduction_pt(A_pt, B_pt, C_pt, D_pt)

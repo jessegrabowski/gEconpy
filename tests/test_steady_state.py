@@ -54,7 +54,7 @@ def test_solve_ss_with_partial_user_solution():
     model_1 = load_and_cache_model(
         "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
-    res = model_1.steady_state()
+    res = model_1.steady_state(verbose=False, progressbar=False)
     assert res.success
 
 
@@ -152,7 +152,7 @@ def test_numerical_solvers_suceed_and_agree():
     model_1 = load_and_cache_model(
         "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
-    root_and_min_agree_helper(model_1)
+    root_and_min_agree_helper(model_1, verbose=False, progressbar=False)
 
 
 def test_steady_state_matches_analytic():
@@ -193,7 +193,7 @@ def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
         backend="numpy",
         use_jax=JAX_INSTALLED,
     )
-    root_and_min_agree_helper(model_2)
+    root_and_min_agree_helper(model_2, verbose=False, progressbar=False)
 
 
 def test_steady_state_matches_analytic_w_calibrated_params():
@@ -264,7 +264,7 @@ def test_numerical_solvers_succeed_and_agree_RBC():
     model_3 = load_and_cache_model(
         "rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED
     )
-    root_and_min_agree_helper(model_3)
+    root_and_min_agree_helper(model_3, verbose=False, progressbar=False)
 
 
 def test_RBC_steady_state_matches_analytic():

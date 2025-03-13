@@ -39,7 +39,7 @@ jobs:
     - uses: actions/cache@v3
       env:
         # Increase this value to reset cache if geconpy_test.yml has changed
-        CACHE_NUMBER: 3
+        CACHE_NUMBER: 4
       with:
         path: ~/conda_pkgs_dir
         key: ${{ runner.os }}-py${{matrix.python-version}}-conda-${{ env.CACHE_NUMBER }}-${{
@@ -48,7 +48,7 @@ jobs:
       uses: actions/cache@v3
       env:
         # Increase this value to reset cache if requirements.txt has changed
-        CACHE_NUMBER: 3
+        CACHE_NUMBER: 4
       with:
         path: |
           ~/.cache/pip
@@ -76,7 +76,7 @@ jobs:
 
     - name: Run tests
       run: |
-        python -m pytest -vv --cov=gEconpy --cov-report=xml --no-cov-on-fail --cov-report term $TEST_SUBSET
+        python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml --no-cov-on-fail --cov-report term $TEST_SUBSET
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:

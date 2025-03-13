@@ -15,7 +15,7 @@ dependencies:
   - arviz
   - statsmodels
   - pymc
-  - pytensor<2.28
+  - pytensor
   - preliz
   - ipython
 
@@ -32,4 +32,5 @@ dependencies:
   - pip:
       - sympytensor
       - numdifftools
+      - jax
       - git+https://github.com/pymc-devs/pymc-extras.git

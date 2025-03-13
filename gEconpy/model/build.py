@@ -379,4 +379,5 @@ def statespace_from_gcn(
         ss_error_grad=ss_grad,
         ss_error_hess=ss_hess,
         linearized_system=[A, B, C, D],
+        verbose=verbose,
     )

@@ -1101,6 +1101,8 @@ class Model:
             )
         if steady_state_kwargs is None:
             steady_state_kwargs = {}
+        if verbose not in steady_state_kwargs:
+            steady_state_kwargs["verbose"] = verbose
 
         if self.is_linear:
             # If the model is linear, the linearization is already done; don't do it again
@@ -1113,7 +1115,8 @@ class Model:
                 steady_state = self.f_ss(**self.parameters(**param_dict))
             else:
                 steady_state = self.steady_state(
-                    **self.parameters(**param_dict), **steady_state_kwargs
+                    **self.parameters(**param_dict),
+                    **steady_state_kwargs,
                 )
 
         not_loglin_flags = make_not_loglin_flags(
@@ -1420,7 +1423,6 @@ def _maybe_linearize_model(
     B: np.ndarray | None,
     C: np.ndarray | None,
     D: np.ndarray | None,
-    verbose: bool = True,
     **linearize_model_kwargs,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -1442,8 +1444,6 @@ def _maybe_linearize_model(
     D: np.ndarray, optional
         Matrix of partial derivatives of model equations with respect to stochastic innovations, evaluated at the
         steady-state
-    verbose: bool, default: True
-        Flag indicating whether to print details about the linearization process to the console
     linearize_model_kwargs
         Arguments forwarded to the ``model.linearize_model`` method. Ignored if all of A, B, C, and D are provided.
 
@@ -1451,8 +1451,9 @@ def _maybe_linearize_model(
     -------
     linear_system: np.ndarray, np.ndarray, np.ndarray, np.ndarray
     """
-
+    verbose = linearize_model_kwargs.get("verbose", True)
     n_matrices = sum(x is not None for x in [A, B, C, D])
+
     if n_matrices < 4 and n_matrices > 0 and verbose:
         _log.warning(
             f"Passing an incomplete subset of A, B, C, and D (you passed {n_matrices}) will still trigger "
@@ -1465,7 +1466,7 @@ def _maybe_linearize_model(
         D = None
 
     if all(x is None for x in [A, B, C, D]):
-        A, B, C, D = model.linearize_model(verbose=verbose, **linearize_model_kwargs)
+        A, B, C, D = model.linearize_model(**linearize_model_kwargs)
 
     return A, B, C, D
 
@@ -1720,7 +1721,6 @@ def check_bk_condition(
     C: np.ndarray | None = None,
     D: np.ndarray | None = None,
     tol=1e-8,
-    verbose=True,
     on_failure: Literal["raise", "ignore"] = "ignore",
     return_value: Literal["dataframe", "bool", None] = "dataframe",
     **linearize_model_kwargs,
@@ -1767,10 +1767,8 @@ def check_bk_condition(
         - Eigenvalues, pd.DataFrame, if return_value is 'df', returns a dataframe containing the real and imaginary
           components of the system's eigenvalues, along with their modulus.
     """
-
-    A, B, C, D = _maybe_linearize_model(
-        model, A, B, C, D, verbose=verbose, **linearize_model_kwargs
-    )
+    verbose = linearize_model_kwargs.get("verbose", True)
+    A, B, C, D = _maybe_linearize_model(model, A, B, C, D, **linearize_model_kwargs)
     bk_result = _check_bk_condition(
         A,
         B,
@@ -1784,7 +1782,7 @@ def check_bk_condition(
     return bk_result
 
 
-@nb.njit(cache=True)
+# @nb.njit(cache=True)
 def _compute_autocovariance_matrix(T, Sigma, n_lags=5, correlation=True):
     """Compute the autocorrelation matrix for the given state-space model.
 
@@ -1879,6 +1877,7 @@ def autocovariance_matrix(
         shock_cov_matrix=shock_cov_matrix,
         shock_std=shock_std,
         return_df=False,
+        **solve_model_kwargs,
     )
     result = _compute_autocovariance_matrix(
         T, Sigma, n_lags=n_lags, correlation=correlation
@@ -2164,7 +2163,6 @@ def simulate(
     model: Model,
     T: np.ndarray | None = None,
     R: np.ndarray | None = None,
-    use_param_priors: bool = False,
     n_simulations: int = 1,
     simulation_length: int = 40,
     shock_std_dict: dict[str, float] | None = None,

@@ -653,7 +653,6 @@ def plot_eigenvalues(
             B=B,
             C=C,
             D=D,
-            verbose=False,
             return_value="dataframe",
             **linearize_model_kwargs,
         ),

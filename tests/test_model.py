@@ -607,7 +607,7 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
     # TODO: I was hitting errors when the models were reused, something about the fixed values was breaking stuff.
     #  Need to track this bug down.
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
-    analytic_res = model.steady_state()
+    analytic_res = model.steady_state(verbose=False, progressbar=False)
     analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
 
     # Overwrite the f_ss function with None to trigger numerical optimization
@@ -636,6 +636,7 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
             "method": "hybr" if how == "root" else "Newton-CG",
         },
         fixed_values=fixed_values,
+        progressbar=False,
     )
 
     # Restore steady state function in the cached function
@@ -659,6 +660,7 @@ def test_numerical_steady_state_with_calibrated_params():
         verbose=False,
         optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 100_000}},
         bounds={"alpha": (0.05, 0.7)},
+        progressbar=False,
     )
     res = res.to_string()
     assert_allclose(res["L_ss"] / res["K_ss"], 0.36)
@@ -704,6 +706,7 @@ def test_partially_analytical_steady_state(
         how="minimize",
         verbose=False,
         optimizer_kwargs={"method": "trust-ncg", "options": {"gtol": 1e-24}},
+        progressbar=False,
     )
 
     numeric_values = np.array(list(numeric_res.values()))
@@ -760,17 +763,25 @@ def test_linearize_with_custom_params(backend):
         i for i, eq in enumerate(model.equations) if model.shocks[0] in eq.atoms()
     )
 
-    A, *_ = model.linearize_model(rho=rho)
+    A, *_ = model.linearize_model(
+        rho=rho,
+        verbose=False,
+        steady_state_kwargs={"verbose": False, "progressbar": False},
+    )
     assert A[technology_eq_idx, A_idx] == rho
 
 
 def test_invalid_solver_raises():
     file_path = "tests/Test GCNs/one_block_1_ss.gcn"
     model = model_from_gcn(file_path, verbose=False)
-    model.steady_state(verbose=False)
+    model.steady_state(verbose=False, progressbar=False)
 
     with pytest.raises(NotImplementedError):
-        model.solve_model(solver="invalid_solver")
+        model.solve_model(
+            solver="invalid_solver",
+            steady_state_kwargs={"verbose": False, "progressbar": False},
+            verbose=False,
+        )
 
 
 def test_bad_failure_argument_raises():
@@ -778,7 +789,13 @@ def test_bad_failure_argument_raises():
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
 
     with pytest.raises(ValueError):
-        model.solve_model(solver="gensys", on_failure="raise", model_is_linear=True)
+        model.solve_model(
+            solver="gensys",
+            on_failure="raise",
+            model_is_linear=True,  # TODO: This argument doesn't do anything yet
+            steady_state_kwargs={"verbose": False, "progressbar": False},
+            verbose=False,
+        )
 
 
 def test_gensys_fails_to_solve():
@@ -786,13 +803,23 @@ def test_gensys_fails_to_solve():
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
 
     with pytest.raises(GensysFailedException):
-        model.solve_model(solver="gensys", on_failure="error", verbose=False)
+        model.solve_model(
+            solver="gensys",
+            on_failure="error",
+            verbose=False,
+            steady_state_kwargs={"verbose": False, "progressbar": False},
+        )
 
 
 def test_outputs_after_gensys_failure(caplog):
     file_path = "tests/Test GCNs/pert_fails.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
-    T, R = model.solve_model(solver="gensys", on_failure="ignore", verbose=True)
+    T, R = model.solve_model(
+        solver="gensys",
+        on_failure="ignore",
+        verbose=True,
+        steady_state_kwargs={"verbose": False, "progressbar": False},
+    )
 
     captured_message = caplog.messages[-1]
     assert captured_message == (
@@ -821,7 +848,10 @@ def test_solve_matches_dynare(backend, model_name, log_linearize):
     gcn_file = model_name + ".gcn"
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
     T, R = model.solve_model(
-        solver="gensys", verbose=False, log_linearize=log_linearize
+        solver="gensys",
+        verbose=False,
+        log_linearize=log_linearize,
+        steady_state_kwargs={"verbose": False, "progressbar": False},
     )
 
     if log_linearize:
@@ -839,7 +869,11 @@ def test_solve_matches_dynare(backend, model_name, log_linearize):
 def test_outputs_after_pert_success(caplog):
     file_path = "tests/Test GCNs/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
-    model.solve_model(solver="gensys", verbose=True)
+    model.solve_model(
+        solver="gensys",
+        verbose=True,
+        steady_state_kwargs={"verbose": False, "progressbar": False},
+    )
 
     result_messages = caplog.messages[-2:]
     expected_messages = [
@@ -857,7 +891,7 @@ def test_bad_argument_to_bk_condition_raises():
 
     A, B, C, D = model.linearize_model()
     with pytest.raises(ValueError, match='Unknown return type "invalid_argument"'):
-        check_bk_condition(A, B, C, D, return_value="invalid_argument")
+        check_bk_condition(A, B, C, D, return_value="invalid_argument", verbose=False)
 
 
 def test_check_bk_condition():
