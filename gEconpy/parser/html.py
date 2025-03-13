@@ -18,31 +18,35 @@ def get_css() -> str:
     """
     css = r"""
     <style>
-        body {
+        /* Scope all styles under the #model-container */
+        #model-container {
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
             font-size: 12px;
             color: #333;
             margin: 0;
             padding: 0;
         }
-        /* Container for all model blocks */
-        .model-blocks {
+
+        #model-container.math {
+            width: 100%;
+            display: block;
+        }
+
+        #model-container .model-blocks {
             padding: 0;
         }
-        /* Top-level blocks inside the model-blocks container */
-        .model-blocks > details.block-info {
+        #model-container .model-blocks > details.block-info {
             border: none;
             padding: 0;
             margin: 0;
         }
-        .model-blocks > details.block-info:not(:last-child) {
+        #model-container .model-blocks > details.block-info:not(:last-child) {
             border-bottom: 1px solid #ddd;
         }
-        .model-blocks > details {
+        #model-container .model-blocks > details {
             background-color: #f9f9f9;
         }
-        /* Block title styling: make it span the full width and inherit background */
-        details.block-info > summary.block-title {
+        #model-container details.block-info > summary.block-title {
             font-weight: bold;
             cursor: pointer;
             padding: 10px;
@@ -50,30 +54,28 @@ def get_css() -> str:
             list-style: none;
             margin: 0;
         }
-        details.block-info > summary.block-title:hover {
+        #model-container details.block-info > summary.block-title:hover {
             background-color: #e9e9e9;
         }
-        details.block-info > summary.block-title::before {
+        #model-container details.block-info > summary.block-title::before {
             content: "►";
             display: inline-block;
             margin-right: 0.5em;
             transition: transform 0.2s ease;
         }
-        details.block-info[open] > summary.block-title::before {
+        #model-container details.block-info[open] > summary.block-title::before {
             content: "▼";
         }
-        /* Container for the block content */
-        .block-content {
+        #model-container .block-content {
             margin: 0;
             padding: 0;
         }
-        /* Collapsible sub-sections within the block */
-        details.property-details {
+        #model-container details.property-details {
             margin: 0;
             padding: 0 0 0 1em;
             border: none;
         }
-        details.property-details > summary {
+        #model-container details.property-details > summary {
             font-weight: bold;
             cursor: pointer;
             padding: 8px;
@@ -81,19 +83,19 @@ def get_css() -> str:
             border-bottom: 1px solid #ddd;
             list-style: none;
         }
-        details.property-details > summary:hover {
+        #model-container details.property-details > summary:hover {
             background-color: #e9e9e9;
         }
-        details.property-details > summary::before {
+        #model-container details.property-details > summary::before {
             content: "►";
             display: inline-block;
             margin-right: 0.5em;
             transition: transform 0.2s ease;
         }
-        details.property-details[open] > summary::before {
+        #model-container details.property-details[open] > summary::before {
             content: "▼";
         }
-        .block-content p {
+        #model-container .block-content p {
             margin: 0;
             padding: 5px 10px;
         }
@@ -112,22 +114,40 @@ def generate_html(blocks: list["Block"]) -> HTML:
         List of blocks to represent
     """
     html_parts = []
-    html_parts.append("<html><head>")
-    html_parts.append("<meta charset='utf-8'>")
     html_parts.append("""
-    <script type="text/javascript" async
-      src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS_HTML">
+    <script>
+      if (typeof window.MathJax === 'undefined') {
+        var mathjaxScript = document.createElement('script');
+        mathjaxScript.type = 'text/javascript';
+        mathjaxScript.async = true;
+        mathjaxScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS_HTML';
+        document.head.appendChild(mathjaxScript);
+      }
     </script>
     """)
     html_parts.append(get_css())
-    html_parts.append("</head><body>")
 
+    html_parts.append(
+        "<div id='model-container' class='math model-container-subclass'>"
+    )
     html_parts.append("<div class='model-blocks'>")
     for block in blocks:
         html_parts.append(block.__html_repr__())
     html_parts.append("</div>")
+    html_parts.append("</div>")
 
-    html_parts.append("</body></html>")
+    # html_parts.append("""
+    # <script>
+    #   function reprocessMath() {
+    #     if (window.MathJax && window.MathJax.Hub) {
+    #       MathJax.Hub.Queue(["Typeset", MathJax.Hub, document.getElementById("model-container")]);
+    #     } else {
+    #       setTimeout(reprocessMath, 100);
+    #     }
+    #   }
+    #   reprocessMath();
+    # </script>
+    # """)
 
     final_html = "\n".join(html_parts)
     return HTML(final_html)

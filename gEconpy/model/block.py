@@ -867,7 +867,7 @@ class Block:
                 f"<details class='property-details'><summary>{prop_label}</summary>"
             )
             for item in prop:
-                latex_repr = f"\\({sp.latex(item)}\\)"
+                latex_repr = f"\\[{sp.latex(item)}\\]"
                 html_parts.append(f"<p>{latex_repr}</p>")
             html_parts.append("</details>")
 
