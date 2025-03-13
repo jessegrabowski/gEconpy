@@ -1,0 +1,150 @@
+tryreduce
+{
+	U[], TC[], q[], K_d[];
+};
+
+block STEADY_STATE
+{
+    definitions
+    {
+        K_to_L[ss] = (alpha * A[ss] * mc[ss] / r[ss]) ^ (1 / (1 - alpha));
+    };
+
+    identities
+    {
+        A[ss] = 1;
+        shock_I[ss] = 1;
+        beta[ss] = beta;
+        Theta[ss] = Theta;
+        z[ss] = 1;
+        mc[ss] = 1;
+
+        r[ss] = (1 / beta - (1 - delta));
+        w[ss] = (1 - alpha) * A[ss] * mc[ss] * K_to_L[ss] ^ alpha;
+        L[ss] = ((A[ss] * K_to_L[ss] ^ alpha - delta * K_to_L[ss]) ^ (-sigma_C)
+                    * (1 - phi_H * beta) / (1 - phi_H) ^ sigma_C
+                    * w[ss] / Theta
+                ) ^ (1 / (sigma_C + sigma_L));
+
+        K[ss] = K_to_L[ss] * L[ss];
+        K_d[ss] = z[ss] * K[ss];
+        Y[ss] = A[ss] * K_d[ss] ^ alpha * L[ss] ^ (1 - alpha);
+
+        I[ss] = delta * K[ss];
+        C[ss] = Y[ss] - I[ss];
+
+        U[ss] = (1 / (1 - beta)) * (C[ss] ^ (1 - sigma_C) / (1 - sigma_C) - L[ss] ^ (1 + sigma_L) / (1 + sigma_L));
+        lambda[ss] = (1 - phi_H * beta) / ((1 - phi_H) * C[ss]) ^ sigma_C;
+        q[ss] = lambda[ss];
+
+        TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);
+    };
+};
+
+
+block HOUSEHOLD
+{
+	definitions
+	{
+		u[] = ((C[] - phi_H * C[-1]) ^ (1 - sigma_C) / (1 - sigma_C) - Theta[] * L[] ^ (1 + sigma_L) / (1 + sigma_L));
+        Psi_z[] = psi_z_1 * (z[] - 1) + psi_z / 2 * (z[] - 1) ^ 2;
+	};
+
+	controls
+	{
+		C[], L[], I[], K[], z[];
+	};
+
+	objective
+	{
+		U[] = u[] + beta[] * E[][U[1]];
+	};
+
+	constraints
+	{
+		C[] + I[] + Psi_z[] * K[-1] = r[] * z[] * K[-1] + w[] * L[]: lambda[];
+        K[] = (1 - delta) * K[-1] + I[] * (1 - gamma_I / 2 * (shock_I[] * I[] / I[-1] - 1) ^ 2) : q[];
+	};
+
+    identities
+    {
+        log(beta[]) = rho_beta * log(beta[-1]) + (1 - rho_beta) * log(beta) + epsilon_beta[];
+        log(shock_I[]) = rho_I * log(shock_I[-1]) + epsilon_I[];
+        log(Theta[]) = rho_Theta * log(Theta[-1]) + (1 - rho_Theta) * log(Theta) + epsilon_Theta[];
+    };
+
+    shocks
+    {
+        epsilon_beta[], epsilon_I[], epsilon_Theta[];
+    };
+
+
+    calibration
+    {
+        beta ~ maxent(Beta(), lower=0.95, upper=0.99, mass=0.99) = 0.99;
+        delta ~ maxent(Beta(), lower=0.01, upper=0.05, mass=0.99) = 0.035;
+
+        sigma_C ~ maxent(Gamma(), lower=1.5, upper=5.0, mass=0.99) = 3;
+        sigma_L ~ maxent(Gamma(), lower=1.0, upper=5.0, mass=0.99) = 1.5;
+
+        Theta ~ maxent(Gamma(), lower=0.8, upper=1.5, mass=0.99) = 1.0;
+        gamma_I	~ maxent(Gamma(), lower=3.0, upper=10.0) = 6.32;
+        phi_H ~ maxent(Beta(), lower=0.7, upper=0.99, mass=0.99) = 0.8;
+
+        rho_beta ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
+        rho_Theta ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
+        rho_I ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
+		psi_z ~ maxent(Beta(), lower=0.05, upper=0.30) = 0.169;
+
+		# Choose this to be r[ss] so that z[] has no effect on the steady-state
+		psi_z_1 = 1 / beta - (1 - delta);
+    };
+};
+
+block FIRM
+{
+    controls
+    {
+        K_d[], L[];
+    };
+
+    objective
+    {
+        TC[] = -(r[] * K_d[] + w[] * L[]);
+    };
+
+    constraints
+    {
+        Y[] = A[] * K_d[] ^ alpha * L[] ^ (1 - alpha) : mc[];
+    };
+
+    identities
+    {
+        # Perfect competition
+        mc[] = 1;
+        K_d[] = z[] * K[-1];
+    };
+
+    calibration
+    {
+		alpha ~ maxent(Beta(), lower=0.2, upper=0.5, mass=0.99) = 0.35;
+    };
+};
+
+block TECHNOLOGY_SHOCKS
+{
+    identities
+    {
+        log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+    };
+
+    shocks
+    {
+        epsilon_A[];
+    };
+
+    calibration
+    {
+		rho_A ~ Beta(mu=0.95, sigma=0.04) = 0.95;
+    };
+};

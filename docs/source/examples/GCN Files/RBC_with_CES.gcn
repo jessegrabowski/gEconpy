@@ -1,0 +1,127 @@
+tryreduce
+{
+	U[], TC[];
+};
+
+assumptions
+{
+    positive
+    {
+        A[], Y[], C[], K[], L[], w[], r[], mc[], beta, delta, sigma_C, sigma_L, alpha, psi;
+    };
+};
+
+block STEADY_STATE
+{
+    definitions
+    {
+        f1[ss] = r[ss] ^ (psi - 1) * alpha ^ ((1 - psi) / psi) * (A[ss] * mc[ss]) ^ (1 - psi);
+        N[ss] = ((f1[ss] - alpha ^ (1 / psi)) / (1 - alpha) ^ (1 / psi)) ^ (psi / (1 - psi));
+        f2[ss] = alpha ^ (1 / psi) * N[ss] ^ ((psi - 1) / psi) + (1 - alpha) ^ (1 / psi);
+    };
+
+    identities
+    {
+        A[ss] = 1.0;
+        r[ss] = 1 / beta - (1 - delta);
+        mc[ss] = 1.0;
+
+        w[ss] = (1 - alpha) ^ (1 / psi) * A[ss] * mc[ss] * f2[ss] ^ (1 / (psi - 1));
+
+        L[ss] = (w[ss] / Theta) ^ (1 / (sigma_L + sigma_C)) *
+            (A[ss] * f2[ss]  ^ (psi / (psi - 1)) -  delta * N[ss]) ^ (-sigma_C / (sigma_L + sigma_C));
+
+        K[ss] = N[ss] * L[ss];
+        I[ss] = delta * K[ss];
+        Y[ss] = A[ss] * (alpha ^ (1 / psi) * K[ss] ^ ((psi - 1) / psi) +
+                        (1 - alpha) ^ (1 / psi) * L[ss] ^ ((psi - 1) / psi)) ^ (psi / (psi - 1));
+        C[ss] = Y[ss] - I[ss];
+
+        lambda[ss] = C[ss] ^ (-sigma_C);
+    };
+
+};
+
+block HOUSEHOLD
+{
+	definitions
+	{
+		u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) - Theta * L[] ^ (1 + sigma_L) / (1 + sigma_L);
+	};
+
+	controls
+	{
+		C[], L[], I[], K[];
+	};
+
+	objective
+	{
+		U[] = u[] + beta * E[][U[1]];
+	};
+
+	constraints
+	{
+		C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
+
+		K[] = (1 - delta) * K[-1] + I[];
+	};
+
+	calibration
+	{
+		beta = 0.99;
+		delta = 0.02;
+		sigma_C = 1.5;
+		sigma_L = 2.0;
+		Theta = 1.0;
+	};
+};
+
+block FIRM
+{
+    controls
+    {
+        K[-1], L[];
+    };
+
+    objective
+    {
+        TC[] = -(r[] * K[-1] + w[] * L[]);
+    };
+
+    constraints
+    {
+        Y[] = A[] * (alpha ^ (1 / psi) * K[-1] ^ ((psi - 1) / psi) +
+               (1 - alpha) ^ (1 / psi) * L[] ^ ((psi - 1) / psi)
+                     ) ^ (psi / (psi - 1)): mc[];
+    };
+
+    identities
+    {
+        # Perfect competition
+        mc[] = 1;
+    };
+
+    calibration
+    {
+        alpha = 0.35;
+        psi = 0.6;
+    };
+};
+
+block TECHNOLOGY_SHOCKS
+{
+    identities
+    {
+        log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+    };
+
+    shocks
+    {
+        epsilon_A[];
+    };
+
+    calibration
+    {
+        rho_A = 0.95;
+    };
+};
