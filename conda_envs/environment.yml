@@ -6,7 +6,6 @@ dependencies:
   - python=3.12
   - pymc
   - pytensor
-  - emcee
   - joblib
   - matplotlib
   - numba
@@ -16,8 +15,15 @@ dependencies:
   - scipy
   - setuptools
   - statsmodels
-  - sympy
+  - preliz
+  - sympy<1.13
+  - pymc-extras
+  - better-optimize
+  - preliz
+  - ipython
+  - nutpie
 
   - pip:
       - sympytensor
-      - gEconpy
+      - flowjax
+      - git+https://github.com/pymc-devs/pymc-extras.git

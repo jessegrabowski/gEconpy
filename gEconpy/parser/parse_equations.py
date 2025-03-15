@@ -1,4 +1,5 @@
 import re
+
 from collections import defaultdict
 
 import sympy as sp
@@ -140,18 +141,16 @@ def extract_time_index(token: str) -> str:
     >>> # Out: 't'
     """
 
-    if has_num_index(token) and "-" not in token:
-        lead = re.findall(r"\d+", token)[0]
-        time_index = "t" + lead
-    elif has_num_index(token) and "-" in token:
-        lag = re.findall(r"\d+", token)[0]
-        time_index = "tL" + lag
-    elif "[ss]" in token:
-        time_index = "ss"
-    else:
-        time_index = "t"
-
-    return time_index
+    match = re.search(r"\[(.*?)\]", token)
+    if match:
+        index = match.group(1)
+        if index == "ss":
+            return "ss"
+        elif index.startswith("-"):
+            return f"tL{index[1:]}"
+        else:
+            return f"t{index}"
+    return "t"
 
 
 def remove_timing_information(token: str) -> str:
@@ -185,12 +184,12 @@ def convert_to_python_operator(token: str) -> str:
         A string representing a mathematical operation.
 
     Returns
-    ---------
+    -------
     str
         A string representing the same operation in python syntax.
 
     Notes
-    ----------
+    -----
     The syntax of a gEcon GCN file is slightly different from what SymPy expects, this function resolves the
     differences. In particular:
         1. Exponents are marked with a caret "^" in the GCN file, and must be converted to python's **
@@ -308,7 +307,7 @@ def single_symbol_to_sympy(
     ----------
     variable : str
         A gEcon variable or parameter.
-    assumptions : Optional[Dict]
+    assumptions : dict, optional
         Assumptions for the symbol.
 
     Returns
@@ -322,8 +321,12 @@ def single_symbol_to_sympy(
     if "[" not in variable and "]" not in variable:
         return sp.Symbol(variable, **assumptions[variable])
 
-    variable_name, time_part = variable.split("[")
-    time_part = time_part.replace("]", "")
+    try:
+        variable_name, time_part = variable.split("[")
+        time_part = time_part.replace("]", "")
+    except Exception as e:
+        raise ValueError(f"Error encountered while parsing: {variable}") from e
+
     if time_part == "ss":
         return TimeAwareSymbol(variable_name, 0).to_ss()
     else:
@@ -388,6 +391,11 @@ def build_sympy_equations(
                 token_base = remove_timing_information(token)
                 token = token_base + "_" + time_index
 
+                if time_index not in TIME_INDEX_DICT:
+                    raise ValueError(
+                        f"Invalid time index {time_index} associated with token {token} from equation: {eq}"
+                    )
+
                 symbol = TimeAwareSymbol(
                     token_base, TIME_INDEX_DICT[time_index], **assumptions[token_base]
                 )
@@ -405,9 +413,9 @@ def build_sympy_equations(
         try:
             eq_sympy = sp.parse_expr(eq_str, evaluate=False, local_dict=sub_dict)
         except Exception as e:
-            print(f"Error encountered while parsing {eq_str}")
-            print(e)
-            raise e
+            raise ValueError(
+                f"Error encountered the following error while parsing: {eq_str}\n"
+            ) from e
 
         eq_sympy = sp.Eq(*eq_sympy)
         flags["is_calibrating"] = calibrating_parameter is not None

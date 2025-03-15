@@ -3,7 +3,7 @@ import unittest
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.shared.utilities import (
+from gEconpy.utilities import (
     diff_through_time,
     step_equation_backward,
     step_equation_forward,

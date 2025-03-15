@@ -1,28 +1,37 @@
-import os
 import unittest
-from pathlib import Path
+import warnings
+from typing import Literal
 
+import arviz as az
+import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib import pyplot as plt
+import pandas as pd
+import pymc as pm
+import pytest
 
-from gEconpy.classes.model import gEconModel
+from gEconpy.model.model import (
+    autocorrelation_matrix,
+    check_bk_condition,
+    impulse_response_function,
+    simulate,
+    stationary_covariance_matrix,
+)
+from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.plotting import (
+    plot_acf,
     plot_covariance_matrix,
     plot_eigenvalues,
+    plot_heatmap,
     plot_irf,
-    plot_prior_solvability,
+    plot_kalman_filter,
+    plot_priors,
     plot_simulation,
     prepare_gridspec_figure,
 )
-from gEconpy.plotting.plotting import (
-    plot_acf,
-    plot_corner,
-    plot_heatmap,
-    plot_kalman_filter,
+from tests.utilities.shared_fixtures import (
+    load_and_cache_model,
+    load_and_cache_statespace,
 )
-from gEconpy.sampling import kalman_filter_from_posterior, prior_solvability_check
-
-ROOT = Path(__file__).parent.absolute()
 
 
 class TestUtilities(unittest.TestCase):
@@ -46,16 +55,21 @@ class TestUtilities(unittest.TestCase):
 class TestPlotSimulation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/RBC_Linearized.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-        cls.data = cls.model.simulate(simulation_length=100, n_simulations=1)
+        cls.model = load_and_cache_model("rbc_linearized.gcn", backend="numpy")
+        cls.data = simulate(
+            cls.model,
+            simulation_length=100,
+            n_simulations=1000,
+            shock_std=0.1,
+            solver="gensys",
+            verbose=False,
+            steady_state_kwargs={"verbose": False, "progressbar": False},
+        )
 
     def test_plot_simulation_defaults(self):
         fig = plot_simulation(self.data)
 
-        self.assertEqual(len(fig.axes), self.model.n_variables)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
         plt.close()
 
     def test_plot_simulation_vars_to_plot(self):
@@ -69,11 +83,12 @@ class TestPlotSimulation(unittest.TestCase):
             plot_simulation(self.data, vars_to_plot=["Y", "C", "Invalid"])
         error_msg = error.exception
         self.assertEqual(str(error_msg), "Invalid not found among model variables.")
+        plt.close()
 
     def test_plot_simulation_with_ci(self):
         fig = plot_simulation(self.data, ci=0.95)
 
-        self.assertEqual(len(fig.axes), self.model.n_variables)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
         plt.close()
 
     def test_plot_simulation_aesthetic_params(self):
@@ -81,151 +96,138 @@ class TestPlotSimulation(unittest.TestCase):
             self.data, cmap="YlGn", figsize=(14, 4), dpi=100, fill_color="brickred"
         )
 
-        self.assertEqual(len(fig.axes), self.model.n_variables)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
         self.assertEqual(fig.get_dpi(), 100)
         self.assertEqual(fig.get_figwidth(), 14)
         self.assertEqual(fig.get_figheight(), 4)
-
         plt.close()
 
 
-class TestIRFPlot(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        file_path = os.path.join(ROOT, "Test GCNs/Full_New_Keyensian.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-        cls.irf = cls.model.impulse_response_function(
-            simulation_length=100, shock_size=0.1
+@pytest.fixture(scope="session")
+def irf_setup():
+    model = load_and_cache_model("full_nk.gcn", backend="numpy")
+    model.steady_state(verbose=False)
+    T, R = model.solve_model(verbose=False, solver="gensys")
+    irf = impulse_response_function(
+        model,
+        T=T,
+        R=R,
+        simulation_length=100,
+        shock_size=0.1,
+        return_individual_shocks=True,
+    )
+
+    return model, irf
+
+
+def test_plot_irf_defaults(irf_setup):
+    model, irf = irf_setup
+    fig = plot_irf(irf, legend=True)
+
+    assert len(fig.axes) == len(model.variables)
+    assert len(fig.axes[0].get_lines()) == len(model.shocks)
+
+    plt.close()
+
+
+@pytest.mark.parametrize(
+    "shocks_to_plot", ["epsilon_Y", ["epsilon_Y"]], ids=["str", "list"]
+)
+def test_plot_irf_one_shock(irf_setup, shocks_to_plot):
+    model, irf = irf_setup
+    fig = plot_irf(irf, shocks_to_plot=shocks_to_plot)
+
+    assert len(fig.axes) == len(model.variables)
+    assert len(fig.axes[0].get_lines()) == 1
+
+    plt.close()
+
+
+def test_plot_irf_one_variable(irf_setup):
+    model, irf = irf_setup
+    fig = plot_irf(irf, vars_to_plot="Y")
+
+    assert len(fig.axes) == 1
+    assert len(fig.axes[0].get_lines()) == len(model.shocks)
+
+    plt.close()
+
+
+def test_plot_irf_raises_if_var_not_found(irf_setup):
+    model, irf = irf_setup
+
+    with pytest.raises(
+        ValueError, match="Invalid not found among simulated impulse responses."
+    ):
+        plot_irf(irf, vars_to_plot=["Y", "C", "Invalid"])
+
+    plt.close()
+
+
+def test_plot_irf_raises_if_shock_not_found(irf_setup):
+    model, irf = irf_setup
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid not found among shocks used in impulse response data.",
+    ):
+        plot_irf(
+            irf,
+            vars_to_plot=["Y", "C"],
+            shocks_to_plot=["epsilon_Y", "Invalid"],
         )
-
-    def test_plot_irf_defaults(self):
-        fig = plot_irf(self.irf)
-
-        self.assertEqual(len(fig.axes), self.model.n_variables)
-        self.assertEqual(len(fig.axes[0].get_lines()), self.model.n_shocks)
-        plt.close()
-
-    def test_plot_irf_one_shock(self):
-        with self.assertRaises(ValueError):
-            fig = plot_irf(self.irf, shocks_to_plot="epsilon_A")
-
-        fig = plot_irf(self.irf, shocks_to_plot=["epsilon_Y"])
-        self.assertEqual(len(fig.axes), self.model.n_variables)
-        self.assertEqual(len(fig.axes[0].get_lines()), 1)
-        plt.close()
-
-    def test_plot_irf_one_variable(self):
-        with self.assertRaises(ValueError):
-            fig = plot_irf(self.irf, vars_to_plot="Y")
-
-        fig = plot_irf(self.irf, vars_to_plot=["Y"])
-        self.assertEqual(len(fig.axes), 1)
-        self.assertEqual(len(fig.axes[0].get_lines()), self.model.n_shocks)
-        plt.close()
-
-    def test_var_not_found_raises(self):
-        with self.assertRaises(ValueError) as error:
-            plot_irf(self.irf, vars_to_plot=["Y", "C", "Invalid"])
-        error_msg = error.exception
-        self.assertEqual(
-            str(error_msg), "Invalid not found among simulated impulse responses."
-        )
-        plt.close()
-
-    def test_shock_not_found_raises(self):
-        with self.assertRaises(ValueError) as error:
-            plot_irf(
-                self.irf,
-                vars_to_plot=["Y", "C"],
-                shocks_to_plot=["epsilon_Y", "Invalid"],
-            )
-        error_msg = error.exception
-        self.assertEqual(
-            str(error_msg),
-            "Invalid not found among shocks used in impulse response data.",
-        )
-
-    def test_legend(self):
-        fig = plot_irf(
-            self.irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y"], legend=True
-        )
-        self.assertIsNotNone(fig.axes[0].get_legend())
-        self.assertIsNone(fig.axes[1].get_legend())
-        plt.close()
+    plt.close()
 
 
-class TestPriorSolvabilityPlot(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        file_path = os.path.join(
-            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
-        )
-        cls.model = gEconModel(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-        cls.data = prior_solvability_check(cls.model, n_samples=1_000)
+def test_plot_irf_legend(irf_setup):
+    model, irf = irf_setup
 
-    def test_plot_with_defaults(self):
-        fig = plot_prior_solvability(self.data)
-
-        n_priors = len(self.model.param_priors)
-        self.assertTrue(len(fig.axes) == n_priors**2)
-        plot_idxs = np.arange(n_priors**2).reshape((n_priors, n_priors))
-        upper_idxs = plot_idxs[np.triu_indices_from(plot_idxs, 1)]
-        lower_idxs = plot_idxs[np.tril_indices_from(plot_idxs)]
-        for idx in upper_idxs:
-            self.assertTrue(not fig.axes[idx].get_visible())
-        for idx in lower_idxs:
-            self.assertTrue(fig.axes[idx].get_visible())
-        plt.close()
-
-    def test_plot_with_vars_to_plot(self):
-        fig = plot_prior_solvability(self.data, params_to_plot=["alpha", "gamma"])
-        n_priors = 2
-
-        self.assertTrue(len(fig.axes) == n_priors**2)
-        plot_idxs = np.arange(n_priors**2).reshape((n_priors, n_priors))
-        upper_idxs = plot_idxs[np.triu_indices_from(plot_idxs, 1)]
-        lower_idxs = plot_idxs[np.tril_indices_from(plot_idxs)]
-        for idx in upper_idxs:
-            self.assertTrue(not fig.axes[idx].get_visible())
-        for idx in lower_idxs:
-            self.assertTrue(fig.axes[idx].get_visible())
-        plt.close()
-
-    def test_raises_if_param_not_found(self):
-        with self.assertRaises(ValueError) as error:
-            plot_prior_solvability(self.data, params_to_plot=["alpha", "beta"])
-
-        msg = str(error.exception)
-        self.assertEqual(
-            msg, 'Cannot plot parameter "beta", it was not found in the provided data.'
-        )
+    fig = plot_irf(
+        irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y"], legend=True
+    )
+    assert all(axis.get_legend() is None for axis in fig.axes)
+    assert len(fig.figure.legends) == 1
+    plt.close()
 
 
 class TestPlotEigenvalues(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
+        cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
 
     def test_plot_with_defaults(self):
-        fig = plot_eigenvalues(self.model)
         from matplotlib.collections import PathCollection
 
+        fig = plot_eigenvalues(
+            self.model,
+            linearize_model_kwargs={
+                "verbose": False,
+                "steady_state_kwargs": {"progressbar": False, "verbose": False},
+            },
+        )
+
         scatter_points = fig.axes[0].findobj(PathCollection)[0].get_offsets().data
-        data = self.model.check_bk_condition(return_value="df", verbose=False)
+        data = check_bk_condition(
+            self.model,
+            return_value="dataframe",
+            verbose=False,
+            steady_state_kwargs={"progressbar": False, "verbose": False},
+        )
 
         n_finite = (data["Modulus"] < 1.5).sum()
         self.assertEqual(n_finite, scatter_points.shape[0])
         plt.close()
 
     def test_plot_with_aesthetic_params(self):
-        fig = plot_eigenvalues(self.model, dpi=144, figsize=(2, 2))
+        fig = plot_eigenvalues(
+            self.model,
+            dpi=144,
+            figsize=(2, 2),
+            linearize_model_kwargs={
+                "verbose": False,
+                "steady_state_kwargs": {"progressbar": False, "verbose": False},
+            },
+        )
 
         self.assertEqual(fig.get_figwidth(), 2)
         self.assertEqual(fig.get_figheight(), 2)
@@ -236,12 +238,14 @@ class TestPlotEigenvalues(unittest.TestCase):
 class TestPlotCovarianceMatrix(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-        cls.cov_matrix = cls.model.compute_stationary_covariance_matrix(
-            shock_cov_matrix=np.eye(1) * 0.01
+        cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
+
+        cls.cov_matrix = stationary_covariance_matrix(
+            cls.model,
+            shock_cov_matrix=np.eye(1) * 0.01,
+            return_df=True,
+            verbose=False,
+            steady_state_kwargs={"progressbar": False, "verbose": False},
         )
 
     def test_plot_with_defaults(self):
@@ -272,22 +276,30 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
 class TestPlotACF(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        file_path = os.path.join(ROOT, "Test GCNs/One_Block_Simple_1.gcn")
-        cls.model = gEconModel(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-        cls.acf = cls.model.compute_autocorrelation_matrix(
-            shock_cov_matrix=np.eye(1) * 0.01
+        cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
+
+        cls.acf = autocorrelation_matrix(
+            cls.model,
+            shock_cov_matrix=np.eye(1) * 0.01,
+            return_xr=True,
+            verbose=False,
+            steady_state_kwargs={"progressbar": False, "verbose": False},
         )
 
     def test_plot_with_defaults(self):
         fig = plot_acf(self.acf)
-        self.assertEqual(len(fig.axes), self.model.n_variables)
+        self.assertEqual(len(fig.axes), len(self.model.variables))
+        for axis, variable in zip(fig.axes, self.model.variables):
+            assert axis.get_title() == variable.base_name
+
         plt.close()
 
     def test_plot_with_subset(self):
         fig = plot_acf(self.acf, vars_to_plot=["C", "K", "A"])
         self.assertEqual(len(fig.axes), 3)
+        for axis, variable in zip(fig.axes, ["C", "K", "A"]):
+            assert axis.get_title() == variable
+
         plt.close()
 
     def test_invalid_var_raises(self):
@@ -298,64 +310,94 @@ class TestPlotACF(unittest.TestCase):
             msg,
             "Can not plot variable Invalid, it was not found in the provided covariance matrix",
         )
-
-
-class TestPostEstimationPlots(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        file_path = os.path.join(
-            ROOT, "Test GCNs/One_Block_Simple_1_w_Distributions.gcn"
-        )
-        cls.model = gEconModel(file_path, verbose=False)
-        cls.model.steady_state(verbose=False)
-        cls.model.solve_model(verbose=False)
-
-        cls.data = cls.model.simulate(simulation_length=100, n_simulations=1)
-        cls.data = cls.data.droplevel(axis=1, level=1).T[["C"]]
-
-        cls.idata = cls.model.fit(
-            cls.data,
-            filter_type="univariate",
-            draws=36,
-            n_walkers=36,
-            return_inferencedata=True,
-            burn_in=0,
-            verbose=False,
-            compute_sampler_stats=False,
-        )
-
-    def test_plot_corner_with_defaults(self):
-        fig = plot_corner(self.idata)
-        self.assertIsNotNone(fig)
         plt.close()
 
-    def test_plot_kalman_with_defaults(self):
-        posterior = self.idata.posterior.stack(sample=["chain", "draw"])
-        conditional_posterior = kalman_filter_from_posterior(
-            self.model, self.data, posterior, n_samples=10
+
+@pytest.fixture(scope="session")
+def ss_mod() -> DSGEStateSpace:
+    model = load_and_cache_statespace("rbc_linearized.gcn")
+    model.configure(
+        observed_states=["Y", "C", "L"],
+        measurement_error=["Y", "C", "L"],
+        full_shock_covaraince=False,
+        solver="gensys",
+        mode="FAST_RUN",
+        verbose=False,
+    )
+
+    return model
+
+
+@pytest.fixture(scope="session")
+@pytest.mark.filterwarnings("ignore")
+def pm_mod(ss_mod) -> pm.Model:
+    with pm.Model(coords=ss_mod.coords) as pm_mod:
+        ss_mod.to_pymc()
+        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+
+        for var_name in ss_mod.observed_states:
+            pm.Gamma(f"error_sigma_{var_name}", alpha=2, beta=100)
+
+        with warnings.catch_warnings(action="ignore"):
+            ss_mod.build_statespace_graph(np.full((100, 3), np.nan))
+
+    return pm_mod
+
+
+@pytest.fixture(scope="session")
+def prior_idata(pm_mod, ss_mod) -> tuple[az.InferenceData, pd.DataFrame]:
+    with warnings.catch_warnings(action="ignore"):
+        with pm_mod:
+            prior = pm.sample_prior_predictive(25)
+
+        unconditional_prior = ss_mod.sample_unconditional_prior(
+            prior, progressbar=False
         )
 
-        fig = plot_kalman_filter(
-            conditional_posterior, self.data, kalman_output="predicted"
+        prior["unconditional_prior"] = unconditional_prior
+        fake_data = (
+            unconditional_prior["prior_observed"]
+            .sel(observed_state=["Y", "C", "L"], chain=0, draw=0)
+            .to_dataframe()["prior_observed"]
+            .unstack("observed_state")
         )
-        self.assertIsNotNone(fig)
-        plt.close()
+        fake_data.index = pd.RangeIndex(0, 100)
 
-        fig = plot_kalman_filter(
-            conditional_posterior, self.data, kalman_output="filtered"
-        )
-        self.assertIsNotNone(fig)
-        plt.close()
+        with pm_mod:
+            pm.set_data({"data": fake_data})
+            ss_mod._fit_data = fake_data
 
-        fig = plot_kalman_filter(
-            conditional_posterior, self.data, kalman_output="smoothed"
-        )
-        self.assertIsNotNone(fig)
-        plt.close()
+        conditional_prior = ss_mod.sample_conditional_prior(prior, progressbar=False)
+        prior["conditional_prior"] = conditional_prior
 
-    def test_plot_kalman_raises_on_invalid_args(self):
-        with self.assertRaises(ValueError):
-            plot_kalman_filter(self.idata, self.data, kalman_output="invalid")
+    return (prior, fake_data)
+
+
+@pytest.mark.parametrize("kalman_output", ["predicted", "filtered", "smoothed"])
+@pytest.mark.parametrize("vars_to_plot", [["Y"], ["Y", "C"], ["Y", "C", "L"]])
+def test_plot_kalman_filter(
+    ss_mod,
+    prior_idata,
+    kalman_output: Literal["predicted", "filtered", "smoothed"],
+    vars_to_plot,
+):
+    idata, fake_data = prior_idata
+    fig = plot_kalman_filter(
+        idata["conditional_prior"],
+        fake_data,
+        kalman_output=kalman_output,
+        group="prior",
+        vars_to_plot=vars_to_plot,
+    )
+
+    assert len(fig.axes) == len(vars_to_plot)
+    assert all(axis.get_title() in vars_to_plot for axis in fig.axes)
+
+
+def test_plot_priors(ss_mod):
+    fig = plot_priors(ss_mod)
+    titles = [ax.get_title() for ax in fig.axes]
+    assert len(titles) == len(ss_mod.shock_priors | ss_mod.param_priors)
 
 
 if __name__ == "__main__":

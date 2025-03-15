@@ -8,9 +8,9 @@ import gEconpy
 
 # -- Project information -----------------------------------------------------
 project = "gEconpy"
-copyright = "2022-2024, Jesse Grabowski"
+copyright = "2022-2025, Jesse Grabowski"
 language = "en"
-html_baseurl = "www.jbgrabowski.com/geconpy/"
+html_baseurl = "github.com/jessegrabowski/gEconpy"
 
 docnames = []
 
@@ -192,6 +192,7 @@ intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
     "xarray": ("https://docs.xarray.dev/en/stable/", None),
+    "sympy": ("https://docs.sympy.org/latest/", None),
 }
 
 # OpenGraph config

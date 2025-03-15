@@ -1,0 +1,103 @@
+tryreduce
+{
+	Pi[], U[], TC[];
+};
+
+block STEADYSTATE
+{
+    definitions
+    {
+		# Capital/Labor Ratio
+		N[ss] = (alpha * beta * A[ss] / (1 - beta * (1 - delta)))
+					^ (1 / (1 - alpha));
+    };
+
+    identities
+    {
+        A[ss] = 1;
+        P[ss] = 1;
+        Pi[ss] = 0;
+
+		L[ss] = (1 - alpha) / Theta / (1 - delta * N[ss] ^ (1 - alpha));
+		K[ss] = N[ss] * L[ss];
+
+		r[ss] = 1 / beta - (1 - delta);
+		w[ss] = (1 - alpha) * N[ss] ^ alpha;
+
+		Y[ss] = A[ss] * K[ss] ^ alpha * L[ss] ^ (1 - alpha);
+		I[ss] = delta * K[ss];
+		C[ss] = Y[ss] - I[ss];
+
+		U[ss] = (1 / (1 - beta)) * (log(C[ss]) - Theta * L[ss]);
+        lambda[ss] = 1 / (C[ss] * P[ss]);
+        TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);
+    };
+};
+
+block HOUSEHOLD
+{
+	definitions
+	{
+		u[] = log(C[]) - Theta * L[];
+	};
+
+	objective
+	{
+		U[] = u[] + beta * E[][U[1]];
+	};
+
+	controls
+	{
+		C[], L[], I[], K[];
+	};
+
+	constraints
+	{
+		C[] + I[] = w[] * L[] + r[] * K[-1] + Pi[] : lambda[];
+		K[] = (1 - delta) * K[-1] + I[];
+	};
+
+	calibration
+	{
+		beta = 0.99;
+		Theta = 1;
+        delta = 0.035;
+	};
+};
+
+
+block FIRM
+{
+	controls
+	{
+		K[-1], L[];
+	};
+
+    objective
+    {
+		TC[] = -(w[] * L[] + r[] * K[-1]);
+    };
+
+    constraints
+    {
+		Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha) : P[];
+    };
+
+	identities
+	{
+		log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+		P[] = 1;
+		Pi[] = P[] * Y[] + TC[];
+	};
+
+	shocks
+	{
+		epsilon_A[];
+	};
+
+    calibration
+    {
+		alpha = 0.35;
+		rho_A = 0.95;
+    };
+};

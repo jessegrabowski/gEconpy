@@ -1,0 +1,67 @@
+options
+{
+    linear = True;
+};
+
+block STEADY_STATE
+{
+    identities
+    {
+		A[ss] = 1;
+		R[ss] = (1 / beta - (1 - delta));
+		W[ss] = (1 - alpha) ^ (1 / (1 - alpha)) * (alpha / R[ss]) ^ (alpha / (1 - alpha));
+		Y[ss] = (R[ss] / (R[ss] - delta * alpha)) ^ (sigma / (sigma + phi)) *
+			   ((1 - alpha) ^ (-phi) * (W[ss]) ^ (1 + phi)) ^ (1 / (sigma + phi));
+		K[ss] = alpha * Y[ss] / R[ss];
+		I[ss] = delta * K[ss];
+		C[ss] = Y[ss] - I[ss];
+		L[ss] = (1 - alpha) * Y[ss] / W[ss];
+    };
+};
+
+block SYSTEM_EQUATIONS
+{
+	identities
+	{
+		#1. Labor supply
+		W[] = sigma * C[] + phi * L[];
+
+		#2. Euler Equation
+		sigma / beta * (E[][C[1]] - C[]) = R[ss] * E[][R[1]];
+
+		#3. Law of motion of capital
+		K[] = (1 - delta) * K[-1] + delta * I[];
+
+		#4. Production Function
+		Y[] = A[] + alpha * K[-1] + (1 - alpha) * L[];
+
+		#5. Demand for capital
+		R[] = Y[] - K[-1];
+
+		#6. Demand for labor
+		W[] = Y[] - L[];
+
+		#7. Equlibrium Condition
+		Y[ss] * Y[] = C[ss] * C[] + I[ss] * I[];
+
+		#8. Productivity Shock
+		A[] = rho_A * A[-1] + epsilon_A[];
+	};
+
+	shocks
+	{
+		epsilon_A[] ~ Normal(mu=0, sigma=sigma_A);
+	};
+
+	calibration
+	{
+		sigma   ~ maxent(Gamma(), lower=1.5, upper=3.0) = 2;
+		phi     ~ maxent(Gamma(), lower=1.0, upper=5.0) = 1.5;
+		alpha   ~ Beta(alpha=5, beta=9) = 0.35;
+		beta    ~ Beta(alpha=10, beta=1) = 0.985;
+		delta   ~ Beta(alpha=1, beta=10) = 0.025;
+		rho_A   ~ Beta(alpha=1, beta=5) = 0.95;
+		sigma_A ~ maxent(Gamma(), lower=0.001, upper=0.1) = 0.01;
+	};
+
+};

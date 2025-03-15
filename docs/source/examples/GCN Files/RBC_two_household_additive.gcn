@@ -1,0 +1,194 @@
+assumptions
+{
+	positive
+	{
+		Y[], K[], C_NR[], C_R[],
+		w[], r[],
+		L[], L_NR[], L_R[],
+		TFP[],
+		alpha, alpha_L, beta, sigma_C, sigma_L, delta;
+	};
+};
+
+tryreduce
+{
+	U_NR[], U_R[], TC[];
+};
+
+block STEADY_STATE
+{
+	definitions
+	{
+	    # Capital/Labor ratio, N = K/L
+		N[ss] = (alpha * TFP[ss] / r[ss]) ^ (1 / (1 - alpha));
+
+	};
+	identities
+	{
+		TFP[ss] = 1.0;
+		shock_beta_R[ss] = 1.0;
+		Theta_R[ss] = Theta_R;
+		Theta_N[ss] = Theta_N;
+
+		r[ss] = 1 / beta - (1 - delta);
+		w[ss] = (1 - alpha) * N[ss] ^ alpha;
+
+		C_R[ss] = (w[ss] / Theta_R) ^ (1 / sigma_R);
+		C_NR[ss] = (w[ss] / Theta_N) ^ (1 / sigma_N);
+
+		C[ss] = omega * C_R[ss] + (1 - omega) * C_NR[ss];
+        L[ss] = C[ss] / (N[ss] ^ alpha - delta * N[ss]);
+        L_NR[ss] = C_NR[ss] / w[ss];
+        L_R[ss] = (L[ss] - (1 - omega) * L_NR[ss]) / omega;
+
+        K[ss] = N[ss] * L[ss];
+        I[ss] = delta * K[ss];
+        Y[ss] = C[ss] + I[ss];
+
+		lambda_R[ss] = C_R[ss] ^ -sigma_R;
+		lambda_NR[ss] = C_NR[ss] ^ -sigma_N;
+		q[ss] = lambda_R[ss];
+	};
+};
+
+block RICARDIAN_HOUSEHOLD
+{
+	definitions
+	{
+		u_R[] = shock_beta_R[] * (C_R[] ^ (1 - sigma_R) / (1 - sigma_R) - Theta_R[] * L_R[]);
+	};
+
+	controls
+	{
+		C_R[], L_R[], I[], K[];
+	};
+
+	objective
+	{
+		U_R[] = u_R[] + beta * E[][U_R[1]];
+	};
+
+	constraints
+	{
+		@exclude
+		C_R[] + I[] = r[] * K[-1] + w[] * L_R[] : lambda_R[];
+
+		K[] = (1 - delta) * K[-1] + I[]: q[];
+	};
+
+	identities
+	{
+		log(shock_beta_R[]) = rho_beta_R * log(shock_beta_R[-1]) + epsilon_beta_R[];
+		log(Theta_R[]) = (1 - rho_Theta_R) * log(Theta_R) + rho_Theta_R * log(Theta_R[-1]) + epsilon_Theta_R[];
+	};
+
+	shocks
+	{
+		epsilon_beta_R[], epsilon_Theta_R[];
+	};
+
+	calibration
+	{
+		beta  ~ maxent(Beta(), lower=0.90, upper=0.99) = 0.99;
+		delta ~ maxent(Beta(), lower=0.01, upper=0.05) = 0.02;
+		sigma_R ~ maxent(Gamma(), lower=1.1, upper=3.0) = 1.5;
+		Theta_R ~ maxent(Gamma(), lower=0.1, upper=5.0) = 1.0;
+		rho_beta_R  ~ maxent(Beta(), lower=0.5, upper=0.99) = 0.95;
+        rho_Theta_R  ~ maxent(Beta(), lower=0.5, upper=0.99) = 0.95;
+	};
+};
+
+block NON_RICARDIAN_HOUSEHOLD
+{
+	definitions
+	{
+		u_NR[] = C_NR[] ^ (1 - sigma_N) / (1 - sigma_N) - Theta_N[] * L_NR[];
+	};
+
+	controls
+	{
+		C_NR[], L_NR[];
+	};
+
+	objective
+	{
+		U_NR[] = u_NR[] + beta * E[][U_NR[1]];
+	};
+
+	constraints
+	{
+		C_NR[] = w[] * L_NR[]: lambda_NR[];
+	};
+
+	identities
+	{
+	    log(Theta_N[]) = (1 - rho_Theta_N) * log(Theta_N) + rho_Theta_N * log(Theta_N[-1]) + epsilon_Theta_N[];
+	};
+
+	shocks
+	{
+	    epsilon_Theta_N[];
+	};
+
+	calibration
+	{
+	    Theta_N ~ maxent(Gamma(), lower=0.1, upper=5.0) = 1.0;
+        sigma_N ~ maxent(Gamma(), lower=1.1, upper=3.0) = 1.5;
+
+        rho_Theta_N ~ maxent(Beta(), lower=0.5, upper=0.99) = 0.95;
+	};
+};
+
+
+block FIRM
+{
+    controls
+    {
+        K[-1], L[];
+    };
+
+    objective
+    {
+        TC[] = -(r[] * K[-1] + w[] * L[]);
+    };
+
+    constraints
+    {
+		Y[] = TFP[] * K[-1] ^ alpha * L[] ^ (1 - alpha) : mc[];
+    };
+
+    identities
+    {
+        # Perfect competition
+        mc[] = 1;
+
+		# Exogenous technology process
+		log(TFP[]) = rho_TFP * log(TFP[-1]) + epsilon_TFP[];
+    };
+
+    shocks
+    {
+        epsilon_TFP[];
+    };
+
+    calibration
+    {
+        alpha   ~ maxent(Beta(), lower=0.3, upper=0.6) = 0.35;
+		rho_TFP ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.95;
+    };
+};
+
+block EQULIBRIUM
+{
+	identities
+	{
+		Y[] = C[] + I[];
+		L[] = omega * L_R[] + (1 - omega) * L_NR[];
+		C[] = omega * C_R[] + (1 - omega) * C_NR[];
+	};
+
+	calibration
+	{
+	    omega ~ maxent(Beta(), lower=0.6, upper=0.99) = 0.66;
+	};
+};

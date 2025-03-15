@@ -4,7 +4,7 @@
 Plotting
 ********
 
-.. automodule:: gEconpy.plotting.plotting
+.. automodule:: gEconpy.plotting
 
 .. autosummary::
     :toctree: generated/

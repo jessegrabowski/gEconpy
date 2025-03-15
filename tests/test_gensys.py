@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 from gEconpy.solvers.gensys import (
+    build_u_v_d,
     determine_n_unstable,
     qzdiv,
     qzswitch,
@@ -19,7 +20,7 @@ class GensysComponentTests(unittest.TestCase):
 
         self.div = 1.01
 
-        self.A = np.array(
+        A = np.array(
             [
                 [
                     -2.0123 - 0.5490j,
@@ -59,7 +60,7 @@ class GensysComponentTests(unittest.TestCase):
             ]
         )
 
-        self.B = np.array(
+        B = np.array(
             [
                 [
                     2.2056 + 0.0000j,
@@ -99,7 +100,7 @@ class GensysComponentTests(unittest.TestCase):
             ]
         )
 
-        self.Q = np.array(
+        Q = np.array(
             [
                 [
                     -0.1666 + 0.0735j,
@@ -139,7 +140,7 @@ class GensysComponentTests(unittest.TestCase):
             ]
         )
 
-        self.Z = np.array(
+        Z = np.array(
             [
                 [
                     -0.1455 + 0.1400j,
@@ -178,6 +179,11 @@ class GensysComponentTests(unittest.TestCase):
                 ],
             ]
         )
+
+        self.A = np.asfortranarray(A)
+        self.B = np.asfortranarray(B)
+        self.Q = np.asfortranarray(Q)
+        self.Z = np.asfortranarray(Z)
 
     def unpack_matrices(self):
         return self.A, self.B, self.Q, self.Z
@@ -346,14 +352,22 @@ class GensysComponentTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(np.allclose(A, ans_A), True)
-        self.assertEqual(np.allclose(B, ans_B), True)
-        self.assertEqual(np.allclose(Q, ans_Q), True)
-        self.assertEqual(np.allclose(Z, ans_Z), True)
+        np.testing.assert_allclose(
+            A, ans_A, err_msg="A not equal to requested precision"
+        )
+        np.testing.assert_allclose(
+            B, ans_B, err_msg="B not equal to requested precision"
+        )
+        np.testing.assert_allclose(
+            Q, ans_Q, err_msg="Q not equal to requested precision"
+        )
+        np.testing.assert_allclose(
+            Z, ans_Z, err_msg="Z not equal to requested precision"
+        )
 
     def test_qzswitch(self):
         # TODO: Find matrices that test conditions (1) and (2) in qzswitch (most will only hit condition 3)
-        A, B, Q, Z = self.unpack_matrices()
+        A, B, Q, Z = list(map(np.asfortranarray, self.unpack_matrices()))
         A, B, Q, Z = qzswitch(2, A, B, Q, Z)
 
         ans_A = np.array(
@@ -519,15 +533,23 @@ class GensysComponentTests(unittest.TestCase):
         # Riddle me this: qzswitch tests only pass at 3 decimal places of precision, but qzdiv tests, which call
         # qzswitch multiple times, pass at 4!
 
-        self.assertEqual(np.allclose(A, ans_A, atol=1e-3), True)
-        self.assertEqual(np.allclose(B, ans_B, atol=1e-3), True)
-        self.assertEqual(np.allclose(Q, ans_Q, atol=1e-3), True)
-        self.assertEqual(np.allclose(Z, ans_Z, atol=1e-3), True)
+        np.testing.assert_allclose(
+            A, ans_A, atol=1e-3, err_msg="A not close to requested precision"
+        )
+        np.testing.assert_allclose(
+            B, ans_B, atol=1e-3, err_msg="B not close to requested precision"
+        )
+        np.testing.assert_allclose(
+            Q, ans_Q, atol=1e-3, err_msg="Q not close to requested precision"
+        )
+        np.testing.assert_allclose(
+            Z, ans_Z, atol=1e-3, err_msg="Z not close to requested precision"
+        )
 
     def test_determine_n_unstable(self):
         A, B, _, _ = self.unpack_matrices()
 
-        div, n_unstable, zxz = determine_n_unstable(A, B, self.div, realsmall=-6)
+        div, n_unstable, zxz = determine_n_unstable(A, B, self.div, realsmall=1e-6)
 
         self.assertEqual(div, 1.01)
         self.assertEqual(n_unstable, 5)

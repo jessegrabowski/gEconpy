@@ -2,12 +2,10 @@
 Containers
 **********
 
-.. automodule:: gEconpy.classes.containers
+.. currentmodule:: gEconpy.classes.containers
 
 .. autosummary::
     :toctree: generated/
-
-    SymbolDictionary
 
     safe_string_to_sympy
     symbol_to_string
@@ -16,4 +14,5 @@ Containers
     sympy_number_values_to_floats
     float_values_to_sympy_float
     sort_dictionary
-    sort_sympy_dict
+
+    SymbolDictionary

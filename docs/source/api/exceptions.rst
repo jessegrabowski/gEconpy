@@ -5,7 +5,7 @@ Exceptions
 **********
 
 
-.. automodule:: gEconpy.exceptions.exceptions
+.. automodule:: gEconpy.exceptions
 
 .. autosummary::
     :toctree: generated/
@@ -19,20 +19,21 @@ Exceptions
     OptimizationProblemNotDefinedException
     MultipleObjectiveFunctionsException
     ControlVariableNotFoundException
-    SteadyStateNotSolvedError
+    ModelUnknownParameterError
     PerturbationSolutionNotFoundException
+    SteadyStateNotFoundError
     MultipleSteadyStateBlocksException
     GensysFailedException
     VariableNotFoundException
     InvalidDistributionException
-    DistributionNotFoundException
     RepeatedParameterException
-    ParameterNotFoundException
+    DistributionParameterNotFoundException
     MultipleParameterDefinitionException
     UnusedParameterError
     InvalidParameterException
     InvalidMeanException
     DistributionOverDefinedException
-    InsufficientDegreesOfFreedomException
-    IgnoredCloseMatchWarning
-    UnusedParameterWarning
+    OrphanParameterError
+    ExtraParameterError
+    ExtraParameterWarning
+    DuplicateParameterError

@@ -1,0 +1,163 @@
+assumptions
+{
+	positive
+	{
+		Y[], K[], C_NR[], C_R[],
+		w[], r[],
+		L[], L_NR[], L_R[],
+		TFP[],
+		alpha, beta, sigma_C, sigma_L, delta, omega;
+	};
+};
+
+tryreduce
+{
+	U_NR[], U_R[], TC[];
+};
+
+block STEADY_STATE
+{
+	identities
+	{
+		TFP[ss] = 1.0;
+		shock_beta_R[ss] = 1.0;
+
+		r[ss] = 1 / beta - (1 - delta);
+        w[ss] = (1 - alpha) * (alpha / r[ss]) ^ (alpha / (1 - alpha));
+        mc[ss] = 1;
+        Y[ss] = (r[ss] / (r[ss] - delta * alpha)) ^ (sigma_C / (sigma_C + sigma_L)) *
+            (w[ss] * (w[ss] / (1 - alpha)) ^ sigma_L) ^ (1 / (sigma_C + sigma_L));
+
+        I[ss] = (delta * alpha / r[ss]) * Y[ss];
+        C[ss] = Y[ss] ^ (-sigma_L / sigma_C) * ((1 - alpha) ^ (-sigma_L) * w[ss] ^ (1 + sigma_L)) ^ (1 / sigma_C);
+        K[ss] = alpha * Y[ss] * mc[ss] / r[ss];
+        L[ss] = (1 - alpha) * Y[ss] * mc[ss] / w[ss];
+
+        TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);
+	};
+};
+
+block RICARDIAN_HOUSEHOLD
+{
+	definitions
+	{
+		u_R[] = shock_beta_R[] * (C_R[] ^ (1 - sigma_C) / (1 - sigma_C) -
+								  L_R[] ^ (1 + sigma_L) / (1 + sigma_L));
+	};
+
+	controls
+	{
+		C_R[], L_R[], I[], K[];
+	};
+
+	objective
+	{
+		U_R[] = u_R[] + beta * E[][U_R[1]];
+	};
+
+	constraints
+	{
+		@exclude
+		C_R[] + I[] = r[] * K[-1] + w[] * L_R[] : lambda_R[];
+
+		K[] = (1 - delta) * K[-1] + I[]: q[];
+	};
+
+	identities
+	{
+		log(shock_beta_R[]) = rho_beta_R * log(shock_beta_R[-1]) + epsilon_beta_R[];
+	};
+
+	shocks
+	{
+		epsilon_beta_R[];
+	};
+
+	calibration
+	{
+		beta = 0.99;
+		delta = 0.02;
+		sigma_C = 1.5;
+		sigma_L = 2.0;
+		rho_beta_R = 0.95;
+	};
+};
+
+block NON_RICARDIAN_HOUSEHOLD
+{
+	definitions
+	{
+		u_NR[] = (C_NR[] ^ (1 - sigma_C) / (1 - sigma_C) -
+				  L_NR[] ^ (1 + sigma_L) / (1 + sigma_L));
+	};
+
+	controls
+	{
+		C_NR[], L_NR[];
+	};
+
+	objective
+	{
+		U_NR[] = u_NR[] + beta * E[][U_NR[1]];
+	};
+
+	constraints
+	{
+		C_NR[] = w[] * L_NR[]: lambda_NR[];
+	};
+};
+
+
+block FIRM
+{
+    controls
+    {
+        K[-1], L[];
+    };
+
+    objective
+    {
+        TC[] = -(r[] * K[-1] + w[] * L[]);
+    };
+
+    constraints
+    {
+		Y[] = TFP[] * K[-1] ^ alpha * L[] ^ (1 - alpha) : mc[];
+    };
+
+    identities
+    {
+        # Perfect competition
+        mc[] = 1;
+
+		# Exogenous technology process
+		log(TFP[]) = rho_TFP * log(TFP[-1]) + epsilon_TFP[];
+    };
+
+    shocks
+    {
+        epsilon_TFP[];
+    };
+
+    calibration
+    {
+        alpha = 0.35;
+
+		rho_TFP = 0.95;
+    };
+};
+
+block EQULIBRIUM
+{
+	identities
+	{
+		Y[] = C[] + I[];
+		L[] = omega * L_R[] + (1 - omega) * L_NR[];
+		C[] = omega * C_R[] + (1 - omega) * C_NR[];
+	};
+
+	calibration
+	{
+        omega = 0.5;
+	};
+};

@@ -1,0 +1,134 @@
+block STEADY_STATE
+{
+	identities
+	{
+		A[ss] = 1.0;
+		Div[ss] = 0.0;
+		r_u[ss] = 1 / beta_u - (1 - delta_u);
+		r_s[ss] = 1 / beta_s - (1 - delta_s);
+	};
+};
+
+block SKILLED_HOUSEHOLD
+{
+	definitions
+	{
+		u_s[] = log(C_s[]) - Theta_s * L_s[];
+	};
+
+	objective
+	{
+		U_s[] = u_s[] + beta_s * E[][U_s[1]];
+	};
+
+	controls
+	{
+		C_s[], L_s[], K_s[], I_s[];
+	};
+
+	constraints
+	{
+		C_s[] + I_s[] = w_s[] * L_s[] + r_s[] * K_s[-1] + s * Div[]: lambda_s[];
+		K_s[] = (1 - delta_s) * K_s[-1] + I_s[];
+	};
+
+	calibration
+	{
+		beta_s = 0.99;
+		delta_s = 0.035;
+		Theta_s = 1;
+		s = 0.5; # Share of dividend that the skilled household gets (could be alpha_L ?)
+	};
+};
+
+block UNSKILLED_HOUSEHOLD
+{
+	definitions
+	{
+		u_u[] = log(C_u[]) - Theta_u * L_u[];
+	};
+
+	objective
+	{
+		U_u[] = u_u[] + beta_u * E[][U_u[1]];
+	};
+
+	controls
+	{
+		C_u[], L_u[], K_u[], I_u[];
+	};
+
+	constraints
+	{
+		C_u[] + I_u[] = w_u[] * L_u[] + r_u[] * K_u[-1] + (1 - s) * Div[]: lambda_u[];
+		K_u[] = (1 - delta_u) * K_u[-1] + I_u[];
+	};
+
+	calibration
+	{
+		beta_u = 0.99;
+		delta_u = 0.035;
+		Theta_u = 1;
+	};
+};
+
+
+block FIRM
+{
+	objective
+	{
+		TC[] = -(r_u[] * K_u[] + r_s[] * K_s[] + w_u[] * L_u[] + w_s[] * L_s[]);
+	};
+
+	controls
+	{
+		K_u[-1], K_s[-1], L_u[], L_s[], K[], L[];
+	};
+
+	constraints
+	{
+		# Bundle labor -- skilled/unskilled are imperfect substitutes
+		L[] = (alpha_L  ^ (1 / psi_L) * L_u[] ^ ((psi_L - 1) / psi_L) +
+	      (1 - alpha_L) ^ (1 / psi_L) * L_s[] ^ ((psi_L - 1) / psi_L)) ^
+				(psi_L / (psi_L - 1));
+
+		# Bundle capital -- perfect substitutes
+		K[] = K_u[-1] ^ alpha_K * K_s[-1] ^ (1 - alpha_K);
+
+		# Production function
+		Y[] = A[] * K[] ^ alpha * L[] ^ (1 - alpha) : P[];
+	};
+
+	identities
+	{
+		# Perfect competition
+		P[] = 1;
+		Div[] = Y[] * P[] + TC[];
+	};
+
+	calibration
+	{
+		alpha_L = 0.5; # share of unskilled labor in economy
+		alpha_K = 0.5; # share of capital stock owned by unskilled household
+		psi_L = 3.0; # Elasticity of substitution btwn skilled & unskilled, psi_L -> oo implies perfect substitutes
+		alpha = 0.66; # Share of capital in production
+	};
+};
+
+block TECHNOLOGY
+{
+	identities
+	{
+		log(A[]) = rho * log(A[-1]) + epsilon_A[];
+	};
+
+	shocks
+	{
+		epsilon_A[];
+	};
+
+	calibration
+	{
+		rho = 0.95;
+	};
+};

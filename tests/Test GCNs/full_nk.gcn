@@ -1,0 +1,313 @@
+options
+{
+    output logfile = TRUE;
+    output LaTeX = TRUE;
+    output LaTeX landscape = TRUE;
+};
+
+assumptions
+{
+	negative
+	{
+		TC[];
+	};
+
+	positive
+	{
+		shock_technology[], shock_preference[], pi[], pi_star[], pi_obj[], r[], r_G[], mc[], w[], w_star[],
+		Y[], C[], I[], K[], L[],
+		delta, beta, sigma_C, sigma_L, gamma_I, phi_H;
+	};
+};
+
+block STEADY_STATE
+{
+    identities
+    {
+        # Steady state values
+        shock_technology[ss] = 1;
+        shock_preference[ss] = 1;
+        pi[ss] = 1;
+        pi_star[ss] = 1;
+        pi_obj[ss] = 1;
+        B[ss] = 0;
+
+        r[ss] = 1 / beta - (1 - delta);
+        r_G[ss] = 1 / beta;
+
+        mc[ss] = 1 / (1 + psi_p);
+        w[ss] = (1 - alpha) * mc[ss] ** (1 / (1 - alpha)) * (alpha / r[ss]) ** (alpha / (1 - alpha));
+
+        w_star[ss] = w[ss];
+
+        Y[ss] = (
+            w[ss] ** ((sigma_L + 1) / (sigma_C + sigma_L))
+            * ((-beta * phi_H + 1) / (psi_w + 1)) ** (1 / (sigma_C + sigma_L))
+            * (r[ss] / ((1 - phi_H) * (-alpha * delta * mc[ss] + r[ss])))
+            ** (sigma_C / (sigma_C + sigma_L))
+            / (mc[ss] * (1 - alpha)) ** (sigma_L / (sigma_C + sigma_L))
+        );
+
+        C[ss] = (
+            w[ss] ** ((1 + sigma_L) / sigma_C)
+            * (1 / (1 - phi_H))
+            * ((1 - beta * phi_H) / (1 + psi_w)) ** (1 / sigma_C)
+            * ((1 - alpha) * mc[ss]) ** (-sigma_L / sigma_C)
+            * Y[ss] ** (-sigma_L / sigma_C)
+        );
+
+        lambda[ss] = (1 - beta * phi_H) * ((1 - phi_H) * C[ss]) ** (-sigma_C);
+        q[ss] = lambda[ss];
+        I[ss] = delta * alpha * mc[ss] * Y[ss] / r[ss];
+        K[ss] = alpha * mc[ss] * Y[ss] / r[ss];
+        L[ss] = (1 - alpha) * Y[ss] * mc[ss] / w[ss];
+
+        U[ss] = (
+            1
+            / (1 - beta)
+            * (
+                ((1 - phi_H) * C[ss]) ** (1 - sigma_C) / (1 - sigma_C)
+                - L[ss] ** (1 + sigma_L) / (1 + sigma_L)
+            )
+        );
+
+        TC[ss] = -(r[ss] * K[ss] + w[ss] * L[ss]);
+        Div[ss] = Y[ss] + TC[ss];
+
+        LHS[ss] = 1 / (1 - beta * eta_p * pi[ss] ** (1 / psi_p)) * lambda[ss] * Y[ss] * pi_star[ss];
+
+        RHS[ss] = 1 / (1 + psi_p) * LHS[ss];
+
+        LHS_w[ss] = 1 / (1 - beta * eta_w) * 1 / (1 + psi_w) * w_star[ss] * lambda[ss] * L[ss];
+
+        RHS_w[ss] = LHS_w[ss];
+    };
+
+};
+
+
+block HOUSEHOLD
+{
+    definitions
+    {
+        u[] = shock_preference[] * (
+				(C[] - phi_H * C[-1]) ^ (1 - sigma_C) / (1 - sigma_C) -
+			    L[] ^ (1 + sigma_L) / (1 + sigma_L));
+    };
+    controls
+    {
+		C[], I[], K[], B[];
+    };
+
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
+
+    constraints
+    {
+        C[] + I[] + B[] / r_G[]  =
+			  r[] * K[-1] +
+			  w[] * L[] +
+			  B[-1] / pi[] +
+			  Div[] : lambda[];
+
+		K[] = (1 - delta) * K[-1] +
+			I[] * (1 - gamma_I / 2 * (I[] / I[-1] - 1) ^ 2) : q[];
+    };
+
+    calibration
+    {
+        delta = 0.025;
+        beta = 0.99;
+
+        sigma_C = 2;
+        sigma_L = 1.5;
+
+		gamma_I = 10;
+		phi_H = 0.5;
+    };
+};
+
+block WAGE_SETTING
+{
+	definitions
+	{
+		L_d_star[] = (w[] / w_star[]) ^ ((1 + psi_w) / psi_w) * L[];
+	};
+
+	identities
+	{
+		LHS_w[] = RHS_w[];
+
+		LHS_w[] =  1 / (1 + psi_w) * w_star[] * lambda[] * L_d_star[] +
+			beta * eta_w * E[][
+				pi[1] * (w_star[1] / w_star[]) ^ (1 / psi_w) * LHS_w[1]
+			];
+
+		RHS_w[] = shock_preference[] * L_d_star[] ^ (1 + sigma_L) +
+			beta * eta_w * E[][
+				(pi[1] * w_star[1] / w_star[]) ^ ((1 + psi_w) * (1 + sigma_L) / psi_w) *
+				RHS_w[1]
+			];
+
+	};
+
+	calibration
+	{
+		psi_w	= 0.782;	# Elasticity of substitution between forms of labor
+		eta_w	= 0.75;		# Probability of not receiving the update signal
+	};
+};
+
+block WAGE_EVOLUTION
+{
+	identities
+	{
+		1 = eta_w * (pi[] * w[] / w[-1]) ^ (1 / psi_w) +
+			(1 - eta_w) * (w[] / w_star[]) ^ (1 / psi_w);
+	};
+};
+
+
+block PREFERENCE_SHOCKS
+{
+	identities
+	{
+		log(shock_preference[]) = rho_preference * log(shock_preference[-1]) + epsilon_preference[];
+	};
+
+	shocks
+	{
+		epsilon_preference[];
+	};
+
+	calibration
+	{
+		rho_preference = 0.95;
+	};
+};
+
+
+block FIRM
+{
+    controls
+    {
+        K[-1], L[];
+    };
+
+    objective
+    {
+        TC[] = -(L[] * w[] + K[-1] * r[]);
+    };
+
+    constraints
+    {
+        Y[] = shock_technology[] * K[-1] ^ alpha *
+					L[] ^ (1 - alpha) :  mc[];
+    };
+
+	identities
+	{
+		Div[] = Y[] + TC[];
+	};
+
+    calibration
+    {
+        alpha  = 0.35;
+    };
+};
+
+
+block TECHNOLOGY_SHOCKS
+{
+    identities
+    {
+        log(shock_technology[]) = rho_technology * log(shock_technology[-1]) + epsilon_Y[];
+    };
+    shocks
+    {
+        epsilon_Y[];
+    };
+    calibration
+    {
+        rho_technology = 0.95;
+    };
+};
+
+
+block FIRM_PRICE_SETTING_PROBLEM
+{
+	identities
+	{
+		LHS[] = (1 + psi_p) * RHS[];
+
+		LHS[] = lambda[] * Y[] * pi_star[] +
+			beta * eta_p * E[][
+				pi_star[] / pi_star[1] * pi[1] ^ (1 / psi_p) * LHS[1]];
+
+		RHS[] = lambda[] * mc[] * Y[] +
+			beta * eta_p * E[][
+				pi[1] ^ ((1 + psi_p) / psi_p) * RHS[1]];
+	};
+
+	calibration
+	{
+		psi_p   = 0.6;
+		eta_p   = 0.75;
+	};
+};
+
+
+block PRICE_EVOLUTION
+{
+	identities
+	{
+		1 = eta_p * pi[] ^ (1 / psi_p) +
+				(1 - eta_p) * pi_star[] ^ (-1 / psi_p);
+	};
+};
+
+
+block MONETARY_POLICY
+{
+	identities
+	{
+		log(r_G[] / r_G[ss]) = gamma_R * log(r_G[-1] / r_G[ss]) +
+			(1 - gamma_R) * log(pi_obj[]) +
+			(1 - gamma_R) * gamma_pi * log(pi[] / pi[ss] - log(pi_obj[])) +
+			(1 - gamma_R) * gamma_Y * log(Y[] / Y[-1]) +
+			epsilon_R[];
+
+		log(pi_obj[]) = (1 - rho_pi_dot) * log(phi_pi_obj) +
+			rho_pi_dot * log(pi_obj[-1]) + epsilon_pi[];
+	};
+
+	shocks
+	{
+		epsilon_R[], epsilon_pi[];
+	};
+
+
+	calibration
+	{
+		gamma_R = 0.9;
+		gamma_pi = 1.5;
+		gamma_Y = 0.05;
+#		pi_obj[ss]	= 1	-> phi_pi_obj;
+#		pi[ss]		= pi_obj[ss]-> phi_pi;
+        phi_pi_obj = 1;
+#        phi_pi = 1;
+		rho_pi_dot	= 0.924;
+	};
+};
+
+
+
+block EQUILIBRIUM
+{
+    identities
+    {
+		B[] = 0;
+    };
+};

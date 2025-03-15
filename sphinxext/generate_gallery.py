@@ -8,21 +8,21 @@ import base64
 import json
 import os
 import shutil
+
 from glob import glob
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import sphinx
 
 from matplotlib import image
-
-import sphinx
+from pathlib import Path
 
 logger = sphinx.util.logging.getLogger(__name__)
 
-DOC_SRC = os.path.dirname(os.path.abspath(__file__))
-# DEFAULT_IMG_LOC = os.path.join(os.path.dirname(DOC_SRC), "_static", "PyMC.png")
+DOC_SRC = Path(__file__).resolve().parent.parent
 
 DEFAULT_IMG_LOC = None
 external_nbs = {}
@@ -55,7 +55,11 @@ ITEM_TEMPLATE = """
       :shadow: none
 """
 
-folder_title_map = {"introductory": "Introductory", "estimation": "Estimation"}
+folder_title_map = {
+    "introductory": "Introductory",
+    "estimation": "Estimation",
+    "case_study": "Case Studies",
+}
 
 
 def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
@@ -90,11 +94,13 @@ class NotebookGenerator:
 
     def __init__(self, filename, root_dir, folder):
         self.folder = folder
-        self.basename = os.path.basename(filename)
-        self.stripped_name = os.path.splitext(self.basename)[0]
-        self.image_dir = os.path.join(root_dir, "_thumbnails", folder)
-        self.png_path = os.path.join(self.image_dir, f"{self.stripped_name}.png")
-        with open(filename, encoding="utf-8") as fid:
+
+        self.basename = Path(filename).name
+        self.stripped_name = Path(filename).stem
+        self.image_dir = Path(root_dir) / "source" / "_thumbnails" / folder
+        self.png_path = self.image_dir / f"{self.stripped_name}.png"
+
+        with filename.open(encoding="utf-8") as fid:
             self.json_source = json.load(fid)
         self.default_image_loc = DEFAULT_IMG_LOC
 
@@ -112,8 +118,7 @@ class NotebookGenerator:
     def gen_previews(self):
         preview = self.extract_preview_pic()
         if preview is not None:
-            print(self.png_path)
-            with open(self.png_path, "wb") as buff:
+            with self.png_path.open("wb") as buff:
                 buff.write(preview)
         else:
             logger.warning(
@@ -127,8 +132,10 @@ class NotebookGenerator:
 def main(app):
     logger.info("Starting thumbnail extractor.")
 
-    working_dir = os.getcwd()
     os.chdir(app.builder.srcdir)
+    working_dir = Path.cwd()
+
+    logger.info(f"Current working directory: {working_dir}")
 
     file = [HEAD]
 
@@ -139,38 +146,39 @@ def main(app):
             )
         )
 
-        thumbnail_dir = os.path.join("..", "..", "_thumbnails", folder)
-        if not os.path.exists(thumbnail_dir):
-            os.makedirs(thumbnail_dir)
+        thumbnail_dir = working_dir / "_thumbnails" / folder
+        if not thumbnail_dir.exists():
+            Path.mkdir(thumbnail_dir, parents=True)
 
         if folder in external_nbs.keys():
-            for descr in external_nbs[folder]:
-                file.append(
-                    ITEM_TEMPLATE.format(
-                        doc_name=descr["doc_name"],
-                        image=descr["image"],
-                        doc_reference=descr["doc_reference"],
-                        link_type=descr["link_type"],
-                    )
+            file += [
+                ITEM_TEMPLATE.format(
+                    doc_name=descr["doc_name"],
+                    image=descr["image"],
+                    doc_reference=descr["doc_reference"],
+                    link_type=descr["link_type"],
                 )
+                for descr in external_nbs[folder]
+            ]
 
-        nb_paths = glob(f"examples/{folder}/*.ipynb")
+        nb_paths = sorted(Path("examples", folder).glob("*.ipynb"))
+
         for nb_path in nb_paths:
             nbg = NotebookGenerator(
-                filename=nb_path, root_dir=os.path.join("..", ".."), folder=folder
+                filename=nb_path, root_dir=Path(".."), folder=folder
             )
             nbg.gen_previews()
 
             file.append(
                 ITEM_TEMPLATE.format(
-                    doc_name=os.path.join(folder, nbg.stripped_name),
-                    image="/" + nbg.png_path,
-                    doc_reference=os.path.join(folder, nbg.stripped_name),
+                    doc_name=Path(folder) / nbg.stripped_name,
+                    image="/" + str(nbg.png_path),
+                    doc_reference=Path(folder) / nbg.stripped_name,
                     link_type="doc",
                 )
             )
 
-    with open(os.path.join("examples", "gallery.rst"), "w", encoding="utf-8") as f:
+    with Path("examples", "gallery.rst").open("w", encoding="utf-8") as f:
         f.write("\n".join(file))
 
     os.chdir(working_dir)

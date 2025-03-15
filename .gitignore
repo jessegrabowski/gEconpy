@@ -1,5 +1,11 @@
 # Created by https://www.toptal.com/developers/gitignore/
 
+# Default ignored files
+/shelf/
+/workspace.xml
+# GitHub Copilot persisted chat sessions
+/copilot/chatSessions
+
 # Jetbrains stuff
 .idea/
 

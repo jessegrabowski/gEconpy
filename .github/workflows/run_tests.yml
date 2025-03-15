@@ -5,6 +5,15 @@ on:
   push:
     branches: [main]
 
+
+# Cancels all previous workflow runs for pull requests that have not completed.
+concurrency:
+  # The concurrency group contains the workflow name and the branch name for pull requests
+  # or the commit hash for any other events.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+
 jobs:
   unittest:
     strategy:
@@ -29,8 +38,8 @@ jobs:
     - uses: actions/checkout@v3
     - uses: actions/cache@v3
       env:
-        # Increase this value to reset cache if geconpy_test.yml has not changed
-        CACHE_NUMBER: 0
+        # Increase this value to reset cache if geconpy_test.yml has changed
+        CACHE_NUMBER: 4
       with:
         path: ~/conda_pkgs_dir
         key: ${{ runner.os }}-py${{matrix.python-version}}-conda-${{ env.CACHE_NUMBER }}-${{
@@ -38,8 +47,8 @@ jobs:
     - name: Cache multiple paths
       uses: actions/cache@v3
       env:
-        # Increase this value to reset cache if requirements.txt has not changed
-        CACHE_NUMBER: 0
+        # Increase this value to reset cache if requirements.txt has changed
+        CACHE_NUMBER: 4
       with:
         path: |
           ~/.cache/pip
@@ -49,13 +58,13 @@ jobs:
           hashFiles('requirements.txt') }}
     - uses: conda-incubator/setup-miniconda@v2
       with:
-        miniforge-variant: Mambaforge
+        miniforge-variant: Miniforge3
         miniforge-version: latest
         mamba-version: "*"
         activate-environment: geconpy-test
         channel-priority: strict
         environment-file: conda_envs/geconpy_test.yml
-        python-version: 3.12
+        python-version: ${{matrix.python-version}}
         use-mamba: true
         use-only-tar-bz2: false # IMPORTANT: This may break caching of conda packages! See https://github.com/conda-incubator/setup-miniconda/issues/267
 
@@ -67,7 +76,7 @@ jobs:
 
     - name: Run tests
       run: |
-        python -m pytest -vv --cov=gEconpy --cov-report=xml --no-cov-on-fail --cov-report term $TEST_SUBSET
+        python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml --no-cov-on-fail --cov-report term $TEST_SUBSET
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:

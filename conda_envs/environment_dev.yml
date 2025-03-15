@@ -2,33 +2,34 @@ name: geconpy-dev
 channels:
   - conda-forge
   - nvidia
+  - nodefaults
 
 dependencies:
   # Core dependencies
   - python=3.12
   - pymc
   - pytensor
-  - emcee
   - joblib
   - matplotlib
   - numba
   - numpy
   - pandas
   - pyparsing
+  - preliz
   - scipy
   - setuptools
   - statsmodels
-  - sympy
+  - sympy<1.13
+  - preliz
   - pip
-
-  # GPU stuff, optional for now
-  - jaxlib=*=*cuda*
-  - cuda-nvcc
+  - ipython
+  - notebook<7
+  - nutpie
 
   # JAX, optional for now
   - jax
-  - numpyro
   - blackjax
+#  - jaxlib=*=*cuda*
 
   # For building docs
   - ipython
@@ -51,7 +52,10 @@ dependencies:
   - pytest
   - pytest-env
   - pytest-cov
+  - pandas-datareader
 
   - pip:
       - sympytensor
-      - bumpver
+      - numdifftools
+      - git+https://github.com/pymc-devs/pymc-extras.git
+      - -e ../.

@@ -1,0 +1,83 @@
+options
+{
+	output logfile = FALSE;
+	output LaTeX = FALSE;
+};
+
+tryreduce
+{
+    C[];
+};
+
+block STEADY_STATE
+{
+    definitions
+    {
+        L_num = theta * (1 - alpha) * (1 - beta * (1 - delta));
+        L_denom = 1 - alpha * theta - beta * (1 - delta * (1 - alpha) - alpha * theta);
+    };
+
+    identities
+    {
+        L[ss] =  L_num / L_denom;
+        K[ss] = (((1 - alpha * theta) * L[ss] - theta * (1 - alpha)) / (delta * (1 - theta) * L[ss])) ^
+            (1 / (1 - alpha)) * L[ss];
+        A[ss] = 1;
+
+        Y[ss] = K[ss] ^ alpha * L[ss] ^ (1 - alpha);
+        I[ss] = delta * K[ss];
+        C[ss] = Y[ss] - I[ss];
+
+        lambda[ss] = theta * (C[ss] ^ theta * (1 - L[ss]) ^ (1 - theta)) ^ (1 - tau) / C[ss];
+        q[ss] = lambda[ss];
+        U[ss] = (C[ss] ^ theta * (1 - L[ss]) ^ (1 - theta)) ^ (1 - tau) / ((1 - beta) * (1 - tau));
+    };
+};
+
+block HOUSEHOLD
+{
+	definitions
+	{
+		u[] = (C[] ^ theta * (1 - L[]) ^ (1 - theta)) ^ (1 - tau) / (1 - tau);
+	};
+
+	controls
+	{
+		C[], L[], I[], K[], Y[];
+	};
+
+	objective
+	{
+		U[] = u[] + beta * E[][U[1]];
+	};
+
+	constraints
+	{
+		Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha);
+		C[] + I[] = Y[] : lambda[];
+		K[] = I[] + (1 - delta) * K[-1] : q[];
+	};
+
+	identities
+	{
+		log(A[]) = rho * log(A[-1]) + epsilon[];
+	};
+
+	shocks
+	{
+		epsilon[];
+	};
+
+	calibration
+	{
+		# L[ss] / K[ss] = 0.36 -> alpha;
+		alpha ~ Beta(alpha=1, beta=1) = 0.35;
+		theta ~ Beta(alpha=1, beta=1) = 0.357;
+		beta  ~ Beta(alpha=1, beta=1) = 0.99;
+		delta ~ Beta(alpha=1, beta=1) = 0.02;
+		tau   ~ Gamma(alpha=2, beta=1) = 2;
+		rho   ~ Beta(alpha=1, beta=1) = 0.95;
+	};
+
+
+};

@@ -1,8 +1,3 @@
-.. gEconpy documentation master file, created by
-   sphinx-quickstart on Sun Jun 30 13:20:44 2024.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
 Introduction
 ============
 A collection of tools for working with DSGE models in python, inspired by the fantastic R package gEcon, http://gecon.r-forge.r-project.org/.
@@ -46,6 +41,7 @@ If you use gEconpy in your research, please cite the package using the following
 .. toctree::
    :maxdepth: 1
    :hidden:
+   :titlesonly:
 
    get_started/index
    user_guide/index

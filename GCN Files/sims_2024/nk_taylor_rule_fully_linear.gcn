@@ -1,0 +1,79 @@
+options
+{
+    linear = True;
+};
+
+block STEADY_STATE
+{
+    identities
+    {
+        A[ss] = 0;
+        interest_shock[ss] = 0;
+        cost_push_shock[ss] = 0;
+
+        pi[ss] = 0;
+        i[ss] = 0;
+        mc[ss] = 0;
+        w[ss] = 0;
+        N[ss] = 0;
+        Y[ss] = 0;
+        C[ss] = 0;
+    };
+};
+
+block MODEL
+{
+    identities
+    {
+        # IS curve
+        Y[] = E[][Y[1]] - 1 / sigma * (i[] - E[][pi[1]]);
+
+        # Labor supply
+        chi * N[] = w[] - sigma * Y[];
+
+        # Marginal cost
+        mc[] = w[] - A[];
+
+        # Production
+        Y[] = A[] + N[];
+
+        # Phillips curve
+        pi[] = (1 - phi) * (1 - phi * beta) / phi * mc[] + beta * E[][pi[1]] + cost_push_shock[];
+
+        # Taylor rule
+        i[] = phi_pi * pi[] + phi_Y * Y[] + interest_shock[];
+
+        # Technology process
+        A[] = rho_A * A[-1] + epsilon_A[];
+
+        # Cost push shock process
+        cost_push_shock[] = rho_markup * cost_push_shock[-1] + epsilon_markup[];
+
+        # Interest shock process
+        interest_shock[] = rho_i * interest_shock[-1] + epsilon_interest[];
+    };
+
+    shocks
+    {
+        epsilon_A[], epsilon_markup[], epsilon_interest[];
+    };
+
+    calibration
+    {
+        beta ~ maxent(Beta(), lower=0.95, upper=0.99) = 0.99;
+        sigma ~ maxent(Gamma(), lower=1.5, upper=5.0) = 3;
+        # theta ~ maxent(Gamma(), lower=0.8, upper=3.0) = 1.0;
+        chi ~ maxent(Gamma(), lower=0.8, upper=3.0) = 1.0;
+        # psi ~ maxent(Gamma(), lower=0.8, upper=3.0) = 1.0;
+
+        phi ~ maxent(Beta(), lower=0.6, upper=0.9) = 3/4;
+        # epsilon ~ maxent(Gamma(), lower=2, upper=20) = 11;
+
+        rho_markup ~ maxent(Beta(), lower=0.7, upper=0.99) = 0.8;
+        rho_A ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
+        rho_i ~ maxent(Beta(), lower=0.4, upper=0.99) = 0.5;
+
+        phi_pi ~ maxent(Gamma(), lower=1.4, upper=2.0) = 1.5;
+        phi_Y  ~ maxent(Beta(), lower=0.01, upper=0.6) = 0.5;
+    };
+};
