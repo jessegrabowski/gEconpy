@@ -8,40 +8,51 @@ on:
 jobs:
   release-job:
     runs-on: ubuntu-latest
-    env:
-      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
     steps:
-    - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.12
-    - name: Install release tooling
-      run: |
-        pip install twine wheel numpy setuptools versioneer
-    - name: Build package
-      run: |
-        python setup.py sdist bdist_wheel
-    - name: Check version number match
-      run: |
-        echo "GITHUB_REF: ${GITHUB_REF}"
-        # The GITHUB_REF should be something like "refs/tags/v1.2.3"
-        # Make sure the package version is the same as the tag
-        grep -Rq "^Version: ${GITHUB_REF:11}$" gEconpy.egg-info/PKG-INFO
-    - name: Publish to PyPI
-      run: |
-        twine check dist/*
-        twine upload --repository pypi --username __token__ --password ${PYPI_TOKEN} dist/*
-  test-install-job:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+      - name: Install release tooling
+        run: |
+          pip install twine wheel numpy setuptools versioneer
+      - name: Build package
+        run: |
+          python setup.py sdist bdist_wheel
+      - name: Check version number match
+        run: |
+          echo "GITHUB_REF: ${GITHUB_REF}"
+          # The GITHUB_REF should be something like "refs/tags/v1.2.3"
+          # Make sure the package version is the same as the tag
+          grep -Rq "^Version: ${GITHUB_REF:11}$" gEconpy.egg-info/PKG-INFO
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bdist
+          path: dist/*
+  pypi-publish:
     needs: release-job
+    name: upload release to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bdist
+          path: dist
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+  test-install-job:
+    needs: pypi-publish
     runs-on: ubuntu-latest
     steps:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: 3.7
+        python-version: 3.12
     - name: Give PyPI a chance to update the index
-      run: sleep 240
+      run: sleep 360
     - name: Install from PyPI
       run: |
         pip install gEconpy==${GITHUB_REF:11}
