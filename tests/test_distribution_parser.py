@@ -24,6 +24,7 @@ test_strings = [
     "maxent(Normal(), lower=1, upper=3)",
     "maxent(Normal(), lower=1, upper=3) = 42",
     "Truncated(Normal(), lower=0, upper=5)",
+    "Truncated(Normal(), lower=0) = 10",
     "Censored(Beta(alpha=2, beta=5), lower=0.1, upper=None)",
     "maxent(StudentT(nu=7), lower=3, upper=7) = 18 / 10",
 ]
@@ -77,6 +78,13 @@ expected_results = [
         "dist_name": "Normal",
         "dist_kwargs": {},
         "initial_value": None,
+    },
+    {
+        "wrapper_name": "Truncated",
+        "wrapper_kwargs": {"lower": 0},
+        "dist_name": "Normal",
+        "dist_kwargs": {},
+        "initial_value": 10,
     },
     {
         "wrapper_name": "Censored",
