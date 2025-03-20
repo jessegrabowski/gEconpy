@@ -22,8 +22,8 @@ dependencies:
   - preliz
   - ipython
   - nutpie
+  - sympytensor
+  - pymc-extras
 
   - pip:
-      - sympytensor
       - flowjax
-      - git+https://github.com/pymc-devs/pymc-extras.git

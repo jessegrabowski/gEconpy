@@ -25,10 +25,11 @@ dependencies:
   - ipython
   - notebook<7
   - nutpie
+  - sympytensor
+  - pymc-extras
 
   # JAX, optional for now
   - jax
-  - blackjax
 #  - jaxlib=*=*cuda*
 
   # For building docs
@@ -55,7 +56,5 @@ dependencies:
   - pandas-datareader
 
   - pip:
-      - sympytensor
       - numdifftools
-      - git+https://github.com/pymc-devs/pymc-extras.git
       - -e ../.

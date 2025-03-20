@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gEconpy"
 dynamic = ['version']
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.11"
 authors = [{name="Jesse Grabowski", email='jessegrabowski@gmail.com'}]
 description = "A package for solving, estimating, and analyzing DSGE models"
 readme = 'README.md'

@@ -28,9 +28,9 @@ dependencies:
   - pip
   - better-optimize
   - nutpie
+  - sympytensor
+  - pymc-extras
 
   - pip:
-      - sympytensor
       - numdifftools
       - jax
-      - git+https://github.com/pymc-devs/pymc-extras.git

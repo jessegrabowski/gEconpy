@@ -18,10 +18,11 @@ dependencies:
   - statsmodels
   - preliz
   - sympy<1.13
-#  - pymc-extras
+  - pymc-extras
   - better-optimize
   - jax
   - nutpie
+  - sympytensor
 
   # Extra dependencies for docs build
   - ipython
@@ -38,7 +39,3 @@ dependencies:
   - sphinxcontrib-bibtex
   - pydata-sphinx-theme
   - watermark
-
-  - pip:
-      - sympytensor
-      - git+https://github.com/pymc-devs/pymc-extras.git
