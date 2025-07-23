@@ -1,4 +1,4 @@
-name: gEconpy
+name: geconpy-test
 channels:
 - conda-forge
 - nodefaults
