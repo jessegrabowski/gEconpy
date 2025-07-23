@@ -41,27 +41,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - uses: actions/cache@v3
-      env:
-        # Increase this value to reset cache if geconpy_test.yml has changed
-        CACHE_NUMBER: 4
-      with:
-        path: ~/conda_pkgs_dir
-        key: ${{ runner.os }}-py${{matrix.python-version}}-conda-${{ env.CACHE_NUMBER }}-${{
-          hashFiles('conda_envs/geconpy_test.yml') }}
-    - name: Cache multiple paths
-      uses: actions/cache@v3
-      env:
-        # Increase this value to reset cache if requirements.txt has changed
-        CACHE_NUMBER: 4
-      with:
-        path: |
-          ~/.cache/pip
-          $RUNNER_TOOL_CACHE/Python/*
-          ~\AppData\Local\pip\Cache
-        key: ${{ runner.os }}-build-${{ matrix.python-version }}-${{ env.CACHE_NUMBER }}-${{
-          hashFiles('requirements.txt') }}
-
 
     - uses: mamba-org/setup-micromamba@v2
       with:
