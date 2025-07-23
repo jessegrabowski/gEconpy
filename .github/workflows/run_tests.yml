@@ -44,7 +44,7 @@ jobs:
 
     - uses: mamba-org/setup-micromamba@v2
       with:
-        environment-file: conda_envs/geconpy_test.yaml
+        environment-file: conda_envs/geconpy_test.yml
         create-args: >-
           python=${{matrix.python-version}}
         environment-name: geconpy-test
