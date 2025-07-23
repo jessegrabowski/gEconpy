@@ -7,7 +7,7 @@ channels:
 dependencies:
   # Core dependencies
   - python=3.12
-  - pymc
+  - pymc>=5.24.1
   - pytensor
   - joblib
   - matplotlib
@@ -15,18 +15,18 @@ dependencies:
   - numpy
   - pandas
   - pyparsing
-  - preliz
+  - preliz>=0.2.0
   - scipy
   - setuptools
   - statsmodels
-  - sympy<1.13
-  - preliz
+  - sympy>=1.14.0
+  - sympytensor
   - pip
   - ipython
   - notebook<7
   - nutpie
   - sympytensor
-  - pymc-extras
+  - pymc-extras>=0.4.0
 
   # JAX, optional for now
   - jax

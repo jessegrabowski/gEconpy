@@ -182,28 +182,30 @@ class TestSymbolDictionary(unittest.TestCase):
         self.assertRaises(ValueError, loop_update, [d0, d1, d2])
 
     def test_convert_values(self):
+        # Since sympy 1.14.0, the `mpmath` library is used for complex numbers.
+        from mpmath.ctx_mp_python import _mpc
+
         d = self.d.copy()
         d_sp = d.float_to_values()
         values = list(d_sp.values())
-        self.assertTrue(
-            all([isinstance(x, sp.core.Number | ComplexElement) for x in values])
-        )
+        self.assertTrue(all([isinstance(x, sp.core.Number | _mpc) for x in values]))
 
         d_np = d_sp.values_to_float()
         values = list(d_np.values())
-        self.assertTrue(all([isinstance(x, int | float | complex) for x in values]))
+        self.assertTrue(all([isinstance(x, int | float | _mpc) for x in values]))
 
     def test_convert_values_inplace(self):
+        # Since sympy 1.14.0, the `mpmath` library is used for complex numbers.
+        from mpmath.ctx_mp_python import _mpc
+
         d = self.d.copy()
         d.float_to_values(inplace=True)
         values = list(d.values())
-        self.assertTrue(
-            all([isinstance(x, sp.core.Number | ComplexElement) for x in values])
-        )
+        self.assertTrue(all([isinstance(x, sp.core.Number | _mpc) for x in values]))
 
         d.values_to_float(inplace=True)
         values = list(d.values())
-        self.assertTrue(all([isinstance(x, int | float | complex) for x in values]))
+        self.assertTrue(all([isinstance(x, int | float | _mpc) for x in values]))
 
     def test_not_inplace_update_is_not_persistent(self):
         d = self.d

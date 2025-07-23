@@ -1,11 +1,12 @@
 name: geconpy-docs
 channels:
   - conda-forge
+  - nodefaults
 dependencies:
   # Core dependencies
   - python=3.12
   - pip
-  - pymc
+  - pymc>=5.25.0
   - pytensor
   - joblib
   - matplotlib
@@ -16,13 +17,13 @@ dependencies:
   - scipy
   - setuptools
   - statsmodels
-  - preliz
-  - sympy<1.13
-  - pymc-extras
+  - preliz>=0.2.0
+  - sympy>=1.14.0
+  - pymc-extras>=0.4.0
   - better-optimize
+  - sympytensor
   - jax
   - nutpie
-  - sympytensor
 
   # Extra dependencies for docs build
   - ipython

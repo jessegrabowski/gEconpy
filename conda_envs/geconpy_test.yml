@@ -1,12 +1,14 @@
-name: gEconpy
+name: geconpy-test
 channels:
 - conda-forge
+- nodefaults
 dependencies:
   # Base dependencies
   - numpy
   - numba
   - scipy
-  - sympy<1.13
+  - sympy>=1.14.0
+  - sympytensor
   - pyparsing
   - pandas
   - xarray
@@ -14,10 +16,14 @@ dependencies:
   - joblib
   - arviz
   - statsmodels
-  - pymc
+  - pymc>=5.25.0
   - pytensor
-  - preliz
+  - preliz>=0.2.0
   - ipython
+  - sympytensor
+  - pymc-extras>=0.4.0
+  - better-optimize
+  - nutpie
 
   # Testing dependencies
   - pre-commit
@@ -26,11 +32,6 @@ dependencies:
   - pytest-env
 
   - pip
-  - better-optimize
-  - nutpie
-  - sympytensor
-  - pymc-extras
-
   - pip:
       - numdifftools
       - jax
