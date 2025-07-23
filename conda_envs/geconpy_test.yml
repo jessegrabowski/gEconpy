@@ -22,7 +22,6 @@ dependencies:
   - ipython
   - sympytensor
   - pymc-extras>=0.4.0
-  - jax
   - better-optimize
   - nutpie
 
@@ -35,3 +34,4 @@ dependencies:
   - pip
   - pip:
       - numdifftools
+      - jax
