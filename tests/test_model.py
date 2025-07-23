@@ -707,6 +707,8 @@ def test_partially_analytical_steady_state(
         verbose=False,
         optimizer_kwargs={"method": "trust-ncg", "options": {"gtol": 1e-24}},
         progressbar=False,
+        use_hessp=True,
+        use_jac=True,
     )
 
     numeric_values = np.array(list(numeric_res.values()))
