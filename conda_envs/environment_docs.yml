@@ -19,7 +19,7 @@ dependencies:
   - statsmodels
   - preliz>=0.2.0
   - sympy>=1.14.0
-  - pymc-extras
+  - pymc-extras>=0.4.0
   - better-optimize
   - sympytensor
   - jax

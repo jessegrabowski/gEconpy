@@ -21,7 +21,7 @@ dependencies:
   - preliz>=0.2.0
   - ipython
   - sympytensor
-  - pymc-extras
+  - pymc-extras>=0.4.0
   - jax
   - better-optimize
   - nutpie
@@ -33,6 +33,5 @@ dependencies:
   - pytest-env
 
   - pip
-
   - pip:
       - numdifftools
