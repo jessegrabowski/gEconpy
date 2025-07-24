@@ -19,31 +19,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12"]
-        test-config:
-          - name: "Model Steady State Tests"
+        include:
+          - subset-name: "Model Steady State Tests"
             os: ubuntu-latest
-            subset: "tests/test_model.py::test_numerical_steady_state tests/test_model.py::test_steady_state tests/test_model.py::test_partially_analytical_steady_state"
-          - name: "Model Tests"
+            python-version: "3.12"
+            test-subset: "tests/test_model.py::test_numerical_steady_state tests/test_model.py::test_steady_state tests/test_model.py::test_partially_analytical_steady_state"
+          - subset-name: "Model Tests"
             os: ubuntu-latest
-            subset: "tests/test_model.py --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state"
-          - name: "Steady State Tests"
+            python-version: "3.12"
+            test-subset: "tests/test_model.py --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state"
+          - subset-name: "Steady State Tests"
             os: ubuntu-latest
-            subset: "tests/test_steady_state.py"
-          - name: "Perturbation Tests"
+            python-version: "3.12"
+            test-subset: "tests/test_steady_state.py"
+          - subset-name: "Perturbation Tests"
             os: ubuntu-latest
-            subset: "tests/test_perturbation.py"
-          - name: "Other Tests"
+            python-version: "3.12"
+            test-subset: "tests/test_perturbation.py"
+          - subset-name: "Other Tests"
             os: ubuntu-latest
-            subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
-          - name: "Windows Tests"
+            python-version: "3.12"
+            test-subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
+          - subset-name: "Windows Tests"
             os: windows-latest
-            subset: "tests/ --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state --deselect tests/test_model.py::test_all_backends_agree_on_functions --deselect tests/test_model.py::test_scipy_wrapped_functions_agree --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
-    name: ${{ matrix.test-config.name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
+            python-version: "3.12"
+            test-subset: "tests/ --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state --deselect tests/test_model.py::test_all_backends_agree_on_functions --deselect tests/test_model.py::test_scipy_wrapped_functions_agree --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
+    name: ${{ matrix.subset-name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
 
     env:
-      TEST_SUBSET: ${{ matrix.test-config.subset }}
+      TEST_SUBSET: ${{ matrix.test-subset }}
 
     defaults:
       run:
