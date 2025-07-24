@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools", "versioneer[toml]"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
 
 [project]
@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 authors = [{name="Jesse Grabowski", email='jessegrabowski@gmail.com'}]
 description = "A package for solving, estimating, and analyzing DSGE models"
 readme = 'README.md'
-license = { file = 'LICENSE.txt'}
+license = { file = 'LICENSE'}
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Science/Research",
@@ -81,14 +81,22 @@ docs = [
   "watermark",
 ]
 
+[tool.hatch.version]
+source = 'vcs'
 
-[tool.versioneer]
-VCS = "git"
-style = "pep440"
-versionfile_source = "gEconpy/_version.py"
-versionfile_build = "gEconpy/_version.py"
-tag_prefix = 'v'
+[tool.hatch.build.hooks.vcs]
+version-file = "gEconpy/_version.py"
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+  '/.github',
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gEconpy"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 minversion = "6.0"

@@ -26,6 +26,7 @@ from gEconpy.model.model import (
 from gEconpy.model.statespace import data_from_prior
 from gEconpy.model.steady_state import print_steady_state
 from gEconpy.parser.html import print_gcn_file
+from importlib.metadata import version
 
 _log = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ if not logging.root.handlers:
         _log.addHandler(handler)
 
 
-__version__ = get_versions()["version"]
+__version__ = version("gEconpy")
 
 __all__ = [
     "autocorrelation_matrix",
