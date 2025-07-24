@@ -15,21 +15,40 @@ concurrency:
 
 
 jobs:
-  unittest:
+  test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
-        exclude:
-          - os: ubuntu-latest
-            python-version: "3.11"
-          - os: windows-latest
+        include:
+          - subset-name: "Model Steady State Tests"
+            os: ubuntu-latest
             python-version: "3.12"
-        test-subset:
-          - |
-            tests/
-
+            test-subset: "tests/test_model.py::test_numerical_steady_state tests/test_model.py::test_steady_state tests/test_model.py::test_partially_analytical_steady_state"
+          - subset-name: "Model Tests"
+            os: ubuntu-latest
+            python-version: "3.12"
+            test-subset: "tests/test_model.py --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state"
+          - subset-name: "Steady State Tests"
+            os: ubuntu-latest
+            python-version: "3.12"
+            test-subset: "tests/test_steady_state.py"
+          - subset-name: "Perturbation Tests"
+            os: ubuntu-latest
+            python-version: "3.12"
+            test-subset: "tests/test_perturbation.py"
+          - subset-name: "Other Tests"
+            os: ubuntu-latest
+            python-version: "3.12"
+            test-subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
+          - subset-name: "Windows Test Model"
+            os: windows-latest
+            python-version: "3.13"
+            test-subset: "tests/test_model.py --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state --deselect tests/test_model.py::test_all_backends_agree_on_functions --deselect tests/test_model.py::test_scipy_wrapped_functions_agree"
+          - subset-name: "Windows Other Tests"
+            os: windows-latest
+            python-version: "3.13"
+            test-subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
+    name: ${{ matrix.subset-name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
 
     env:
@@ -37,10 +56,10 @@ jobs:
 
     defaults:
       run:
-        shell: bash -l {0}
+        shell: bash -leo pipefail {0}
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - uses: mamba-org/setup-micromamba@v2
       with:
@@ -53,18 +72,71 @@ jobs:
 
     - name: Install current branch
       run: |
-        conda activate geconpy-test
         pip install -e .
         python --version
 
+    - name: Create matrix id
+      id: matrix-id
+      env:
+        MATRIX_CONTEXT: ${{ toJson(matrix) }}
+      run: |
+        echo $MATRIX_CONTEXT
+        export MATRIX_ID=`echo $MATRIX_CONTEXT | sha256sum | cut -c 1-32`
+        echo $MATRIX_ID
+        echo "id=$MATRIX_ID" >> $GITHUB_OUTPUT
+
     - name: Run tests
       run: |
-        python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml --no-cov-on-fail --cov-report term $TEST_SUBSET
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+        python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --cov-report term $TEST_SUBSET
+      env:
+        MATRIX_ID: ${{ steps.matrix-id.outputs.id }}
+
+    - name: Upload coverage file
+      uses: actions/upload-artifact@v4
       with:
-        token: ${{ secrets.CODECOV_TOKEN }} # use token for more robust uploads
-        env_vars: TEST_SUBSET
-        name: ${{ matrix.os }}
-        fail_ci_if_error: false
-        verbose: true
+        name: coverage-${{ steps.matrix-id.outputs.id }}
+        path: coverage/coverage-${{ steps.matrix-id.outputs.id }}.xml
+
+
+  all-checks:
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    name: "All tests"
+    needs: [test]
+    steps:
+      - name: Check build matrix status
+        if: ${{ needs.test.result != 'success' }}
+        run: exit 1
+
+  upload-coverage:
+    runs-on: ubuntu-latest
+    name: "Upload coverage"
+    needs: [all-checks]
+    if: ${{ needs.all-checks.result == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -U coverage>=5.1 coveralls
+
+      - name: Download coverage file
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          directory: ./coverage/
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}

@@ -1233,7 +1233,7 @@ def test_simulate(gcn_file, argument):
     T, R = model.solve_model(solver="gensys", verbose=False)
     n_variables, n_shocks = R.shape
 
-    n_simulations = 2000
+    n_simulations = 3000
     simulation_length = 2000
 
     shock_std, shock_std_dict, shock_cov_matrix = setup_cov_arguments(
