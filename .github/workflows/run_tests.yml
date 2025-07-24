@@ -20,15 +20,27 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
-        exclude:
-          - os: ubuntu-latest
-            python-version: "3.11"
-          - os: windows-latest
-            python-version: "3.12"
-        test-subset:
-          - |
-            tests/
+        python-version: ["3.12"]
+        include:
+          - subset-name: "Numerical Steady State Tests"
+            test-subset: |
+              tests/test_model.py::test_numerical_steady_state
+          - subset-name: "Model Tests"
+            test-subset: |
+              tests/test_model.py
+              --ignore tests/test_model.py::test_numerical_steady_state
+          - subset-name: "Steady State Tests"
+            test-subset: |
+              tests/test_steady_state.py
+          - subset-name: "Perturbation Tests"
+            test-subset: |
+              tests/test_perturbation.py
+          - subset-name: "Other Tests"
+            test-subset: |
+              tests/
+              --ignore tests/test_model.py
+              --ignore tests/test_steady_state.py
+              --ignore tests/test_perturbation.py
 
     runs-on: ${{ matrix.os }}
 
@@ -37,10 +49,10 @@ jobs:
 
     defaults:
       run:
-        shell: bash -l {0}
+        shell: bash -leo pipefail {0}
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - uses: mamba-org/setup-micromamba@v2
       with:
@@ -60,6 +72,7 @@ jobs:
     - name: Run tests
       run: |
         python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml --no-cov-on-fail --cov-report term $TEST_SUBSET
+
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
