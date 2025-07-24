@@ -21,27 +21,22 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.12"]
-        include:
-          - subset-name: "Numerical Steady State Tests"
-            test-subset: |
-              tests/test_model.py::test_numerical_steady_state
-          - subset-name: "Model Tests"
-            test-subset: |
-              tests/test_model.py --ignore tests/test_model.py::test_numerical_steady_state
-          - subset-name: "Steady State Tests"
-            test-subset: |
-              tests/test_steady_state.py
-          - subset-name: "Perturbation Tests"
-            test-subset: |
-              tests/test_perturbation.py
-          - subset-name: "Other Tests"
-            test-subset: |
-              tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py
-    name: ${{ matrix.subset-name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
+        test-config:
+          - name: "Numerical Steady State Tests"
+            subset: "tests/test_model.py::test_numerical_steady_state"
+          - name: "Model Tests"
+            subset: "tests/test_model.py --ignore tests/test_model.py::test_numerical_steady_state"
+          - name: "Steady State Tests"
+            subset: "tests/test_steady_state.py"
+          - name: "Perturbation Tests"
+            subset: "tests/test_perturbation.py"
+          - name: "Other Tests"
+            subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
+    name: ${{ matrix.test-config.name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
 
     env:
-      TEST_SUBSET: ${{ matrix.test-subset }}
+      TEST_SUBSET: ${{ matrix.test-config.subset }}
 
     defaults:
       run:
