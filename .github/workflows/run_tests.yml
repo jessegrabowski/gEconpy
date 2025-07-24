@@ -37,7 +37,7 @@ jobs:
           - subset-name: "Other Tests"
             test-subset: |
               tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py
-
+    name: ${{ matrix.subset-name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
 
     env:
