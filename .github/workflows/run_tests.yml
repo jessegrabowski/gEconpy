@@ -63,12 +63,6 @@ jobs:
         init-shell: bash
         cache-environment: true
 
-    - name: Install current branch
-      run: |
-        conda activate geconpy-test
-        pip install -e .
-        python --version
-
     - name: Run tests
       run: |
         python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml --no-cov-on-fail --cov-report term $TEST_SUBSET
