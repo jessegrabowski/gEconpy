@@ -27,8 +27,7 @@ jobs:
               tests/test_model.py::test_numerical_steady_state
           - subset-name: "Model Tests"
             test-subset: |
-              tests/test_model.py \
-              --ignore tests/test_model.py::test_numerical_steady_state
+              tests/test_model.py --ignore tests/test_model.py::test_numerical_steady_state
           - subset-name: "Steady State Tests"
             test-subset: |
               tests/test_steady_state.py
@@ -37,10 +36,7 @@ jobs:
               tests/test_perturbation.py
           - subset-name: "Other Tests"
             test-subset: |
-              tests/ \
-              --ignore tests/test_model.py \
-              --ignore tests/test_steady_state.py \
-              --ignore tests/test_perturbation.py
+              tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py
 
     runs-on: ${{ matrix.os }}
 
@@ -49,7 +45,7 @@ jobs:
 
     defaults:
       run:
-        shell: bash -l {0}
+        shell: bash -leo pipefail {0}
 
     steps:
     - uses: actions/checkout@v4
@@ -62,6 +58,11 @@ jobs:
         environment-name: geconpy-test
         init-shell: bash
         cache-environment: true
+
+    - name: Install current branch
+      run: |
+        pip install -e .
+        python --version
 
     - name: Run tests
       run: |
