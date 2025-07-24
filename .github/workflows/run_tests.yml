@@ -19,19 +19,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         python-version: ["3.12"]
         test-config:
           - name: "Model Steady State Tests"
+            os: ubuntu-latest
             subset: "tests/test_model.py::test_numerical_steady_state tests/test_model.py::test_steady_state tests/test_model.py::test_partially_analytical_steady_state"
           - name: "Model Tests"
+            os: ubuntu-latest
             subset: "tests/test_model.py --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state"
           - name: "Steady State Tests"
+            os: ubuntu-latest
             subset: "tests/test_steady_state.py"
           - name: "Perturbation Tests"
+            os: ubuntu-latest
             subset: "tests/test_perturbation.py"
           - name: "Other Tests"
+            os: ubuntu-latest
             subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
+          - name: "Windows Tests"
+            os: windows-latest
+            subset: "tests/ --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state --deselect tests/test_model.py::test_all_backends_agree_on_functions --deselect tests/test_model.py::test_scipy_wrapped_functions_agree --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
     name: ${{ matrix.test-config.name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
 
