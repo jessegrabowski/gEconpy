@@ -40,10 +40,14 @@ jobs:
             os: ubuntu-latest
             python-version: "3.12"
             test-subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
-          - subset-name: "Windows Tests"
+          - subset-name: "Windows Test Model"
             os: windows-latest
-            python-version: "3.12"
-            test-subset: "tests/ --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state --deselect tests/test_model.py::test_all_backends_agree_on_functions --deselect tests/test_model.py::test_scipy_wrapped_functions_agree --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
+            python-version: "3.13"
+            test-subset: "tests/test_model.py --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state --deselect tests/test_model.py::test_all_backends_agree_on_functions --deselect tests/test_model.py::test_scipy_wrapped_functions_agree"
+          - subset-name: "Windows Other Tests"
+            os: windows-latest
+            python-version: "3.13"
+            test-subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
     name: ${{ matrix.subset-name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
 
