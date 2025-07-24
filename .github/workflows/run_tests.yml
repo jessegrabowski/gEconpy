@@ -49,7 +49,7 @@ jobs:
 
     defaults:
       run:
-        shell: bash -leo pipefail {0}
+        shell: bash -l {0}
 
     steps:
     - uses: actions/checkout@v4
