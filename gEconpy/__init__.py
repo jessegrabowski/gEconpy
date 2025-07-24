@@ -9,7 +9,6 @@ from gEconpy import (
     solvers,
     utilities,
 )
-from gEconpy._version import get_versions
 from gEconpy.dynare_convert import make_mod_file
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 from gEconpy.model.model import (
