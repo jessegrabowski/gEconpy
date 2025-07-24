@@ -22,10 +22,10 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.12"]
         test-config:
-          - name: "Numerical Steady State Tests"
-            subset: "tests/test_model.py::test_numerical_steady_state"
+          - name: "Model Steady State Tests"
+            subset: "tests/test_model.py::test_numerical_steady_state tests/test_model.py::test_steady_state tests/test_model.py::test_partially_analytical_steady_state"
           - name: "Model Tests"
-            subset: "tests/test_model.py --ignore tests/test_model.py::test_numerical_steady_state"
+            subset: "tests/test_model.py --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state"
           - name: "Steady State Tests"
             subset: "tests/test_steady_state.py"
           - name: "Perturbation Tests"
