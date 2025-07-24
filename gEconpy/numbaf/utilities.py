@@ -319,5 +319,6 @@ def numba_lambdify(
     docstring = f"'''Automatically generated code:\n{full_code}'''"
     code = f"{decorator}\ndef f({input_signature}):\n    {docstring}\n\n{assignments}\n\n{code}\n\n    return {returns}"
 
-    exec(code)
-    return locals()["f"]
+    exec_namespace = {}
+    exec(code, globals(), exec_namespace)
+    return exec_namespace["f"]
