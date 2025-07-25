@@ -67,7 +67,11 @@ def test_variables_to_all_times(backend):
 
 @pytest.mark.parametrize(
     "gcn_file",
-    ["one_block_1.gcn", "rbc_2_block.gcn", "full_nk.gcn"],
+    [
+        "one_block_1.gcn",
+        "rbc_2_block.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+    ],
 )
 @pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
 def test_log_linearize_model(gcn_file, backend):
@@ -118,7 +122,7 @@ def test_log_linearize_model(gcn_file, backend):
     [
         ("one_block_1_ss.gcn", ["K", "A"]),
         ("open_rbc.gcn", ["A", "K", "IIP"]),
-        (
+        pytest.param(
             "full_nk.gcn",
             [
                 "K",
@@ -132,6 +136,7 @@ def test_log_linearize_model(gcn_file, backend):
                 "pi_obj",
                 "r_G",
             ],
+            marks=pytest.mark.include_nk,
         ),
     ],
 )
@@ -184,6 +189,7 @@ def test_solve_policy_function(gcn_file, state_variables, backend):
     [cycle_reduction_pt, scan_cycle_reduction],
     ids=["cycle_reduction", "scan_cycle_reduction"],
 )
+@pytest.mark.include_nk
 def test_cycle_reduction_gradients(op):
     mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     A, B, C, D = mod.linearize_model(
@@ -220,6 +226,7 @@ def test_cycle_reduction_gradients(op):
     )
 
 
+@pytest.mark.include_nk
 def test_pytensor_gensys():
     mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     A, B, C, D = mod.linearize_model(

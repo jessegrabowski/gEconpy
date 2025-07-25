@@ -36,7 +36,7 @@ JAX_INSTALLED = find_spec("jax") is not None
     [
         ("one_block_1_dist.gcn", "one_block_prior"),
         ("one_block_1_ss.gcn", "one_block_ss"),
-        ("full_nk.gcn", "full_nk"),
+        pytest.param("full_nk.gcn", "full_nk", marks=pytest.mark.include_nk),
     ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
@@ -77,7 +77,11 @@ def test_deterministic_model_parameters(backend: BACKENDS):
 
 @pytest.mark.parametrize(
     "gcn_path",
-    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn"],
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+    ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
 def test_all_backends_agree_on_parameters(gcn_path):
@@ -94,7 +98,11 @@ def test_all_backends_agree_on_parameters(gcn_path):
 
 @pytest.mark.parametrize(
     "gcn_path",
-    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn"],
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+    ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
 @pytest.mark.parametrize(
@@ -124,7 +132,7 @@ def test_all_backends_agree_on_functions(gcn_path, func):
     "gcn_path",
     [
         "rbc_2_block_partial_ss.gcn",
-        "full_nk_partial_ss.gcn",
+        pytest.param("full_nk_partial_ss.gcn", marks=pytest.mark.include_nk),
     ],
     ids=["two_block", "full_nk"],
 )
@@ -219,7 +227,7 @@ def test_linear_model():
                 "r_given_ss": 1.00000101e-02,
             },
         ),
-        (
+        pytest.param(
             "full_nk.gcn",
             {
                 "C_ss": 1.50620761e00,
@@ -247,6 +255,7 @@ def test_linear_model():
                 "w_ss": 1.08810356e00,
                 "w_star_ss": 1.08810356e00,
             },
+            marks=pytest.mark.include_nk,
         ),
     ],
     ids=["one_block", "open_rbc", "nk"],
@@ -288,7 +297,11 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
 )
 @pytest.mark.parametrize(
     "gcn_file",
-    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn"],
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+    ],
 )
 def test_model_gradient(backend, gcn_file):
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
@@ -330,7 +343,12 @@ def test_model_gradient(backend, gcn_file):
 @pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
 @pytest.mark.parametrize(
     "gcn_file",
-    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn", "rbc_with_excluded.gcn"],
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+        "rbc_with_excluded.gcn",
+    ],
 )
 @pytest.mark.parametrize(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
@@ -423,7 +441,9 @@ def test_steady_state_with_parameter_updates(backend):
             "rbc_2_block_partial_ss.gcn",
             "rbc_2_block_ss.gcn",
         ),
-        ("full_nk_partial_ss.gcn", "full_nk.gcn"),
+        pytest.param(
+            "full_nk_partial_ss.gcn", "full_nk.gcn", marks=pytest.mark.include_nk
+        ),
     ],
 )
 def test_partially_analytical_steady_state(
@@ -465,7 +485,7 @@ def test_partially_analytical_steady_state(
     [
         ("one_block_1_ss.gcn", "one_block_ss"),
         ("rbc_2_block_ss.gcn", "two_block_ss"),
-        ("full_nk.gcn", "full_nk"),
+        pytest.param("full_nk.gcn", "full_nk", marks=pytest.mark.include_nk),
     ],
     ids=["one_block_ss", "two_block_ss", "full_nk"],
 )
@@ -572,7 +592,7 @@ def test_outputs_after_gensys_failure(caplog):
     [
         ("one_block_1_ss", False),
         ("rbc_2_block_ss", False),
-        ("full_nk", False),
+        pytest.param("full_nk", False, marks=pytest.mark.include_nk),
         ("basic_rbc", False),
         ("basic_rbc", True),
     ],
@@ -771,7 +791,7 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        "full_nk.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
     ],
 )
@@ -800,7 +820,7 @@ def test_compute_stationary_covariance(caplog, gcn_file):
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        "full_nk.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
     ],
 )
@@ -954,7 +974,7 @@ def test_irf_from_trajectory(return_individual_shocks, n_shocks):
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        "full_nk.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
     ],
 )
 @pytest.mark.parametrize(

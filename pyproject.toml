@@ -108,6 +108,9 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::RuntimeWarning"]
 
+markers = [
+    "include_nk: mark tests using the full new keyenesian model (which can be quite slow)",
+]
 
 [tool.ruff.lint]
 select = ["D", "E", "F", "I", "UP", "W", "RUF"]

@@ -190,7 +190,9 @@ nk_shocks = ["epsilon_R", "epsilon_pi", "epsilon_Y", "epsilon_preference"]
             simple_shocks,
         ),
         ("open_rbc.gcn", open_vars, open_params, open_shocks),
-        ("full_nk.gcn", nk_vars, nk_params, nk_shocks),
+        pytest.param(
+            "full_nk.gcn", nk_vars, nk_params, nk_shocks, marks=pytest.mark.include_nk
+        ),
     ],
 )
 def test_variables_parsed(
@@ -232,7 +234,7 @@ def test_variables_parsed(
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        "full_nk.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
     ],
     ids=["one_block_simple", "open_rbc", "full_nk"],
 )

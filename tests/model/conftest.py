@@ -1,6 +1,21 @@
 import pytest
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--skip-nk",
+        action="store_true",
+        default=False,
+        help="skip tests that use full_nk.gcn",
+    )
+
+
+def pytest_runtest_setup(item):
+    skip_nk = item.config.getoption("--skip-nk")
+    if skip_nk and "skip_nk" in item.keywords:
+        pytest.skip("skipped due to --skip-nk")
+
+
 @pytest.fixture
 def gcn_file_1():
     GCN_file = """

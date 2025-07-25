@@ -337,6 +337,7 @@ def test_RBC_steady_state_matches_analytic():
         assert_allclose(answer, numerical_ss_dict[k.name], err_msg=k.name)
 
 
+@pytest.mark.include_nk
 def test_numerical_solvers_succeed_and_agree_NK():
     model_4 = load_and_cache_model(
         "full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED
@@ -360,6 +361,7 @@ def test_numerical_solvers_succeed_and_agree_NK():
     )
 
 
+@pytest.mark.include_nk
 def test_steady_state_matches_analytic_NK():
     model_4 = load_and_cache_model(
         "full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED

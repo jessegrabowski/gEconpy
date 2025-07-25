@@ -14,7 +14,7 @@ from tests._resources.cache_compiled_models import (
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        "full_nk.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
     ],
 )
@@ -67,7 +67,7 @@ def test_model_to_pymc(gcn_file):
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        "full_nk.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
     ],
 )
