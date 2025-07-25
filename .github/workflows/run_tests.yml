@@ -48,12 +48,12 @@ jobs:
           - subset-name: "Windows Test Model"
             os: windows-latest
             python-version: "3.13"
-            test-subset: 'tests/model --ignore=tests/model/test_steady_state.py --ignore=tests/model/test_statespace.py --ignore=tests/model/test_build.py --deselect tests/model/test_model.py::test_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_partially_analytical_steady_state --deselect tests/model/test_model.py::test_all_backends_agree_on_functions --deselect tests/model/test_model.py::test_scipy_wrapped_functions_agree --deselect tests/model/test_model.py::test_all_backends_agree_on_parameters --deselect tests/models/test_model.py::test_simulate -m "not include_nk"'
+            test-subset: "tests/model --ignore=tests/model/test_steady_state.py --ignore=tests/model/test_statespace.py --ignore=tests/model/test_build.py --deselect tests/model/test_model.py::test_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_partially_analytical_steady_state --deselect tests/model/test_model.py::test_all_backends_agree_on_functions --deselect tests/model/test_model.py::test_scipy_wrapped_functions_agree --deselect tests/model/test_model.py::test_all_backends_agree_on_parameters --deselect tests/models/test_model.py::test_simulate -m not\ include_nk"
 
           - subset-name: "Windows Other Tests"
             os: windows-latest
             python-version: "3.13"
-            test-subset: 'tests/ --ignore=tests/model -m "not include_nk"'
+            test-subset: "tests/ --ignore=tests/model -m not\ include_nk"
     name: ${{ matrix.subset-name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
 
