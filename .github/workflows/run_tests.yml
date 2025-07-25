@@ -20,39 +20,54 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - subset-name: "Model Steady State Tests"
-            os: ubuntu-latest
-            python-version: "3.12"
-            test-subset: "tests/test_model.py::test_numerical_steady_state tests/test_model.py::test_steady_state tests/test_model.py::test_partially_analytical_steady_state"
-          - subset-name: "Model Tests"
-            os: ubuntu-latest
-            python-version: "3.12"
-            test-subset: "tests/test_model.py --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state"
           - subset-name: "Steady State Tests"
             os: ubuntu-latest
             python-version: "3.12"
-            test-subset: "tests/test_steady_state.py"
-          - subset-name: "Perturbation Tests"
+            test-subset: "tests/model/test_steady_state.py tests/model/test_model.py::test_steady_state"
+            test-marker: ""
+
+          - subset-name: "Numerical Steady State Tests"
             os: ubuntu-latest
             python-version: "3.12"
-            test-subset: "tests/test_perturbation.py"
+            test-subset: "tests/model/test_model.py::test_numerical_steady_state tests/model/test_model.py::test_numerical_steady_state_with_calibrated_params tests/model/test_model.py::test_partially_analytical_steady_state"
+            test-marker: ""
+
+          - subset-name: "Perturbation and Statespace Tests"
+            os: ubuntu-latest
+            python-version: "3.12"
+            test-subset: "tests/model/test_perturbation.py tests/model/test_statespace.py"
+            test-marker: ""
+
+          - subset-name: "Other Model Tests"
+            os: ubuntu-latest
+            python-version: "3.12"
+            test-subset: "tests/model --ignore=tests/model/test_steady_state.py --ignore=tests/model/test_statespace.py --ignore=tests/model/test_perturbation.py --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state_with_calibrated_params --deselect tests/model/test_model.py::test_partially_analytical_steady_state"
+            test-marker: ""
+
           - subset-name: "Other Tests"
             os: ubuntu-latest
             python-version: "3.12"
-            test-subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
+            test-subset: "tests/ --ignore=tests/model"
+            test-marker: ""
+
           - subset-name: "Windows Test Model"
             os: windows-latest
             python-version: "3.13"
-            test-subset: "tests/test_model.py --deselect tests/test_model.py::test_numerical_steady_state --deselect tests/test_model.py::test_steady_state --deselect tests/test_model.py::test_partially_analytical_steady_state --deselect tests/test_model.py::test_all_backends_agree_on_functions --deselect tests/test_model.py::test_scipy_wrapped_functions_agree"
+            test-subset: "tests/model --ignore=tests/model/test_steady_state.py --ignore=tests/model/test_statespace.py --ignore=tests/model/test_build.py --deselect tests/model/test_model.py::test_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_partially_analytical_steady_state --deselect tests/model/test_model.py::test_all_backends_agree_on_functions --deselect tests/model/test_model.py::test_scipy_wrapped_functions_agree --deselect tests/model/test_model.py::test_all_backends_agree_on_parameters --deselect tests/models/test_model.py::test_simulate"
+            test-marker: "not include_nk"
+
           - subset-name: "Windows Other Tests"
             os: windows-latest
             python-version: "3.13"
-            test-subset: "tests/ --ignore tests/test_model.py --ignore tests/test_steady_state.py --ignore tests/test_perturbation.py"
+            test-subset: "tests/ --ignore=tests/model"
+            test-marker: "not include_nk"
+
     name: ${{ matrix.subset-name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
 
     env:
       TEST_SUBSET: ${{ matrix.test-subset }}
+      TEST_MARKER: ${{ matrix.test-marker }}
 
     defaults:
       run:
@@ -87,7 +102,7 @@ jobs:
 
     - name: Run tests
       run: |
-        python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --cov-report term $TEST_SUBSET
+        python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --cov-report term $TEST_SUBSET -m "$TEST_MARKER" --durations=50
       env:
         MATRIX_ID: ${{ steps.matrix-id.outputs.id }}
 

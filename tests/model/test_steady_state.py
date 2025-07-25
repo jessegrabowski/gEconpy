@@ -1,16 +1,27 @@
 import re
+from importlib.util import find_spec
 
+import numpy as np
 import pytest
 import sympy as sp
 
 from numpy.testing import assert_allclose
 from scipy import optimize
 
-from gEconpy import model_from_gcn
+from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
-from gEconpy.model.steady_state import print_steady_state
-from tests.test_model_loaders import JAX_INSTALLED
-from tests.utilities.shared_fixtures import load_and_cache_model
+from gEconpy.model.steady_state import (
+    print_steady_state,
+    system_to_steady_state,
+    compile_model_ss_functions,
+)
+from gEconpy.parser.file_loaders import (
+    gcn_to_block_dict,
+    block_dict_to_model_primitives,
+    simplify_provided_ss_equations,
+    validate_results,
+)
+from tests._resources.cache_compiled_models import load_and_cache_model
 
 
 def root_and_min_agree_helper(model: Model, **kwargs):
@@ -326,6 +337,7 @@ def test_RBC_steady_state_matches_analytic():
         assert_allclose(answer, numerical_ss_dict[k.name], err_msg=k.name)
 
 
+@pytest.mark.include_nk
 def test_numerical_solvers_succeed_and_agree_NK():
     model_4 = load_and_cache_model(
         "full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED
@@ -349,6 +361,7 @@ def test_numerical_solvers_succeed_and_agree_NK():
     )
 
 
+@pytest.mark.include_nk
 def test_steady_state_matches_analytic_NK():
     model_4 = load_and_cache_model(
         "full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED
@@ -482,3 +495,78 @@ def test_steady_state_matches_analytic_NK():
     for k in ss_vars:
         answer = float(answer_dict[k.name].subs(param_dict))
         assert_allclose(answer, numerical_ss_dict[k.name], err_msg=k.name)
+
+
+JAX_INSTALLED = find_spec("jax") is not None
+
+
+@pytest.mark.parametrize(
+    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
+)
+def test_all_model_functions_return_arrays(backend: BACKENDS):
+    outputs = gcn_to_block_dict(
+        "tests/_resources/test_gcns/one_block_1_ss.gcn", simplify_blocks=True
+    )
+    block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
+
+    (
+        equations,
+        param_dict,
+        calib_dict,
+        deterministic_dict,
+        variables,
+        shocks,
+        param_priors,
+        shock_priors,
+        reduced_vars,
+        singletons,
+    ) = block_dict_to_model_primitives(
+        block_dict,
+        assumptions,
+        try_reduce,
+        prior_info,
+        simplify_tryreduce=True,
+        simplify_constants=True,
+    )
+
+    ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
+    steady_state_relationships = [
+        sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()
+    ]
+    validate_results(
+        equations,
+        steady_state_relationships,
+        param_dict,
+        calib_dict,
+        deterministic_dict,
+    )
+    steady_state_equations = system_to_steady_state(equations, shocks)
+
+    kwargs = {}
+    if backend == "pytensor":
+        kwargs["mode"] = "JAX" if JAX_INSTALLED else "FAST_RUN"
+    (f_params, f_ss, resid_funcs, error_funcs), cache = compile_model_ss_functions(
+        steady_state_equations,
+        ss_solution_dict,
+        variables,
+        param_dict,
+        deterministic_dict,
+        calib_dict,
+        error_func="squared",
+        backend=backend,
+        **kwargs,
+    )
+
+    f_ss_resid, f_ss_jac = resid_funcs
+    f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp = error_funcs
+
+    parameters = f_params(**param_dict)
+    ss = f_ss(**parameters)
+    x0 = {var.to_ss().name: 0.8 for var in variables}
+    x0.update(ss)
+    for f in [f_ss_resid, f_ss_jac, f_ss_grad, f_ss_hess]:
+        result = f(**x0, **parameters)
+        assert isinstance(result, np.ndarray)
+
+    result = f_ss_hessp(np.ones(len(variables)), **x0, **parameters)
+    assert isinstance(result, np.ndarray)

@@ -1,6 +1,7 @@
 import os
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -23,12 +24,11 @@ def record_to_dict(x):
 
 
 def get_available_models():
-    dynare_output_dir = "tests/dynare_outputs"
+    dynare_output_dir = Path("tests") / "_resources" / "dynare_outputs"
     mat_files = os.listdir(dynare_output_dir)
     models = [x.replace("_results.mat", "") for x in mat_files]
     return {
-        model: os.path.join(dynare_output_dir, fname)
-        for model, fname in zip(models, mat_files)
+        model: str(dynare_output_dir / fname) for model, fname in zip(models, mat_files)
     }
 
 

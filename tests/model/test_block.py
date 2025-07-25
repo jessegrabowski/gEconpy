@@ -19,7 +19,7 @@ from gEconpy.model.block import Block
 from gEconpy.parser import constants, file_loaders, gEcon_parser
 from gEconpy.utilities import set_equality_equals_zero, unpack_keys_and_values
 
-ROOT = Path(__file__).parent.absolute()
+ROOT = Path(__file__).parent.parent.absolute()
 
 
 class IncompleteBlockDefinitionTests(unittest.TestCase):
@@ -261,7 +261,7 @@ def test_invalid_decorator_raises():
 class BlockTestCases(unittest.TestCase):
     def setUp(self):
         test_file = file_loaders.load_gcn(
-            os.path.join(ROOT, "Test GCNs/one_block_2.gcn")
+            ROOT / "_resources" / "test_gcns" / "one_block_2.gcn"
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict, options, tryreduce, assumptions = (
@@ -468,7 +468,7 @@ class BlockTestCases(unittest.TestCase):
 
     def test_firm_block_lagrange_parsing(self):
         test_file = file_loaders.load_gcn(
-            os.path.join(ROOT, "Test GCNs/rbc_2_block.gcn")
+            ROOT / "_resources" / "test_gcns" / "rbc_2_block.gcn"
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict, options, tryreduce, assumptions = (
@@ -495,7 +495,7 @@ class BlockTestCases(unittest.TestCase):
 
     def test_firm_FOC(self):
         test_file = file_loaders.load_gcn(
-            os.path.join(ROOT, "Test GCNs/rbc_2_block.gcn")
+            ROOT / "_resources" / "test_gcns" / "rbc_2_block.gcn"
         )
         parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
         block_dict, options, tryreduce, assumptions = (
@@ -600,7 +600,7 @@ class BlockTestCases(unittest.TestCase):
 
 def test_block_with_exlcuded_equation():
     test_file = file_loaders.load_gcn(
-        os.path.join(ROOT, "Test GCNs/rbc_with_excluded.gcn")
+        ROOT / "_resources" / "test_gcns" / "rbc_with_excluded.gcn"
     )
 
     parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
@@ -615,7 +615,3 @@ def test_block_with_exlcuded_equation():
 
     # 6 equations are 4 controls, 1 objective, 1 constraint (excluding the excluded equation)
     assert len(block.system_equations) == 6
-
-
-if __name__ == "__main__":
-    unittest.main()

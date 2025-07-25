@@ -1,19 +1,14 @@
-import os
 import re
-import unittest
-
 from importlib.util import find_spec
-from unittest import mock
 
 import numdifftools as nd
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
-
 from numpy.testing import assert_allclose
 
-from gEconpy.exceptions import GensysFailedException, OrphanParameterError
+from gEconpy.exceptions import GensysFailedException
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import (
@@ -28,275 +23,12 @@ from gEconpy.model.model import (
 )
 from gEconpy.model.perturbation import (
     check_bk_condition,
-    statespace_to_gEcon_representation,
 )
-from tests.utilities.expected_matrices import expected_linearization_result
-from tests.utilities.load_dynare import load_dynare_outputs
-from tests.utilities.shared_fixtures import load_and_cache_model
+from tests._resources.expected_matrices import expected_linearization_result
+from tests._resources.load_dynare import load_dynare_outputs
+from tests._resources.cache_compiled_models import load_and_cache_model
 
 JAX_INSTALLED = find_spec("jax") is not None
-
-
-@pytest.fixture
-def gcn_file_1():
-    GCN_file = """
-                block HOUSEHOLD
-                {
-                    definitions
-                    {
-                        u[] = log(C[]);
-                    };
-
-                    objective
-                    {
-                        U[] = u[] + beta * E[][U[1]];
-                    };
-
-                    controls
-                    {
-                        C[], K[];
-                    };
-
-                    constraints
-                    {
-                        Y[] = K[-1] ^ alpha;
-                        C[] = r[] * K[-1];
-                        K[] = (1 - delta) * K[-1];
-                        X[] = Y[] + C[];
-                        Z[] = 3;
-                    };
-
-                    calibration
-                    {
-                        alpha = 0.33;
-                        beta = 0.99;
-                        delta = 0.035;
-                    };
-                };
-                """
-    return GCN_file
-
-
-expected_warnings = [
-    "Simplification via a tryreduce block was requested but not possible because the system is not well defined.",
-    "Removal of constant variables was requested but not possible because the system is not well defined.",
-    "The model does not appear correctly specified, there are 8 equations but 12 variables. It will not be possible to "
-    "solve this model. Please check the specification using available diagnostic tools, and check the GCN file for "
-    "typos.",
-]
-
-
-@pytest.mark.parametrize(
-    ["simplify_tryreduce", "simplify_constants", "expected_warning"],
-    [
-        (True, False, expected_warnings[0]),
-        (False, True, expected_warnings[1]),
-        (False, False, expected_warnings[2]),
-    ],
-    ids=["tryreduce", "constants", "no_simplify"],
-)
-def test_build_warns_if_model_not_defined(
-    gcn_file_1, simplify_tryreduce, simplify_constants, expected_warning
-):
-    with unittest.mock.patch(
-        "builtins.open",
-        new=unittest.mock.mock_open(read_data=gcn_file_1),
-        create=True,
-    ):
-        with pytest.warns(UserWarning, match=expected_warning):
-            model_from_gcn(
-                gcn_file_1,
-                simplify_constants=simplify_constants,
-                simplify_tryreduce=simplify_tryreduce,
-                verbose=not (simplify_tryreduce or simplify_constants),
-            )
-
-
-def test_missing_parameters_raises():
-    GCN_file = """
-                block HOUSEHOLD
-                {
-                    definitions
-                    {
-                        u[] = log(C[]);
-                    };
-
-                    objective
-                    {
-                        U[] = u[] + beta * E[][U[1]];
-                    };
-
-                    controls
-                    {
-                        C[], K[], K[-1], Y[];
-                    };
-
-                    constraints
-                    {
-                        Y[] = K[-1] ^ alpha;
-                        Y[] = r[] * K[-1];
-                        K[] = (1 - delta) * K[-1];
-
-                    };
-
-                    calibration
-                    {
-                        K[ss] / Y[ss] = 0.33 -> alpha;
-                        delta = 0.035;
-                    };
-                };
-                """
-
-    with unittest.mock.patch(
-        "builtins.open",
-        new=unittest.mock.mock_open(read_data=GCN_file),
-        create=True,
-    ):
-        with pytest.raises(
-            OrphanParameterError,
-            match=r"The following parameter was found among model equations but did not appear in "
-            r"any calibration block: beta",
-        ):
-            model_from_gcn(
-                GCN_file,
-                verbose=False,
-                simplify_tryreduce=False,
-                simplify_constants=False,
-            )
-
-
-simple_vars = ["L", "K", "A", "Y", "I", "C", "q", "U", "lambda", "q"]
-simple_params = ["alpha", "theta", "beta", "delta", "tau", "rho"]
-simple_shocks = ["epsilon"]
-
-open_vars = [
-    "A",
-    "IIP",
-    "r",
-    "r_given",
-    "KtoN",
-    "N",
-    "K",
-    "C",
-    "U",
-    "Y",
-    "I",
-    "TB",
-    "TBtoY",
-    "CA",
-    "lambda",
-]
-open_params = [
-    "beta",
-    "delta",
-    "gamma",
-    "omega",
-    "gamma_rv",
-    "omega_rv",
-    "psi2",
-    "psi",
-    "alpha",
-    "rstar",
-    "IIPbar",
-    "rho_A",
-]
-open_shocks = ["epsilon_A"]
-
-nk_vars = [
-    "shock_technology",
-    "shock_preference",
-    "pi",
-    "pi_star",
-    "pi_obj",
-    "B",
-    "r",
-    "r_G",
-    "mc",
-    "w",
-    "w_star",
-    "Y",
-    "C",
-    "lambda",
-    "q",
-    "I",
-    "K",
-    "L",
-    "U",
-    "TC",
-    "Div",
-    "LHS",
-    "RHS",
-    "LHS_w",
-    "RHS_w",
-]
-nk_params = [
-    "delta",
-    "beta",
-    "sigma_C",
-    "sigma_L",
-    "gamma_I",
-    "phi_H",
-    "psi_w",
-    "eta_w",
-    "alpha",
-    "rho_technology",
-    "rho_preference",
-    "psi_p",
-    "eta_p",
-    "gamma_R",
-    "gamma_pi",
-    "gamma_Y",
-    "phi_pi_obj",
-    "rho_pi_dot",
-]
-nk_shocks = ["epsilon_R", "epsilon_pi", "epsilon_Y", "epsilon_preference"]
-
-
-@pytest.mark.parametrize(
-    "gcn_path, expected_variables, expected_params, expected_shocks",
-    [
-        (
-            "one_block_1_ss.gcn",
-            simple_vars,
-            simple_params,
-            simple_shocks,
-        ),
-        ("open_rbc.gcn", open_vars, open_params, open_shocks),
-        ("full_nk.gcn", nk_vars, nk_params, nk_shocks),
-    ],
-)
-def test_variables_parsed(
-    gcn_path, expected_variables, expected_params, expected_shocks
-):
-    file_path = os.path.join("tests/Test GCNs", gcn_path)
-    model = model_from_gcn(
-        file_path,
-        verbose=False,
-        backend="numpy",
-        mode="FAST_COMPILE",
-        simplify_constants=False,
-        simplify_tryreduce=False,
-    )
-
-    model_vars = [v.base_name for v in model.variables]
-    model_params = [
-        p.name
-        for p in model.params + model.calibrated_params + model.deterministic_params
-    ]
-    model_shocks = [s.base_name for s in model.shocks]
-
-    assert (
-        set(model_vars) - set(expected_variables) == set()
-        and set(expected_variables) - set(model_vars) == set()
-    )
-    assert (
-        set(model_params) - set(expected_params) == set()
-        and set(expected_params) - set(model_params) == set()
-    )
-    assert (
-        set(model_shocks) - set(expected_shocks) == set()
-        and set(expected_shocks) - set(model_shocks) == set()
-    )
 
 
 @pytest.mark.parametrize(
@@ -304,7 +36,7 @@ def test_variables_parsed(
     [
         ("one_block_1_dist.gcn", "one_block_prior"),
         ("one_block_1_ss.gcn", "one_block_ss"),
-        ("full_nk.gcn", "full_nk"),
+        pytest.param("full_nk.gcn", "full_nk", marks=pytest.mark.include_nk),
     ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
@@ -345,7 +77,11 @@ def test_deterministic_model_parameters(backend: BACKENDS):
 
 @pytest.mark.parametrize(
     "gcn_path",
-    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn"],
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+    ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
 def test_all_backends_agree_on_parameters(gcn_path):
@@ -362,7 +98,11 @@ def test_all_backends_agree_on_parameters(gcn_path):
 
 @pytest.mark.parametrize(
     "gcn_path",
-    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn"],
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+    ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
 @pytest.mark.parametrize(
@@ -392,7 +132,7 @@ def test_all_backends_agree_on_functions(gcn_path, func):
     "gcn_path",
     [
         "rbc_2_block_partial_ss.gcn",
-        "full_nk_partial_ss.gcn",
+        pytest.param("full_nk_partial_ss.gcn", marks=pytest.mark.include_nk),
     ],
     ids=["two_block", "full_nk"],
 )
@@ -487,7 +227,7 @@ def test_linear_model():
                 "r_given_ss": 1.00000101e-02,
             },
         ),
-        (
+        pytest.param(
             "full_nk.gcn",
             {
                 "C_ss": 1.50620761e00,
@@ -515,6 +255,7 @@ def test_linear_model():
                 "w_ss": 1.08810356e00,
                 "w_star_ss": 1.08810356e00,
             },
+            marks=pytest.mark.include_nk,
         ),
     ],
     ids=["one_block", "open_rbc", "nk"],
@@ -556,7 +297,11 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
 )
 @pytest.mark.parametrize(
     "gcn_file",
-    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn"],
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+    ],
 )
 def test_model_gradient(backend, gcn_file):
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
@@ -598,7 +343,12 @@ def test_model_gradient(backend, gcn_file):
 @pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
 @pytest.mark.parametrize(
     "gcn_file",
-    ["one_block_1_ss.gcn", "open_rbc.gcn", "full_nk.gcn", "rbc_with_excluded.gcn"],
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+        "rbc_with_excluded.gcn",
+    ],
 )
 @pytest.mark.parametrize(
     "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
@@ -691,7 +441,9 @@ def test_steady_state_with_parameter_updates(backend):
             "rbc_2_block_partial_ss.gcn",
             "rbc_2_block_ss.gcn",
         ),
-        ("full_nk_partial_ss.gcn", "full_nk.gcn"),
+        pytest.param(
+            "full_nk_partial_ss.gcn", "full_nk.gcn", marks=pytest.mark.include_nk
+        ),
     ],
 )
 def test_partially_analytical_steady_state(
@@ -733,7 +485,7 @@ def test_partially_analytical_steady_state(
     [
         ("one_block_1_ss.gcn", "one_block_ss"),
         ("rbc_2_block_ss.gcn", "two_block_ss"),
-        ("full_nk.gcn", "full_nk"),
+        pytest.param("full_nk.gcn", "full_nk", marks=pytest.mark.include_nk),
     ],
     ids=["one_block_ss", "two_block_ss", "full_nk"],
 )
@@ -774,7 +526,7 @@ def test_linearize_with_custom_params(backend):
 
 
 def test_invalid_solver_raises():
-    file_path = "tests/Test GCNs/one_block_1_ss.gcn"
+    file_path = "tests/_resources/test_gcns/one_block_1_ss.gcn"
     model = model_from_gcn(file_path, verbose=False)
     model.steady_state(verbose=False, progressbar=False)
 
@@ -787,7 +539,7 @@ def test_invalid_solver_raises():
 
 
 def test_bad_failure_argument_raises():
-    file_path = "tests/Test GCNs/pert_fails.gcn"
+    file_path = "tests/_resources/test_gcns/pert_fails.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
 
     with pytest.raises(ValueError):
@@ -801,7 +553,7 @@ def test_bad_failure_argument_raises():
 
 
 def test_gensys_fails_to_solve():
-    file_path = "tests/Test GCNs/pert_fails.gcn"
+    file_path = "tests/_resources/test_gcns/pert_fails.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
 
     with pytest.raises(GensysFailedException):
@@ -814,7 +566,7 @@ def test_gensys_fails_to_solve():
 
 
 def test_outputs_after_gensys_failure(caplog):
-    file_path = "tests/Test GCNs/pert_fails.gcn"
+    file_path = "tests/_resources/test_gcns/pert_fails.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     T, R = model.solve_model(
         solver="gensys",
@@ -840,7 +592,7 @@ def test_outputs_after_gensys_failure(caplog):
     [
         ("one_block_1_ss", False),
         ("rbc_2_block_ss", False),
-        ("full_nk", False),
+        pytest.param("full_nk", False, marks=pytest.mark.include_nk),
         ("basic_rbc", False),
         ("basic_rbc", True),
     ],
@@ -869,7 +621,7 @@ def test_solve_matches_dynare(backend, model_name, log_linearize):
 
 
 def test_outputs_after_pert_success(caplog):
-    file_path = "tests/Test GCNs/rbc_linearized.gcn"
+    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     model.solve_model(
         solver="gensys",
@@ -888,7 +640,7 @@ def test_outputs_after_pert_success(caplog):
 
 
 def test_bad_argument_to_bk_condition_raises():
-    file_path = "tests/Test GCNs/rbc_linearized.gcn"
+    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
 
     A, B, C, D = model.linearize_model()
@@ -897,7 +649,7 @@ def test_bad_argument_to_bk_condition_raises():
 
 
 def test_check_bk_condition():
-    file_path = "tests/Test GCNs/rbc_linearized.gcn"
+    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     A, B, C, D = model.linearize_model()
 
@@ -914,7 +666,7 @@ def test_check_bk_condition():
 
 
 def test_summarize_perturbation_solution():
-    file_path = "tests/Test GCNs/rbc_linearized.gcn"
+    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     linear_system = [A, B, C, D] = model.linearize_model()
     policy_function = [T, R] = model.solve_model(solver="gensys", verbose=False)
@@ -928,7 +680,7 @@ def test_summarize_perturbation_solution():
 
 
 def test_validate_shock_options():
-    file_path = "tests/Test GCNs/full_nk.gcn"
+    file_path = "tests/_resources/test_gcns/full_nk.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     T, R = model.solve_model(solver="gensys", verbose=False)
 
@@ -971,7 +723,7 @@ def test_validate_shock_options():
 
 
 def test_build_Q_matrix():
-    file_path = "tests/Test GCNs/full_nk.gcn"
+    file_path = "tests/_resources/test_gcns/full_nk.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
     shocks = model.shocks
 
@@ -1039,7 +791,7 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        "full_nk.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
     ],
 )
@@ -1068,7 +820,7 @@ def test_compute_stationary_covariance(caplog, gcn_file):
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        "full_nk.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
     ],
 )
@@ -1222,7 +974,7 @@ def test_irf_from_trajectory(return_individual_shocks, n_shocks):
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        "full_nk.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
     ],
 )
 @pytest.mark.parametrize(
