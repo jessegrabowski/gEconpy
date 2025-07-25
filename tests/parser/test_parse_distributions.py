@@ -418,36 +418,3 @@ def test_multiple_shocks():
         )
 
     assert shock_priors["epsilon_C"].fixed_params == {"mu": 0.0, "sigma": 1.0}
-
-
-def test_parse_distributions():
-    file = """
-        TEST_BLOCK
-        {
-            shocks
-            {
-                epsilon[] ~ Normal(mean=0, std=0.1);
-            };
-
-            calibration
-            {
-                alpha ~ beta(a=1, b=1) = 0.5;
-                rho ~ gamma(mean=0.95, sd=1) = 0.95;
-                sigma ~ inv_gamma(mean=0.01, sd=0.1) = 0.01;
-                tau ~ halfnorm(MEAN=0.5, sd=1) = 1;
-                psi ~ norm(mean=1.5, Sd=1.5, min=0) = 1;
-            };
-        };
-    """
-
-    # model, prior_dict = preprocess_gcn(file)
-    # means = [0, 0.5, 0.95, 0.01, 0.5, 1.5]
-    # stds = [0.1, 0.28867513459481287, 1, 0.1, 1, 1.5]
-    #
-    # for i, (variable_name, d_string) in enumerate(prior_dict.items()):
-    #     d_name, param_dict = preprocess_distribution_string(variable_name, d_string)
-    #     d = distribution_factory(
-    #         variable_name=variable_name, d_name=d_name, param_dict=param_dict
-    #     )
-    #     np.testing.assert_allclose(d.mean(), means[i], atol=1e-3)
-    #     np.testing.assert_allclose(d.std(), stds[i], atol=1e-3)

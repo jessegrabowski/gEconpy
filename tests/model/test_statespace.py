@@ -3,7 +3,7 @@ import pymc as pm
 import pytensor
 import pytest
 
-from tests.utilities.shared_fixtures import (
+from tests._resources.cache_compiled_models import (
     load_and_cache_model,
     load_and_cache_statespace,
 )

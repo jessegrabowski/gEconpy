@@ -7,7 +7,7 @@ import pytest
 import sympy as sp
 
 from numpy.testing import assert_allclose
-from pytensor.gradient import DisconnectedType, verify_grad
+from pytensor.gradient import verify_grad
 
 from gEconpy.model.perturbation import (
     linearize_model,
@@ -21,7 +21,7 @@ from gEconpy.solvers.cycle_reduction import (
 )
 from gEconpy.solvers.gensys import gensys_pt, solve_policy_function_with_gensys
 from gEconpy.utilities import eq_to_ss
-from tests.utilities.shared_fixtures import load_and_cache_model
+from tests._resources.cache_compiled_models import load_and_cache_model
 
 
 JAX_INSTALLED = find_spec("jax") is not None

@@ -28,7 +28,7 @@ from gEconpy.plotting import (
     plot_simulation,
     prepare_gridspec_figure,
 )
-from tests.utilities.shared_fixtures import (
+from tests._resources.cache_compiled_models import (
     load_and_cache_model,
     load_and_cache_statespace,
 )

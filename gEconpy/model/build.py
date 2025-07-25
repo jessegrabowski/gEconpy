@@ -2,6 +2,7 @@ import logging
 
 import pytensor.tensor as pt
 import sympy as sp
+from pathlib import Path
 
 from pymc.pytensorf import rewrite_pregrad
 from pytensor import graph_replace
@@ -204,7 +205,7 @@ def _compile_gcn(
 
 
 def model_from_gcn(
-    gcn_path: str,
+    gcn_path: str | Path,
     simplify_blocks: bool = True,
     simplify_tryreduce: bool = True,
     simplify_constants: bool = True,

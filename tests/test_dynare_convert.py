@@ -85,17 +85,21 @@ def test_print_time_aware_symbol(name, time_index):
 
 @pytest.fixture()
 def model():
-    return model_from_gcn("tests/Test GCNs/one_block_1_dist.gcn", verbose=False)
+    return model_from_gcn(
+        "tests/_resources/test_gcns/one_block_1_dist.gcn", verbose=False
+    )
 
 
 @pytest.fixture()
 def ss_model():
-    return model_from_gcn("tests/Test GCNs/one_block_1_ss.gcn", verbose=False)
+    return model_from_gcn(
+        "tests/_resources/test_gcns/one_block_1_ss.gcn", verbose=False
+    )
 
 
 @pytest.fixture()
 def nk_model():
-    return model_from_gcn("tests/Test GCNs/full_nk.gcn", verbose=False)
+    return model_from_gcn("tests/_resources/test_gcns/full_nk.gcn", verbose=False)
 
 
 def test_write_variable_declarations(model):

@@ -4,6 +4,7 @@ from typing import Literal
 from warnings import warn
 
 import sympy as sp
+from pathlib import Path
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -33,13 +34,13 @@ PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
 _log = logging.getLogger(__name__)
 
 
-def load_gcn(gcn_path: str) -> str:
+def load_gcn(gcn_path: str | Path) -> str:
     """
     Loads a model file as raw text.
 
     Parameters
     ----------
-    gcn_path : str
+    gcn_path : str or Path
         File path to model file (GCN file).
 
     Returns
@@ -300,7 +301,7 @@ def parsed_model_to_data(
 
 
 def gcn_to_block_dict(
-    gcn_path: str, simplify_blocks: bool, include_ss_block=False
+    gcn_path: str | Path, simplify_blocks: bool, include_ss_block=False
 ) -> tuple[
     dict[str, Block],
     ASSUMPTION_DICT,
