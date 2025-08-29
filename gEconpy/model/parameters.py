@@ -29,7 +29,7 @@ def compile_param_dict_func(
     deterministic_dict: SymbolDictionary
         A dictionary of deterministic parameters, with the keys being the parameters and the values being the
         expressions to compute them.
-    backend: str, one of "numpy", "numba", "pytensor"
+    backend: str, one of "numpy", "pytensor"
         The backend to use for the compiled function.
     cache: dict, optional
         A dictionary mapping from pytensor symbols to sympy expressions. Used to prevent duplicate mappings from

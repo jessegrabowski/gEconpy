@@ -6,7 +6,6 @@ from collections.abc import Callable, Sequence
 from copy import deepcopy
 from typing import Literal, cast
 
-import numba as nb
 import numpy as np
 import pandas as pd
 import sympy as sp

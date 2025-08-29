@@ -40,9 +40,7 @@ JAX_INSTALLED = find_spec("jax") is not None
     ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_model_parameters(gcn_path: str, name: str, backend: BACKENDS):
     model = load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED)
 
@@ -59,9 +57,7 @@ def test_model_parameters(gcn_path: str, name: str, backend: BACKENDS):
     assert model._default_params["beta"] == old_params["beta"]
 
 
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_deterministic_model_parameters(backend: BACKENDS):
     model = load_and_cache_model("one_block_2.gcn", backend, use_jax=JAX_INSTALLED)
     params = model.parameters()
@@ -87,11 +83,11 @@ def test_deterministic_model_parameters(backend: BACKENDS):
 def test_all_backends_agree_on_parameters(gcn_path):
     models = [
         load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED)
-        for backend in ["numpy", "numba", "pytensor"]
+        for backend in ["numpy", "pytensor"]
     ]
     params = [np.r_[list(model.parameters().values())] for model in models]
 
-    for i in range(3):
+    for i in range(2):
         for j in range(i):
             assert_allclose(params[i], params[j])
 
@@ -111,7 +107,7 @@ def test_all_backends_agree_on_parameters(gcn_path):
     ids=["grad", "hess", "jac"],
 )
 def test_all_backends_agree_on_functions(gcn_path, func):
-    backends = ["numpy", "numba", "pytensor"]
+    backends = ["numpy", "pytensor"]
     models = [
         load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED)
         for backend in backends
@@ -121,7 +117,7 @@ def test_all_backends_agree_on_functions(gcn_path, func):
     x0 = dict(zip(ss_vars, np.full(len(models[0].variables), 0.8)))
 
     vals = [getattr(model, func)(**params, **x0) for model in models]
-    for i in range(3):
+    for i in range(2):
         for j in range(i):
             assert_allclose(
                 vals[i], vals[j], err_msg=f"{backends[i]} and {backends[j]} disagree"
@@ -140,7 +136,7 @@ def test_all_backends_agree_on_functions(gcn_path, func):
     "func", ["f_ss_error_grad", "f_ss_error_hess"], ids=["grad", "hess"]
 )
 def test_scipy_wrapped_functions_agree(gcn_path, func):
-    backend_names = ["numpy", "numba", "pytensor"]
+    backend_names = ["numpy", "pytensor"]
     models = [
         load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED)
         for backend in backend_names
@@ -165,7 +161,7 @@ def test_scipy_wrapped_functions_agree(gcn_path, func):
         )(x0, params)
         for model in models
     ]
-    for i in range(3):
+    for i in range(2):
         for j in range(i):
             assert_allclose(
                 vals[i],
@@ -187,9 +183,7 @@ def test_linear_model():
     assert not all(x == 0 for x in mod.f_ss(**mod.parameters()))
 
 
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 @pytest.mark.parametrize(
     ("gcn_file", "expected_result"),
     [
@@ -292,9 +286,7 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
     assert np.all(np.linalg.eigvals(hess) > -1e8)
 
 
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 @pytest.mark.parametrize(
     "gcn_file",
     [
@@ -350,9 +342,7 @@ def test_model_gradient(backend, gcn_file):
         "rbc_with_excluded.gcn",
     ],
 )
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
     # TODO: I was hitting errors when the models were reused, something about the fixed values was breaking stuff.
     #  Need to track this bug down.
@@ -416,9 +406,7 @@ def test_numerical_steady_state_with_calibrated_params():
     assert_allclose(res["L_ss"] / res["K_ss"], 0.36)
 
 
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_steady_state_with_parameter_updates(backend):
     file_path = "rbc_2_block_ss.gcn"
     model = load_and_cache_model(file_path, "numpy", use_jax=JAX_INSTALLED)
@@ -431,9 +419,7 @@ def test_steady_state_with_parameter_updates(backend):
     assert_allclose(ss_dict["r_ss"], (1 / beta - (1 - delta)))
 
 
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 @pytest.mark.parametrize(
     "partial_file, analytic_file",
     [
@@ -489,7 +475,7 @@ def test_partially_analytical_steady_state(
     ],
     ids=["one_block_ss", "two_block_ss", "full_nk"],
 )
-@pytest.mark.parametrize("backend", ["numba"], ids=["numba"])
+@pytest.mark.parametrize("backend", ["numpy"], ids=["numpy"])
 def test_linearize(gcn_file, name, backend: BACKENDS):
     model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
     steady_state_dict = model.steady_state()
@@ -502,9 +488,7 @@ def test_linearize(gcn_file, name, backend: BACKENDS):
         assert_allclose(out, expected_out, atol=1e-8, err_msg=f"{mat_name} failed")
 
 
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_linearize_with_custom_params(backend):
     model = load_and_cache_model("one_block_1_ss.gcn", backend, use_jax=JAX_INSTALLED)
     params = model.parameters(rho=0.5)
@@ -584,9 +568,7 @@ def test_outputs_after_gensys_failure(caplog):
     assert R is None
 
 
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 @pytest.mark.parametrize(
     "model_name, log_linearize",
     [

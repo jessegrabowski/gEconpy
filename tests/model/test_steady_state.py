@@ -500,9 +500,7 @@ def test_steady_state_matches_analytic_NK():
 JAX_INSTALLED = find_spec("jax") is not None
 
 
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_all_model_functions_return_arrays(backend: BACKENDS):
     outputs = gcn_to_block_dict(
         "tests/_resources/test_gcns/one_block_1_ss.gcn", simplify_blocks=True
