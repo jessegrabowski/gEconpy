@@ -158,11 +158,9 @@ def compile_ss_resid_and_sq_err(
         backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
-        # for pytensor/numba, the return is a single object; don't stack into a (1,n,n) array
+        # for pytensor, the return is a single object; don't stack into a (1,n,n) array
         stack_return=backend == "numpy",
-        # Numba directly returns the jacobian as an array, don't pop
-        # pytensor and lambdify return a list of one item, so we have to extract it.
-        pop_return=backend != "numba",
+        pop_return=True,
         **kwargs,
     )
 
@@ -209,8 +207,7 @@ def compile_ss_resid_and_sq_err(
         return_symbolic=return_symbolic,
         # error_hess is a list of one element; don't stack into a (1,n,n) array
         stack_return=backend != "pytensor",
-        # Numba directly returns the hessian as an array, don't pop
-        pop_return=backend != "numba",
+        pop_return=True,
         **kwargs,
     )
 

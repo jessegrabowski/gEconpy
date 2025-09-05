@@ -30,7 +30,7 @@ def complex_param_system():
     return param_dict, deterministic_dict
 
 
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
 def test_compile_param_dict_basic(simple_param_system, backend):
     param_dict, deterministic_dict = simple_param_system
 
@@ -42,7 +42,7 @@ def test_compile_param_dict_basic(simple_param_system, backend):
     assert_allclose(result["gamma"], 0.3 + 0.99)
 
 
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
 def test_compile_param_dict_complex(complex_param_system, backend):
     param_dict, deterministic_dict = complex_param_system
 
@@ -56,7 +56,7 @@ def test_compile_param_dict_complex(complex_param_system, backend):
     assert_allclose(result["delta"], expected_gamma * 0.5)
 
 
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
 def test_compile_param_dict_cache_reuse(complex_param_system, backend):
     param_dict, deterministic_dict = complex_param_system
 
@@ -118,9 +118,7 @@ EXPECTED_PARAM_DICT = {
     ],
     ids=["one_block_simple", "one_block_simple_2"],
 )
-@pytest.mark.parametrize(
-    "backend", ["numpy", "numba", "pytensor"], ids=["numpy", "numba", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_create_parameter_function(gcn_path, name, backend):
     expected = EXPECTED_PARAM_DICT[name]
     block_dict, *outputs = gcn_to_block_dict(

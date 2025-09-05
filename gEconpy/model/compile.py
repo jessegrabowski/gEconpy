@@ -10,9 +10,8 @@ from pytensor.tensor import TensorVariable
 from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SteadyStateResults
-from gEconpy.numbaf.utilities import numba_lambdify
 
-BACKENDS = Literal["numpy", "numba", "pytensor"]
+BACKENDS = Literal["numpy", "pytensor"]
 
 
 def output_to_tensor(x, cache):
@@ -151,7 +150,7 @@ def compile_function(
     **kwargs,
 ) -> tuple[Callable, dict]:
     """
-    Dispatch compilation of a sympy function to one of three possible backends: numpy, numba, or pytensor.
+    Dispatch compilation of a sympy function to one of three possible backends: numpy, or pytensor.
 
     Parameters
     ----------
@@ -161,7 +160,7 @@ def compile_function(
     outputs: list[Union[sp.Symbol, sp.Expr]]
         The outputs of the function.
 
-    backend: str, one of "numpy", "numba", "pytensor"
+    backend: str, one of "numpy" or "pytensor"
         The backend to use for the compiled function.
 
     cache: dict, optional
@@ -193,10 +192,6 @@ def compile_function(
     """
     if backend == "numpy":
         f, cache = compile_to_numpy(
-            inputs, outputs, cache, stack_return, pop_return, **kwargs
-        )
-    elif backend == "numba":
-        f, cache = compile_to_numba(
             inputs, outputs, cache, stack_return, pop_return, **kwargs
         )
     elif backend == "pytensor":
@@ -251,48 +246,6 @@ def compile_to_numpy(
     f = sp.lambdify(inputs, outputs)
     if stack_return:
         f = stack_return_wrapper(f)
-    if pop_return:
-        f = pop_return_wrapper(f)
-    return f, cache
-
-
-def compile_to_numba(
-    inputs: list[sp.Symbol],
-    outputs: list[sp.Symbol | sp.Expr],
-    cache: dict,
-    stack_return: bool,
-    pop_return: bool,
-    **kwargs,
-):
-    """
-    Convert a sympy function to a numba njit function using :func:`numba_lambdify`.
-
-    Parameters
-    ----------
-    inputs: list[sp.Symbol]
-        The inputs to the function.
-    outputs: list[Union[sp.Symbol, sp.Expr]]
-        The outputs of the function.
-    cache: dict
-        Mapping between sympy variables and pytensor variables. Ignored by this function; included for compatibility
-        with other compile functions.
-    stack_return: bool
-        If True, the function will return a single numpy array with all outputs. Otherwise it will return a list
-        of numpy arrays.
-    pop_return: bool
-        If True, the function will return only the 0th element of the output. Used to remove the list wrapper around
-        single-output functions.
-    kwargs: dict
-        Ignored, included for compatibility with other compile functions
-
-    Returns
-    -------
-    f: Callable
-        The compiled function.
-    cache: dict
-        Pytensor caching information.
-    """
-    f = numba_lambdify(inputs, outputs, stack_outputs=stack_return)
     if pop_return:
         f = pop_return_wrapper(f)
     return f, cache

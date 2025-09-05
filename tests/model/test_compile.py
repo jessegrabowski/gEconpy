@@ -32,8 +32,8 @@ def test_dictionary_return_wrapper():
     assert result["b"] == 2.0
 
 
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
-def test_scalar_function(backend: Literal["numpy", "numba", "pytensor"]):
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
+def test_scalar_function(backend: Literal["numpy", "pytensor"]):
     x = sp.symbols("x")
     f = x**2
     f_func, _ = compile_function(
@@ -42,11 +42,9 @@ def test_scalar_function(backend: Literal["numpy", "numba", "pytensor"]):
     assert f_func(x=2) == 4
 
 
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
 @pytest.mark.parametrize("stack_return", [True, False])
-def test_multiple_outputs(
-    backend: Literal["numpy", "numba", "pytensor"], stack_return: bool
-):
+def test_multiple_outputs(backend: Literal["numpy", "pytensor"], stack_return: bool):
     x, y, z = sp.symbols("x y z ")
     x2 = x**2
     y2 = y**2
@@ -68,8 +66,8 @@ def test_multiple_outputs(
     )
 
 
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
-def test_matrix_function(backend: Literal["numpy", "numba", "pytensor"]):
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
+def test_matrix_function(backend: Literal["numpy", "pytensor"]):
     x, y, z = sp.symbols("x y z")
     f = sp.Matrix([x, y, z]).reshape(1, 3)
 
@@ -87,7 +85,7 @@ def test_matrix_function(backend: Literal["numpy", "numba", "pytensor"]):
     np.testing.assert_allclose(res, np.array([[2.0, 3.0, 4.0]]))
 
 
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
 def test_compile_gradient(backend: BACKENDS):
     x, y, z = sp.symbols("x y z")
     f = x**2 + y**2 + z**2

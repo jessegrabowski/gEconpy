@@ -49,7 +49,7 @@ def linearize_method_2(variables, equations, shocks, not_loglin_variables=None):
     return Fs
 
 
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
 def test_variables_to_all_times(backend):
     mod = load_and_cache_model(
         "one_block_1.gcn", backend=backend, use_jax=JAX_INSTALLED
@@ -73,7 +73,7 @@ def test_variables_to_all_times(backend):
         pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
     ],
 )
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
 def test_log_linearize_model(gcn_file, backend):
     mod = load_and_cache_model(gcn_file, backend=backend, use_jax=JAX_INSTALLED)
     (A, B, C, D), not_loglin_variable = linearize_model(
@@ -140,7 +140,7 @@ def test_log_linearize_model(gcn_file, backend):
         ),
     ],
 )
-@pytest.mark.parametrize("backend", ["numpy", "numba", "pytensor"])
+@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
 def test_solve_policy_function(gcn_file, state_variables, backend):
     mod = load_and_cache_model(gcn_file, backend=backend, use_jax=JAX_INSTALLED)
     steady_state_dict = mod.steady_state()

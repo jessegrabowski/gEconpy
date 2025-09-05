@@ -15,7 +15,11 @@ from gEconpy.solvers.shared import (
 )
 
 
-# @nb.njit(cache=True)
+# TODO: These njit decorators cause the CI to fail on Windows only -- no idea why. Disabling it for now.
+# @nb.njit(
+#     (nb.float64[:, ::1], nb.float64[:, ::1], nb.float64[:, ::1], nb.int64, nb.float64),
+#     cache=True,
+# )
 def nb_cycle_reduction(
     A0: np.ndarray,
     A1: np.ndarray,
@@ -113,8 +117,11 @@ def nb_cycle_reduction(
     return X, res, result, log_norm
 
 
-# @nb.njit(cache=True)
-def nb_solve_shock_matrix(B, C, D, G_1):
+# @nb.njit(
+#     (nb.float64[:, ::1], nb.float64[:, ::1], nb.float64[:, ::1], nb.float64[:, ::1]),
+#     cache=True,
+# )
+def nb_solve_shock_matrix(B: np.ndarray, C: np.ndarray, D: np.ndarray, G_1: np.ndarray):
     """
     Given the partial solution to the linear approximate policy function G_1, solve for the remaining component of the
     policy function, R.

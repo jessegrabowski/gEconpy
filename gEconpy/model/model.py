@@ -6,7 +6,6 @@ from collections.abc import Callable, Sequence
 from copy import deepcopy
 from typing import Literal, cast
 
-import numba as nb
 import numpy as np
 import pandas as pd
 import sympy as sp
@@ -41,6 +40,7 @@ from gEconpy.solvers.gensys import (
     solve_policy_function_with_gensys,
 )
 from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
+
 
 VariableType = sp.Symbol | TimeAwareSymbol
 _log = logging.getLogger(__name__)
@@ -1133,7 +1133,10 @@ class Model:
             **param_dict, **steady_state, not_loglin_variable=not_loglin_flags
         )
 
-        return A, B, C, D
+        # Using A.dtype to avoid hard-coding float64 (we might be using float32)
+        # The reason for casting is mostly D, which sometimes comes out as an int32/64 array
+
+        return list(map(lambda x: np.ascontiguousarray(x, dtype=A.dtype), [A, B, C, D]))
 
     def solve_model(
         self,
@@ -1336,6 +1339,8 @@ class Model:
             verbose=verbose,
             **parameter_updates,
         )
+
+        assert all(x.flags["C_CONTIGUOUS"] for x in [A, B, C, D])
 
         if solver == "gensys":
             gensys_results = solve_policy_function_with_gensys(A, B, C, D, tol)
