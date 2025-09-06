@@ -4,7 +4,7 @@ import logging
 
 from collections.abc import Callable, Sequence
 from copy import deepcopy
-from typing import Literal, cast
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -23,7 +23,6 @@ from gEconpy.exceptions import (
     PerturbationSolutionNotFoundException,
     SteadyStateNotFoundError,
 )
-from gEconpy.model.compile import BACKENDS
 from gEconpy.model.perturbation import check_bk_condition as _check_bk_condition
 from gEconpy.model.perturbation import (
     check_perturbation_solution,
@@ -301,7 +300,7 @@ class Model:
         f_ss_error_hess: Callable[[np.ndarray, ...], np.ndarray],
         f_ss_error_hessp: Callable[[np.ndarray, ...], np.ndarray],
         f_linearize: Callable,
-        backend: BACKENDS = "numpy",
+        backend: str = "numpy",
         is_linear: bool = False,
     ) -> None:
         """
@@ -593,7 +592,7 @@ class Model:
 
     def steady_state(
         self,
-        how: Literal["analytic", "root", "minimize"] = "analytic",
+        how: str = "analytic",
         use_jac=True,
         use_hess=True,
         use_hessp=False,
@@ -974,7 +973,7 @@ class Model:
 
     def linearize_model(
         self,
-        order: Literal[1] = 1,
+        order: int = 1,
         log_linearize: bool = True,
         not_loglin_variables: list[str] | None = None,
         steady_state: dict | None = None,
@@ -1143,7 +1142,7 @@ class Model:
         solver="cycle_reduction",
         log_linearize: bool = True,
         not_loglin_variables: list[str] | None = None,
-        order: Literal[1] = 1,
+        order: int = 1,
         loglin_negative_ss: bool = False,
         steady_state: dict | None = None,
         steady_state_kwargs: dict | None = None,
@@ -1726,8 +1725,8 @@ def check_bk_condition(
     C: np.ndarray | None = None,
     D: np.ndarray | None = None,
     tol=1e-8,
-    on_failure: Literal["raise", "ignore"] = "ignore",
-    return_value: Literal["dataframe", "bool", None] = "dataframe",
+    on_failure: str = "ignore",
+    return_value: str | None = "dataframe",
     **linearize_model_kwargs,
 ) -> bool | pd.DataFrame | None:
     """

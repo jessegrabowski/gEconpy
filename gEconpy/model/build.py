@@ -8,12 +8,10 @@ from pymc.pytensorf import rewrite_pregrad
 from pytensor import graph_replace
 
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
 from gEconpy.model.perturbation import compile_linearized_system
 from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.steady_state import (
-    ERROR_FUNCTIONS,
     compile_model_ss_functions,
     system_to_steady_state,
 )
@@ -74,9 +72,9 @@ def _compile_gcn(
     simplify_tryreduce: bool = True,
     simplify_constants: bool = True,
     verbose: bool = True,
-    backend: BACKENDS = "numpy",
+    backend: str = "numpy",
     return_symbolic: bool = False,
-    error_function: ERROR_FUNCTIONS = "squared",
+    error_function: str = "squared",
     on_unused_parameters="raise",
     remove_hyperpriors_from_param_dict=True,
     **kwargs,
@@ -210,11 +208,50 @@ def model_from_gcn(
     simplify_tryreduce: bool = True,
     simplify_constants: bool = True,
     verbose: bool = True,
-    backend: BACKENDS = "numpy",
-    error_function: ERROR_FUNCTIONS = "squared",
+    backend: str = "numpy",
+    error_function: str = "squared",
     on_unused_parameters="raise",
     **kwargs,
 ) -> Model:
+    """
+    Create a Model from a GCN file.
+
+    This function parses a GCN specification and constructs a Model object. The build process performs
+    optional symbolic simplifications, compiles steady-state residuals, objective and derivatives, and
+    generates a callable that returns the first-order linearization of the system. The resulting Model
+    stores all parsed primitives (variables, shocks, equations, steady-state relationships) and exposes
+    convenience methods to compute or validate the steady state, linearize the model, and obtain a
+    perturbation solution.
+
+    Parameters
+    ----------
+    gcn_path: str or Path
+        Path to the model GCN file.
+    simplify_blocks: bool, default True
+        Simplify equations within each parsed block.
+    simplify_tryreduce: bool, default True
+        Attempt symbolic reduction by eliminating singletons and redundant relations.
+    simplify_constants: bool, default True
+        Fold constant expressions during compilation.
+    verbose: bool, default True
+        If True, print a short build report showing the model composition and reductions performed (if any).
+    backend: str, default 'numpy'
+        Computational backend used for the compiled functions attached to the Model. One of 'numpy' or 'pytensor'.
+    error_function: One of 'squared', 'abs', 'huber', ...}, default 'squared'
+        Objective used when forming steady-state error terms and derivatives. Only used when the steady state is
+        numerically computed, and only when the solution method is "minimize".
+    on_unused_parameters: str, default 'raise'
+        Behavior when parameters are defined but unused by equations or steady-state relationships. One of 'raise',
+        or 'ignore'.
+    **kwargs
+        Forwarded to internal compilation routines (e.g., steady-state compilation and linearization).
+
+    Returns
+    -------
+    model: Model
+        A compiled DSGE model instance.
+    """
+
     objects, dictionaries, functions, cache, priors, options = _compile_gcn(
         gcn_path,
         simplify_blocks=simplify_blocks,
@@ -272,12 +309,70 @@ def statespace_from_gcn(
     simplify_tryreduce: bool = True,
     simplify_constants: bool = True,
     verbose: bool = True,
-    error_function: ERROR_FUNCTIONS = "squared",
-    on_unused_parameters="raise",
+    error_function: str = "squared",
+    on_unused_parameters: str = "raise",
     log_linearize: bool = True,
     not_loglin_variables: list[str] | None = None,
+    exog_state_names: list[str] | dict[str, list[str]] | None = None,
+    k_exog: int | dict[str, int] | None = None,
     **kwargs,
 ):
+    """
+    Create a statespace model from a gcn file.
+
+    A statespace model is used for solving and estimating linearized DSGE models using PyMC.
+
+    Parameters
+    ----------
+    gcn_path: str
+        Path to the model GCN file.
+
+    simplify_blocks: bool, default True
+        Simplify equations within each parsed block.
+
+    simplify_tryreduce: bool, default True
+        Attempt symbolic reduction by eliminating singletons/redundant relations.
+
+    simplify_constants: bool, default True
+        Fold constant expressions during compilation.
+
+    verbose: bool, default True
+        Print a short build report (variables, shocks, reductions, priors).
+
+    error_function: {'squared', 'abs', 'huber', ...}, default 'squared'
+        Objective used when forming steady-state error terms and derivatives.
+
+    on_unused_parameters: {'raise', 'ignore'}, default 'raise'
+        Behavior when parameters are defined but unused by equations or steady-state.
+
+    log_linearize: bool, default True
+        If True, variables are log-linearized around the steady state (unless the model
+        is declared linear in options, in which case this is forced to False).
+
+    not_loglin_variables: list[str], optional
+        Variable names to keep in levels even when log_linearize=True. Names must match
+        model variable base names (no time suffix). Unknown names raise ValueError.
+
+    exog_state_names : list[str] or dict[str, list[str]], optional
+        Names of the exogenous state variables. If a list, all endogenous variables will share the same exogenous
+        variables. If a dict, keys should be the names of the endogenous variables, and values should be lists of the
+        exogenous variable names for that endogenous variable. Endogenous variables not included in the dict will
+        be assumed to have no exogenous variables. If None, no exogenous variables will be included.
+
+    k_exog : int or dict[str, int], optional
+        Number of exogenous variables. If an int, all endogenous variables will share the same number of exogenous
+        variables. If a dict, keys should be the names of the endogenous variables, and values should be the number of
+        exogenous variables for that endogenous variable. Endogenous variables not included in the dict will be
+        assumed to have no exogenous variables. If None, no exogenous variables will be included.
+
+    **kwargs
+        Forwarded to internal compilation routines (e.g., steady-state compilation).
+
+    Returns
+    -------
+    statespace_model: DSGEStateSpace
+        An instance of a PyMCStateSpace model representing the linearized DSGE model.
+    """
     objects, dictionaries, functions, cache, priors, options = _compile_gcn(
         gcn_path,
         simplify_blocks=simplify_blocks,
@@ -368,6 +463,8 @@ def statespace_from_gcn(
         variables=variables,
         shocks=shocks,
         equations=equations,
+        k_exog=k_exog,
+        exog_state_names=exog_state_names,
         param_dict=param_dict,
         param_priors=param_priors,
         hyper_param_dict=hyper_param_dict,
