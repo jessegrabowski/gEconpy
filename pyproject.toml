@@ -112,37 +112,54 @@ markers = [
     "include_nk: mark tests using the full new keyenesian model (which can be quite slow)",
 ]
 
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+allowed-confusables = ["×"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
 [tool.ruff.lint]
-select = ["D", "E", "F", "I", "UP", "W", "RUF"]
-ignore = [
-  "E501",   # Line length
-  "E741",   # Ambiguous variable name
-  "RUF001", # String contains ambiguous character (such as Greek letters)
-  "RUF002", # Docstring contains ambiguous character (such as Greek letters)
-  "RUF012", # Mutable class attributes should be annotated with `typing.ClassVar`
-  "D100",
-  "D101",
-  "D102",
-  "D103",
-  "D104",
-  "D105",
-  "D107",
-  "D200",
-  "D202",
-  "D203",
-  "D204",
-  "D205",
-  "D209",
-  "D212",
-  "D213",
-  "D301",
-  "D400",
-  "D401",
-  "D403",
-  "D413",
-  "D415",
-  "D417",
+select = [
+  "E", "F", "W",      # pycodestyle / pyflakes
+  "B",                # flake8-bugbear
+  "UP",               # pyupgrade
+  "I",                # isort
+  "C4",               # flake8-comprehensions
+  "SIM",              # flake8-simplify
+  "ARG",              # flake8-unused-arguments
+  "PTH",              # flake8-use-pathlib
+  "TID",              # flake8-tidy-imports
+  "DTZ",              # flake8-datetimez
+  "RET",              # flake8-return
+  "PERF",             # perflint
+  "TRY",              # try/except best practices
+  "PL",               # pylint-inspired rules
+  "NPY",              # numpy-specific rules
+  "RUF",              # Ruff-specific
+  "D",                # pydocstyle
+  "C90",              # mccabe complexity
 ]
+ignore = [
+  "RUF001", # Allow Greek letters in strings
+  "RUF002", # Allow Greek letters in docstrings
+  "RUF012", # Mutable class attributes without ClassVar
+  # Allow missing docstrings; enforce style where present
+  "D100", "D101", "D102", "D103", "D104", "D105", "D107",
+  # Recommended when using Ruff's formatter
+  "W191", "E111", "E114", "E117",
+  "D206", "D300",
+  "Q000", "Q001", "Q002", "Q003",
+  "COM812", "COM819",
+  "ISC001", "ISC002",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 
 [tool.ruff.lint.isort]
 lines-between-types = 1
