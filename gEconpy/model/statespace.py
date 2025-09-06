@@ -74,6 +74,19 @@ class DSGEStateSpace(PyMCStateSpace):
             List of shocks in the model
         equations: list of sympy.Expr
             List of equations in the model
+
+        exog_state_names : list[str] or dict[str, list[str]], optional
+            Names of the exogenous state variables. If a list, all endogenous variables will share the same exogenous
+            variables. If a dict, keys should be the names of the endogenous variables, and values should be lists of the
+            exogenous variable names for that endogenous variable. Endogenous variables not included in the dict will
+            be assumed to have no exogenous variables. If None, no exogenous variables will be included.
+
+        k_exog : int or dict[str, int], optional
+            Number of exogenous variables. If an int, all endogenous variables will share the same number of exogenous
+            variables. If a dict, keys should be the names of the endogenous variables, and values should be the number of
+            exogenous variables for that endogenous variable. Endogenous variables not included in the dict will be
+            assumed to have no exogenous variables. If None, no exogenous variables will be included.
+
         param_dict: dict
             Dictionary of default parameter values, as defined in the model file
         hyper_param_dict: dict
