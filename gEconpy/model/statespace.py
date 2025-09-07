@@ -38,6 +38,58 @@ SolverType = Literal["gensys", "cycle_reduction", "scan_cycle_reduction"]
 valid_solvers = get_args(SolverType)
 
 
+def _validate_exog_args(
+    k_exog: int | dict[str, int] | None,
+    exog_state_names: list[str] | dict[str, list[str]] | None,
+    endog_names: list[str] | None,
+):
+    if k_exog is not None and not isinstance(k_exog, int | dict):
+        raise ValueError("If not None, k_endog must be either an int or a dict")
+    if exog_state_names is not None and not isinstance(exog_state_names, list | dict):
+        raise ValueError("If not None, exog_state_names must be either a list or a dict")
+
+    if k_exog is not None and exog_state_names is not None:
+        if isinstance(k_exog, int) and isinstance(exog_state_names, list):
+            if len(exog_state_names) != k_exog:
+                raise ValueError("Length of exog_state_names does not match provided k_exog")
+        elif isinstance(k_exog, int) and isinstance(exog_state_names, dict):
+            raise ValueError("If k_exog is an int, exog_state_names must be a list of the same length (or None)")
+        elif isinstance(k_exog, dict) and isinstance(exog_state_names, list):
+            raise ValueError("If k_exog is a dict, exog_state_names must be a dict as well (or None)")
+        elif isinstance(k_exog, dict) and isinstance(exog_state_names, dict):
+            if set(k_exog.keys()) != set(exog_state_names.keys()):
+                raise ValueError("Keys of k_exog and exog_state_names dicts must match")
+            if not all(len(names) == k for names, k in zip(exog_state_names.values(), k_exog.values(), strict=False)):
+                raise ValueError(
+                    "If both k_endog and exog_state_names are provided, lengths of exog_state_names "
+                    "lists must match corresponding values in k_exog"
+                )
+
+    if k_exog is not None and exog_state_names is None:
+        if isinstance(k_exog, int):
+            exog_state_names = [f"exogenous_{i}" for i in range(k_exog)]
+        elif isinstance(k_exog, dict):
+            exog_state_names = {name: [f"{name}_exogenous_{i}" for i in range(k)] for name, k in k_exog.items()}
+
+    if k_exog is None and exog_state_names is not None:
+        if isinstance(exog_state_names, list):
+            k_exog = len(exog_state_names)
+        elif isinstance(exog_state_names, dict):
+            k_exog = {name: len(names) for name, names in exog_state_names.items()}
+
+    # If exog_state_names is a dict but 1) all endog variables are among the keys, and 2) all values are the same
+    # then we can drop back to the list case.
+    if (
+        isinstance(exog_state_names, dict)
+        and set(exog_state_names.keys()) == set(endog_names)
+        and len({frozenset(val) for val in exog_state_names.values()}) == 1
+    ):
+        exog_state_names = exog_state_names[endog_names[0]]
+        k_exog = len(exog_state_names)
+
+    return k_exog, exog_state_names
+
+
 class DSGEStateSpace(PyMCStateSpace):
     """Core class for estimating DSGE models using PyMC."""
 
@@ -74,19 +126,6 @@ class DSGEStateSpace(PyMCStateSpace):
             List of shocks in the model
         equations: list of sympy.Expr
             List of equations in the model
-
-        exog_state_names : list[str] or dict[str, list[str]], optional
-            Names of the exogenous state variables. If a list, all endogenous variables will share the same exogenous
-            variables. If a dict, keys should be the names of the endogenous variables, and values should be lists of the
-            exogenous variable names for that endogenous variable. Endogenous variables not included in the dict will
-            be assumed to have no exogenous variables. If None, no exogenous variables will be included.
-
-        k_exog : int or dict[str, int], optional
-            Number of exogenous variables. If an int, all endogenous variables will share the same number of exogenous
-            variables. If a dict, keys should be the names of the endogenous variables, and values should be the number of
-            exogenous variables for that endogenous variable. Endogenous variables not included in the dict will be
-            assumed to have no exogenous variables. If None, no exogenous variables will be included.
-
         param_dict: dict
             Dictionary of default parameter values, as defined in the model file
         hyper_param_dict: dict
@@ -258,6 +297,8 @@ class DSGEStateSpace(PyMCStateSpace):
         observed_states: list[str],
         measurement_error: list[str] | None = None,
         constant_params: list[str] | None = None,
+        exog_state_names: list[str] | dict[str, list[str]] | None = None,
+        k_exog: int | dict[str, int] | None = None,
         full_shock_covaraince: bool = False,
         solver: SolverType = "gensys",
         mode: str | None = None,
@@ -266,6 +307,50 @@ class DSGEStateSpace(PyMCStateSpace):
         tol: float = 1e-6,
         use_adjoint_gradients: bool = True,
     ):
+        """
+        Finalize the setup of a DSGE Statespace object.
+
+        Parameters
+        ----------
+        observed_states: list of str
+            Names of the endogenous variables to be treated as observed timeseries. Must be a subset of the model's
+            endogenous variables.
+        measurement_error: list of str, optional
+            Names of the observed states to include measurement error for. Must be a subset of the observed_states.
+            If None, no measurement error will be included.
+        constant_params: list of str, optional
+            Names of the parameters to treat as constant (not estimated). Must be a subset of the model's parameters.
+            If None, all parameters will be estimated.
+        exog_state_names : list of str or dict, optional
+            Names of the exogenous state variables. If a list, all endogenous variables will share the same exogenous
+            variables. If a dict, keys should be the names of the endogenous variables, and values should be lists of
+            the exogenous variable names for that endogenous variable. Endogenous variables not included in the dict
+            will be assumed to have no exogenous variables. If None, no exogenous variables will be included.
+        k_exog : int or dict, optional
+            Number of exogenous variables. If an int, all endogenous variables will share the same number of exogenous
+            variables. If a dict, keys should be the names of the endogenous variables, and values should be the number
+            of exogenous variables for that endogenous variable. Endogenous variables not included in the dict will be
+            assumed to have no exogenous variables. If None, no exogenous variables will be included.
+        full_shock_covaraince: bool, default False
+            If True, estimate a full covariance matrix for the structural shocks. If False, estimate only the
+            diagonal elements (i.e. assume shocks are uncorrelated).
+        solver: str, default "gensys"
+            Which solver to use for solving the linearized system. Must be one of "gensys", "cycle_reduction",
+            or "scan_cycle_reduction".
+        mode: str, optional
+            Pytensor compilation mode to use for post-estimation methods. If None, the default mode will be used.
+        verbose: bool, default True
+            If True, print diagnostic messages during configuration.
+        max_iter: int, default 50
+            For iterative solvers ("cycle_reduction" and "scan_cycle_reduction"), the maximum number of iterations to
+            perform. Ignored if solver is "gensys".
+        tol: float, default 1e-6
+            Tolerance for convergence for iterative solvers ("cycle_reduction" and "scan_cycle_reduction"). Ignored if
+            solver is "gensys".
+        use_adjoint_gradients: bool, default True
+            If True, use adjoint gradients for the scan_cycle_reduction solver. Ignored if solver is not
+            "scan_cycle_reduction".
+        """
         # Set up observed states
         unknown_states = [x for x in observed_states if x not in self.state_names]
         if len(unknown_states) > 0:
@@ -327,9 +412,15 @@ class DSGEStateSpace(PyMCStateSpace):
                 "use_adjoint_gradients": use_adjoint_gradients,
             }
 
+        # Handle exogenous data requirements, if any
+        k_exog, exog_state_names = _validate_exog_args(k_exog, exog_state_names, endog_names=self.state_names)
+
         self._obs_state_names = observed_states
         self.error_states = measurement_error
         self.constant_parameters = constant_params
+
+        self.exog_state_names = exog_state_names
+        self.k_exog = k_exog
 
         self.full_covariance = full_shock_covaraince
         self._configured = True
