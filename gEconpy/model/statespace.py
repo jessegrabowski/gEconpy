@@ -1,7 +1,7 @@
 import logging
 import warnings
 
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
 import arviz as az
 import numpy as np
@@ -18,9 +18,12 @@ from pymc.pytensorf import rewrite_pregrad
 from pymc_extras.statespace.core.statespace import PyMCStateSpace
 from pymc_extras.statespace.models.utilities import make_default_coords
 from pymc_extras.statespace.utils.constants import (
+    EXOGENOUS_DIM,
     JITTER_DEFAULT,
+    OBS_STATE_DIM,
     SHOCK_AUX_DIM,
     SHOCK_DIM,
+    TIME_DIM,
 )
 from pytensor import graph_replace
 
@@ -41,12 +44,15 @@ valid_solvers = get_args(SolverType)
 def _validate_exog_args(
     k_exog: int | dict[str, int] | None,
     exog_state_names: list[str] | dict[str, list[str]] | None,
-    endog_names: list[str] | None,
+    endog_names: list[str],
 ):
     if k_exog is not None and not isinstance(k_exog, int | dict):
         raise ValueError("If not None, k_endog must be either an int or a dict")
     if exog_state_names is not None and not isinstance(exog_state_names, list | dict):
         raise ValueError("If not None, exog_state_names must be either a list or a dict")
+
+    if k_exog is None and exog_state_names is None:
+        return None, None
 
     if k_exog is not None and exog_state_names is not None:
         if isinstance(k_exog, int) and isinstance(exog_state_names, list):
@@ -64,11 +70,23 @@ def _validate_exog_args(
                     "If both k_endog and exog_state_names are provided, lengths of exog_state_names "
                     "lists must match corresponding values in k_exog"
                 )
+            unknown_exog = set(exog_state_names.keys()) - set(endog_names)
+            if unknown_exog:
+                raise ValueError(
+                    "Cannot specify exogenous variables for the following states which are not observed: "
+                    f"{', '.join(unknown_exog)}"
+                )
 
     if k_exog is not None and exog_state_names is None:
         if isinstance(k_exog, int):
             exog_state_names = [f"exogenous_{i}" for i in range(k_exog)]
         elif isinstance(k_exog, dict):
+            unknown_exog = set(k_exog.keys()) - set(endog_names)
+            if unknown_exog:
+                raise ValueError(
+                    "Cannot specify exogenous variables for the following states which are not observed: "
+                    f"{', '.join(unknown_exog)}"
+                )
             exog_state_names = {name: [f"{name}_exogenous_{i}" for i in range(k)] for name, k in k_exog.items()}
 
     if k_exog is None and exog_state_names is not None:
@@ -287,6 +305,58 @@ class DSGEStateSpace(PyMCStateSpace):
                 sigma = self.make_and_register_variable(f"error_sigma_{state}", shape=())
                 self.ssm["obs_cov", i, i] = sigma**2
 
+        if self.exog_state_names is not None:
+            if isinstance(self.exog_state_names, list):
+                beta_exog = self.make_and_register_variable(
+                    "beta_exog", shape=(self.k_endog, self.k_exog), dtype=floatX
+                )
+                exog_data = self.make_and_register_data("exogenous_data", shape=(None, self.k_exog), dtype=floatX)
+                self._name_to_variable[beta_exog.name] = beta_exog
+
+                obs_intercept = exog_data @ beta_exog.T
+
+            elif isinstance(self.exog_state_names, dict):
+                obs_components = []
+                for name in self.observed_states:
+                    if name in self.exog_state_names:
+                        k_exog = len(self.exog_state_names[name])
+                        beta_exog = self.make_and_register_variable(f"beta_exog_{name}", shape=(k_exog,), dtype=floatX)
+                        self._name_to_variable[beta_exog.name] = beta_exog
+
+                        exog_data = self.make_and_register_data(
+                            f"{name}_exogenous_data", shape=(None, k_exog), dtype=floatX
+                        )
+                        obs_components.append(pt.expand_dims(exog_data @ beta_exog, axis=-1))
+                    else:
+                        obs_components.append(pt.zeros((1, 1), dtype=floatX))
+
+                # TODO: Replace all of this with pt.concat_with_broadcast once PyMC works with pytensor >= 2.32
+
+                # If there were any zeros, they need to be broadcast against the non-zeros.
+                # Core shape is the last dim, the time dim is always broadcast
+                non_concat_shape = [1, None]
+
+                # Look for the first non-zero component to get the shape from
+                for tensor_inp in obs_components:
+                    for i, (bcast, sh) in enumerate(zip(tensor_inp.type.broadcastable, tensor_inp.shape, strict=False)):
+                        if bcast or i == 1:
+                            continue
+                        non_concat_shape[i] = sh
+
+                assert non_concat_shape.count(None) == 1
+
+                bcast_tensor_inputs = []
+                for tensor_inp in obs_components:
+                    non_concat_shape[1] = tensor_inp.shape[1]
+                    bcast_tensor_inputs.append(pt.broadcast_to(tensor_inp, non_concat_shape))
+
+                obs_intercept = pt.join(1, *bcast_tensor_inputs)
+
+            else:
+                raise NotImplementedError()
+
+            self.ssm["obs_intercept"] = obs_intercept
+
         self.ssm["initial_state", :] = pt.zeros(self.k_states)
 
         Q = self.ssm["state_cov"]
@@ -413,7 +483,7 @@ class DSGEStateSpace(PyMCStateSpace):
             }
 
         # Handle exogenous data requirements, if any
-        k_exog, exog_state_names = _validate_exog_args(k_exog, exog_state_names, endog_names=self.state_names)
+        k_exog, exog_state_names = _validate_exog_args(k_exog, exog_state_names, endog_names=observed_states)
 
         self._obs_state_names = observed_states
         self.error_states = measurement_error
@@ -451,6 +521,12 @@ class DSGEStateSpace(PyMCStateSpace):
         if self.measurement_error:
             param_names += [f"error_sigma_{state}" for state in self.error_states]
 
+        if self._configured and isinstance(self.exog_state_names, list):
+            param_names += ["beta_exog"]
+
+        elif self._configured and isinstance(self.exog_state_names, dict):
+            param_names += [f"beta_exog_{name}" for name in self.exog_state_names]
+
         return param_names
 
     @property
@@ -466,15 +542,30 @@ class DSGEStateSpace(PyMCStateSpace):
         return self._obs_state_names
 
     @property
-    def param_dims(self):
+    def data_names(self) -> list[str]:
         if not self._configured:
-            return {}
-
-        return {param: None if param != "state_cov" else (SHOCK_DIM, SHOCK_AUX_DIM) for param in self.param_names}
+            return []
+        if isinstance(self.exog_state_names, list):
+            return ["exogenous_data"]
+        if isinstance(self.exog_state_names, dict):
+            return [f"{endog_state}_exogenous_data" for endog_state in self.exog_state_names]
+        return []
 
     @property
-    def coords(self):
-        return make_default_coords(self)
+    def param_dims(self):
+        var_to_dims = {
+            param: None if param != "state_cov" else (SHOCK_DIM, SHOCK_AUX_DIM) for param in self.param_names
+        }
+
+        if self._configured and isinstance(self.exog_state_names, list):
+            var_to_dims["beta_exog"] = (OBS_STATE_DIM, EXOGENOUS_DIM)
+        elif self._configured and isinstance(self.exog_state_names, dict):
+            # If each state has its own exogenous variables, each parameter needs it own dim, since we expect the
+            # dim labels to all be different (otherwise we'd be in the list case).
+            for name in self.exog_state_names:
+                var_to_dims[f"beta_{name}"] = (f"{EXOGENOUS_DIM}_{name}",)
+
+        return var_to_dims
 
     @property
     def param_info(self):
@@ -496,11 +587,66 @@ class DSGEStateSpace(PyMCStateSpace):
             else:
                 info[var]["constraints"] = None
 
+        if self._configured and isinstance(self.exog_state_names, list):
+            k_exog = len(self.exog_state_names)
+            info["beta_exog"] = {
+                "shape": (self.k_endog, k_exog),
+                "constraints": "None",
+            }
+
+        elif self._configured and isinstance(self.exog_state_names, dict):
+            for name, exog_names in self.exog_state_names.items():
+                k_exog = len(exog_names)
+                info[f"beta_exog_{name}"] = {
+                    "shape": (k_exog,),
+                    "constraints": "None",
+                }
+
         # Lazy way to add the dims without making any typos
         for name in self.param_names:
             info[name]["dims"] = self.param_dims[name]
 
         return info
+
+    @property
+    def data_info(self) -> dict[str, dict[str, Any]]:
+        info = None
+
+        if not self._configured:
+            return info
+
+        if isinstance(self.exog_state_names, list):
+            info = {
+                "exogenous_data": {
+                    "dims": (TIME_DIM, EXOGENOUS_DIM),
+                    "shape": (None, self.k_exog),
+                }
+            }
+
+        elif isinstance(self.exog_state_names, dict):
+            info = {
+                f"{endog_state}_exogenous_data": {
+                    "dims": (TIME_DIM, f"{EXOGENOUS_DIM}_{endog_state}"),
+                    "shape": (None, len(exog_names)),
+                }
+                for endog_state, exog_names in self.exog_state_names.items()
+            }
+
+        return info
+
+    @property
+    def coords(self):
+        coords = make_default_coords(self)
+        if not self._configured:
+            return coords
+
+        if isinstance(self.exog_state_names, list):
+            coords[EXOGENOUS_DIM] = self.exog_state_names
+        elif isinstance(self.exog_state_names, dict):
+            for name, exog_names in self.exog_state_names.items():
+                coords[f"{EXOGENOUS_DIM}_{name}"] = exog_names
+
+        return coords
 
     def build_statespace_graph(
         self,
