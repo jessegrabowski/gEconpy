@@ -1,10 +1,10 @@
 import logging
 
+from pathlib import Path
 from typing import Literal
 from warnings import warn
 
 import sympy as sp
-from pathlib import Path
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -34,13 +34,13 @@ PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
 _log = logging.getLogger(__name__)
 
 
-def load_gcn(gcn_path: str | Path) -> str:
+def load_gcn(gcn_path: Path) -> str:
     """
-    Loads a model file as raw text.
+    Load a model file as raw text.
 
     Parameters
     ----------
-    gcn_path : str or Path
+    gcn_path : Path
         File path to model file (GCN file).
 
     Returns
@@ -48,10 +48,8 @@ def load_gcn(gcn_path: str | Path) -> str:
     str
         Raw-text of the model file.
     """
-
-    with open(gcn_path, encoding="utf-8") as file:
-        gcn_raw = file.read()
-    return gcn_raw
+    with gcn_path.open(encoding="utf-8") as file:
+        return file.read()
 
 
 def get_provided_ss_equations(
@@ -59,8 +57,9 @@ def get_provided_ss_equations(
     assumptions: ASSUMPTION_DICT = None,
 ) -> tuple[Block | None, dict[str, sp.Expr]]:
     """
-    Extract user-provided steady state equations from the `raw_blocks` dictionary and store the resulting
-    relationships in self.steady_state_relationships.
+    Extract user-provided steady state equations from the `raw_blocks` dictionary.
+
+    Results are stored in self.steady_state_relationships.
 
     Parameters
     ----------
@@ -122,15 +121,11 @@ def simplify_provided_ss_equations(
         return SymbolDictionary()
 
     ss_variables = [x.to_ss() for x in variables]
-    extra_equations = SymbolDictionary(
-        {k: v for k, v in ss_solution_dict.to_sympy().items() if k not in ss_variables}
-    )
+    extra_equations = SymbolDictionary({k: v for k, v in ss_solution_dict.to_sympy().items() if k not in ss_variables})
     if not extra_equations:
         return ss_solution_dict
 
-    simplified_ss_dict = SymbolDictionary(
-        {k: v for k, v in ss_solution_dict.to_sympy().items() if k in ss_variables}
-    )
+    simplified_ss_dict = SymbolDictionary({k: v for k, v in ss_solution_dict.to_sympy().items() if k in ss_variables})
     for var, eq in simplified_ss_dict.items():
         if not hasattr(eq, "subs"):
             continue
@@ -163,9 +158,7 @@ def block_dict_to_sub_dict(
     return sub_dict
 
 
-def block_dict_to_param_dict(
-    block_dict: dict[str, Block], dict_name: PARAM_DICTS = "param_dict"
-) -> SymbolDictionary:
+def block_dict_to_param_dict(block_dict: dict[str, Block], dict_name: PARAM_DICTS = "param_dict") -> SymbolDictionary:
     param_dict = SymbolDictionary()
     block_names, blocks = unpack_keys_and_values(block_dict)
     duplicates = set()
@@ -197,9 +190,9 @@ def block_dict_to_variables_and_shocks(
             shocks.extend(block.shocks)
 
     # Sort variables and shocks alphabetically by name, and set all time indices to 0
-    shocks = sorted(list({x.set_t(0) for x in shocks}), key=lambda x: x.name)
+    shocks = sorted({x.set_t(0) for x in shocks}, key=lambda x: x.name)
     variables = sorted(
-        list({x.set_t(0) for x in variables if x.set_t(0) not in shocks}),
+        {x.set_t(0) for x in variables if x.set_t(0) not in shocks},
         key=lambda x: x.name,
     )
     return variables, shocks
@@ -235,11 +228,11 @@ def prior_info_to_prior_dict(
         param_priors[sympy_key.name] = dist
 
     for shock_name, dist in shocks.items():
-        if not shock_name.endswith("[]"):
-            # Add the [] back to the end of the shock name, because single_symbol_to_sympy uses it to decide
-            # whether to create a time-aware symbol or a regular symbol
-            shock_name = shock_name + "[]"
-        sympy_key = single_symbol_to_sympy(shock_name, assumptions=assumptions)
+        # Add the [] back to the end of the shock name, because single_symbol_to_sympy uses it to decide
+        # whether to create a time-aware symbol or a regular symbol
+        sympy_key = single_symbol_to_sympy(
+            shock_name + "[]" if not shock_name.endswith("[]") else shock_name, assumptions=assumptions
+        )
         shock_priors[sympy_key.name] = dist
 
     return param_priors, shock_priors
@@ -247,11 +240,9 @@ def prior_info_to_prior_dict(
 
 def parsed_model_to_data(
     parsed_model: str, simplify_blocks: bool, include_ss_block: bool = False
-) -> tuple[
-    dict[str, Block], ASSUMPTION_DICT, dict[str, str], list[str], dict[str, sp.Expr]
-]:
+) -> tuple[dict[str, Block], ASSUMPTION_DICT, dict[str, str], list[str], dict[str, sp.Expr]]:
     """
-    Builds blocks of the gEconpy model using strings parsed from the GCN file.
+    Build blocks of the gEconpy model using strings parsed from the GCN file.
 
     Parameters
     ----------
@@ -279,11 +270,8 @@ def parsed_model_to_data(
         Dictionary of user-provided steady-state equations. Keys are variable names, and values should be expressions
         giving the steady-state value of the variable in terms of parameters only.
     """
-
     block_dict: dict[str, Block] = {}
-    raw_blocks, options, tryreduce, assumptions = split_gcn_into_dictionaries(
-        parsed_model
-    )
+    raw_blocks, options, tryreduce, assumptions = split_gcn_into_dictionaries(parsed_model)
     ss_block, provided_ss_equations = get_provided_ss_equations(raw_blocks, assumptions)
 
     if include_ss_block and ss_block:
@@ -291,9 +279,7 @@ def parsed_model_to_data(
 
     for block_name, block_content in raw_blocks.items():
         parsed_block_dict = parsed_block_to_dict(block_content)
-        block = Block(
-            name=block_name, block_dict=parsed_block_dict, assumptions=assumptions
-        )
+        block = Block(name=block_name, block_dict=parsed_block_dict, assumptions=assumptions)
         block.solve_optimization(try_simplify=simplify_blocks)
         block_dict[block.name] = block
 
@@ -310,14 +296,13 @@ def gcn_to_block_dict(
     dict[str, sp.Expr],
     dict[str, str],
 ]:
+    gcn_path = Path(gcn_path)
     raw_model = load_gcn(gcn_path)
     parsed_model, prior_dict = preprocess_gcn(raw_model)
-    block_dict, assumptions, options, tryreduce, ss_solution_dict = (
-        parsed_model_to_data(
-            parsed_model,
-            simplify_blocks=simplify_blocks,
-            include_ss_block=include_ss_block,
-        )
+    block_dict, assumptions, options, tryreduce, ss_solution_dict = parsed_model_to_data(
+        parsed_model,
+        simplify_blocks=simplify_blocks,
+        include_ss_block=include_ss_block,
     )
 
     tryreduce = [single_symbol_to_sympy(x, assumptions) for x in tryreduce]
@@ -325,9 +310,7 @@ def gcn_to_block_dict(
     return block_dict, assumptions, options, tryreduce, ss_solution_dict, prior_dict
 
 
-def check_for_orphan_params(
-    equations: list[sp.Expr], param_dict: SymbolDictionary
-) -> None:
+def check_for_orphan_params(equations: list[sp.Expr], param_dict: SymbolDictionary) -> None:
     parameters = list(param_dict.to_sympy().keys())
     param_equations = [x for x in param_dict.values() if isinstance(x, sp.Expr)]
 
@@ -347,9 +330,7 @@ def check_for_orphan_params(
         raise OrphanParameterError(orphans)
 
 
-def check_for_extra_params(
-    equations: list[sp.Expr], param_dict: SymbolDictionary, on_unused_parameters="raise"
-):
+def check_for_extra_params(equations: list[sp.Expr], param_dict: SymbolDictionary, on_unused_parameters="raise"):
     parameters = list(param_dict.to_sympy().keys())
     param_equations = [x for x in param_dict.values() if isinstance(x, sp.Expr)]
 
@@ -359,8 +340,8 @@ def check_for_extra_params(
     if len(extras) > 0:
         if on_unused_parameters == "raise":
             raise ExtraParameterError(extras)
-        elif on_unused_parameters == "warn":
-            warn(ExtraParameterWarning(extras))
+        if on_unused_parameters == "warn":
+            warn(ExtraParameterWarning(extras), stacklevel=2)
         else:
             return
 
@@ -402,9 +383,7 @@ def validate_results(
 ):
     joint_dict = param_dict | calib_dict | deterministic_dict
     check_for_orphan_params(equations + steady_state_relationships, joint_dict)
-    check_for_extra_params(
-        equations + steady_state_relationships, joint_dict, on_unused_parameters
-    )
+    check_for_extra_params(equations + steady_state_relationships, joint_dict, on_unused_parameters)
 
 
 def block_dict_to_model_primitives(
@@ -460,9 +439,10 @@ def build_report(
     singletons: list[TimeAwareSymbol],
 ) -> None:
     """
-    Write a diagnostic message after building the model. Note that successfully building the model does not
-    guarantee that the model is correctly specified. For example, it is possible to build a model with more
-    equations than parameters. This message will warn the user in this case.
+    Write a diagnostic message after building the model.
+
+    Note that successfully building the model does not guarantee that the model is correctly specified. For example,
+    it is possible to build a model with more equations than parameters. This message will warn the user in this case.
 
     Parameters
     ----------
@@ -499,7 +479,6 @@ def build_report(
     -------
     None
     """
-
     n_equations = len(equations)
     n_variables = len(variables)
     n_shocks = len(shocks)
@@ -533,10 +512,7 @@ def build_report(
         report += "\t\t\t" + ", ".join([x.name for x in singletons]) + "\n"
 
     report += f"\t{n_shocks} stochastic {shock_str}\n"
-    report += (
-        f"\t\t {len(shock_priors)} / {n_shocks} {'have' if len(shock_priors) == 1 else 'has'}"
-        f" a defined prior. \n"
-    )
+    report += f"\t\t {len(shock_priors)} / {n_shocks} {'have' if len(shock_priors) == 1 else 'has'} a defined prior. \n"
 
     report += f"\t{n_params} {free_par_str}\n"
     if reduced_params:
@@ -558,6 +534,6 @@ def build_report(
             f"{n_variables} {var_str}. It will not be possible to solve this model. Please check the "
             f"specification using available diagnostic tools, and check the GCN file for typos."
         )
-        warn(message)
+        warn(message, stacklevel=2)
 
     _log.info(report)

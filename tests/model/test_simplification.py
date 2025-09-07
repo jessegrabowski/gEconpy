@@ -1,8 +1,8 @@
-import sympy as sp
 import pytest
+import sympy as sp
 
-from gEconpy.model.simplification import simplify_tryreduce, simplify_constants
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.model.simplification import simplify_constants, simplify_tryreduce
 
 
 def test_simplify_tryreduce_basic():
@@ -15,9 +15,7 @@ def test_simplify_tryreduce_basic():
     try_reduce_vars = [x]
     tryreduce_sub_dict = {x: 1}
 
-    reduced_eqs, reduced_vars, eliminated = simplify_tryreduce(
-        try_reduce_vars, eqs, variables, tryreduce_sub_dict
-    )
+    reduced_eqs, reduced_vars, eliminated = simplify_tryreduce(try_reduce_vars, eqs, variables, tryreduce_sub_dict)
 
     assert all(isinstance(eq, sp.Expr) for eq in reduced_eqs)
     assert y in reduced_vars
@@ -62,7 +60,6 @@ def test_simplify_constants_non_square_warns():
 
     with pytest.warns(
         UserWarning,
-        match="Removal of constant variables was requested but not possible because the "
-        "system is not well defined.",
+        match="Removal of constant variables was requested but not possible because the system is not well defined.",
     ):
         simplify_constants(eqs, variables)

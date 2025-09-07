@@ -1,7 +1,8 @@
-import pytest
 from pathlib import Path
-from gEconpy.parser.file_loaders import load_gcn
 
+import pytest
+
+from gEconpy.parser.file_loaders import load_gcn
 
 ROOT = Path(__file__).parent.parent.absolute()
 

@@ -16,7 +16,6 @@ def block_is_empty(block: str) -> bool:
     bool
         Whether the block is empty or not.
     """
-
     return block.strip() == "{ };"
 
 
@@ -50,9 +49,7 @@ def validate_key(key: str, block_name: str) -> None:
         error = f"Valid sub-block names are: {valid_names}\n"
         error += f"Found: {key} in block {block_name}"
 
-        raise InvalidComponentNameException(
-            component_name=key, block_name=block_name, message=error
-        )
+        raise InvalidComponentNameException(component_name=key, block_name=block_name, message=error)
 
 
 def jaccard_distance(s: str, d: str) -> float:
@@ -76,7 +73,6 @@ def jaccard_distance(s: str, d: str) -> float:
     float
         The Jaccard distance between the two strings.
     """
-
     s = set(s)
     d = set(d)
     union = len(s.union(d))
@@ -125,15 +121,10 @@ def find_typos_and_guesses(
         A tuple containing the best matching valid input and the user input that may be a typo, if they are above the
         match threshold. If no user input is above the threshold, both elements of the tuple will be None.
     """
-
     #     TODO: Tune match_threshold
 
-    best_guess = max(
-        valid_inputs, key=lambda x: elementwise_jaccard_distance(x, user_inputs)
-    )
-    maybe_typo = max(
-        user_inputs, key=lambda x: elementwise_jaccard_distance(x, valid_inputs)
-    )
+    best_guess = max(valid_inputs, key=lambda x: elementwise_jaccard_distance(x, user_inputs))
+    maybe_typo = max(user_inputs, key=lambda x: elementwise_jaccard_distance(x, valid_inputs))
 
     if jaccard_distance(best_guess, maybe_typo) < match_threshold:
         return None, None

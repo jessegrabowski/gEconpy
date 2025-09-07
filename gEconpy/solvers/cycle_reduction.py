@@ -1,4 +1,3 @@
-import numba as nb
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
@@ -29,8 +28,8 @@ def nb_cycle_reduction(
 ) -> tuple[np.ndarray | None, np.ndarray | None, str, float]:
     """
     Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1].
-    Useful in the DSGE context to solve for the implicit derivative of the policy function, g, with respect to
-    state vector y.
+
+    Useful in the DSGE context to solve for the of the policy function, g, with respect to state vector y.
 
     Adapted from the Dynare file cycle_reduction.m, found at
     https://github.com/DynareTeam/dynare/blob/master/matlab/cycle_reduction.m
@@ -123,8 +122,7 @@ def nb_cycle_reduction(
 # )
 def nb_solve_shock_matrix(B: np.ndarray, C: np.ndarray, D: np.ndarray, G_1: np.ndarray):
     """
-    Given the partial solution to the linear approximate policy function G_1, solve for the remaining component of the
-    policy function, R.
+    Solve for the shock impact matrix R in a linear DSGE system, given the policy function matrix T.
 
     Parameters
     ----------
@@ -147,7 +145,6 @@ def nb_solve_shock_matrix(B: np.ndarray, C: np.ndarray, D: np.ndarray, G_1: np.n
         system variables at time t+1.
 
     """
-
     return -np.linalg.solve(C @ G_1 + B, D.astype(C.dtype))
 
 
@@ -171,13 +168,9 @@ class CycleReductionWrapper(Op):
 
         return Apply(self, inputs, outputs)
 
-    def perform(
-        self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]
-    ) -> None:
+    def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
         A, B, C = inputs
-        T, res, result, log_norm = nb_cycle_reduction(
-            A, B, C, max_iter=self.max_iter, tol=self.tol
-        )
+        T, res, result, log_norm = nb_cycle_reduction(A, B, C, max_iter=self.max_iter, tol=self.tol)
 
         outputs[0][0] = np.asarray(T)
 
@@ -191,9 +184,7 @@ def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
     return T, R
 
 
-def _scan_cycle_reduction(
-    A, B, C, max_iter: int = 1000, tol: float = 1e-7, mode=None
-) -> pt.Variable:
+def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7, mode=None) -> pt.Variable:
     def noop(A0, A1, A2, A1_hat, norm, step_num):
         return A0, A1, A2, A1_hat, norm, step_num
 
@@ -218,12 +209,11 @@ def _scan_cycle_reduction(
         return A0, A1, A2, A1_hat, A0_L1_norm, step_num + 1
 
     def step(A0, A1, A2, A1_hat, norm, step_num, idx_0, idx_1, tol):
-        state = pytensor.ifelse(
+        return pytensor.ifelse(
             norm < tol,
             noop(A0, A1, A2, A1_hat, norm, step_num),
             cycle_step(A0, A1, A2, A1_hat, step_num, idx_0, idx_1),
         )
-        return state
 
     n = A.shape[0]
     idx_0 = pt.arange(n)
@@ -285,8 +275,9 @@ def solve_policy_function_with_cycle_reduction(
     verbose: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, str, float]:
     """
-    Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1] to
-    obtain the first-order linear approxiate policy matrices T and R.
+    Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1].
+
+    Returns policy function matrix T and shock impact matrix R, which together define a linear DSGE system.
 
     Parameters
     ----------
@@ -321,7 +312,6 @@ def solve_policy_function_with_cycle_reduction(
     log_norm: float
         Log L1 matrix norm of the first matrix (A2 -> A1 -> A0) that did not converge.
     """
-
     # Sympy gives back integers in the case of x/dx = 1, which can screw up the dtypes when passing to numba if
     # a Jacobian matrix is all constants (i.e. dF/d_shocks) -- cast everything to float64 here to avoid
     # a numba warning.

@@ -67,9 +67,9 @@ PRELIZ_DIST_WRAPPERS = list(WRAPPER_TO_ARGS.keys())
 def evaluate_expression(parsed_expr):
     if isinstance(parsed_expr, int | float):
         return float(parsed_expr)
-    elif not parsed_expr:
+    if not parsed_expr:
         return None
-    elif isinstance(parsed_expr, pp.ParseResults):
+    if isinstance(parsed_expr, pp.ParseResults):
         parsed_expr = parsed_expr.as_list()
         if len(parsed_expr) == 1 and isinstance(parsed_expr[0], list):
             parsed_expr = parsed_expr[0]
@@ -138,16 +138,10 @@ DIST = DISTRIBUTION_ID("dist_name") + LPAREN + KWARG_LIST("dist_kwargs") + RPARE
 INITIAL_VALUE = EQUALS + NUMBER_EXPR("initial_value")
 
 wrapped_distribution = (
-    WRAPPER_FUNCS("wrapper_name")
-    + LPAREN
-    + DIST
-    + pp.Optional(COMMA + KWARG_LIST("wrapper_kwargs"))
-    + RPAREN
+    WRAPPER_FUNCS("wrapper_name") + LPAREN + DIST + pp.Optional(COMMA + KWARG_LIST("wrapper_kwargs")) + RPAREN
 )
 
-dist_syntax = (
-    (wrapped_distribution | DIST) + pp.Optional(INITIAL_VALUE) + pp.StringEnd()
-)
+dist_syntax = (wrapped_distribution | DIST) + pp.Optional(INITIAL_VALUE) + pp.StringEnd()
 
 
 def dist_parse_action(tokens):
@@ -160,9 +154,7 @@ def dist_parse_action(tokens):
     dist_name = res["dist_name"]
     wrapper_name = res["wrapper_name"]
 
-    res["dist_kwargs"] = result_to_dict(
-        tokens["dist_kwargs"], dist_name, DIST_TO_PARAM_NAMES[dist_name]
-    )
+    res["dist_kwargs"] = result_to_dict(tokens["dist_kwargs"], dist_name, DIST_TO_PARAM_NAMES[dist_name])
     res["wrapper_kwargs"] = result_to_dict(
         tokens.get("wrapper_kwargs"),
         wrapper_name,

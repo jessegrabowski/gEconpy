@@ -34,7 +34,6 @@ def remove_extra_spaces(text: str) -> str:
     This function is used to replace multiple spaces ('   ') with single spaces (' ') that result from removing special
     characters during preprocessing (tabs, newlines, etc).
     """
-
     out_text = re.sub(" +", " ", text)
     return out_text.strip()
 
@@ -53,12 +52,9 @@ def remove_newlines_and_tabs(text: str) -> str:
     str
         A string with newline and tab characters removed.
     """
-
     out_text = text.replace("\n", " ")
     out_text = out_text.replace("\t", " ")
-    out_text = remove_extra_spaces(out_text)
-
-    return out_text
+    return remove_extra_spaces(out_text)
 
 
 def remove_comments(text: str) -> str:
@@ -80,7 +76,6 @@ def remove_comments(text: str) -> str:
     The GCN model language allows for comments using the # prefix, either on their own line or following an equation
     in-line. This function strips these comments out.
     """
-
     lines = text.split("\n")
     lines = [line.strip() for line in lines if len(line.strip()) > 0]
     output = []
@@ -98,8 +93,9 @@ def remove_comments(text: str) -> str:
 
 def extract_distributions(text: str) -> tuple[str, dict[str, str]]:
     """
-    Extract prior distributions from a GCN model file and return the "clean" model file and a dictionary of the form
-    parameter:distribution.
+    Extract prior distributions from a GCN model file.
+
+    Returns the "clean" model file and a dictionary of the form parameter:distribution.
 
     Parameters
     ----------
@@ -119,7 +115,6 @@ def extract_distributions(text: str) -> tuple[str, dict[str, str]]:
          extract_distributions('alpha ~ Beta(mean=0.5, sd=0.1) = 0.55;')
         # ('alpha = 0.55;', {"alpha": "Beta(mean=0.5, sd=0.1)"})
     """
-
     lines = text.split("\n")
     output = []
     prior_dict = {}
@@ -180,12 +175,9 @@ def add_spaces_around_expectations(text: str) -> str:
         # Output: "E[] [ u[] + beta * U[1] ];"
 
     """
-
     # Only add white space to the left of the expectation token so we can look for [[ when splitting the square brackets
     out_text = re.sub(f"(\\b{re.escape(EXPECTATION_TOKEN)})", r" \g<0>", text)
-    out_text = re.sub(r"(?<=\])[\[\]]|(?<!(\[|\]))\]", r" \g<0> ", out_text)
-
-    return out_text
+    return re.sub(r"(?<=\])[\[\]]|(?<!(\[|\]))\]", r" \g<0> ", out_text)
 
 
 def repair_special_tokens(text: str) -> str:
@@ -208,14 +200,11 @@ def repair_special_tokens(text: str) -> str:
         repair_special_tokens(" u[ -1 ]")
         # Output: "u[-1]"
     """
-
     out_text = re.sub(r"\[ *\- *1 *\]", LAG_TOKEN, text)
     out_text = re.sub(r"\[ *1 *\]", LEAD_TOKEN, out_text)
     out_text = re.sub(r"\[ *ss * \]", SS_TOKEN, out_text)
     out_text = re.sub(r" * - * > *", f" {CALIBRATING_EQ_TOKEN} ", out_text)
-    out_text = re.sub("} ;", BLOCK_END_TOKEN, out_text)
-
-    return out_text
+    return re.sub("} ;", BLOCK_END_TOKEN, out_text)
 
 
 def add_spaces_around_operators(text: str) -> str:
@@ -243,13 +232,10 @@ def add_spaces_around_operators(text: str) -> str:
     the calibrating equation assignment operator "->" becomes " - >", and the "end of block" token, "};"
     is mutilated to "} ;". These errors are corrected by the repair_special_tokens function.
     """
-
     out_text = re.sub(f"[{OPERATORS}]", r" \g<0> ", text)
     out_text = add_spaces_around_expectations(out_text)
     out_text = remove_extra_spaces(out_text)
-    out_text = repair_special_tokens(out_text)
-
-    return out_text
+    return repair_special_tokens(out_text)
 
 
 def delete_block(text: str, block_name: str) -> str:
@@ -277,10 +263,8 @@ def delete_block(text: str, block_name: str) -> str:
     >>> delete_block("options { }; tryreduce { };", "tryreduce")
     'options { };'
     """
-
     if block_name not in text:
         return text
-    elif block_name == "assumptions":
+    if block_name == "assumptions":
         return re.sub(block_name + " {.*?}; };", "", text).strip()
-    else:
-        return re.sub(block_name + " {.*?};", "", text).strip()
+    return re.sub(block_name + " {.*?};", "", text).strip()

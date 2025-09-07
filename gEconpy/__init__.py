@@ -1,6 +1,8 @@
 import logging
 import sys
 
+from importlib.metadata import version
+
 from gEconpy import (
     classes,
     numbaf,  #  noqa: F401
@@ -25,7 +27,6 @@ from gEconpy.model.model import (
 from gEconpy.model.statespace import data_from_prior
 from gEconpy.model.steady_state import print_steady_state
 from gEconpy.parser.html import print_gcn_file
-from importlib.metadata import version
 
 _log = logging.getLogger(__name__)
 

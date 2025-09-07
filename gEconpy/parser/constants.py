@@ -5,9 +5,9 @@ import sympy as sp
 from sympy.abc import _clash1, _clash2
 
 LOCAL_DICT = {}
-for letter in _clash1.keys():
+for letter in _clash1:
     LOCAL_DICT[letter] = sp.Symbol(letter)
-for letter in _clash2.keys():
+for letter in _clash2:
     LOCAL_DICT[letter] = sp.Symbol(letter)
 
 OPERATORS = re.escape("+-*/^=();:")

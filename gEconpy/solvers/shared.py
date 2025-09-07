@@ -15,13 +15,15 @@ def o1_policy_function_adjoints(
     T_bar: TensorVariable,
 ) -> list[TensorVariable, TensorVariable, TensorVariable]:
     """
-    Compute the adjoints of the inputs to the equation:
+    Compute the adjoint gradients to a matrix quadratic equation.
+
+    The matrix quadratic equation is of the form:
 
     ..math::
 
         A + BT + CTT = 0
 
-    Which is the matrix quadratic equation associated with the first order approximation to a DSGE policy function.
+    It is associated with the first order approximation to a DSGE policy function.
 
     Parameters
     ----------
@@ -32,6 +34,7 @@ def o1_policy_function_adjoints(
     C: TensorVariable
         Matrix of partial derivatives with respect to variables at t+1, evaluated at the steady-state
     T: TensorVariable
+        Solved policy function matrix, such that :math:`X_t = T X_{t-1}`
     T_bar: TensorVariable
         Backward sensitivity of a scalar loss function with respect to the solved policy function T
 
@@ -55,9 +58,7 @@ def o1_policy_function_adjoints(
     M2 = pt.linalg.kron(eye, T.T @ C.T)
     M3 = pt.linalg.kron(eye, B.T)
 
-    vec_S = pt.linalg.solve(
-        stabilize(M1 + M2 + M3), -vec_T_bar, assume_a="gen", check_finite=False
-    )
+    vec_S = pt.linalg.solve(stabilize(M1 + M2 + M3), -vec_T_bar, assume_a="gen", check_finite=False)
     S = vec_S.reshape((n, n)).T
 
     # With S, compute adjoints of the inputs
@@ -69,6 +70,4 @@ def o1_policy_function_adjoints(
 
 
 def pt_compute_selection_matrix(B, C, D, T):
-    return -pt.linalg.solve(
-        C @ T + B, D.astype(T.dtype), assume_a="gen", check_finite=False
-    )
+    return -pt.linalg.solve(C @ T + B, D.astype(T.dtype), assume_a="gen", check_finite=False)

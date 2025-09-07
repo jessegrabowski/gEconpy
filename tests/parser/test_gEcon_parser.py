@@ -1,18 +1,20 @@
 import os
+
+from pathlib import Path
+
 import pyparsing
 import pytest
 
 from gEconpy.parser import gEcon_parser
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
-from gEconpy.parser.gEcon_parser import (
-    preprocess_gcn,
-    extract_special_block,
-    split_gcn_into_dictionaries,
-    rebuild_eqs_from_parser_output,
-    parsed_block_to_dict,
-)
 from gEconpy.parser.file_loaders import load_gcn
-from pathlib import Path
+from gEconpy.parser.gEcon_parser import (
+    extract_special_block,
+    parsed_block_to_dict,
+    preprocess_gcn,
+    rebuild_eqs_from_parser_output,
+    split_gcn_into_dictionaries,
+)
 
 ROOT = Path(__file__).parent.parent.absolute()
 
@@ -63,9 +65,7 @@ def test_parse_gcn():
     };
     """
     parser_output, _ = preprocess_gcn(test_file)
-    with open(
-        ROOT / "_resources" / "test_answer_strings" / "test_parse_gcn.txt"
-    ) as file:
+    with (ROOT / "_resources" / "test_answer_strings" / "test_parse_gcn.txt").open() as file:
         expected_result = file.read()
     assert parser_output.strip() == expected_result.strip()
 
@@ -98,13 +98,9 @@ def test_block_extraction():
 def test_split_gcn_by_blocks():
     test_file = load_gcn(ROOT / "_resources" / "test_gcns" / "one_block_1.gcn")
     parser_output, _ = preprocess_gcn(test_file)
-    with open(
-        ROOT / "_resources" / "test_answer_strings" / "test_split_gcn_by_blocks.txt"
-    ) as file:
+    with (ROOT / "_resources" / "test_answer_strings" / "test_split_gcn_by_blocks.txt").open() as file:
         expected_result = file.read()
-    block_dict, options, tryreduce, assumptions = split_gcn_into_dictionaries(
-        parser_output
-    )
+    block_dict, options, tryreduce, assumptions = split_gcn_into_dictionaries(parser_output)
     assert list(block_dict.keys()) == ["HOUSEHOLD"]
     assert options == {}
     assert tryreduce == []
@@ -115,9 +111,7 @@ def test_split_gcn_by_blocks():
 def test_equation_rebuilding():
     test_eq = "{Y[] = C[] + I[] + G[]; A[] ^ ( ( alpha + 1 ) / alpha ) - B[] / C[] * exp ( L[] ); };"
     parser_output, _ = preprocess_gcn(test_eq)
-    parsed_block = (
-        pyparsing.nestedExpr("{", "};").parseString(parser_output).asList()[0]
-    )
+    parsed_block = pyparsing.nestedExpr("{", "};").parseString(parser_output).asList()[0]
     eqs = rebuild_eqs_from_parser_output(parsed_block)
     assert len(eqs) == 2
     assert " ".join(eqs[0]).strip() == test_eq.split(";")[0].replace("{", "").strip()
@@ -129,12 +123,8 @@ def test_parse_block_to_dict():
     test_eq += "objective { U[] = u[] + beta * E[] [ U[1] ] ; }; };"
     block_dict = parsed_block_to_dict(test_eq)
     assert list(block_dict.keys()) == ["definitions", "objective"]
-    assert block_dict["definitions"] == [
-        ["u[]", "=", "log", "(", "C[]", ")", "+", "log", "(", "L[]", ")"]
-    ]
-    assert block_dict["objective"] == [
-        ["U[]", "=", "u[]", "+", "beta", "*", "E[]", "[", "U[1]", "]"]
-    ]
+    assert block_dict["definitions"] == [["u[]", "=", "log", "(", "C[]", ")", "+", "log", "(", "L[]", ")"]]
+    assert block_dict["objective"] == [["U[]", "=", "u[]", "+", "beta", "*", "E[]", "[", "U[1]", "]"]]
 
 
 def test_extract_assumption_blocks():
@@ -164,9 +154,7 @@ def test_invalid_assumptions_raise_error():
         };
         """
     parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
-    with pytest.raises(
-        ValueError, match='Assumption "random_words" is not a valid Sympy assumption.'
-    ):
+    with pytest.raises(ValueError, match='Assumption "random_words" is not a valid Sympy assumption.'):
         gEcon_parser.extract_special_block(parser_output, "assumptions")
 
 
@@ -182,8 +170,7 @@ def test_typo_in_assumptions_gives_suggestion():
     parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
     with pytest.raises(
         ValueError,
-        match='Assumption "possitive" is not a valid Sympy assumption. '
-        'Did you mean "positive"?',
+        match='Assumption "possitive" is not a valid Sympy assumption. Did you mean "positive"?',
     ):
         gEcon_parser.extract_special_block(parser_output, "assumptions")
 
@@ -227,7 +214,7 @@ def test_defaults_removed_if_conflicting_with_user_spec():
     parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
     assumptions = gEcon_parser.extract_special_block(parser_output, "assumptions")
 
-    assert "real" not in assumptions["C"].keys()
+    assert "real" not in assumptions["C"]
 
 
 def test_defaults_given_when_variable_subset_defined():
@@ -290,5 +277,5 @@ def test_shock_block_with_multiple_distributions():
         "Invgamma(a=0.1, b=0.2) = 0.2",
     ]
 
-    for value, d in zip(prior_dict.values(), dists):
+    for value, d in zip(prior_dict.values(), dists, strict=False):
         assert value == d

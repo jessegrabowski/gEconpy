@@ -6,11 +6,11 @@ import pytest
 from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 from gEconpy.parser.file_loaders import (
-    load_gcn,
-    parsed_model_to_data,
+    block_dict_to_model_primitives,
     block_dict_to_variables_and_shocks,
     gcn_to_block_dict,
-    block_dict_to_model_primitives,
+    load_gcn,
+    parsed_model_to_data,
 )
 from gEconpy.parser.gEcon_parser import preprocess_gcn
 
@@ -112,9 +112,7 @@ EXPECTED_TRYREDUCE = {
 EXPECTED_SS_LEN = {"one_block": 0, "one_block_ss": 9, "one_block_2": 0, "full_nk": 25}
 
 
-@pytest.mark.parametrize(
-    "gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES
-)
+@pytest.mark.parametrize("gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES, strict=False), ids=TEST_NAMES)
 def test_build_model_blocks(gcn_path, name):
     raw_model = load_gcn(Path("tests") / "_resources" / "test_gcns" / gcn_path)
     parsed_model, prior_dict = preprocess_gcn(raw_model)
@@ -123,14 +121,9 @@ def test_build_model_blocks(gcn_path, name):
     blocks, assumptions, options, try_reduce_vars, steady_state_equations = parse_result
 
     assert list(blocks.keys()) == EXPECTED_BLOCKS[name]
-    assert all(
-        [
-            assumptions[var] == EXPECTED_ASSUMPTIONS[name][var]
-            for var in assumptions.keys()
-        ]
-    )
+    assert all(assumptions[var] == EXPECTED_ASSUMPTIONS[name][var] for var in assumptions)
     assert options.keys() == EXPECTED_OPTIONS[name].keys()
-    assert all([options[k] == EXPECTED_OPTIONS[name][k] for k in options.keys()])
+    assert all(options[k] == EXPECTED_OPTIONS[name][k] for k in options)
     assert try_reduce_vars == EXPECTED_TRYREDUCE[name]
     assert len(steady_state_equations) == EXPECTED_SS_LEN[name]
 
@@ -175,9 +168,7 @@ EXPECTED_SHOCKS = {
 }
 
 
-@pytest.mark.parametrize(
-    "gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES), ids=TEST_NAMES
-)
+@pytest.mark.parametrize("gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES, strict=False), ids=TEST_NAMES)
 def test_block_dict_to_variables_and_shocks(gcn_path, name):
     raw_model = load_gcn(Path("tests") / "_resources" / "test_gcns" / gcn_path)
     parsed_model, prior_dict = preprocess_gcn(raw_model)
@@ -205,9 +196,7 @@ def test_block_dict_to_variables_and_shocks(gcn_path, name):
 )
 def test_loading_fails_if_duplicate_parameters_in_two_blocks(gcn_file):
     with pytest.raises(DuplicateParameterError):
-        outputs = gcn_to_block_dict(
-            Path("tests") / "_resources" / "test_gcns" / gcn_file, True
-        )
+        outputs = gcn_to_block_dict(Path("tests") / "_resources" / "test_gcns" / gcn_file, True)
         (
             block_dict,
             assumptions,

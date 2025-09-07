@@ -23,9 +23,9 @@ def output_to_tensor(x, cache):
 
 def dictionary_return_wrapper(f: Callable, outputs: list[sp.Symbol]) -> Callable:
     """
-    Wrap a function that returns a numpy array to instead return a SymbolDictionary object, with keys
-    corresponding to the output symbols.
+    Wrap a function that returns a numpy array to instead return a SymbolDictionary.
 
+    The dictionary returned has keys corresponding to the output symbols.
 
     Parameters
     ----------
@@ -43,18 +43,18 @@ def dictionary_return_wrapper(f: Callable, outputs: list[sp.Symbol]) -> Callable
     @wraps(f)
     def inner(*args, **kwargs):
         values = f(*args, **kwargs)
-        return SteadyStateResults(zip(outputs, values)).to_string()
+        return SteadyStateResults(zip(outputs, values, strict=False)).to_string()
 
     return inner
 
 
 def stack_return_wrapper(f: Callable) -> Callable:
     """
-    Wrap a function that returns a list of numpy arrays to instead return a single numpy array with all outputs stacked
-    into a single flat array.
+    Wrap a function to return a single numpy array with all outputs stacked into a single flat array.
 
-    This is useful when working with the output of :func:`sympy.lambdify`, which returns one numpy array per equation
-    in the outputs. Scipy optimize routines, on the other hand, expect a single numpy array with all outputs stacked.
+    The original function should return a list of numpy arrays. This is useful when working with the output of
+    :func:`sympy.lambdify`, which returns one numpy array per equation in the outputs. Scipy optimize routines, on the
+    other hand, expect a single numpy array with all outputs stacked.
 
     Parameters
     ----------
@@ -102,8 +102,7 @@ def pop_return_wrapper(f: Callable) -> Callable:
         values = np.array(f(*args, **kwargs))
         if values.ndim == 0:
             return values.item(0)
-        else:
-            return values[0]
+        return values[0]
 
     return inner
 
@@ -191,17 +190,13 @@ def compile_function(
         A dictionary mapping from sympy symbols to pytensor symbols.
     """
     if backend == "numpy":
-        f, cache = compile_to_numpy(
-            inputs, outputs, cache, stack_return, pop_return, **kwargs
-        )
+        f, cache = compile_to_numpy(inputs, outputs, cache, stack_return, pop_return, **kwargs)
     elif backend == "pytensor":
         f, cache = compile_to_pytensor_function(
             inputs, outputs, cache, stack_return, pop_return, return_symbolic, **kwargs
         )
     else:
-        raise NotImplementedError(
-            f"backend {backend} not implemented. Must be one of {BACKENDS}."
-        )
+        raise NotImplementedError(f"backend {backend} not implemented. Must be one of {BACKENDS}.")
 
     return f, cache
 
@@ -212,7 +207,7 @@ def compile_to_numpy(
     cache: dict,
     stack_return: bool,
     pop_return: bool,
-    **kwargs,
+    **kwargs,  # noqa: ARG001
 ):
     """
     Convert a sympy function to a numpy function using :func:`sympy.lambdify`.
@@ -242,7 +237,6 @@ def compile_to_numpy(
     cache: dict
         Pytensor caching information.
     """
-
     f = sp.lambdify(inputs, outputs)
     if stack_return:
         f = stack_return_wrapper(f)
@@ -302,11 +296,7 @@ def compile_to_pytensor_function(
     if stack_return:
         output_pt = pytensor.tensor.stack(output_pt)
     if pop_return:
-        output_pt = (
-            output_pt[0]
-            if (isinstance(output_pt, list) and len(output_pt) == 1)
-            else output_pt
-        )
+        output_pt = output_pt[0] if (isinstance(output_pt, list) and len(output_pt) == 1) else output_pt
 
     if return_symbolic:
         return output_pt, cache
@@ -366,7 +356,8 @@ def make_return_dict_and_update_cache(
         Dictionary mapping sympy symbols to pytensor symbols, used to maintain a consistent namespace between
         compiled functions
     cls: sp.Symbol, optional
-        The type of the sympy symbol (e.g. sp.Symbol, sp.Idx, sp.IndexedBase, TimeAwareSymbol, etc). Default is sp.Symbol
+        The type of the sympy symbol (e.g. sp.Symbol, sp.Idx, sp.IndexedBase, TimeAwareSymbol, etc). Default is
+        sp.Symbol
 
     Returns
     -------
@@ -375,11 +366,10 @@ def make_return_dict_and_update_cache(
     cache: dict
         Updated cache dictionary
     """
-
     if cls is None:
         cls = sp.Symbol
     out_dict = {}
-    for symbol, value in zip(input_symbols, output_tensors):
+    for symbol, value in zip(input_symbols, output_tensors, strict=False):
         cache_key = make_cache_key(symbol.name, cls)
 
         if cache_key in cache:

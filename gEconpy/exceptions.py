@@ -101,8 +101,7 @@ class MultipleObjectiveFunctionsException(ValueError):
         for eq in eqs:
             message += str(eq) + "\n"
         message += (
-            " Only one objective function is supported. Please manually simplify the objective"
-            " to a single function."
+            " Only one objective function is supported. Please manually simplify the objective to a single function."
         )
 
         super().__init__(message)
@@ -195,8 +194,7 @@ class InvalidDistributionException(ValueError):
 class RepeatedParameterException(ValueError):
     def __init__(self, d_str: str, parameter: str):
         message = (
-            f'In {d_str}, the parameter "{parameter}" was '
-            f"declared multiple times. Please check the GCN file for typos."
+            f'In {d_str}, the parameter "{parameter}" was declared multiple times. Please check the GCN file for typos.'
         )
 
         super().__init__(message)
@@ -217,9 +215,7 @@ class DistributionParameterNotFoundException(ValueError):
             f'"{variable_name}". Valid aliases for {param_name} are: '
         )
         if len(valid_param_names) > 1:
-            message += (
-                ", ".join(valid_param_names[:-1]) + f", and {valid_param_names[-1]}."
-            )
+            message += ", ".join(valid_param_names[:-1]) + f", and {valid_param_names[-1]}."
         else:
             message += f"{valid_param_names[0]}."
 
@@ -230,9 +226,7 @@ class DistributionParameterNotFoundException(ValueError):
 
 
 class MultipleParameterDefinitionException(ValueError):
-    def __init__(
-        self, variable_name: str, d_name: str, param_name: str, result_list: list[str]
-    ) -> None:
+    def __init__(self, variable_name: str, d_name: str, param_name: str, result_list: list[str]) -> None:
         message = (
             f'The {d_name} distribution associated with "{variable_name}" has multiple declarations for '
             f"{param_name}. Please pass only one of: "
@@ -276,9 +270,7 @@ class InvalidMeanException(ValueError):
 
 
 class DistributionOverDefinedException(ValueError):
-    def __init__(
-        self, variable_name, d_name, dist_n_params, n_params_passed, n_constraints
-    ):
+    def __init__(self, variable_name, d_name, dist_n_params, n_params_passed, n_constraints):
         message = (
             f"The {d_name} distribution associated wth {variable_name} is over-defined. The distribution has "
             f"{dist_n_params} free parameters, but you passed {n_params_passed} plus {n_constraints} moment "

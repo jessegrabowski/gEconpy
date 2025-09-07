@@ -25,14 +25,12 @@ def test_statespace_matrices_agree_with_model(gcn_file):
     inputs = pm.inputvars(ss_mod.linearized_system)
     input_names = [x.name for x in inputs]
     f = pytensor.function(inputs, ss_mod.linearized_system, on_unused_input="ignore")
-    mod_matrices = model.linearize_model(
-        verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False}
-    )
+    mod_matrices = model.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
 
     param_dict = model.parameters()
     ss_matrices = f(**{k: param_dict[k] for k in input_names})
 
-    for mod_matrix, ss_matrix in zip(mod_matrices, ss_matrices):
+    for mod_matrix, ss_matrix in zip(mod_matrices, ss_matrices, strict=False):
         np.testing.assert_allclose(mod_matrix, ss_matrix, atol=1e-8, rtol=1e-8)
 
 
@@ -51,12 +49,10 @@ def test_model_to_pymc(gcn_file):
         ss_mod.to_pymc()
     rv_names = [rv.name for rv in m.free_RVs]
 
-    assert all(name in rv_names for name in ss_mod.param_priors.keys())
+    assert all(name in rv_names for name in ss_mod.param_priors)
 
     hyper_prior_names = [
-        name
-        for dist in ss_mod.shock_priors.values()
-        for name in dist.param_name_to_hyper_name.values()
+        name for dist in ss_mod.shock_priors.values() for name in dist.param_name_to_hyper_name.values()
     ]
 
     assert all(name in rv_names for name in hyper_prior_names)

@@ -7,7 +7,7 @@ from sympy.polys.domains.mpelements import ComplexElement
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 
-SAFE_STRING_TO_INDEX_DICT = dict(ss="ss", tp1=1, tm1=-1, t=0)
+SAFE_STRING_TO_INDEX_DICT = {"ss": "ss", "tp1": 1, "tm1": -1, "t": 0}
 
 
 def safe_string_to_sympy(s, assumptions=None):
@@ -17,23 +17,20 @@ def safe_string_to_sympy(s, assumptions=None):
     assumptions = assumptions or defaultdict(dict)
 
     *name, time_index_str = s.split("_")
-    if time_index_str not in [str(x) for x in SAFE_STRING_TO_INDEX_DICT.keys()]:
+    if time_index_str not in [str(x) for x in SAFE_STRING_TO_INDEX_DICT]:
         name.append(time_index_str)
         name = "_".join(name)
         return sp.Symbol(name, **assumptions[name])
 
     name = "_".join(name)
     time_index = SAFE_STRING_TO_INDEX_DICT[time_index_str]
-    symbol = TimeAwareSymbol(name, time_index, **assumptions.get(name, {}))
-
-    return symbol
+    return TimeAwareSymbol(name, time_index, **assumptions.get(name, {}))
 
 
 def symbol_to_string(symbol: str | sp.Symbol):
     if isinstance(symbol, str):
         return symbol
-    else:
-        return symbol.safe_name if isinstance(symbol, TimeAwareSymbol) else symbol.name
+    return symbol.safe_name if isinstance(symbol, TimeAwareSymbol) else symbol.name
 
 
 def string_keys_to_sympy(d, assumptions=None, is_variable=None):
@@ -62,7 +59,7 @@ def string_keys_to_sympy(d, assumptions=None, is_variable=None):
 
 def sympy_keys_to_strings(d):
     result = {}
-    for key in d.keys():
+    for key in d:
         result[symbol_to_string(key)] = d[key]
 
     return result
@@ -89,7 +86,7 @@ def float_values_to_sympy_float(d: dict[sp.Symbol, Any]):
 
 def sort_dictionary(d):
     result = {}
-    sorted_keys = sorted(list(d.keys()))
+    sorted_keys = sorted(d.keys())
     for key in sorted_keys:
         result[key] = d[key]
 
@@ -105,15 +102,15 @@ class SymbolDictionary(dict):
         self._is_variable: dict = {}
 
         keys = list(self.keys())
-        if any([not isinstance(x, sp.Symbol | str) for x in keys]):
+        if any(not isinstance(x, sp.Symbol | str) for x in keys):
             raise KeyError("All keys should be either string or Sympy symbols")
 
         if len(keys) > 0:
             self.is_sympy = not isinstance(keys[0], str)
 
-            if self.is_sympy and any([isinstance(x, str) for x in keys]):
+            if self.is_sympy and any(isinstance(x, str) for x in keys):
                 raise KeyError("Cannot mix sympy and string keys")
-            if not self.is_sympy and any([isinstance(x, sp.Symbol) for x in keys]):
+            if not self.is_sympy and any(isinstance(x, sp.Symbol) for x in keys):
                 raise KeyError("Cannot mix sympy and string keys")
 
         self._save_assumptions(keys)
@@ -121,7 +118,7 @@ class SymbolDictionary(dict):
 
     def __or__(self, other: dict):
         if not isinstance(other, dict):
-            raise ValueError("__or__ not defined on non-dictionary objects")
+            raise TypeError("__or__ not defined on non-dictionary objects")
         if not isinstance(other, SymbolDictionary):
             other = SymbolDictionary(other)
 
@@ -141,9 +138,7 @@ class SymbolDictionary(dict):
 
         # If both are populated but of different types, raise an error
         if other.is_sympy != self.is_sympy:
-            raise ValueError(
-                "Cannot merge string-mode SymbolDictionary with sympy-mode SymbolDictionary"
-            )
+            raise ValueError("Cannot merge string-mode SymbolDictionary with sympy-mode SymbolDictionary")
 
         # Full merge
         other_assumptions = getattr(other, "_assumptions", {})
@@ -221,7 +216,7 @@ class SymbolDictionary(dict):
 
         if inplace:
             self._clean_update(d)
-            return
+            return None
 
         return d
 
@@ -249,27 +244,24 @@ class SymbolDictionary(dict):
 
         if inplace:
             self._clean_update(d)
-            return
-        else:
-            return d
+            return None
+        return d
 
     def step_forward(self, inplace=False):
         d = self._step_dict_keys("step_forward")
 
         if inplace:
             self._clean_update(d)
-            return
-        else:
-            return d
+            return None
+        return d
 
     def to_ss(self, inplace=False):
         d = self._step_dict_keys("to_ss")
 
         if inplace:
             self._clean_update(d)
-            return
-        else:
-            return d
+            return None
+        return d
 
     def to_string(self, inplace=False):
         copy_dict = self.copy()
@@ -279,7 +271,7 @@ class SymbolDictionary(dict):
 
         if inplace:
             self._clean_update(d)
-            return
+            return None
 
         return d
 
@@ -294,7 +286,7 @@ class SymbolDictionary(dict):
 
         if inplace:
             self._clean_update(d)
-            return
+            return None
 
         return d
 
@@ -306,7 +298,7 @@ class SymbolDictionary(dict):
 
         if inplace:
             self._clean_update(d)
-            return
+            return None
 
         return d
 
@@ -318,7 +310,7 @@ class SymbolDictionary(dict):
 
         if inplace:
             self._clean_update(d)
-            return
+            return None
 
         return d
 

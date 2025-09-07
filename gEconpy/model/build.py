@@ -1,8 +1,9 @@
 import logging
 
+from pathlib import Path
+
 import pytensor.tensor as pt
 import sympy as sp
-from pathlib import Path
 
 from pymc.pytensorf import rewrite_pregrad
 from pytensor import graph_replace
@@ -50,15 +51,10 @@ def split_out_hyper_params(
     param_dict: SymbolDictionary
         Dictionary of initial parameter values with shock hyper parameters removed.
     """
-
     new_param_dict = param_dict.copy()
     hyper_param_dict = SymbolDictionary()
 
-    all_hyper_params = [
-        param
-        for dist in shock_prior.values()
-        for param in dist.param_name_to_hyper_name.values()
-    ]
+    all_hyper_params = [param for dist in shock_prior.values() for param in dist.param_name_to_hyper_name.values()]
 
     for param in all_hyper_params:
         if param in new_param_dict:
@@ -69,7 +65,7 @@ def split_out_hyper_params(
 
 
 def _compile_gcn(
-    gcn_path: str,
+    gcn_path: Path,
     simplify_blocks: bool = True,
     simplify_tryreduce: bool = True,
     simplify_constants: bool = True,
@@ -78,7 +74,6 @@ def _compile_gcn(
     return_symbolic: bool = False,
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters="raise",
-    remove_hyperpriors_from_param_dict=True,
     **kwargs,
 ) -> tuple[tuple, tuple, tuple, dict, tuple, dict]:
     outputs = gcn_to_block_dict(gcn_path, simplify_blocks=simplify_blocks)
@@ -107,9 +102,7 @@ def _compile_gcn(
     param_dict, hyper_param_dict = split_out_hyper_params(param_dict, shock_priors)
 
     ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
-    steady_state_relationships = [
-        sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()
-    ]
+    steady_state_relationships = [sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()]
 
     # TODO: Move this to a separate function
     # TODO: Add option to not eliminate deterministic parameters (the user might be interested in them)
@@ -123,7 +116,7 @@ def _compile_gcn(
     reduced_params = []
     final_deterministics = deterministic_dict.copy()
 
-    for param in deterministic_dict.keys():
+    for param in deterministic_dict:
         if not any(eq.has(param) for eq in equations + steady_state_relationships):
             reduced_params.append(param)
             del final_deterministics[param]
@@ -215,6 +208,7 @@ def model_from_gcn(
     on_unused_parameters="raise",
     **kwargs,
 ) -> Model:
+    gcn_path = Path(gcn_path)
     objects, dictionaries, functions, cache, priors, options = _compile_gcn(
         gcn_path,
         simplify_blocks=simplify_blocks,
@@ -312,21 +306,16 @@ def statespace_from_gcn(
 
     # Check that the entire steady state has been provided
     if steady_state_mapping is None or len(steady_state_mapping) != len(variables):
-        raise NotImplementedError(
-            "Numeric steady state not yet implemented in StateSpace model"
-        )
+        raise NotImplementedError("Numeric steady state not yet implemented in StateSpace model")
 
     A, B, C, D = linearized_matrices
 
-    not_loglin_flags = next(
-        x for x in cache.values() if x.name == "not_loglin_variable"
-    )
+    not_loglin_flags = next(x for x in cache.values() if x.name == "not_loglin_variable")
 
     # First replace deterministic variables with functions of input variables in the user-provided steady state
     # expressiong
     steady_state_mapping = {
-        k: graph_replace(v, parameter_mapping, strict=False)
-        for k, v in steady_state_mapping.items()
+        k: graph_replace(v, parameter_mapping, strict=False) for k, v in steady_state_mapping.items()
     }
 
     ss_vec = pt.stack(list(steady_state_mapping.values()))
@@ -360,9 +349,7 @@ def statespace_from_gcn(
     ss_resid, ss_jac, ss_error, ss_grad, ss_hess = graph_replace(
         [ss_resid, ss_jac, ss_error, ss_grad, ss_hess], replacements, strict=False
     )
-    A, B, C, D = rewrite_pregrad(
-        graph_replace([A, B, C, D], replacements, strict=False)
-    )
+    A, B, C, D = rewrite_pregrad(graph_replace([A, B, C, D], replacements, strict=False))
 
     return DSGEStateSpace(
         variables=variables,

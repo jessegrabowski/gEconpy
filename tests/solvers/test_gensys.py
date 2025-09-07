@@ -352,18 +352,10 @@ class GensysComponentTests(unittest.TestCase):
             ]
         )
 
-        np.testing.assert_allclose(
-            A, ans_A, err_msg="A not equal to requested precision"
-        )
-        np.testing.assert_allclose(
-            B, ans_B, err_msg="B not equal to requested precision"
-        )
-        np.testing.assert_allclose(
-            Q, ans_Q, err_msg="Q not equal to requested precision"
-        )
-        np.testing.assert_allclose(
-            Z, ans_Z, err_msg="Z not equal to requested precision"
-        )
+        np.testing.assert_allclose(A, ans_A, err_msg="A not equal to requested precision")
+        np.testing.assert_allclose(B, ans_B, err_msg="B not equal to requested precision")
+        np.testing.assert_allclose(Q, ans_Q, err_msg="Q not equal to requested precision")
+        np.testing.assert_allclose(Z, ans_Z, err_msg="Z not equal to requested precision")
 
     def test_qzswitch(self):
         # TODO: Find matrices that test conditions (1) and (2) in qzswitch (most will only hit condition 3)
@@ -533,18 +525,10 @@ class GensysComponentTests(unittest.TestCase):
         # Riddle me this: qzswitch tests only pass at 3 decimal places of precision, but qzdiv tests, which call
         # qzswitch multiple times, pass at 4!
 
-        np.testing.assert_allclose(
-            A, ans_A, atol=1e-3, err_msg="A not close to requested precision"
-        )
-        np.testing.assert_allclose(
-            B, ans_B, atol=1e-3, err_msg="B not close to requested precision"
-        )
-        np.testing.assert_allclose(
-            Q, ans_Q, atol=1e-3, err_msg="Q not close to requested precision"
-        )
-        np.testing.assert_allclose(
-            Z, ans_Z, atol=1e-3, err_msg="Z not close to requested precision"
-        )
+        np.testing.assert_allclose(A, ans_A, atol=1e-3, err_msg="A not close to requested precision")
+        np.testing.assert_allclose(B, ans_B, atol=1e-3, err_msg="B not close to requested precision")
+        np.testing.assert_allclose(Q, ans_Q, atol=1e-3, err_msg="Q not close to requested precision")
+        np.testing.assert_allclose(Z, ans_Z, atol=1e-3, err_msg="Z not close to requested precision")
 
     def test_determine_n_unstable(self):
         A, B, _, _ = self.unpack_matrices()

@@ -1,4 +1,5 @@
 import re
+
 from importlib.util import find_spec
 
 import numpy as np
@@ -11,13 +12,13 @@ from scipy import optimize
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
 from gEconpy.model.steady_state import (
+    compile_model_ss_functions,
     print_steady_state,
     system_to_steady_state,
-    compile_model_ss_functions,
 )
 from gEconpy.parser.file_loaders import (
-    gcn_to_block_dict,
     block_dict_to_model_primitives,
+    gcn_to_block_dict,
     simplify_provided_ss_equations,
     validate_results,
 )
@@ -57,22 +58,18 @@ def root_and_min_agree_helper(model: Model, **kwargs):
     assert ss_root.success
     assert ss_minimize.success
 
-    for k in ss_root.keys():
+    for k in ss_root:
         assert_allclose(ss_root[k], ss_minimize[k], err_msg=k)
 
 
 def test_solve_ss_with_partial_user_solution():
-    model_1 = load_and_cache_model(
-        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     res = model_1.steady_state(verbose=False, progressbar=False)
     assert res.success
 
 
 def test_wrong_user_solutions_raises():
-    model_1 = load_and_cache_model(
-        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
 
     expected_msg = (
         "User-provide steady state is not valid. The following equations had non-zero residuals "
@@ -84,9 +81,7 @@ def test_wrong_user_solutions_raises():
 
 
 def test_print_steady_state_report_solver_successful(caplog):
-    model_1 = load_and_cache_model(
-        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     res = model_1.steady_state(verbose=False, progressbar=False)
 
     expected_output = """A_ss               1.000
@@ -108,9 +103,7 @@ def test_print_steady_state_report_solver_successful(caplog):
 
 
 def test_print_steady_state_report_solver_fails(caplog):
-    model_1 = load_and_cache_model(
-        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     result = model_1.steady_state(verbose=False, progressbar=False)
 
     # Spoof a failed solving attempt
@@ -133,9 +126,7 @@ def test_print_steady_state_report_solver_fails(caplog):
 
 
 def test_incomplete_ss_relationship_raises_with_root():
-    model_1 = load_and_cache_model(
-        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     expected_msg = (
         'Solving a partially provided steady state with how = "root" is only allowed if applying the given '
         "values results in a new square system.\n"
@@ -150,26 +141,18 @@ def test_incomplete_ss_relationship_raises_with_root():
 
 
 def test_wrong_and_incomplete_ss_relationship_fails_with_minimize():
-    model_1 = load_and_cache_model(
-        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
-    res = model_1.steady_state(
-        verbose=False, progressbar=False, fixed_values={"K_ss": 3.0}
-    )
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    res = model_1.steady_state(verbose=False, progressbar=False, fixed_values={"K_ss": 3.0})
     assert not res.success
 
 
 def test_numerical_solvers_suceed_and_agree():
-    model_1 = load_and_cache_model(
-        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     root_and_min_agree_helper(model_1, verbose=False, progressbar=False)
 
 
 def test_steady_state_matches_analytic():
-    model_1 = load_and_cache_model(
-        "one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     param_dict = model_1.parameters().to_sympy()
     alpha, beta, delta, gamma, rho = list(param_dict.keys())
 
@@ -180,22 +163,17 @@ def test_steady_state_matches_analytic():
     U_ss = 1 / (1 - beta) * (C_ss ** (1 - gamma) - 1) / (1 - gamma)
 
     ss_var = [x.to_ss().name for x in model_1.variables]
-    ss_dict = {
-        k: float(v.subs(param_dict))
-        for k, v in zip(ss_var, [A_ss, C_ss, K_ss, U_ss, lambda_ss])
-    }
+    ss_dict = {k: float(v.subs(param_dict)) for k, v in zip(ss_var, [A_ss, C_ss, K_ss, U_ss, lambda_ss], strict=False)}
 
     root_ss_dict = model_1.steady_state(verbose=False, progressbar=False, how="root")
     assert root_ss_dict.success
 
-    minimize_ss_dict = model_1.steady_state(
-        verbose=False, progressbar=False, how="minimize"
-    )
+    minimize_ss_dict = model_1.steady_state(verbose=False, progressbar=False, how="minimize")
     assert minimize_ss_dict.success
 
-    for k in ss_dict:
-        assert_allclose(ss_dict[k], root_ss_dict[k])
-        assert_allclose(ss_dict[k], minimize_ss_dict[k])
+    for param_name, ss_value in ss_dict.items():
+        assert_allclose(ss_value, root_ss_dict[param_name])
+        assert_allclose(ss_value, minimize_ss_dict[param_name])
 
 
 def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
@@ -233,12 +211,7 @@ def test_steady_state_matches_analytic_w_calibrated_params():
     lambda_ss = theta * (C_ss**theta * (1 - L_ss) ** (1 - theta)) ** (1 - tau) / C_ss
     q_ss = lambda_ss
 
-    U_ss = (
-        1
-        / (1 - beta)
-        * (C_ss**theta * (1 - L_ss) ** (1 - theta)) ** (1 - tau)
-        / (1 - tau)
-    )
+    U_ss = 1 / (1 - beta) * (C_ss**theta * (1 - L_ss) ** (1 - theta)) ** (1 - tau) / (1 - tau)
 
     f = sp.lambdify(alpha, (L_ss / K_ss - 0.36).simplify().subs(param_dict))
     res = optimize.root_scalar(f, bracket=[1e-4, 0.99])
@@ -272,16 +245,12 @@ def test_steady_state_matches_analytic_w_calibrated_params():
 
 
 def test_numerical_solvers_succeed_and_agree_RBC():
-    model_3 = load_and_cache_model(
-        "rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_3 = load_and_cache_model("rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     root_and_min_agree_helper(model_3, verbose=False, progressbar=False)
 
 
 def test_RBC_steady_state_matches_analytic():
-    model_3 = load_and_cache_model(
-        "rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_3 = load_and_cache_model("rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     param_dict = model_3.parameters().to_sympy()
 
     alpha, beta, delta, rho_A, sigma_C, sigma_L = list(param_dict.keys())
@@ -303,14 +272,7 @@ def test_RBC_steady_state_matches_analytic():
     L_ss = (1 - alpha) * Y_ss / w_ss
     P_ss = (w_ss / (1 - alpha)) ** (1 - alpha) * (r_ss / alpha) ** alpha
 
-    U_ss = (
-        1
-        / (1 - beta)
-        * (
-            C_ss ** (1 - sigma_C) / (1 - sigma_C)
-            - L_ss ** (1 + sigma_L) / (1 + sigma_L)
-        )
-    )
+    U_ss = 1 / (1 - beta) * (C_ss ** (1 - sigma_C) / (1 - sigma_C) - L_ss ** (1 + sigma_L) / (1 + sigma_L))
 
     TC_ss = -(r_ss * K_ss + w_ss * L_ss)
 
@@ -339,9 +301,7 @@ def test_RBC_steady_state_matches_analytic():
 
 @pytest.mark.include_nk
 def test_numerical_solvers_succeed_and_agree_NK():
-    model_4 = load_and_cache_model(
-        "full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_4 = load_and_cache_model("full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED)
 
     # This model's SS can't be solved without some help, so we provide the "obvious" solutions
     # This is almost equivalent to the full_nk_partial_ss.gcn, with a bit less info
@@ -363,9 +323,7 @@ def test_numerical_solvers_succeed_and_agree_NK():
 
 @pytest.mark.include_nk
 def test_steady_state_matches_analytic_NK():
-    model_4 = load_and_cache_model(
-        "full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED
-    )
+    model_4 = load_and_cache_model("full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED)
 
     param_dict = model_4.parameters().to_sympy()
     (
@@ -399,18 +357,13 @@ def test_steady_state_matches_analytic_NK():
     r_G_ss = 1 / beta
 
     mc_ss = 1 / (1 + psi_p)
-    w_ss = (
-        (1 - alpha)
-        * mc_ss ** (1 / (1 - alpha))
-        * (alpha / r_ss) ** (alpha / (1 - alpha))
-    )
+    w_ss = (1 - alpha) * mc_ss ** (1 / (1 - alpha)) * (alpha / r_ss) ** (alpha / (1 - alpha))
     w_star_ss = w_ss
 
     Y_ss = (
         w_ss ** ((sigma_L + 1) / (sigma_C + sigma_L))
         * ((-beta * phi_H + 1) / (psi_w + 1)) ** (1 / (sigma_C + sigma_L))
-        * (r_ss / ((1 - phi_H) * (-alpha * delta * mc_ss + r_ss)))
-        ** (sigma_C / (sigma_C + sigma_L))
+        * (r_ss / ((1 - phi_H) * (-alpha * delta * mc_ss + r_ss))) ** (sigma_C / (sigma_C + sigma_L))
         / (mc_ss * (1 - alpha)) ** (sigma_L / (sigma_C + sigma_L))
     )
 
@@ -429,20 +382,13 @@ def test_steady_state_matches_analytic_NK():
     L_ss = (1 - alpha) * Y_ss * mc_ss / w_ss
 
     U_ss = (
-        1
-        / (1 - beta)
-        * (
-            ((1 - phi_H) * C_ss) ** (1 - sigma_C) / (1 - sigma_C)
-            - L_ss ** (1 + sigma_L) / (1 + sigma_L)
-        )
+        1 / (1 - beta) * (((1 - phi_H) * C_ss) ** (1 - sigma_C) / (1 - sigma_C) - L_ss ** (1 + sigma_L) / (1 + sigma_L))
     )
 
     TC_ss = -(r_ss * K_ss + w_ss * L_ss)
     Div_ss = Y_ss + TC_ss
 
-    LHS_ss = (
-        1 / (1 - beta * eta_p * pi_ss ** (1 / psi_p)) * lambda_ss * Y_ss * pi_star_ss
-    )
+    LHS_ss = 1 / (1 - beta * eta_p * pi_ss ** (1 / psi_p)) * lambda_ss * Y_ss * pi_star_ss
 
     RHS_ss = 1 / (1 + psi_p) * LHS_ss
 
@@ -502,9 +448,7 @@ JAX_INSTALLED = find_spec("jax") is not None
 
 @pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_all_model_functions_return_arrays(backend: BACKENDS):
-    outputs = gcn_to_block_dict(
-        "tests/_resources/test_gcns/one_block_1_ss.gcn", simplify_blocks=True
-    )
+    outputs = gcn_to_block_dict("tests/_resources/test_gcns/one_block_1_ss.gcn", simplify_blocks=True)
     block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
 
     (
@@ -528,9 +472,7 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
     )
 
     ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
-    steady_state_relationships = [
-        sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()
-    ]
+    steady_state_relationships = [sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()]
     validate_results(
         equations,
         steady_state_relationships,

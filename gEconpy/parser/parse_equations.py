@@ -10,8 +10,7 @@ from gEconpy.parser.constants import CALIBRATING_EQ_TOKEN, LOCAL_DICT, TIME_INDE
 
 def rebuild_eqs_from_parser_output(parser_output: list[str]) -> list[list[str]]:
     """
-    Takes the output of pyparsing applied to the text of a model block and returns a list of lists of tokens
-    that represent equations.
+    Convert parser output to list of equations.
 
     The heavy lifting of parsing the model blocks is done by the pyparsing, which returns a list of tokens found
     between the BLOCK_START_TOKEN and BLOCK_END_TOKEN. These lists need to be further decomposed into equations,
@@ -33,16 +32,23 @@ def rebuild_eqs_from_parser_output(parser_output: list[str]) -> list[list[str]]:
 
     Examples
     --------
-    ..code-block:: text
-        rebuild_eqs_from_parser_output([A[], +, B[], +, C[], ;, Y[], =, L[], ^, alpha, *, K[-1], ^, (, 1, -, alpha, ), ;]) [[A[], +, B[], +, C[]],
-         [Y[], =, L[], ^, alpha, *, K[-1], ^, (, 1, -, alpha, )]
-    """
+    .. code-block:: text
 
+        rebuild_eqs_from_parser_output([
+            A[], +, B[], +, C[], ;,
+            Y[], =, L[], ^, alpha, *, K[-1], ^, (, 1, -, alpha, ), ;
+        ])
+        # Output:
+        [
+            [A[], +, B[], +, C[]],
+            [Y[], =, L[], ^, alpha, *, K[-1], ^, (, 1, -, alpha, )]
+        ]
+    """
     eqs = []
     eq = []
-    for element in parser_output:
+    for raw_element in parser_output:
         # TODO: Why are commas appearing in the control list after parsing? This is a hack fix.
-        element = element.replace(",", "").strip()
+        element = raw_element.replace(",", "").strip()
         if len(element) > 0:
             eq.append(element)
         if ";" in element:
@@ -68,7 +74,8 @@ def token_classifier(token: str) -> str:
     Returns
     -------
     classification: str
-        Classification of the model token. One of ['operator', 'variable', 'number', 'lagrange_definition', 'calibration_definition', 'parameter']
+        Classification of the model token. One of ['operator', 'variable', 'number', 'lagrange_definition',
+        'calibration_definition', 'parameter']
 
     Notes
     -----
@@ -77,7 +84,6 @@ def token_classifier(token: str) -> str:
          associated with the equation.
         2. The arrow "->", that defines an calibrating equation for a parameter.
     """
-
     if token in ["E[]", "log", "exp"] or token in "+-*/^=()[]":
         return "operator"
     if "[" in token and "]" in token:
@@ -109,10 +115,9 @@ def has_num_index(token: str) -> bool:
     bool
         Whether the variable has a numerical lag/lead index.
     """
-
     numbers = list("0123456789")
     index_part = token.split("[")[-1]
-    return any([n in index_part for n in numbers])
+    return any(n in index_part for n in numbers)
 
 
 def extract_time_index(token: str) -> str:
@@ -140,16 +145,14 @@ def extract_time_index(token: str) -> str:
     >>> extract_time_index("alpha")
     >>> # Out: 't'
     """
-
     match = re.search(r"\[(.*?)\]", token)
     if match:
         index = match.group(1)
         if index == "ss":
             return "ss"
-        elif index.startswith("-"):
+        if index.startswith("-"):
             return f"tL{index[1:]}"
-        else:
-            return f"t{index}"
+        return f"t{index}"
     return "t"
 
 
@@ -200,7 +203,6 @@ def convert_to_python_operator(token: str) -> str:
 
     TODO: Implement an expectation operation in Sympy that can inserted here.
     """
-
     if token == "^":
         return "**"
     if token == "=":
@@ -233,19 +235,17 @@ def rename_time_indexes(eq: sp.Eq) -> sp.Eq:
     -----
     The function assumes the index is always at the end of the variable name.
     """
-
     ret_eq = eq.copy()
     for atom in ret_eq.atoms():
-        if isinstance(atom, sp.core.Symbol):
-            if re.search(r"tL?\d+", atom.name) is not None:
-                name_tokens = atom.name.split("_")
-                index_token = name_tokens[-1]
-                operator = "-" if "L" in index_token else "+"
-                number = re.search(r"\d+", index_token)[0]
-                new_index = "".join(["_{t", operator, number, "}"])
+        if isinstance(atom, sp.core.Symbol) and re.search(r"tL?\d+", atom.name) is not None:
+            name_tokens = atom.name.split("_")
+            index_token = name_tokens[-1]
+            operator = "-" if "L" in index_token else "+"
+            number = re.search(r"\d+", index_token)[0]
+            new_index = "".join(["_{t", operator, number, "}"])
 
-                var_name = "_".join(s for s in name_tokens[:-1])
-                atom.name = var_name + new_index
+            var_name = "_".join(s for s in name_tokens[:-1])
+            atom.name = var_name + new_index
 
     return ret_eq
 
@@ -269,7 +269,6 @@ def convert_symbols_to_time_symbols(eq: sp.Eq) -> sp.Eq:
     Despite having time indexes, SymPy symbols are not "time aware". This function replaces all sp.Symbols with
     TimeAwareSymbols, which are extended to include a time index.
     """
-
     sub_dict = {}
     var_list = [variable for variable in eq.atoms() if isinstance(variable, sp.Symbol)]
 
@@ -281,10 +280,7 @@ def convert_symbols_to_time_symbols(eq: sp.Eq) -> sp.Eq:
             time_part = name_tokens[-1]
 
             time_part = re.sub(r"[\{\}t]", "", time_part)
-            if len(time_part) == 0:
-                time_index = 0
-            else:
-                time_index = int(time_part)
+            time_index = 0 if len(time_part) == 0 else int(time_part)
             time_var = TimeAwareSymbol(name_part, time_index)
             sub_dict[variable] = time_var
         elif "_ss" in var_name:
@@ -296,12 +292,11 @@ def convert_symbols_to_time_symbols(eq: sp.Eq) -> sp.Eq:
     return eq.subs(sub_dict)
 
 
-def single_symbol_to_sympy(
-    variable: str, assumptions: dict | None = None
-) -> TimeAwareSymbol:
+def single_symbol_to_sympy(variable: str, assumptions: dict | None = None) -> TimeAwareSymbol:
     """
-    Convert a single gEcon style variable (e.g. X[], or X[-1]) to a Time-Aware Sympy symbol. If it seems to be a
-    parameter (no []), it returns a standard Sympy symbol instead.
+    Convert a single gEcon style variable (e.g. X[], or X[-1]) to a Time-Aware Sympy symbol.
+
+    If it seems to be a parameter (no []), it returns a standard Sympy symbol instead.
 
     Parameters
     ----------
@@ -329,14 +324,11 @@ def single_symbol_to_sympy(
 
     if time_part == "ss":
         return TimeAwareSymbol(variable_name, 0).to_ss()
-    else:
-        time_index = int(time_part) if time_part != "" else 0
-        return TimeAwareSymbol(variable_name, time_index, **assumptions[variable_name])
+    time_index = int(time_part) if time_part != "" else 0
+    return TimeAwareSymbol(variable_name, time_index, **assumptions[variable_name])
 
 
-def build_sympy_equations(
-    eqs: list[list[str]], assumptions: dict | None = None
-) -> list[sp.Eq]:
+def build_sympy_equations(eqs: list[list[str]], assumptions: dict | None = None) -> list[sp.Eq]:
     """
     Convert processed list of equation tokens to sympy equations.
 
@@ -363,29 +355,30 @@ def build_sympy_equations(
     Examples
     --------
     .. code-block:: py
-        eqs = [['Y', '=', 'C', '+', 'I']]
-        assumptions = {'Y': {'real': True}, 'C': {'real': True}, 'I': {'real': True}}
+        eqs = [["Y", "=", "C", "+", "I"]]
+        assumptions = {"Y": {"real": True}, "C": {"real": True}, "I": {"real": True}}
         build_sympy_equations(eqs, assumptions)
     """
-
     if assumptions is None:
         assumptions = defaultdict(defaultdict)
 
     eqs_processed = []
-    for eq in eqs:
+    for raw_eq in eqs:
         eq_str = ""
         calibrating_parameter = None
         sub_dict = LOCAL_DICT.copy()
         flags = {"is_calibrating": False}
 
-        if CALIBRATING_EQ_TOKEN in eq:
-            arrow_idx = eq.index(CALIBRATING_EQ_TOKEN)
-            calibrating_parameter = eq[arrow_idx + 1]
-            eq = eq[:arrow_idx]
+        if CALIBRATING_EQ_TOKEN in raw_eq:
+            arrow_idx = raw_eq.index(CALIBRATING_EQ_TOKEN)
+            calibrating_parameter = raw_eq[arrow_idx + 1]
+            eq = raw_eq[:arrow_idx]
+        else:
+            eq = raw_eq
 
-        for token in eq:
-            token_type = token_classifier(token)
-            token = token.strip()
+        for raw_token in eq:
+            token_type = token_classifier(raw_token)
+            token = raw_token.strip()
             if token_type == "variable":
                 time_index = extract_time_index(token)
                 token_base = remove_timing_information(token)
@@ -396,9 +389,7 @@ def build_sympy_equations(
                         f"Invalid time index {time_index} associated with token {token} from equation: {eq}"
                     )
 
-                symbol = TimeAwareSymbol(
-                    token_base, TIME_INDEX_DICT[time_index], **assumptions[token_base]
-                )
+                symbol = TimeAwareSymbol(token_base, TIME_INDEX_DICT[time_index], **assumptions[token_base])
                 sub_dict[token] = symbol
 
             elif token_type == "parameter":
@@ -413,20 +404,13 @@ def build_sympy_equations(
         try:
             eq_sympy = sp.parse_expr(eq_str, evaluate=False, local_dict=sub_dict)
         except Exception as e:
-            raise ValueError(
-                f"Error encountered the following error while parsing: {eq_str}\n"
-            ) from e
+            raise ValueError(f"Error encountered the following error while parsing: {eq_str}\n") from e
 
         eq_sympy = sp.Eq(*eq_sympy)
         flags["is_calibrating"] = calibrating_parameter is not None
         if flags["is_calibrating"]:
-            param = sp.Symbol(
-                calibrating_parameter, **assumptions[calibrating_parameter]
-            )
+            param = sp.Symbol(calibrating_parameter, **assumptions[calibrating_parameter])
             eq_sympy = sp.Eq(param, eq_sympy.lhs - eq_sympy.rhs)
-
-        # eq_sympy = rename_time_indexes(eq_sympy)
-        # eq_sympy = convert_symbols_to_time_symbols(eq_sympy)
 
         eqs_processed.append((eq_sympy, flags))
 
