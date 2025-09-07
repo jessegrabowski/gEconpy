@@ -27,7 +27,7 @@ _log = logging.getLogger(__name__)
 
 def override_dummy_wrapper(f, param_name="not_loglin_variable"):
     """
-    Wrap a function to map a parameter name to a _Dummy argument in a sympy lambdify generated function
+    Wrap a function to map a parameter name to a _Dummy argument in a sympy lambdify generated function.
 
     To have a 1d array input to a sympy lambdify function, it is necessary to use an IndexBase. IndexBase,
     unfortunately, always ends up as a Dummy value when lambdified. This wrapper finds a single dummy value
@@ -70,7 +70,7 @@ def make_all_variable_time_combinations(
     variables,
 ) -> tuple[list[TimeAwareSymbol], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     """
-    Given a list of TimeAwareSymbols, all at time t, shift them to create all possible lags, current, and lead variables.
+    Shift a list of TimeAwareSymbols to create all possible lags, current, and lead variables.
 
     Parameters
     ----------
@@ -173,9 +173,7 @@ def linearize_model(
     [1] gEcon User's Guide, page 54, equation 9.9.
     """
     if order != 1:
-        raise NotImplementedError(
-            "Only order = 1 linearization is currently implemented."
-        )
+        raise NotImplementedError("Only order = 1 linearization is currently implemented.")
 
     ss_variables = [x.to_ss() for x in variables]
     lags, now, leads = make_all_variable_time_combinations(variables)
@@ -186,9 +184,7 @@ def linearize_model(
     D = eq_to_ss(eq_vec.jacobian(shocks)) if shocks else sp.ZeroMatrix(*eq_vec.shape)
 
     not_loglin_var = sp.IndexedBase("not_loglin_variable", shape=(len(variables),))
-    T = sp.diag(
-        *[ss_var ** (1 - not_loglin_var[i]) for i, ss_var in enumerate(ss_variables)]
-    )
+    T = sp.diag(*[ss_var ** (1 - not_loglin_var[i]) for i, ss_var in enumerate(ss_variables)])
 
     if shocks:
         shock_subs = {x.to_ss(): 0 for x in shocks}
@@ -225,8 +221,7 @@ def make_not_loglin_flags(
 
     if verbose and len(not_loglin_variables) > 0:
         _log.warning(
-            "The following variables will not be log-linearized at the user's request: "
-            f"{not_loglin_variables}"
+            f"The following variables will not be log-linearized at the user's request: {not_loglin_variables}"
         )
 
     n_variables = len(vars_and_calibrated)
@@ -235,8 +230,9 @@ def make_not_loglin_flags(
     for i, name in enumerate(var_names):
         not_loglin_flags[i] = name in not_loglin_variables
 
+    FLOAT_ZEROS = 1e-8
     ss_values = np.array(list(steady_state.values()))
-    ss_zeros = np.abs(ss_values) < 1e-8
+    ss_zeros = np.abs(ss_values) < FLOAT_ZEROS
     ss_negative = ss_values < 0.0
 
     if np.any(ss_zeros):
@@ -271,7 +267,6 @@ def compile_linearized_system(
     deterministic_dict: SymbolDictionary[sp.Symbol, sp.Expr],
     calib_dict: SymbolDictionary[sp.Symbol, float | sp.Expr],
     shocks: list[TimeAwareSymbol],
-    model_is_linear: bool = False,
     backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
     cache: dict | None = None,
@@ -335,9 +330,7 @@ def statespace_to_gEcon_representation(A, T, R, tol):
     n_vars = T.shape[1]
     n_shocks = R.shape[1]
 
-    state_var_idx = np.where(
-        np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol
-    )[0]
+    state_var_idx = np.where(np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol)[0]
     state_var_mask = np.isin(np.arange(n_vars), state_var_idx)
 
     shock_idx = np.arange(n_shocks)
@@ -361,12 +354,8 @@ def statespace_to_gEcon_representation(A, T, R, tol):
 
 
 def check_perturbation_solution(A, B, C, D, T, R, tol=1e-8):
-    P, Q, R, S, A_prime, R_prime, S_prime = statespace_to_gEcon_representation(
-        A, T, R, tol
-    )
-    norm_deterministic, norm_stochastic = residual_norms(
-        B, C, D, Q, P, A_prime, R_prime, S_prime
-    )
+    P, Q, R, S, A_prime, R_prime, S_prime = statespace_to_gEcon_representation(A, T, R, tol)
+    norm_deterministic, norm_stochastic = residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
 
     _log.info(f"Norm of deterministic part: {norm_deterministic:0.9f}")
     _log.info(f"Norm of stochastic part:    {norm_stochastic:0.9f}")
@@ -390,9 +379,7 @@ def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
     eig[:, 2] = np.imag(eigenval)
 
     sorted_idx = np.argsort(eig[:, 0])
-    eig = eig[sorted_idx, :]
-
-    return eig
+    return eig[sorted_idx, :]
 
 
 def check_bk_condition(
@@ -406,9 +393,10 @@ def check_bk_condition(
     return_value: Literal["dataframe", "bool", None] = "dataframe",
 ) -> bool | pd.DataFrame | None:
     """
-    Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
-    unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of forward-looking variables. Failing
-    this test suggests timing problems in the definition of the model.
+    Compute the generalized eigenvalues of system in the form presented in [1].
+
+    Per [2], the number of unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of
+    forward-looking variables. Failing this test suggests timing problems in the definition of the model.
 
     Parameters
     ----------
@@ -477,11 +465,10 @@ def check_bk_condition(
         _log.info(message)
 
     if return_value is None:
-        return
+        return None
     if return_value == "dataframe":
         return eig
-    else:
-        return ~condition_not_satisfied
+    return ~condition_not_satisfied
 
 
 class BlanchardKahnCondition(Op):
@@ -499,15 +486,12 @@ class BlanchardKahnCondition(Op):
 
         return Apply(self, inputs, outputs)
 
-    def perform(
-        self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]
-    ) -> None:
+    def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
         A, B, C, D = inputs
-        eig = check_bk_condition(
-            A, B, C, D, tol=self.tol, verbose=False, return_value="dataframe"
-        )
+        eig = check_bk_condition(A, B, C, D, tol=self.tol, verbose=False, return_value="dataframe")
 
-        n_forward = (np.abs(C).sum(axis=0) > 1e-8).sum().astype(int)
+        FLOAT_ZERO = 1e-8
+        n_forward = (np.abs(C).sum(axis=0) > FLOAT_ZERO).sum().astype(int)
         n_greater_than_one = (eig["Modulus"] > 1).sum()
 
         condition_not_satisfied = n_forward != n_greater_than_one
@@ -525,7 +509,7 @@ def check_bk_condition_pt(
     tol: float = 1e-8,
 ):
     """
-    Check the Blanchard-Kahn condition for a model
+    Check the Blanchard-Kahn condition for a model.
 
     Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
     unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of forward-looking variables. Failing
@@ -556,5 +540,4 @@ def check_bk_condition_pt(
     n_greater_than_one: int
         Number of eigenvalues greater than one in modulus.
     """
-
     return BlanchardKahnCondition(tol=tol)(A, B, C, D)

@@ -2,7 +2,7 @@ import pytest
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.parser import parse_equations, gEcon_parser
+from gEconpy.parser import gEcon_parser, parse_equations
 
 classification_cases = [
     "Y[] = C[] + I[]",
@@ -44,7 +44,7 @@ classification_answers = [
 
 @pytest.mark.parametrize(
     "case, expected_result",
-    zip(classification_cases, classification_answers),
+    zip(classification_cases, classification_answers, strict=False),
     ids=["simple", "complex", "calibration"],
 )
 def test_token_classification(case, expected_result):
@@ -217,15 +217,11 @@ def test_parameters_parsed_with_time_subscripts():
     """
 
     parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-    block_dict, options, tryreduce, assumptions = (
-        gEcon_parser.split_gcn_into_dictionaries(parser_output)
-    )
+    block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(parser_output)
     system = gEcon_parser.parsed_block_to_dict(block_dict["SYSTEM_EQUATIONS"])
-    parser_output = parse_equations.build_sympy_equations(
-        system["calibration"], assumptions
-    )
+    parser_output = parse_equations.build_sympy_equations(system["calibration"], assumptions)
 
-    for eq, attrs in parser_output:
+    for eq, _attrs in parser_output:
         assert not any(isinstance(x, TimeAwareSymbol) for x in eq.atoms())
 
 
@@ -251,11 +247,9 @@ def test_parse_equations_to_sympy():
     block_dict = gEcon_parser.parsed_block_to_dict(test_eq)
 
     for i, (component, equations) in enumerate(block_dict.items()):
-        block_dict[component], flags = list(
-            zip(*parse_equations.build_sympy_equations(equations))
-        )
+        block_dict[component], flags = list(zip(*parse_equations.build_sympy_equations(equations), strict=False))
         eq1 = block_dict[component][0]
         eq2 = answers[i]
 
         assert ((eq1.lhs - eq1.rhs) - (eq2.lhs - eq2.rhs)).simplify() == 0
-        assert not flags[0]["is_calibrating"] if i < 2 else flags[0]["is_calibrating"]
+        assert flags[0]["is_calibrating"] == (component in ["calibration"])

@@ -18,7 +18,7 @@ def pytest_runtest_setup(item):
 
 @pytest.fixture
 def gcn_file_1():
-    GCN_file = """
+    return """
                 block HOUSEHOLD
                 {
                     definitions
@@ -53,4 +53,3 @@ def gcn_file_1():
                     };
                 };
                 """
-    return GCN_file

@@ -1,6 +1,6 @@
-from gEconpy.parser.dist_syntax import dist_syntax
 import pytest
 
+from gEconpy.parser.dist_syntax import dist_syntax
 
 test_strings = [
     "Normal(mu=3, sigma=1)",
@@ -89,7 +89,7 @@ expected_results = [
 ]
 
 
-@pytest.mark.parametrize("case, expected_results", zip(test_strings, expected_results))
+@pytest.mark.parametrize("case, expected_results", zip(test_strings, expected_results, strict=False))
 def test_distribution_parser(case, expected_results):
     [results] = dist_syntax.parse_string(case, parse_all=True)
 

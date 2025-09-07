@@ -39,10 +39,7 @@ valid_solvers = get_args(SolverType)
 
 
 class DSGEStateSpace(PyMCStateSpace):
-    """
-    Core class for estimating DSGE models using PyMC.
-
-    """
+    """Core class for estimating DSGE models using PyMC."""
 
     def __init__(
         self,
@@ -64,7 +61,7 @@ class DSGEStateSpace(PyMCStateSpace):
         verbose: bool = True,
     ):
         """
-        Create a :class:`pmx.statespace.PyMCStateSpace` model representing a linearized DSGE
+        Create a :class:`pmx.statespace.PyMCStateSpace` model representing a linearized DSGE.
 
         Users should not create this class direction, and should instead use
         :func:`gEconpy.model.build.statespace_from_gcn` to compile a statespace model from a gcn file.
@@ -117,9 +114,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self.parameter_mapping = parameter_mapping
         self.steady_state_mapping = steady_state_mapping
-        self.input_parameters = [
-            x for x in parameter_mapping.keys() if x.name in param_dict
-        ]
+        self.input_parameters = [x for x in parameter_mapping if x.name in param_dict]
 
         self.ss_jac = ss_jac
         self.ss_resid = ss_resid
@@ -143,6 +138,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self._bk_output = None
         self._policy_resid = None
+        self._n_steps = None
 
         self.verbose = verbose
 
@@ -159,12 +155,41 @@ class DSGEStateSpace(PyMCStateSpace):
             measurement_error=False,
         )
 
+    def _setup_policy_matrices(
+        self, A: pt.TensorVariable, B: pt.TensorVariable, C: pt.TensorVariable, D: pt.TensorVariable
+    ) -> tuple[pt.TensorVariable, pt.TensorVariable]:
+        if self._solver == "gensys":
+            T, R, success = gensys_pt(A, B, C, D, **self._solver_kwargs)
+        elif self._solver == "cycle_reduction":
+            T, R = cycle_reduction_pt(A, B, C, D, **self._solver_kwargs)
+        else:
+            T, R, n_steps = scan_cycle_reduction(A, B, C, D, mode=self._mode, **self._solver_kwargs)
+            self._n_steps = n_steps
+
+        return T, R
+
+    def _setup_state_covariance(self):
+        if self.full_covariance:
+            state_cov = self.make_and_register_variable("state_cov", shape=(self.k_posdef, self.k_posdef))
+            self.ssm["state_cov", :, :] = state_cov
+            return
+
+        for i, shock in enumerate(self.shocks):
+            sigma = self.make_and_register_variable(f"sigma_{shock.base_name}", shape=())
+            self.ssm["state_cov", i, i] = sigma**2
+
+    def _make_design_matrix(self):
+        Z = np.zeros((self.k_endog, self.k_states))
+
+        for i, name in enumerate(self.observed_states):
+            Z[i, self.state_names.index(name)] = 1.0
+
+        return Z
+
     def make_symbolic_graph(self):
         if not self._configured:
             if self.verbose:
-                _log.info(
-                    "Statespace model construction complete, but call the .configure method to finalize."
-                )
+                _log.info("Statespace model construction complete, but call the .configure method to finalize.")
             return
 
         # Register the existing placeholders with the statespace model
@@ -183,22 +208,11 @@ class DSGEStateSpace(PyMCStateSpace):
         )
 
         self._bk_output = check_bk_condition_pt(A, B, C, D)
-        n_steps = None
 
-        if self._solver == "gensys":
-            T, R, success = gensys_pt(A, B, C, D, **self._solver_kwargs)
-        elif self._solver == "cycle_reduction":
-            T, R = cycle_reduction_pt(A, B, C, D, **self._solver_kwargs)
-        else:
-            T, R, n_steps = scan_cycle_reduction(
-                A, B, C, D, mode=self._mode, **self._solver_kwargs
-            )
-
+        T, R = self._setup_policy_matrices(A, B, C, D)
         resid = pt.square(A + B @ T + C @ T @ T).sum()
 
-        ss_resid = pytensor.graph_replace(
-            self.ss_resid, constant_replacements, strict=False
-        )
+        ss_resid = pytensor.graph_replace(self.ss_resid, constant_replacements, strict=False)
         ss_resid = pt.square(ss_resid).sum()
 
         T = rewrite_pregrad(T)
@@ -207,7 +221,6 @@ class DSGEStateSpace(PyMCStateSpace):
         ss_resid = rewrite_pregrad(ss_resid)
 
         self._policy_graph = [T, R]
-        self._n_steps = n_steps
         self._policy_resid = resid
         self._ss_resid = ss_resid
 
@@ -215,31 +228,17 @@ class DSGEStateSpace(PyMCStateSpace):
         self.ssm["selection", :, :] = R
         self.ssm["design", :, :] = self._make_design_matrix()
 
-        if not self.full_covariance:
-            for i, shock in enumerate(self.shocks):
-                sigma = self.make_and_register_variable(
-                    f"sigma_{shock.base_name}", shape=()
-                )
-                self.ssm["state_cov", i, i] = sigma**2
-        else:
-            state_cov = self.make_and_register_variable(
-                "state_cov", shape=(self.k_posdef, self.k_posdef)
-            )
-            self.ssm["state_cov", :, :] = state_cov
+        self._setup_state_covariance()
 
         if self.measurement_error:
             for i, state in enumerate(self.error_states):
-                sigma = self.make_and_register_variable(
-                    f"error_sigma_{state}", shape=()
-                )
+                sigma = self.make_and_register_variable(f"error_sigma_{state}", shape=())
                 self.ssm["obs_cov", i, i] = sigma**2
 
         self.ssm["initial_state", :] = pt.zeros(self.k_states)
 
         Q = self.ssm["state_cov"]
-        self.ssm["initial_state_cov", :, :] = pt.linalg.solve_discrete_lyapunov(
-            T, R @ Q @ R.T
-        )
+        self.ssm["initial_state_cov", :, :] = pt.linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
 
     def configure(
         self,
@@ -288,8 +287,7 @@ class DSGEStateSpace(PyMCStateSpace):
         # Validate solver argument
         if solver not in valid_solvers:
             raise ValueError(
-                f'Unknown solver {solver}, expected one of "gensys", "cycle_reduction", '
-                f'or "scan_cycle_reduction"'
+                f'Unknown solver {solver}, expected one of "gensys", "cycle_reduction", or "scan_cycle_reduction"'
             )
 
         # Check model is identified
@@ -335,14 +333,6 @@ class DSGEStateSpace(PyMCStateSpace):
             verbose=verbose,
         )
 
-    def _make_design_matrix(self):
-        Z = np.zeros((self.k_endog, self.k_states))
-
-        for i, name in enumerate(self.observed_states):
-            Z[i, self.state_names.index(name)] = 1.0
-
-        return Z
-
     @property
     def param_names(self):
         param_names = [x.name for x in self.input_parameters]
@@ -376,15 +366,11 @@ class DSGEStateSpace(PyMCStateSpace):
         if not self._configured:
             return {}
 
-        return {
-            param: None if param != "state_cov" else (SHOCK_DIM, SHOCK_AUX_DIM)
-            for param in self.param_names
-        }
+        return {param: None if param != "state_cov" else (SHOCK_DIM, SHOCK_AUX_DIM) for param in self.param_names}
 
     @property
     def coords(self):
-        coords = make_default_coords(self)
-        return coords
+        return make_default_coords(self)
 
     @property
     def param_info(self):
@@ -436,9 +422,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         pymc_model = pm.modelcontext(None)
 
-        replacement_dict = {
-            var: pymc_model[name] for name, var in self._name_to_variable.items()
-        }
+        replacement_dict = {var: pymc_model[name] for name, var in self._name_to_variable.items()}
 
         A, B, C, D, T, R = graph_replace(
             self._linearized_system_subbed + self._policy_graph,
@@ -447,9 +431,7 @@ class DSGEStateSpace(PyMCStateSpace):
         )
 
         if self._n_steps is not None:
-            n_steps = graph_replace(
-                self._n_steps, replace=replacement_dict, strict=False
-            )
+            n_steps = graph_replace(self._n_steps, replace=replacement_dict, strict=False)
             pm.Deterministic("n_cycle_steps", n_steps.astype(int))
 
         policy_resid, *bk_output, ss_resid = graph_replace(
@@ -462,18 +444,8 @@ class DSGEStateSpace(PyMCStateSpace):
 
         if add_norm_check:
             n_vars, n_shocks = R.shape
-            tm1_grid = np.array(
-                [
-                    [eq.has(var.set_t(-1)) for var in self.variables]
-                    for eq in self.equations
-                ]
-            )
-            t_grid = np.array(
-                [
-                    [eq.has(var.set_t(0)) for var in self.variables]
-                    for eq in self.equations
-                ]
-            )
+            tm1_grid = np.array([[eq.has(var.set_t(-1)) for var in self.variables] for eq in self.equations])
+            t_grid = np.array([[eq.has(var.set_t(0)) for var in self.variables] for eq in self.equations])
 
             tm1_idx = np.any(tm1_grid, axis=0)
             t_idx = np.any(t_grid, axis=0)
@@ -493,9 +465,7 @@ class DSGEStateSpace(PyMCStateSpace):
                 "deterministic_norm",
                 pt.linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P),
             )
-            norm_stochastic = pm.Deterministic(
-                "stochastic_norm", pt.linalg.norm(B @ S_prime + C @ R_prime @ Q + D)
-            )
+            norm_stochastic = pm.Deterministic("stochastic_norm", pt.linalg.norm(B @ S_prime + C @ R_prime @ Q + D))
 
             # Add penalty terms to the likelihood to rule out invalid solutions
             pm.Potential(
@@ -505,9 +475,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         if add_bk_check:
             pm.Deterministic("bk_flag", bk_flag)
-            pm.Potential(
-                "bk_condition_satisfied", pt.switch(pt.eq(bk_flag, 1.0), 0.0, -np.inf)
-            )
+            pm.Potential("bk_condition_satisfied", pt.switch(pt.eq(bk_flag, 1.0), 0.0, -np.inf))
 
         if add_solver_success_check:
             policy_resid = pm.Deterministic("policy_resid", policy_resid)
@@ -542,8 +510,10 @@ def data_from_prior(
     random_seed: np.random.Generator | int | None = None,
 ) -> tuple[xr.Dataset, pd.DataFrame, az.InferenceData]:
     """
-    Generate artificial data from prior predictive samples. Also modifies the pymc model and the statespace model
-    in-place to act as if build_statespace_graph has been called with the new data.
+    Generate artificial data from prior predictive samples.
+
+    Also modifies the pymc model and the statespace model in-place to act as if build_statespace_graph has been
+    called with the new data.
 
     Parameters
     ----------
@@ -574,9 +544,7 @@ def data_from_prior(
 
     if index is None:
         index = pd.date_range(start="1980-01-01", end="2024-11-01", freq="QS-OCT")
-    dummy_data = pd.DataFrame(
-        np.nan, index=index, columns=statepace_mod.observed_states
-    )
+    dummy_data = pd.DataFrame(np.nan, index=index, columns=statepace_mod.observed_states)
     dummy_data.index.freq = dummy_data.index.inferred_freq
 
     # Copy the model so the original model is unchanged
@@ -594,16 +562,11 @@ def data_from_prior(
         else:
             pm.set_data({"data": dummy_data.fillna(-9999)})
 
-    with warnings.catch_warnings(action="ignore"):
-        with freeze_dims_and_data(new_model):
-            prior_idata = pm.sample_prior_predictive(
-                n_samples, compile_kwargs={"mode": "JAX"}, random_seed=rng
-            )
+    with warnings.catch_warnings(action="ignore"), freeze_dims_and_data(new_model):
+        prior_idata = pm.sample_prior_predictive(n_samples, compile_kwargs={"mode": "JAX"}, random_seed=rng)
 
     with warnings.catch_warnings(action="ignore"):
-        prior_trajectories = statepace_mod.sample_unconditional_prior(
-            prior_idata, random_seed=rng
-        )
+        prior_trajectories = statepace_mod.sample_unconditional_prior(prior_idata, random_seed=rng)
 
     prior_idata["unconditional_prior"] = prior_trajectories
 
@@ -613,12 +576,7 @@ def data_from_prior(
     true_params["param_idx"] = idx
 
     data = prior_trajectories.isel(chain=0, draw=idx).prior_observed
-    data = (
-        data.to_dataframe()
-        .drop(columns=["chain", "draw"])
-        .unstack("observed_state")
-        .droplevel(axis=1, level=0)
-    )
+    data = data.to_dataframe().drop(columns=["chain", "draw"]).unstack("observed_state").droplevel(axis=1, level=0)
 
     data.index.freq = data.index.inferred_freq
     if pct_missing > 0:

@@ -45,9 +45,7 @@ def test_print_power():
 
     assert out == "a ^ 2 - 4"
 
-    expr = sp.parse_expr(
-        "alpha ** (beta ** gamma) - sigma", transformations="all", local_dict=LOCAL_DICT
-    )
+    expr = sp.parse_expr("alpha ** (beta ** gamma) - sigma", transformations="all", local_dict=LOCAL_DICT)
     out = printer.doprint(expr)
     assert out == "alpha ^ (beta ^ gamma) - sigma"
 
@@ -85,16 +83,12 @@ def test_print_time_aware_symbol(name, time_index):
 
 @pytest.fixture()
 def model():
-    return model_from_gcn(
-        "tests/_resources/test_gcns/one_block_1_dist.gcn", verbose=False
-    )
+    return model_from_gcn("tests/_resources/test_gcns/one_block_1_dist.gcn", verbose=False)
 
 
 @pytest.fixture()
 def ss_model():
-    return model_from_gcn(
-        "tests/_resources/test_gcns/one_block_1_ss.gcn", verbose=False
-    )
+    return model_from_gcn("tests/_resources/test_gcns/one_block_1_ss.gcn", verbose=False)
 
 
 @pytest.fixture()
@@ -135,14 +129,9 @@ def test_write_param_names(model):
 
 def test_write_parameter_declarations(model):
     out = write_parameter_declarations(model)
-    lines = [
-        line
-        for line in out.split("\n")
-        if not line.startswith("parameters") and len(line) > 0
-    ]
+    lines = [line for line in out.split("\n") if not line.startswith("parameters") and len(line) > 0]
     for line in lines:
-        line = line.replace(" ", "").replace(";", "")
-        name, value = line.split("=")
+        name, value = line.replace(" ", "").replace(";", "").split("=")
         assert model.parameters()[name] == float(value)
 
 
@@ -157,23 +146,16 @@ def test_write_model_equations(nk_model):
     assert out.startswith("model;")
     assert out.endswith("end;")
 
-    lines = [
-        line
-        for line in out.split("\n")
-        if line not in ["model;", "end;"] and len(line) > 0
-    ]
+    lines = [line for line in out.split("\n") if line not in ["model;", "end;"] and len(line) > 0]
     count = 0
     expect_ss_definition = True
 
     for line in lines:
-        line = line.replace(" ", "").replace(";", "")
-        if line.startswith("#"):
+        clean_line = line.replace(" ", "").replace(";", "")
+        if clean_line.startswith("#"):
             assert "=" in line
-            assert (
-                expect_ss_definition
-            )  # All the ss definitions should be at the beginning and all together
-            line = line.replace(" ", "").replace(";", "")
-            name, value = line.split("=")
+            assert expect_ss_definition  # All the ss definitions should be at the beginning and all together
+            name, value = clean_line.split("=")
             assert name.endswith("_ss")
 
         else:
@@ -188,9 +170,7 @@ def test_write_steady_state(model):
     assert out.startswith("initval;")
     assert out.endswith("end;\n\nsteady;\nresid;")
     lines = [
-        line
-        for line in out.split("\n")
-        if line not in ["initval;", "end;", "steady;", "resid;"] and len(line) > 0
+        line for line in out.split("\n") if line not in ["initval;", "end;", "steady;", "resid;"] and len(line) > 0
     ]
     ss_dict = {}
     for line in lines:
@@ -208,12 +188,8 @@ def test_write_steady_state(model):
 def test_write_analytical_steady_state(ss_model):
     out = write_steady_state(ss_model)
     assert out.startswith("steady_state_model;")
-    lines = [
-        line.replace(" ", "").replace(";", "")
-        for line in out.split("\n")
-        if "=" in line and len(line) > 0
-    ]
-    names, exprs = zip(*[line.split("=") for line in lines])
+    lines = [line.replace(" ", "").replace(";", "") for line in out.split("\n") if "=" in line and len(line) > 0]
+    names, exprs = zip(*[line.split("=") for line in lines], strict=False)
     n_vars = len(ss_model.variables)
 
     assert all(x.base_name in names[-n_vars:] for x in ss_model.variables)
@@ -223,11 +199,7 @@ def test_write_shock_std(model):
     out = write_shock_std(model)
     assert out.startswith("shocks;")
     assert out.endswith("end;")
-    lines = [
-        line
-        for line in out.split("\n")
-        if line not in ["shocks;", "end;"] and len(line) > 0
-    ]
+    lines = [line for line in out.split("\n") if line not in ["shocks;", "end;"] and len(line) > 0]
     assert all(line.startswith("var") for line in lines[::2])
     assert all(line.startswith("stderr") for line in lines[1::2])
 

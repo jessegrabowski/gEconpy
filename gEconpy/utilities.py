@@ -40,22 +40,16 @@ def set_equality_equals_zero(eq):
 
 
 def eq_to_ss(eq: sp.Expr, shocks: list[TimeAwareSymbol] | None = None):
-    if shocks is None:
-        shock_subs = {}
-    else:
-        shock_subs = {x.to_ss(): 0.0 for x in shocks}
+    shock_subs = {} if shocks is None else {x.to_ss(): 0.0 for x in shocks}
 
     var_list = [x for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
-    to_ss_subs = dict(zip(var_list, [x.to_ss() for x in var_list]))
+    to_ss_subs = dict(zip(var_list, [x.to_ss() for x in var_list], strict=False))
 
     return eq.subs(to_ss_subs).subs(shock_subs)
 
 
 def safe_to_ss(x: sp.Symbol):
-    """
-    Convert ``x`` to steady-state if it is TimeAware, or return it unchanged otherwise.
-    """
-
+    """Convert ``x`` to steady-state if it is TimeAware, or return it unchanged otherwise."""
     if isinstance(x, TimeAwareSymbol):
         return x.to_ss()
     return x
@@ -65,20 +59,13 @@ def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]):
     result = {}
     for lhs, rhs in sub_dict.items():
         for t in [-1, 0, 1, "ss"]:
-            result[lhs.set_t(t)] = (
-                rhs.set_t(t) if isinstance(rhs, TimeAwareSymbol) else rhs
-            )
+            result[lhs.set_t(t)] = rhs.set_t(t) if isinstance(rhs, TimeAwareSymbol) else rhs
 
     return result
 
 
 def step_equation_forward(eq):
-    to_step = []
-
-    for variable in set(eq.atoms()):
-        if hasattr(variable, "step_forward"):
-            if variable.time_index != "ss":
-                to_step.append(variable)
+    to_step = [variable for variable in set(eq.atoms()) if hasattr(variable, "step_forward")]
 
     for variable in sorted(to_step, key=lambda x: x.time_index, reverse=True):
         eq = eq.subs({variable: variable.step_forward()})
@@ -87,11 +74,7 @@ def step_equation_forward(eq):
 
 
 def step_equation_backward(eq):
-    to_step = []
-
-    for variable in set(eq.atoms()):
-        if hasattr(variable, "step_forward"):
-            to_step.append(variable)
+    to_step = [variable for variable in set(eq.atoms()) if hasattr(variable, "step_backward")]
 
     for variable in sorted(to_step, key=lambda x: x.time_index, reverse=False):
         eq = eq.subs({variable: variable.step_backward()})
@@ -121,41 +104,34 @@ def substitute_all_equations(eqs, *sub_dicts):
 
     if isinstance(eqs, list):
         return [eq.subs(sub_dict) for eq in eqs]
-    else:
-        result = {}
-        for key in eqs:
-            result[key] = (
-                eqs[key]
-                if isinstance(eqs[key], int | float)
-                else eqs[key].subs(sub_dict)
-            )
-        return result
+    result = {}
+    for key in eqs:
+        result[key] = eqs[key] if isinstance(eqs[key], int | float) else eqs[key].subs(sub_dict)
+    return result
 
 
 def is_variable(x):
     return isinstance(x, TimeAwareSymbol)
 
 
-def is_number(x: str):
+def is_number(x: str) -> bool:
     """
-    Parameters
-    ----------
-    x: str
-        string to test
+    Check if string x is a numeric string (int or float).
 
-    Returns
-    -------
-    is_number: bool
-        Flag indicating whether this is a number
-
-    A small extension to the .isnumeric() string built-in method, to allow float values with "." to pass.
+    Non-string inputs return False, even if they are numeric types.
     """
-    if isinstance(x, float | int):
-        return True
-    elif isinstance(x, str):
-        return all([c in set("0123456789.") for c in x])
-    else:
+    if not isinstance(x, str):
         return False
+
+    s = x.strip()
+    if not s:
+        return False
+    try:
+        float(s)
+    except ValueError:
+        return False
+    else:
+        return True
 
 
 def unpack_keys_and_values(d):
@@ -203,9 +179,7 @@ def postprocess_optimizer_res(
 
     # Sometimes the optimizer is way too strict and returns success of False even if the point is pretty clearly
     # minimum.
-    numeric_success = all(
-        condition < tol for condition in [sse, max_abs_error, grad_norm, abs_max_grad]
-    )
+    numeric_success = all(condition < tol for condition in [sse, max_abs_error, grad_norm, abs_max_grad])
 
     if numeric_success and not success:
         word = " IS "
@@ -254,23 +228,22 @@ def get_name(x: str | sp.Symbol, base_name=False) -> str:
     name: str
         The name of the object.
     """
-
     if isinstance(x, str):
         return x
 
-    elif isinstance(x, TimeAwareSymbol):
+    if isinstance(x, TimeAwareSymbol):
         return x.safe_name if not base_name else x.base_name
 
-    elif isinstance(x, sp.Symbol):
+    if isinstance(x, sp.Symbol):
         return x.name
+    return None
 
 
-def substitute_repeatedly(
-    expr: sp.Expr, sub_dict: dict[sp.Expr, sp.Expr], max_subs: int = 10
-) -> sp.Expr:
+def substitute_repeatedly(expr: sp.Expr, sub_dict: dict[sp.Expr, sp.Expr], max_subs: int = 10) -> sp.Expr:
     """
-    Repeatedly call ``expr = expr.sub(sub_dict)``. Useful when substitutions in ``sub_dict`` themselves require
-    substitution.
+    Repeatedly call ``expr = expr.sub(sub_dict)``.
+
+    Used when substitutions in ``sub_dict`` themselves require substitution.
 
     Parameters
     ----------
@@ -290,9 +263,9 @@ def substitute_repeatedly(
     if isinstance(expr, int | float):
         return expr
 
-    for i in range(max_subs):
+    for _i in range(max_subs):
         new_expr = expr.subs(sub_dict)
-        if not any([new_expr.has(x) for x in sub_dict.keys()]):
+        if not any(new_expr.has(x) for x in sub_dict):
             return new_expr
         expr = new_expr
 
@@ -313,7 +286,6 @@ def simplify_matrix(A: sp.MutableMatrix):
     A: sp.MutableMatrix
         Simplified matrix
     """
-
     for i in range(A.rows):
         for j in range(A.cols):
             expr = A[i, j]

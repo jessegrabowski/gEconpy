@@ -1,6 +1,5 @@
 """
-This script/module may be used to re-run, commit & push notebooks
-from the CLI or from another Python script (via `import rerun`).
+Re-run, commit & push notebooks from the CLI or from another Python script (via `import rerun`).
 
 Run `python rerun.py -h` to show the CLI help.
 
@@ -17,9 +16,9 @@ python scripts/rerun.py --fp_notebook=examples/case_studies/BEST.ipynb --commit_
 
 import argparse
 import logging
-from pathlib import Path
 import subprocess
 
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger(__file__)
@@ -36,10 +35,11 @@ def run_precommit(fp: Path, attempts: int = 2):
             except subprocess.CalledProcessError:
                 if a == attempts - 1:
                     raise
-        return True
     except Exception as ex:
         _log.exception("❌ Failed to run pre-commit.", exc_info=ex)
         return False
+    else:
+        return True
 
 
 def execute_notebook(fp: Path) -> bool:
@@ -57,10 +57,11 @@ def execute_notebook(fp: Path) -> bool:
             ]
         )
         _log.info("✔ Notebook executed successfully.")
-        return True
     except subprocess.CalledProcessError as ex:
         _log.exception("❌ Failed to commit.", exc_info=ex)
         return False
+    else:
+        return True
 
 
 def commit(fp: Path, branch: str) -> bool:
@@ -75,10 +76,13 @@ def commit(fp: Path, branch: str) -> bool:
         subprocess.check_call(["git", "stage", str(fp)])
         subprocess.check_call(["git", "commit", "-m", f"Re-run {fp.name} notebook"])
         _log.info("✔ Changes in %s were committed to branch %s.", fp, branch)
-        return True
+
     except subprocess.CalledProcessError as ex:
         _log.exception("❌ Failed to commit.", exc_info=ex)
         return False
+
+    else:
+        return True
 
 
 def push(branch, remote: str) -> bool:
@@ -86,10 +90,13 @@ def push(branch, remote: str) -> bool:
         _log.info("⏳ Pushing %s to %s", branch, remote)
         subprocess.check_call(["git", "push", "-u", remote, f"{branch}:{branch}"])
         _log.info("✔ Pushed %s to %s/%s.", branch, remote, branch)
-        return True
+
     except subprocess.CalledProcessError as ex:
         _log.exception("❌ Failed push.", exc_info=ex)
         return False
+
+    else:
+        return True
 
 
 def get_args():
@@ -97,7 +104,7 @@ def get_args():
     parser.add_argument(
         "--fp_notebook",
         type=str,
-        help=f"Absolute or relative path to a Jupyter notebook in {str(DP_REPO)}.",
+        help=f"Absolute or relative path to a Jupyter notebook in {DP_REPO!s}.",
         required=True,
     )
     parser.add_argument(

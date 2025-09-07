@@ -11,6 +11,7 @@ from gEconpy.exceptions import (
     MultipleObjectiveFunctionsException,
     OptimizationProblemNotDefinedException,
 )
+from gEconpy.parser import parse_equations
 from gEconpy.utilities import (
     diff_through_time,
     expand_subs_for_all_times,
@@ -22,13 +23,15 @@ from gEconpy.utilities import (
 
 class Block:
     """
-    The Block class holds equations and parameters associated with each block of the DSGE model. They hold methods
-    to solve their associated optimization problem. Blocks should be created by a Model.
+    The Block class holds equations and parameters associated with each block of the DSGE model.
+
+    Holds methods to solve their associated optimization problem. Blocks should be created by a Model.
     """
 
-    #     TODO: Split components out into their own class/protocol and let them handle their own parsing?
-    #    TODO: Refactor this into an abstract class with basic functionality, then create some child classes for specific
-    #     problems, e.g. IdentityBlock, OptimizationBlock, CRRABlock, etc, each with their own optimization machinery.
+    #    TODO: Split components out into their own class/protocol and let them handle their own parsing?
+    #    TODO: Refactor this into an abstract class with basic functionality, then create some child classes for
+    #     specific problems, e.g. IdentityBlock, OptimizationBlock, CRRABlock, etc, each with their own optimization
+    #     machinery.
 
     def __init__(
         self,
@@ -37,7 +40,7 @@ class Block:
         assumptions: dict[str, dict] | None = None,
     ) -> None:
         """
-        Initialize a block object
+        Initialize a block object.
 
         Parameters
         ----------
@@ -46,7 +49,6 @@ class Block:
         block_dict: dict
             Dictionary of component:list[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
         """
-
         self.name = name
         self.short_name = "".join(word[0] for word in name.split("_"))
 
@@ -106,7 +108,9 @@ class Block:
 
     def initialize_from_dictionary(self, block_dict: dict, assumptions: dict) -> None:
         """
-        Initialize the model block with the provided definitions, objective, constraints, identities, and calibration
+        Initialize a model block from a dictionary of parer results.
+
+        The dictionary will include provided definitions, objective, constraints, identities, and calibration
         equations. The model block's controls and shocks will also be extracted from the provided block dictionary.
 
         Parameters
@@ -115,28 +119,15 @@ class Block:
             A dictionary of component: list[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict
         assumptions: dict
             A dictionary of user-provided Sympy assumptions about variables in the model.
-
-        Returns
-        -------
-        None
         """
-
         self.controls = self._parse_variable_list(block_dict, "controls", assumptions)
         self.shocks = self._parse_variable_list(block_dict, "shocks", assumptions)
 
-        self.definitions = self._parse_equation_list(
-            block_dict, "definitions", assumptions
-        )
+        self.definitions = self._parse_equation_list(block_dict, "definitions", assumptions)
         self.objective = self._parse_equation_list(block_dict, "objective", assumptions)
-        self.constraints = self._parse_equation_list(
-            block_dict, "constraints", assumptions
-        )
-        self.identities = self._parse_equation_list(
-            block_dict, "identities", assumptions
-        )
-        self.calibration = self._parse_equation_list(
-            block_dict, "calibration", assumptions
-        )
+        self.constraints = self._parse_equation_list(block_dict, "constraints", assumptions)
+        self.identities = self._parse_equation_list(block_dict, "identities", assumptions)
+        self.calibration = self._parse_equation_list(block_dict, "calibration", assumptions)
 
         self.initialized = self._validate_initialization()
 
@@ -146,8 +137,8 @@ class Block:
 
         At a high level, gEcon allows for two kinds of blocks: those with and those without an optimization problem.
         To have an optimization problem, the block needs both the `controls` and `objective` components to be present.
-        Additionally, all control variables need to be represented among the equations in `objective`, `definitions`, and
-        `constraints`.
+        Additionally, all control variables need to be represented among the equations in `objective`, `definitions`,
+        and `constraints`.
 
         Parameters
         ----------
@@ -168,30 +159,19 @@ class Block:
         ControlVariableNotFoundException
             If a control variable is not found in any of the `objective`, `definitions`, or `constraints` equations.
         """
-
         if self.objective is not None and self.controls is None:
-            raise OptimizationProblemNotDefinedException(
-                block_name=self.name, missing="controls"
-            )
+            raise OptimizationProblemNotDefinedException(block_name=self.name, missing="controls")
 
         if self.objective is None and self.controls is not None:
-            raise OptimizationProblemNotDefinedException(
-                block_name=self.name, missing="objective"
-            )
+            raise OptimizationProblemNotDefinedException(block_name=self.name, missing="objective")
 
         if self.objective is not None and len(list(self.objective.values())) > 1:
-            raise MultipleObjectiveFunctionsException(
-                block_name=self.name, eqs=list(self.objective.values())
-            )
+            raise MultipleObjectiveFunctionsException(block_name=self.name, eqs=list(self.objective.values()))
 
         if self.controls is not None:
             for control in self.controls:
                 control_found = False
-                eq_dicts = [
-                    x
-                    for x in [self.definitions, self.objective, self.constraints]
-                    if x is not None
-                ]
+                eq_dicts = [x for x in [self.definitions, self.objective, self.constraints] if x is not None]
                 for eq_dict in eq_dicts:
                     for eq in list(eq_dict.values()):
                         if control in eq.atoms():
@@ -211,6 +191,7 @@ class Block:
         for name, eq_block in zip(
             ["definitions", "objective", "constraints", "identities"],
             [self.definitions, self.objective, self.constraints, self.identities],
+            strict=False,
         ):
             if eq_block is not None:
                 for key, eq in eq_block.items():
@@ -222,10 +203,7 @@ class Block:
                             f"Equation {eq} in {name} block of {self.name} has an invalid decorator: is_calibrating. "
                             f"This flag should only appear in the calibration block."
                         )
-                    if (
-                        self.equation_flags[key].get("exclude", False)
-                        and name not in valid_flags["exclude"]
-                    ):
+                    if self.equation_flags[key].get("exclude", False) and name not in valid_flags["exclude"]:
                         raise ValueError(
                             f"Equation {eq} in {name} block of {self.name} has an invalid decorator: exclude. "
                             f"This flag should only appear in the constraints block."
@@ -235,8 +213,9 @@ class Block:
 
     def _validate_key(self, block_dict: dict, key: str) -> bool:
         """
-        Check whether a block component is present in the block_dict, and a valid component name. For valid component
-        names, see gEcon_parser.BLOCK_COMPONENTS.
+        Check whether a block component is present in the block_dict, and a valid component name.
+
+        For valid component names, see gEcon_parser.BLOCK_COMPONENTS.
 
         Parameters
         ----------
@@ -252,9 +231,7 @@ class Block:
         return key in block_dict and hasattr(self, key) and block_dict[key] is not None
 
     def _consolidate_definitions(self):
-        """
-        Combine definitions that refer to other definitions via subsitution
-        """
+        """Combine definitions that refer to other definitions via subsitution."""
         if self.definitions is None:
             return
 
@@ -265,18 +242,17 @@ class Block:
                 continue
             sub_dict[var] = substitute_repeatedly(eq, sub_dict)
 
-        self.definitions = {
-            k: sp.Eq(v.lhs, v.rhs.subs(sub_dict)) for k, v in self.definitions.items()
-        }
+        self.definitions = {k: sp.Eq(v.lhs, v.rhs.subs(sub_dict)) for k, v in self.definitions.items()}
 
     def _extract_lagrange_multipliers(
         self, equations: list[list[str]], assumptions: dict
     ) -> tuple[list[list[str]], list[TimeAwareSymbol | None]]:
         """
-        gEcon allows the user to name lagrange multipliers in the GCN file. These multiplier variables need to be saved
-        and used once the optimization problem is solved. This function removes the ": muliplier[]" from each equation
-        and returns them as a list, along with the new equations. A None is placed in the list for each equation
-        with no associated multiplier.
+        GEcon allows the user to name lagrange multipliers in the GCN file.
+
+        These multiplier variables need to be saved and used once the optimization problem is solved. This function
+        removes the ": muliplier[]" from each equation and returns them as a list, along with the new equations. A None
+        is placed in the list for each equation with no associated multiplier.
 
         Parameters
         ----------
@@ -293,19 +269,14 @@ class Block:
         list
             List of Union[TimeAwareSymbols, None].
         """
-        from gEconpy.parser import parse_equations
-
         result, multipliers = [], []
         for eq in equations:
             if ":" in eq:
                 colon_idx = eq.index(":")
                 multiplier = eq[-1]
-                multiplier = parse_equations.single_symbol_to_sympy(
-                    multiplier, assumptions
-                )
-                eq = eq[:colon_idx].copy()
+                multiplier = parse_equations.single_symbol_to_sympy(multiplier, assumptions)
 
-                result.append(eq)
+                result.append(eq[:colon_idx].copy())
                 multipliers.append(multiplier)
             else:
                 result.append(eq)
@@ -313,12 +284,16 @@ class Block:
 
         return result, multipliers
 
+    @staticmethod
     def _extract_decorators(
-        self, equations: list[list[str]], assumptions: dict
+        equations: list[list[str]],
+        assumptions: dict,  # noqa: ARG004
     ) -> tuple[list[list[str]], list[dict[str, bool]]]:
         """
-        Extract decorators from the equations in the block. Decorators are flags that indicate special properties of the
-        equation, such as whether it should be excluded from the final system of equations.
+        Extract decorators from the equations in the block.
+
+        Decorators are flags that indicate special properties of the equation, such as whether it should be excluded
+        from the final system of equations.
 
         Parameters
         ----------
@@ -327,7 +302,7 @@ class Block:
             gEcon_parser.parsed_block_to_dict function.
 
         assumptions : dict
-            Assumptions for the model.
+            Assumptions for the model. Ignored, but included for consistency with other parsing functions.
 
         Returns
         -------
@@ -337,9 +312,8 @@ class Block:
         flags: dict
             A dictionary of flags for each equation, indexed by equation number.
         """
-
         result, decorator_flags = [], []
-        for i, eq in enumerate(equations):
+        for _i, eq in enumerate(equations):
             new_eq = []
             flags = {}
             for token in eq:
@@ -356,9 +330,9 @@ class Block:
     def _parse_variable_list(
         self, block_dict: dict, key: str, assumptions: dict | None = None
     ) -> list[sp.Symbol] | None:
-        from gEconpy.parser import parse_equations
-
         """
+        Convert a list of variables represented as strings into a list of sympy symbols.
+
         Two components -- controls and shocks -- expect a simple list of variables, which is a case the
         gEcon_parser.build_sympy_equations cannot handle.
 
@@ -378,21 +352,13 @@ class Block:
             A list of variables, represented as Sympy objects, or None if the block does not exist.
         """
         if not self._validate_key(block_dict, key):
-            return
+            return None
 
         raw_list = [var for var_list in block_dict[key] for var in var_list]
-        output = []
-        for variable in raw_list:
-            variable = parse_equations.single_symbol_to_sympy(variable, assumptions)
-            output.append(variable)
-
-        return output
+        return [parse_equations.single_symbol_to_sympy(variable, assumptions) for variable in raw_list]
 
     def _get_variable_list(self) -> None:
-        """
-        :return: None
-        Get a list of all unique variables in the Block and store it in the class attribute "variables"
-        """
+        """Get a list of all unique variables in the Block and store it in the class attribute "variables"."""
         objective, constraints, identities, multipliers = [], [], [], []
         sub_dict = {}
         if self.definitions is not None:
@@ -408,20 +374,15 @@ class Block:
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
 
-        all_equations = [
-            eq for eq_list in [objective, constraints, identities] for eq in eq_list
-        ]
+        all_equations = [eq for eq_list in [objective, constraints, identities] for eq in eq_list]
 
         if self.multipliers is not None:
             _, multipliers = unpack_keys_and_values(self.multipliers)
             multipliers = [x for x in multipliers if x is not None]
 
-        all_equations = [
-            eq for eqs_list in [objective, constraints, identities] for eq in eqs_list
-        ]
+        all_equations = [eq for eqs_list in [objective, constraints, identities] for eq in eqs_list]
         for eq in all_equations:
-            eq = substitute_repeatedly(eq, sub_dict)
-            atoms = eq.atoms()
+            atoms = substitute_repeatedly(eq, sub_dict).atoms()
             variables = [x for x in atoms if isinstance(x, TimeAwareSymbol)]
             for variable in variables:
                 if variable.to_ss() not in self.variables:
@@ -435,7 +396,7 @@ class Block:
         shocks = self.shocks or []
         self.variables = [*self.variables, *multipliers]
         self.variables = sorted(
-            list({x for x in self.variables if x.set_t(0) not in shocks}),
+            {x for x in self.variables if x.set_t(0) not in shocks},
             key=lambda x: x.name,
         )
 
@@ -454,12 +415,11 @@ class Block:
 
         return equation_numbers
 
-    def _parse_equation_list(
-        self, block_dict: dict, key: str, assumptions: dict[str, str]
-    ) -> dict[int, sp.Eq] | None:
+    def _parse_equation_list(self, block_dict: dict, key: str, assumptions: dict[str, str]) -> dict[int, sp.Eq] | None:
         """
-        Convert a list of equations represented as strings into a dictionary of sympy equations, indexed by their
-        equation number.
+        Convert a list of equations represented as strings into a dictionary of sympy equations.
+
+        The resulting dictionary is indexed by equation number, which is unique across all components of the block.
 
         Parameters
         ----------
@@ -476,31 +436,27 @@ class Block:
         dict
             A dictionary of sympy equations, indexed by their equation number, or None if the block does not exist.
         """
-        from gEconpy.parser import parse_equations
-
         if not self._validate_key(block_dict, key):
-            return
+            return None
 
         equations = block_dict[key]
-        equations, lagrange_multipliers = self._extract_lagrange_multipliers(
-            equations, assumptions
-        )
+        equations, lagrange_multipliers = self._extract_lagrange_multipliers(equations, assumptions)
         equations, decorators = self._extract_decorators(equations, assumptions)
 
         parser_output = parse_equations.build_sympy_equations(equations, assumptions)
 
         if len(parser_output) > 0:
-            equations, flags = list(zip(*parser_output))
+            equations, flags = list(zip(*parser_output, strict=False))
         else:
             equations, flags = [], {}
 
         equation_numbers = self._get_and_record_equation_numbers(equations)
 
-        equations = dict(zip(equation_numbers, equations))
-        flags = dict(zip(equation_numbers, flags))
-        decorator_flags = dict(zip(equation_numbers, decorators))
+        equations = dict(zip(equation_numbers, equations, strict=False))
+        flags = dict(zip(equation_numbers, flags, strict=False))
+        decorator_flags = dict(zip(equation_numbers, decorators, strict=False))
 
-        lagrange_multipliers = dict(zip(equation_numbers, lagrange_multipliers))
+        lagrange_multipliers = dict(zip(equation_numbers, lagrange_multipliers, strict=False))
         self.multipliers.update(lagrange_multipliers)
         for k in equation_numbers:
             self.equation_flags[k] = flags[k]
@@ -510,6 +466,8 @@ class Block:
 
     def _get_param_dict_and_calibrating_equations(self) -> None:
         """
+        Extract parameters and calibrating equations from the calibration block.
+
         The calibration block, as implemented in gEcon, mixes together parameters, which are fixed values with a
         user-provided value, with calibrating equations, which are extra conditions added to the steady-state system.
         This function divides these out so that the Model instance can ask for only one or the other.
@@ -533,7 +491,7 @@ class Block:
         duplicates = []
 
         # Main parameter processing loop
-        for idx, eq in zip(eq_idxs, equations):
+        for idx, eq in zip(eq_idxs, equations, strict=False):
             atoms = eq.atoms()
             lhs, rhs = eq.lhs, eq.rhs
             if not lhs.is_symbol:
@@ -548,7 +506,7 @@ class Block:
             # an sp.Float, which won't play nice with lambdify later)
             if eq.rhs.is_number:
                 value = eq.rhs.evalf()
-                if param in self.param_dict.keys():
+                if param in self.param_dict:
                     duplicates.append(param)
                 else:
                     self.param_dict[param] = value
@@ -559,16 +517,8 @@ class Block:
             # Calibrating equations are tagged in the equation_flags dictionary during parsing.
             elif self.equation_flags[idx]["is_calibrating"]:
                 # Calibrating equations can have variables, but they must be in the steady state
-                if not all(
-                    [
-                        x.time_index == "ss"
-                        for x in atoms
-                        if isinstance(x, TimeAwareSymbol)
-                    ]
-                ):
-                    raise DynamicCalibratingEquationException(
-                        eq=eq, block_name=self.name
-                    )
+                if not all(x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)):
+                    raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
 
                 if param in self.calib_dict:
                     duplicates.append(param)
@@ -580,7 +530,7 @@ class Block:
                 # functions of other parameters that the user wants to keep track of.
 
                 # Check that these are functions of numbers and parameters only
-                if any([isinstance(x, TimeAwareSymbol) for x in atoms]):
+                if any(isinstance(x, TimeAwareSymbol) for x in atoms):
                     raise ValueError(
                         "Parameters defined as functions in the calibration sub-block cannot be functions "
                         f"of variables. Found:\n\n {eq} in {self.name}"
@@ -594,22 +544,11 @@ class Block:
             raise DuplicateParameterError(duplicates, self.name)
 
     def _build_lagrangian(self) -> sp.Add:
-        """
-        Split the calibration block into a dictionary of fixed parameters and a list of equations to be used for
-        calibration.
-
-        A parameter is assumed to be an equation with up to three atoms, all of which are of class sp.Symbol or
-        sp.Number. Calibrating equations, on the other hand, are comprised of Symbols, TimeAwareSymbols, and numbers.
-        In this second case, all TimeAwareSymbols must be in the steady state.
-
-        Returns
-        -------
-        None
-        """
+        """Build the Lagrangian associated with the block's optimization program."""
         objective = next(iter(self.objective.values()))
         constraints = self.constraints
         multipliers = self.multipliers
-        sub_dict = dict()
+        sub_dict = {}
 
         if self.definitions is not None:
             definitions = list(self.definitions.values())
@@ -626,9 +565,7 @@ class Block:
                 self.multipliers[i] = lm
                 i += 1
 
-            lagrange = lagrange - lm * (
-                constraint.lhs.subs(sub_dict) - constraint.rhs.subs(sub_dict)
-            )
+            lagrange = lagrange - lm * (constraint.lhs.subs(sub_dict) - constraint.rhs.subs(sub_dict))
 
         return lagrange
 
@@ -656,65 +593,58 @@ class Block:
         ValueError
             If the block has multiple t+1 variables in the Bellman equation.
         """
-
         _, objective = unpack_keys_and_values(self.objective)
         objective = objective[0]
 
         variables = [x for x in objective.atoms() if isinstance(x, TimeAwareSymbol)]
 
         # Return 1 if there is no continuation value -- static optimization
-        if all([x.time_index in [0, -1] for x in variables]):
+        if all(x.time_index in [0, -1] for x in variables):
             return sp.Float(1.0)
 
-        else:
-            # We expect a bellman equation of the form X[] = a[] + E[][f(a[1]]. Step one is to identify a[], the
-            # instantaneous value function at time t. It should be a term isolated on the RHS of the equation.
-            current_value = objective.lhs
-            continuation_value = [
-                x for x in objective.rhs.args if x.has(current_value.set_t(1))
-            ]
+        # We expect a bellman equation of the form X[] = a[] + E[][f(a[1]]. Step one is to identify a[], the
+        # instantaneous value function at time t. It should be a term isolated on the RHS of the equation.
+        current_value = objective.lhs
+        continuation_value = [x for x in objective.rhs.args if x.has(current_value.set_t(1))]
 
-            # continuation_value = [x for x in variables if x.time_index == 1 and x.set_t(0) in variables]
-            if len(continuation_value) == 0:
-                raise ValueError(
-                    f"Block {self.name} did not find the continuation value of the current state value in the following"
-                    f"objective function: {objective}. Objectives should be written in the form "
-                    f"``V[t] = f(x[t]) + b[t] * E[V[t+1]]``, where V[t] is the current state value, f(x[t]) is the "
-                    f"instantaneous value function, and b[t] is the discount factor."
-                )
+        # continuation_value = [x for x in variables if x.time_index == 1 and x.set_t(0) in variables]
+        if len(continuation_value) == 0:
+            raise ValueError(
+                f"Block {self.name} did not find the continuation value of the current state value in the following"
+                f"objective function: {objective}. Objectives should be written in the form "
+                f"``V[t] = f(x[t]) + b[t] * E[V[t+1]]``, where V[t] is the current state value, f(x[t]) is the "
+                f"instantaneous value function, and b[t] is the discount factor."
+            )
 
-            continuation_value = continuation_value[0]
-            discount_factor = continuation_value.subs({current_value.set_t(1): 1})
-            return discount_factor
+        continuation_value = continuation_value[0]
+        return continuation_value.subs({current_value.set_t(1): 1})
 
     def simplify_system_equations(self) -> None:
         """
-        Simplify the system of equations that define the first-order conditions (FoCs) in the model. This function
-        currently applies a heuristic to remove redundant Lagrange multipliers generated by the solver. User-named
-        lagrange multipliers are not removed, following the example of gEcon.
+        Simplify the system of equations that define the first-order conditions (FoCs) in the model.
+
+        This function currently applies a heuristic to remove redundant Lagrange multipliers generated by the solver.
+        User-named lagrange multipliers are not removed, following the example of gEcon.
 
         TODO: Add solution patterns for CES, CRRA, and CD functions. Check parameter values to allow CES to collapse
         TODO: to CD, and CRRA to log-utility.
         """
-
         system = self.system_equations
         simplified_system = system.copy()
-        variables = [
-            x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)
-        ]
-        generated_multipliers = list(
-            {x for x in variables if "lambda__" in x.base_name}
-        )
+        variables = [x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
+        generated_multipliers = list({x for x in variables if "lambda__" in x.base_name})
 
         # Strictly heuristic simplification: look for an equation of the form x = y and use it to substitute away
         # the generated multipliers.
+
+        # x = y will have 2 atoms, x = -y will have 3
+        N_TOKENS_IN_DIRECT_DEFINITION = 3
 
         eliminated_variables = []
         for x in generated_multipliers:
             candidates = [eq for eq in simplified_system if x in eq.atoms()]
             for eq in candidates:
-                # x = y will have 2 atoms, x = -y will have 3
-                if len(eq.atoms()) <= 3:
+                if len(eq.atoms()) <= N_TOKENS_IN_DIRECT_DEFINITION:
                     sub_dict = sp.solve(eq, x, dict=True)[0]
                     sub_dict = expand_subs_for_all_times(sub_dict)
                     eliminated_variables.extend(list(sub_dict.keys()))
@@ -732,7 +662,9 @@ class Block:
 
     def solve_optimization(self, try_simplify: bool = True) -> None:
         r"""
-        Solve the optimization problem implied by the block structure:
+        Solve the Block's optimization program.
+
+        The optimization program is implied by the block structure as follows:
 
         .. math::
 
@@ -744,8 +676,10 @@ class Block:
         By setting up the following Lagrangian:
 
         ..math::
+            :nowrap:
 
-            L = Sum_{t=0}^\infty \text{Objective} - lambda_1 * \text{constraint}_1 - ... - \lambda_n * \text{constraint}_n
+            L = Sum_{t=0}^\infty \text{Objective} - lambda_1 * \text{constraint}_1 - ... - \lambda_n *
+            \text{constraint}_n
 
         And taking the derivative with respect to each control variable in turn.
 
@@ -763,11 +697,10 @@ class Block:
         All first order conditions, along with the constraints and objective are stored in the .system_equations method.
         No attempt is made to simplify the resulting system if try_simplify = False.
         """
-
         # TODO: Add helper functions to simplify common setups, including CRRA/log-utility (extract Euler equation,
         #     labor supply curve, etc), and common production functions (CES, CD -- extract demand curves, prices, or
         #     marginal costs)
-        sub_dict = dict()
+        sub_dict = {}
         if self.system_equations is None:
             self.system_equations = []
 
@@ -778,17 +711,13 @@ class Block:
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
             for eq in identities:
-                self.system_equations.append(
-                    set_equality_equals_zero(eq.subs(sub_dict))
-                )
+                self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
 
         if self.constraints is not None:
             eq_idx, constraints = unpack_keys_and_values(self.constraints)
-            for idx, eq in zip(eq_idx, constraints):
+            for idx, eq in zip(eq_idx, constraints, strict=False):
                 if not self.equation_flags[idx].get("exclude", False):
-                    self.system_equations.append(
-                        set_equality_equals_zero(eq.subs(sub_dict))
-                    )
+                    self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
 
         if self.controls is None and self.objective is None:
             return
@@ -834,11 +763,8 @@ class Block:
         The block is rendered as a collapsible section with collapsible sub-sections for each component (definitions,
         controls, objective, constraints, identities, shocks, calibration).
         """
-
         html_parts = []
-        html_parts.append(
-            f"<details class='block-info'><summary class='block-title'>Block: {self.name}</summary>"
-        )
+        html_parts.append(f"<details class='block-info'><summary class='block-title'>Block: {self.name}</summary>")
         html_parts.append("<div class='block-content'>")
         prop_names = [
             "definitions",
@@ -852,20 +778,17 @@ class Block:
         properties = {}
         for prop in prop_names:
             value = getattr(self, prop)
-            prop = prop.title()
             if value is None:
                 continue
-            elif isinstance(value, list):
-                properties[prop] = [sp.Set([sp.cancel(x) for x in value])]
+            if isinstance(value, list):
+                properties[prop.title()] = [sp.Set([sp.cancel(x) for x in value])]
             elif isinstance(value, dict):
-                properties[prop] = [sp.cancel(x) for x in value.values()]
+                properties[prop.title()] = [sp.cancel(x) for x in value.values()]
             else:
-                raise ValueError(f"Unexpected type for property {prop}")
+                raise TypeError(f"Unexpected type for property {prop}")
 
         for prop_label, prop in properties.items():
-            html_parts.append(
-                f"<details class='property-details'><summary>{prop_label}</summary>"
-            )
+            html_parts.append(f"<details class='property-details'><summary>{prop_label}</summary>")
             for item in prop:
                 latex_repr = f"\\[{sp.latex(item)}\\]"
                 html_parts.append(f"<p>{latex_repr}</p>")

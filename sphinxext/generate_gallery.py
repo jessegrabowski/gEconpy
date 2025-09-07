@@ -1,5 +1,5 @@
 """
-Sphinx plugin to run generate a gallery for notebooks
+Sphinx plugin to run generate a gallery for notebooks.
 
 Modified from the pymc project, whihch modified the seaborn project, which modified the mpld3 project.
 """
@@ -9,16 +9,15 @@ import json
 import os
 import shutil
 
-from glob import glob
-
 import matplotlib
 
 matplotlib.use("Agg")
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import sphinx
 
 from matplotlib import image
-from pathlib import Path
 
 logger = sphinx.util.logging.getLogger(__name__)
 
@@ -63,13 +62,13 @@ folder_title_map = {
 
 
 def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
-    """Overwrites `infile` with a new file of the given size"""
+    """Overwrite `infile` with a new file of the given size."""
     im = image.imread(infile)
     rows, cols = im.shape[:2]
     size = min(rows, cols)
     if size == cols:
         xslice = slice(0, size)
-        ymin = min(max(0, int(cx * rows - size // 2)), rows - size)
+        ymin = min(max(0, int(cy * rows - size // 2)), rows - size)
         yslice = slice(ymin, ymin + size)
     else:
         yslice = slice(0, size)
@@ -90,7 +89,7 @@ def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
 
 
 class NotebookGenerator:
-    """Tools for generating an example page from a file"""
+    """Tools for generating an example page from a file."""
 
     def __init__(self, filename, root_dir, folder):
         self.folder = folder
@@ -140,17 +139,13 @@ def main(app):
     file = [HEAD]
 
     for folder, title in folder_title_map.items():
-        file.append(
-            SECTION_TEMPLATE.format(
-                section_title=title, section_id=folder, underlines="-" * len(title)
-            )
-        )
+        file.append(SECTION_TEMPLATE.format(section_title=title, section_id=folder, underlines="-" * len(title)))
 
         thumbnail_dir = working_dir / "_thumbnails" / folder
         if not thumbnail_dir.exists():
             Path.mkdir(thumbnail_dir, parents=True)
 
-        if folder in external_nbs.keys():
+        if folder in external_nbs:
             file += [
                 ITEM_TEMPLATE.format(
                     doc_name=descr["doc_name"],
@@ -164,9 +159,7 @@ def main(app):
         nb_paths = sorted(Path("examples", folder).glob("*.ipynb"))
 
         for nb_path in nb_paths:
-            nbg = NotebookGenerator(
-                filename=nb_path, root_dir=Path(".."), folder=folder
-            )
+            nbg = NotebookGenerator(filename=nb_path, root_dir=Path(".."), folder=folder)
             nbg.gen_previews()
 
             file.append(

@@ -1,10 +1,13 @@
-import pytest
-from gEconpy.parser import parse_plaintext, gEcon_parser
 import os
+
 from pathlib import Path
 
+import pytest
 
-def test_distribution_extraction_simple(model):
+from gEconpy.parser import gEcon_parser, parse_plaintext
+
+
+def test_distribution_extraction_simple():
     test_str = "alpha ~ Normal(0, 1) = 0.5;"
     line, prior_dict = parse_plaintext.extract_distributions(test_str)
     assert line == "alpha = 0.5;"
@@ -65,7 +68,7 @@ parse_expectation_expected = [
 
 @pytest.mark.parametrize(
     "test_string, expected_result",
-    zip(parse_expectation_tests, parse_expectation_expected),
+    zip(parse_expectation_tests, parse_expectation_expected, strict=False),
     ids=[
         "bellman_rhs",
         "equation",
@@ -101,9 +104,7 @@ def test_block_deletion():
     result = parse_plaintext.delete_block(parser_output, "tryreduce")
 
     ROOT = Path(__file__).parent.parent.absolute()
-    with open(
-        ROOT / "_resources" / "test_answer_strings" / "test_block_deletion.txt"
-    ) as file:
+    with (ROOT / "_resources" / "test_answer_strings" / "test_block_deletion.txt").open() as file:
         expected_result = file.read()
 
     assert result.strip() == expected_result.strip()

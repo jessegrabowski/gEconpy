@@ -141,9 +141,7 @@ def schur_impl(A, output):
     numba_cgees = _LAPACK().numba_cgees(dtype)
 
     def real_schur_impl(A, output):
-        """
-        schur() implementation for real arrays
-        """
+        """schur() implementation for real arrays."""
         _N = np.int32(A.shape[-1])
         if A.shape[-2] != _N:
             msg = "Last 2 dimensions of the array must be square"
@@ -217,10 +215,7 @@ def schur_impl(A, output):
         return A_copy, VS.T
 
     def complex_schur_impl(A, output):
-        """
-        schur() implementation for complex arrays
-        """
-
+        """schur() implementation for complex arrays."""
         _N = np.int32(A.shape[-1])
         if A.shape[-2] != _N:
             msg = "Last 2 dimensions of the array must be square"
@@ -294,8 +289,7 @@ def schur_impl(A, output):
 
     if isinstance(A.dtype, types.scalars.Complex):
         return complex_schur_impl
-    else:
-        return real_schur_impl
+    return real_schur_impl
 
 
 def nb_qz(
@@ -320,11 +314,11 @@ def nb_qz(
     )
 
 
-def full_return_qz(
-    A, B, output
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def full_return_qz(A, B, output) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Dummy function to be overloaded below. It's purpose is to match the signature of the underlying LAPACK function,
+    Compute QZ decomposition, with the LAPACK return signature.
+
+    Placeholder function to be overloaded. It's purpose is to match the signature of the underlying LAPACK function,
     rather than the scipy function.
     """
     pass
@@ -345,8 +339,10 @@ def full_return_qz_impl(A, B, output):
 
     def real_full_return_qz_impl(A, B, output):
         """
-        schur() implementation for real arrays. Unlike the Scipy function, this has 5 returns, including the
-        generalized eigenvalues (alpha, beta), because these are required by ordqz.
+        schur() implementation for real arrays.
+
+        Unlike the Scipy function, this has 5 returns, including the generalized eigenvalues (alpha, beta), because
+        these are required by ordqz.
         """
         _M, _N = np.int32(A.shape[-2:])
         if A.shape[-2] != _N:
@@ -447,10 +443,11 @@ def full_return_qz_impl(A, B, output):
 
     def complex_full_return_qz_impl(A, B, output):
         """
-        qz decomposition for complex arrays. Unlike the Scipy function, this has 5 returns, including the
-        generalized eigenvalues (alpha, beta), because these are required by ordqz.
-        """
+        Qz decomposition for complex arrays.
 
+        Unlike the Scipy function, this has 5 returns, including the generalized eigenvalues (alpha, beta), because
+        these are required by ordqz.
+        """
         _M, _N = np.int32(A.shape[-2:])
         if A.shape[-2] != _N:
             raise linalg.LinAlgError("Last 2 dimensions of A must be square")
@@ -546,15 +543,12 @@ def full_return_qz_impl(A, B, output):
 
     if isinstance(A.dtype, types.scalars.Complex):
         return complex_full_return_qz_impl
-    else:
-        return real_full_return_qz_impl
+    return real_full_return_qz_impl
 
 
 @overload(nb_qz)
 def qz_impl(A, B, output):
-    """
-    scipy.linalg.qz overload. Wraps full_return_qz and returns only A, B, Q ,Z to match the scipy signature.
-    """
+    """scipy.linalg.qz overload. Wraps full_return_qz and returns only A, B, Q ,Z to match the scipy signature."""
     ensure_lapack()
 
     _check_scipy_linalg_matrix(A, "qz")
@@ -571,8 +565,7 @@ def qz_impl(A, B, output):
 
     if isinstance(A.dtype, types.scalars.Complex):
         return complex_qz_impl
-    else:
-        return real_qz_impl
+    return real_qz_impl
 
 
 def nb_ordqz(
@@ -619,9 +612,7 @@ def ordqz_impl(A, B, sort, output):
         _check_finite_matrix(B)
 
         if sort not in ["lhp", "rhp", "iuc", "ouc"]:
-            raise ValueError(
-                'Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"'
-            )
+            raise ValueError('Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"')
 
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
@@ -740,9 +731,7 @@ def ordqz_impl(A, B, sort, output):
         _check_finite_matrix(B)
 
         if sort not in ["lhp", "rhp", "iuc", "ouc"]:
-            raise ValueError(
-                'Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"'
-            )
+            raise ValueError('Argument "sort" should be one of: "lhp", "rhp", "iuc", "ouc"')
 
         A_copy = _copy_to_fortran_order(A)
         B_copy = _copy_to_fortran_order(B)
@@ -845,8 +834,7 @@ def ordqz_impl(A, B, sort, output):
 
     if isinstance(A.dtype, types.scalars.Complex):
         return complex_ordqz_impl
-    else:
-        return real_ordqz_impl
+    return real_ordqz_impl
 
 
 def nb_solve_continuous_lyapunov(a: np.ndarray, q: np.ndarray) -> np.ndarray:
@@ -928,9 +916,7 @@ def solve_continuous_lyapunov_impl(A, Q):
 
         C *= SCALE
         _handle_err_maybe_convergence_problem(int_ptr_to_val(INFO))
-        X = U.dot(C).dot(U.conj().T)
-
-        return X
+        return U.dot(C).dot(U.conj().T)
 
     return _solve_cont_lyapunov_impl
 
@@ -950,13 +936,11 @@ def solve_discrete_lyapunov_impl(A, Q, method="auto"):
     # w_type = _get_underlying_float(dtype)  #  noeq
 
     def impl(A, Q, method="auto"):
+        SMALL_MATRIX = 10
         _M, _N = np.int32(A.shape)
 
         if method == "auto":
-            if _M < 10:
-                method = "direct"
-            else:
-                method = "bilinear"
+            method = "direct" if _M < SMALL_MATRIX else "bilinear"
 
         if method == "direct":
             X = direct_lyapunov_solution(A, Q)

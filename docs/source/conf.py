@@ -1,10 +1,13 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join("..", "..")))
-sys.path.insert(0, os.path.abspath(os.path.join("..", "..", "sphinxext")))
+from pathlib import Path
 
-import gEconpy
+root_dir = Path("../..").resolve()
+sys.path.insert(0, str(root_dir))
+sys.path.insert(0, str(root_dir / "sphinxext"))
+
+import gEconpy  # noqa: E402
 
 # -- Project information -----------------------------------------------------
 project = "gEconpy"
@@ -15,7 +18,7 @@ html_baseurl = "github.com/jessegrabowski/gEconpy"
 docnames = []
 
 version = gEconpy.__version__
-on_readthedocs = os.environ.get("READTHEDOCS", False)
+on_readthedocs = os.environ.get("READTHEDOCS", None)
 rtd_version = os.environ.get("READTHEDOCS_VERSION", "")
 if on_readthedocs:
     if rtd_version.lower() == "stable":

@@ -1,11 +1,11 @@
-import os
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
 from gEconpy import model_from_gcn
-from gEconpy.exceptions import OrphanParameterError, ExtraParameterError
+from gEconpy.exceptions import ExtraParameterError, OrphanParameterError
+from gEconpy.model.model import Model
 
 expected_warnings = [
     "Simplification via a tryreduce block was requested but not possible because the system is not well defined.",
@@ -25,21 +25,21 @@ expected_warnings = [
     ],
     ids=["tryreduce", "constants", "no_simplify"],
 )
-def test_build_warns_if_model_not_defined(
-    gcn_file_1, simplify_tryreduce, simplify_constants, expected_warning
-):
-    with mock.patch(
-        "builtins.open",
-        new=mock.mock_open(read_data=gcn_file_1),
-        create=True,
+def test_build_warns_if_model_not_defined(gcn_file_1, simplify_tryreduce, simplify_constants, expected_warning):
+    with (
+        mock.patch(
+            "pathlib.Path.open",
+            new=mock.mock_open(read_data=gcn_file_1),
+            create=True,
+        ),
+        pytest.warns(UserWarning, match=expected_warning),
     ):
-        with pytest.warns(UserWarning, match=expected_warning):
-            model_from_gcn(
-                gcn_file_1,
-                simplify_constants=simplify_constants,
-                simplify_tryreduce=simplify_tryreduce,
-                verbose=not (simplify_tryreduce or simplify_constants),
-            )
+        model_from_gcn(
+            gcn_file_1,
+            simplify_constants=simplify_constants,
+            simplify_tryreduce=simplify_tryreduce,
+            verbose=not (simplify_tryreduce or simplify_constants),
+        )
 
 
 def test_missing_parameters_raises():
@@ -77,22 +77,24 @@ def test_missing_parameters_raises():
                 };
                 """
 
-    with mock.patch(
-        "builtins.open",
-        new=mock.mock_open(read_data=GCN_file),
-        create=True,
-    ):
-        with pytest.raises(
+    with (
+        mock.patch(
+            "pathlib.Path.open",
+            new=mock.mock_open(read_data=GCN_file),
+            create=True,
+        ),
+        pytest.raises(
             OrphanParameterError,
             match=r"The following parameter was found among model equations but did not appear in "
             r"any calibration block: beta",
-        ):
-            model_from_gcn(
-                GCN_file,
-                verbose=False,
-                simplify_tryreduce=False,
-                simplify_constants=False,
-            )
+        ),
+    ):
+        model_from_gcn(
+            GCN_file,
+            verbose=False,
+            simplify_tryreduce=False,
+            simplify_constants=False,
+        )
 
 
 simple_vars = ["L", "K", "A", "Y", "I", "C", "q", "U", "lambda", "q"]
@@ -190,14 +192,10 @@ nk_shocks = ["epsilon_R", "epsilon_pi", "epsilon_Y", "epsilon_preference"]
             simple_shocks,
         ),
         ("open_rbc.gcn", open_vars, open_params, open_shocks),
-        pytest.param(
-            "full_nk.gcn", nk_vars, nk_params, nk_shocks, marks=pytest.mark.include_nk
-        ),
+        pytest.param("full_nk.gcn", nk_vars, nk_params, nk_shocks, marks=pytest.mark.include_nk),
     ],
 )
-def test_variables_parsed(
-    gcn_path, expected_variables, expected_params, expected_shocks
-):
+def test_variables_parsed(gcn_path, expected_variables, expected_params, expected_shocks):
     file_path = Path("tests") / "_resources" / "test_gcns" / gcn_path
     model = model_from_gcn(
         file_path,
@@ -209,24 +207,12 @@ def test_variables_parsed(
     )
 
     model_vars = [v.base_name for v in model.variables]
-    model_params = [
-        p.name
-        for p in model.params + model.calibrated_params + model.deterministic_params
-    ]
+    model_params = [p.name for p in model.params + model.calibrated_params + model.deterministic_params]
     model_shocks = [s.base_name for s in model.shocks]
 
-    assert (
-        set(model_vars) - set(expected_variables) == set()
-        and set(expected_variables) - set(model_vars) == set()
-    )
-    assert (
-        set(model_params) - set(expected_params) == set()
-        and set(expected_params) - set(model_params) == set()
-    )
-    assert (
-        set(model_shocks) - set(expected_shocks) == set()
-        and set(expected_shocks) - set(model_shocks) == set()
-    )
+    assert set(model_vars) - set(expected_variables) == set() and set(expected_variables) - set(model_vars) == set()
+    assert set(model_params) - set(expected_params) == set() and set(expected_params) - set(model_params) == set()
+    assert set(model_shocks) - set(expected_shocks) == set() and set(expected_shocks) - set(model_shocks) == set()
 
 
 @pytest.mark.parametrize(
@@ -239,8 +225,6 @@ def test_variables_parsed(
     ids=["one_block_simple", "open_rbc", "full_nk"],
 )
 def test_load_gcn(gcn_file):
-    from gEconpy.model.model import Model
-
     mod = model_from_gcn(
         Path("tests") / "_resources" / "test_gcns" / gcn_file,
         simplify_blocks=True,
@@ -263,16 +247,12 @@ def test_load_gcn(gcn_file):
 
 def test_loading_fails_if_orphan_parameters():
     with pytest.raises(OrphanParameterError):
-        model_from_gcn(
-            Path("tests") / "_resources" / "test_gcns" / "open_rbc_orphan_params.gcn"
-        )
+        model_from_gcn(Path("tests") / "_resources" / "test_gcns" / "open_rbc_orphan_params.gcn")
 
 
 def test_loading_fails_if_extra_parameters():
     with pytest.raises(ExtraParameterError):
-        model_from_gcn(
-            Path("tests") / "_resources" / "test_gcns" / "open_rbc_extra_params.gcn"
-        )
+        model_from_gcn(Path("tests") / "_resources" / "test_gcns" / "open_rbc_extra_params.gcn")
 
 
 def test_build_report(caplog):

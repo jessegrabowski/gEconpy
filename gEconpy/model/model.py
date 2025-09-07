@@ -4,7 +4,8 @@ import logging
 
 from collections.abc import Callable, Sequence
 from copy import deepcopy
-from typing import Literal, cast
+from dataclasses import dataclass
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -41,7 +42,6 @@ from gEconpy.solvers.gensys import (
 )
 from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
 
-
 VariableType = sp.Symbol | TimeAwareSymbol
 _log = logging.getLogger(__name__)
 
@@ -60,13 +60,13 @@ def scipy_wrapper(
             @ft.wraps(f)
             def inner(ss_values, param_dict):
                 given_ss = f_ss(**param_dict)
-                ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
+                ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
                 ss_dict.update(given_ss)
                 res = f(**ss_dict, **param_dict)
 
                 if isinstance(res, float | int):
                     return res
-                elif res.ndim == 1:
+                if res.ndim == 1:
                     res = res[unknown_eq_idxs]
                 elif res.ndim == 2:
                     res = res[unknown_eq_idxs, :][:, unknown_var_idxs]
@@ -76,7 +76,7 @@ def scipy_wrapper(
             @ft.wraps(f)
             def inner(ss_values, p, param_dict):
                 given_ss = f_ss(**param_dict)
-                ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
+                ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
                 ss_dict.update(given_ss)
 
                 p_full = np.zeros(unknown_eq_idxs.shape[0])
@@ -86,32 +86,29 @@ def scipy_wrapper(
 
                 if isinstance(res, float | int):
                     return res
-                elif res.ndim == 1:
+                if res.ndim == 1:
                     res = res[unknown_eq_idxs]
                 elif res.ndim == 2:
                     res = res[unknown_eq_idxs, :][:, unknown_var_idxs]
                 return res
 
+    elif not include_p:
+
+        @ft.wraps(f)
+        def inner(ss_values, param_dict):
+            ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
+            return f(**ss_dict, **param_dict)
     else:
-        if not include_p:
 
-            @ft.wraps(f)
-            def inner(ss_values, param_dict):
-                ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
-                return f(**ss_dict, **param_dict)
-        else:
-
-            @ft.wraps(f)
-            def inner(ss_values, p, param_dict):
-                ss_dict = SymbolDictionary(zip(variables, ss_values)).to_string()
-                return f(p, **ss_dict, **param_dict)
+        @ft.wraps(f)
+        def inner(ss_values, p, param_dict):
+            ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
+            return f(p, **ss_dict, **param_dict)
 
     return inner
 
 
-def add_more_ss_values_wrapper(
-    f_ss: Callable | None, known_variables: SymbolDictionary
-) -> Callable:
+def add_more_ss_values_wrapper(f_ss: Callable | None, known_variables: SymbolDictionary) -> Callable:
     """
     Inject user-provided constant steady state values to the return of the steady state function.
 
@@ -163,14 +160,13 @@ def _initialize_x0(optimizer_kwargs, variables, jitter_x0):
         x0[negative_idx] = -x0[negative_idx]
 
     if jitter_x0:
-        x0 += np.random.normal(scale=1e-4, size=n_variables)
+        rng = np.random.default_rng()
+        x0 += rng.normal(scale=1e-4, size=n_variables)
 
     return x0
 
 
-def validate_policy_function(
-    A, B, C, D, T, R, tol: float = 1e-8, verbose: bool = True
-) -> None:
+def validate_policy_function(A, B, C, D, T, R, tol: float = 1e-8, verbose: bool = True) -> None:
     gEcon_matrices = statespace_to_gEcon_representation(A, T, R, tol)
 
     P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
@@ -194,7 +190,7 @@ def get_known_equation_mask(
 
     eq_is_zero_mask = [
         (sp.Abs(subbed_eq) < tol) == True  # noqa: E712
-        for eq, subbed_eq in zip(steady_state_system, subbed_system)
+        for eq, subbed_eq in zip(steady_state_system, subbed_system, strict=False)
     ]
 
     return np.array(eq_is_zero_mask)
@@ -259,7 +255,7 @@ def validate_user_steady_state_simple(
     # know that this is NOT the same as True.
     invalid_equation_strings = [
         str(eq)
-        for eq, subbed_eq in zip(steady_state_system, subbed_system)
+        for eq, subbed_eq in zip(steady_state_system, subbed_system, strict=False)
         if (sp.Abs(subbed_eq) < tol) == False  #  noqa
     ]
 
@@ -274,7 +270,7 @@ def validate_user_steady_state_simple(
 
 class Model:
     """
-    A Dynamic Stochastic General Equlibrium (DSGE) Model
+    A Dynamic Stochastic General Equlibrium (DSGE) Model.
 
     A ``Model`` is a container class for a DSGE model. It has two primary functions: to store all model primitives
     (variables, parameters, shocks, equations, etc.), and to store compiled functions used to solve the model.
@@ -354,7 +350,8 @@ class Model:
 
         f_ss_error_hessp: Callable, optional
             Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
-            the Hessian-vector product of the error function f_ss_error with respect to the steady-state variable values x_ss
+            the Hessian-vector product of the error function f_ss_error with respect to the steady-state variable
+            values x_ss.
 
         f_ss_jac: Callable, optional
             Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
@@ -365,7 +362,6 @@ class Model:
             Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
             the first-order approximation of the model around the steady state.
         """
-
         self._variables = variables
         self._shocks = shocks
         self._equations = equations
@@ -380,13 +376,7 @@ class Model:
 
         self._all_names_to_symbols = {
             get_name(x, base_name=True): x
-            for x in (
-                self.variables
-                + self.params
-                + self.calibrated_params
-                + self.deterministic_params
-                + self.shocks
-            )
+            for x in (self.variables + self.params + self.calibrated_params + self.deterministic_params + self.shocks)
         }
 
         self._priors = priors
@@ -427,9 +417,7 @@ class Model:
 
     @property
     def equations(self) -> list[sp.Expr]:
-        """
-        List of equations in the model, stored as Sympy expressions.
-        """
+        """List of equations in the model, stored as Sympy expressions."""
         return self._equations
 
     @property
@@ -494,10 +482,7 @@ class Model:
 
     @property
     def steady_state_relationships(self) -> list[sp.Eq]:
-        """
-        List of model equations, evaluated at the deterministic steady state
-        """
-
+        """List of model equations, evaluated at the deterministic steady state."""
         return self._steady_state_relationships
 
     def parameters(self, **updates: float) -> SymbolDictionary[str, float]:
@@ -555,26 +540,20 @@ class Model:
 
         result = self._all_names_to_symbols.get(name)
         if result is None:
-            close_match = difflib.get_close_matches(
-                name, [get_name(x) for x in self._all_names_to_symbols.keys()], n=1
-            )[0]
-            raise IndexError(
-                f"Did not find {name} among model objects. Did you mean {close_match}?"
-            )
+            close_match = difflib.get_close_matches(name, [get_name(x) for x in self._all_names_to_symbols], n=1)[0]
+            raise IndexError(f"Did not find {name} among model objects. Did you mean {close_match}?")
         if ss_requested:
             return result.to_ss()
         return result
 
-    def _validate_provided_steady_state_variables(
-        self, user_fixed_variables: Sequence[str]
-    ):
+    def _validate_provided_steady_state_variables(self, user_fixed_variables: Sequence[str]):
         # User is allowed to pass the variable name either with or without the _ss suffix. Begin by normalizing the
         # inputs
         fixed_variables_normed = [x.removesuffix("_ss") for x in user_fixed_variables]
 
         # Check for duplicated values. This should only be possible if the user passed both `x` and `x_ss`.
         counts = [fixed_variables_normed.count(x) for x in fixed_variables_normed]
-        duplicates = [x for x, c in zip(fixed_variables_normed, counts) if c > 1]
+        duplicates = [x for x, c in zip(fixed_variables_normed, counts, strict=False) if c > 1]
         if len(duplicates) > 0:
             raise ValueError(
                 "The following variables were provided twice (once with a _ss prefix and once without):\n"
@@ -606,7 +585,7 @@ class Model:
         **updates: float,
     ) -> SteadyStateResults:
         r"""
-        Solve for the deterministic steady state of the DSGE model
+        Solve for the deterministic steady state of the DSGE model.
 
         A steady state is defined as the fixed point in the system of  nonlinear equations that describe the model's
         equilibrium. Given a system of model equations :math:`F(x_{t+1}, x_t, x_{t-1}, \varepsilon_t)`, the steady state
@@ -692,13 +671,10 @@ class Model:
 
         else:
             self._validate_provided_steady_state_variables(list(fixed_values.keys()))
-            fixed_symbols = [safe_to_ss(self.get(x)) for x in fixed_values.keys()]
+            fixed_symbols = [safe_to_ss(self.get(x)) for x in fixed_values]
 
             fixed_dict = SymbolDictionary(
-                {
-                    symbol: value
-                    for symbol, value in zip(fixed_symbols, fixed_values.values())
-                },
+                dict(zip(fixed_symbols, fixed_values.values(), strict=False)),
             ).to_string()
 
             f_ss = add_more_ss_values_wrapper(self.f_ss, fixed_dict)
@@ -723,15 +699,12 @@ class Model:
             if self.is_linear:
                 # TODO: This is a hack, but if we're a linear model, we need to set all the steady state values
                 #  to zero. But we don't want to modify the underlying f_ss function, so modify it here.
-                ss_dict = SteadyStateResults(
-                    {x.to_ss(): 0 for x in self.variables}
-                ).to_string()
+                ss_dict = SteadyStateResults({x.to_ss(): 0 for x in self.variables}).to_string()
 
             if len(ss_dict) != 0 and len(ss_dict) != len(self.variables):
                 if self.is_linear:
                     raise ValueError(
-                        "If a model is declared linear, the steady state must be provided for "
-                        "all variables."
+                        "If a model is declared linear, the steady state must be provided for all variables."
                     )
                 if how == "root":
                     zero_eq_mask = get_known_equation_mask(
@@ -758,9 +731,7 @@ class Model:
                 success = np.allclose(resid, 0.0, atol=1e-8)
                 ss_dict.success = success
                 if not success:
-                    _log.warning(
-                        f"Steady State was not found. Sum of square residuals: {np.square(resid).sum()}"
-                    )
+                    _log.warning(f"Steady State was not found. Sum of square residuals: {np.square(resid).sum()}")
                 return ss_dict
 
         # Quick and dirty check of user-provided steady-state validity. This is NOT robust at all.
@@ -771,18 +742,12 @@ class Model:
             tol=tol,
         )
 
-        ss_variables = [x.to_ss() for x in self.variables] + list(
-            self.calibrated_params
-        )
+        ss_variables = [x.to_ss() for x in self.variables] + list(self.calibrated_params)
 
-        known_variables = (
-            [] if f_ss is None else list(f_ss(**self.parameters()).to_sympy().keys())
-        )
+        known_variables = [] if f_ss is None else list(f_ss(**self.parameters()).to_sympy().keys())
 
         vars_to_solve = [var for var in ss_variables if var not in known_variables]
-        unknown_var_idx = np.array(
-            [x in vars_to_solve for x in ss_variables], dtype="bool"
-        )
+        unknown_var_idx = np.array([x in vars_to_solve for x in ss_variables], dtype="bool")
 
         if how == "root":
             res = self._solve_steady_state_with_root(
@@ -816,13 +781,9 @@ class Model:
             raise NotImplementedError()
 
         provided_ss_values = f_ss(**param_dict).to_sympy() if f_ss is not None else {}
-        optimizer_results = SymbolDictionary(
-            {var: res.x[i] for i, var in enumerate(vars_to_solve)}
-        )
+        optimizer_results = SymbolDictionary({var: res.x[i] for i, var in enumerate(vars_to_solve)})
         res_dict = optimizer_results | provided_ss_values
-        res_dict = SteadyStateResults(
-            {x: res_dict[x] for x in ss_variables}
-        ).to_string()
+        res_dict = SteadyStateResults({x: res_dict[x] for x in ss_variables}).to_string()
 
         return postprocess_optimizer_res(
             res=res,
@@ -881,7 +842,7 @@ class Model:
         f_jac = wrapper(self.f_ss_jac) if use_jac else None
 
         with np.errstate(all="ignore"):
-            res = root(
+            return root(
                 f=f,
                 x0=x0,
                 args=(param_dict,),
@@ -890,8 +851,6 @@ class Model:
                 progressbar=progressbar,
                 **optimizer_kwargs,
             )
-
-        return res
 
     def _solve_steady_state_with_minimize(
         self,
@@ -920,11 +879,9 @@ class Model:
         bound_dict.update(user_bounds)
 
         bounds = [bound_dict[x.name] for x in vars_to_solve]
-        has_bounds = any([x != (None, None) for x in bounds])
+        has_bounds = any(x != (None, None) for x in bounds)
 
-        method = optimizer_kwargs.pop(
-            "method", "trust-ncg" if not has_bounds else "trust-constr"
-        )
+        method = optimizer_kwargs.pop("method", "trust-ncg" if not has_bounds else "trust-constr")
         if method not in ["trust-constr", "L-BFGS-B", "powell"]:
             has_bounds = False
 
@@ -946,9 +903,7 @@ class Model:
         )
 
         if use_hess and use_hessp:
-            _log.warning(
-                "Both use_hess and use_hessp are set to True. use_hessp will be used."
-            )
+            _log.warning("Both use_hess and use_hessp are set to True. use_hessp will be used.")
             use_hess = False
 
         f = wrapper(self.f_ss_error)
@@ -956,7 +911,7 @@ class Model:
         f_hess = wrapper(self.f_ss_error_hess) if use_hess else None
         f_hessp = wrapper(self.f_ss_error_hessp, include_p=True) if use_hessp else None
 
-        res = minimize(
+        return minimize(
             f=f,
             x0=x0,
             args=(param_dict,),
@@ -969,8 +924,6 @@ class Model:
             progressbar=progressbar,
             **optimizer_kwargs,
         )
-
-        return res
 
     def linearize_model(
         self,
@@ -1077,8 +1030,12 @@ class Model:
         Taking derivaties with respect to :math:`\tilde{x}_t`, the linearized model is then:
 
         .. math::
+            :nowrap:
 
-            A \exp(\tilde{x}_{ss}) (\tilde{x}_{t+1} - \tilde{x}_{ss}) + B \exp(\tilde{x}_{ss}) (\tilde{x}_t - \tilde{x}_{ss}) + C \exp(\tilde{x}_{ss}) (\tilde{x}_{t-1} - \tilde{x}_{ss}) + D \varepsilon_t = 0
+            \[
+            A \exp(\tilde{x}_{ss}) (\tilde{x}_{t+1} - \tilde{x}_{ss}) + B \exp(\tilde{x}_{ss}) (\tilde{x}_t -
+            \tilde{x}_{ss}) + C \exp(\tilde{x}_{ss}) (\tilde{x}_{t-1} - \tilde{x}_{ss}) + D \varepsilon_t = 0
+            \]
 
         Note that :math:`\tilde{x} - \tilde{x}_{ss} = \log(x - \bar{x}) = \log \left (\frac{x}{\bar{x}} \right )` is
         the approximate percent deviation of the variable from its steady state.
@@ -1092,13 +1049,9 @@ class Model:
 
         Where :math:`h(x_i) = 1` if the variable is left in levels, and :math:`h(x_i) = \exp(\tilde{x}_{ss})` if the
         variable is logged. This function returns the matrices :math:`AT`, :math:`BT`, :math:`CT`, and :math:`D`.
-
-
         """
         if order != 1:
-            raise NotImplementedError(
-                "Only first order linearization is currently supported."
-            )
+            raise NotImplementedError("Only first order linearization is currently supported.")
         if steady_state_kwargs is None:
             steady_state_kwargs = {}
         if verbose not in steady_state_kwargs:
@@ -1129,14 +1082,12 @@ class Model:
             verbose=verbose,
         )
 
-        A, B, C, D = self.f_linearize(
-            **param_dict, **steady_state, not_loglin_variable=not_loglin_flags
-        )
+        A, B, C, D = self.f_linearize(**param_dict, **steady_state, not_loglin_variable=not_loglin_flags)
 
         # Using A.dtype to avoid hard-coding float64 (we might be using float32)
         # The reason for casting is mostly D, which sometimes comes out as an int32/64 array
 
-        return list(map(lambda x: np.ascontiguousarray(x, dtype=A.dtype), [A, B, C, D]))
+        return [np.ascontiguousarray(x, dtype=A.dtype) for x in [A, B, C, D]]
 
     def solve_model(
         self,
@@ -1208,47 +1159,80 @@ class Model:
         policy function using a perturbation method. We begin with a model defined as a function of the form:
 
         .. math::
-            \mathbb{E} \left [ F(x_{t+1}, x_t, x_{t-1}, \varepsilon_t) \right ] = 0
+           :nowrap:
+
+           \[
+           \mathbb{E} \left [ F(x_{t+1}, x_t, x_{t-1}, \varepsilon_t) \right ] = 0
+           \]
 
         The linear approximation is then given by the matrices :math:`A`, :math:`B`, :math:`C`, and :math:`D`, as:
 
         .. math::
+           :nowrap:
 
-            A \hat{x}_{t+1} + B \hat{x}_t + C \hat{x}_{t-1} + D \varepsilon_t = 0
+           \[
+           A \hat{x}_{t+1} + B \hat{x}_t + C \hat{x}_{t-1} + D \varepsilon_t = 0
+           \]
 
         where :math:`\hat{x}_t = x_t - \bar{x}` is the deviation of the state vector from its steady state (again,
         potentially in logs). A solution to the model seeks a function:
 
         .. math::
+           :nowrap:
 
-            x_t = g(x_{t-1}, \varepsilon_t)
+           \[
+           x_t = g(x_{t-1}, \varepsilon_t)
+           \]
 
         This implies that :math:`x_{t+1} = g(x_t, \varepsilon_{t+1})`, allowing us to write the model as:
 
         .. math::
+           :nowrap:
 
-            F_g(x_{t-1}, \varepsilon_t, \varepsilon_{t+1}) = f(g(g(x_{t-1}, \varepsilon_t), \varepsilon_{t+1}), g(x_{t-1}, \varepsilon_t), x_{t-1}, \varepsilon_t) = 0
+           \[
+           F_g(x_{t-1}, \varepsilon_t, \varepsilon_{t+1}) =
+           f(g(g(x_{t-1}, \varepsilon_t), \varepsilon_{t+1}),
+             g(x_{t-1}, \varepsilon_t), x_{t-1}, \varepsilon_t) = 0
+           \]
 
         To lighten notation, define:
 
         .. math::
+           :nowrap:
 
-            u = \varepsilon_t, \quad u_+ = \varepsilon_{t+1}, \quad \hat{x} = x_{t-1} - \bar{x} \\
-            f_{x_+} = \left. \frac{\partial F_g}{\partial x_{t+1}} \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \quad f_x = \left. \frac{\partial F_g}{\partial x_t}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \\
-            f_{x_-} = \left. \frac{\partial F_g}{\partial x_{t-1}}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \quad f_u = \left. \frac{\partial F_g}{\partial u}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0} \\
-            g_x = \left. \frac{\partial g}{\partial x_{t-1}}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \quad g_u = \left. \frac{\partial g}{\partial \varepsilon_t}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}
+           \[
+           u = \varepsilon_t, \quad
+           u_+ = \varepsilon_{t+1}, \quad
+           \hat{x} = x_{t-1} - \bar{x} \\
+           f_{x_+} = \left. \frac{\partial F_g}{\partial x_{t+1}} \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \quad
+           f_x = \left. \frac{\partial F_g}{\partial x_t}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \\
+           f_{x_-} = \left. \frac{\partial F_g}{\partial x_{t-1}}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \quad
+           f_u = \left. \frac{\partial F_g}{\partial u}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0} \\
+           g_x = \left. \frac{\partial g}{\partial x_{t-1}}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}, \quad
+           g_u = \left. \frac{\partial g}{\partial \varepsilon_t}  \right |_{\bar{x}, \bar{x}, \bar{x}, 0}
+           \]
 
         Under this new notation, the system is:
 
         .. math::
-            F_g(x_-, u, u_+) = f(g(g(x_-, u), u_+), g(x, u), x_-, u) = 0
+           :nowrap:
+
+           \[
+           F_g(x_-, u, u_+) = f(g(g(x_-, u), u_+), g(x, u), x_-, u) = 0
+           \]
 
         The function :math:`g` is unknown, but is implicitly defined by this expression, and can be approximated by a
         first order Taylor expansion around the steady state. The linearized system is then:
 
         .. math::
+           :nowrap:
 
-            0 \approx F_g(x_-, u, u_+) = f_{x_+} (g_x (g_x \hat{x} + g_u u) + g_u u_+) + f_x (g_x \hat{x} + g_u u) + f_{x_-} \hat{x} + f_u u
+           \[
+           0 \approx F_g(x_-, u, u_+) =
+           f_{x_+} (g_x (g_x \hat{x} + g_u u) + g_u u_+) +
+           f_x (g_x \hat{x} + g_u u) +
+           f_{x_-} \hat{x} + f_u u
+           \]
 
         The Jacobian matrices :math:`f_{x_+}`, :math:`f_x`, :math:`f_{x_-}`, and :math:`f_u` are the matrices :math:`A`,
         :math:`B`, :math:`C`, and :math:`D` respectively, evaluated at the steady state, and are thus known. The task
@@ -1258,60 +1242,97 @@ class Model:
         Take expectations, and impose that :math:`\mathbb{E}_t[u_+] = 0`:
 
         .. math::
-            \begin{align}
-            0 \approx & f_{x_+} (g_x(g_x \hat{x} + g_u u) + g_u \mathbb{E}_t[u_+]) + f_x (g_x \hat{x} + g_u u) + f_{x_-} \hat{x} + f_u u \\
-            \approx & (f_{x_+} g_x g_x + f_x g_x + f_{x_-})\hat{x} + (f_{x_+} g_x g_u + f_x g_u + f_u) u
-            \end{align}
+           :nowrap:
+
+           \begin{align}
+           0 \approx {} &
+           f_{x_+} (g_x(g_x \hat{x} + g_u u) + g_u \mathbb{E}_t[u_+]) +
+           f_x (g_x \hat{x} + g_u u) + f_{x_-} \hat{x} + f_u u \\
+           \approx {} &
+           (f_{x_+} g_x g_x + f_x g_x + f_{x_-})\hat{x} +
+           (f_{x_+} g_x g_u + f_x g_u + f_u) u
+           \end{align}
 
         For the system to be equal to zero, both coefficient matrices must be zero, which gives us two linear equations
         in the unknowns :math:`g_x` and :math:`g_u`:
 
         .. math::
+           :nowrap:
 
-            \begin{align}
-            (f_{x_+} g_x g_x + f_x g_x + f_{x_-}) \hat{x} &= 0 \\
-            (f_{x_+} g_x g_u + f_x g_u + f_u) u &= 0
-            \end{align}
+           \begin{align}
+           (f_{x_+} g_x g_x + f_x g_x + f_{x_-}) \hat{x} &= 0 \\
+           (f_{x_+} g_x g_u + f_x g_u + f_u) u &= 0
+           \end{align}
 
         Assuming :math:`g_x` has been solved for, the coefficient in the second equation can be directly solved for,
         giving:
 
         .. math::
-            g_u = -(f_{x_+} g_x + f_x)^{-1} f_u = 0
+           :nowrap:
 
-        The first equation, on the other hand, is a quadratic in :math:`g_x`, and cannot be solved for directly. Instead,
-        we employ trickery. Then the equation can be re-written as a linear system in two states:
+           \[
+           g_u = -(f_{x_+} g_x + f_x)^{-1} f_u = 0
+           \]
+
+        The first equation, on the other hand, is a quadratic in :math:`g_x`, and cannot be solved for directly.
+        Instead, we employ trickery. Then the equation can be re-written as a linear system in two states:
 
         .. math::
-            \begin{align}
-            \begin{bmatrix} 0 & f_{x_+} \\ I & 0 \end{bmatrix} \begin{bmatrix} g_x g_x \\ g_x \end{bmatrix} \hat{x} &= \begin{bmatrix} -f_x & -f_{x_-} \\ I & 0 \end{bmatrix} \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x} \\
-            D \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x} &= E \begin{matrix} g_x \\ I \end{matrix} \hat{x} \\
-            QTZ \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x} &= QSZ \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x} \\
-            TZ \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x} &= SZ \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x}
-            \end{align}
+           :nowrap:
 
-        The last two lines use the QZ decomposition of the pencil :math:`<D, E>` into upper triangular matrix :math:`T` and
-        quasi-upper triangular matrix :math:`S`, and the orthogonal matrices :math:`Z` and :math:`Q`. :math:`T` and
+           \begin{align}
+           \begin{bmatrix} 0 & f_{x_+} \\ I & 0 \end{bmatrix}
+           \begin{bmatrix} g_x g_x \\ g_x \end{bmatrix} \hat{x}
+           &=
+           \begin{bmatrix} -f_x & -f_{x_-} \\ I & 0 \end{bmatrix}
+           \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x} \\
+           D \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x}
+           &=
+           E \begin{matrix} g_x \\ I \end{matrix} \hat{x} \\
+           QTZ \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x}
+           &=
+           QSZ \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x} \\
+           TZ \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x}
+           &=
+           SZ \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x}
+           \end{align}
+
+        The last two lines use the QZ decomposition of the pencil :math:`<D, E>` into upper triangular matrix :math:`T`
+        and quasi-upper triangular matrix :math:`S`, and the orthogonal matrices :math:`Z` and :math:`Q`. :math:`T` and
         :math:`S` have structure that can be exploited. In particular, they are arranged so that the eigenvalues of the
         pencil :math:`<D, E>` are sorted in modulus from smallest (stable) to largest (unstable).
 
         Partitioning the rows of the matrices by eign-stability, and the columns by the size of :math:`g_x`, we get:
 
         .. math::
+           :nowrap:
 
-            \begin{bmatrix} T_{11} & T_{12} \\ 0 & T_{22} \end{bmatrix} \begin{bmatrix} Z_{11} & Z_{12} \\ Z_{21} & Z_{22} \end{bmatrix} \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x} = \begin{bmatrix} S_{11} & S_{12} \\ 0 & S_{22} \end{bmatrix} \begin{bmatrix} Z_{11} & Z_{12} \\ Z_{21} & Z_{22} \end{bmatrix} \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x}
+           \[
+           \begin{bmatrix} T_{11} & T_{12} \\ 0 & T_{22} \end{bmatrix}
+           \begin{bmatrix} Z_{11} & Z_{12} \\ Z_{21} & Z_{22} \end{bmatrix}
+           \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x} =
+           \begin{bmatrix} S_{11} & S_{12} \\ 0 & S_{22} \end{bmatrix}
+           \begin{bmatrix} Z_{11} & Z_{12} \\ Z_{21} & Z_{22} \end{bmatrix}
+           \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x}
+           \]
 
         For the system to the stable, we require that:
 
         .. math::
+           :nowrap:
 
-            Z_{21} + Z_{22} g_x = 0
+           \[
+           Z_{21} + Z_{22} g_x = 0
+           \]
 
         And thus:
 
         .. math::
+           :nowrap:
 
-            g_x = -Z_{22}^{-1} Z_{21}
+           \[
+           g_x = -Z_{22}^{-1} Z_{21}
+           \]
 
         This requires that -Z_{22} is square and invertible, which are known as the *rank* and *stability* conditions of
         Blanchard and Kahn (1980). If these conditions are not met, the model is indeterminate, and a solution is not
@@ -1319,15 +1340,11 @@ class Model:
 
         """
         if on_failure not in ["error", "ignore"]:
-            raise ValueError(
-                f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}'
-            )
+            raise ValueError(f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}')
         if steady_state_kwargs is None:
             steady_state_kwargs = {}
 
-        ss_dict = _maybe_solve_steady_state(
-            self, steady_state, steady_state_kwargs, parameter_updates
-        )
+        ss_dict = _maybe_solve_steady_state(self, steady_state, steady_state_kwargs, parameter_updates)
         n_variables = len(self.variables)
 
         A, B, C, D = self.linearize_model(
@@ -1346,12 +1363,12 @@ class Model:
             gensys_results = solve_policy_function_with_gensys(A, B, C, D, tol)
             G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
 
-            success = all([x == 1 for x in eu[:2]])
+            success = all(x == 1 for x in eu[:2])
 
             if not success:
                 if on_failure == "error":
                     raise GensysFailedException(eu)
-                elif on_failure == "ignore":
+                if on_failure == "ignore":
                     if verbose:
                         message = interpret_gensys_output(eu)
                         _log.info(message)
@@ -1361,9 +1378,7 @@ class Model:
             if verbose:
                 message = interpret_gensys_output(eu)
                 _log.info(message)
-                _log.info(
-                    "Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S"
-                )
+                _log.info("Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S")
 
             T = G_1[:n_variables, :][:, :n_variables]
             R = impact[:n_variables, :]
@@ -1374,20 +1389,16 @@ class Model:
                 R,
                 result,
                 log_norm,
-            ) = solve_policy_function_with_cycle_reduction(
-                A, B, C, D, max_iter, tol, verbose
-            )
+            ) = solve_policy_function_with_cycle_reduction(A, B, C, D, max_iter, tol, verbose)
             if T is None:
                 if on_failure == "error":
                     raise GensysFailedException(result)
-                elif on_failure == "ignore":
+                if on_failure == "ignore":
                     if verbose:
                         _log.info(result)
                     return None, None
         else:
-            raise NotImplementedError(
-                'Only "cycle_reduction" and "gensys" are valid values for solver'
-            )
+            raise NotImplementedError('Only "cycle_reduction" and "gensys" are valid values for solver')
 
         if verbose:
             check_perturbation_solution(A, B, C, D, T, R, tol=tol)
@@ -1405,15 +1416,12 @@ def _maybe_solve_steady_state(
         if model.is_linear:
             return model.f_ss(**model.parameters(**parameter_updates))
 
-        return model.steady_state(
-            **model.parameters(**parameter_updates), **steady_state_kwargs
-        )
+        return model.steady_state(**model.parameters(**parameter_updates), **steady_state_kwargs)
 
     ss_resid = model.f_ss_resid(**steady_state, **model.parameters(**parameter_updates))
-    unsatisfied_flags = np.abs(ss_resid) > 1e-8
-    unsatisfied_eqs = [
-        f"Equation {i}" for i, flag in enumerate(unsatisfied_flags) if flag
-    ]
+    FLOAT_ZERO = 1e-8
+    unsatisfied_flags = np.abs(ss_resid) > FLOAT_ZERO
+    unsatisfied_eqs = [f"Equation {i}" for i, flag in enumerate(unsatisfied_flags) if flag]
 
     if np.any(unsatisfied_flags):
         raise SteadyStateNotFoundError(unsatisfied_eqs)
@@ -1431,7 +1439,7 @@ def _maybe_linearize_model(
     **linearize_model_kwargs,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Linearize a model if required, or return the provided matrices
+    Linearize a model if required, or return the provided matrices.
 
     Parameters
     ----------
@@ -1478,9 +1486,9 @@ def _maybe_linearize_model(
 
 def _maybe_solve_model(
     model: Model, T: np.ndarray | None, R: np.ndarray | None, **solve_model_kwargs
-):
+) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
     """
-    Solve for the linearized policy matrix of a model if required, or return the provided T and R
+    Solve for the linearized policy matrix of a model if required, or return the provided T and R.
 
     Parameters
     ----------
@@ -1526,26 +1534,22 @@ def _validate_shock_options(
     shocks: list[TimeAwareSymbol],
 ):
     n_shocks = len(shocks)
-    n_provided = sum(
-        x is not None for x in [shock_std_dict, shock_cov_matrix, shock_std]
-    )
+    n_provided = sum(x is not None for x in [shock_std_dict, shock_cov_matrix, shock_std])
     if n_provided > 1 or n_provided == 0:
         raise ValueError(
             "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. You passed "
             f"{n_provided}."
         )
 
-    if shock_cov_matrix is not None:
-        if any(s != n_shocks for s in shock_cov_matrix.shape):
-            raise ValueError(
-                f"Incorrect covariance matrix shape. Expected ({n_shocks}, {n_shocks}), "
-                f"found {shock_cov_matrix.shape}"
-            )
+    if shock_cov_matrix is not None and any(s != n_shocks for s in shock_cov_matrix.shape):
+        raise ValueError(
+            f"Incorrect covariance matrix shape. Expected ({n_shocks}, {n_shocks}), found {shock_cov_matrix.shape}"
+        )
 
     if shock_std_dict is not None:
         shock_names = [x.base_name for x in shocks]
-        missing = [x for x in shock_std_dict.keys() if x not in shock_names]
-        extra = [x for x in shock_names if x not in shock_std_dict.keys()]
+        missing = [x for x in shock_std_dict if x not in shock_names]
+        extra = [x for x in shock_names if x not in shock_std_dict]
         if len(missing) > 0:
             raise ValueError(
                 f"If shock_std_dict is specified, it must give values for all shocks. The following shocks were not "
@@ -1576,9 +1580,7 @@ def _validate_simulation_options(shock_size, shock_cov, shock_trajectory) -> Non
     n_options = sum(x is not None for x in options)
 
     if n_options != 1:
-        raise ValueError(
-            "Specify exactly 1 of shock_size, shock_cov, or shock_trajectory"
-        )
+        raise ValueError("Specify exactly 1 of shock_size, shock_cov, or shock_trajectory")
 
 
 def build_Q_matrix(
@@ -1588,8 +1590,10 @@ def build_Q_matrix(
     shock_std: np.ndarray | list | float | None = None,
 ) -> np.array:
     """
-    Take different options for user input and reconcile them into a covariance matrix. Exactly one or zero of shock_dict
-    or shock_cov_matrix should be provided. Then, proceed according to the following logic:
+    Take different options for user input and reconcile them into a covariance matrix.
+
+    Exactly one or zero of shock_dict or shock_cov_matrix should be provided. Then, proceed according to the following
+    logic:
 
     - If `shock_cov_matrix` is provided, it is Q. Return it.
     - If `shock_dict` is provided, insert these into a diagonal matrix at locations according to `model_shocks`.
@@ -1625,7 +1629,6 @@ def build_Q_matrix(
     Q: ndarray
         Shock variance-covariance matrix
     """
-
     _validate_shock_options(
         shock_std_dict=shock_std_dict,
         shock_cov_matrix=shock_cov_matrix,
@@ -1636,16 +1639,15 @@ def build_Q_matrix(
     if shock_cov_matrix is not None:
         return shock_cov_matrix
 
-    elif shock_std_dict is not None:
+    if shock_std_dict is not None:
         shock_names = [x.base_name for x in model_shocks]
-        indices = [shock_names.index(x) for x in shock_std_dict.keys()]
+        indices = [shock_names.index(x) for x in shock_std_dict]
         Q = np.zeros((len(model_shocks), len(model_shocks)))
-        for i, (key, value) in enumerate(shock_std_dict.items()):
+        for i, (_key, value) in enumerate(shock_std_dict.items()):
             Q[indices[i], indices[i]] = value**2
         return Q
 
-    else:
-        return np.eye(len(model_shocks)) * shock_std**2
+    return np.eye(len(model_shocks)) * shock_std**2
 
 
 def stationary_covariance_matrix(
@@ -1659,8 +1661,9 @@ def stationary_covariance_matrix(
     **solve_model_kwargs,
 ) -> np.ndarray | pd.DataFrame:
     """
-    Compute the stationary covariance matrix of the solved system by solving the associated discrete lyapunov
-    equation.
+    Compute the stationary covariance matrix of the solved system.
+
+    Solution is found by solving the associated discrete lyapunov equation.
 
     In order to construct the shock covariance matrix, exactly one of shock_dict, shock_cov_matrix, or shock_std should
     be provided.
@@ -1731,9 +1734,10 @@ def check_bk_condition(
     **linearize_model_kwargs,
 ) -> bool | pd.DataFrame | None:
     """
-    Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
-    unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of forward-looking variables. Failing
-    this test suggests timing problems in the definition of the model.
+    Compute the generalized eigenvalues of system in the form presented in [1].
+
+    Per [2], the number of unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of
+    forward-looking variables. Failing this test suggests timing problems in the definition of the model.
 
     Parameters
     ----------
@@ -1774,7 +1778,7 @@ def check_bk_condition(
     """
     verbose = linearize_model_kwargs.get("verbose", True)
     A, B, C, D = _maybe_linearize_model(model, A, B, C, D, **linearize_model_kwargs)
-    bk_result = _check_bk_condition(
+    return _check_bk_condition(
         A,
         B,
         C,
@@ -1784,7 +1788,6 @@ def check_bk_condition(
         on_failure=on_failure,
         return_value=return_value,
     )
-    return bk_result
 
 
 # @nb.njit(cache=True)
@@ -1808,15 +1811,11 @@ def _compute_autocovariance_matrix(T, Sigma, n_lags=5, correlation=True):
         An array of shape (n_lags, n_variables, n_variables) whose (i, j, k)-th entry gives the autocorrelation
         (or autocovaraince) between variables j and k at lag i.
     """
-
     n_vars = T.shape[0]
     auto_coors = np.empty((n_lags, n_vars, n_vars))
     std_vec = np.sqrt(np.diag(Sigma))
 
-    if correlation:
-        normalization_factor = np.outer(std_vec, std_vec)
-    else:
-        normalization_factor = np.ones_like(Sigma)
+    normalization_factor = np.outer(std_vec, std_vec) if correlation else np.ones_like(Sigma)
 
     for i in range(n_lags):
         auto_coors[i] = np.linalg.matrix_power(T, i) @ Sigma / normalization_factor
@@ -1837,8 +1836,9 @@ def autocovariance_matrix(
     **solve_model_kwargs,
 ):
     """
-    Computes the model's autocovariance matrix using the stationary covariance matrix. Alteratively, the autocorrelation
-    matrix can be returned by specifying ``correlation = True``.
+    Compute the model's autocovariance matrix using the stationary covariance matrix.
+
+    Alternatively, the autocorrelation matrix can be returned by specifying ``correlation = True``.
 
     In order to construct the shock covariance matrix, exactly one of shock_dict, shock_cov_matrix, or shock_std should
     be provided.
@@ -1846,7 +1846,7 @@ def autocovariance_matrix(
     Parameters
     ----------
     model: Model
-        DSGE Model assoicated with T and R
+        DSGE Model associated with T and R
     T: np.ndarray, optional
         Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
         method.
@@ -1884,9 +1884,7 @@ def autocovariance_matrix(
         return_df=False,
         **solve_model_kwargs,
     )
-    result = _compute_autocovariance_matrix(
-        T, Sigma, n_lags=n_lags, correlation=correlation
-    )
+    result = _compute_autocovariance_matrix(T, Sigma, n_lags=n_lags, correlation=correlation)
 
     if return_xr:
         variables = [x.base_name for x in model.variables]
@@ -1934,6 +1932,190 @@ def summarize_perturbation_solution(
 
 autocorrelation_matrix = ft.partial(autocovariance_matrix, correlation=True)
 autocorrelation_matrix.__doc__ = autocovariance_matrix.__doc__
+
+
+@dataclass(frozen=True)
+class ShockSpec:
+    """Representation of a shock input used to generate an impulse response function."""
+
+    mode: str  # one of "trajectory",  "cov", or "size"
+    trajectory: np.ndarray | None
+    cov: np.ndarray | None
+    size: float | np.ndarray | dict[str, float] | None
+    orthogonalize: bool
+
+
+def _validate_irf_shock_arguments(*values_with_names: tuple[str, Any]) -> None:
+    """Ensure at most one of the provided options is non-None."""
+    provided_names, provided_values = zip(*[(n, v) for n, v in values_with_names if v is not None], strict=False)
+    if len(provided_names) > 1:
+        names = ", ".join(n for n, _ in provided_names)
+        raise ValueError(f"Only one of {names} may be specified, got {len(provided_names)}.")
+
+
+def _is_diagonal(M: np.ndarray) -> bool:
+    return np.allclose(M, np.diag(np.diag(M)))
+
+
+def _get_selected_shock_names(spec: ShockSpec, shock_names: list[str]) -> list[str]:
+    """
+    If user passed a dict for shock_size, return only those shock names (in model order).
+
+    Otherwise, return None to indicate all shocks should be used.
+    """
+    if spec.mode == "size" and isinstance(spec.size, dict):
+        if len(spec.size) == 0:
+            raise ValueError("Shock size cannot be empty.")
+
+        unknown_shocks = set(spec.size) - set(shock_names)
+        if unknown_shocks:
+            raise ValueError(f"shock_size dict contains unknown shock names: {unknown_shocks}")
+
+        return [name for name in shock_names if name in spec.size]
+
+    return shock_names
+
+
+def _infer_shocks_are_individual(
+    requested: bool | None,
+    shock_spec: ShockSpec,
+    n_shocks: int,
+) -> bool:
+    # If the user specifically asked for individual shocks (or not), respect it
+    if requested is not None:
+        return requested
+
+    if shock_spec.mode == "size":
+        # scalar, dict, or diagonal vector are all treated as per-shock steps
+        if isinstance(shock_spec.size, int | float | dict):
+            return True
+
+        arr = np.asarray(shock_spec.size)
+        return arr.ndim == 0 or arr.shape == (n_shocks,)
+
+    if shock_spec.mode == "cov":
+        return _is_diagonal(np.asarray(shock_spec.cov))
+
+    if shock_spec.mode == "trajectory":
+        # If a full trajectory is given, default to a single combined IRF unless user asks otherwise
+        return False
+
+    return False
+
+
+def _make_shock_spec(
+    shock_size: float | np.ndarray | dict[str, float] | None,
+    shock_cov: np.ndarray | None,
+    shock_trajectory: np.ndarray | None,
+    orthogonalize_shocks: bool,
+) -> ShockSpec:
+    _validate_irf_shock_arguments(
+        ("shock_size", shock_size),
+        ("shock_cov", shock_cov),
+        ("shock_trajectory", shock_trajectory),
+    )
+
+    mode = "trajectory" if shock_trajectory is not None else "cov" if shock_cov is not None else "size"
+    return ShockSpec(
+        mode=mode, trajectory=shock_trajectory, cov=shock_cov, size=shock_size, orthogonalize=orthogonalize_shocks
+    )
+
+
+def _shock_vector_from_spec(
+    size: float | np.ndarray | dict[str, float] | None,
+    shock_names: Sequence[str],
+) -> np.ndarray:
+    """Return an (n_shocks,) vector for a one-period step size."""
+    n = len(shock_names)
+    if size is None:
+        return np.ones(n)
+    if isinstance(size, int | float):
+        return np.full(n, float(size))
+    if isinstance(size, dict):
+        return np.array([float(size.get(name, 0.0)) for name in shock_names], dtype=float)
+    arr = np.asarray(size, dtype=float)
+    if arr.shape != (n,):
+        raise ValueError(f"shock_size array must have shape ({n},); got {arr.shape}.")
+    return arr
+
+
+def _orthogonal_factor(cov: np.ndarray, make_unit_variance: bool = False) -> np.ndarray:
+    """
+    Compute L such that z ~ N(0, I), e = L @ z has Cov(e)=cov.
+
+    If make_unit_variance=True, return L' whose columns are scaled to unit variance (orthonormal shocks).
+    """
+    L = np.linalg.cholesky(cov)  # lower-triangular
+    if not make_unit_variance:
+        return L
+
+    col_norms = np.linalg.norm(L, axis=0)
+    col_norms[col_norms == 0] = 1.0
+    return L / col_norms
+
+
+def _build_trajectory(
+    spec: ShockSpec,
+    simulation_length: int,
+    n_shocks: int,
+    shock_names: Sequence[str],
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Convert a ShockSpec into a (simulation_length, n_shocks) shock trajectory."""
+    match spec.mode:
+        case "trajectory":
+            traj = np.asarray(spec.trajectory, dtype=float)
+            if traj.ndim != 2 or traj.shape[1] != n_shocks:
+                raise ValueError(f"shock_trajectory must have shape (T, {n_shocks}); got {traj.shape}.")
+
+        case "cov":
+            traj = np.zeros((simulation_length, n_shocks), dtype=float)
+
+            Q = np.asarray(spec.cov, dtype=float)
+            if Q.shape != (n_shocks, n_shocks):
+                raise ValueError(f"shock_cov must be ({n_shocks}, {n_shocks}); got {Q.shape}.")
+            L = _orthogonal_factor(Q, make_unit_variance=False) if spec.orthogonalize else np.linalg.cholesky(Q)
+            e0 = rng.standard_normal(n_shocks)
+            traj[0] = L @ e0
+
+        case "size":
+            traj = np.zeros((simulation_length, n_shocks), dtype=float)
+            shock_size = _shock_vector_from_spec(spec.size, shock_names)
+            traj[0] = shock_size
+
+        case _:
+            raise RuntimeError(f"Unexpected ShockSpec mode: {spec.mode}. You shouldn't get here, please report a bug.")
+
+    return traj
+
+
+def _simulate_linear_system(T: np.ndarray, R: np.ndarray, shock_traj: np.ndarray) -> np.ndarray:
+    """Simulate a linear system :math:`x_t = T x_{t-1} + R e_t`, given a shock trajectory :math:`e_t`."""
+    T = np.asarray(T)
+    R = np.asarray(R)
+    T_len, n_shocks = shock_traj.shape
+    n_vars = T.shape[0]
+
+    out = np.zeros((T_len, n_vars), dtype=float)
+    for t in range(1, T_len):
+        out[t] = T @ out[t - 1] + R @ shock_traj[t - 1]
+    return out
+
+
+def _irf_to_xarray(
+    data: np.ndarray,
+    variable_names: list[str],
+    shock_names: list[str] | None,
+) -> xr.DataArray:
+    if shock_names is None:
+        coords = {"time": np.arange(data.shape[0]), "variable": list(variable_names)}
+        return xr.DataArray(data, dims=["time", "variable"], coords=coords)
+    coords = {
+        "shock": list(shock_names),
+        "time": np.arange(data.shape[1]),
+        "variable": list(variable_names),
+    }
+    return xr.DataArray(data, dims=["shock", "time", "variable"], coords=coords)
 
 
 def impulse_response_function(
@@ -2009,159 +2191,52 @@ def impulse_response_function(
     xr.DataArray
         The IRFs for each variable in the model.
     """
-    variable_names = [x.base_name for x in model.variables]
-    model_shock_names = [x.base_name for x in model.shocks]
-
-    n_variables = len(model.variables)
-    n_model_shocks = len(model.shocks)
-
     rng = np.random.default_rng(random_seed)
-    Q = None  # No covariance matrix needed if a trajectory is provided. Will be overwritten later if needed.
-
-    _validate_simulation_options(shock_size, shock_cov, shock_trajectory)
-
-    return_individual_shocks = (
-        True if return_individual_shocks is None else return_individual_shocks
-    )
-
-    if shock_trajectory is not None:
-        n, k = shock_trajectory.shape
-
-        # Validate the shock trajectory
-        if k != n_model_shocks:
-            raise ValueError(
-                "If shock_trajectory is provided, there must be a trajectory provided for each shock. "
-                f"Model has {n_model_shocks} shocks, but shock_trajectory has only {k} columns"
-            )
-        if simulation_length is not None and simulation_length != n:
-            _log.warning(
-                "Both steps and shock_trajectory were provided but do not agree. Length of "
-                "shock_trajectory will take priority, and steps will be ignored."
-            )
-        simulation_length = n  # Overwrite steps with the length of the shock trajectory
-        shock_trajectory = np.array(shock_trajectory)
-
-    if shock_cov is not None:
-        Q = np.array(shock_cov)
-        is_diag = np.all(Q == np.diag(np.diagonal(Q)))
-        return_individual_shocks = is_diag
-
-        if orthogonalize_shocks:
-            Q = linalg.cholesky(Q) / np.diag(Q)[:, None]
-
     T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
 
-    def _simulate(shock_trajectory):
-        data = np.zeros((simulation_length, n_variables))
+    spec = _make_shock_spec(shock_size, shock_cov, shock_trajectory, orthogonalize_shocks)
 
-        for t in range(1, simulation_length):
-            stochastic = R @ shock_trajectory[t - 1]
-            deterministic = T @ data[t - 1]
-            data[t] = deterministic + stochastic
+    variable_names = [x.base_name for x in model.variables]
+    shock_names = [x.base_name for x in model.shocks]
+    selected_shock_names = _get_selected_shock_names(spec, [x.base_name for x in model.shocks])
 
-        return data
+    n_vars = len(variable_names)
+    n_shocks = len(model.shocks)
+    n_selected_shocks = len(selected_shock_names)
 
-    def _create_shock_trajectory(
-        n_shocks, shock_names, Q=None, shock_size=None, shock_trajectory=None
-    ):
-        if shock_trajectory is not None:
-            return np.array(shock_trajectory)
+    shock_idxs = [i for i, x in enumerate(model.shocks) if x.base_name in selected_shock_names]
 
-        shock_trajectory = np.zeros((simulation_length, n_shocks))
+    if spec.mode == "trajectory":
+        simulation_length = spec.trajectory.shape[0]
 
-        if Q is not None:
-            shock_size = rng.multivariate_normal(
-                mean=np.zeros(n_shocks), cov=Q, size=simulation_length
-            )
+    apply_shocks_individually = _infer_shocks_are_individual(return_individual_shocks, spec, n_selected_shocks)
 
+    if apply_shocks_individually:
+        # Build and simulate one IRF per shock axis
+        data = np.zeros((n_selected_shocks, simulation_length, n_vars), dtype=float)
+
+        if spec.mode == "trajectory":
+            full = np.asarray(spec.trajectory, dtype=float)
+            if full.shape[1] != n_shocks:
+                raise ValueError(f"shock_trajectory must have n_shocks={n_shocks}.")
+            for i, idx in enumerate(shock_idxs):
+                traj = np.zeros_like(full)
+                traj[:, idx] = full[:, idx]
+                data[i] = _simulate_linear_system(T, R, traj)
         else:
-            if isinstance(shock_size, int | float):
-                shock_size = np.ones(n_shocks) * shock_size
-            if isinstance(shock_size, dict):
-                shock_dict = shock_size.copy()
-                shock_size = np.zeros(n_shocks)
-                for i, name in enumerate(shock_names):
-                    if name in shock_dict:
-                        shock_size[i] = shock_dict[name]
+            # Regardless of how many shocks were chosen by the user, we normalize to a full trajectory for everything
+            # first, then subset only what was requested.
+            base = _build_trajectory(spec, simulation_length, n_shocks, shock_names, rng)
+            for i, idx in enumerate(shock_idxs):
+                traj = np.zeros_like(base)
+                traj[:, idx] = base[:, idx]
+                data[i] = _simulate_linear_system(T, R, traj)
 
-        shock_trajectory[0] = shock_size
+        return _irf_to_xarray(data, variable_names, shock_names=selected_shock_names)
 
-        return shock_trajectory
-
-    def _make_shock_dict(
-        shock_names: list[str],
-        shock_size: dict | int | float | list[float] | np.ndarray | None = None,
-        Q: np.ndarray | None = None,
-    ):
-        if Q is not None:
-            return {name: np.sqrt(Q[i, i]) for i, name in enumerate(shock_names)}
-        elif isinstance(shock_size, dict):
-            # Sort the keys so they match the ordering in the model
-            return {
-                name: shock_size[name] for name in shock_names if name in shock_size
-            }
-        elif isinstance(shock_size, int | float):
-            return {name: shock_size for name in shock_names}
-        elif isinstance(shock_size, np.ndarray | list):
-            return {name: shock_size[i] for i, name in enumerate(shock_names)}
-        else:
-            ValueError()
-
-    shock_dict = _make_shock_dict(model_shock_names, shock_size, Q)
-    shock_names = (
-        list(shock_dict.keys()) if shock_dict is not None else model_shock_names
-    )
-    n_shocks = len(shock_names)
-
-    data_shape = (simulation_length, n_variables)
-
-    coords = {"time": np.arange(simulation_length), "variable": variable_names}
-    dims = ["time", "variable"]
-
-    if return_individual_shocks:
-        data_shape = (n_shocks, *data_shape)
-        coords.update({"shock": shock_names})
-        dims = ["shock", "time", "variable"]
-
-    data = np.zeros(data_shape)
-
-    if return_individual_shocks and shock_dict is not None:
-        for i, (shock_name, init_shock) in enumerate(shock_dict.items()):
-            step_dict = {
-                k: shock_dict[k] if k == shock_name else 0.0 for k in shock_dict
-            }
-            traj = _create_shock_trajectory(
-                shock_names=model_shock_names,
-                n_shocks=n_model_shocks,
-                shock_size=step_dict,
-            )
-
-            data[i] = _simulate(traj)
-
-    elif return_individual_shocks and shock_trajectory is not None:
-        for i, shock_name in enumerate(shock_names):
-            traj = np.zeros_like(shock_trajectory)
-            traj[i] = shock_trajectory[i]
-            data[i] = _simulate(traj)
-
-    else:
-        traj = _create_shock_trajectory(
-            shock_names=model_shock_names,
-            n_shocks=n_model_shocks,
-            Q=Q,
-            shock_trajectory=shock_trajectory,
-            shock_size=shock_size,
-        )
-
-        data = _simulate(traj)
-
-    irf = xr.DataArray(
-        data,
-        dims=dims,
-        coords=coords,
-    )
-
-    return irf
+    traj = _build_trajectory(spec, simulation_length, n_shocks, selected_shock_names, rng)
+    data = _simulate_linear_system(T, R, traj)
+    return _irf_to_xarray(data, variable_names, shock_names=None)
 
 
 def simulate(
@@ -2246,7 +2321,7 @@ def simulate(
         deterministic = np.einsum("nm,sm->sn", T, data[:, t - 1, :])
         data[:, t, :] = deterministic + stochastic
 
-    data = xr.DataArray(
+    return xr.DataArray(
         data,
         dims=["simulation", "time", "variable"],
         coords={
@@ -2255,8 +2330,6 @@ def simulate(
             "time": np.arange(simulation_length),
         },
     )
-
-    return data
 
 
 def matrix_to_dataframe(
@@ -2268,7 +2341,6 @@ def matrix_to_dataframe(
 ) -> pd.DataFrame:
     """
     Convert a matrix to a DataFrame with variable names as columns and rows.
-
 
     Parameters
     ----------
@@ -2306,8 +2378,7 @@ def matrix_to_dataframe(
     for i, ordinal in enumerate(["First", "Secoond"]):
         if matrix.shape[i] not in [n_variables, n_shocks]:
             raise ValueError(
-                f"{ordinal} dimension of the matrix must match the number of variables or shocks "
-                f"in the model"
+                f"{ordinal} dimension of the matrix must match the number of variables or shocks in the model"
             )
 
     if dim1 is None:
@@ -2336,20 +2407,17 @@ def check_steady_state(
     if steady_state_kwargs is None:
         steady_state_kwargs = {}
 
-    ss_dict = _maybe_solve_steady_state(
-        model, stead_state, steady_state_kwargs, parameter_updates
-    )
+    ss_dict = _maybe_solve_steady_state(model, stead_state, steady_state_kwargs, parameter_updates)
     if ss_dict.success:
         _log.warning("Steady state successfully found!")
         return
 
     parameters = model.parameters(**parameter_updates)
     residuals = model.f_ss_resid(**ss_dict, **parameters)
-    _log.warning(
-        "Steady state NOT successful. The following equations have non-zero residuals:"
-    )
+    _log.warning("Steady state NOT successful. The following equations have non-zero residuals:")
 
-    for resid, eq in zip(residuals, model.equations):
-        if np.abs(resid) > 1e-6:
+    FLOAT_ZERO = 1e-8
+    for resid, eq in zip(residuals, model.equations, strict=False):
+        if np.abs(resid) > FLOAT_ZERO:
             _log.warning(eq)
             _log.warning(f"Residual: {resid:0.4f}")

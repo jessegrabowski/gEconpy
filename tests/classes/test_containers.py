@@ -2,7 +2,9 @@ import unittest
 
 import sympy as sp
 
-from sympy.polys.domains.mpelements import ComplexElement
+
+# Since sympy 1.14.0, the `mpmath` library is used for complex numbers.
+from mpmath.ctx_mp_python import _mpc
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -33,7 +35,7 @@ class TestSymbolDictErrors(unittest.TestCase):
 
     def test_pipe_merge_errors_with_non_dict_other(self):
         d = SymbolDictionary({"A": 4})
-        with self.assertRaises(ValueError) as e:
+        with self.assertRaises(TypeError) as e:
             s = {1, 2, 3}
             d | s
         error_msg = str(e.exception)
@@ -67,7 +69,7 @@ class TestSymbolDictionary(unittest.TestCase):
         self.assertTrue(not self.d.is_sympy)
 
     def test_convert_to_sympy(self):
-        d = SymbolDictionary(dict(a=2, b=3)).to_sympy()
+        d = SymbolDictionary({"a": 2, "b": 3}).to_sympy()
         self.assertEqual(list(d.keys()), [sp.Symbol("a"), sp.Symbol("b")])
         self.assertTrue(d.is_sympy)
 
@@ -78,16 +80,16 @@ class TestSymbolDictionary(unittest.TestCase):
 
         d.to_sympy(inplace=True)
         F_ss = TimeAwareSymbol("F", "ss")
-        assert F_ss in d.keys()
+        assert F_ss in d
 
         # But when we add in symbol mode, the original type (Symbol vs TimeAwareSymbol) is preserved
         d = self.d.copy()
         F_ss2 = sp.Symbol("F_ss")
         d[F_ss2] = 3
         d.to_string(inplace=True)
-        assert "F_ss" in d.keys()
+        assert "F_ss" in d
         d.to_sympy(inplace=True)
-        assert F_ss2 in d.keys()
+        assert F_ss2 in d
 
     def test_copy(self):
         d_copy = self.d.copy()
@@ -182,36 +184,30 @@ class TestSymbolDictionary(unittest.TestCase):
         self.assertRaises(ValueError, loop_update, [d0, d1, d2])
 
     def test_convert_values(self):
-        # Since sympy 1.14.0, the `mpmath` library is used for complex numbers.
-        from mpmath.ctx_mp_python import _mpc
-
         d = self.d.copy()
         d_sp = d.float_to_values()
         values = list(d_sp.values())
-        self.assertTrue(all([isinstance(x, sp.core.Number | _mpc) for x in values]))
+        self.assertTrue(all(isinstance(x, sp.core.Number | _mpc) for x in values))
 
         d_np = d_sp.values_to_float()
         values = list(d_np.values())
-        self.assertTrue(all([isinstance(x, int | float | _mpc) for x in values]))
+        self.assertTrue(all(isinstance(x, int | float | _mpc) for x in values))
 
     def test_convert_values_inplace(self):
-        # Since sympy 1.14.0, the `mpmath` library is used for complex numbers.
-        from mpmath.ctx_mp_python import _mpc
-
         d = self.d.copy()
         d.float_to_values(inplace=True)
         values = list(d.values())
-        self.assertTrue(all([isinstance(x, sp.core.Number | _mpc) for x in values]))
+        self.assertTrue(all(isinstance(x, sp.core.Number | _mpc) for x in values))
 
         d.values_to_float(inplace=True)
         values = list(d.values())
-        self.assertTrue(all([isinstance(x, int | float | _mpc) for x in values]))
+        self.assertTrue(all(isinstance(x, int | float | _mpc) for x in values))
 
     def test_not_inplace_update_is_not_persistent(self):
         d = self.d
         d.to_string()
 
-        self.assertTrue(all([isinstance(x, sp.Symbol) for x in d.keys()]))
+        self.assertTrue(all(isinstance(x, sp.Symbol) for x in d))
         self.assertTrue(d.is_sympy)
 
 

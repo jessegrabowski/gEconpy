@@ -1,7 +1,7 @@
 import warnings
 
-from itertools import combinations_with_replacement, product
-from typing import TYPE_CHECKING, Any, Literal, cast, Union
+from itertools import product
+from typing import Any, Literal, cast
 
 import arviz as az
 import matplotlib
@@ -17,8 +17,8 @@ from matplotlib.gridspec import GridSpec
 from scipy import stats
 from xarray_einstats.linalg import diagonal as xr_diagonal
 
+from gEconpy.model.model import Model, check_bk_condition
 from gEconpy.model.statespace import DSGEStateSpace
-from gEconpy.model.model import Model
 
 
 def set_matplotlib_style():
@@ -39,9 +39,7 @@ def set_matplotlib_style():
     plt.rcParams.update(config)
 
 
-def prepare_gridspec_figure(
-    n_cols: int, n_plots: int, figure: plt.Figure | None = None
-) -> tuple[GridSpec, list]:
+def prepare_gridspec_figure(n_cols: int, n_plots: int, figure: plt.Figure | None = None) -> tuple[GridSpec, list]:
     """
      Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
@@ -61,17 +59,15 @@ def prepare_gridspec_figure(
     list of tuple(slice, slice)
          A list of tuples of slices representing the indices of the grid cells to be used for each subplot.
     """
-
     remainder = n_plots % n_cols
     has_remainder = remainder > 0
     n_rows = n_plots // n_cols + int(has_remainder)
 
     gs = GridSpec(2 * n_rows, 2 * n_cols, figure=figure)
-    plot_locs = []
-
-    for i in range(n_rows - int(has_remainder)):
-        for j in range(n_cols):
-            plot_locs.append((slice(i * 2, (i + 1) * 2), slice(j * 2, (j + 1) * 2)))
+    plot_locs = [
+        (slice(i * 2, (i + 1) * 2), slice(j * 2, (j + 1) * 2))
+        for i, j in product(range(n_rows - int(has_remainder)), range(n_cols))
+    ]
 
     if has_remainder:
         last_row = slice((n_rows - 1) * 2, n_rows * 2)
@@ -91,9 +87,7 @@ def set_axis_cmap(axis, cmap):
     axis.set_prop_cycle(cycler)
 
 
-def _plot_single_variable(
-    data: xr.DataArray, ax, ci=None, cmap=None, fill_color="tab:blue", **line_kwargs
-):
+def _plot_single_variable(data: xr.DataArray, ax, ci=None, cmap=None, fill_color="tab:blue", **line_kwargs):
     """
     Plot the mean and optionally a confidence interval for a single variable.
 
@@ -123,16 +117,14 @@ def _plot_single_variable(
         data.plot.line(x="time", ax=ax, add_legend=False, hue=hue, **line_kwargs)
         if hue is not None:
             lines = ax.get_lines()
-            for line, shock in zip(lines, data.coords["shock"].values):
+            for line, shock in zip(lines, data.coords["shock"].values, strict=False):
                 line.set_label(shock)
 
     else:
         q_low, q_high = ((1 - ci) / 2), 1 - ((1 - ci) / 2)
         ci_bounds = data.quantile([q_low, q_high], dim=["simulation"])
 
-        data.mean(dim="simulation").plot.line(
-            x="time", ax=ax, add_legend=False, **line_kwargs
-        )
+        data.mean(dim="simulation").plot.line(x="time", ax=ax, add_legend=False, **line_kwargs)
         ci_bounds.plot.line(
             ax=ax,
             x="time",
@@ -180,7 +172,6 @@ def plot_timeseries(
     figure: plt.Figure
         The Matplotlib Figure object containing the plots.
     """
-
     if fig_kwargs is None:
         fig_kwargs = {}
     if n_cols is None:
@@ -191,7 +182,7 @@ def plot_timeseries(
     figure = plt.figure(**fig_kwargs)
     gs, plot_locs = prepare_gridspec_figure(n_cols, len(vars_to_plot), figure=figure)
 
-    for var, loc in zip(vars_to_plot, plot_locs):
+    for var, loc in zip(vars_to_plot, plot_locs, strict=False):
         axis = figure.add_subplot(gs[loc])
         axis.plot(df.index, df[var], **line_kwargs)
 
@@ -243,7 +234,6 @@ def plot_simulation(
     Figure
         The Matplotlib Figure object containing the plots.
     """
-
     if vars_to_plot is None:
         vars_to_plot = simulation.coords["variable"].values.tolist()
     n_plots = len(vars_to_plot)
@@ -271,6 +261,123 @@ def plot_simulation(
 
     fig.tight_layout()
     return fig
+
+
+def _irf_to_mapping(
+    irf: az.InferenceData | list[az.InferenceData] | dict[str, az.InferenceData],
+) -> dict[str, xr.DataArray]:
+    """Normalize IRF input into a mapping of scenario name -> DataArray."""
+    if isinstance(irf, xr.DataArray):
+        return {"": irf}
+    if isinstance(irf, list):
+        return {f"Scenario {i}": irf[i] for i in range(len(irf))}
+    if isinstance(irf, dict):
+        return irf
+    raise ValueError(f"Unsupported irf type: {type(irf)}")
+
+
+def _resolve_list_to_plot(
+    value: str | list[str] | None,
+    available: list[str],
+    item_name: str,
+) -> list[str]:
+    """Turn a string or None into a validated list against 'available'."""
+    if value is None:
+        return available
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        raise TypeError(f"Expected str or list for {item_name}, got {type(value)}")
+    for v in value:
+        if v not in available:
+            raise ValueError(f"{item_name} '{v}' not found among available: {available}")
+    return value
+
+
+def _resolve_vars_and_shocks(
+    irf_map: dict[str, xr.DataArray],
+    vars_to_plot: str | list[str] | None,
+    shocks_to_plot: str | list[str] | None,
+) -> tuple[list[str], list[str] | None]:
+    coords = next(iter(irf_map.values())).coords
+    variables = coords["variable"].values.tolist()
+    vars_resolved = _resolve_list_to_plot(vars_to_plot, variables, "variable")
+
+    shocks_resolved: list[str] | None
+    if "shock" in coords:
+        shocks = coords["shock"].values.tolist()
+        shocks_resolved = _resolve_list_to_plot(shocks_to_plot, shocks, "shock")
+    else:
+        shocks_resolved = None
+
+    return vars_resolved, shocks_resolved
+
+
+def _prepare_irf_grid(figsize, dpi, n_plots: int, n_cols: int | None, figure: plt.Figure | None = None):
+    """Create figure and gridspec, return gs, plot_locs, row indices, and last rows."""
+    n_cols = min(4, n_plots) if n_cols is None else n_cols
+    fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True) if figure is None else figure
+    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
+
+    plot_row_idxs = [loc[0].stop // 2 - 1 for loc in plot_locs]
+    plot_rows = sorted(set(plot_row_idxs))
+    is_square = all(plot_row_idxs.count(i) == n_cols for i in plot_rows)
+    last_row_idxs = [plot_rows[-1]] if is_square else plot_rows[-2:]
+
+    return fig, gs, plot_locs, plot_row_idxs, last_row_idxs
+
+
+def _plot_irf_panel(
+    axis,
+    irf_map: dict[str, xr.DataArray],
+    variable: str,
+    shocks_to_plot: list[str] | None,
+    cmap: str | Colormap | None,
+    markers: list[str],
+    add_scenario_legend: bool,
+    scenario_names: list[str],
+    show_xticks: bool,
+) -> None:
+    """Plot one variable panel across scenarios, style axis, optionally add legend."""
+    sel_dict: dict[str, Any] = {"variable": variable}
+    if shocks_to_plot is not None:
+        sel_dict["shock"] = shocks_to_plot
+
+    for scenario_idx, (_scenario, irf_data) in enumerate(irf_map.items()):
+        _plot_single_variable(
+            irf_data.sel(**sel_dict),
+            ax=axis,
+            cmap=cmap,
+            ls=markers[scenario_idx % len(markers)],
+        )
+
+    if add_scenario_legend and len(scenario_names) > 1 and scenario_names[0] != "":
+        lines = axis.get_lines()
+        axis.legend(handles=lines, labels=scenario_names)
+
+    axis.set(title=variable)
+    if not show_xticks:
+        axis.set(xticklabels=[], xlabel="")
+
+    [spine.set_visible(False) for spine in axis.spines.values()]
+    axis.grid(ls="--", lw=0.5)
+
+
+def _add_shocks_legend(
+    fig: plt.Figure, shocks_to_plot: list[str] | None, legend: bool, legend_kwargs: dict | None
+) -> None:
+    """Add a global legend for shocks using the first axis' handles."""
+    if not legend:
+        return
+    if legend_kwargs is None:
+        n_shocks_to_plot = len(shocks_to_plot) if shocks_to_plot is not None else 1
+        legend_kwargs = {
+            "ncol": min(4, n_shocks_to_plot),
+            "loc": "lower center",
+            "bbox_to_anchor": (0.5, 1.0),
+        }
+    handles = fig.axes[0].get_lines()
+    fig.legend(handles=handles, labels=shocks_to_plot, **legend_kwargs)
 
 
 def plot_irf(
@@ -318,253 +425,141 @@ def plot_irf(
     matplotlib.figure.Figure
         The figure object.
     """
-    if not isinstance(vars_to_plot, str | list | None):
-        raise ValueError(
-            f"Expected strings or list of strings for parameter vars_to_plot, got {vars_to_plot} of "
-            f"type {type(vars_to_plot)}"
-        )
+    irf_map = _irf_to_mapping(irf)
+    vars_to_plot_resolved, shocks_to_plot_resolved = _resolve_vars_and_shocks(irf_map, vars_to_plot, shocks_to_plot)
 
-    if isinstance(irf, xr.DataArray):
-        irf = {"": irf}
-    elif isinstance(irf, list):
-        irf = {f"Scenario {i}": irf[i] for i in range(len(irf))}
-
-    coords = irf[next(iter(irf.keys()))].coords
-
-    if vars_to_plot is None:
-        vars_to_plot = coords["variable"].values.tolist()
-    if isinstance(vars_to_plot, str):
-        vars_to_plot = [vars_to_plot]
-
-    for var in vars_to_plot:
-        if var not in coords["variable"]:
-            raise ValueError(f"{var} not found among simulated impulse responses.")
-
-    if "shock" in coords:
-        shock_list = coords["shock"].values.tolist()
-    else:
-        shock_list = None
-
-    if shocks_to_plot is None:
-        shocks_to_plot = shock_list
-    if isinstance(shocks_to_plot, str):
-        shocks_to_plot = [shocks_to_plot]
-
-    for shock in shocks_to_plot:
-        if shock not in shock_list:
-            raise ValueError(
-                f"{shock} not found among shocks used in impulse response data."
-            )
-
-    if not isinstance(shocks_to_plot, list):
-        raise ValueError(
-            f"Expected list for parameter shocks_to_plot, got {shocks_to_plot} "
-            f"of type {type(shocks_to_plot)}"
-        )
-
-    n_plots = len(vars_to_plot)
-    n_cols = min(4, n_plots) if n_cols is None else n_cols
+    n_plots = len(vars_to_plot_resolved)
+    fig, gs, plot_locs, plot_row_idxs, last_row_idxs = _prepare_irf_grid(
+        figsize=figsize, dpi=dpi, n_plots=n_plots, n_cols=n_cols
+    )
 
     markers = ["-", "--", "-.", ":"]
-    scenario_names = list(irf.keys())
+    scenario_names = list(irf_map.keys())
 
-    fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True)
-    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
+    for idx, variable in enumerate(vars_to_plot_resolved):
+        axis = fig.add_subplot(gs[plot_locs[idx]])
+        _plot_irf_panel(
+            axis=axis,
+            irf_map=irf_map,
+            variable=variable,
+            shocks_to_plot=shocks_to_plot_resolved,
+            cmap=cmap,
+            markers=markers,
+            add_scenario_legend=(idx == 0),
+            scenario_names=scenario_names,
+            show_xticks=(plot_row_idxs[idx] in last_row_idxs),
+        )
 
-    plot_row_idxs = [x[0].stop // 2 - 1 for x in plot_locs]
-    plot_rows = sorted(list(set(plot_row_idxs)))
-    is_square = all([plot_row_idxs.count(i) == n_cols for i in plot_rows])
-    last_row_idxs = [plot_rows[-1]] if is_square else plot_rows[-2:]
-
-    for idx, variable in enumerate(vars_to_plot):
-        loc = plot_locs[idx]
-        row_idx = plot_row_idxs[idx]
-
-        axis = fig.add_subplot(gs[loc])
-        sel_dict = {"variable": variable}
-        if shocks_to_plot is not None:
-            sel_dict["shock"] = shocks_to_plot
-
-        for scenario_idx, (scenario, irf_data) in enumerate(irf.items()):
-            _plot_single_variable(
-                irf_data.sel(**sel_dict),
-                ax=axis,
-                cmap=cmap,
-                ls=markers[scenario_idx % 4],
-            )
-
-        if (idx == 0) and len(scenario_names) > 1 and scenario_names[0] != "":
-            lines = axis.get_lines()
-            axis.legend(handles=lines, labels=scenario_names)
-
-        axis.set(title=variable)
-        if row_idx not in last_row_idxs:
-            axis.set(xticklabels=[], xlabel="")
-
-        [spine.set_visible(False) for spine in axis.spines.values()]
-        axis.grid(ls="--", lw=0.5)
-
-    if legend:
-        if legend_kwargs is None:
-            n_shocks_to_plot = len(shocks_to_plot) if shocks_to_plot is not None else 1
-            legend_kwargs = {
-                "ncol": min(4, n_shocks_to_plot),
-                "loc": "lower center",
-                "bbox_to_anchor": (0.5, 1.0),
-            }
-        handles = fig.axes[0].get_lines()
-        fig.legend(handles=handles, labels=shocks_to_plot, **legend_kwargs)
-
+    _add_shocks_legend(fig, shocks_to_plot_resolved, legend, legend_kwargs)
     return fig
 
 
-def plot_prior_solvability(
-    data: pd.DataFrame,
-    params_to_plot: list[str] | None = None,
-):
-    """
-    Plot the results of sampling from the prior distributions of a GCN and attempting to fit a DSGE model.
+def _prior_validate_params_to_plot(params_to_plot: list[str] | None, params: list[str]) -> None:
+    """Validate the requested params_to_plot against available params."""
+    if params_to_plot is not None:
+        for param in params_to_plot:
+            if param not in params:
+                raise ValueError(f'Cannot plot parameter "{param}", it was not found in the provided data.')
 
-    This function produces a grid of plots that show the distribution of parameter values where model fitting was successful
-    or where it failed. Each plot on the grid shows the distribution of one parameter against another, with successful
-    fits plotted in blue and failed fits plotted in red.
 
-    Parameters
-    ----------
-    data : pd.DataFrame
-        A DataFrame containing the results of sampling from the prior distributions and attempting to fit a model.
-    n_samples : int, optional
-        The number of samples to draw from the prior distributions.
-    seed : int, optional
-        The seed to use for the random number generator.
-    params_to_plot : list of str, optional
-        A list of parameter names to include in the plots. If not provided, all parameters will be plotted.
-
-    Returns
-    -------
-    fig : Matplotlib Figure
-        The Figure object containing the plots
-
-    Notes
-    -----
-    - Parameters will be sampled from prior distributions defined in the GCN.
-    - The following failure modes are considered:
-        - Steady state: The steady state of the model could not be calculated.
-        - Perturbation: The perturbation of the model failed.
-        - Blanchard-Kahn: The Blanchard-Kahn condition was not satisfied.
-        - Deterministic norm: Residuals of the deterministic part of the solution matrix were not zero.
-        - Stochastic norm: Residuals of the stochastic part of the solution matrix were not zero.
-    """
-
+def _prior_prepare_data(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]]:
+    """Prepare data: drop constants, split failure_step, compute success flag and params list."""
     plot_data = data.copy()
     failure_step = plot_data["failure_step"].copy()
     plot_data.drop(columns=["failure_step"], inplace=True)
 
-    color_dict = {
-        "steady_state": "tab:red",
-        "perturbation": "tab:orange",
-        "blanchard-kahn": "tab:green",
-        "deterministic_norm": "tab:purple",
-        "stochastic_norm": "tab:pink",
-    }
-
-    constant_cols = plot_data.var() < 1e-18
-
+    FLOAT_ZERO = 1e-18
+    constant_cols = plot_data.var() < FLOAT_ZERO
     plot_data = plot_data.loc[:, ~constant_cols].copy()
-    params = plot_data.columns
-    n_params = len(params) if params_to_plot is None else len(params_to_plot)
 
     plot_data["success"] = failure_step.isna()
-    fig, axes = plt.subplots(n_params, n_params, figsize=(16, 16), dpi=100)
+    params = plot_data.columns.drop("success").tolist()
+    return plot_data, failure_step, params
 
-    if params_to_plot is not None:
-        for param in params_to_plot:
-            if param not in params:
-                raise ValueError(
-                    f'Cannot plot parameter "{param}", it was not found in the provided data.'
-                )
 
-    if params_to_plot is None:
-        param_pairs = list(combinations_with_replacement(params, 2))
-    else:
-        param_pairs = list(combinations_with_replacement(params_to_plot, 2))
+def _prior_hide_upper_triangle_axes(axes: np.ndarray, n_params: int) -> None:
+    """Hide axes in the upper triangle."""
+    for row in range(n_params):
+        for col in range(n_params):
+            if col > row:
+                axes[row][col].set_visible(False)
 
-    plot_grid = np.arange(1, n_params**2 + 1).reshape((n_params, n_params))
-    plot_grid[np.tril_indices(n_params, k=-1)] = 0
 
-    plot_idxs = np.where(plot_grid)
-    blank_idxs = np.where(plot_grid == 0)
+def _prior_plot_diagonal(ax, series: pd.Series, success_mask: pd.Series) -> None:
+    """Draw KDE-like 1D densities for success vs failure on the diagonal."""
+    X_sorted = series.sort_values()
+    X_success = X_sorted[success_mask]
+    X_failure = X_sorted[~success_mask]
 
-    for col, row in zip(*blank_idxs):
-        axes[row][col].set_visible(False)
+    n_success = X_success.shape[0]
+    n_failure = X_failure.shape[0]
 
-    for col, row, pair in zip(*plot_idxs, param_pairs):
-        param_1, param_2 = pair
-        axis = axes[row][col]
-        if param_1 == param_2:
-            X_sorted = plot_data[param_1].sort_values()
-            X_success = X_sorted[plot_data["success"]]
-            X_failure = X_sorted[~plot_data["success"]]
+    if n_success > 0:
+        success_grid = np.linspace(X_success.min() * 0.9, X_success.max() * 1.1, 100)
+        d_success = stats.gaussian_kde(X_success)
+        ax.plot(success_grid, d_success.pdf(success_grid), color="tab:blue")
+        ax.fill_between(
+            x=success_grid,
+            y1=d_success.pdf(success_grid),
+            y2=0,
+            color="tab:blue",
+            alpha=0.25,
+        )
 
-            n_success = X_success.shape[0]
-            n_failure = X_failure.shape[0]
+    if n_failure > 0:
+        failure_grid = np.linspace(X_failure.min() * 0.9, X_failure.max() * 1.1, 100)
+        d_failure = stats.gaussian_kde(X_failure)
+        ax.plot(failure_grid, d_failure.pdf(failure_grid), color="tab:red")
+        ax.fill_between(
+            x=failure_grid,
+            y1=d_failure.pdf(failure_grid),
+            y2=0,
+            color="tab:red",
+            alpha=0.25,
+        )
 
-            if n_success > 0:
-                success_grid = np.linspace(
-                    X_success.min() * 0.9, X_success.max() * 1.1, 100
-                )
-                d_success = stats.gaussian_kde(X_success)
-                axis.plot(success_grid, d_success.pdf(success_grid), color="tab:blue")
-                axis.fill_between(
-                    x=success_grid,
-                    y1=d_success.pdf(success_grid),
-                    y2=0,
-                    color="tab:blue",
-                    alpha=0.25,
-                )
 
-            if n_failure > 0:
-                failure_grid = np.linspace(
-                    X_failure.min() * 0.9, X_failure.max() * 1.1, 100
-                )
+def _prior_plot_offdiag(
+    ax,
+    plot_data: pd.DataFrame,
+    failure_step: pd.Series,
+    x_name: str,
+    y_name: str,
+    color_dict: dict[str, str],
+) -> None:
+    """Draw success vs failure scatter by reason for off-diagonal panels."""
+    ax.scatter(
+        plot_data.loc[plot_data.success, x_name],
+        plot_data.loc[plot_data.success, y_name],
+        c="tab:blue",
+        s=10,
+        label="Model Successfully Fit",
+    )
 
-                d_failure = stats.gaussian_kde(X_failure)
-                axis.plot(failure_grid, d_failure.pdf(failure_grid), color="tab:red")
-                axis.fill_between(
-                    x=failure_grid,
-                    y1=d_failure.pdf(failure_grid),
-                    y2=0,
-                    color="tab:red",
-                    alpha=0.25,
-                )
+    why_failed = failure_step[~plot_data.success]
+    for reason in why_failed.unique():
+        reason_mask = why_failed == reason
+        ax.scatter(
+            plot_data.loc[~plot_data.success, x_name][reason_mask],
+            plot_data.loc[~plot_data.success, y_name][reason_mask],
+            c=color_dict[reason],
+            s=10,
+            label=f"{reason.title()} Failed",
+        )
 
-        else:
-            axis.scatter(
-                plot_data.loc[plot_data.success, param_1],
-                plot_data.loc[plot_data.success, param_2],
-                c="tab:blue",
-                s=10,
-                label="Model Successfully Fit",
-            )
-            why_failed = failure_step[~plot_data.success]
-            for reason in why_failed.unique():
-                reason_mask = why_failed == reason
-                axis.scatter(
-                    plot_data.loc[~plot_data.success, param_1][reason_mask],
-                    plot_data.loc[~plot_data.success, param_2][reason_mask],
-                    c=color_dict[reason],
-                    s=10,
-                    label=f"{reason.title()} Failed",
-                )
 
-        if col == 0:
-            axis.set_ylabel(param_2)
-        if row == n_params - 1:
-            axis.set_xlabel(param_1)
+def _prior_finalize_axis(ax, x_name: str, y_name: str, row: int, col: int, n_params: int) -> None:
+    """Apply labels on outer axes, hide spines, and add grid."""
+    if col == 0:
+        ax.set_ylabel(y_name)
+    if row == n_params - 1:
+        ax.set_xlabel(x_name)
+    [spine.set_visible(False) for spine in ax.spines.values()]
+    ax.grid(ls="--", lw=0.5)
 
-        [spine.set_visible(False) for spine in axis.spines.values()]
-        axis.grid(ls="--", lw=0.5)
 
+def _prior_add_legend_and_title(fig: plt.Figure, axes: np.ndarray) -> None:
+    """Add a compact legend and figure title."""
     axes[1][0].legend(
         loc="center",
         bbox_to_anchor=(0.5, 0.91),
@@ -575,6 +570,52 @@ def plot_prior_solvability(
     )
     fig.suptitle("Model Solution Results by Parameter Values", y=0.95)
 
+
+def plot_prior_solvability(
+    data: pd.DataFrame,
+    params_to_plot: list[str] | None = None,
+):
+    """
+    Plot the results of sampling from the prior distributions of a GCN and attempting to fit a DSGE model.
+
+    The solvability plot is a grid of plots that show the distribution of parameter values where model fitting was
+    successful or where it failed. Each plot on the grid shows the distribution of one parameter against another, with
+    successful fits plotted in blue and failed fits plotted in red.
+    """
+    color_dict = {
+        "steady_state": "tab:red",
+        "perturbation": "tab:orange",
+        "blanchard-kahn": "tab:green",
+        "deterministic_norm": "tab:purple",
+        "stochastic_norm": "tab:pink",
+    }
+
+    plot_data, failure_step, params = _prior_prepare_data(data)
+    _prior_validate_params_to_plot(params_to_plot, params)
+
+    params_use = params if params_to_plot is None else params_to_plot
+    n_params = len(params_use)
+
+    fig, axes = plt.subplots(n_params, n_params, figsize=(16, 16), dpi=100)
+    _prior_hide_upper_triangle_axes(axes, n_params)
+
+    for row in range(n_params):
+        for col in range(n_params):
+            ax = axes[row][col]
+            if not ax.get_visible():
+                continue
+
+            y_name = params_use[row]
+            x_name = params_use[col]
+
+            if row == col:
+                _prior_plot_diagonal(ax, plot_data[x_name], plot_data["success"])
+            else:
+                _prior_plot_offdiag(ax, plot_data, failure_step, x_name, y_name, color_dict)
+
+            _prior_finalize_axis(ax, x_name, y_name, row, col, n_params)
+
+    _prior_add_legend_and_title(fig, axes)
     return fig
 
 
@@ -592,9 +633,10 @@ def plot_eigenvalues(
     **parameter_updates,
 ):
     """
-    Plot the eigenvalues of the model solution, along with a unit circle. Eigenvalues with modulus greater than 1 are
-    shown in red, while those with modulus less than 1 are shown in blue. Eigenvalues greater than 10 in modulus
-    are not drawn.
+    Plot the eigenvalues of the model solution, along with a unit circle.
+
+    Eigenvalues with modulus greater than 1 are shown in red, while those with modulus less than 1 are shown in blue.
+    Eigenvalues greater than 10 in modulus are not drawn.
 
     Parameters
     ----------
@@ -630,8 +672,6 @@ def plot_eigenvalues(
     Matplotlib Figure
         The figure object containing the plot.
     """
-    from gEconpy.model.model import check_bk_condition
-
     if figsize is None:
         figsize = (5, 5)
     if dpi is None:
@@ -644,6 +684,7 @@ def plot_eigenvalues(
 
     if linearize_model_kwargs is None:
         linearize_model_kwargs = {}
+    linearize_model_kwargs.update(parameter_updates)
 
     data = cast(
         pd.DataFrame,
@@ -658,8 +699,9 @@ def plot_eigenvalues(
         ),
     )
 
-    n_infinity = (data["Modulus"] > 10).sum()
-    data = data[data.Modulus < 10]
+    MAX_PLOT_VAL = 10
+    n_infinity = (data["Modulus"] > MAX_PLOT_VAL).sum()
+    data = data[data.Modulus < MAX_PLOT_VAL]
 
     if plot_circle:
         x_circle = np.linspace(-2 * np.pi, 2 * np.pi, 1000)
@@ -670,9 +712,7 @@ def plot_eigenvalues(
     ax.scatter(data.Real, data.Imaginary, color=colors, s=50, lw=1, edgecolor="k")
     [spine.set_visible(False) for spine in ax.spines.values()]
     ax.grid(ls="--", lw=0.5)
-    ax.set_title(
-        f"Eigenvalues of Model Solution\n{n_infinity} Eigenvalues with Infinity Modulus not shown."
-    )
+    ax.set_title(f"Eigenvalues of Model Solution\n{n_infinity} Eigenvalues with Infinity Modulus not shown.")
     return fig
 
 
@@ -688,7 +728,7 @@ def plot_covariance_matrix(
     annotation_kwargs: dict | None = None,
 ) -> plt.Figure:
     """
-    Plots a heatmap of the covariance matrix of the input data.
+    Plot a heatmap of the covariance matrix of the input data.
 
     Parameters
     ----------
@@ -696,8 +736,8 @@ def plot_covariance_matrix(
         A square DataFrame, representing a covariance matrix. The index and the columns should both have the same
         values.
     vars_to_plot : list of str, optional
-        A list of strings containing the names of the variables to plot. If not provided, all variables in the input data
-        will be plotted.
+        A list of strings containing the names of the variables to plot. If not provided, all variables in the input
+        data will be plotted.
     cbarlabel : str, optional
         The label for the colorbar.
     figsize : tuple of float, optional
@@ -718,7 +758,6 @@ def plot_covariance_matrix(
     matplotlib.figure.Figure
         A figure containing the heatmap.
     """
-
     if vars_to_plot is None:
         vars_to_plot = data.columns
 
@@ -767,7 +806,6 @@ def plot_heatmap(
     **kwargs
         All other arguments are forwarded to `imshow`.
     """
-
     if not ax:
         ax = plt.gca()
 
@@ -814,7 +852,7 @@ def annotate_heatmap(
     **textkw,
 ):
     """
-    A function to annotate a heatmap.
+    Add annotation to a heatmap.
 
     Parameters
     ----------
@@ -837,19 +875,15 @@ def annotate_heatmap(
         All other arguments are forwarded to each call to `text` used to create
         the text labels.
     """
-
     if not isinstance(data, list | np.ndarray):
         data = im.get_array()
 
     # Normalize the threshold to the images color range.
-    if threshold is not None:
-        threshold = im.norm(threshold)
-    else:
-        threshold = im.norm(data.max()) / 2.0
+    threshold = im.norm(threshold) if threshold is not None else im.norm(data.max()) / 2.0
 
     # Set default alignment to center, but allow it to be
     # overwritten by textkw.
-    kw = dict(horizontalalignment="center", verticalalignment="center")
+    kw = {"horizontalalignment": "center", "verticalalignment": "center"}
     kw.update(textkw)
 
     # Get the formatter in case a string is supplied
@@ -903,9 +937,7 @@ def plot_acf(
     else:
         for var in vars_to_plot:
             if var not in all_variables:
-                raise ValueError(
-                    f"Can not plot variable {var}, it was not found in the provided covariance matrix"
-                )
+                raise ValueError(f"Can not plot variable {var}, it was not found in the provided covariance matrix")
 
     n_plots = len(vars_to_plot)
     n_cols = min(n_cols, n_plots)
@@ -913,12 +945,10 @@ def plot_acf(
     fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
     gc, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_plots, figure=fig)
 
-    acorr_matrix = xr_diagonal(acorr, dims=["variable", "variable_aux"]).sel(
-        variable=vars_to_plot
-    )
+    acorr_matrix = xr_diagonal(acorr, dims=["variable", "variable_aux"]).sel(variable=vars_to_plot)
     x_values = acorr_matrix.coords["lag"]
 
-    for variable, plot_loc in zip(vars_to_plot, plot_locs):
+    for variable, plot_loc in zip(vars_to_plot, plot_locs, strict=False):
         axis = fig.add_subplot(gc[plot_loc])
         axis.scatter(x_values, acorr_matrix.sel(variable=variable).values)
         axis.vlines(x_values, 0, acorr_matrix.sel(variable=variable).values)
@@ -928,6 +958,108 @@ def plot_acf(
         axis.set(title=variable)
 
     return fig
+
+
+def _validate_and_prepare_corner_inputs(
+    idata: Any,
+    group: str,
+    var_names: list[str] | None,
+    figure_kwargs: dict | None,
+    colorby: str | None,
+    scatter_kwargs: dict | None,
+) -> tuple[list[str], int, dict, np.ndarray | None, dict | None]:
+    """Validate inputs and resolve plotting options for plot_corner."""
+    if not hasattr(idata, group):
+        raise ValueError(f"Argument idata should be an arviz idata object with a {group} group")
+
+    figure_kwargs = figure_kwargs or {}
+
+    vars_available = list(idata[group].data_vars)
+    var_names = var_names or vars_available
+    for v in var_names:
+        if v not in vars_available:
+            raise ValueError(f'Variable "{v}" not found in idata[{group}]')
+
+    # Optional color mapping
+    color_data = None
+    resolved_scatter_kwargs = None
+    if colorby is not None:
+        if colorby not in vars_available:
+            raise ValueError(f'colorby "{colorby}" not found in idata[{group}]')
+        color_data = idata[group][colorby].values.ravel()
+        resolved_scatter_kwargs = {"zorder": 100, "cmap": "viridis", "s": 10, "alpha": 0.5}
+        if scatter_kwargs:
+            resolved_scatter_kwargs.update(scatter_kwargs)
+
+    return var_names, len(var_names), figure_kwargs, color_data, resolved_scatter_kwargs
+
+
+def _format_axis_for_corner(ax, fontsize: int) -> None:
+    """Apply standard tick formatting for corner plot axes."""
+    ax.ticklabel_format(axis="both", style="sci")
+    ax.yaxis.major.formatter.set_powerlimits((-2, 2))
+    ax.yaxis.offsetText.set_fontsize(fontsize)
+    ax.xaxis.major.formatter.set_powerlimits((-2, 2))
+    ax.xaxis.offsetText.set_fontsize(fontsize)
+
+
+def _plot_diagonal_hist(ax, data: np.ndarray, bins: int, fontsize: int, is_last_row: bool) -> None:
+    """Draw the 1D histogram on the diagonal panel."""
+    ax.hist(data, bins=bins, histtype="step", density=True)
+    ax.set_yticklabels([])
+    ax.tick_params(axis="both", left=False, bottom=is_last_row, labelsize=fontsize)
+    if not is_last_row:
+        ax.set_xticklabels([])
+        ax.tick_params(axis="x", which="both", bottom=False)
+
+
+def _plot_offdiag_panel(
+    ax,
+    x_name: str,
+    y_name: str,
+    x_data: np.ndarray,
+    y_data: np.ndarray,
+    rug_bins: int,
+    rug_levels: int,
+    show_marginal_modes: bool,
+    fontsize: int,
+    draw_xlabel: bool,
+    draw_ylabel: bool,
+    color_data: np.ndarray | None,
+    scatter_kwargs: dict | None,
+) -> None:
+    """Draw the off-diagonal joint density and optional scatter layer."""
+    if color_data is not None and scatter_kwargs is not None:
+        ax.scatter(x_data, y_data, c=color_data, **scatter_kwargs)
+
+    # 2D histogram (y first, then x to match contour axes)
+    H, y_edges, x_edges = np.histogram2d(y_data, x_data, bins=rug_bins)
+
+    # Mode via argmax -> unique pair
+    iy, ix = np.unravel_index(np.argmax(H), H.shape)
+    x_mode, y_mode = x_edges[ix], y_edges[iy]
+
+    ax.contourf(x_edges[:-1], y_edges[:-1], H, cmap="Blues", levels=rug_levels)
+
+    if show_marginal_modes:
+        ax.axvline(x_mode, ls="--", lw=0.5, color="k")
+        ax.axhline(y_mode, ls="--", lw=0.5, color="k")
+        ax.scatter(x_mode, y_mode, color="k", marker="s", s=20)
+
+    # Labels and ticks
+    if draw_ylabel:
+        ax.set_ylabel(y_name, fontsize=fontsize)
+    else:
+        ax.set_yticklabels([])
+        ax.tick_params(axis="y", which="both", left=False)
+
+    if draw_xlabel:
+        ax.set_xlabel(x_name, fontsize=fontsize)
+    else:
+        ax.set_xticklabels([])
+        ax.tick_params(axis="x", which="both", bottom=False)
+
+    ax.tick_params(axis="both", which="both", labelsize=fontsize)
 
 
 def plot_corner(
@@ -942,11 +1074,12 @@ def plot_corner(
     fontsize: int = 6,
     show_marginal_modes: bool = True,
     scatter_kwargs: dict | None = None,
-) -> None:
+) -> plt.Figure:
     """
-    Produces a corner plot, also known as a scatterplot matrix, of the posterior distributions of a set of variables.
-    Each panel of the plot shows the two-dimensional distribution of two of the variables, with the remaining variables
-    marginalized out. The diagonal panels show the one-dimensional distribution of each variable.
+    Draw a corner plot, also known as a scatterplot matrix, of the posterior distributions of a set of variables.
+
+    Each panel of the plot shows the two-dimensional distribution of two of the variables, marginalizing over the
+    remaining variables. The diagonal panels show the one-dimensional distribution of each variable.
 
     Parameters
     ----------
@@ -974,108 +1107,66 @@ def plot_corner(
     matplotlib.figure.Figure
         Figure object containing the plots.
     """
-
-    if not hasattr(idata, group):
-        raise ValueError(
-            f"Argument idata should be an arviz idata object with a {group} group"
-        )
-
-    if figure_kwargs is None:
-        figure_kwargs = {}
-
-    var_names = var_names or list(idata[group].data_vars)
-    k_params = len(var_names)
+    (
+        var_names,
+        k_params,
+        figure_kwargs,
+        color_data,
+        resolved_scatter_kwargs,
+    ) = _validate_and_prepare_corner_inputs(
+        idata=idata,
+        group=group,
+        var_names=var_names,
+        figure_kwargs=figure_kwargs,
+        colorby=colorby,
+        scatter_kwargs=scatter_kwargs,
+    )
 
     fig, axes = plt.subplots(k_params, k_params, **figure_kwargs)
+    flat_data = {name: idata[group][name].values.ravel() for name in var_names}
 
-    for row in range(k_params):
-        for col in range(k_params):
-            axis = axes[row, col]
+    for row, col in product(range(k_params), range(k_params)):
+        ax = axes[row, col]
+        _format_axis_for_corner(ax, fontsize)
+        x_name, y_name = var_names[col], var_names[row]
 
-            axis.ticklabel_format(axis="both", style="sci")
-            axis.yaxis.major.formatter.set_powerlimits((-2, 2))
-            axis.yaxis.offsetText.set_fontsize(fontsize)
-            axis.xaxis.major.formatter.set_powerlimits((-2, 2))
-            axis.xaxis.offsetText.set_fontsize(fontsize)
+        # Hide upper triangle
+        if col > row:
+            ax.set(xticks=[], yticks=[], xlabel="", ylabel="")
+            ax.set_visible(False)
+            continue
 
-            if col > row:
-                axis.set(xticks=[], yticks=[], xlabel="", ylabel="")
-                axis.set_visible(False)
-                continue
+        if col == row:
+            _plot_diagonal_hist(
+                ax=ax,
+                data=flat_data[x_name],
+                bins=hist_bins,
+                fontsize=fontsize,
+                is_last_row=(row == k_params - 1),
+            )
+            continue
 
-            if col == row:
-                # Make a histogram on the diagonal
-                v = var_names[col]
-                axis.hist(
-                    idata[group][v].values.ravel(),
-                    bins=hist_bins,
-                    histtype="step",
-                    density=True,
-                )
-                axis.set_yticklabels([])
-                axis.tick_params(
-                    axis="both",
-                    left=False,
-                    bottom=row == (k_params - 1),
-                    labelsize=fontsize,
-                )
-                if row != (k_params - 1):
-                    axis.set_xticklabels([])
-                    axis.tick_params(axis="x", which="both", bottom=False)
+        # Off-diagonal panel
+        _plot_offdiag_panel(
+            ax=ax,
+            x_name=x_name,
+            y_name=y_name,
+            x_data=flat_data[x_name],
+            y_data=flat_data[y_name],
+            rug_bins=rug_bins,
+            rug_levels=rug_levels,
+            show_marginal_modes=show_marginal_modes,
+            fontsize=fontsize,
+            draw_xlabel=(row == k_params - 1),
+            draw_ylabel=(col == 0),
+            color_data=color_data,
+            scatter_kwargs=resolved_scatter_kwargs,
+        )
 
-            else:
-                # Make the rugplot
-                x = var_names[col]
-                y = var_names[row]
+    engine = fig.get_layout_engine()
+    if engine is not None:
+        engine.set(h_pad=0.0, w_pad=0.0, wspace=0.05, hspace=0.05)
 
-                data_x = idata[group][x].values.ravel()
-                data_y = idata[group][y].values.ravel()
-
-                if colorby is not None:
-                    defaults = {"zorder": 100, "cmap": "viridis", "s": 10, "alpha": 0.5}
-
-                    if scatter_kwargs is not None:
-                        defaults.update(scatter_kwargs)
-
-                    scatter_kwargs = defaults
-                    color_data = idata[group][colorby].values.ravel()
-                    axis.scatter(data_x, data_y, c=color_data, **scatter_kwargs)
-
-                H, y_edges, x_edges = np.histogram2d(data_y, data_x, bins=rug_bins)
-                ymax_idx, xmax_idx = np.where(H == H.max())
-
-                x_mode = x_edges[xmax_idx]
-                y_mode = y_edges[ymax_idx]
-
-                if len(x_mode) > 1:
-                    x_mode = x_mode[0]
-                if len(y_mode) > 1:
-                    y_mode = y_mode[0]
-
-                axis.contourf(
-                    x_edges[:-1], y_edges[:-1], H, cmap="Blues", levels=rug_levels
-                )
-
-                if show_marginal_modes:
-                    axis.axvline(x_mode, ls="--", lw=0.5, color="k")
-                    axis.axhline(y_mode, ls="--", lw=0.5, color="k")
-                    axis.scatter(x_mode, y_mode, color="k", marker="s", s=20)
-
-                if col == 0:
-                    axis.set_ylabel(y, fontsize=fontsize)
-                else:
-                    axis.set_yticklabels([])
-                    axis.tick_params(axis="y", which="both", left=False)
-
-                if row != (k_params - 1):
-                    axis.set_xticklabels([])
-                    axis.tick_params(axis="x", which="both", bottom=False)
-                else:
-                    axis.set_xlabel(x, fontsize=fontsize)
-
-                axis.tick_params(axis="both", which="both", labelsize=fontsize)
-
-    fig.get_layout_engine().set(h_pad=0.0, w_pad=0.0, wspace=0.05, hspace=0.05)
     return fig
 
 
@@ -1123,11 +1214,8 @@ def plot_kalman_filter(
     matplotlib.figure.Figure
         Matplotlib Figure object with the plot.
     """
-
     if kalman_output.lower() not in ["filtered", "predicted", "smoothed"]:
-        raise ValueError(
-            f'kalman_output must be one of "filtered", "predicted", "smoothed". Found {kalman_output}.'
-        )
+        raise ValueError(f'kalman_output must be one of "filtered", "predicted", "smoothed". Found {kalman_output}.')
 
     if fig is None:
         fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
@@ -1138,21 +1226,13 @@ def plot_kalman_filter(
 
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
-    output_name = (
-        f"{kalman_output}_{group}"
-        if not observed
-        else f"{kalman_output}_{group}_observed"
-    )
+    output_name = f"{kalman_output}_{group}" if not observed else f"{kalman_output}_{group}_observed"
 
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
     time_idx = idata.coords["time"]
 
-    means = (
-        idata[output_name].sel(**{state_name: vars_to_plot}).mean(dim=["chain", "draw"])
-    )
-    hdis = az.hdi(
-        idata[output_name].sel(**{state_name: vars_to_plot}), hdi_prob=0.95, skipna=True
-    )[output_name]
+    means = idata[output_name].sel(**{state_name: vars_to_plot}).mean(dim=["chain", "draw"])
+    hdis = az.hdi(idata[output_name].sel(**{state_name: vars_to_plot}), hdi_prob=0.95, skipna=True)[output_name]
 
     for idx, variable in enumerate(vars_to_plot):
         axis = fig.add_subplot(gs[plot_locs[idx]])
@@ -1209,12 +1289,9 @@ def plot_priors(
     fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
     gs, locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_params, figure=fig)
 
-    if isinstance(model, DSGEStateSpace):
-        all_params = model.param_dict | model.hyper_param_dict
-    else:
-        all_params = model.parameters()
+    all_params = model.param_dict | model.hyper_param_dict if isinstance(model, DSGEStateSpace) else model.parameters()
 
-    for (name, prior), loc in zip(pz_priors.items(), locs):
+    for (name, prior), loc in zip(pz_priors.items(), locs, strict=False):
         axis = fig.add_subplot(gs[loc])
         with warnings.catch_warnings(action="ignore"):
             prior.plot_pdf(
@@ -1247,9 +1324,7 @@ def plot_posterior_with_prior(
     if true_values is None:
         ref_val = None
     else:
-        ref_val = np.r_[
-            *[true_values[name].values.ravel() for name in var_names]
-        ].tolist()
+        ref_val = np.r_[*[true_values[name].values.ravel() for name in var_names]].tolist()
 
     if fig_kwargs is None:
         n_rows = len(var_names) // n_cols
@@ -1258,9 +1333,7 @@ def plot_posterior_with_prior(
         plot_posterior_kwargs = {"textsize": 10}
 
     fig = plt.figure(**fig_kwargs)
-    gs, locs = prepare_gridspec_figure(
-        n_cols=n_cols, n_plots=len(var_names), figure=fig
-    )
+    gs, locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=len(var_names), figure=fig)
     [fig.add_subplot(gs[loc]) for loc in locs]
 
     axes = az.plot_posterior(
@@ -1310,9 +1383,7 @@ def plot_estimated_matrix(
         axis.axvline(0, ls="--", c="k", lw=0.5)
 
         axis.set_ylabel(y_var.replace("epsilon_", "") if j == 0 else "", fontsize=6)
-        axis.set_xlabel(
-            x_var.replace("epsilon_", "") if i == (n_shocks - 1) else "", fontsize=6
-        )
+        axis.set_xlabel(x_var.replace("epsilon_", "") if i == (n_shocks - 1) else "", fontsize=6)
 
         axis.set_yticklabels([])
         axis.tick_params(axis="x", labelsize=6)

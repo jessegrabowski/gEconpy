@@ -2,13 +2,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from numpy.testing import assert_allclose
 import sympy as sp
+
+from numpy.testing import assert_allclose
 from pytensor.tensor import TensorVariable
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.parser.file_loaders import gcn_to_block_dict, block_dict_to_param_dict
+from gEconpy.parser.file_loaders import block_dict_to_param_dict, gcn_to_block_dict
 
 
 @pytest.fixture
@@ -62,14 +63,10 @@ def test_compile_param_dict_cache_reuse(complex_param_system, backend):
 
     # First compilation should create cache
     cache = {}
-    f1, cache = compile_param_dict_func(
-        param_dict, deterministic_dict, backend=backend, cache=cache
-    )
+    f1, cache = compile_param_dict_func(param_dict, deterministic_dict, backend=backend, cache=cache)
 
     # Second compilation should reuse cache
-    f2, cache2 = compile_param_dict_func(
-        param_dict, deterministic_dict, backend=backend, cache=cache
-    )
+    f2, cache2 = compile_param_dict_func(param_dict, deterministic_dict, backend=backend, cache=cache)
 
     # Results should be identical
     result1 = f1(alpha=0.3, beta=0.99, theta=0.5)
@@ -88,25 +85,23 @@ def test_compile_param_dict_symbolic(complex_param_system):
 
     assert isinstance(symbolic_result, dict)
     assert isinstance(cache, dict)
-    assert all(isinstance(k, TensorVariable) for k in symbolic_result.keys())
+    assert all(isinstance(k, TensorVariable) for k in symbolic_result)
 
     *_, gamma, delta = symbolic_result.keys()
-    np.testing.assert_allclose(
-        symbolic_result[gamma].eval({"alpha": 2.0, "beta": 3.0}), np.log(5.0)
-    )
+    np.testing.assert_allclose(symbolic_result[gamma].eval({"alpha": 2.0, "beta": 3.0}), np.log(5.0))
 
 
 EXPECTED_PARAM_DICT = {
-    "one_block_simple": dict(alpha=0.4, beta=0.99, delta=0.02, rho=0.95, gamma=1.5),
-    "one_block_simple_2": dict(
-        theta=0.357,
-        beta=1 / 1.01,
-        delta=0.02,
-        tau=2,
-        rho=0.95,
-        Theta=0.95 * 1 / 1.01 + 3,
-        zeta=-np.log(0.357),
-    ),
+    "one_block_simple": {"alpha": 0.4, "beta": 0.99, "delta": 0.02, "rho": 0.95, "gamma": 1.5},
+    "one_block_simple_2": {
+        "theta": 0.357,
+        "beta": 1 / 1.01,
+        "delta": 0.02,
+        "tau": 2,
+        "rho": 0.95,
+        "Theta": 0.95 * 1 / 1.01 + 3,
+        "zeta": -np.log(0.357),
+    },
 }
 
 
@@ -120,23 +115,21 @@ EXPECTED_PARAM_DICT = {
 )
 @pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_create_parameter_function(gcn_path, name, backend):
+    rng = np.random.default_rng()
     expected = EXPECTED_PARAM_DICT[name]
-    block_dict, *outputs = gcn_to_block_dict(
-        Path("tests") / "_resources" / "test_gcns" / gcn_path, True
-    )
+    block_dict, *outputs = gcn_to_block_dict(Path("tests") / "_resources" / "test_gcns" / gcn_path, True)
     param_dict = block_dict_to_param_dict(block_dict, "param_dict")
     deterministic_dict = block_dict_to_param_dict(block_dict, "deterministic_dict")
 
     f, _ = compile_param_dict_func(param_dict, deterministic_dict, backend)
 
     inputs = list(param_dict.keys())
-    np.random.shuffle(inputs)
+    rng.shuffle(inputs)
+
     shuffled_input_dict = {k: param_dict[k] for k in inputs}
     output = f(**shuffled_input_dict)
 
     computed_param_dict = output.to_string().values_to_float()
 
-    for k in expected.keys():
-        np.testing.assert_allclose(
-            computed_param_dict[k], expected[k], err_msg=f"{k} not close to tolerance"
-        )
+    for k in expected:
+        np.testing.assert_allclose(computed_param_dict[k], expected[k], err_msg=f"{k} not close to tolerance")

@@ -23,7 +23,6 @@ from gEconpy.solvers.gensys import gensys_pt, solve_policy_function_with_gensys
 from gEconpy.utilities import eq_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
 
-
 JAX_INSTALLED = find_spec("jax") is not None
 
 
@@ -51,18 +50,16 @@ def linearize_method_2(variables, equations, shocks, not_loglin_variables=None):
 
 @pytest.mark.parametrize("backend", ["numpy", "pytensor"])
 def test_variables_to_all_times(backend):
-    mod = load_and_cache_model(
-        "one_block_1.gcn", backend=backend, use_jax=JAX_INSTALLED
-    )
+    mod = load_and_cache_model("one_block_1.gcn", backend=backend, use_jax=JAX_INSTALLED)
     variables = mod.variables
     lags, now, leads = make_all_variable_time_combinations(variables)
 
     assert set(variables) == set(now)
-    assert all([len(vars) == len(variables) for vars in [lags, now, leads]])
+    assert all(len(vars) == len(variables) for vars in [lags, now, leads])
     for i, var_group in enumerate([lags, now, leads]):
         t = i - 1
-        assert all([var.time_index == t for var in var_group])
-        assert all([var.set_t(0) in mod.variables for var in var_group])
+        assert all(var.time_index == t for var in var_group)
+        assert all(var.set_t(0) in mod.variables for var in var_group)
 
 
 @pytest.mark.parametrize(
@@ -98,9 +95,7 @@ def test_log_linearize_model(gcn_file, backend):
         not_loglin_variables=[x.base_name for x in mod.variables],
     )
 
-    for i, (M1, M2) in enumerate(
-        zip([A, B, C, D], [(A2, A22), (B2, B22), (C2, C22), (D2, D22)])
-    ):
+    for _i, (M1, M2) in enumerate(zip([A, B, C, D], [(A2, A22), (B2, B22), (C2, C22), (D2, D22)], strict=False)):
         f1 = sp.lambdify(ss_vars + ss_shocks + parameters + [not_loglin_variable], M1)
         f1 = override_dummy_wrapper(f1, "not_loglin_variable")
         f2 = sp.lambdify(ss_vars + ss_shocks + parameters, list(M2))
@@ -156,12 +151,8 @@ def test_solve_policy_function(gcn_file, state_variables, backend):
     gensys_results = solve_policy_function_with_gensys(A, B, C, D, 1e-8)
     G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
 
-    state_idxs = [
-        i for i, var in enumerate(mod.variables) if var.base_name in state_variables
-    ]
-    jumper_idxs = [
-        i for i, var in enumerate(mod.variables) if var.base_name not in state_variables
-    ]
+    state_idxs = [i for i, var in enumerate(mod.variables) if var.base_name in state_variables]
+    jumper_idxs = [i for i, var in enumerate(mod.variables) if var.base_name not in state_variables]
 
     assert not np.allclose(G_1[:, state_idxs], 0.0)
     assert_allclose(G_1[:, jumper_idxs], 0.0, atol=1e-8, rtol=1e-8)
@@ -192,14 +183,11 @@ def test_solve_policy_function(gcn_file, state_variables, backend):
 @pytest.mark.include_nk
 def test_cycle_reduction_gradients(op):
     mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
-    A, B, C, D = mod.linearize_model(
-        verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False}
-    )
+    A, B, C, D = mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
     A, B, C, D = [np.ascontiguousarray(x, dtype="float64") for x in [A, B, C, D]]
 
     A_pt, B_pt, C_pt, D_pt = (
-        pt.tensor(name=name, shape=x.shape)
-        for name, x in zip(list("ABCD"), [A, B, C, D])
+        pt.tensor(name=name, shape=x.shape) for name, x in zip(list("ABCD"), [A, B, C, D], strict=False)
     )
 
     T, R, *_ = op(A_pt, B_pt, C_pt, D_pt)
@@ -221,17 +209,13 @@ def test_cycle_reduction_gradients(op):
         T, R, *_ = op(A, B, C, D)
         return T.sum()
 
-    verify_grad(
-        cycle_func, pt=[A, B, C, D.astype("float64")], rng=np.random.default_rng()
-    )
+    verify_grad(cycle_func, pt=[A, B, C, D.astype("float64")], rng=np.random.default_rng())
 
 
 @pytest.mark.include_nk
 def test_pytensor_gensys():
     mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
-    A, B, C, D = mod.linearize_model(
-        verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False}
-    )
+    A, B, C, D = mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
 
     A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in list("ABCD"))
     T1, R1 = cycle_reduction_pt(A_pt, B_pt, C_pt, D_pt)
@@ -244,9 +228,7 @@ def test_pytensor_gensys():
         T, R, _ = gensys_pt(A, B, C, D)
         return T.sum()
 
-    verify_grad(
-        gensys_func, pt=[A, B, C, D.astype("float64")], rng=np.random.default_rng()
-    )
+    verify_grad(gensys_func, pt=[A, B, C, D.astype("float64")], rng=np.random.default_rng())
 
     f = pytensor.function(
         [A_pt, B_pt, C_pt, D_pt],
@@ -255,9 +237,7 @@ def test_pytensor_gensys():
         mode="FAST_RUN",
     )
 
-    T1_np, T2_np, R1_np, R2_np, A_bar_1, B_bar_1, C_bar_1, A_bar_2, B_bar_2, C_bar_2 = (
-        f(A, B, C, D)
-    )
+    T1_np, T2_np, R1_np, R2_np, A_bar_1, B_bar_1, C_bar_1, A_bar_2, B_bar_2, C_bar_2 = f(A, B, C, D)
 
     assert_allclose(A_bar_1, A_bar_2, atol=1e-8, rtol=1e-8)
     assert_allclose(B_bar_1, B_bar_2, atol=1e-8, rtol=1e-8)

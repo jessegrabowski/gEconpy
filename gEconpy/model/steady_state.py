@@ -20,104 +20,38 @@ _log = logging.getLogger(__name__)
 ERROR_FUNCTIONS = Literal["squared", "mean_squared", "abs", "l2-norm"]
 
 
-def _validate_optimizer_kwargs(
-    optimizer_kwargs: dict,
-    n_eq: int,
-    method: str,
-    use_jac: bool,
-    use_hess: bool,
-) -> dict:
-    """
-    Validate user-provided keyword arguments to either scipy.optimize.root or scipy.optimize.minimize, and insert
-    defaults where not provided.
-
-    Note: This function never overwrites user arguments.
-
-    Parameters
-    ----------
-    optimizer_kwargs: dict
-        User-provided arguments for the optimizer
-    n_eq: int
-        Number of remaining steady-state equations after reduction
-    method: str
-        Which family of solution algorithms, minimization or root-finding, to be used.
-    use_jac: bool
-        Whether computation of the jacobian has been requested
-    use_hess: bool
-        Whether computation of the hessian has been requested
-
-    Returns
-    -------
-    optimizer_kwargs: dict
-        Keyword arguments for the scipy function, with "reasonable" defaults inserted where not provided
-    """
-
-    optimizer_kwargs = {} if optimizer_kwargs is None else optimizer_kwargs
-    method_given = "method" in optimizer_kwargs.keys()
-
-    if method == "root" and not method_given:
-        if use_jac:
-            optimizer_kwargs["method"] = "hybr"
-        else:
-            optimizer_kwargs["method"] = "broyden1"
-
-        if n_eq == 1:
-            optimizer_kwargs["method"] = "lm"
-
-    elif method == "minimize" and not method_given:
-        # Set optimizer_kwargs for minimization
-        if use_hess and use_jac:
-            optimizer_kwargs["method"] = "trust-exact"
-        elif use_jac:
-            optimizer_kwargs["method"] = "BFGS"
-        else:
-            optimizer_kwargs["method"] = "Nelder-Mead"
-
-    if "tol" not in optimizer_kwargs.keys():
-        optimizer_kwargs["tol"] = 1e-9
-
-    return optimizer_kwargs
-
-
 def make_steady_state_shock_dict(shocks):
     return SymbolDictionary.fromkeys(shocks, 0.0).to_ss()
 
 
 def make_steady_state_variables(variables):
-    return list(map(lambda x: x.to_ss(), variables))
+    return [x.to_ss() for x in variables]
 
 
 def system_to_steady_state(system, shocks):
     shock_dict = make_steady_state_shock_dict(shocks)
-    steady_state_system = [eq_to_ss(eq).subs(shock_dict).simplify() for eq in system]
-
-    return steady_state_system
+    return [eq_to_ss(eq).subs(shock_dict).simplify() for eq in system]
 
 
-def faster_simplify(x: sp.Expr, var_list: list[TimeAwareSymbol]):
+def faster_simplify(x: sp.Expr, var_list: list[TimeAwareSymbol]) -> sp.Expr:  # noqa: ARG001
+    """Simplify a sympy expressing, skipping heavier algorithms."""
     # return sp.powsimp(sp.powdenest(x, force=True), force=True)
     return x
 
 
-def steady_state_error_function(
-    steady_state, variables: list[sp.Symbol], func: ERROR_FUNCTIONS = "squared"
-) -> sp.Expr:
+def steady_state_error_function(steady_state, variables: list[sp.Symbol], func: ERROR_FUNCTIONS = "squared") -> sp.Expr:
     ss_vars = [x.to_ss() if isinstance(x, TimeAwareSymbol) else x for x in variables]
 
     if func == "squared":
         error = sum([faster_simplify(eq**2, ss_vars) for eq in steady_state])
     elif func == "mean_squared":
-        error = sum([faster_simplify(eq**2, ss_vars) for eq in steady_state]) / len(
-            steady_state
-        )
+        error = sum([faster_simplify(eq**2, ss_vars) for eq in steady_state]) / len(steady_state)
     elif func == "abs":
         error = sum([faster_simplify(sp.Abs(eq), ss_vars) for eq in steady_state])
     elif func == "l2-norm":
         error = sp.sqrt(sum([faster_simplify(eq**2, ss_vars) for eq in steady_state]))
     else:
-        raise NotImplementedError(
-            f"Error function {func} not implemented, must be one of {ERROR_FUNCTIONS}"
-        )
+        raise NotImplementedError(f"Error function {func} not implemented, must be one of {ERROR_FUNCTIONS}")
 
     return error
 
@@ -134,12 +68,7 @@ def compile_ss_resid_and_sq_err(
 ):
     cache = {} if cache is None else cache
     ss_variables = [x.to_ss() if hasattr(x, "to_ss") else x for x in variables]
-    resid_jac = sp.Matrix(
-        [
-            [faster_simplify(eq.diff(x), ss_variables) for x in ss_variables]
-            for eq in steady_state
-        ]
-    )
+    resid_jac = sp.Matrix([[faster_simplify(eq.diff(x), ss_variables) for x in ss_variables] for eq in steady_state])
 
     f_ss_resid, cache = compile_function(
         ss_variables + parameters,
@@ -165,12 +94,7 @@ def compile_ss_resid_and_sq_err(
     )
 
     error_grad = [faster_simplify(ss_error.diff(x), ss_variables) for x in ss_variables]
-    error_hess = sp.Matrix(
-        [
-            [faster_simplify(eq.diff(x), ss_variables) for eq in error_grad]
-            for x in ss_variables
-        ]
-    )
+    error_hess = sp.Matrix([[faster_simplify(eq.diff(x), ss_variables) for eq in error_grad] for x in ss_variables])
 
     n = len(ss_variables)
     p = sp.IndexedBase("hess_eval_point", shape=n)
@@ -247,18 +171,14 @@ def compile_known_ss(
     ss_solution_dict = ss_solution_dict.to_sympy()
     ss_variables = [to_ss(x) for x in variables]
 
-    sorted_solution_dict = {
-        to_ss(k): ss_solution_dict[to_ss(k)]
-        for k in ss_variables
-        if k in ss_solution_dict.keys()
-    }
+    sorted_solution_dict = {to_ss(k): ss_solution_dict[to_ss(k)] for k in ss_variables if k in ss_solution_dict}
 
     output_vars, output_exprs = (
         list(sorted_solution_dict.keys()),
         list(sorted_solution_dict.values()),
     )
     if stack_return is None:
-        stack_return = True if not return_symbolic else False
+        stack_return = bool(not return_symbolic)
 
     f_ss, cache = compile_function(
         parameters,
@@ -270,9 +190,7 @@ def compile_known_ss(
         **kwargs,
     )
     if return_symbolic and backend == "pytensor":
-        return make_return_dict_and_update_cache(
-            ss_variables, f_ss, cache, TimeAwareSymbol
-        )
+        return make_return_dict_and_update_cache(ss_variables, f_ss, cache, TimeAwareSymbol)
 
     return dictionary_return_wrapper(f_ss, output_vars), cache
 
@@ -305,9 +223,7 @@ def compile_model_ss_functions(
     parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
 
     variables = variables + list(calib_dict.to_sympy().keys())
-    ss_error = steady_state_error_function(
-        steady_state_equations, variables, error_func
-    )
+    ss_error = steady_state_error_function(steady_state_equations, variables, error_func)
 
     f_ss, cache = compile_known_ss(
         ss_solution_dict,
@@ -319,17 +235,15 @@ def compile_model_ss_functions(
         **kwargs,
     )
 
-    (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp), cache = (
-        compile_ss_resid_and_sq_err(
-            steady_state_equations,
-            variables,
-            parameters,
-            ss_error,
-            backend=backend,
-            cache=cache,
-            return_symbolic=return_symbolic,
-            **kwargs,
-        )
+    (f_ss_resid, f_ss_jac), (f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp), cache = compile_ss_resid_and_sq_err(
+        steady_state_equations,
+        variables,
+        parameters,
+        ss_error,
+        backend=backend,
+        cache=cache,
+        return_symbolic=return_symbolic,
+        **kwargs,
     )
 
     return (
@@ -343,9 +257,7 @@ def compile_model_ss_functions(
 def print_steady_state(ss_dict: SteadyStateResults):
     output = []
     if not ss_dict.success:
-        output.append(
-            "Values come from the latest solver iteration but are NOT a valid steady state."
-        )
+        output.append("Values come from the latest solver iteration but are NOT a valid steady state.")
 
     max_var_name = max(len(x) for x in list(ss_dict.keys())) + 5
 

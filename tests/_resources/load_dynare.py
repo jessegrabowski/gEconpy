@@ -19,17 +19,15 @@ def squeeze_record(x):
 
 def record_to_dict(x):
     if x.dtype.names is not None:
-        return dict(zip(x.dtype.names, x))
+        return dict(zip(x.dtype.names, x, strict=False))
     return x
 
 
 def get_available_models():
     dynare_output_dir = Path("tests") / "_resources" / "dynare_outputs"
-    mat_files = os.listdir(dynare_output_dir)
-    models = [x.replace("_results.mat", "") for x in mat_files]
-    return {
-        model: str(dynare_output_dir / fname) for model, fname in zip(models, mat_files)
-    }
+    dynare_output_paths = list(dynare_output_dir.iterdir())
+    model_names = [x.name.replace("_results.mat", "") for x in dynare_output_paths]
+    return {name: str(mat_path) for name, mat_path in zip(model_names, dynare_output_paths, strict=False)}
 
 
 def read_dynare_output(
@@ -53,20 +51,14 @@ def read_dynare_output(
 
 def extract_policy_matrices(oo, M) -> tuple[pd.DataFrame, pd.DataFrame]:
     var_names = np.concatenate([x.item() for x in M["endo_names"]])
-    shock_names = np.concatenate(
-        [np.atleast_1d(x.item()) for x in np.atleast_1d(M["exo_names"])]
-    )
+    shock_names = np.concatenate([np.atleast_1d(x.item()) for x in np.atleast_1d(M["exo_names"])])
     state_idx = M["state_var"] - 1
     dynare_order = oo["dr"]["order_var"].ravel() - 1
 
     dr_state_idx = np.array([x for x in dynare_order if x in state_idx])
 
-    dynare_T = pd.DataFrame(
-        oo["dr"]["ghx"], index=var_names[dynare_order], columns=var_names[dr_state_idx]
-    )
-    dynare_R = pd.DataFrame(
-        oo["dr"]["ghu"], index=var_names[dynare_order], columns=shock_names
-    )
+    dynare_T = pd.DataFrame(oo["dr"]["ghx"], index=var_names[dynare_order], columns=var_names[dr_state_idx])
+    dynare_R = pd.DataFrame(oo["dr"]["ghu"], index=var_names[dynare_order], columns=shock_names)
 
     return dynare_T, dynare_R
 
@@ -74,9 +66,7 @@ def extract_policy_matrices(oo, M) -> tuple[pd.DataFrame, pd.DataFrame]:
 def load_dynare_outputs(model_name) -> dict[str, pd.DataFrame]:
     models = get_available_models()
     if model_name not in models:
-        raise ValueError(
-            f"Model {model_name} not found. Available models are {models.keys()}"
-        )
+        raise ValueError(f"Model {model_name} not found. Available models are {models.keys()}")
 
     oo, M = read_dynare_output(model_name)
     T, R = extract_policy_matrices(oo, M)

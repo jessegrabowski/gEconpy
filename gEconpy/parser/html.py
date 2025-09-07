@@ -11,12 +11,12 @@ if TYPE_CHECKING:
 
 def get_css() -> str:
     """
-    Return a CSS string to style the generated HTML.
-    The style is inspired by the xarray HTML representation.
-    Each block is rendered in a unified container with an unbroken background,
-    and the whole block is collapsible.
+    Generate a CSS string to style generated HTML used to represent a gEconpy model.
+
+    The style is inspired by the xarray HTML representation. Each block is rendered in a unified container with an
+    unbroken background, and the whole block is collapsible.
     """
-    css = r"""
+    return r"""
     <style>
         /* Scope all styles under the #model-container */
         #model-container {
@@ -101,12 +101,11 @@ def get_css() -> str:
         }
     </style>
     """
-    return css
 
 
 def generate_html(blocks: list["Block"]) -> HTML:
     """
-    Represent a model in HTML
+    Represent a model in HTML.
 
     Parameters
     ----------
@@ -127,12 +126,9 @@ def generate_html(blocks: list["Block"]) -> HTML:
     """)
     html_parts.append(get_css())
 
-    html_parts.append(
-        "<div id='model-container' class='math model-container-subclass'>"
-    )
+    html_parts.append("<div id='model-container' class='math model-container-subclass'>")
     html_parts.append("<div class='model-blocks'>")
-    for block in blocks:
-        html_parts.append(block.__html_repr__())
+    html_parts.extend([block.__html_repr__() for block in blocks])
     html_parts.append("</div>")
     html_parts.append("</div>")
 
@@ -155,7 +151,7 @@ def generate_html(blocks: list["Block"]) -> HTML:
 
 def print_gcn_file(gcn_path: str) -> None:
     """
-    Display a model in HTML
+    Display a model in HTML.
 
     Parameters
     ----------

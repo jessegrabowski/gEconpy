@@ -1,19 +1,19 @@
 from typing import Literal
 
 import numpy as np
+import pytensor.tensor as pt
 import pytest
 import sympy as sp
-import pytensor.tensor as pt
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.model.compile import (
     BACKENDS,
+    array_return_wrapper,
     compile_function,
     dictionary_return_wrapper,
-    stack_return_wrapper,
-    pop_return_wrapper,
-    array_return_wrapper,
     make_return_dict_and_update_cache,
+    pop_return_wrapper,
+    stack_return_wrapper,
 )
 
 
@@ -36,9 +36,7 @@ def test_dictionary_return_wrapper():
 def test_scalar_function(backend: Literal["numpy", "pytensor"]):
     x = sp.symbols("x")
     f = x**2
-    f_func, _ = compile_function(
-        [x], f, backend=backend, mode="FAST_COMPILE", pop_return=backend == "pytensor"
-    )
+    f_func, _ = compile_function([x], f, backend=backend, mode="FAST_COMPILE", pop_return=backend == "pytensor")
     assert f_func(x=2) == 4
 
 
@@ -57,13 +55,9 @@ def test_multiple_outputs(backend: Literal["numpy", "pytensor"], stack_return: b
         mode="FAST_COMPILE",
     )
     res = f_func(x=2, y=3, z=4)
-    assert (
-        isinstance(res, np.ndarray) if stack_return else isinstance(res, list | tuple)
-    )
+    assert isinstance(res, np.ndarray) if stack_return else isinstance(res, list | tuple)
     assert res.shape == (3,) if stack_return else len(res) == 3
-    np.testing.assert_allclose(
-        res if stack_return else np.stack(res), np.array([4.0, 9.0, 16.0])
-    )
+    np.testing.assert_allclose(res if stack_return else np.stack(res), np.array([4.0, 9.0, 16.0]))
 
 
 @pytest.mark.parametrize("backend", ["numpy", "pytensor"])
@@ -176,15 +170,13 @@ def test_make_return_dict_and_update_cache():
     assert x_pt in out_dict.values()
     assert y_pt in out_dict.values()
     assert len(new_cache) == 2
-    assert all(isinstance(k, tuple) for k in new_cache.keys())
+    assert all(isinstance(k, tuple) for k in new_cache)
     assert all(hasattr(v, "type") for v in new_cache.values())
 
     z = sp.symbols("z")
     z_pt = pt.dscalar("z")
 
-    out_dict, new_cache_2 = make_return_dict_and_update_cache(
-        [x, y, z], [x_pt, y_pt, z_pt], cache.copy()
-    )
+    out_dict, new_cache_2 = make_return_dict_and_update_cache([x, y, z], [x_pt, y_pt, z_pt], cache.copy())
     x_key, *_ = new_cache.keys()
     assert z_pt in out_dict.values()
     assert new_cache_2[x_key] is new_cache[x_key]

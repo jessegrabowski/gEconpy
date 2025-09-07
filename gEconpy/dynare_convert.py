@@ -1,4 +1,5 @@
 from functools import reduce
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import sympy as sp
@@ -41,26 +42,15 @@ class DynareCodePrinter(OctaveCodePrinter):
 
         pow_paren = []  # Will collect all pow with more than one base element and exp = -1
 
-        if self.order not in ("old", "none"):
-            args = expr.as_ordered_factors()
-        else:
-            # use make_args in case expr was something like -x -> x
-            args = Mul.make_args(expr)
+        args = expr.as_ordered_factors() if self.order not in ("old", "none") else Mul.make_args(expr)
 
         # Gather args for numerator/denominator
         for item in args:
-            if (
-                item.is_commutative
-                and item.is_Pow
-                and item.exp.is_Rational
-                and item.exp.is_negative
-            ):
+            if item.is_commutative and item.is_Pow and item.exp.is_Rational and item.exp.is_negative:
                 if item.exp != -1:
                     b.append(Pow(item.base, -item.exp, evaluate=False))
                 else:
-                    if len(item.args[0].args) != 1 and isinstance(
-                        item.base, Mul
-                    ):  # To avoid situations like #14160
+                    if len(item.args[0].args) != 1 and isinstance(item.base, Mul):  # To avoid situations like #14160
                         pow_paren.append(item)
                     b.append(Pow(item.base, -item.exp))
             elif item.is_Rational and item is not S.Infinity:
@@ -91,12 +81,11 @@ class DynareCodePrinter(OctaveCodePrinter):
 
         if not b:
             return sign + multjoin(a, a_str)
-        elif len(b) == 1:
+        if len(b) == 1:
             divsym = " / " if not expr.is_Matrix else " ./ "
             return sign + multjoin(a, a_str) + divsym + b_str[0]
-        else:
-            divsym = " / " if not expr.is_Matrix else " ./ "
-            return sign + multjoin(a, a_str) + divsym + f"({multjoin(b, b_str)})"
+        divsym = " / " if not expr.is_Matrix else " ./ "
+        return sign + multjoin(a, a_str) + divsym + f"({multjoin(b, b_str)})"
 
     def _print_Pow(self, expr):
         powsymbol = " ^ "
@@ -122,9 +111,9 @@ class DynareCodePrinter(OctaveCodePrinter):
 
         if t == "ss":
             return f"{name}_{t}"
-        elif t == 0:
+        if t == 0:
             return f"{name}"
-        elif t > 0:
+        if t > 0:
             return f"{name}(+{t})"
 
         return f"{name}({t})"
@@ -167,11 +156,7 @@ def write_values_from_dict(d, round: int = 3):
 
 def write_param_names(mod: "Model", linewidth=100):
     param_names = [param.name for param in mod.params]
-    param_string = write_lines_from_list(
-        param_names, linewidth=linewidth, line_start="parameters"
-    )
-
-    return param_string
+    return write_lines_from_list(param_names, linewidth=linewidth, line_start="parameters")
 
 
 def write_parameter_declarations(mod: "Model", linewidth=100):
@@ -183,16 +168,10 @@ def write_parameter_declarations(mod: "Model", linewidth=100):
 
 
 def find_ss_variables(mod: "Model"):
-    variables = reduce(
-        lambda s, eq: s.union(set(eq.free_symbols)), mod.equations, set()
-    )
+    variables = reduce(lambda s, eq: s.union(set(eq.free_symbols)), mod.equations, set())
 
     return sorted(
-        [
-            x
-            for x in variables
-            if isinstance(x, TimeAwareSymbol) and (x.time_index == "ss")
-        ],
+        [x for x in variables if isinstance(x, TimeAwareSymbol) and (x.time_index == "ss")],
         key=lambda x: x.base_name,
     )
 
@@ -207,11 +186,7 @@ def write_model_equations(mod: "Model"):
         ss_values = mod.steady_state(verbose=False, progressbar=False).to_sympy()
         ss_dict = {k.name: v for k, v in ss_values.items() if k in required_ss_values}
     else:
-        ss_dict = {
-            eq.lhs: eq.rhs
-            for eq in mod.steady_state_relationships
-            if eq.lhs in required_ss_values
-        }
+        ss_dict = {eq.lhs: eq.rhs for eq in mod.steady_state_relationships if eq.lhs in required_ss_values}
         ss_dict = {k.name: printer.doprint(v) for k, v in ss_dict.items()}
 
     model_block = "model;\n\n"
@@ -266,10 +241,11 @@ def write_shock_std(mod: "Model"):
 
 
 def make_mod_file(
-    model: "Model", linewidth=100, use_cse: bool = True, out_path=None
+    model: "Model", linewidth=100, use_cse: bool = True, out_path: str | Path | None = None
 ) -> str | None:
     """
     Generate a string representation of a Dynare model file for a dynamic stochastic general equilibrium (DSGE) model.
+
     For more information, see [1].
 
     Parameters
@@ -294,7 +270,6 @@ def make_mod_file(
     ----------
     ..[1] Adjemian, Stéphane, et al. "Dynare: Reference manual, version 4." (2011).
     """
-
     mod_blocks = [
         write_variable_declarations(model, linewidth=linewidth),
         write_shock_declarations(model, linewidth=linewidth),
@@ -311,5 +286,6 @@ def make_mod_file(
     if out_path is None:
         return mod_file
 
-    with open(out_path, "w") as f:
+    with Path(out_path).open("w") as f:
         f.write(mod_file)
+    return None

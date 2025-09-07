@@ -103,7 +103,7 @@ expected_results = [
 ]
 
 
-@pytest.mark.parametrize("case, expected_results", zip(test_strings, expected_results))
+@pytest.mark.parametrize("case, expected_results", zip(test_strings, expected_results, strict=False))
 def test_distribution_parser(case, expected_results):
     [results] = dist_syntax.parse_string(case, parse_all=True)
 
@@ -144,7 +144,7 @@ def test_extract_param_dist_simple(file):
     ]
 
 
-def test_catch_no_initial_value(file):
+def test_catch_no_initial_value():
     no_initial_value = """
             Block TEST
             {
@@ -219,12 +219,10 @@ def test_catch_distribution_typos(case):
     model, prior_dict = preprocess_gcn(case)
     for param_name, distribution_string in prior_dict.items():
         with pytest.raises(InvalidDistributionException):
-            preprocess_distribution_string(
-                variable_name=param_name, d_string=distribution_string
-            )
+            preprocess_distribution_string(variable_name=param_name, d_string=distribution_string)
 
 
-def test_catch_repeated_parameter_definition(file):
+def test_catch_repeated_parameter_definition():
     repeated_parameter = """
             Block TEST
             {
@@ -238,9 +236,7 @@ def test_catch_repeated_parameter_definition(file):
 
     for param_name, distribution_string in prior_dict.items():
         with pytest.raises(RepeatedParameterException):
-            preprocess_distribution_string(
-                variable_name=param_name, d_string=distribution_string
-            )
+            preprocess_distribution_string(variable_name=param_name, d_string=distribution_string)
 
 
 @pytest.mark.parametrize("mu", ["1.0", "mu_epsilon"], ids=["number", "hyper_param"])
@@ -325,9 +321,7 @@ def test_initial_value_on_shock_raises():
    """
     model, raw_prior_dict = preprocess_gcn(test_case)
 
-    with pytest.raises(
-        ValueError, match="Initial value not allowed on shock distributions"
-    ):
+    with pytest.raises(ValueError, match="Initial value not allowed on shock distributions"):
         create_prior_distribution_dictionary(raw_prior_dict)
 
 
@@ -345,8 +339,8 @@ def test_parameter_parsing_simple(file):
     wrapper_dicts = [{}, {}, {"lower": 0.1, "upper": 0.3}]
 
     for i, (param_name, distribution_string) in enumerate(prior_dict.items()):
-        (dist_name, param_dict), (wrapper_name, wrapper_dict) = (
-            preprocess_distribution_string(param_name, distribution_string)
+        (dist_name, param_dict), (wrapper_name, wrapper_dict) = preprocess_distribution_string(
+            param_name, distribution_string
         )
 
         assert dist_name == dist_names[i]
@@ -408,13 +402,7 @@ def test_multiple_shocks():
         dists = shock_priors[name].hyper_param_dict.values()
         expected_shock_dists = [expected_dists[f"sigma_{name}"]]
 
-        assert all(
-            d.mean() == expected_d.mean()
-            for d, expected_d in zip(dists, expected_shock_dists)
-        )
-        assert all(
-            d.std() == expected_d.std()
-            for d, expected_d in zip(dists, expected_shock_dists)
-        )
+        assert all(d.mean() == expected_d.mean() for d, expected_d in zip(dists, expected_shock_dists, strict=False))
+        assert all(d.std() == expected_d.std() for d, expected_d in zip(dists, expected_shock_dists, strict=False))
 
     assert shock_priors["epsilon_C"].fixed_params == {"mu": 0.0, "sigma": 1.0}

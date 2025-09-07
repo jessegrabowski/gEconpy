@@ -23,12 +23,11 @@ def squeeze_list(lst):
     return squeeze_list(lst[0])
 
 
-def _process_kwarg_results(result_dict, variable_name, dist_name, valid_params):
+def _process_kwarg_results(result_dict, variable_name, dist_name):
     res = {}
-    # result_dict = squeeze_list(result_dict)
 
     for param_name, param_value in result_dict.items():
-        if param_name in res.keys():
+        if param_name in res:
             raise RepeatedParameterException(variable_name, dist_name, param_name)
 
         res[param_name] = evaluate_expression(param_value)
@@ -65,9 +64,7 @@ def split_prior_dict_by_params_and_shocks(
             raw_param_dict[variable_name] = d_string
 
     raw_param_dict = {
-        param_name: d_string
-        for param_name, d_string in raw_param_dict.items()
-        if param_name not in shock_hyper_params
+        param_name: d_string for param_name, d_string in raw_param_dict.items() if param_name not in shock_hyper_params
     }
 
     return raw_param_dict, raw_shock_dict
@@ -166,17 +163,11 @@ class CompositeDistribution:
 
 
 def create_composite_distribution(variable_name, outer_dist, hyper_param_dict):
-    (dist_name, dist_kwargs), (wrapper_name, wrapper_kwargs) = (
-        preprocess_distribution_string(variable_name, outer_dist)
-    )
+    (dist_name, dist_kwargs), (wrapper_name, wrapper_kwargs) = preprocess_distribution_string(variable_name, outer_dist)
     if wrapper_name is not None:
-        raise NotImplementedError(
-            "Wrapper functions are not allowed on shock distributions"
-        )
+        raise NotImplementedError("Wrapper functions are not allowed on shock distributions")
     if dist_name != "Normal":
-        raise NotImplementedError(
-            "Only Normal distributions are currently allowed on shocks"
-        )
+        raise NotImplementedError("Only Normal distributions are currently allowed on shocks")
 
     initial_value = dist_kwargs.pop("initial_value", None)
     if initial_value is not None:
@@ -200,15 +191,13 @@ def create_composite_distribution(variable_name, outer_dist, hyper_param_dict):
             continue
 
         if param_name == "mu":
-            raise NotImplementedError(
-                "Currently, only shock variance parameters can be assigned hyper-priors."
-            )
+            raise NotImplementedError("Currently, only shock variance parameters can be assigned hyper-priors.")
 
         pz_dist = create_preliz_distribution(param_name, d_string)
         pz_hyper_params[param_name] = pz_dist
         param_name_to_hyper_name[param_name] = hyper_name
 
-    composite_dist = CompositeDistribution(
+    return CompositeDistribution(
         name=variable_name,
         dist_name=outer_dist,
         param_name_to_hyper_name=param_name_to_hyper_name,
@@ -216,14 +205,11 @@ def create_composite_distribution(variable_name, outer_dist, hyper_param_dict):
         fixed_params=fixed_params,
     )
 
-    return composite_dist
-
 
 def param_values_to_floats(param_dict: dict):
     for param, param_value in param_dict.items():
-        if isinstance(param_value, str):
-            if is_number(param_value):
-                param_dict[param] = float(param_value)
+        if isinstance(param_value, str) and is_number(param_value):
+            param_dict[param] = float(param_value)
 
     return param_dict
 
@@ -236,8 +222,9 @@ def fetch_rv_params(param_dict, model):
         elif isinstance(v, str):
             return_dict[k] = model[v]
         else:
-            raise ValueError(
-                f"Found an illegal key:value pair in prior param dict, {k}:{v}"
+            raise TypeError(
+                f"Found an illegal key:value pair in prior param dict, {k}:{v}. Expected {v} to be a "
+                f"float, int, or str, but found {type(v)} instead."
             )
 
     return return_dict
@@ -245,10 +232,10 @@ def fetch_rv_params(param_dict, model):
 
 def create_prior_distribution_dictionary(
     raw_prior_dict: dict[str, str],
-) -> tuple[
-    SymbolDictionary[str, Distribution], SymbolDictionary[str, CompositeDistribution]
-]:
+) -> tuple[SymbolDictionary[str, Distribution], SymbolDictionary[str, CompositeDistribution]]:
     """
+    Create priors from parsed GCN text.
+
     Parameters
     ----------
     raw_prior_dict: dict[str, str]
@@ -264,21 +251,13 @@ def create_prior_distribution_dictionary(
     param_priors = SymbolDictionary()
     shock_priors = SymbolDictionary()
 
-    raw_param_dict, raw_shock_dict = split_prior_dict_by_params_and_shocks(
-        raw_prior_dict
-    )
+    raw_param_dict, raw_shock_dict = split_prior_dict_by_params_and_shocks(raw_prior_dict)
 
     for variable_name, d_string in raw_param_dict.items():
-        param_priors[variable_name] = create_preliz_distribution(
-            variable_name, d_string
-        )
+        param_priors[variable_name] = create_preliz_distribution(variable_name, d_string)
 
     for variable_name, (outer_dist, hyper_param_dict) in raw_shock_dict.items():
-        clean_name = variable_name[
-            :-2
-        ]  # remove trailing [] from the variable name (e.g. Y[] -> Y)
-        shock_priors[clean_name] = create_composite_distribution(
-            clean_name, outer_dist, hyper_param_dict
-        )
+        clean_name = variable_name[:-2]  # remove trailing [] from the variable name (e.g. Y[] -> Y)
+        shock_priors[clean_name] = create_composite_distribution(clean_name, outer_dist, hyper_param_dict)
 
     return param_priors, shock_priors

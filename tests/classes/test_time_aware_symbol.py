@@ -47,15 +47,11 @@ class TimeAwareSymbolTests(unittest.TestCase):
 
     def test_step_equation_backward(self):
         eq = self.x_t + self.x_tp1 + self.x_tm1
-        self.assertEqual(
-            step_equation_backward(eq), self.x_tm1 + self.x_t + TimeAwareSymbol("x", -2)
-        )
+        self.assertEqual(step_equation_backward(eq), self.x_tm1 + self.x_t + TimeAwareSymbol("x", -2))
 
     def test_step_equation_forward(self):
         eq = self.x_t + self.x_tp1 + self.x_tm1
-        self.assertEqual(
-            step_equation_forward(eq), self.x_tp1 + TimeAwareSymbol("x", 2) + self.x_t
-        )
+        self.assertEqual(step_equation_forward(eq), self.x_tp1 + TimeAwareSymbol("x", 2) + self.x_t)
 
     def test_diff_through_time(self):
         # X = Sum_{t=0}^10 beta * x_t

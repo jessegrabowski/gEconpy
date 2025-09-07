@@ -39,7 +39,7 @@ SPECIAL_BLOCK_DEFAULT = {
 
 def block_to_clean_list(block: str) -> list[str]:
     """
-    Processes a block of text by removing certain characters, and then splitting it into a list of strings.
+    Process a block of text by removing certain characters, and then splitting it into a list of strings.
 
     Parameters
     ----------
@@ -51,18 +51,16 @@ def block_to_clean_list(block: str) -> list[str]:
     block: list of str
         The processed list of strings.
     """
-
     block = re.sub("[{};]", "", block)
     block = remove_extra_spaces(block).strip()
-    block = [x.replace(",", "").strip() for x in block.split()]
-
-    return block
+    return [x.replace(",", "").strip() for x in block.split()]
 
 
 def extract_assumption_sub_blocks(block_str) -> dict[str, list[str]]:
     """
-    Extracts the special "Assumptions" block from the GCN file. Saves each user-provided assumption to a dictionary,
-    along with all variables associated to that assumption.
+    Extract the special "Assumptions" block from the GCN file.
+
+    Saves each user-provided assumption to a dictionary, along with all variables associated to that assumption.
 
     Parameters
     ----------
@@ -90,14 +88,10 @@ def extract_assumption_sub_blocks(block_str) -> dict[str, list[str]]:
     LINE = VAR_LINE | ANYTHING
 
     SUBBLOCK = pp.Forward()
-    SUBBLOCK << pp.Dict(
-        pp.Group((BLOCK_NAME + pp.Group(LBRACE + (LINE | SUBBLOCK) + BLOCK_END)) | LINE)
-    )
+    SUBBLOCK << pp.Dict(pp.Group((BLOCK_NAME + pp.Group(LBRACE + (LINE | SUBBLOCK) + BLOCK_END)) | LINE))
 
     LAYERED_BLOCK = pp.Forward()
-    LAYERED_BLOCK << pp.Dict(
-        pp.Group(header + LBRACE + pp.OneOrMore(LAYERED_BLOCK | SUBBLOCK) + BLOCK_END)
-    )
+    LAYERED_BLOCK << pp.Dict(pp.Group(header + LBRACE + pp.OneOrMore(LAYERED_BLOCK | SUBBLOCK) + BLOCK_END))
 
     return LAYERED_BLOCK.parse_string(block_str).as_dict()["assumptions"]
 
@@ -116,12 +110,9 @@ def validate_assumptions(block_dict: dict[str, list[str]]) -> None:
     -------
     None
     """
-
-    for assumption in block_dict.keys():
+    for assumption in block_dict:
         if assumption not in SYMPY_ASSUMPTIONS:
-            best_guess, maybe_typo = find_typos_and_guesses(
-                [assumption], SYMPY_ASSUMPTIONS
-            )
+            best_guess, maybe_typo = find_typos_and_guesses([assumption], SYMPY_ASSUMPTIONS)
             message = f'Assumption "{assumption}" is not a valid Sympy assumption.'
             if best_guess is not None:
                 message += f' Did you mean "{best_guess}"?'
@@ -132,7 +123,7 @@ def create_assumption_kwargs(
     assumption_dicts: dict[str, list[str]],
 ) -> dict[str, dict[str, bool]]:
     """
-    Extracts assumption flags from `assumption_dicts` and returns them in a dictionary keyed by variable names.
+    Extract assumption flags from `assumption_dicts` and returns them in a dictionary keyed by variable names.
 
     Parameters
     ----------
@@ -145,7 +136,6 @@ def create_assumption_kwargs(
     assumptions: dict
         A dictionary of flags and values keyed by variable names.
     """
-
     assumption_kwargs = defaultdict(lambda: DEFAULT_ASSUMPTIONS.copy())
     user_assumptions = defaultdict(dict)
 
@@ -167,9 +157,7 @@ def create_assumption_kwargs(
             implications = dict(_assume_rules.full_implications[(k, v)])
             for user_k, user_v in user_assumptions[base_var].items():
                 # Assumptions agree, move along
-                if ((user_k == k) and (user_v == v)) or (
-                    user_k not in implications.keys()
-                ):
+                if ((user_k == k) and (user_v == v)) or (user_k not in implications):
                     continue
 
                 # Assumptions disagree -- delete the default
@@ -196,7 +184,6 @@ def preprocess_gcn(gcn_raw: str) -> tuple[str, dict[str, str]]:
     prior_dict: dict
         Dictionary of variables and associated prior distributions
     """
-
     gcn_processed = remove_comments(gcn_raw)
     gcn_processed, prior_dict = extract_distributions(gcn_processed)
     gcn_processed = remove_newlines_and_tabs(gcn_processed)
@@ -207,7 +194,7 @@ def preprocess_gcn(gcn_raw: str) -> tuple[str, dict[str, str]]:
 
 def parse_options_flags(options: str) -> dict[str, bool] | None:
     """
-    Extracts flags and values from `options`.
+    Extract flags and values from `options`.
 
     Parameters
     ----------
@@ -224,8 +211,7 @@ def parse_options_flags(options: str) -> dict[str, bool] | None:
     Currently nothing is done with these values, and this step is primarily to ensure backwards compatibility with
     .GCN files written for the gEcon R package.
     """
-
-    result = dict()
+    result = {}
     options = re.sub("[{}]", "", options)
     options = [line.strip() for line in options.split(";") if len(line.strip()) > 0]
 
@@ -235,13 +221,7 @@ def parse_options_flags(options: str) -> dict[str, bool] | None:
     for option in options:
         flag, value = option.split("=")
         value = value.replace(";", "").strip()
-        value = (
-            True
-            if value.lower() == "true"
-            else False
-            if value.lower() == "false"
-            else value
-        )
+        value = True if value.lower() == "true" else False if value.lower() == "false" else value
 
         result[flag.strip()] = value
 
@@ -250,6 +230,8 @@ def parse_options_flags(options: str) -> dict[str, bool] | None:
 
 def extract_special_block(text: str, block_name: str) -> dict[str, list[str]]:
     """
+    Extract special blocks from a preprocessed GCN text string.
+
     Parameters
     ----------
     text: str
@@ -264,11 +246,7 @@ def extract_special_block(text: str, block_name: str) -> dict[str, list[str]]:
         A dictionary with the name as the key and the contents of the block as the values. The contents are split into
         a list of strings, with each item in the list as a single line from the GCN file. Empty lines are discarded.
     """
-    result = {
-        block_name: defaultdict(lambda: DEFAULT_ASSUMPTIONS)
-        if block_name == "assumptions"
-        else None
-    }
+    result = {block_name: defaultdict(lambda: DEFAULT_ASSUMPTIONS) if block_name == "assumptions" else None}
 
     if block_name not in text:
         return result[block_name]
@@ -279,7 +257,7 @@ def extract_special_block(text: str, block_name: str) -> dict[str, list[str]]:
     if block_is_empty(block):
         return result[block_name]
 
-    elif block_name == "options":
+    if block_name == "options":
         block = parse_options_flags(block)
 
     elif block_name == "tryreduce":
@@ -293,12 +271,11 @@ def extract_special_block(text: str, block_name: str) -> dict[str, list[str]]:
     return block
 
 
-def process_special_block_text(
-    text: str, name: SPECIAL_BLOCK
-) -> tuple[str, dict | list]:
+def process_special_block_text(text: str, name: SPECIAL_BLOCK) -> tuple[str, dict | list]:
     """
-    Extract special blocks from a preprocessed GCN text string. Modifies the GCN text string in-place by deleting
-    the special block.
+    Extract special blocks from a preprocessed GCN text string.
+
+    Modifies the GCN text string in-place by deleting the special block.
 
     Parameters
     ----------
@@ -359,10 +336,9 @@ def split_gcn_into_dictionaries(
         of assumption flags and values. If no assumptions are provided, the default assumptions are used. For more
         details, see the Sympy documentation.
     """
-
     # TODO: Add checks that model blocks follow the correct format and fail more helpfully.
 
-    block_dict = dict()
+    block_dict = {}
     text, tryreduce = process_special_block_text(text, "tryreduce")
     text, options = process_special_block_text(text, "options")
     text, assumptions = process_special_block_text(text, "assumptions")
@@ -382,7 +358,7 @@ def split_gcn_into_dictionaries(
 
 def parsed_block_to_dict(block: str) -> dict[str, list[list[str]]]:
     """
-    Extracts the block components and equations from a pre-processed model block.
+    Extract the block components and equations from a pre-processed model block.
 
     Parameters
     ----------

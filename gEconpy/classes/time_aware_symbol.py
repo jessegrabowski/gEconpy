@@ -17,6 +17,7 @@ class TimeAwareSymbol(sp.Symbol):
     .. code-block:: python
 
         from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+
         x1 = TimeAwareSymbol("x", time_index=1)
         x2 = TimeAwareSymbol("x", time_index=2)
 
@@ -38,13 +39,13 @@ class TimeAwareSymbol(sp.Symbol):
     def __getnewargs__(self):
         return self.name, self.time_index
 
-    def _numpycode(self, *args, **kwargs):
+    def _numpycode(self, *args, **kwargs):  # noqa: ARG002
         return self.safe_name
 
     @staticmethod
     @cacheit
-    def __xnew__(cls, name, time_index, **assumptions):
-        obj = super().__xnew__(cls, name, **assumptions)
+    def __xnew__(symbol_class, name, time_index, **assumptions):
+        obj = super().__xnew__(symbol_class, name, **assumptions)
         obj.time_index = time_index
         obj.base_name = name
         obj.name = obj._create_name_from_time_index()
@@ -90,18 +91,12 @@ class TimeAwareSymbol(sp.Symbol):
         )
 
     def step_forward(self):
-        """
-        Increment the time index by one.
-        """
-        obj = TimeAwareSymbol(self.base_name, self.time_index + 1, **self.assumptions0)
-        return obj
+        """Increment the time index by one."""
+        return TimeAwareSymbol(self.base_name, self.time_index + 1, **self.assumptions0)
 
     def step_backward(self):
-        """
-        Decrement the time index by one.
-        """
-        obj = TimeAwareSymbol(self.base_name, self.time_index - 1, **self.assumptions0)
-        return obj
+        """Decrement the time index by one."""
+        return TimeAwareSymbol(self.base_name, self.time_index - 1, **self.assumptions0)
 
     def to_ss(self):
         """
@@ -109,18 +104,11 @@ class TimeAwareSymbol(sp.Symbol):
 
         Once in the steady state, :meth:`step_forward` and :meth:`step_backward` will not change the time index.
         """
-        obj = TimeAwareSymbol(self.base_name, "ss", **self.assumptions0)
-        return obj
+        return TimeAwareSymbol(self.base_name, "ss", **self.assumptions0)
 
     def exit_ss(self):
-        """
-        Set the time index to zero if in the steady state, otherwise do nothing.
-        """
-        if self.time_index == "ss":
-            obj = TimeAwareSymbol(self.base_name, 0, **self.assumptions0)
-        else:
-            obj = self
-        return obj
+        """Set the time index to zero if in the steady state, otherwise do nothing."""
+        return TimeAwareSymbol(self.base_name, 0, **self.assumptions0) if self.time_index == "ss" else self
 
     def set_t(self, t):
         """
@@ -133,5 +121,4 @@ class TimeAwareSymbol(sp.Symbol):
         """
         if isinstance(t, str) and t != "ss":
             raise ValueError("Time index must be an integer or 'ss'.")
-        obj = TimeAwareSymbol(self.base_name, t, **self.assumptions0)
-        return obj
+        return TimeAwareSymbol(self.base_name, t, **self.assumptions0)

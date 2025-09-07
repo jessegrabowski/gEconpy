@@ -89,26 +89,24 @@ def qzswitch(
         if abs(a) < eps:
             return A, B, Q, Z
 
-        else:
-            wz_row = np.array((b, -a))
-            wz_inner = (wz_row * wz_row.conj()).sum()
-            wz_row = wz_row / np.sqrt(wz_inner)
+        wz_row = np.array((b, -a))
+        wz_inner = (wz_row * wz_row.conj()).sum()
+        wz_row = wz_row / np.sqrt(wz_inner)
 
-            wz[:, 0] = wz_row
-            wz[:, 1] = neg_conj_flip(wz_row)
-            xy[:] = np.eye(2).astype(wz.dtype)
+        wz[:, 0] = wz_row
+        wz[:, 1] = neg_conj_flip(wz_row)
+        xy[:] = np.eye(2).astype(wz.dtype)
 
     elif (abs(a) < eps) & (abs(d) < eps):
         if abs(c) < eps:
             return A, B, Q, Z
-        else:
-            xy_row = np.array((c, -b))
-            xy_inner = (xy_row * xy_row.conj()).sum()
-            xy_row = xy_row / np.sqrt(xy_inner)
+        xy_row = np.array((c, -b))
+        xy_inner = (xy_row * xy_row.conj()).sum()
+        xy_row = xy_row / np.sqrt(xy_inner)
 
-            xy[:, 0] = neg_conj_flip(xy_row)
-            xy[:, 1] = xy_row
-            wz[:] = np.eye(2).astype(xy.dtype)
+        xy[:, 0] = neg_conj_flip(xy_row)
+        xy[:, 1] = xy_row
+        wz[:] = np.eye(2).astype(xy.dtype)
 
     else:
         wz_row = np.array((c * e - f * b, (c * d - f * a).conjugate()))
@@ -158,7 +156,7 @@ def qzdiv(
     stake: float, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-     Christopher Sim's qzdiv
+    Christopher Sim's qzdiv.
 
     Takes upper-triangular matrices :math:`A`, :math:`B` and orthonormal matrices :math:`Q`, :math:`Z`, and rearranges
     them so that all cases of ``abs(B(i, i) / A(i, i)) > stake`` are in the lower-right corner, while preserving
@@ -189,26 +187,26 @@ def qzdiv(
 
     Notes
     -----
-     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
+    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
     """
-
     # TODO: scipy offers a sorted qz routine, ordqz, which automatically sorts the matrices by size of eigenvalue. This
     #     seems to be what the functions qzdiv and qzswitch do, so it might be worthwhile to see if we can just use
     #     ordqz instead.
     #
     # TODO: Add shape information to the Typing (see PEP 646)
-
+    FLOAT_ZERO = 1e-13
     n, _ = A.shape
 
     root = np.hstack((np.diag(A)[:, None], np.diag(B)[:, None]))
     root = np.abs(root)
-    root[:, 0] = root[:, 0] - (root[:, 0] < 1e-13) * (root[:, 0] + root[:, 1])
+    root[:, 0] = root[:, 0] - (root[:, 0] < FLOAT_ZERO) * (root[:, 0] + root[:, 1])
     root[:, 1] = root[:, 1] / root[:, 0]
 
     for i in range(n - 1, -1, -1):
         m = None
         for j in range(i, -1, -1):
-            if (root[j, 1] > stake) or (root[j, 1] < -0.1):
+            # No idea why -0.1 appears here; it comes from the original MATLAB code.
+            if (root[j, 1] > stake) or (root[j, 1] < -0.1):  # noqa: PLR2004
                 m = j
                 break
 
@@ -229,11 +227,9 @@ def qzdiv(
     ],
     cache=True,
 )
-def determine_n_unstable(
-    A: np.ndarray, B: np.ndarray, div: float | None, realsmall: float
-) -> tuple[float, int, bool]:
+def determine_n_unstable(A: np.ndarray, B: np.ndarray, div: float | None, realsmall: float) -> tuple[float, int, bool]:
     """
-    Determines how many roots of the system described by A and B are unstable.
+    Determine how many roots of the system described by A and B are unstable.
 
     Parameters
     ----------
@@ -273,11 +269,10 @@ def determine_n_unstable(
         div = 1.01
 
     for i in range(n):
-        if compute_div:
-            if abs(A[i, i]) > 0:
-                divhat = abs(B[i, i] / A[i, i])
-                if (1 + realsmall < divhat) and divhat <= div:
-                    div = 0.5 * (1 + divhat)
+        if compute_div and abs(A[i, i]) > 0:
+            divhat = abs(B[i, i] / A[i, i])
+            if 1 + realsmall < divhat <= div:
+                div = 0.5 * (1 + divhat)
         n_unstable += abs(B[i, i]) > div * abs(A[i, i])
 
         zxz = (abs(A[i, i]) < realsmall) & (abs(B[i, i]) < realsmall)
@@ -292,11 +287,9 @@ def determine_n_unstable(
     ],
     cache=True,
 )
-def split_matrix_on_eigen_stability(
-    A: np.ndarray, n_unstable: int
-) -> tuple[np.ndarray, np.ndarray]:
+def split_matrix_on_eigen_stability(A: np.ndarray, n_unstable: int) -> tuple[np.ndarray, np.ndarray]:
     """
-    Splits a matrix into stable and unstable parts based on the number of unstable roots.
+    Split a matrix into stable and unstable parts based on the number of unstable roots.
 
     Parameters
     ----------
@@ -332,10 +325,12 @@ def split_matrix_on_eigen_stability(
 #           'Tuple((c16[:,::1], c16[:,::1], c16[:,::1], i8[::1]))(c16[:,::1], f8)'],
 #          cache=True)
 def build_u_v_d(
-    eta: np.ndarray, realsmall: float = EPSILON
+    eta: np.ndarray, realsmall: float = EPSILON, invalid_system: bool = False
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Computes the singular value decomposition (SVD) of the input matrix `eta` and identifies non-zero indices.
+    Compute the singular value decomposition (SVD) of the input matrix `eta` and identifies non-zero indices.
+
+    Alternatively, if the system is invalid, returns zero matrices.
 
     Parameters
     ----------
@@ -343,6 +338,8 @@ def build_u_v_d(
         Input matrix for which to compute the SVD.
     realsmall : float
         A small threshold value to determine non-zero singular values.
+    invalid_system : int
+        If True, return a zero solution. If False, compute the SVD normally.
 
     Returns
     -------
@@ -357,6 +354,18 @@ def build_u_v_d(
     -----
     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
+    # No stable roots
+    if invalid_system:
+        big_ev = np.zeros(
+            0,
+        )
+
+        u_eta = np.zeros((0, 0))
+        d_eta = np.zeros((0, 0))
+        v_eta = np.zeros((eta.shape[-1], 0))
+
+        return u_eta, v_eta, d_eta, big_ev
+
     u_eta, d_eta, vh_eta = linalg.svd(eta, compute_uv=True, full_matrices=False)
     v_eta = vh_eta.conj().T
 
@@ -380,8 +389,8 @@ def gensys(
     tol: float | None = 1e-8,
     return_all_matrices: bool = True,
 ) -> tuple:
-    """
-    Christopher Sim's gensys
+    r"""
+    Christopher Sim's gensys.
 
     Solves rational expectations equations by partitioning the system into stable and unstable roots,
     then eliminating the unstable roots via QZ decomposition.
@@ -389,18 +398,28 @@ def gensys(
     System given as:
 
     .. math::
+       :nowrap:
 
-        G_0 \\cdot y_t = G_1 \\cdot y_{t-1} + c + \\psi \\cdot z_t + \\pi \\cdot \\eta_t,
+       \begin{aligned}
+       G_0 \cdot y_t &= G_1 \cdot y_{t-1} + c \\
+                     &\quad + \psi \cdot z_t + \pi \cdot \eta_t
+       \end{aligned}
 
-    with :math:`z_t` an exogenous variable process and :math:`\\eta_t` being endogenously determined one-step-ahead expectational errors.
+    with :math:`z_t` an exogenous variable process and :math:`\eta_t` being endogenously determined one-step-ahead
+    expectational errors.
 
     Returned system is:
 
     .. math::
+       :nowrap:
 
-        y_t = G_1 \\cdot y_{t-1} + C + \\text{impact} \\cdot z_t + ywt \\cdot (I - fmat \\cdot L^{-1})^{-1} \\cdot fwt \\cdot z_{t+1}.
+       \begin{aligned}
+       y_t &= G_1 \cdot y_{t-1} + C + \text{impact} \cdot z_t \\
+           &\quad + ywt \cdot (I - fmat \cdot L^{-1})^{-1} \cdot fwt \cdot z_{t+1}
+       \end{aligned}
 
-    If :math:`z_t` is i.i.d., the last term drops out. If `div` is omitted from argument list, a :math:`div > 1` is calculated.
+    If :math:`z_t` is i.i.d., the last term drops out. If `div` is omitted from argument list, a :math:`div > 1` is
+    calculated.
 
     Parameters
     ----------
@@ -459,14 +478,11 @@ def gensys(
     -----
     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
-
     eu = [0, 0, 0]
 
     n, _ = g1.shape
     A, B, Q, Z = linalg.qz(g0, g1, "complex")
-    Q = np.asfortranarray(
-        Q.conj().T
-    )  # q is transposed relative to matlab, see scipy docs
+    Q = np.asfortranarray(Q.conj().T)  # q is transposed relative to matlab, see scipy docs
 
     div, n_unstable, zxz = determine_n_unstable(A, B, div, tol)
     n_stable = n - n_unstable
@@ -482,33 +498,15 @@ def gensys(
 
     eta_wt = Q2 @ pi
     _, n_eta = pi.shape
-
-    # No stable roots
-    if n_unstable == 0:
-        big_ev = np.zeros(
-            0,
-        )
-
-        u_eta = np.zeros((0, 0))
-        d_eta = np.zeros((0, 0))
-        v_eta = np.zeros((n_eta, 0))
-
-    else:
-        u_eta, v_eta, d_eta, big_ev = build_u_v_d(eta_wt, tol)
+    u_eta, v_eta, d_eta, big_ev = build_u_v_d(eta_wt, tol, n_unstable == 0)
 
     if len(big_ev) >= n_unstable:
         eu[0] = 1
 
     # All stable roots
-    if n_unstable == n:
-        eta_wt_1 = np.zeros((0, n_eta))
-        u_eta_1 = np.zeros((0, 0))
-        d_eta_1 = np.zeros((0, 0))
-        v_eta_1 = np.zeros((n_eta, 0))
+    eta_wt_1 = np.zeros((0, n_eta)) if n_unstable == n else Q1 @ pi
 
-    else:
-        eta_wt_1 = Q1 @ pi
-        u_eta_1, v_eta_1, d_eta_1, big_ev = build_u_v_d(eta_wt_1, tol)
+    u_eta_1, v_eta_1, d_eta_1, big_ev = build_u_v_d(eta_wt_1, tol, n_unstable == n)
 
     if 0 in v_eta_1.shape:
         unique = True
@@ -525,23 +523,17 @@ def gensys(
     if unique:
         eu[1] = 1
 
-    inner_term = (
-        u_eta
-        @ linalg.solve(d_eta, v_eta.conj().T)
-        @ v_eta_1
-        @ d_eta_1
-        @ u_eta_1.conj().T
-    )
+    inner_term = u_eta @ linalg.solve(d_eta, v_eta.conj().T) @ v_eta_1 @ d_eta_1 @ u_eta_1.conj().T
 
     T_mat = np.column_stack((np.eye(n_stable), -inner_term.conj().T))
-    G_0 = np.row_stack(
+    G_0 = np.vstack(
         (
             T_mat @ A,
             np.column_stack((np.zeros((n_unstable, n_stable)), np.eye(n_unstable))),
         )
     )
 
-    G_1 = np.row_stack((T_mat @ B, np.zeros((n_unstable, n))))
+    G_1 = np.vstack((T_mat @ B, np.zeros((n_unstable, n))))
 
     G_0_inv = linalg.inv(G_0)
     G_1 = G_0_inv @ G_1
@@ -552,17 +544,15 @@ def gensys(
 
     idx = slice(n_stable, n)
 
-    C = np.row_stack((T_mat @ Q @ c, linalg.solve(A[idx, idx] - B[idx, idx], Q2) @ c))
+    C = np.vstack((T_mat @ Q @ c, linalg.solve(A[idx, idx] - B[idx, idx], Q2) @ c))
 
-    impact = G_0_inv @ np.row_stack(
-        (T_mat @ Q @ psi, np.zeros((n_unstable, psi.shape[1])))
-    )
+    impact = G_0_inv @ np.vstack((T_mat @ Q @ psi, np.zeros((n_unstable, psi.shape[1]))))
 
     f_mat = linalg.solve(B[idx, idx], A[idx, idx])
     f_wt = -linalg.solve(B[idx, idx], Q2) @ psi
     y_wt = G_0_inv[:, idx]
 
-    loose = G_0_inv @ np.row_stack(
+    loose = G_0_inv @ np.vstack(
         (
             eta_wt_1 @ (np.eye(n_eta) - v_eta @ v_eta.conj().T),
             np.zeros((n_unstable, n_eta)),
@@ -579,8 +569,10 @@ def gensys(
 
 def interpret_gensys_output(eu):
     """
-    Interprets the output of the gensys function, providing a message that describes the existence and uniqueness
-    of the solution.
+    Interprets the output of the gensys function.
+
+    Gensys returns integer success codes like we're FORTRAN programmers in 1980. This function converts these codes
+    to human-readable messages that describe the existence and uniqueness of the solution.
 
     Parameters
     ----------
@@ -596,23 +588,23 @@ def interpret_gensys_output(eu):
     message : str
         A message describing the existence and uniqueness of the solution based on the values in `eu`.
     """
+    NON_EXISTENCE_CODE = 0
+    COINCIDENT_ZEROS_CODE = -2
+    INDETERMINATE_CODE = -1
+    EXISTENCE_CODE = 1
 
-    message = (
-        f"Gensys return codes: {' '.join(map(str, eu))}, with the following meaning:\n"
-    )
-    if eu[0] == -2 and eu[1] == -2:
+    message = f"Gensys return codes: {' '.join(map(str, eu))}, with the following meaning:\n"
+    if eu[0] == COINCIDENT_ZEROS_CODE and eu[1] == COINCIDENT_ZEROS_CODE:
         message += "Coincident zeros.  Indeterminacy and/or nonexistence. Check that your system is correctly defined."
-    elif eu[0] == -1:
-        message += (
-            f"System is indeterminate. There are {eu[2]} loose endogenous variables."
-        )
-    elif eu[1] == -1:
+    elif eu[0] == INDETERMINATE_CODE:
+        message += f"System is indeterminate. There are {eu[2]} loose endogenous variables."
+    elif eu[1] == INDETERMINATE_CODE:
         message += "Solution exists, but it is not unique -- sunspots."
-    elif eu[0] == 0 and eu[1] == 0:
+    elif eu[0] == NON_EXISTENCE_CODE and eu[1] == NON_EXISTENCE_CODE:
         message += "Solution does not exist."
-    elif eu[0] == 1 and eu[1] == 0:
+    elif eu[0] == EXISTENCE_CODE and eu[1] == NON_EXISTENCE_CODE:
         message += "Solution exists, but is not unique."
-    elif eu[0] == 1 and eu[1] == 1:
+    elif eu[0] == EXISTENCE_CODE and eu[1] == EXISTENCE_CODE:
         message += "Gensys found a unique solution."
     else:
         message += "Unknown return code. Check the gensys documentation."
@@ -637,14 +629,10 @@ def _gensys_setup(A, B, C, D, tol=1e-8):
     n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
 
     lead_var_idx = _find_lead_variables(C, tol)
-    eqs_and_leads_idx = np.concatenate(
-        (np.arange(n_vars), lead_var_idx + n_vars), axis=0
-    )
+    eqs_and_leads_idx = np.concatenate((np.arange(n_vars), lead_var_idx + n_vars), axis=0)
     n_leads = len(lead_var_idx)
 
-    Gamma_0 = np.vstack(
-        (np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq)))))
-    )
+    Gamma_0 = np.vstack((np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq))))))
 
     Gamma_1 = np.vstack(
         (
@@ -677,15 +665,12 @@ def solve_policy_function_with_gensys(
     reutrn_all_matrices: bool = True,
 ) -> tuple:
     g0, g1, c, psi, pi = _gensys_setup(A, B, C, D, tol)
-    G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(
-        g0, g1, c, psi, pi
-    )
+    G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
 
     if reutrn_all_matrices:
         return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
 
-    else:
-        return G_1, eu
+    return G_1, eu
 
 
 class GensysWrapper(Op):
@@ -704,17 +689,13 @@ class GensysWrapper(Op):
 
         return Apply(self, inputs, outputs)
 
-    def perform(
-        self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]
-    ) -> None:
+    def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
         A, B, C, D = inputs
-        G_1, eu = solve_policy_function_with_gensys(
-            A, B, C, D, tol=self.tol, reutrn_all_matrices=False
-        )
+        G_1, eu = solve_policy_function_with_gensys(A, B, C, D, tol=self.tol, reutrn_all_matrices=False)
 
         n_vars = A.shape[0]
         T = G_1[:n_vars, :n_vars]
-        success = all([x == 1 for x in eu[:2]])
+        success = all(x == 1 for x in eu[:2])
 
         outputs[0][0] = np.asarray(T)
         outputs[1][0] = np.asarray(success)

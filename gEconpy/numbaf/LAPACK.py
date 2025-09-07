@@ -19,15 +19,13 @@ _ptr_int = _PTR(_int)
 def _get_float_pointer_for_dtype(blas_dtype):
     if blas_dtype in ["s", "c"]:
         return _ptr_float
-    elif blas_dtype in ["d", "z"]:
+    if blas_dtype in ["d", "z"]:
         return _ptr_dbl
+    return None
 
 
 class _LAPACK:
-    """
-    Functions to return type signatures for wrapped
-    LAPACK functions.
-    """
+    """Functions to return type signatures for wrapped LAPACK functions."""
 
     def __init__(self):
         ensure_lapack()
@@ -278,12 +276,9 @@ class _LAPACK:
     @classmethod
     def numba_xsysv(cls, dtype):
         """
-        From LAPACK docs:
+        Compute the solution to a real system of linear equations A @ X = B.
 
-        *SYSV computes the solution to a real system of linear equations
-        A * X = B,
-        where A is an N-by-N symmetric matrix and X and B are N-by-NRHS
-        matrices.
+        A is an N-by-N symmetric matrix and X and B are N-by-NRHS matrices.
         """
         d = _blas_kinds[dtype]
         func_name = f"{d}sysv"

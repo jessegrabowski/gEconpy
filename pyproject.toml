@@ -112,48 +112,112 @@ markers = [
     "include_nk: mark tests using the full new keyenesian model (which can be quite slow)",
 ]
 
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.format]
+docstring-code-format = true
+
 [tool.ruff.lint]
-select = ["D", "E", "F", "I", "UP", "W", "RUF"]
-ignore = [
-  "E501",   # Line length
-  "E741",   # Ambiguous variable name
-  "RUF001", # String contains ambiguous character (such as Greek letters)
-  "RUF002", # Docstring contains ambiguous character (such as Greek letters)
-  "RUF012", # Mutable class attributes should be annotated with `typing.ClassVar`
-  "D100",
-  "D101",
-  "D102",
-  "D103",
-  "D104",
-  "D105",
-  "D107",
-  "D200",
-  "D202",
-  "D203",
-  "D204",
-  "D205",
-  "D209",
-  "D212",
-  "D213",
-  "D301",
-  "D400",
-  "D401",
-  "D403",
-  "D413",
-  "D415",
-  "D417",
+select = [
+  "E", "F", "W",      # pycodestyle / pyflakes
+  "B",                # flake8-bugbear
+  "UP",               # pyupgrade
+  "I",                # isort
+  "C4",               # flake8-comprehensions
+  "SIM",              # flake8-simplify
+  "ARG",              # flake8-unused-arguments
+  "PTH",              # flake8-use-pathlib
+  "TID",              # flake8-tidy-imports
+  "DTZ",              # flake8-datetimez
+  "RET",              # flake8-return
+  "PERF",             # perflint
+  "TRY",              # try/except best practices
+  "PL",               # pylint-inspired rules
+  "NPY",              # numpy-specific rules
+  "RUF",              # Ruff-specific
+  "D",                # pydocstyle
+  "C90",              # mccabe complexity
 ]
+ignore = [
+    "RUF001", # Allow Greek letters in strings
+    "RUF002", # Allow Greek letters in docstrings
+    "RUF012", # Mutable class attributes without ClassVar
+    "PLR0913", # Allow functions with many arguments
+    "TRY003", # Allow custom exception messages
+
+    # Allow missing docstrings; enforce style where present
+    "D100", "D101", "D102", "D103", "D104", "D105", "D107",
+
+    # Recommended when using Ruff's formatter
+    "W191",
+    "E111", "E114", "E117",
+    "D206", "D300",
+    "Q000", "Q001", "Q002", "Q003",
+    "COM812", "COM819",
+    "ISC001", "ISC002",
+]
+
+allowed-confusables = ["×"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 
 [tool.ruff.lint.isort]
 lines-between-types = 1
 
 [tool.ruff.lint.per-file-ignores]
-'tests/*.py' = [
-  'F401', # Unused import warning for test files -- this check removes imports of fixtures
-  'F811',  # Redefine while unused -- this check fails on imported fixtures
-  'F841', # Unused variable warning for test files -- common in pymc model declarations
-  'D106'  # Missing docstring for public method -- unittest test subclasses don't need docstrings
+'gEconpy/solvers/gensys.py' = [
+    "ARG002", # Allow unused arguments in Pytensor Op classes
 ]
-'docs/source/examples/case_study/*.ipynb' = [
-    'F821' # Notebooks uses direct assignment to globals, so ruff thinks variables are not declared
+
+'gEconpy/solvers/cycle_reduction.py' = [
+    "ARG002", # Allow unused arguments in Pytensor Op classes
+]
+
+'gEconpy/model/*.py' = [
+    "C901" ,  # Allow high complexity in model definition
+    "PLR0912", # Allow many branches
+    "PLR0915", # Allow many statements,
+    "PLR2004", # Allow magic numbers in model definition
+]
+
+'gEconpy/model/perturbation.py' = [
+    "ARG002", # Allow unused arguments in Pytensor Op classes
+]
+
+'gEconpy/numbaf/*.py' = [
+    'ARG001', # Allow unused arguments in numba overloads
+    'PLR0915', # Allow long functions in numba overloads
+    'C901',  # Allow high complexity in numba overloads
+
+]
+
+'gEconpy/parser/*.py' = [
+    'PLR0915', # Allow long functions in parser
+    'C901',  # Allow high complexity in parser
+]
+
+'gEconpy/dynare_convert.py' = [
+    'PLR0912', # Allow many branches in dynare converter
+    'C901', # Allow high complexity in dynare converter
+]
+
+'tests/*.py' = [
+    'F401', # Unused import warning for test files -- this check removes imports of fixtures
+    'F811',  # Redefine while unused -- this check fails on imported fixtures
+    'F841', # Unused variable warning for test files -- common in pymc model declarations
+    'D106',  # Missing docstring for public method -- unittest test subclasses don't need docstrings
+    "PLR2004", # Allow magic numbers in test files
+    "E741", # Allow single letter variable names in test files (e.g. I for investment)
+]
+
+'docs/source/examples/*/*.ipynb' = [
+    'F821', # Notebooks uses direct assignment to globals, so ruff thinks variables are not declared
+    'PLR2004', # Allow magic numbers in notebooks
+    'PTH113' # TODO: fix pathlib usage in notebooks
 ]
