@@ -14,15 +14,6 @@ from gEconpy.parser.ast import (
     Variable,
 )
 
-OPERATOR_SYMBOLS = {
-    Operator.ADD: "+",
-    Operator.SUB: "-",
-    Operator.MUL: "*",
-    Operator.DIV: "/",
-    Operator.POW: "^",
-    Operator.NEG: "-",
-}
-
 PRECEDENCE = {
     Operator.ADD: 1,
     Operator.SUB: 1,
@@ -63,7 +54,7 @@ def print_expression(node: Node, parent_precedence: int = 0) -> str:  # noqa: PL
 
         case UnaryOp(op=op, operand=operand):
             operand_str = print_expression(operand, PRECEDENCE[op])
-            return f"{OPERATOR_SYMBOLS[op]}{operand_str}"
+            return f"{op}{operand_str}"
 
         case BinaryOp(left=left, op=op, right=right):
             my_precedence = PRECEDENCE[op]
@@ -74,7 +65,7 @@ def print_expression(node: Node, parent_precedence: int = 0) -> str:  # noqa: PL
             if op == Operator.POW:
                 right_str = print_expression(right, my_precedence - 1)
 
-            result = f"{left_str} {OPERATOR_SYMBOLS[op]} {right_str}"
+            result = f"{left_str} {op} {right_str}"
 
             if my_precedence < parent_precedence:
                 return f"({result})"

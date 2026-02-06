@@ -162,12 +162,12 @@ def parse_assumptions(text: str) -> dict[str, dict[str, bool]]:
         Dictionary mapping variable names to their assumption dictionaries.
     """
     if "assumptions" not in text.lower():
-        return defaultdict(lambda: DEFAULT_ASSUMPTIONS)
+        return defaultdict(DEFAULT_ASSUMPTIONS.copy)
 
     # Extract just the assumptions block
     match = re.search(r"assumptions\s*\{", text, re.IGNORECASE)
     if not match:
-        return defaultdict(lambda: DEFAULT_ASSUMPTIONS)
+        return defaultdict(DEFAULT_ASSUMPTIONS.copy)
 
     # Find the matching closing brace
     start = match.start()
@@ -194,7 +194,7 @@ def parse_assumptions(text: str) -> dict[str, dict[str, bool]]:
     # Check if block is empty
     inner = re.sub(r"assumptions\s*\{|\};?", "", assumptions_block).strip()
     if not inner:
-        return defaultdict(lambda: DEFAULT_ASSUMPTIONS)
+        return defaultdict(DEFAULT_ASSUMPTIONS.copy)
 
     sub_blocks = _extract_assumption_sub_blocks(assumptions_block)
     _validate_assumptions(sub_blocks)

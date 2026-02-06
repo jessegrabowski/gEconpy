@@ -18,6 +18,9 @@ from gEconpy.parser.ast.nodes import (
     TimeIndex,
     UnaryOp,
     Variable,
+    collect_nodes_of_type,
+    collect_parameter_names,
+    collect_variable_names,
 )
 
 __all__ = [
@@ -40,4 +43,7 @@ __all__ = [
     "TimeIndex",
     "UnaryOp",
     "Variable",
+    "collect_nodes_of_type",
+    "collect_parameter_names",
+    "collect_variable_names",
 ]

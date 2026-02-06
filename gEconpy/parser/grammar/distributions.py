@@ -1,3 +1,5 @@
+import operator
+
 import pyparsing as pp
 
 from gEconpy.parser.ast import GCNDistribution
@@ -6,9 +8,39 @@ from gEconpy.parser.dist_syntax import (
     PRELIZ_DISTS,
 )
 
+_SAFE_OPERATORS = {
+    "+": operator.add,
+    "-": operator.sub,
+    "*": operator.mul,
+    "/": operator.truediv,
+}
+
+
+def _safe_eval_tokens(tokens: list) -> float:
+    """Evaluate a flat list of [number, op, number, op, ...] tokens safely."""
+    if not tokens:
+        raise ValueError("Empty token list")
+
+    # Handle single value
+    if len(tokens) == 1:
+        return float(tokens[0])
+
+    # Process left-to-right (no precedence - pyparsing handles that via infixNotation)
+    result = float(tokens[0])
+    i = 1
+    while i < len(tokens):
+        op_str = str(tokens[i])
+        if op_str not in _SAFE_OPERATORS:
+            raise ValueError(f"Unknown operator: {op_str}")
+        operand = float(tokens[i + 1])
+        result = _SAFE_OPERATORS[op_str](result, operand)
+        i += 2
+
+    return result
+
 
 def _evaluate_expression(parsed_expr):
-    """Safely evaluate a simple numeric expression."""
+    """Safely evaluate a simple numeric expression without using eval()."""
     if isinstance(parsed_expr, int | float):
         return float(parsed_expr)
     if parsed_expr is None:
@@ -16,11 +48,11 @@ def _evaluate_expression(parsed_expr):
     if isinstance(parsed_expr, pp.ParseResults):
         parsed_expr = parsed_expr.as_list()
     if isinstance(parsed_expr, list):
-        if len(parsed_expr) == 1 and isinstance(parsed_expr[0], list):
+        # Flatten nested single-element lists
+        while len(parsed_expr) == 1 and isinstance(parsed_expr[0], list):
             parsed_expr = parsed_expr[0]
-        expr_str = "".join(map(str, parsed_expr))
-        return eval(expr_str, {"__builtins__": None}, {})
-    return parsed_expr
+        return _safe_eval_tokens(parsed_expr)
+    return float(parsed_expr)
 
 
 # Basic tokens

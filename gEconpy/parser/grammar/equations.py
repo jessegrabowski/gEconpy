@@ -1,22 +1,7 @@
 import pyparsing as pp
 
 from gEconpy.parser.ast import GCNEquation
-from gEconpy.parser.grammar.expressions import IDENTIFIER, parse_expression
-
-# Equation markers
-EQUALS = pp.Literal("=")
-COLON = pp.Suppress(":")
-ARROW = pp.Suppress("->")
-SEMICOLON = pp.Suppress(";")
-
-# Lagrange multiplier: : lambda[] or : mc[]
-LAGRANGE_MULT = COLON + IDENTIFIER + pp.Suppress("[") + pp.Suppress("]")
-
-# Calibrating target: -> parameter_name
-CALIBRATING_TARGET = ARROW + IDENTIFIER
-
-# Full equation: lhs = rhs [: lagrange] [-> calibrating] ;
-# We need to handle the equation structure carefully since EXPR is greedy
+from gEconpy.parser.grammar.expressions import parse_expression
 
 
 def _parse_equation_string(text: str) -> GCNEquation:

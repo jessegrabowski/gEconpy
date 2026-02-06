@@ -1,3 +1,5 @@
+import os
+
 from pathlib import Path
 
 import sympy as sp
@@ -8,6 +10,29 @@ from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel
 from gEconpy.parser.ast_to_distribution import ast_to_distribution_with_metadata
 from gEconpy.parser.ast_to_sympy import ast_to_sympy, equation_to_sympy
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
+
+# Feature flag for parser switching
+# Set to True to use the new AST-based parser, False for the old parser
+# Can be controlled via environment variable GECONPY_USE_NEW_PARSER
+_USE_NEW_PARSER = os.environ.get("GECONPY_USE_NEW_PARSER", "1").lower() in ("1", "true", "yes")
+
+
+def use_new_parser() -> bool:
+    """Return whether the new parser is enabled."""
+    return _USE_NEW_PARSER
+
+
+def set_parser(use_new: bool) -> None:
+    """
+    Set which parser to use.
+
+    Parameters
+    ----------
+    use_new : bool
+        If True, use the new AST-based parser. If False, use the old parser.
+    """
+    global _USE_NEW_PARSER  # noqa: PLW0603
+    _USE_NEW_PARSER = use_new
 
 
 def ast_block_to_equations(
@@ -236,7 +261,8 @@ def load_gcn_file(filepath: str | Path) -> dict:
     """
     Load a GCN file and return model primitives.
 
-    This is the main entry point for loading GCN files with the new parser.
+    This is the main entry point for loading GCN files. Uses the new AST-based
+    parser by default, but can fall back to the old parser via feature flag.
 
     Parameters
     ----------
@@ -247,7 +273,52 @@ def load_gcn_file(filepath: str | Path) -> dict:
     -------
     dict
         Dictionary of model primitives ready for Model construction.
+
+    Notes
+    -----
+    The parser can be switched using:
+    - Environment variable: GECONPY_USE_NEW_PARSER=0
+    - Programmatically: gEconpy.parser.loader.set_parser(False)
     """
+    if not _USE_NEW_PARSER:
+        # Use old parser via adapter
+        from gEconpy.parser.file_loaders import block_dict_to_model_primitives, gcn_to_block_dict  # noqa: PLC0415
+
+        filepath = Path(filepath)
+        block_dict, assumptions, options, tryreduce, _ss_solution_dict, prior_dict = gcn_to_block_dict(
+            filepath, simplify_blocks=False
+        )
+        (
+            equations,
+            param_dict,
+            calib_dict,
+            _deterministic_dict,
+            variables,
+            shocks,
+            param_priors,
+            _shock_priors,
+            _eliminated_variables,
+            _singletons,
+        ) = block_dict_to_model_primitives(
+            block_dict,
+            assumptions,
+            tryreduce,
+            prior_dict,
+            simplify_tryreduce=False,
+            simplify_constants=False,
+        )
+        return {
+            "equations": equations,
+            "variables": variables,
+            "shocks": shocks,
+            "param_dict": param_dict,
+            "calib_dict": calib_dict,
+            "distributions": param_priors,
+            "options": options,
+            "tryreduce": tryreduce,
+            "assumptions": assumptions,
+        }
+
     result = preprocess_file(filepath, validate=True)
     return ast_model_to_primitives(result.ast)
 
@@ -265,6 +336,52 @@ def load_gcn_string(source: str) -> dict:
     -------
     dict
         Dictionary of model primitives ready for Model construction.
+
+    Notes
+    -----
+    The parser can be switched using:
+    - Environment variable: GECONPY_USE_NEW_PARSER=0
+    - Programmatically: gEconpy.parser.loader.set_parser(False)
     """
+    if not _USE_NEW_PARSER:
+        # Use old parser via adapter
+        from gEconpy.parser.file_loaders import block_dict_to_model_primitives, parsed_model_to_data  # noqa: PLC0415
+        from gEconpy.parser.gEcon_parser import preprocess_gcn  # noqa: PLC0415
+
+        parsed_model, prior_dict = preprocess_gcn(source)
+        block_dict, assumptions, options, tryreduce, _ss_solution_dict = parsed_model_to_data(
+            parsed_model, simplify_blocks=False
+        )
+        (
+            equations,
+            param_dict,
+            calib_dict,
+            _deterministic_dict,
+            variables,
+            shocks,
+            param_priors,
+            _shock_priors,
+            _eliminated_variables,
+            _singletons,
+        ) = block_dict_to_model_primitives(
+            block_dict,
+            assumptions,
+            tryreduce,
+            prior_dict,
+            simplify_tryreduce=False,
+            simplify_constants=False,
+        )
+        return {
+            "equations": equations,
+            "variables": variables,
+            "shocks": shocks,
+            "param_dict": param_dict,
+            "calib_dict": calib_dict,
+            "distributions": param_priors,
+            "options": options,
+            "tryreduce": tryreduce,
+            "assumptions": assumptions,
+        }
+
     result = preprocess(source, validate=True)
     return ast_model_to_primitives(result.ast)

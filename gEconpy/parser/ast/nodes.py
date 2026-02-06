@@ -425,35 +425,51 @@ class GCNModel:
 
 def _collect_variables(node: Node) -> set[Variable]:
     """Recursively collect all Variable nodes from an expression."""
-    if isinstance(node, Variable):
-        return {node}
-    if isinstance(node, BinaryOp):
-        return _collect_variables(node.left) | _collect_variables(node.right)
-    if isinstance(node, UnaryOp):
-        return _collect_variables(node.operand)
-    if isinstance(node, FunctionCall):
-        result: set[Variable] = set()
-        for arg in node.args:
-            result |= _collect_variables(arg)
-        return result
-    if isinstance(node, Expectation):
-        return _collect_variables(node.expr)
-    return set()
+    return collect_nodes_of_type(node, Variable)
 
 
 def _collect_parameters(node: Node) -> set[Parameter]:
     """Recursively collect all Parameter nodes from an expression."""
-    if isinstance(node, Parameter):
+    return collect_nodes_of_type(node, Parameter)
+
+
+def collect_nodes_of_type(node: Node, node_type: type) -> set:
+    """
+    Recursively collect all nodes of a specific type from an expression.
+
+    Parameters
+    ----------
+    node : Node
+        The expression node to search.
+    node_type : type
+        The type of node to collect (e.g., Variable, Parameter).
+
+    Returns
+    -------
+    set
+        Set of all nodes of the specified type.
+    """
+    if isinstance(node, node_type):
         return {node}
     if isinstance(node, BinaryOp):
-        return _collect_parameters(node.left) | _collect_parameters(node.right)
+        return collect_nodes_of_type(node.left, node_type) | collect_nodes_of_type(node.right, node_type)
     if isinstance(node, UnaryOp):
-        return _collect_parameters(node.operand)
+        return collect_nodes_of_type(node.operand, node_type)
     if isinstance(node, FunctionCall):
-        result: set[Parameter] = set()
+        result: set = set()
         for arg in node.args:
-            result |= _collect_parameters(arg)
+            result |= collect_nodes_of_type(arg, node_type)
         return result
     if isinstance(node, Expectation):
-        return _collect_parameters(node.expr)
+        return collect_nodes_of_type(node.expr, node_type)
     return set()
+
+
+def collect_variable_names(node: Node) -> set[str]:
+    """Recursively collect all variable names from an expression."""
+    return {v.name for v in collect_nodes_of_type(node, Variable)}
+
+
+def collect_parameter_names(node: Node) -> set[str]:
+    """Recursively collect all parameter names from an expression."""
+    return {p.name for p in collect_nodes_of_type(node, Parameter)}

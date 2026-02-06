@@ -1,66 +1,18 @@
 from collections import defaultdict
 
 from gEconpy.parser.ast import (
-    BinaryOp,
-    Expectation,
-    FunctionCall,
     GCNBlock,
     GCNDistribution,
     GCNEquation,
     GCNModel,
-    Node,
-    Number,
     Parameter,
-    UnaryOp,
     Variable,
+    collect_parameter_names,
+    collect_variable_names,
 )
 from gEconpy.parser.errors import (
     ValidationErrorCollection,
 )
-
-
-def _collect_variables(node: Node) -> set[str]:  # noqa: PLR0911
-    """Recursively collect all variable names from an expression."""
-    match node:
-        case Variable(name=name):
-            return {name}
-        case Parameter() | Number():
-            return set()
-        case BinaryOp(left=left, right=right):
-            return _collect_variables(left) | _collect_variables(right)
-        case UnaryOp(operand=operand):
-            return _collect_variables(operand)
-        case FunctionCall(args=args):
-            result = set()
-            for arg in args:
-                result |= _collect_variables(arg)
-            return result
-        case Expectation(expr=expr):
-            return _collect_variables(expr)
-        case _:
-            return set()
-
-
-def _collect_parameters(node: Node) -> set[str]:  # noqa: PLR0911
-    """Recursively collect all parameter names from an expression."""
-    match node:
-        case Parameter(name=name):
-            return {name}
-        case Variable() | Number():
-            return set()
-        case BinaryOp(left=left, right=right):
-            return _collect_parameters(left) | _collect_parameters(right)
-        case UnaryOp(operand=operand):
-            return _collect_parameters(operand)
-        case FunctionCall(args=args):
-            result = set()
-            for arg in args:
-                result |= _collect_parameters(arg)
-            return result
-        case Expectation(expr=expr):
-            return _collect_parameters(expr)
-        case _:
-            return set()
 
 
 def validate_block(block: GCNBlock) -> ValidationErrorCollection:  # noqa: PLR0912
@@ -262,9 +214,9 @@ def check_undefined_variables(
     used_vars = set()
     for block in model.blocks:
         for eq in block.definitions + block.constraints + block.identities:
-            used_vars |= _collect_variables(eq.rhs)
+            used_vars |= collect_variable_names(eq.rhs)
         if block.objective:
-            used_vars |= _collect_variables(block.objective.rhs)
+            used_vars |= collect_variable_names(block.objective.rhs)
 
     # Find undefined
     undefined = used_vars - defined_vars - external
@@ -309,11 +261,11 @@ def check_undefined_parameters(
     used_params = set()
     for block in model.blocks:
         for eq in block.definitions + block.constraints + block.identities:
-            used_params |= _collect_parameters(eq.lhs)
-            used_params |= _collect_parameters(eq.rhs)
+            used_params |= collect_parameter_names(eq.lhs)
+            used_params |= collect_parameter_names(eq.rhs)
         if block.objective:
-            used_params |= _collect_parameters(block.objective.lhs)
-            used_params |= _collect_parameters(block.objective.rhs)
+            used_params |= collect_parameter_names(block.objective.lhs)
+            used_params |= collect_parameter_names(block.objective.rhs)
 
     # Find undefined
     undefined = used_params - calibrated_params - external

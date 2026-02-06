@@ -171,3 +171,23 @@ class TestErrorCases:
     def test_empty_string_raises(self):
         with pytest.raises(ParseException):
             parse_distribution("")
+
+
+class TestSecurity:
+    def test_cannot_execute_arbitrary_code_in_kwargs(self):
+        # This should fail to parse - the expression parser only allows numbers and operators
+        with pytest.raises((ParseException, ValueError)):
+            parse_distribution("x ~ Normal(mu=__import__('os').system('ls'))")
+
+    def test_cannot_execute_code_via_initial_value(self):
+        with pytest.raises((ParseException, ValueError)):
+            parse_distribution("x ~ Normal() = open('/etc/passwd')")
+
+    def test_only_arithmetic_allowed(self):
+        # This should work - simple arithmetic
+        d = parse_distribution("x ~ Normal(mu=1+2)")
+        assert d.dist_kwargs["mu"] == 3
+
+    def test_division_is_safe(self):
+        d = parse_distribution("x ~ Normal(mu=10/2)")
+        assert d.dist_kwargs["mu"] == 5.0

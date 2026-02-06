@@ -14,7 +14,7 @@ from gEconpy.parser.ast import (
     Variable,
 )
 
-# Disable packrat caching to avoid issues with parse actions
+# Enable packrat caching for better performance with recursive grammars
 pp.ParserElement.enablePackrat()
 
 # Basic tokens

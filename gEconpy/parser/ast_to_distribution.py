@@ -1,4 +1,4 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import preliz as pz
 
@@ -7,6 +7,9 @@ from preliz.distributions.distributions import Distribution
 from gEconpy.exceptions import InvalidDistributionException
 from gEconpy.parser.ast import GCNDistribution
 from gEconpy.parser.dist_syntax import PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
+
+if TYPE_CHECKING:
+    from gEconpy.parser.ast import GCNModel
 
 
 def ast_to_distribution(node: GCNDistribution) -> Distribution:
@@ -108,7 +111,7 @@ def distributions_from_calibration(
     return result
 
 
-def distributions_from_model(model) -> dict[str, tuple[Distribution, dict[str, Any]]]:
+def distributions_from_model(model: "GCNModel") -> dict[str, tuple[Distribution, dict[str, Any]]]:
     """
     Extract all distributions from a GCNModel.
 

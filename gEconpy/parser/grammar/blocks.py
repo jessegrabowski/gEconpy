@@ -10,16 +10,6 @@ from gEconpy.parser.grammar.distributions import parse_distribution
 from gEconpy.parser.grammar.equations import parse_equation
 from gEconpy.parser.grammar.expressions import parse_expression
 
-COMPONENT_NAMES = {
-    "definitions",
-    "controls",
-    "objective",
-    "constraints",
-    "identities",
-    "shocks",
-    "calibration",
-}
-
 
 def _split_statements(text: str) -> list[str]:
     """Split text into individual statements by semicolons, respecting brackets."""
