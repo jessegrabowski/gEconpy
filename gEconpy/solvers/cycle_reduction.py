@@ -220,12 +220,13 @@ def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7, mode
     idx_1 = idx_0 + n
     norm = np.array(1e9, dtype="float64")
     step_num = pt.zeros((), dtype="int32")
-    (*_, A1_hat, norm, n_steps), updates = pytensor.scan(
+    *_, A1_hat, norm, n_steps = pytensor.scan(
         step,
         outputs_info=[A, B, C, B, norm, step_num],
         non_sequences=[idx_0, idx_1, tol],
         n_steps=max_iter,
         mode=get_mode(mode),
+        return_updates=False,
     )
     A1_hat = A1_hat[-1]
 
