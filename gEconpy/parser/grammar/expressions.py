@@ -15,7 +15,7 @@ from gEconpy.parser.ast import (
 )
 
 # Enable packrat caching for better performance with recursive grammars
-pp.ParserElement.enablePackrat()
+pp.ParserElement.enable_packrat()
 
 # Basic tokens
 LPAREN = pp.Suppress("(")
@@ -26,11 +26,11 @@ COMMA = pp.Suppress(",")
 
 # Numbers - integers and floats, including scientific notation
 # Note: negative numbers are handled via unary minus, not in the number itself
-NUMBER = pp.Regex(r"\d+\.?\d*(?:[eE][+-]?\d+)?").setParseAction(lambda t: Number(value=float(t[0])))
+NUMBER = pp.Regex(r"\d+\.?\d*(?:[eE][+-]?\d+)?").set_parse_action(lambda t: Number(value=float(t[0])))
 
 # Time index inside brackets: [], [-1], [1], [ss]
 TIME_INDEX_CONTENT = pp.Regex(r"-?\d+|ss")
-TIME_INDEX = (pp.Suppress("[") + pp.Optional(TIME_INDEX_CONTENT, default="") + pp.Suppress("]")).setParseAction(
+TIME_INDEX = (pp.Suppress("[") + pp.Optional(TIME_INDEX_CONTENT, default="") + pp.Suppress("]")).set_parse_action(
     lambda t: _parse_time_index(t[0])
 )
 
@@ -47,26 +47,26 @@ def _parse_time_index(content: str) -> TimeIndex:
 IDENTIFIER = pp.Word(pp.alphas + "_", pp.alphanums + "_")
 
 # Variable: identifier followed by time index
-VARIABLE = (IDENTIFIER + TIME_INDEX).setParseAction(lambda t: Variable(name=t[0], time_index=t[1]))
+VARIABLE = (IDENTIFIER + TIME_INDEX).set_parse_action(lambda t: Variable(name=t[0], time_index=t[1]))
 
 # Expectation operator: E[] followed by bracketed expression
 # We need to use Combine to make it a single token that won't match as identifier
 EXPECTATION_MARKER = pp.Combine(pp.Literal("E") + pp.Literal("[") + pp.Literal("]"))
 
 # Parameter: identifier not followed by bracket
-PARAMETER = IDENTIFIER.copy().setParseAction(lambda t: Parameter(name=t[0]))
+PARAMETER = IDENTIFIER.copy().set_parse_action(lambda t: Parameter(name=t[0]))
 
 # Forward declaration for recursive expression
 EXPR = pp.Forward()
 
 # Function call: identifier followed by parenthesized arguments
-FUNC_ARGS = pp.Optional(pp.delimitedList(EXPR))
-FUNC_CALL = (IDENTIFIER + LPAREN + FUNC_ARGS + RPAREN).setParseAction(
+FUNC_ARGS = pp.Optional(pp.DelimitedList(EXPR))
+FUNC_CALL = (IDENTIFIER + LPAREN + FUNC_ARGS + RPAREN).set_parse_action(
     lambda t: FunctionCall(func_name=t[0], args=tuple(t[1:]))
 )
 
 # Expectation: E[][expr]
-EXPECTATION = (pp.Suppress(EXPECTATION_MARKER) + pp.Suppress("[") + EXPR + pp.Suppress("]")).setParseAction(
+EXPECTATION = (pp.Suppress(EXPECTATION_MARKER) + pp.Suppress("[") + EXPR + pp.Suppress("]")).set_parse_action(
     lambda t: Expectation(expr=t[0])
 )
 
@@ -117,13 +117,13 @@ def _make_binary_op(tokens):
 # 4. Exponentiation (right-associative)
 # 5. Atoms
 
-EXPR <<= pp.infixNotation(
+EXPR <<= pp.infix_notation(
     ATOM,
     [
-        (pp.oneOf("^ **"), 2, pp.opAssoc.RIGHT, _make_binary_op),
-        (pp.oneOf("+ -"), 1, pp.opAssoc.RIGHT, _make_unary_op),
-        (pp.oneOf("* /"), 2, pp.opAssoc.LEFT, _make_binary_op),
-        (pp.oneOf("+ -"), 2, pp.opAssoc.LEFT, _make_binary_op),
+        (pp.one_of("^ **"), 2, pp.OpAssoc.RIGHT, _make_binary_op),
+        (pp.one_of("+ -"), 1, pp.OpAssoc.RIGHT, _make_unary_op),
+        (pp.one_of("* /"), 2, pp.OpAssoc.LEFT, _make_binary_op),
+        (pp.one_of("+ -"), 2, pp.OpAssoc.LEFT, _make_binary_op),
     ],
 )
 
@@ -142,5 +142,5 @@ def parse_expression(text: str):
     Node
         The AST representation of the expression.
     """
-    result = EXPR.parseString(text, parseAll=True)
+    result = EXPR.parse_string(text, parse_all=True)
     return result[0]

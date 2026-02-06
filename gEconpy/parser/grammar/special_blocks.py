@@ -48,7 +48,7 @@ def _extract_assumption_sub_blocks(text: str) -> dict[str, list[str]]:
     PARAM = pp.Word(pp.alphas, pp.alphanums + "_").set_name("parameter")
     BLOCK_NAME = pp.Word(pp.alphas, pp.alphanums + "_")
 
-    VAR_LIST = pp.delimitedList((VARIABLE | PARAM), delim=",").set_name("var_list")
+    VAR_LIST = pp.DelimitedList((VARIABLE | PARAM), delim=",").set_name("var_list")
     VAR_LINE = pp.Group(VAR_LIST + SEMI).set_name("variable_list")
 
     ANYTHING = pp.Group(pp.Regex("[^{};]+") + SEMI).set_name("generic_line")

@@ -25,7 +25,7 @@ def _safe_eval_tokens(tokens: list) -> float:
     if len(tokens) == 1:
         return float(tokens[0])
 
-    # Process left-to-right (no precedence - pyparsing handles that via infixNotation)
+    # Process left-to-right (no precedence - pyparsing handles that via infix_notation)
     result = float(tokens[0])
     i = 1
     while i < len(tokens):
@@ -68,25 +68,25 @@ PARAM_NAME = pp.Word(pp.alphas, pp.alphanums + "_")
 
 # Numbers and expressions
 NUMBER = pp.pyparsing_common.number
-NUMBER_EXPR = pp.infixNotation(
+NUMBER_EXPR = pp.infix_notation(
     NUMBER,
     [
-        (pp.Literal("/"), 2, pp.opAssoc.LEFT),
-        (pp.Literal("*"), 2, pp.opAssoc.LEFT),
-        (pp.Literal("+"), 2, pp.opAssoc.LEFT),
-        (pp.Literal("-"), 2, pp.opAssoc.LEFT),
+        (pp.Literal("/"), 2, pp.OpAssoc.LEFT),
+        (pp.Literal("*"), 2, pp.OpAssoc.LEFT),
+        (pp.Literal("+"), 2, pp.OpAssoc.LEFT),
+        (pp.Literal("-"), 2, pp.OpAssoc.LEFT),
     ],
 )
 
 # None literal for bounds
-NONE_LITERAL = pp.Keyword("None").setParseAction(lambda _: [None])
+NONE_LITERAL = pp.Keyword("None").set_parse_action(lambda _: [None])
 
 # Value can be number expression, None, or identifier (for hyper-parameters)
 VALUE = NUMBER_EXPR | NONE_LITERAL | PARAM_NAME
 
 # Key-value pair: alpha=2, lower=0.5, etc.
 KEY_VALUE_PAIR = pp.Group(PARAM_NAME + EQUALS + VALUE)
-KWARG_LIST = pp.Optional(pp.delimitedList(KEY_VALUE_PAIR, delim=COMMA), default=None)
+KWARG_LIST = pp.Optional(pp.DelimitedList(KEY_VALUE_PAIR, delim=COMMA), default=None)
 
 # Distribution names
 WRAPPER_FUNCS = pp.MatchFirst([pp.Keyword(wrapper) for wrapper in PRELIZ_DIST_WRAPPERS])
@@ -149,7 +149,7 @@ def _parse_action(tokens) -> GCNDistribution:
     )
 
 
-PRIOR_DECLARATION.setParseAction(_parse_action)
+PRIOR_DECLARATION.set_parse_action(_parse_action)
 
 
 def parse_distribution(text: str) -> GCNDistribution:
@@ -171,5 +171,5 @@ def parse_distribution(text: str) -> GCNDistribution:
     text = text.strip()
     if text.endswith(";"):
         text = text[:-1]
-    result = PRIOR_DECLARATION.parseString(text, parseAll=True)
+    result = PRIOR_DECLARATION.parse_string(text, parse_all=True)
     return result[0]
