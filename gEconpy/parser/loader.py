@@ -7,6 +7,7 @@ import sympy as sp
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel
+from gEconpy.parser.ast_to_block import ast_model_to_block_dict
 from gEconpy.parser.ast_to_distribution import ast_to_distribution_with_metadata
 from gEconpy.parser.ast_to_sympy import ast_to_sympy, equation_to_sympy
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
@@ -185,6 +186,9 @@ def ast_model_to_primitives(
     """
     Convert a GCNModel to model primitives.
 
+    This function builds Block objects from the AST, calls solve_optimization()
+    on each block to derive FOCs, then extracts model primitives.
+
     Parameters
     ----------
     model : GCNModel
@@ -204,56 +208,50 @@ def ast_model_to_primitives(
         - tryreduce: list of variables to try to reduce
         - assumptions: dict of variable assumptions
     """
-    assumptions = model.assumptions
-    all_variables = []
-    all_shocks = []
-    all_equations = []
-    param_dict = SymbolDictionary()
-    calib_dict = SymbolDictionary()
+    from gEconpy.parser.file_loaders import (  # noqa: PLC0415
+        block_dict_to_equation_list,
+        block_dict_to_param_dict,
+        block_dict_to_variables_and_shocks,
+    )
+
+    # Build Block objects and solve optimization
+    block_dict, assumptions, options, tryreduce = ast_model_to_block_dict(model)
+
+    # Extract primitives using the same functions as the old parser
+    equations = block_dict_to_equation_list(block_dict)
+    param_dict = block_dict_to_param_dict(block_dict, "param_dict")
+    calib_dict = block_dict_to_param_dict(block_dict, "calib_dict")
+    variables, shocks = block_dict_to_variables_and_shocks(block_dict)
+
+    # Handle distributions from calibration blocks
     distributions = SymbolDictionary()
-
-    for block in model.blocks:
-        # Get equations
-        block_eqs = ast_block_to_equations(block, assumptions)
-        for eq, _metadata in block_eqs["definitions"]:
-            all_equations.append(eq)
-        if block_eqs["objective"]:
-            eq, _metadata = block_eqs["objective"]
-            all_equations.append(eq)
-        for eq, _metadata in block_eqs["constraints"]:
-            all_equations.append(eq)
-        for eq, _metadata in block_eqs["identities"]:
-            all_equations.append(eq)
-
-        # Get variables and shocks
-        block_vars, block_shocks = ast_block_to_variables_and_shocks(block, assumptions)
-        all_variables.extend(block_vars)
-        all_shocks.extend(block_shocks)
-
-        # Get calibration
-        block_params, block_calib, block_dists = ast_block_to_calibration(block, assumptions)
-        param_dict = param_dict | block_params
-        calib_dict = calib_dict | block_calib
-        distributions = distributions | block_dists
-
-    # Deduplicate
-    all_variables = sorted(set(all_variables), key=lambda x: x.name)
-    all_shocks = sorted(set(all_shocks), key=lambda x: x.name)
-
-    # Remove shocks from variables
-    shock_names = {s.name for s in all_shocks}
-    all_variables = [v for v in all_variables if v.name not in shock_names]
+    for ast_block in model.blocks:
+        for item in ast_block.calibration:
+            if isinstance(item, GCNDistribution):
+                try:
+                    dist, metadata = ast_to_distribution_with_metadata(item)
+                    distributions[item.parameter_name] = dist
+                except (ValueError, TypeError):
+                    # Distribution has parameter references that can't be resolved yet
+                    pass
+        # Also include shock distributions
+        for item in ast_block.shock_distributions:
+            try:
+                dist, metadata = ast_to_distribution_with_metadata(item)
+                distributions[item.parameter_name] = dist
+            except (ValueError, TypeError):
+                pass
 
     return {
-        "equations": all_equations,
-        "variables": all_variables,
-        "shocks": all_shocks,
+        "equations": equations,
+        "variables": variables,
+        "shocks": shocks,
         "param_dict": param_dict,
         "calib_dict": calib_dict,
         "distributions": distributions,
-        "options": model.options,
-        "tryreduce": model.tryreduce,
-        "assumptions": model.assumptions,
+        "options": options,
+        "tryreduce": tryreduce,
+        "assumptions": assumptions,
     }
 
 
