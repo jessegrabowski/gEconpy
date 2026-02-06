@@ -36,15 +36,15 @@ keywords = [
     "bayesian statistics"
 ]
 
-
 dependencies = [
     "matplotlib",
     "numba",
     "numpy",
     "pandas",
-    "pymc>=5.25.0",
-    "pymc_extras>=0.4.0",
-    "preliz>=0.2.0",
+    "pytensor>=2.37.0",
+    "pymc>=5.27.1",
+    "pymc_extras>=0.8.0",
+    "preliz>=0.23.0",
     "pyparsing",
     "pytensor",
     "scipy",
