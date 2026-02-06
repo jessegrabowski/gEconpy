@@ -300,7 +300,6 @@ class TestAstModelToPrimitives:
         source = """
         block TEST
         {
-            controls { C[]; };
             shocks { epsilon[]; };
             identities { C[] = epsilon[]; };
         };
