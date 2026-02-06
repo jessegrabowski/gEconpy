@@ -325,3 +325,35 @@ class TestRealWorldExpressions:
         result = parse_expression(expr)
         assert result.op == Operator.SUB
         assert isinstance(result.right, UnaryOp)
+
+    def test_exponent_with_unary_minus_on_rhs(self):
+        # x ^ -y should work (common in economics: C^-sigma)
+        expr = "x ^ -y"
+        result = parse_expression(expr)
+        assert result.op == Operator.POW
+        assert isinstance(result.right, UnaryOp)
+        assert result.right.op == Operator.NEG
+        assert result.right.operand == Parameter(name="y")
+
+    def test_variable_to_negative_parameter(self):
+        # C_R[ss] ^ -sigma_R from RBC_two_household_additive.gcn
+        expr = "C_R[ss] ^ -sigma_R"
+        result = parse_expression(expr)
+        assert result.op == Operator.POW
+        assert result.left == Variable(name="C_R", time_index=STEADY_STATE)
+        assert isinstance(result.right, UnaryOp)
+        assert result.right.operand == Parameter(name="sigma_R")
+
+    def test_power_with_negative_number(self):
+        expr = "x ^ -2"
+        result = parse_expression(expr)
+        assert result.op == Operator.POW
+        assert isinstance(result.right, UnaryOp)
+
+    def test_negative_base_to_power(self):
+        # -x ^ 2 should be -(x^2), not (-x)^2
+        expr = "-x ^ 2"
+        result = parse_expression(expr)
+        assert isinstance(result, UnaryOp)
+        assert result.op == Operator.NEG
+        assert result.operand.op == Operator.POW

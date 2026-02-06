@@ -74,6 +74,13 @@ EXPECTATION = (pp.Suppress(EXPECTATION_MARKER) + pp.Suppress("[") + EXPR + pp.Su
 # Order matters: try more specific patterns first
 ATOM = EXPECTATION | FUNC_CALL | VARIABLE | NUMBER | PARAMETER | (LPAREN + EXPR + RPAREN)
 
+# Signed atom: handles unary minus directly on atoms (for cases like x ^ -y)
+UNARY_MINUS = pp.Literal("-")
+UNARY_PLUS = pp.Literal("+")
+SIGNED_ATOM = (pp.Optional(UNARY_MINUS | UNARY_PLUS, default="") + ATOM).set_parse_action(
+    lambda t: UnaryOp(op=Operator.NEG, operand=t[1]) if t[0] == "-" else t[1] if len(t) > 1 else t[0]
+)
+
 
 def _make_unary_op(tokens):
     """Handle unary + and -."""
@@ -113,14 +120,21 @@ def _make_binary_op(tokens):
 # Expression with operator precedence (lowest to highest):
 # 1. Addition/Subtraction (left-associative)
 # 2. Multiplication/Division (left-associative)
-# 3. Unary minus
-# 4. Exponentiation (right-associative)
+# 3. Unary +/- (for expressions like -x + y)
+# 4. Exponentiation (right-associative) - uses SIGNED_ATOM to allow x ^ -y
 # 5. Atoms
 
-EXPR <<= pp.infix_notation(
-    ATOM,
+# Build power expression separately to handle x ^ -y
+POWER_EXPR = pp.infix_notation(
+    SIGNED_ATOM,
     [
         (pp.one_of("^ **"), 2, pp.OpAssoc.RIGHT, _make_binary_op),
+    ],
+)
+
+EXPR <<= pp.infix_notation(
+    POWER_EXPR,
+    [
         (pp.one_of("+ -"), 1, pp.OpAssoc.RIGHT, _make_unary_op),
         (pp.one_of("* /"), 2, pp.OpAssoc.LEFT, _make_binary_op),
         (pp.one_of("+ -"), 2, pp.OpAssoc.LEFT, _make_binary_op),
