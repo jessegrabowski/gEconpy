@@ -106,6 +106,29 @@ class BlockComponent(Enum):
     CALIBRATION = "calibration"
 
 
+class Tag(Enum):
+    """
+    Tags that can be applied to GCN objects using @tag syntax.
+
+    Tags modify how objects are processed during model building.
+    """
+
+    EXCLUDE = "exclude"  # Exclude equation from final system after optimization
+
+    @classmethod
+    def from_string(cls, name: str) -> Tag:
+        """Convert a string to a Tag, raising ValueError if unknown."""
+        name_lower = name.lower()
+        for tag in cls:
+            if tag.value == name_lower:
+                return tag
+        valid_tags = ", ".join(t.value for t in cls)
+        raise ValueError(f"Unknown tag '@{name}'. Valid tags are: {valid_tags}")
+
+    def __str__(self) -> str:
+        return f"@{self.value}"
+
+
 @dataclass(frozen=True)
 class Node:
     """Base class for all AST nodes."""
@@ -255,12 +278,14 @@ class GCNEquation(Node):
     Equations can optionally have:
     - A Lagrange multiplier name (for constraints)
     - A calibrating parameter (for calibration equations with ->)
+    - Tags that modify processing (e.g., @exclude)
     """
 
     lhs: Node
     rhs: Node
     lagrange_multiplier: str | None = None
     calibrating_parameter: str | None = None
+    tags: frozenset[Tag] = field(default_factory=frozenset)
 
     def with_location(self, location: ParseLocation) -> GCNEquation:
         return GCNEquation(
@@ -268,8 +293,29 @@ class GCNEquation(Node):
             rhs=self.rhs,
             lagrange_multiplier=self.lagrange_multiplier,
             calibrating_parameter=self.calibrating_parameter,
+            tags=self.tags,
             location=location,
         )
+
+    def with_tags(self, tags: frozenset[Tag]) -> GCNEquation:
+        """Return a new equation with the specified tags."""
+        return GCNEquation(
+            lhs=self.lhs,
+            rhs=self.rhs,
+            lagrange_multiplier=self.lagrange_multiplier,
+            calibrating_parameter=self.calibrating_parameter,
+            tags=tags,
+            location=self.location,
+        )
+
+    def has_tag(self, tag: Tag) -> bool:
+        """Check if the equation has a specific tag."""
+        return tag in self.tags
+
+    @property
+    def is_excluded(self) -> bool:
+        """Check if the equation has the @exclude tag."""
+        return Tag.EXCLUDE in self.tags
 
     @property
     def is_calibrating(self) -> bool:
@@ -280,7 +326,11 @@ class GCNEquation(Node):
         return self.lagrange_multiplier is not None
 
     def __str__(self) -> str:
-        base = f"{self.lhs} = {self.rhs}"
+        parts = []
+        if self.tags:
+            parts.extend(str(tag) for tag in sorted(self.tags, key=lambda t: t.value))
+        parts.append(f"{self.lhs} = {self.rhs}")
+        base = "\n".join(parts) if self.tags else parts[0]
         if self.lagrange_multiplier:
             base += f" : {self.lagrange_multiplier}"
         if self.calibrating_parameter:

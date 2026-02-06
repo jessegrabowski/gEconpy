@@ -1,7 +1,31 @@
-import pyparsing as pp
+import re
 
-from gEconpy.parser.ast import GCNEquation
+from gEconpy.parser.ast import GCNEquation, Tag
 from gEconpy.parser.grammar.expressions import parse_expression
+
+# Pattern to match @tag at the start of text (with optional whitespace)
+TAG_PATTERN = re.compile(r"^\s*@(\w+)\s*", re.MULTILINE)
+
+
+def _extract_tags(text: str) -> tuple[str, frozenset[Tag]]:
+    """
+    Extract @tags from the beginning of equation text.
+
+    Returns the remaining text (without tags) and the set of parsed tags.
+    """
+    tags = set()
+    remaining = text
+
+    while True:
+        match = TAG_PATTERN.match(remaining)
+        if not match:
+            break
+        tag_name = match.group(1)
+        tag = Tag.from_string(tag_name)
+        tags.add(tag)
+        remaining = remaining[match.end() :]
+
+    return remaining.strip(), frozenset(tags)
 
 
 def _parse_equation_string(text: str) -> GCNEquation:
@@ -12,16 +36,20 @@ def _parse_equation_string(text: str) -> GCNEquation:
     - Simple equations: Y[] = C[] + I[]
     - Equations with Lagrange multipliers: C[] + I[] = Y[] : lambda[]
     - Calibrating equations: beta = 0.99 -> beta
+    - Tagged equations: @exclude C[] = Y[]
     """
     text = text.strip()
     if text.endswith(";"):
         text = text[:-1].strip()
 
+    # Extract any tags from the beginning
+    text, tags = _extract_tags(text)
+
     lagrange_mult = None
     calibrating_param = None
 
     # Check for calibrating parameter (->)
-    if " -> " in text or "\t->" in text or "-> " in text:
+    if "->" in text:
         # Find the -> that's not inside brackets
         arrow_pos = _find_outside_brackets(text, "->")
         if arrow_pos != -1:
@@ -55,6 +83,7 @@ def _parse_equation_string(text: str) -> GCNEquation:
         rhs=rhs,
         lagrange_multiplier=lagrange_mult,
         calibrating_parameter=calibrating_param,
+        tags=tags,
     )
 
 
@@ -86,6 +115,9 @@ def _find_lagrange_colon(text: str) -> int:
     The colon must be followed by an identifier with brackets (possibly with time index),
     not just any colon. This distinguishes from colons in other contexts.
     """
+    # Pattern to match: identifier[], identifier[ss], identifier[-1], identifier[1], etc.
+    lagrange_pattern = re.compile(r"\w+\s*\[\s*(-?\d+|ss)?\s*\]")
+
     depth_paren = 0
     depth_bracket = 0
     i = 0
@@ -102,8 +134,7 @@ def _find_lagrange_colon(text: str) -> int:
         elif ch == ":" and depth_paren == 0 and depth_bracket == 0:
             # Check if followed by identifier with brackets (with optional content)
             rest = text[i + 1 :].strip()
-            # Match: identifier[], identifier[ss], identifier[-1], identifier[1], etc.
-            if pp.Regex(r"\w+\s*\[\s*(-?\d+|ss)?\s*\]").matches(rest):
+            if lagrange_pattern.match(rest):
                 return i
         i += 1
     return -1
