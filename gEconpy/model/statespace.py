@@ -243,7 +243,8 @@ class DSGEStateSpace(PyMCStateSpace):
         self.ssm["initial_state", :] = pt.zeros(self.k_states)
 
         Q = self.ssm["state_cov"]
-        self.ssm["initial_state_cov", :, :] = pt.linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
+        method = "direct" if self.use_direct_lyapunov else "bilinear"
+        self.ssm["initial_state_cov", :, :] = pt.linalg.solve_discrete_lyapunov(T, R @ Q @ R.T, method=method)
 
     def configure(
         self,
@@ -257,6 +258,7 @@ class DSGEStateSpace(PyMCStateSpace):
         max_iter: int = 50,
         tol: float = 1e-6,
         use_adjoint_gradients: bool = True,
+        use_direct_lyapunov: bool = False,
     ):
         # Set up observed states
         unknown_states = [x for x in observed_states if x not in self.state_names]
@@ -324,6 +326,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self.constant_parameters = constant_params
 
         self.full_covariance = full_shock_covaraince
+        self.use_direct_lyapunov = use_direct_lyapunov
         self._configured = True
         self._solver = solver
         self._solver_kwargs = solver_kwargs
