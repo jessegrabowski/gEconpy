@@ -80,7 +80,7 @@ def extract_assumption_sub_blocks(block_str) -> dict[str, list[str]]:
     PARAM = pp.Word(pp.alphas, pp.alphanums + "_").set_name("parameter")
     BLOCK_NAME = pp.Word(pp.alphas, pp.alphanums + "_")
 
-    VAR_LIST = pp.delimitedList((VARIABLE | PARAM), delim=",").set_name("var_list")
+    VAR_LIST = pp.DelimitedList((VARIABLE | PARAM), delim=",").set_name("var_list")
     VAR_LINE = pp.Group(VAR_LIST + SEMI).set_name("variable_list")
 
     ANYTHING = pp.Group(pp.Regex("[^{};]+") + SEMI).set_name("generic_line")
@@ -381,7 +381,7 @@ def parsed_block_to_dict(block: str) -> dict[str, list[list[str]]]:
                     "objective" = ["U[]", "=", "u[]", "+", "beta", "*", "E[][U[1]]", ";"])
     """
     block_dict = defaultdict(list)
-    parsed_block = next(iter(pp.nestedExpr("{", "};").parseString(block).asList()))
+    parsed_block = next(iter(pp.nested_expr("{", "};").parse_string(block).asList()))
     current_key = parsed_block.pop(0)
 
     if isinstance(current_key, list):
