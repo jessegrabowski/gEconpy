@@ -7,15 +7,14 @@ channels:
 dependencies:
   # Core dependencies
   - python=3.12
-  - pymc>=5.24.1
-  - pytensor
-  - joblib
+  - pymc>=5.27.1
+  - pytensor>=2.37.0
   - matplotlib
   - numba
   - numpy
   - pandas
   - pyparsing
-  - preliz>=0.2.0
+  - preliz>=0.23.0
   - scipy
   - setuptools
   - statsmodels
@@ -26,11 +25,7 @@ dependencies:
   - notebook<7
   - nutpie
   - sympytensor
-  - pymc-extras>=0.4.0
-
-  # JAX, optional for now
-  - jax
-#  - jaxlib=*=*cuda*
+  - pymc-extras>=0.8.0
 
   # For building docs
   - ipython
@@ -57,4 +52,6 @@ dependencies:
 
   - pip:
       - numdifftools
+      - jax>0.9
+      - corner
       - -e ../.

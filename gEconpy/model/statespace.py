@@ -15,8 +15,8 @@ import xarray as xr
 from preliz.distributions.distributions import Distribution
 from pymc.model.transform.optimization import freeze_dims_and_data
 from pymc.pytensorf import rewrite_pregrad
+from pymc_extras.statespace.core.properties import Coord, Parameter, Shock, State, SymbolicVariable
 from pymc_extras.statespace.core.statespace import PyMCStateSpace
-from pymc_extras.statespace.models.utilities import make_default_coords
 from pymc_extras.statespace.utils.constants import (
     JITTER_DEFAULT,
     SHOCK_AUX_DIM,
@@ -154,6 +154,11 @@ class DSGEStateSpace(PyMCStateSpace):
             verbose=False,
             measurement_error=False,
         )
+
+        for variable in self.input_parameters:
+            self._tensor_variable_info = self._tensor_variable_info.add(
+                SymbolicVariable(name=variable.name, symbolic_variable=variable)
+            )
 
     def _setup_policy_matrices(
         self, A: pt.TensorVariable, B: pt.TensorVariable, C: pt.TensorVariable, D: pt.TensorVariable
@@ -333,33 +338,48 @@ class DSGEStateSpace(PyMCStateSpace):
             verbose=verbose,
         )
 
-    @property
-    def param_names(self):
-        param_names = [x.name for x in self.input_parameters]
-        if self.constant_parameters is not None:
-            param_names = [x for x in param_names if x not in self.constant_parameters]
+        for variable in self.input_parameters:
+            self._tensor_variable_info = self._tensor_variable_info.add(
+                SymbolicVariable(name=variable.name, symbolic_variable=variable)
+            )
+
+    def set_states(self) -> tuple[State, ...]:
+        observed_states = self._obs_state_names if self._obs_state_names is not None else []
+        hidden_states = [State(name=x.base_name, observed=False) for x in self.variables]
+        observed_states = [State(name=name, observed=True) for name in observed_states]
+        return *hidden_states, *observed_states
+
+    def set_parameters(self) -> tuple[Parameter, ...]:
+        # TODO: Extract information from assumptions and use them to denote constraints on the parameters
+        constant_params = self.constant_parameters if self.constant_parameters is not None else []
+        parameters = [Parameter(name=x.name, shape=()) for x in self.input_parameters if x.name not in constant_params]
 
         if self.full_covariance:
-            param_names += ["state_cov"]
+            parameters += [
+                Parameter(
+                    name="state_cov",
+                    shape=(self.k_posdef, self.k_posdef),
+                    dims=(SHOCK_DIM, SHOCK_AUX_DIM),
+                    constraints="Positive Semi-Definite",
+                ),
+            ]
         else:
-            param_names += [f"sigma_{shock.base_name}" for shock in self.shocks]
+            parameters += [
+                Parameter(name=f"sigma_{shock.base_name}", shape=(), constraints="Positive") for shock in self.shocks
+            ]
 
         if self.measurement_error:
-            param_names += [f"error_sigma_{state}" for state in self.error_states]
+            parameters += [
+                Parameter(name=f"error_sigma_{state}", shape=(), constraints="Positive") for state in self.error_states
+            ]
 
-        return param_names
+        return tuple(parameters)
 
-    @property
-    def state_names(self):
-        return [x.base_name for x in self.variables]
+    def set_shocks(self) -> tuple[Shock]:
+        return tuple(Shock(name=x.base_name) for x in self.shocks)
 
-    @property
-    def shock_names(self):
-        return [x.base_name for x in self.shocks]
-
-    @property
-    def observed_states(self):
-        return self._obs_state_names
+    def set_coords(self) -> tuple[Coord, ...]:
+        return self.default_coords()
 
     @property
     def param_dims(self):
@@ -367,36 +387,6 @@ class DSGEStateSpace(PyMCStateSpace):
             return {}
 
         return {param: None if param != "state_cov" else (SHOCK_DIM, SHOCK_AUX_DIM) for param in self.param_names}
-
-    @property
-    def coords(self):
-        return make_default_coords(self)
-
-    @property
-    def param_info(self):
-        info = {}
-        if not self._configured:
-            return info
-
-        for var in self.param_names:
-            placeholder = self._name_to_variable[var]
-
-            info[var] = {
-                "shape": placeholder.type.shape,
-                "initval": self.param_dict.get(var, None),
-            }
-            if var.startswith("sigma"):
-                info[var]["constraints"] = "Positive"
-            elif var == "state_cov":
-                info[var]["constraints"] = "Positive Semi-Definite"
-            else:
-                info[var]["constraints"] = None
-
-        # Lazy way to add the dims without making any typos
-        for name in self.param_names:
-            info[name]["dims"] = self.param_dims[name]
-
-        return info
 
     def build_statespace_graph(
         self,

@@ -116,7 +116,7 @@ RPAREN = pp.Literal(")").suppress()
 COMMA = pp.Literal(",").suppress()
 
 NUMBER = pp.pyparsing_common.number
-NUMBER_EXPR = pp.infixNotation(
+NUMBER_EXPR = pp.infix_notation(
     NUMBER,
     [
         (pp.Literal("/"), 2, pp.opAssoc.LEFT),
@@ -131,7 +131,7 @@ VALUE = NUMBER_EXPR | VARIABLE_ID
 ARG_NAME = pp.Word(pp.alphas, pp.alphanums + "_")
 KEY_VALUE_PAIR = pp.Group(ARG_NAME + EQUALS + VALUE)
 
-KWARG_LIST = pp.Optional(pp.delimitedList(KEY_VALUE_PAIR, delim=COMMA), default=None)
+KWARG_LIST = pp.Optional(pp.DelimitedList(KEY_VALUE_PAIR, delim=COMMA), default=None)
 
 
 DIST = DISTRIBUTION_ID("dist_name") + LPAREN + KWARG_LIST("dist_kwargs") + RPAREN

@@ -36,15 +36,15 @@ keywords = [
     "bayesian statistics"
 ]
 
-
 dependencies = [
     "matplotlib",
     "numba",
     "numpy",
     "pandas",
-    "pymc>=5.25.0",
-    "pymc_extras>=0.4.0",
-    "preliz>=0.2.0",
+    "pytensor>=2.37.0",
+    "pymc>=5.27.1",
+    "pymc_extras>=0.8.0",
+    "preliz>=0.23.0",
     "pyparsing",
     "pytensor",
     "scipy",
@@ -105,8 +105,22 @@ log_cli=true
 log_cli_level="INFO"
 filterwarnings = [
     "error",
-    "ignore::DeprecationWarning",
-    "ignore::RuntimeWarning"]
+    # JAX issues an over-eager warning if os.fork() is called when the JAX module is loaded, even if JAX isn't being used
+    'ignore:os\.fork\(\) was called\.:RuntimeWarning',
+
+    # OpenMP library warning on windows CI
+    'ignore::RuntimeWarning:threadpoolctl',
+
+    # ArviZ warning related to 1.0 release
+    'ignore:\nArviZ is undergoing a major refactor.*:FutureWarning',
+
+    # Upstream deprication warning from sympytensor
+    'ignore:The `broadcastable` keyword is deprecated; use `shape`:DeprecationWarning',
+
+    # Scipy lambdify can easily hit numerical issues that are not relevant to our tests
+    'ignore:invalid value encountered in scalar power::RuntimeWarning',
+
+]
 
 markers = [
     "include_nk: mark tests using the full new keyenesian model (which can be quite slow)",

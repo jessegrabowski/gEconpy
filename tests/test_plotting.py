@@ -320,7 +320,6 @@ def ss_mod() -> DSGEStateSpace:
 
 
 @pytest.fixture(scope="session")
-@pytest.mark.filterwarnings("ignore")
 def pm_mod(ss_mod) -> pm.Model:
     with pm.Model(coords=ss_mod.coords) as pm_mod:
         ss_mod.to_pymc()

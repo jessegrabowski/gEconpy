@@ -111,7 +111,7 @@ def test_split_gcn_by_blocks():
 def test_equation_rebuilding():
     test_eq = "{Y[] = C[] + I[] + G[]; A[] ^ ( ( alpha + 1 ) / alpha ) - B[] / C[] * exp ( L[] ); };"
     parser_output, _ = preprocess_gcn(test_eq)
-    parsed_block = pyparsing.nestedExpr("{", "};").parseString(parser_output).asList()[0]
+    parsed_block = pyparsing.nested_expr("{", "};").parse_string(parser_output).asList()[0]
     eqs = rebuild_eqs_from_parser_output(parsed_block)
     assert len(eqs) == 2
     assert " ".join(eqs[0]).strip() == test_eq.split(";")[0].replace("{", "").strip()
