@@ -10,6 +10,7 @@ from gEconpy.parser.ast import (
     Operator,
     Parameter,
     T,
+    Tag,
     Variable,
 )
 from gEconpy.parser.grammar.equations import parse_equation
@@ -248,3 +249,45 @@ class TestAmbiguousCases:
         # Should be left-associative: (A / B) / C
         assert eq.rhs.op == Operator.DIV
         assert eq.rhs.left.op == Operator.DIV
+
+
+class TestEquationTags:
+    def test_exclude_tag(self):
+        eq = parse_equation("@exclude C[] = Y[]")
+        assert eq.has_tag(Tag.EXCLUDE)
+        assert eq.is_excluded
+        assert eq.lhs == Variable(name="C")
+
+    def test_exclude_with_lagrange(self):
+        eq = parse_equation("@exclude C[] = w[] * L[] : lambda[]")
+        assert eq.is_excluded
+        assert eq.has_lagrange_multiplier
+        assert eq.lagrange_multiplier == "lambda"
+
+    def test_exclude_with_whitespace(self):
+        eq = parse_equation("  @exclude   C[] = Y[]  ")
+        assert eq.is_excluded
+
+    def test_exclude_on_separate_line(self):
+        eq = parse_equation("@exclude\nC[] = Y[]")
+        assert eq.is_excluded
+        assert eq.lhs == Variable(name="C")
+
+    def test_no_tags_by_default(self):
+        eq = parse_equation("Y[] = C[]")
+        assert eq.tags == frozenset()
+        assert not eq.is_excluded
+
+    def test_unknown_tag_raises(self):
+        with pytest.raises(ValueError, match="Unknown tag"):
+            parse_equation("@unknown Y[] = C[]")
+
+    def test_tag_case_insensitive(self):
+        eq = parse_equation("@EXCLUDE Y[] = C[]")
+        assert eq.is_excluded
+
+    def test_with_tags_method(self):
+        eq = parse_equation("Y[] = C[]")
+        tagged = eq.with_tags(frozenset([Tag.EXCLUDE]))
+        assert tagged.is_excluded
+        assert not eq.is_excluded  # Original unchanged
