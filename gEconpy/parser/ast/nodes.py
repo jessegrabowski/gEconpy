@@ -408,6 +408,7 @@ class GCNBlock:
     constraints: list[GCNEquation] = field(default_factory=list)
     identities: list[GCNEquation] = field(default_factory=list)
     shocks: list[Variable] = field(default_factory=list)
+    shock_distributions: list[GCNDistribution] = field(default_factory=list)
     calibration: list[GCNEquation | GCNDistribution] = field(default_factory=list)
     location: ParseLocation | None = field(default=None, compare=False, repr=False)
 

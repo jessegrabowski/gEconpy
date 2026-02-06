@@ -59,6 +59,40 @@ def _parse_variable_list(text: str) -> list[Variable]:
     return variables
 
 
+def _parse_shock_statements(statements: list[str]) -> tuple[list[Variable], list[GCNDistribution]]:
+    """
+    Extract variables and distributions from shock statements.
+
+    Shock statements can be either:
+        - Plain variable lists: epsilon[], eta[]
+        - Distribution declarations: epsilon[] ~ Normal(mu=0, sigma=sigma_eps).
+    """
+    variables = []
+    distributions = []
+
+    for raw_stmt in statements:
+        stmt = raw_stmt.strip()
+        if not stmt:
+            continue
+
+        # Check if it's a distribution (contains ~)
+        if "~" in stmt:
+            try:
+                dist = parse_distribution(stmt)
+                distributions.append(dist)
+                # Also create a Variable for the shock
+                var_name = dist.parameter_name
+                variables.append(Variable(name=var_name))
+            except Exception:
+                # If distribution parsing fails, try as variable list
+                variables.extend(_parse_variable_list(stmt))
+        else:
+            # Plain variable list
+            variables.extend(_parse_variable_list(stmt))
+
+    return variables, distributions
+
+
 def _extract_component_content(block_text: str, component_name: str) -> str | None:
     """Extract the content between braces for a component."""
     pattern = rf"\b{component_name}\s*\{{"
@@ -158,10 +192,11 @@ def parse_block(name: str, content: str) -> GCNBlock:
         statements = _split_statements(identities_content)
         block.identities = [parse_equation(s) for s in statements]
 
-    # Parse shocks
+    # Parse shocks (can include distribution declarations)
     shocks_content = _extract_component_content(content, "shocks")
     if shocks_content:
-        block.shocks = _parse_variable_list(shocks_content)
+        statements = _split_statements(shocks_content)
+        block.shocks, block.shock_distributions = _parse_shock_statements(statements)
 
     # Parse calibration
     calibration_content = _extract_component_content(content, "calibration")

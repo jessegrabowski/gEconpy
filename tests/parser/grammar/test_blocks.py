@@ -14,8 +14,6 @@ from gEconpy.parser.grammar.blocks import (
 
 
 class TestParseBlock:
-    # ...existing code...
-
     def test_empty_block(self):
         block = parse_block("TEST", "")
         assert block.name == "TEST"
@@ -231,6 +229,40 @@ class TestFullBlock:
         assert len(block.identities) == 1
         assert len(block.shocks) == 1
         assert block.shocks[0].name == "epsilon_A"
+
+    def test_shock_with_distribution(self):
+        content = """
+        shocks
+        {
+            epsilon[] ~ Normal(mu=0, sigma=sigma_epsilon);
+        };
+        """
+        block = parse_block("TEST", content)
+
+        assert len(block.shocks) == 1
+        assert block.shocks[0].name == "epsilon"
+        assert len(block.shock_distributions) == 1
+        dist = block.shock_distributions[0]
+        assert dist.parameter_name == "epsilon"
+        assert dist.dist_name == "Normal"
+        assert dist.dist_kwargs["mu"] == 0
+        assert dist.dist_kwargs["sigma"] == "sigma_epsilon"
+
+    def test_mixed_shocks_plain_and_distribution(self):
+        content = """
+        shocks
+        {
+            epsilon_A[], epsilon_B[];
+            epsilon_C[] ~ Normal(mu=0, sigma=0.01);
+        };
+        """
+        block = parse_block("TEST", content)
+
+        assert len(block.shocks) == 3
+        shock_names = {s.name for s in block.shocks}
+        assert shock_names == {"epsilon_A", "epsilon_B", "epsilon_C"}
+        assert len(block.shock_distributions) == 1
+        assert block.shock_distributions[0].parameter_name == "epsilon_C"
 
 
 class TestParseBlockFromText:

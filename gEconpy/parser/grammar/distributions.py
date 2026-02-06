@@ -63,8 +63,12 @@ COMMA = pp.Literal(",").suppress()
 TILDE = pp.Literal("~").suppress()
 SEMICOLON = pp.Optional(pp.Literal(";")).suppress()
 
-# Identifiers
-PARAM_NAME = pp.Word(pp.alphas, pp.alphanums + "_")
+# Identifiers - can be plain parameters (alpha) or shock variables (epsilon[])
+IDENTIFIER = pp.Word(pp.alphas + "_", pp.alphanums + "_")
+OPTIONAL_BRACKETS = pp.Optional(pp.Literal("[") + pp.Literal("]")).suppress()
+PARAM_NAME = pp.Combine(IDENTIFIER + OPTIONAL_BRACKETS).set_parse_action(
+    lambda t: t[0].rstrip("[]")  # Strip brackets if present for parameter_name
+)
 
 # Numbers and expressions
 NUMBER = pp.pyparsing_common.number
