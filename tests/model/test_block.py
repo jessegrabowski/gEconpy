@@ -534,3 +534,124 @@ def test_block_with_exlcuded_equation():
 
     # 6 equations are 4 controls, 1 objective, 1 constraint (excluding the excluded equation)
     assert len(block.system_equations) == 6
+
+
+class TestBlockFromSympy:
+    """Test Block.from_sympy() class method."""
+
+    def test_from_sympy_creates_valid_block(self):
+        """Basic test that from_sympy creates a working Block."""
+        C = TimeAwareSymbol("C", 0)
+        Y = TimeAwareSymbol("Y", 0)
+
+        identities = {0: sp.Eq(Y, C)}
+        equation_flags = {0: {}}
+
+        block = Block.from_sympy(
+            name="TEST",
+            identities=identities,
+            equation_flags=equation_flags,
+        )
+
+        assert block.name == "TEST"
+        assert block.initialized is True
+        assert block.identities == identities
+
+    def test_from_sympy_matches_dict_constructor(self):
+        """Test that from_sympy produces same result as dict-based constructor."""
+        from collections import defaultdict  # noqa: PLC0415
+
+        test_file = """
+            block HOUSEHOLD
+            {
+                identities
+                {
+                    Y[] = C[] + I[];
+                    K[] = I[] + (1 - delta) * K[-1];
+                };
+
+                calibration
+                {
+                    delta = 0.02;
+                };
+            };
+            """
+
+        parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
+        block_dict, _, _, assumptions = gEcon_parser.split_gcn_into_dictionaries(parser_output)
+        block_dict = gEcon_parser.parsed_block_to_dict(block_dict["HOUSEHOLD"])
+
+        # Create block via dict constructor (old way)
+        old_block = Block("HOUSEHOLD", block_dict, defaultdict(dict, assumptions))
+        old_block.solve_optimization()
+
+        # Create sympy objects for from_sympy constructor
+        Y = TimeAwareSymbol("Y", 0)
+        C = TimeAwareSymbol("C", 0)
+        I = TimeAwareSymbol("I", 0)
+        K = TimeAwareSymbol("K", 0)
+        K_lag = TimeAwareSymbol("K", -1)
+        delta = sp.Symbol("delta")
+
+        identities = {
+            0: sp.Eq(Y, C + I),
+            1: sp.Eq(K, I + (1 - delta) * K_lag),
+        }
+        calibration = {
+            2: sp.Eq(delta, sp.Float(0.02)),
+        }
+        equation_flags = {0: {}, 1: {}, 2: {"is_calibrating": False}}
+
+        new_block = Block.from_sympy(
+            name="HOUSEHOLD",
+            identities=identities,
+            calibration=calibration,
+            equation_flags=equation_flags,
+        )
+        new_block.solve_optimization()
+
+        # Compare key attributes
+        assert old_block.name == new_block.name
+        assert len(old_block.system_equations) == len(new_block.system_equations)
+        assert {v.base_name for v in old_block.variables} == {v.base_name for v in new_block.variables}
+
+        # Compare parameters
+        assert set(old_block.param_dict.keys()) == set(new_block.param_dict.keys())
+        for key in old_block.param_dict:
+            assert float(old_block.param_dict[key]) == float(new_block.param_dict[key])
+
+    def test_from_sympy_with_optimization_problem(self):
+        """Test from_sympy with a block that has an optimization problem."""
+        U = TimeAwareSymbol("U", 0)
+        U_next = TimeAwareSymbol("U", 1)
+        C = TimeAwareSymbol("C", 0)
+        L = TimeAwareSymbol("L", 0)
+        w = TimeAwareSymbol("w", 0)
+        lambda_ = TimeAwareSymbol("lambda", 0)
+        beta = sp.Symbol("beta")
+
+        objective = {0: sp.Eq(U, sp.log(C) - L + beta * U_next)}
+        constraints = {1: sp.Eq(C, w * L)}
+        controls = [C, L]
+        # Multipliers should map constraint indices to multiplier symbols
+        # Objective index (0) should map to None
+        multipliers = {0: None, 1: lambda_}
+        equation_flags = {0: {}, 1: {}}
+
+        block = Block.from_sympy(
+            name="HOUSEHOLD",
+            objective=objective,
+            constraints=constraints,
+            controls=controls,
+            multipliers=multipliers,
+            equation_flags=equation_flags,
+        )
+
+        assert block.initialized is True
+        assert block.controls == controls
+        assert block.objective == objective
+        assert block.constraints == constraints
+
+        # Solve should work
+        block.solve_optimization()
+        assert len(block.system_equations) > 0

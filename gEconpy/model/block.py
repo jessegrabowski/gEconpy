@@ -84,6 +84,94 @@ class Block:
         self._get_variable_list()
         self._get_param_dict_and_calibrating_equations()
 
+    @classmethod
+    def from_sympy(
+        cls,
+        name: str,
+        definitions: dict[int, sp.Eq] | None = None,
+        controls: list[TimeAwareSymbol] | None = None,
+        objective: dict[int, sp.Eq] | None = None,
+        constraints: dict[int, sp.Eq] | None = None,
+        identities: dict[int, sp.Eq] | None = None,
+        calibration: dict[int, sp.Eq] | None = None,
+        shocks: list[TimeAwareSymbol] | None = None,
+        multipliers: dict[int, TimeAwareSymbol | None] | None = None,
+        equation_flags: dict[int, dict[str, bool]] | None = None,
+    ) -> "Block":
+        """
+        Create a Block directly from sympy equations, bypassing token parsing.
+
+        This is an alternative constructor that accepts sympy equations directly,
+        avoiding the need to go through the token-based parsing in `__init__`.
+
+        Parameters
+        ----------
+        name : str
+            The name of the block.
+        definitions : dict[int, sp.Eq], optional
+            Dictionary of definition equations, indexed by equation number.
+        controls : list[TimeAwareSymbol], optional
+            List of control variables.
+        objective : dict[int, sp.Eq], optional
+            Dictionary containing the objective equation.
+        constraints : dict[int, sp.Eq], optional
+            Dictionary of constraint equations.
+        identities : dict[int, sp.Eq], optional
+            Dictionary of identity equations.
+        calibration : dict[int, sp.Eq], optional
+            Dictionary of calibration equations.
+        shocks : list[TimeAwareSymbol], optional
+            List of shock variables.
+        multipliers : dict[int, TimeAwareSymbol | None], optional
+            Dictionary mapping constraint indices to Lagrange multipliers.
+        equation_flags : dict[int, dict[str, bool]], optional
+            Dictionary mapping equation indices to flag dictionaries.
+
+        Returns
+        -------
+        Block
+            A fully initialized Block object.
+        """
+        # Create instance without calling __init__
+        block = object.__new__(cls)
+
+        # Initialize all attributes
+        block.name = name
+        block.short_name = "".join(word[0] for word in name.split("_"))
+
+        block.definitions = definitions
+        block.controls = controls
+        block.objective = objective
+        block.constraints = constraints
+        block.identities = identities
+        block.shocks = shocks
+        block.calibration = calibration
+
+        block.variables = []
+        block.param_dict = SymbolDictionary()
+        block.calib_dict = SymbolDictionary()
+        block.deterministic_dict = SymbolDictionary()
+
+        block.system_equations = []
+        block.multipliers = multipliers or {}
+        block.eliminated_variables = []
+        block.equation_flags = equation_flags or {}
+
+        # Count equations
+        block.n_equations = sum(
+            len(eq_dict) if eq_dict else 0 for eq_dict in [definitions, objective, constraints, identities, calibration]
+        )
+
+        # Run validation
+        block.initialized = block._validate_initialization()
+
+        # Run post-initialization processing (same as __init__)
+        block._consolidate_definitions()
+        block._get_variable_list()
+        block._get_param_dict_and_calibrating_equations()
+
+        return block
+
     def __str__(self):
         return (
             f"{self.name} Block of {self.n_equations} equations, initialized: {self.initialized}, "
