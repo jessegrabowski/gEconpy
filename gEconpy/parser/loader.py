@@ -10,7 +10,18 @@ from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel
 from gEconpy.parser.ast_to_block import ast_model_to_block_dict
 from gEconpy.parser.ast_to_distribution import ast_to_distribution_with_metadata
 from gEconpy.parser.ast_to_sympy import ast_to_sympy, equation_to_sympy
+from gEconpy.parser.constants import STEADY_STATE_NAMES
+from gEconpy.parser.file_loaders import (
+    block_dict_to_equation_list,
+    block_dict_to_model_primitives,
+    block_dict_to_param_dict,
+    block_dict_to_variables_and_shocks,
+    gcn_to_block_dict,
+    parsed_model_to_data,
+)
+from gEconpy.parser.gEcon_parser import preprocess_gcn
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
+from gEconpy.utilities import substitute_repeatedly
 
 # Feature flag for parser switching
 # Set to True to use the new AST-based parser, False for the old parser
@@ -180,8 +191,49 @@ def ast_block_to_variables_and_shocks(
     return list(set(variables)), list(set(shocks))
 
 
+def _extract_ss_solution_dict(model: GCNModel, assumptions: dict) -> SymbolDictionary:
+    """Extract user-provided steady state equations from STEADY_STATE block."""
+    # Find STEADY_STATE block
+    ss_blocks = [
+        b for b in model.blocks if b.name.upper().replace("_", "") in [n.replace("_", "") for n in STEADY_STATE_NAMES]
+    ]
+
+    if not ss_blocks:
+        return SymbolDictionary()
+
+    ss_block = ss_blocks[0]
+    sub_dict = SymbolDictionary()
+    steady_state_dict = SymbolDictionary()
+
+    # Process definitions first (they define substitution rules)
+    for eq in ss_block.definitions:
+        sympy_eq = _equation_to_sympy_simple(eq, assumptions)
+        sub_dict[sympy_eq.lhs] = sympy_eq.rhs
+
+    # Process identities (these define the steady state values)
+    for eq in ss_block.identities:
+        sympy_eq = _equation_to_sympy_simple(eq, assumptions)
+        subbed_rhs = substitute_repeatedly(sympy_eq.rhs, sub_dict)
+        steady_state_dict[sympy_eq.lhs] = subbed_rhs
+        sub_dict[sympy_eq.lhs] = subbed_rhs
+
+    # Substitute within steady state dict
+    for k, eq in steady_state_dict.items():
+        steady_state_dict[k] = substitute_repeatedly(eq, steady_state_dict)
+
+    return steady_state_dict.sort_keys().to_string().values_to_float()
+
+
+def _equation_to_sympy_simple(eq, assumptions):
+    """Convert a GCNEquation to sympy Eq (helper for SS block)."""
+    lhs = ast_to_sympy(eq.lhs, assumptions)
+    rhs = ast_to_sympy(eq.rhs, assumptions)
+    return sp.Eq(lhs, rhs)
+
+
 def ast_model_to_primitives(
     model: GCNModel,
+    simplify_blocks: bool = False,
 ) -> dict:
     """
     Convert a GCNModel to model primitives.
@@ -193,6 +245,8 @@ def ast_model_to_primitives(
     ----------
     model : GCNModel
         The model to convert.
+    simplify_blocks : bool, optional
+        Whether to simplify block equations during optimization.
 
     Returns
     -------
@@ -203,25 +257,26 @@ def ast_model_to_primitives(
         - shocks: list of TimeAwareSymbol
         - param_dict: SymbolDictionary of parameters
         - calib_dict: SymbolDictionary of calibrating equations
+        - deterministic_dict: SymbolDictionary of deterministic relationships
         - distributions: SymbolDictionary of prior distributions
+        - ss_solution_dict: SymbolDictionary of user-provided steady state solutions
         - options: dict of model options
         - tryreduce: list of variables to try to reduce
         - assumptions: dict of variable assumptions
+        - block_dict: dict of Block objects (for advanced use)
     """
-    from gEconpy.parser.file_loaders import (  # noqa: PLC0415
-        block_dict_to_equation_list,
-        block_dict_to_param_dict,
-        block_dict_to_variables_and_shocks,
-    )
-
     # Build Block objects and solve optimization
-    block_dict, assumptions, options, tryreduce = ast_model_to_block_dict(model)
+    block_dict, assumptions, options, tryreduce = ast_model_to_block_dict(model, simplify_blocks=simplify_blocks)
 
     # Extract primitives using the same functions as the old parser
     equations = block_dict_to_equation_list(block_dict)
     param_dict = block_dict_to_param_dict(block_dict, "param_dict")
     calib_dict = block_dict_to_param_dict(block_dict, "calib_dict")
+    deterministic_dict = block_dict_to_param_dict(block_dict, "deterministic_dict")
     variables, shocks = block_dict_to_variables_and_shocks(block_dict)
+
+    # Extract steady state solutions from STEADY_STATE block
+    ss_solution_dict = _extract_ss_solution_dict(model, assumptions)
 
     # Handle distributions from calibration blocks
     distributions = SymbolDictionary()
@@ -248,14 +303,17 @@ def ast_model_to_primitives(
         "shocks": shocks,
         "param_dict": param_dict,
         "calib_dict": calib_dict,
+        "deterministic_dict": deterministic_dict,
         "distributions": distributions,
+        "ss_solution_dict": ss_solution_dict,
         "options": options,
         "tryreduce": tryreduce,
         "assumptions": assumptions,
+        "block_dict": block_dict,
     }
 
 
-def load_gcn_file(filepath: str | Path) -> dict:
+def load_gcn_file(filepath: str | Path, simplify_blocks: bool = True) -> dict:
     """
     Load a GCN file and return model primitives.
 
@@ -266,6 +324,8 @@ def load_gcn_file(filepath: str | Path) -> dict:
     ----------
     filepath : str | Path
         Path to the GCN file.
+    simplify_blocks : bool, optional
+        Whether to simplify block equations during optimization. Default True.
 
     Returns
     -------
@@ -280,17 +340,15 @@ def load_gcn_file(filepath: str | Path) -> dict:
     """
     if not _USE_NEW_PARSER:
         # Use old parser via adapter
-        from gEconpy.parser.file_loaders import block_dict_to_model_primitives, gcn_to_block_dict  # noqa: PLC0415
-
         filepath = Path(filepath)
-        block_dict, assumptions, options, tryreduce, _ss_solution_dict, prior_dict = gcn_to_block_dict(
-            filepath, simplify_blocks=False
+        block_dict, assumptions, options, tryreduce, ss_solution_dict, prior_dict = gcn_to_block_dict(
+            filepath, simplify_blocks=simplify_blocks
         )
         (
             equations,
             param_dict,
             calib_dict,
-            _deterministic_dict,
+            deterministic_dict,
             variables,
             shocks,
             param_priors,
@@ -311,14 +369,17 @@ def load_gcn_file(filepath: str | Path) -> dict:
             "shocks": shocks,
             "param_dict": param_dict,
             "calib_dict": calib_dict,
+            "deterministic_dict": deterministic_dict,
             "distributions": param_priors,
+            "ss_solution_dict": ss_solution_dict,
             "options": options,
             "tryreduce": tryreduce,
             "assumptions": assumptions,
+            "block_dict": block_dict,
         }
 
     result = preprocess_file(filepath, validate=True)
-    return ast_model_to_primitives(result.ast)
+    return ast_model_to_primitives(result.ast, simplify_blocks=simplify_blocks)
 
 
 def load_gcn_string(source: str) -> dict:
@@ -343,8 +404,6 @@ def load_gcn_string(source: str) -> dict:
     """
     if not _USE_NEW_PARSER:
         # Use old parser via adapter
-        from gEconpy.parser.file_loaders import block_dict_to_model_primitives, parsed_model_to_data  # noqa: PLC0415
-        from gEconpy.parser.gEcon_parser import preprocess_gcn  # noqa: PLC0415
 
         parsed_model, prior_dict = preprocess_gcn(source)
         block_dict, assumptions, options, tryreduce, _ss_solution_dict = parsed_model_to_data(
