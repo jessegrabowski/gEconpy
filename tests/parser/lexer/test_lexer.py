@@ -1,8 +1,7 @@
 import pytest
 
 from gEconpy.parser.errors import GCNLexerError
-from gEconpy.parser.lexer import tokenize
-from gEconpy.parser.tokens import TokenType
+from gEconpy.parser.lexer import TokenType, tokenize
 
 
 class TestLexerBasics:

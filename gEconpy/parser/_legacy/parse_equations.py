@@ -116,7 +116,7 @@ def has_num_index(token: str) -> bool:
         Whether the variable has a numerical lag/lead index.
     """
     numbers = list("0123456789")
-    index_part = token.split("[")[-1]
+    index_part = token.rsplit("[", maxsplit=1)[-1]
     return any(n in index_part for n in numbers)
 
 

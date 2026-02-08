@@ -1,6 +1,6 @@
 import pytest
 
-from gEconpy.parser.dist_syntax import dist_syntax
+from gEconpy.parser._legacy.dist_syntax import dist_syntax
 
 test_strings = [
     "Normal(mu=3, sigma=1)",

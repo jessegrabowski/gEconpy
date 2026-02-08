@@ -1,6 +1,5 @@
 from string import Template
 
-import numpy as np
 import preliz as pz
 import pytest
 
@@ -9,9 +8,9 @@ from gEconpy.exceptions import (
     MissingParameterValueException,
     RepeatedParameterException,
 )
-from gEconpy.parser.dist_syntax import dist_syntax
-from gEconpy.parser.gEcon_parser import preprocess_gcn
-from gEconpy.parser.parse_distributions import (
+from gEconpy.parser._legacy.dist_syntax import dist_syntax
+from gEconpy.parser._legacy.gEcon_parser import preprocess_gcn
+from gEconpy.parser._legacy.parse_distributions import (
     create_prior_distribution_dictionary,
     preprocess_distribution_string,
 )
@@ -135,7 +134,7 @@ def file():
 
 
 def test_extract_param_dist_simple(file):
-    model, prior_dict = preprocess_gcn(file)
+    _model, prior_dict = preprocess_gcn(file)
     assert list(prior_dict.keys()) == ["epsilon[]", "alpha", "gamma"]
     assert list(prior_dict.values()) == [
         "Normal(mu = 0, sigma = 1)",
@@ -216,7 +215,7 @@ case_names = [
 
 @pytest.mark.parametrize("case", typo_cases, ids=case_names)
 def test_catch_distribution_typos(case):
-    model, prior_dict = preprocess_gcn(case)
+    _model, prior_dict = preprocess_gcn(case)
     for param_name, distribution_string in prior_dict.items():
         with pytest.raises(InvalidDistributionException):
             preprocess_distribution_string(variable_name=param_name, d_string=distribution_string)
@@ -232,7 +231,7 @@ def test_catch_repeated_parameter_definition():
                 };
             };
     """
-    model, prior_dict = preprocess_gcn(repeated_parameter)
+    _model, prior_dict = preprocess_gcn(repeated_parameter)
 
     for param_name, distribution_string in prior_dict.items():
         with pytest.raises(RepeatedParameterException):
@@ -256,7 +255,7 @@ def test_non_zero_shock_mean_raises(mu):
     };
     """).safe_substitute(mu=mu)
 
-    model, raw_prior_dict = preprocess_gcn(test_case)
+    _model, raw_prior_dict = preprocess_gcn(test_case)
 
     msg = (
         "Currently, the mean of all shocks must be zero"
@@ -279,7 +278,7 @@ def test_wrapper_on_shock_raises(wrapper):
     };
     """).safe_substitute(wrapper=wrapper)
 
-    model, raw_prior_dict = preprocess_gcn(test_case)
+    _model, raw_prior_dict = preprocess_gcn(test_case)
 
     with pytest.raises(
         NotImplementedError,
@@ -300,7 +299,7 @@ def test_non_normal_shock_dist_raises(dist):
     };
     """).safe_substitute(dist=dist)
 
-    model, raw_prior_dict = preprocess_gcn(test_case)
+    _model, raw_prior_dict = preprocess_gcn(test_case)
 
     with pytest.raises(
         NotImplementedError,
@@ -319,14 +318,14 @@ def test_initial_value_on_shock_raises():
                };
            };
    """
-    model, raw_prior_dict = preprocess_gcn(test_case)
+    _model, raw_prior_dict = preprocess_gcn(test_case)
 
     with pytest.raises(ValueError, match="Initial value not allowed on shock distributions"):
         create_prior_distribution_dictionary(raw_prior_dict)
 
 
 def test_parameter_parsing_simple(file):
-    model, prior_dict = preprocess_gcn(file)
+    _model, prior_dict = preprocess_gcn(file)
 
     dist_names = ["Normal", "Normal", "Beta"]
     wrapper_names = [None, None, "maxent"]

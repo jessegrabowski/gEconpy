@@ -1,26 +1,24 @@
-import os
-
 from pathlib import Path
 
 import pyparsing
 import pytest
 
-from gEconpy.parser import gEcon_parser
-from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
-from gEconpy.parser.file_loaders import load_gcn
-from gEconpy.parser.gEcon_parser import (
+from gEconpy.parser._legacy import gEcon_parser
+from gEconpy.parser._legacy.file_loaders import load_gcn
+from gEconpy.parser._legacy.gEcon_parser import (
     extract_special_block,
     parsed_block_to_dict,
     preprocess_gcn,
     rebuild_eqs_from_parser_output,
     split_gcn_into_dictionaries,
 )
+from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 
 ROOT = Path(__file__).parent.parent.absolute()
 
 
 def test_remove_distributions_and_normal_parse(model):
-    parser_output, prior_dict = preprocess_gcn(model)
+    _parser_output, prior_dict = preprocess_gcn(model)
     assert list(prior_dict.keys()) == [
         "epsilon[]",
         "alpha",
@@ -114,7 +112,7 @@ def test_equation_rebuilding():
     parsed_block = pyparsing.nested_expr("{", "};").parse_string(parser_output).asList()[0]
     eqs = rebuild_eqs_from_parser_output(parsed_block)
     assert len(eqs) == 2
-    assert " ".join(eqs[0]).strip() == test_eq.split(";")[0].replace("{", "").strip()
+    assert " ".join(eqs[0]).strip() == test_eq.split(";", maxsplit=1)[0].replace("{", "").strip()
     assert " ".join(eqs[1]).strip() == test_eq.split(";")[1].replace("};", "").strip()
 
 
@@ -154,7 +152,7 @@ def test_invalid_assumptions_raise_error():
         };
         """
     parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
-    with pytest.raises(ValueError, match='Assumption "random_words" is not a valid Sympy assumption.'):
+    with pytest.raises(ValueError, match=r'Assumption "random_words" is not a valid Sympy assumption.'):
         gEcon_parser.extract_special_block(parser_output, "assumptions")
 
 
@@ -170,7 +168,7 @@ def test_typo_in_assumptions_gives_suggestion():
     parser_output, _ = gEcon_parser.preprocess_gcn(test_file)
     with pytest.raises(
         ValueError,
-        match='Assumption "possitive" is not a valid Sympy assumption. Did you mean "positive"?',
+        match=r'Assumption "possitive" is not a valid Sympy assumption. Did you mean "positive"?',
     ):
         gEcon_parser.extract_special_block(parser_output, "assumptions")
 
@@ -260,7 +258,7 @@ def test_shock_block_with_multiple_distributions():
                     };
                     """
 
-    parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
+    _parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
 
     assert len(prior_dict) == 4
     assert list(prior_dict.keys()) == [

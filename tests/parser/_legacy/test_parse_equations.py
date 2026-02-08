@@ -2,7 +2,7 @@ import pytest
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.parser import gEcon_parser, parse_equations
+from gEconpy.parser._legacy import gEcon_parser, parse_equations
 
 classification_cases = [
     "Y[] = C[] + I[]",
@@ -216,8 +216,8 @@ def test_parameters_parsed_with_time_subscripts():
     };
     """
 
-    parser_output, prior_dict = gEcon_parser.preprocess_gcn(test_file)
-    block_dict, options, tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(parser_output)
+    parser_output, _prior_dict = gEcon_parser.preprocess_gcn(test_file)
+    block_dict, _options, _tryreduce, assumptions = gEcon_parser.split_gcn_into_dictionaries(parser_output)
     system = gEcon_parser.parsed_block_to_dict(block_dict["SYSTEM_EQUATIONS"])
     parser_output = parse_equations.build_sympy_equations(system["calibration"], assumptions)
 

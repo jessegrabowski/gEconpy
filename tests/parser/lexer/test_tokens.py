@@ -1,6 +1,6 @@
 import pytest
 
-from gEconpy.parser.tokens import KEYWORDS, SINGLE_CHAR_TOKENS, Token, TokenType
+from gEconpy.parser.lexer.tokens import KEYWORDS, SINGLE_CHAR_TOKENS, Token, TokenType
 
 
 class TestToken:

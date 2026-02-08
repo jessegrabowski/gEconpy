@@ -227,7 +227,7 @@ def block_to_sympy(
     """
     result = {
         "definitions": [],
-        "objective": None,
+        "objective": [],
         "constraints": [],
         "identities": [],
         "calibration": [],
@@ -236,8 +236,8 @@ def block_to_sympy(
     for eq in block.definitions:
         result["definitions"].append(equation_to_sympy(eq, assumptions))
 
-    if block.objective:
-        result["objective"] = equation_to_sympy(block.objective, assumptions)
+    for eq in block.objective:
+        result["objective"].append(equation_to_sympy(eq, assumptions))
 
     for eq in block.constraints:
         result["constraints"].append(equation_to_sympy(eq, assumptions))

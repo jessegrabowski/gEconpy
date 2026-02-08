@@ -18,13 +18,13 @@ from gEconpy.parser.ast import (
     UnaryOp,
     Variable,
 )
-from gEconpy.parser.ast_to_sympy import (
+from gEconpy.parser.grammar.expressions import parse_expression
+from gEconpy.parser.transform.to_sympy import (
     ast_to_sympy,
     block_to_sympy,
     equation_to_sympy,
     model_to_sympy,
 )
-from gEconpy.parser.grammar.expressions import parse_expression
 
 
 class TestConvertAtoms:

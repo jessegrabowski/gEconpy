@@ -8,18 +8,18 @@ import pyparsing as pp
 from sympy.core.assumptions import _assume_rules
 
 from gEconpy.exceptions import GCNSyntaxError
-from gEconpy.parser.constants import (
-    DEFAULT_ASSUMPTIONS,
-    SYMPY_ASSUMPTIONS,
-)
-from gEconpy.parser.parse_equations import rebuild_eqs_from_parser_output
-from gEconpy.parser.parse_plaintext import (
+from gEconpy.parser._legacy.parse_equations import rebuild_eqs_from_parser_output
+from gEconpy.parser._legacy.parse_plaintext import (
     add_spaces_around_operators,
     delete_block,
     extract_distributions,
     remove_comments,
     remove_extra_spaces,
     remove_newlines_and_tabs,
+)
+from gEconpy.parser.constants import (
+    DEFAULT_ASSUMPTIONS,
+    SYMPY_ASSUMPTIONS,
 )
 from gEconpy.parser.validation import (
     block_is_empty,
@@ -73,7 +73,7 @@ def extract_assumption_sub_blocks(block_str) -> dict[str, list[str]]:
         A dictionary containing assumptions and variables, with the assumption names as keys and associated variables
         as values.
     """
-    LBRACE, RBRACE, SEMI, COMMA = map(pp.Suppress, "{};,")
+    LBRACE, RBRACE, SEMI, _COMMA = map(pp.Suppress, "{};,")
     BLOCK_END = RBRACE + SEMI
     header = pp.Keyword("assumptions")
     VARIABLE = pp.Word(pp.alphas, pp.alphanums + "_" + "[]").set_name("variable")
@@ -112,7 +112,7 @@ def validate_assumptions(block_dict: dict[str, list[str]]) -> None:
     """
     for assumption in block_dict:
         if assumption not in SYMPY_ASSUMPTIONS:
-            best_guess, maybe_typo = find_typos_and_guesses([assumption], SYMPY_ASSUMPTIONS)
+            best_guess, _maybe_typo = find_typos_and_guesses([assumption], SYMPY_ASSUMPTIONS)
             message = f'Assumption "{assumption}" is not a valid Sympy assumption.'
             if best_guess is not None:
                 message += f' Did you mean "{best_guess}"?'
@@ -136,7 +136,7 @@ def create_assumption_kwargs(
     assumptions: dict
         A dictionary of flags and values keyed by variable names.
     """
-    assumption_kwargs = defaultdict(lambda: DEFAULT_ASSUMPTIONS.copy())
+    assumption_kwargs = defaultdict(DEFAULT_ASSUMPTIONS.copy)
     user_assumptions = defaultdict(dict)
 
     # Maintain two dicts in first pass: one with user values + defaults, and one with just user values

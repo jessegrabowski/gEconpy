@@ -1,10 +1,8 @@
-import os
-
 from pathlib import Path
 
 import pytest
 
-from gEconpy.parser import gEcon_parser, parse_plaintext
+from gEconpy.parser._legacy import gEcon_parser, parse_plaintext
 
 
 def test_distribution_extraction_simple():

@@ -17,17 +17,17 @@ from gEconpy.exceptions import (
 )
 from gEconpy.model.block import Block
 from gEconpy.model.simplification import simplify_constants, simplify_tryreduce
-from gEconpy.parser.constants import STEADY_STATE_NAMES
-from gEconpy.parser.gEcon_parser import (
+from gEconpy.parser._legacy.gEcon_parser import (
     ASSUMPTION_DICT,
     parsed_block_to_dict,
     preprocess_gcn,
     split_gcn_into_dictionaries,
 )
-from gEconpy.parser.parse_distributions import (
+from gEconpy.parser._legacy.parse_distributions import (
     create_prior_distribution_dictionary,
 )
-from gEconpy.parser.parse_equations import single_symbol_to_sympy
+from gEconpy.parser._legacy.parse_equations import single_symbol_to_sympy
+from gEconpy.parser.constants import STEADY_STATE_NAMES
 from gEconpy.utilities import substitute_repeatedly, unpack_keys_and_values
 
 PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
@@ -136,7 +136,7 @@ def simplify_provided_ss_equations(
 
 def block_dict_to_equation_list(block_dict: dict[str, Block]) -> list[sp.Expr]:
     equations = []
-    block_names, blocks = unpack_keys_and_values(block_dict)
+    _block_names, blocks = unpack_keys_and_values(block_dict)
     for block in blocks:
         equations.extend(block.system_equations)
 
@@ -147,7 +147,7 @@ def block_dict_to_sub_dict(
     block_dict: dict[str, Block],
 ) -> dict[TimeAwareSymbol, sp.Expr]:
     sub_dict = {}
-    block_names, blocks = unpack_keys_and_values(block_dict)
+    _block_names, blocks = unpack_keys_and_values(block_dict)
     for block in blocks:
         for group in ["identities", "objective", "constraints"]:
             if getattr(block, group) is not None:
@@ -160,7 +160,7 @@ def block_dict_to_sub_dict(
 
 def block_dict_to_param_dict(block_dict: dict[str, Block], dict_name: PARAM_DICTS = "param_dict") -> SymbolDictionary:
     param_dict = SymbolDictionary()
-    block_names, blocks = unpack_keys_and_values(block_dict)
+    _block_names, blocks = unpack_keys_and_values(block_dict)
     duplicates = set()
 
     for block in blocks:
@@ -182,7 +182,7 @@ def block_dict_to_variables_and_shocks(
 ) -> tuple[list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     variables = []
     shocks = []
-    block_names, blocks = unpack_keys_and_values(block_dict)
+    _block_names, blocks = unpack_keys_and_values(block_dict)
     for block in blocks:
         if block.variables is not None:
             variables.extend(block.variables)

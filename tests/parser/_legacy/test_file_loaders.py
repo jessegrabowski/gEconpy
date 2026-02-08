@@ -4,15 +4,15 @@ from pathlib import Path
 import pytest
 
 from gEconpy.exceptions import DuplicateParameterError
-from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
-from gEconpy.parser.file_loaders import (
+from gEconpy.parser._legacy.file_loaders import (
     block_dict_to_model_primitives,
     block_dict_to_variables_and_shocks,
     gcn_to_block_dict,
     load_gcn,
     parsed_model_to_data,
 )
-from gEconpy.parser.gEcon_parser import preprocess_gcn
+from gEconpy.parser._legacy.gEcon_parser import preprocess_gcn
+from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
 
 # Add tests for gEconpy.parser.file_loaders here
 
@@ -115,7 +115,7 @@ EXPECTED_SS_LEN = {"one_block": 0, "one_block_ss": 9, "one_block_2": 0, "full_nk
 @pytest.mark.parametrize("gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES, strict=False), ids=TEST_NAMES)
 def test_build_model_blocks(gcn_path, name):
     raw_model = load_gcn(Path("tests") / "_resources" / "test_gcns" / gcn_path)
-    parsed_model, prior_dict = preprocess_gcn(raw_model)
+    parsed_model, _prior_dict = preprocess_gcn(raw_model)
 
     parse_result = parsed_model_to_data(parsed_model, False)
     blocks, assumptions, options, try_reduce_vars, steady_state_equations = parse_result
@@ -171,10 +171,10 @@ EXPECTED_SHOCKS = {
 @pytest.mark.parametrize("gcn_path, name", zip(TEST_GCN_FILES, TEST_NAMES, strict=False), ids=TEST_NAMES)
 def test_block_dict_to_variables_and_shocks(gcn_path, name):
     raw_model = load_gcn(Path("tests") / "_resources" / "test_gcns" / gcn_path)
-    parsed_model, prior_dict = preprocess_gcn(raw_model)
+    parsed_model, _prior_dict = preprocess_gcn(raw_model)
 
     parse_result = parsed_model_to_data(parsed_model, False)
-    blocks, assumptions, options, try_reduce_vars, steady_state_equations = parse_result
+    blocks, _assumptions, _options, _try_reduce_vars, _steady_state_equations = parse_result
     variables, shocks = block_dict_to_variables_and_shocks(blocks)
 
     expected_vars = set(EXPECTED_VARIABLES[name])
@@ -200,9 +200,9 @@ def test_loading_fails_if_duplicate_parameters_in_two_blocks(gcn_file):
         (
             block_dict,
             assumptions,
-            options,
+            _options,
             tryreduce,
-            steady_state_equations,
+            _steady_state_equations,
             prior_dict,
         ) = outputs
         block_dict_to_model_primitives(block_dict, assumptions, tryreduce, prior_dict)

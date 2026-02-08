@@ -6,7 +6,7 @@ from preliz.distributions.distributions import Distribution
 
 from gEconpy.exceptions import InvalidDistributionException
 from gEconpy.parser.ast import GCNDistribution
-from gEconpy.parser.dist_syntax import PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
+from gEconpy.parser.constants import PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
 
 if TYPE_CHECKING:
     from gEconpy.parser.ast import GCNModel

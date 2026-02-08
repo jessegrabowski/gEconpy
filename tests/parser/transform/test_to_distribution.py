@@ -1,18 +1,15 @@
-import numpy as np
 import preliz as pz
 import pytest
 
-from preliz.distributions.distributions import Distribution
-
 from gEconpy.exceptions import InvalidDistributionException
 from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Number, Parameter
-from gEconpy.parser.ast_to_distribution import (
+from gEconpy.parser.grammar.distributions import parse_distribution
+from gEconpy.parser.transform.to_distribution import (
     ast_to_distribution,
     ast_to_distribution_with_metadata,
     distributions_from_calibration,
     distributions_from_model,
 )
-from gEconpy.parser.grammar.distributions import parse_distribution
 
 
 class TestAstToDistributionBasic:

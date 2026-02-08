@@ -8,7 +8,7 @@ from gEconpy.exceptions import (
     InvalidDistributionException,
     RepeatedParameterException,
 )
-from gEconpy.parser.dist_syntax import (
+from gEconpy.parser._legacy.dist_syntax import (
     PRELIZ_DIST_WRAPPERS,
     PRELIZ_DISTS,
     dist_syntax,
@@ -163,7 +163,9 @@ class CompositeDistribution:
 
 
 def create_composite_distribution(variable_name, outer_dist, hyper_param_dict):
-    (dist_name, dist_kwargs), (wrapper_name, wrapper_kwargs) = preprocess_distribution_string(variable_name, outer_dist)
+    (dist_name, dist_kwargs), (wrapper_name, _wrapper_kwargs) = preprocess_distribution_string(
+        variable_name, outer_dist
+    )
     if wrapper_name is not None:
         raise NotImplementedError("Wrapper functions are not allowed on shock distributions")
     if dist_name != "Normal":
