@@ -226,7 +226,7 @@ block MONETARY_POLICY
 
 	shocks
 	{
-		epsilon_R[], epsilon_pi[];f
+		epsilon_R[], epsilon_pi[];
 	};
 
 

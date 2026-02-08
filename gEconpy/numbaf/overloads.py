@@ -555,12 +555,12 @@ def qz_impl(A, B, output):
     _check_scipy_linalg_matrix(B, "qz")
 
     def real_qz_impl(A, B, output):
-        A, B, ALPHA, BETA, VSL, VSR = full_return_qz(A, B, output)
+        A, B, _ALPHA, _BETA, VSL, VSR = full_return_qz(A, B, output)
 
         return A, B, VSL, VSR
 
     def complex_qz_impl(A, B, output):
-        A, B, ALPHA, BETA, VSL, VSR = full_return_qz(A, B, output)
+        A, B, _ALPHA, _BETA, VSL, VSR = full_return_qz(A, B, output)
         return A, B, VSL, VSR
 
     if isinstance(A.dtype, types.scalars.Complex):

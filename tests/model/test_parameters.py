@@ -9,7 +9,9 @@ from pytensor.tensor import TensorVariable
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.parser.file_loaders import block_dict_to_param_dict, gcn_to_block_dict
+from gEconpy.parser.loader import _block_dict_to_param_dict
+from gEconpy.parser.preprocessor import preprocess_file
+from gEconpy.parser.transform.to_block import ast_model_to_block_dict
 
 
 @pytest.fixture
@@ -87,7 +89,7 @@ def test_compile_param_dict_symbolic(complex_param_system):
     assert isinstance(cache, dict)
     assert all(isinstance(k, TensorVariable) for k in symbolic_result)
 
-    *_, gamma, delta = symbolic_result.keys()
+    *_, gamma, _delta = symbolic_result.keys()
     np.testing.assert_allclose(symbolic_result[gamma].eval({"alpha": 2.0, "beta": 3.0}), np.log(5.0))
 
 
@@ -117,9 +119,11 @@ EXPECTED_PARAM_DICT = {
 def test_create_parameter_function(gcn_path, name, backend):
     rng = np.random.default_rng()
     expected = EXPECTED_PARAM_DICT[name]
-    block_dict, *outputs = gcn_to_block_dict(Path("tests") / "_resources" / "test_gcns" / gcn_path, True)
-    param_dict = block_dict_to_param_dict(block_dict, "param_dict")
-    deterministic_dict = block_dict_to_param_dict(block_dict, "deterministic_dict")
+    filepath = Path("tests") / "_resources" / "test_gcns" / gcn_path
+    result = preprocess_file(filepath, validate=True)
+    block_dict = ast_model_to_block_dict(result.ast, simplify_blocks=True)
+    param_dict = _block_dict_to_param_dict(block_dict, "param_dict")
+    deterministic_dict = _block_dict_to_param_dict(block_dict, "deterministic_dict")
 
     f, _ = compile_param_dict_func(param_dict, deterministic_dict, backend)
 

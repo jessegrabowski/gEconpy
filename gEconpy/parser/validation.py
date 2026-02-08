@@ -1,4 +1,15 @@
-from gEconpy.exceptions import InvalidComponentNameException
+from warnings import warn
+
+import sympy as sp
+
+from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.exceptions import (
+    ExtraParameterError,
+    ExtraParameterWarning,
+    InvalidComponentNameException,
+    OrphanParameterError,
+)
 from gEconpy.parser.constants import BLOCK_COMPONENTS
 
 
@@ -130,3 +141,141 @@ def find_typos_and_guesses(
         return None, None
 
     return best_guess, maybe_typo
+
+
+def check_for_orphan_params(equations: list[sp.Expr], param_dict: SymbolDictionary) -> None:
+    """
+    Check for parameters used in equations but not defined in param_dict.
+
+    Parameters
+    ----------
+    equations : list of sp.Expr
+        Model equations.
+    param_dict : SymbolDictionary
+        Dictionary of defined parameters.
+
+    Raises
+    ------
+    OrphanParameterError
+        If orphan parameters are found.
+    """
+    parameters = list(param_dict.to_sympy().keys())
+    param_equations = [x for x in param_dict.values() if isinstance(x, sp.Expr)]
+
+    orphans = [
+        atom
+        for eq in equations
+        for atom in eq.atoms()
+        if (
+            isinstance(atom, sp.Symbol)
+            and not isinstance(atom, TimeAwareSymbol)
+            and atom not in parameters
+            and not any(eq.has(atom) for eq in param_equations)
+        )
+    ]
+
+    if len(orphans) > 0:
+        raise OrphanParameterError(orphans)
+
+
+def check_for_extra_params(
+    equations: list[sp.Expr],
+    param_dict: SymbolDictionary,
+    on_unused_parameters: str = "raise",
+    distribution_atoms: set[sp.Symbol] | None = None,
+) -> None:
+    """
+    Check for parameters defined but not used in any equations.
+
+    Parameters
+    ----------
+    equations : list of sp.Expr
+        Model equations.
+    param_dict : SymbolDictionary
+        Dictionary of defined parameters.
+    on_unused_parameters : str
+        How to handle unused parameters: "raise", "warn", or "ignore".
+    distribution_atoms : set of sp.Symbol, optional
+        Atoms used in distribution definitions (e.g., shock standard deviations).
+
+    Raises
+    ------
+    ExtraParameterError
+        If extra parameters are found and on_unused_parameters="raise".
+    """
+    parameters = list(param_dict.to_sympy().keys())
+    param_equations = [x for x in param_dict.values() if isinstance(x, sp.Expr)]
+
+    all_atoms = {atom for eq in equations + param_equations for atom in eq.atoms()}
+    if distribution_atoms:
+        all_atoms |= distribution_atoms
+    extras = [parameter for parameter in parameters if parameter not in all_atoms]
+
+    if len(extras) > 0:
+        if on_unused_parameters == "raise":
+            raise ExtraParameterError(extras)
+        if on_unused_parameters == "warn":
+            warn(ExtraParameterWarning(extras), stacklevel=2)
+
+
+def validate_results(
+    equations: list[sp.Expr],
+    steady_state_relationships: list[sp.Expr],
+    param_dict: SymbolDictionary,
+    calib_dict: SymbolDictionary,
+    deterministic_dict: SymbolDictionary,
+    on_unused_parameters: str = "raise",
+    distributions: SymbolDictionary | None = None,
+    distribution_param_names: set[str] | None = None,
+) -> None:
+    """
+    Validate parsed model results for orphan and extra parameters.
+
+    Parameters
+    ----------
+    equations : list of sp.Expr
+        Model equations.
+    steady_state_relationships : list of sp.Expr
+        Steady-state equations.
+    param_dict : SymbolDictionary
+        Dictionary of parameters.
+    calib_dict : SymbolDictionary
+        Dictionary of calibrating equations.
+    deterministic_dict : SymbolDictionary
+        Dictionary of deterministic relationships.
+    on_unused_parameters : str
+        How to handle unused parameters: "raise", "warn", or "ignore".
+    distributions : SymbolDictionary, optional
+        Dictionary of distributions (for shock priors, etc.).
+    distribution_param_names : set of str, optional
+        Parameter names used in distribution definitions (e.g., shock standard deviations).
+    """
+    joint_dict = param_dict | calib_dict | deterministic_dict
+    check_for_orphan_params(equations + steady_state_relationships, joint_dict)
+
+    # Extract atoms used in distribution parameters
+    distribution_atoms: set[sp.Symbol] = set()
+    if distributions:
+        for dist in distributions.values():
+            if hasattr(dist, "args"):
+                for arg in dist.args:
+                    if isinstance(arg, sp.Expr):
+                        distribution_atoms |= arg.atoms(sp.Symbol)
+
+    # Also add parameter names referenced in shock distributions
+    if distribution_param_names:
+        # Get sympy version of joint_dict to match symbols properly
+        sympy_dict = joint_dict.to_sympy()
+        for param_name in distribution_param_names:
+            # Find matching symbol in sympy_dict
+            for sym in sympy_dict:
+                if str(sym) == param_name:
+                    distribution_atoms.add(sym)
+                    break
+
+    check_for_extra_params(
+        equations + steady_state_relationships,
+        joint_dict,
+        on_unused_parameters,
+        distribution_atoms=distribution_atoms,
+    )

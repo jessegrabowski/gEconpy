@@ -512,7 +512,7 @@ def gensys(
         unique = True
     else:
         loose = v_eta_1 - v_eta @ v_eta.T @ v_eta_1
-        [ul, dl, vl] = linalg.svd(loose)
+        [_ul, dl, _vl] = linalg.svd(loose)
         if dl.ndim == 1:
             dl = np.diag(dl)
 
@@ -702,8 +702,8 @@ class GensysWrapper(Op):
 
     def L_op(self, inputs, outputs, output_grads):
         A, B, C, D = inputs
-        T, success = outputs
-        T_bar, success_bar = output_grads
+        T, _success = outputs
+        T_bar, _success_bar = output_grads
 
         A_bar, B_bar, C_bar = o1_policy_function_adjoints(A, B, C, T, T_bar)
         D_bar = pt.zeros_like(D).astype(floatX)

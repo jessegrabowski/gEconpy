@@ -1,5 +1,3 @@
-from collections import defaultdict
-
 import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -11,7 +9,6 @@ from gEconpy.exceptions import (
     MultipleObjectiveFunctionsException,
     OptimizationProblemNotDefinedException,
 )
-from gEconpy.parser import parse_equations
 from gEconpy.utilities import (
     diff_through_time,
     expand_subs_for_all_times,
@@ -25,7 +22,8 @@ class Block:
     """
     The Block class holds equations and parameters associated with each block of the DSGE model.
 
-    Holds methods to solve their associated optimization problem. Blocks should be created by a Model.
+    Holds methods to solve their associated optimization problem. Blocks should be created via
+    the `from_sympy` class method or through the parser.
     """
 
     #    TODO: Split components out into their own class/protocol and let them handle their own parsing?
@@ -36,53 +34,108 @@ class Block:
     def __init__(
         self,
         name: str,
-        block_dict: dict[str, list[list[str]]],
-        assumptions: dict[str, dict] | None = None,
+        definitions: dict[int, sp.Eq] | None = None,
+        controls: list[TimeAwareSymbol] | None = None,
+        objective: dict[int, sp.Eq] | None = None,
+        constraints: dict[int, sp.Eq] | None = None,
+        identities: dict[int, sp.Eq] | None = None,
+        calibration: dict[int, sp.Eq] | None = None,
+        shocks: list[TimeAwareSymbol] | None = None,
+        multipliers: dict[int, TimeAwareSymbol | None] | None = None,
+        equation_flags: dict[int, dict[str, bool]] | None = None,
     ) -> None:
         """
-        Initialize a block object.
+        Initialize a Block from sympy equations.
 
         Parameters
         ----------
-        name: str
-            The name of the block
-        block_dict: dict
-            Dictionary of component:list[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
+        name : str
+            The name of the block.
+        definitions : dict[int, sp.Eq], optional
+            Dictionary of definition equations, indexed by equation number.
+        controls : list[TimeAwareSymbol], optional
+            List of control variables.
+        objective : dict[int, sp.Eq], optional
+            Dictionary containing the objective equation.
+        constraints : dict[int, sp.Eq], optional
+            Dictionary of constraint equations.
+        identities : dict[int, sp.Eq], optional
+            Dictionary of identity equations.
+        calibration : dict[int, sp.Eq], optional
+            Dictionary of calibration equations.
+        shocks : list[TimeAwareSymbol], optional
+            List of shock variables.
+        multipliers : dict[int, TimeAwareSymbol | None], optional
+            Dictionary mapping constraint indices to Lagrange multipliers.
+        equation_flags : dict[int, dict[str, bool]], optional
+            Dictionary mapping equation indices to flag dictionaries.
         """
         self.name = name
         self.short_name = "".join(word[0] for word in name.split("_"))
 
-        self.definitions: dict[int, sp.Eq] | None = None
-        self.controls: list[TimeAwareSymbol] | None = None
-        self.objective: dict[int, sp.Expr] | None = None
-        self.constraints: dict[int, sp.Eq] | None = None
-        self.identities: dict[int, sp.Eq] | None = None
-        self.shocks: dict[int, TimeAwareSymbol] | None = None
-        self.calibration: dict[int, sp.Expr] | None = None
+        self.definitions = definitions
+        self.controls = controls
+        self.objective = objective
+        self.constraints = constraints
+        self.identities = identities
+        self.shocks = shocks
+        self.calibration = calibration
 
         self.variables: list[TimeAwareSymbol] = []
         self.param_dict: SymbolDictionary[str, float] = SymbolDictionary()
-
         self.calib_dict: SymbolDictionary[str, float] = SymbolDictionary()
         self.deterministic_dict: SymbolDictionary[str, float] = SymbolDictionary()
 
         self.system_equations: list[sp.Expr] = []
-        self.multipliers: dict[int, TimeAwareSymbol] = {}
+        self.multipliers = multipliers or {}
         self.eliminated_variables: list[sp.Symbol] = []
+        self.equation_flags = equation_flags or {}
 
-        self.equation_flags: dict[int, dict[str, bool]] = {}
+        # Count equations
+        self.n_equations = sum(
+            len(eq_dict) if eq_dict else 0 for eq_dict in [definitions, objective, constraints, identities, calibration]
+        )
 
-        self.n_equations = 0
-        self.initialized = False
+        # Run validation
+        self.initialized = self._validate_initialization()
 
-        if assumptions is None:
-            assumptions = defaultdict(dict)
-
-        self.initialize_from_dictionary(block_dict, assumptions)
+        # Run post-initialization processing
         self._consolidate_definitions()
 
         self._get_variable_list()
         self._get_param_dict_and_calibrating_equations()
+
+    @classmethod
+    def from_sympy(
+        cls,
+        name: str,
+        definitions: dict[int, sp.Eq] | None = None,
+        controls: list[TimeAwareSymbol] | None = None,
+        objective: dict[int, sp.Eq] | None = None,
+        constraints: dict[int, sp.Eq] | None = None,
+        identities: dict[int, sp.Eq] | None = None,
+        calibration: dict[int, sp.Eq] | None = None,
+        shocks: list[TimeAwareSymbol] | None = None,
+        multipliers: dict[int, TimeAwareSymbol | None] | None = None,
+        equation_flags: dict[int, dict[str, bool]] | None = None,
+    ) -> "Block":
+        """
+        Create a Block directly from sympy equations.
+
+        This is an alias for the constructor for backwards compatibility.
+        """
+        return cls(
+            name=name,
+            definitions=definitions,
+            controls=controls,
+            objective=objective,
+            constraints=constraints,
+            identities=identities,
+            calibration=calibration,
+            shocks=shocks,
+            multipliers=multipliers,
+            equation_flags=equation_flags,
+        )
 
     def __str__(self):
         return (
@@ -105,31 +158,6 @@ class Block:
     @property
     def calibrating_equations(self) -> list[sp.Expr]:
         return list(self.calib_dict.values())
-
-    def initialize_from_dictionary(self, block_dict: dict, assumptions: dict) -> None:
-        """
-        Initialize a model block from a dictionary of parer results.
-
-        The dictionary will include provided definitions, objective, constraints, identities, and calibration
-        equations. The model block's controls and shocks will also be extracted from the provided block dictionary.
-
-        Parameters
-        ----------
-        block_dict: dict
-            A dictionary of component: list[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict
-        assumptions: dict
-            A dictionary of user-provided Sympy assumptions about variables in the model.
-        """
-        self.controls = self._parse_variable_list(block_dict, "controls", assumptions)
-        self.shocks = self._parse_variable_list(block_dict, "shocks", assumptions)
-
-        self.definitions = self._parse_equation_list(block_dict, "definitions", assumptions)
-        self.objective = self._parse_equation_list(block_dict, "objective", assumptions)
-        self.constraints = self._parse_equation_list(block_dict, "constraints", assumptions)
-        self.identities = self._parse_equation_list(block_dict, "identities", assumptions)
-        self.calibration = self._parse_equation_list(block_dict, "calibration", assumptions)
-
-        self.initialized = self._validate_initialization()
 
     def _validate_initialization(self) -> bool:
         """
@@ -211,25 +239,6 @@ class Block:
 
         return True
 
-    def _validate_key(self, block_dict: dict, key: str) -> bool:
-        """
-        Check whether a block component is present in the block_dict, and a valid component name.
-
-        For valid component names, see gEcon_parser.BLOCK_COMPONENTS.
-
-        Parameters
-        ----------
-        block_dict : dict
-            Dictionary of component:list[equations] key-value pairs created by gEcon_parser.parsed_block_to_dict.
-        key : str
-            A component name.
-
-        Returns
-        -------
-        bool
-        """
-        return key in block_dict and hasattr(self, key) and block_dict[key] is not None
-
     def _consolidate_definitions(self):
         """Combine definitions that refer to other definitions via subsitution."""
         if self.definitions is None:
@@ -243,119 +252,6 @@ class Block:
             sub_dict[var] = substitute_repeatedly(eq, sub_dict)
 
         self.definitions = {k: sp.Eq(v.lhs, v.rhs.subs(sub_dict)) for k, v in self.definitions.items()}
-
-    def _extract_lagrange_multipliers(
-        self, equations: list[list[str]], assumptions: dict
-    ) -> tuple[list[list[str]], list[TimeAwareSymbol | None]]:
-        """
-        GEcon allows the user to name lagrange multipliers in the GCN file.
-
-        These multiplier variables need to be saved and used once the optimization problem is solved. This function
-        removes the ": muliplier[]" from each equation and returns them as a list, along with the new equations. A None
-        is placed in the list for each equation with no associated multiplier.
-
-        Parameters
-        ----------
-        equations : list
-            A list of lists of strings, each list representing a model equation. Created by the
-            gEcon_parser.parsed_block_to_dict function.
-        assumptions : dict
-            Assumptions for the model.
-
-        Returns
-        -------
-        list
-            List of lists of strings.
-        list
-            List of Union[TimeAwareSymbols, None].
-        """
-        result, multipliers = [], []
-        for eq in equations:
-            if ":" in eq:
-                colon_idx = eq.index(":")
-                multiplier = eq[-1]
-                multiplier = parse_equations.single_symbol_to_sympy(multiplier, assumptions)
-
-                result.append(eq[:colon_idx].copy())
-                multipliers.append(multiplier)
-            else:
-                result.append(eq)
-                multipliers.append(None)
-
-        return result, multipliers
-
-    @staticmethod
-    def _extract_decorators(
-        equations: list[list[str]],
-        assumptions: dict,  # noqa: ARG004
-    ) -> tuple[list[list[str]], list[dict[str, bool]]]:
-        """
-        Extract decorators from the equations in the block.
-
-        Decorators are flags that indicate special properties of the equation, such as whether it should be excluded
-        from the final system of equations.
-
-        Parameters
-        ----------
-        equations : list
-            A list of lists of strings, each list representing a model equation. Created by the
-            gEcon_parser.parsed_block_to_dict function.
-
-        assumptions : dict
-            Assumptions for the model. Ignored, but included for consistency with other parsing functions.
-
-        Returns
-        -------
-        equations: list
-            List of lists of strings. All decorator strings have been removed.
-
-        flags: dict
-            A dictionary of flags for each equation, indexed by equation number.
-        """
-        result, decorator_flags = [], []
-        for _i, eq in enumerate(equations):
-            new_eq = []
-            flags = {}
-            for token in eq:
-                if token.startswith("@"):
-                    decorator = token.removeprefix("@")
-                    flags[decorator] = True
-                else:
-                    new_eq.append(token)
-            result.append(new_eq)
-            decorator_flags.append(flags)
-
-        return result, decorator_flags
-
-    def _parse_variable_list(
-        self, block_dict: dict, key: str, assumptions: dict | None = None
-    ) -> list[sp.Symbol] | None:
-        """
-        Convert a list of variables represented as strings into a list of sympy symbols.
-
-        Two components -- controls and shocks -- expect a simple list of variables, which is a case the
-        gEcon_parser.build_sympy_equations cannot handle.
-
-        Parameters
-        ----------
-        block_dict : list
-            A list of lists of strings, each list representing a model equation. Created by the
-            gEcon_parser.parsed_block_to_dict function.
-        key : str
-            A component name.
-        assumptions : dict, optional
-            Assumptions for the model.
-
-        Returns
-        -------
-        list
-            A list of variables, represented as Sympy objects, or None if the block does not exist.
-        """
-        if not self._validate_key(block_dict, key):
-            return None
-
-        raw_list = [var for var_list in block_dict[key] for var in var_list]
-        return [parse_equations.single_symbol_to_sympy(variable, assumptions) for variable in raw_list]
 
     def _get_variable_list(self) -> None:
         """Get a list of all unique variables in the Block and store it in the class attribute "variables"."""
@@ -414,55 +310,6 @@ class Block:
         self.n_equations += n_equations
 
         return equation_numbers
-
-    def _parse_equation_list(self, block_dict: dict, key: str, assumptions: dict[str, str]) -> dict[int, sp.Eq] | None:
-        """
-        Convert a list of equations represented as strings into a dictionary of sympy equations.
-
-        The resulting dictionary is indexed by equation number, which is unique across all components of the block.
-
-        Parameters
-        ----------
-        block_dict : list
-            A list of lists of strings, each list representing a model equation. Created by the
-            gEcon_parser.parsed_block_to_dict function.
-        key : str
-            A component name.
-        assumptions : dict
-            A dictionary with assumptions for each variable.
-
-        Returns
-        -------
-        dict
-            A dictionary of sympy equations, indexed by their equation number, or None if the block does not exist.
-        """
-        if not self._validate_key(block_dict, key):
-            return None
-
-        equations = block_dict[key]
-        equations, lagrange_multipliers = self._extract_lagrange_multipliers(equations, assumptions)
-        equations, decorators = self._extract_decorators(equations, assumptions)
-
-        parser_output = parse_equations.build_sympy_equations(equations, assumptions)
-
-        if len(parser_output) > 0:
-            equations, flags = list(zip(*parser_output, strict=False))
-        else:
-            equations, flags = [], {}
-
-        equation_numbers = self._get_and_record_equation_numbers(equations)
-
-        equations = dict(zip(equation_numbers, equations, strict=False))
-        flags = dict(zip(equation_numbers, flags, strict=False))
-        decorator_flags = dict(zip(equation_numbers, decorators, strict=False))
-
-        lagrange_multipliers = dict(zip(equation_numbers, lagrange_multipliers, strict=False))
-        self.multipliers.update(lagrange_multipliers)
-        for k in equation_numbers:
-            self.equation_flags[k] = flags[k]
-            self.equation_flags[k].update(decorator_flags[k])
-
-        return equations
 
     def _get_param_dict_and_calibrating_equations(self) -> None:
         """
@@ -701,8 +548,8 @@ class Block:
         #     labor supply curve, etc), and common production functions (CES, CD -- extract demand curves, prices, or
         #     marginal costs)
         sub_dict = {}
-        if self.system_equations is None:
-            self.system_equations = []
+
+        self.system_equations = []
 
         if self.definitions is not None:
             _, definitions = unpack_keys_and_values(self.definitions)

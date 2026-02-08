@@ -170,7 +170,7 @@ class CycleReductionWrapper(Op):
 
     def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
         A, B, C = inputs
-        T, res, result, log_norm = nb_cycle_reduction(A, B, C, max_iter=self.max_iter, tol=self.tol)
+        T, _res, _result, _log_norm = nb_cycle_reduction(A, B, C, max_iter=self.max_iter, tol=self.tol)
 
         outputs[0][0] = np.asarray(T)
 

@@ -155,7 +155,7 @@ def test_write_model_equations(nk_model):
         if clean_line.startswith("#"):
             assert "=" in line
             assert expect_ss_definition  # All the ss definitions should be at the beginning and all together
-            name, value = clean_line.split("=")
+            name, _value = clean_line.split("=")
             assert name.endswith("_ss")
 
         else:
@@ -189,7 +189,7 @@ def test_write_analytical_steady_state(ss_model):
     out = write_steady_state(ss_model)
     assert out.startswith("steady_state_model;")
     lines = [line.replace(" ", "").replace(";", "") for line in out.split("\n") if "=" in line and len(line) > 0]
-    names, exprs = zip(*[line.split("=") for line in lines], strict=False)
+    names, _exprs = zip(*[line.split("=") for line in lines], strict=False)
     n_vars = len(ss_model.variables)
 
     assert all(x.base_name in names[-n_vars:] for x in ss_model.variables)
