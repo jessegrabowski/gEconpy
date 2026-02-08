@@ -121,7 +121,7 @@ def test_create_parameter_function(gcn_path, name, backend):
     expected = EXPECTED_PARAM_DICT[name]
     filepath = Path("tests") / "_resources" / "test_gcns" / gcn_path
     result = preprocess_file(filepath, validate=True)
-    block_dict, *_outputs = ast_model_to_block_dict(result.ast, simplify_blocks=True)
+    block_dict = ast_model_to_block_dict(result.ast, simplify_blocks=True)
     param_dict = _block_dict_to_param_dict(block_dict, "param_dict")
     deterministic_dict = _block_dict_to_param_dict(block_dict, "deterministic_dict")
 

@@ -325,5 +325,4 @@ class TestIntegrationWithRealFiles:
 
         assert len(result.equations) > 0
         assert len(result.variables) > 0
-        # RBC should have shocks
         assert len(result.shocks) > 0
