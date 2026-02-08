@@ -201,8 +201,9 @@ def _convert_calibration(
 
 def ast_model_to_block_dict(
     model: GCNModel,
+    assumptions: dict[str, dict[str, bool]] | None = None,
     simplify_blocks: bool = False,
-) -> tuple[dict[str, Block], dict[str, dict[str, bool]], dict[str, str], list[str]]:
+) -> dict[str, Block]:
     """
     Convert a GCNModel AST to a dictionary of Block objects.
 
@@ -213,15 +214,19 @@ def ast_model_to_block_dict(
     ----------
     model : GCNModel
         The parsed model AST.
+    assumptions : dict, optional
+        Variable/parameter assumptions. If None, uses model.assumptions.
     simplify_blocks : bool, optional
         Whether to simplify block equations during optimization.
 
     Returns
     -------
-    tuple
-        (block_dict, assumptions, options, tryreduce)
+    dict[str, Block]
+        Dictionary mapping block names to Block objects.
     """
-    assumptions = defaultdict(dict, model.assumptions or {})
+    if assumptions is None:
+        assumptions = defaultdict(dict, model.assumptions or {})
+
     block_dict = {}
 
     for ast_block in model.blocks:
@@ -237,4 +242,4 @@ def ast_model_to_block_dict(
         block.solve_optimization(try_simplify=simplify_blocks)
         block_dict[block.name] = block
 
-    return block_dict, assumptions, model.options, model.tryreduce
+    return block_dict

@@ -27,7 +27,7 @@ ROOT = Path(__file__).parent.parent.absolute()
 def get_block_from_string(gcn_string: str, block_name: str = "HOUSEHOLD") -> Block:
     """Parse a GCN string and return the specified block (already solved)."""
     result = load_gcn_string(gcn_string)
-    return result["block_dict"][block_name]
+    return result.block_dict[block_name]
 
 
 def get_unsolved_block_from_string(gcn_string: str, block_name: str = "HOUSEHOLD") -> Block:
@@ -225,7 +225,7 @@ def test_invalid_decorator_raises():
 @pytest.fixture
 def block():
     result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "one_block_2.gcn")
-    return result["block_dict"]["HOUSEHOLD"]
+    return result.block_dict["HOUSEHOLD"]
 
 
 class TestBlockCases:
@@ -396,7 +396,7 @@ class TestBlockCases:
 
     def test_firm_block_lagrange_parsing(self):
         result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "rbc_2_block.gcn")
-        block = result["block_dict"]["FIRM"]
+        block = result.block_dict["FIRM"]
 
         Y = TimeAwareSymbol("Y", 0)
         K = TimeAwareSymbol("K", -1)
@@ -415,7 +415,7 @@ class TestBlockCases:
 
     def test_firm_FOC(self, rng):
         result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "rbc_2_block.gcn")
-        firm_block = result["block_dict"]["FIRM"]
+        firm_block = result.block_dict["FIRM"]
         firm_block.solve_optimization()
 
         Y = TimeAwareSymbol("Y", 0)
@@ -513,7 +513,7 @@ class TestBlockCases:
 
 def test_block_with_exlcuded_equation():
     result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "rbc_with_excluded.gcn")
-    block = result["block_dict"]["HOUSEHOLD"]
+    block = result.block_dict["HOUSEHOLD"]
     block.solve_optimization()
 
     # 6 equations are 4 controls, 1 objective, 1 constraint (excluding the excluded equation)

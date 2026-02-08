@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -19,6 +20,26 @@ if TYPE_CHECKING:
     from gEconpy.model.block import Block
 
 PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
+
+
+@dataclass
+class ModelPrimitives:
+    """Container for all primitives extracted from a parsed GCN model."""
+
+    equations: list[sp.Expr]
+    variables: list[TimeAwareSymbol]
+    shocks: list[TimeAwareSymbol]
+    param_dict: SymbolDictionary
+    calib_dict: SymbolDictionary
+    deterministic_dict: SymbolDictionary
+    distributions: SymbolDictionary
+    shock_distributions: SymbolDictionary
+    distribution_param_names: set[str]
+    ss_solution_dict: SymbolDictionary
+    options: dict[str, str]
+    tryreduce: list[TimeAwareSymbol]
+    assumptions: dict[str, dict[str, bool]]
+    block_dict: dict[str, "Block"] = field(repr=False)
 
 
 def _create_shock_distribution(
@@ -319,10 +340,39 @@ def _equation_to_sympy_simple(eq, assumptions):
     return sp.Eq(lhs, rhs)
 
 
+def _extract_tryreduce(
+    model: GCNModel,
+    variables: list[TimeAwareSymbol],
+) -> list[TimeAwareSymbol]:
+    """
+    Convert tryreduce block entries to TimeAwareSymbol objects.
+
+    Parameters
+    ----------
+    model : GCNModel
+        The model AST containing tryreduce strings like "Pi[]", "U[]".
+    variables : list[TimeAwareSymbol]
+        List of model variables to match against.
+
+    Returns
+    -------
+    list[TimeAwareSymbol]
+        List of variables marked for reduction.
+    """
+    tryreduce = []
+    for tr_str in model.tryreduce:
+        base_name = tr_str.replace("[]", "").strip()
+        for var in variables:
+            if var.base_name == base_name:
+                tryreduce.append(var)
+                break
+    return tryreduce
+
+
 def ast_model_to_primitives(
     model: GCNModel,
     simplify_blocks: bool = False,
-) -> dict:
+) -> ModelPrimitives:
     """
     Convert a GCNModel to model primitives.
 
@@ -338,30 +388,25 @@ def ast_model_to_primitives(
 
     Returns
     -------
-    dict
-        Dictionary containing:
-        - equations: list of sympy equations
-        - variables: list of TimeAwareSymbol
-        - shocks: list of TimeAwareSymbol
-        - param_dict: SymbolDictionary of parameters
-        - calib_dict: SymbolDictionary of calibrating equations
-        - deterministic_dict: SymbolDictionary of deterministic relationships
-        - distributions: SymbolDictionary of prior distributions
-        - ss_solution_dict: SymbolDictionary of user-provided steady state solutions
-        - options: dict of model options
-        - tryreduce: list of variables to try to reduce
-        - assumptions: dict of variable assumptions
-        - block_dict: dict of Block objects (for advanced use)
+    ModelPrimitives
+        Dataclass containing all extracted model primitives.
     """
-    # Build Block objects and solve optimization
-    block_dict, assumptions, options, tryreduce = ast_model_to_block_dict(model, simplify_blocks=simplify_blocks)
+    # Extract model-level properties
+    assumptions = dict(model.assumptions) if model.assumptions else {}
+    options = model.options
 
-    # Extract primitives
+    # Build Block objects and solve optimization
+    block_dict = ast_model_to_block_dict(model, assumptions=assumptions, simplify_blocks=simplify_blocks)
+
+    # Extract primitives from blocks
     equations = _block_dict_to_equation_list(block_dict)
     param_dict = _block_dict_to_param_dict(block_dict, "param_dict")
     calib_dict = _block_dict_to_param_dict(block_dict, "calib_dict")
     deterministic_dict = _block_dict_to_param_dict(block_dict, "deterministic_dict")
     variables, shocks = _block_dict_to_variables_and_shocks(block_dict)
+
+    # Convert tryreduce strings to symbols
+    tryreduce = _extract_tryreduce(model, variables)
 
     # Extract steady state solutions from STEADY_STATE block
     ss_solution_dict = _extract_ss_solution_dict(model, assumptions)
@@ -392,25 +437,25 @@ def ast_model_to_primitives(
                 if isinstance(kwarg_value, str) and not kwarg_value.replace(".", "").replace("-", "").isdigit():
                     distribution_param_names.add(kwarg_value)
 
-    return {
-        "equations": equations,
-        "variables": variables,
-        "shocks": shocks,
-        "param_dict": param_dict,
-        "calib_dict": calib_dict,
-        "deterministic_dict": deterministic_dict,
-        "distributions": distributions,
-        "shock_distributions": shock_distributions,
-        "distribution_param_names": distribution_param_names,
-        "ss_solution_dict": ss_solution_dict,
-        "options": options,
-        "tryreduce": tryreduce,
-        "assumptions": assumptions,
-        "block_dict": block_dict,
-    }
+    return ModelPrimitives(
+        equations=equations,
+        variables=variables,
+        shocks=shocks,
+        param_dict=param_dict,
+        calib_dict=calib_dict,
+        deterministic_dict=deterministic_dict,
+        distributions=distributions,
+        shock_distributions=shock_distributions,
+        distribution_param_names=distribution_param_names,
+        ss_solution_dict=ss_solution_dict,
+        options=options,
+        tryreduce=tryreduce,
+        assumptions=assumptions,
+        block_dict=block_dict,
+    )
 
 
-def load_gcn_file(filepath: str | Path, simplify_blocks: bool = True) -> dict:
+def load_gcn_file(filepath: str | Path, simplify_blocks: bool = True) -> ModelPrimitives:
     """
     Load a GCN file and return model primitives.
 
@@ -425,14 +470,14 @@ def load_gcn_file(filepath: str | Path, simplify_blocks: bool = True) -> dict:
 
     Returns
     -------
-    dict
-        Dictionary of model primitives ready for Model construction.
+    ModelPrimitives
+        Dataclass containing model primitives ready for Model construction.
     """
     result = preprocess_file(filepath, validate=True)
     return ast_model_to_primitives(result.ast, simplify_blocks=simplify_blocks)
 
 
-def load_gcn_string(source: str) -> dict:
+def load_gcn_string(source: str) -> ModelPrimitives:
     """
     Load a GCN model from a string and return model primitives.
 
@@ -443,8 +488,8 @@ def load_gcn_string(source: str) -> dict:
 
     Returns
     -------
-    dict
-        Dictionary of model primitives ready for Model construction.
+    ModelPrimitives
+        Dataclass containing model primitives ready for Model construction.
     """
     result = preprocess(source, validate=True)
     return ast_model_to_primitives(result.ast)

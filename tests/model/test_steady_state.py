@@ -446,13 +446,13 @@ JAX_INSTALLED = find_spec("jax") is not None
 def test_all_model_functions_return_arrays(backend: BACKENDS):
     primitives = load_gcn_file("tests/_resources/test_gcns/one_block_1_ss.gcn", simplify_blocks=True)
 
-    equations = primitives["equations"]
-    param_dict = primitives["param_dict"]
-    calib_dict = primitives["calib_dict"]
-    deterministic_dict = primitives["deterministic_dict"]
-    variables = primitives["variables"]
-    shocks = primitives["shocks"]
-    ss_solution_dict = primitives["ss_solution_dict"]
+    equations = primitives.equations
+    param_dict = primitives.param_dict
+    calib_dict = primitives.calib_dict
+    deterministic_dict = primitives.deterministic_dict
+    variables = primitives.variables
+    shocks = primitives.shocks
+    ss_solution_dict = primitives.ss_solution_dict
 
     validate_results(
         equations,

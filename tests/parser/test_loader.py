@@ -143,7 +143,7 @@ class TestAstBlockToCalibration:
         block = model.blocks[0]
         _param_dict, calib_dict, _dists = ast_block_to_calibration(block)
 
-        assert "alpha" in calib_dict
+        assert "alpha" in calib_dict.to_string()
 
 
 class TestAstBlockToVariablesAndShocks:
@@ -228,11 +228,11 @@ class TestAstModelToPrimitives:
         model = quick_parse(source)
         result = ast_model_to_primitives(model)
 
-        assert len(result["equations"]) > 0
-        assert len(result["variables"]) > 0
-        assert len(result["shocks"]) > 0
-        assert "beta" in result["param_dict"]
-        assert "alpha" in result["param_dict"]
+        assert len(result.equations) > 0
+        assert len(result.variables) > 0
+        assert len(result.shocks) > 0
+        assert "beta" in result.param_dict
+        assert "alpha" in result.param_dict
 
     def test_shocks_not_in_variables(self):
         source = """
@@ -245,8 +245,8 @@ class TestAstModelToPrimitives:
         model = quick_parse(source)
         result = ast_model_to_primitives(model)
 
-        var_names = {v.base_name for v in result["variables"]}
-        shock_names = {s.base_name for s in result["shocks"]}
+        var_names = {v.base_name for v in result.variables}
+        shock_names = {s.base_name for s in result.shocks}
 
         assert "epsilon" in shock_names
         assert "epsilon" not in var_names
@@ -263,10 +263,10 @@ class TestLoadGcnString:
         """
         result = load_gcn_string(source)
 
-        assert "equations" in result
-        assert "variables" in result
-        assert "param_dict" in result
-        assert "alpha" in result["param_dict"]
+        assert len(result.equations) > 0
+        assert len(result.variables) > 0
+        assert result.param_dict is not None
+        assert "alpha" in result.param_dict
 
     def test_with_distributions(self):
         source = """
@@ -280,8 +280,8 @@ class TestLoadGcnString:
         """
         result = load_gcn_string(source)
 
-        assert "alpha" in result["distributions"]
-        assert "alpha" in result["param_dict"]
+        assert "alpha" in result.distributions
+        assert "alpha" in result.param_dict
 
 
 class TestLoadGcnFile:
@@ -296,9 +296,9 @@ class TestLoadGcnFile:
 
         result = load_gcn_file(gcn_path)
 
-        assert "equations" in result
-        assert "variables" in result
-        assert len(result["equations"]) > 0
+        assert result.equations is not None
+        assert result.variables is not None
+        assert len(result.equations) > 0
 
     def test_load_basic_rbc(self, gcn_dir):
         gcn_path = gcn_dir / "basic_rbc.gcn"
@@ -307,8 +307,8 @@ class TestLoadGcnFile:
 
         result = load_gcn_file(gcn_path)
 
-        assert len(result["equations"]) > 0
-        assert len(result["variables"]) > 0
+        assert len(result.equations) > 0
+        assert len(result.variables) > 0
 
 
 class TestIntegrationWithRealFiles:
@@ -323,7 +323,7 @@ class TestIntegrationWithRealFiles:
 
         result = load_gcn_file(gcn_path)
 
-        assert len(result["equations"]) > 0
-        assert len(result["variables"]) > 0
+        assert len(result.equations) > 0
+        assert len(result.variables) > 0
         # RBC should have shocks
-        assert len(result["shocks"]) > 0
+        assert len(result.shocks) > 0

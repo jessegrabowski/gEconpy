@@ -110,21 +110,21 @@ def _compile_gcn(
     **kwargs,
 ) -> tuple[tuple, tuple, tuple, dict, tuple, dict]:
     # Load using new parser
-    result = load_gcn_file(gcn_path, simplify_blocks=simplify_blocks)
+    primitives = load_gcn_file(gcn_path, simplify_blocks=simplify_blocks)
 
-    equations = result["equations"]
-    variables = result["variables"]
-    shocks = result["shocks"]
-    param_dict = result["param_dict"]
-    calib_dict = result["calib_dict"]
-    deterministic_dict = result["deterministic_dict"]
-    ss_solution_dict = result["ss_solution_dict"]
-    options = result["options"]
-    try_reduce = result["tryreduce"]
-    block_dict = result["block_dict"]
-    distributions = result["distributions"]
-    shock_distributions = result.get("shock_distributions", SymbolDictionary())
-    distribution_param_names = result.get("distribution_param_names", set())
+    equations = primitives.equations
+    variables = primitives.variables
+    shocks = primitives.shocks
+    param_dict = primitives.param_dict
+    calib_dict = primitives.calib_dict
+    deterministic_dict = primitives.deterministic_dict
+    ss_solution_dict = primitives.ss_solution_dict
+    options = primitives.options
+    try_reduce = primitives.tryreduce
+    block_dict = primitives.block_dict
+    distributions = primitives.distributions
+    shock_distributions = primitives.shock_distributions
+    distribution_param_names = primitives.distribution_param_names
 
     # Build sub_dict for tryreduce from block equations
     tryreduce_sub_dict = _block_dict_to_sub_dict(block_dict)

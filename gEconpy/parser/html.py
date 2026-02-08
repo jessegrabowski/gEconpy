@@ -159,7 +159,7 @@ def print_gcn_file(gcn_path: str) -> None:
         Path to the GCN file
     """
     result = load_gcn_file(gcn_path, simplify_blocks=False)
-    blocks = list(result["block_dict"].values())
+    blocks = list(result.block_dict.values())
 
     html = generate_html(blocks)
     display(html)
