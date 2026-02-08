@@ -3,10 +3,10 @@ from typing import Any
 
 from gEconpy.parser.ast import GCNModel
 from gEconpy.parser.ast.validation import full_validation
-from gEconpy.parser.ast_to_distribution import distributions_from_model
-from gEconpy.parser.ast_to_sympy import model_to_sympy
 from gEconpy.parser.errors import ValidationErrorCollection
 from gEconpy.parser.grammar.model import parse_gcn
+from gEconpy.parser.transform.to_distribution import distributions_from_model
+from gEconpy.parser.transform.to_sympy import model_to_sympy
 
 
 class ParseResult:

@@ -13,7 +13,7 @@ from gEconpy.model.compile import (
     make_return_dict_and_update_cache,
 )
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.utilities import eq_to_ss
+from gEconpy.utilities import eq_to_ss, substitute_repeatedly
 
 _log = logging.getLogger(__name__)
 
@@ -273,3 +273,38 @@ def print_steady_state(ss_dict: SteadyStateResults):
         output.extend(calibrated_outputs)
 
     _log.info("\n".join(output))
+
+
+def simplify_provided_ss_equations(
+    ss_solution_dict: SymbolDictionary, variables: list[TimeAwareSymbol]
+) -> SymbolDictionary:
+    """
+    Simplify user-provided steady-state equations by substituting intermediate variables.
+
+    Parameters
+    ----------
+    ss_solution_dict : SymbolDictionary
+        Dictionary of steady-state equations from STEADY_STATE block.
+    variables : list of TimeAwareSymbol
+        Model variables.
+
+    Returns
+    -------
+    SymbolDictionary
+        Simplified steady-state equations containing only model variables.
+    """
+    if not ss_solution_dict:
+        return SymbolDictionary()
+
+    ss_variables = [x.to_ss() for x in variables]
+    extra_equations = SymbolDictionary({k: v for k, v in ss_solution_dict.to_sympy().items() if k not in ss_variables})
+    if not extra_equations:
+        return ss_solution_dict
+
+    simplified_ss_dict = SymbolDictionary({k: v for k, v in ss_solution_dict.to_sympy().items() if k in ss_variables})
+    for var, eq in simplified_ss_dict.items():
+        if not hasattr(eq, "subs"):
+            continue
+        simplified_ss_dict[var] = substitute_repeatedly(eq, extra_equations)
+
+    return simplified_ss_dict

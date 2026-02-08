@@ -19,7 +19,7 @@ class TestParseBlock:
         assert block.name == "TEST"
         assert block.definitions == []
         assert block.controls == []
-        assert block.objective is None
+        assert block.objective == []
 
     def test_identities_only(self):
         content = """
@@ -78,8 +78,7 @@ class TestParseBlock:
         };
         """
         block = parse_block("HOUSEHOLD", content)
-        assert block.objective is not None
-        assert block.objective.lhs == Variable(name="U")
+        assert block.objective[0].lhs == Variable(name="U")
 
     def test_constraints_with_lagrange(self):
         content = """

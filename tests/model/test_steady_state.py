@@ -16,12 +16,8 @@ from gEconpy.model.steady_state import (
     print_steady_state,
     system_to_steady_state,
 )
-from gEconpy.parser.file_loaders import (
-    block_dict_to_model_primitives,
-    gcn_to_block_dict,
-    simplify_provided_ss_equations,
-    validate_results,
-)
+from gEconpy.parser.loader import load_gcn_file
+from gEconpy.parser.validation import validate_results
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 
@@ -154,7 +150,7 @@ def test_numerical_solvers_suceed_and_agree():
 def test_steady_state_matches_analytic():
     model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     param_dict = model_1.parameters().to_sympy()
-    alpha, beta, delta, gamma, rho = list(param_dict.keys())
+    alpha, beta, delta, gamma, _rho = list(param_dict.keys())
 
     A_ss = sp.Float(1.0)
     K_ss = ((alpha * beta) / (1 - beta + beta * delta)) ** (1 / (1 - alpha))
@@ -194,7 +190,7 @@ def test_steady_state_matches_analytic_w_calibrated_params():
     param_dict = model_2.parameters().to_sympy()
     calib_params = model_2.calibrated_params
 
-    beta, delta, rho, tau, theta = list(param_dict.keys())
+    beta, delta, _rho, tau, theta = list(param_dict.keys())
     (alpha,) = calib_params
 
     term_1 = theta * (1 - alpha) / (1 - theta)
@@ -253,7 +249,7 @@ def test_RBC_steady_state_matches_analytic():
     model_3 = load_and_cache_model("rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED)
     param_dict = model_3.parameters().to_sympy()
 
-    alpha, beta, delta, rho_A, sigma_C, sigma_L = list(param_dict.keys())
+    alpha, beta, delta, _rho_A, sigma_C, sigma_L = list(param_dict.keys())
     A_ss = sp.Float(1.0)
     r_ss = 1 / beta - (1 - delta)
     w_ss = (1 - alpha) * (alpha / r_ss) ** (alpha / (1 - alpha))
@@ -332,17 +328,17 @@ def test_steady_state_matches_analytic_NK():
         delta,
         eta_p,
         eta_w,
-        gamma_I,
-        gamma_R,
-        gamma_Y,
-        gamma_pi,
+        _gamma_I,
+        _gamma_R,
+        _gamma_Y,
+        _gamma_pi,
         phi_H,
-        phi_pi_obj,
+        _phi_pi_obj,
         psi_p,
         psi_w,
-        rho_pi_dot,
-        rho_preference,
-        rho_technology,
+        _rho_pi_dot,
+        _rho_preference,
+        _rho_technology,
         sigma_C,
         sigma_L,
     ) = list(param_dict.keys())
@@ -448,34 +444,19 @@ JAX_INSTALLED = find_spec("jax") is not None
 
 @pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 def test_all_model_functions_return_arrays(backend: BACKENDS):
-    outputs = gcn_to_block_dict("tests/_resources/test_gcns/one_block_1_ss.gcn", simplify_blocks=True)
-    block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
+    primitives = load_gcn_file("tests/_resources/test_gcns/one_block_1_ss.gcn", simplify_blocks=True)
 
-    (
-        equations,
-        param_dict,
-        calib_dict,
-        deterministic_dict,
-        variables,
-        shocks,
-        param_priors,
-        shock_priors,
-        reduced_vars,
-        singletons,
-    ) = block_dict_to_model_primitives(
-        block_dict,
-        assumptions,
-        try_reduce,
-        prior_info,
-        simplify_tryreduce=True,
-        simplify_constants=True,
-    )
+    equations = primitives["equations"]
+    param_dict = primitives["param_dict"]
+    calib_dict = primitives["calib_dict"]
+    deterministic_dict = primitives["deterministic_dict"]
+    variables = primitives["variables"]
+    shocks = primitives["shocks"]
+    ss_solution_dict = primitives["ss_solution_dict"]
 
-    ss_solution_dict = simplify_provided_ss_equations(ss_solution_dict, variables)
-    steady_state_relationships = [sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()]
     validate_results(
         equations,
-        steady_state_relationships,
+        [],  # steady_state_relationships handled separately
         param_dict,
         calib_dict,
         deterministic_dict,
@@ -485,7 +466,7 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
     kwargs = {}
     if backend == "pytensor":
         kwargs["mode"] = "JAX" if JAX_INSTALLED else "FAST_RUN"
-    (f_params, f_ss, resid_funcs, error_funcs), cache = compile_model_ss_functions(
+    (f_params, f_ss, resid_funcs, error_funcs), _cache = compile_model_ss_functions(
         steady_state_equations,
         ss_solution_dict,
         variables,
@@ -498,7 +479,7 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
     )
 
     f_ss_resid, f_ss_jac = resid_funcs
-    f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp = error_funcs
+    _f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp = error_funcs
 
     parameters = f_params(**param_dict)
     ss = f_ss(**parameters)

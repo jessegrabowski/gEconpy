@@ -177,8 +177,7 @@ def parse_block(name: str, content: str) -> GCNBlock:
     objective_content = _extract_component_content(content, "objective")
     if objective_content:
         statements = _split_statements(objective_content)
-        if statements:
-            block.objective = parse_equation(statements[0])
+        block.objective = [parse_equation(s) for s in statements]
 
     # Parse constraints
     constraints_content = _extract_component_content(content, "constraints")

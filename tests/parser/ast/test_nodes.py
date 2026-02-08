@@ -128,7 +128,7 @@ class TestGCNBlock:
         # Objective only - no optimization
         block2 = GCNBlock(
             name="TEST",
-            objective=GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u")),
+            objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))],
         )
         assert not block2.has_optimization_problem()
 
@@ -136,7 +136,7 @@ class TestGCNBlock:
         block3 = GCNBlock(
             name="TEST",
             controls=[Variable(name="C")],
-            objective=GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u")),
+            objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))],
         )
         assert block3.has_optimization_problem()
 

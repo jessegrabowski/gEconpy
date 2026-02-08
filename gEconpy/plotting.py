@@ -768,7 +768,7 @@ def plot_covariance_matrix(
         annotation_kwargs = {}
 
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-    im, cbar = plot_heatmap(
+    im, _cbar = plot_heatmap(
         data.loc[vars_to_plot, vars_to_plot],
         ax=ax,
         cbar_kw=cbar_kw,
@@ -1345,7 +1345,7 @@ def plot_posterior_with_prior(
     )
 
     for axis in axes.ravel():
-        var_name, *coords = axis.get_title().split("\n")
+        var_name, *_coords = axis.get_title().split("\n")
 
         if var_name in prior_dict:
             prior_dict[var_name].plot_pdf(ax=axis, legend=False, color="tab:orange")

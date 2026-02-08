@@ -281,10 +281,12 @@ class TestPrintModel:
     def test_full_model(self):
         block = GCNBlock(name="HOUSEHOLD")
         block.controls = [Variable(name="C")]
-        block.objective = GCNEquation(
-            lhs=Variable(name="U"),
-            rhs=Variable(name="u"),
-        )
+        block.objective = [
+            GCNEquation(
+                lhs=Variable(name="U"),
+                rhs=Variable(name="u"),
+            )
+        ]
         block.constraints = [
             GCNEquation(
                 lhs=Variable(name="C"),

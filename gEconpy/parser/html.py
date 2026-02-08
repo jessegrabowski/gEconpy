@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from IPython.core.display_functions import display
 from IPython.display import HTML
 
-from gEconpy.parser.file_loaders import gcn_to_block_dict
+from gEconpy.parser.loader import load_gcn_file
 
 if TYPE_CHECKING:
     from gEconpy.model.block import Block
@@ -155,13 +155,11 @@ def print_gcn_file(gcn_path: str) -> None:
 
     Parameters
     ----------
-    gcn_file : str
+    gcn_path : str
         Path to the GCN file
     """
-    outputs = gcn_to_block_dict(gcn_path, simplify_blocks=False, include_ss_block=True)
-    block_dict, assumptions, options, try_reduce, ss_solution_dict, prior_info = outputs
-    blocks = list(block_dict.values())
+    result = load_gcn_file(gcn_path, simplify_blocks=False)
+    blocks = list(result["block_dict"].values())
 
-    # TODO: Do stuff with the other outputs
     html = generate_html(blocks)
     display(html)

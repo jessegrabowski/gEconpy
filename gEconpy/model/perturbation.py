@@ -354,7 +354,7 @@ def statespace_to_gEcon_representation(A, T, R, tol):
 
 
 def check_perturbation_solution(A, B, C, D, T, R, tol=1e-8):
-    P, Q, R, S, A_prime, R_prime, S_prime = statespace_to_gEcon_representation(A, T, R, tol)
+    P, Q, R, _S, A_prime, R_prime, S_prime = statespace_to_gEcon_representation(A, T, R, tol)
     norm_deterministic, norm_stochastic = residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
 
     _log.info(f"Norm of deterministic part: {norm_deterministic:0.9f}")
@@ -368,7 +368,7 @@ def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
 
     # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
     # have sign flip relative to qzdiv -- does it matter?
-    A, B, alpha, beta, Q, Z = nb_ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
+    A, B, _alpha, _beta, _Q, _Z = nb_ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
 
     eigenval = np.diag(B) / (np.diag(A) + tol)
     n_eigs = len(eigenval)

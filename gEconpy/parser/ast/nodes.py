@@ -404,7 +404,7 @@ class GCNBlock:
     name: str
     definitions: list[GCNEquation] = field(default_factory=list)
     controls: list[Variable] = field(default_factory=list)
-    objective: GCNEquation | None = None
+    objective: list[GCNEquation] = field(default_factory=list)
     constraints: list[GCNEquation] = field(default_factory=list)
     identities: list[GCNEquation] = field(default_factory=list)
     shocks: list[Variable] = field(default_factory=list)
@@ -416,7 +416,7 @@ class GCNBlock:
         return getattr(self, component.value)
 
     def has_optimization_problem(self) -> bool:
-        return len(self.controls) > 0 and self.objective is not None
+        return len(self.controls) > 0 and len(self.objective) > 0
 
 
 # --- Model Node (Root) ---
@@ -451,8 +451,7 @@ class GCNModel:
         equations = []
         for block in self.blocks:
             equations.extend(block.definitions)
-            if block.objective:
-                equations.append(block.objective)
+            equations.extend(block.objective)
             equations.extend(block.constraints)
             equations.extend(block.identities)
         return equations

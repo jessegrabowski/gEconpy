@@ -552,7 +552,7 @@ def test_outputs_after_gensys_failure(caplog):
         ("basic_rbc", False),
         ("basic_rbc", True),
     ],
-    ids=lambda x: str(x),
+    ids=str,
 )
 def test_solve_matches_dynare(backend, model_name, log_linearize):
     gcn_file = model_name + ".gcn"
@@ -624,8 +624,8 @@ def test_check_bk_condition():
 def test_summarize_perturbation_solution():
     file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
     model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
-    linear_system = [A, B, C, D] = model.linearize_model()
-    policy_function = [T, R] = model.solve_model(solver="gensys", verbose=False)
+    linear_system = [_A, _B, _C, _D] = model.linearize_model()
+    policy_function = [_T, _R] = model.solve_model(solver="gensys", verbose=False)
 
     res = summarize_perturbation_solution(linear_system, policy_function, model)
     matrix_names = ["A", "B", "C", "D", "T", "R"]
@@ -730,7 +730,7 @@ def test_build_Q_matrix_from_dict(rng):
 
 def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     model = load_and_cache_model("rbc_linearized.gcn", "numpy", use_jax=JAX_INSTALLED)
-    T, R = model.solve_model(solver="gensys", verbose=False)
+    T, _R = model.solve_model(solver="gensys", verbose=False)
 
     stationary_covariance_matrix(model, T, shock_std=0.1, verbose=False)
     messages = caplog.messages
@@ -749,7 +749,7 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
 def test_compute_stationary_covariance(caplog, gcn_file):
     model = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
     T, R = model.solve_model(solver="gensys", verbose=False)
-    n_variables, n_shocks = R.shape
+    n_variables, _n_shocks = R.shape
 
     Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1, return_df=False)
     assert len(caplog.messages) == 0

@@ -1,50 +1,135 @@
-import os
-
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel
-from gEconpy.parser.ast_to_block import ast_model_to_block_dict
-from gEconpy.parser.ast_to_distribution import ast_to_distribution_with_metadata
-from gEconpy.parser.ast_to_sympy import ast_to_sympy, equation_to_sympy
 from gEconpy.parser.constants import STEADY_STATE_NAMES
-from gEconpy.parser.file_loaders import (
-    block_dict_to_equation_list,
-    block_dict_to_model_primitives,
-    block_dict_to_param_dict,
-    block_dict_to_variables_and_shocks,
-    gcn_to_block_dict,
-    parsed_model_to_data,
-)
-from gEconpy.parser.gEcon_parser import preprocess_gcn
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
+from gEconpy.parser.transform.to_block import ast_model_to_block_dict
+from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_metadata
+from gEconpy.parser.transform.to_sympy import ast_to_sympy, equation_to_sympy
 from gEconpy.utilities import substitute_repeatedly
 
-# Feature flag for parser switching
-# Set to True to use the new AST-based parser, False for the old parser
-# Can be controlled via environment variable GECONPY_USE_NEW_PARSER
-_USE_NEW_PARSER = os.environ.get("GECONPY_USE_NEW_PARSER", "1").lower() in ("1", "true", "yes")
+if TYPE_CHECKING:
+    from gEconpy.model.block import Block
+
+PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
 
 
-def use_new_parser() -> bool:
-    """Return whether the new parser is enabled."""
-    return _USE_NEW_PARSER
-
-
-def set_parser(use_new: bool) -> None:
+def _create_shock_distribution(
+    item: GCNDistribution,
+    param_distributions: SymbolDictionary,
+) -> CompositeDistribution | None:
     """
-    Set which parser to use.
+    Create a CompositeDistribution for shock distributions with parameter references.
+
+    Shock distributions like `epsilon[] ~ Normal(mu=0, sigma=sigma_A)` where `sigma_A`
+    is a parameter need to be converted to CompositeDistribution objects that link
+    the shock's distribution parameter to the hyper-parameter and its prior.
 
     Parameters
     ----------
-    use_new : bool
-        If True, use the new AST-based parser. If False, use the old parser.
+    item : GCNDistribution
+        The shock distribution AST node.
+    param_distributions : SymbolDictionary
+        Dictionary of parameter priors (for looking up hyper-parameter distributions).
+
+    Returns
+    -------
+    CompositeDistribution or None
+        A CompositeDistribution if the shock has parameter references, None otherwise.
     """
-    global _USE_NEW_PARSER  # noqa: PLW0603
-    _USE_NEW_PARSER = use_new
+    if item.dist_name != "Normal":
+        # Only Normal distributions are currently supported for shocks
+        return None
+
+    fixed_params = {}
+    hyper_param_dict = {}
+    param_name_to_hyper_name = {}
+
+    for param_name, value in item.dist_kwargs.items():
+        if isinstance(value, str):
+            # Check if it's a number
+            try:
+                fixed_params[param_name] = float(value)
+            except ValueError:
+                # It's a parameter reference
+                hyper_name = value
+                # Look up the parameter's distribution
+                if hyper_name in param_distributions:
+                    hyper_param_dict[param_name] = param_distributions[hyper_name]
+                    param_name_to_hyper_name[param_name] = hyper_name
+                else:
+                    # Parameter has no distribution - just use a placeholder
+                    param_name_to_hyper_name[param_name] = hyper_name
+        elif isinstance(value, (int, float)):
+            fixed_params[param_name] = float(value)
+
+    # If there are no hyper-parameters, this is a simple distribution
+    if not param_name_to_hyper_name:
+        return None
+
+    return CompositeDistribution(
+        name=item.parameter_name,
+        dist_name=item.dist_name,
+        fixed_params=fixed_params,
+        hyper_param_dict=hyper_param_dict,
+        param_name_to_hyper_name=param_name_to_hyper_name,
+    )
+
+
+def _block_dict_to_equation_list(block_dict: dict[str, "Block"]) -> list[sp.Expr]:
+    """Extract all system equations from a dictionary of Block objects."""
+    equations = []
+    for block in block_dict.values():
+        equations.extend(block.system_equations)
+    return equations
+
+
+def _block_dict_to_param_dict(
+    block_dict: dict[str, "Block"], dict_name: PARAM_DICTS = "param_dict"
+) -> SymbolDictionary:
+    """Extract and merge parameter dictionaries from all blocks."""
+    param_dict = SymbolDictionary()
+    duplicates = set()
+
+    for block in block_dict.values():
+        current_keys = set(param_dict.keys())
+        new_keys = set(getattr(block, dict_name).keys())
+        new_duplicates = current_keys.intersection(new_keys)
+        duplicates = duplicates.union(new_duplicates)
+        param_dict = param_dict | getattr(block, dict_name)
+
+    if len(duplicates) > 0:
+        raise DuplicateParameterError(duplicates)
+
+    return param_dict.sort_keys().to_string().values_to_float()
+
+
+def _block_dict_to_variables_and_shocks(
+    block_dict: dict[str, "Block"],
+) -> tuple[list[TimeAwareSymbol], list[TimeAwareSymbol]]:
+    """Extract variables and shocks from all blocks."""
+    variables = []
+    shocks = []
+
+    for block in block_dict.values():
+        if block.variables is not None:
+            variables.extend(block.variables)
+        if block.shocks is not None:
+            shocks.extend(block.shocks)
+
+    shocks = sorted({x.set_t(0) for x in shocks}, key=lambda x: x.name)
+    variables = sorted(
+        {x.set_t(0) for x in variables if x.set_t(0) not in shocks},
+        key=lambda x: x.name,
+    )
+    return variables, shocks
 
 
 def ast_block_to_equations(
@@ -70,7 +155,7 @@ def ast_block_to_equations(
     assumptions = assumptions or {}
     result = {
         "definitions": [],
-        "objective": None,
+        "objective": [],
         "constraints": [],
         "identities": [],
     }
@@ -78,8 +163,8 @@ def ast_block_to_equations(
     for eq in block.definitions:
         result["definitions"].append(equation_to_sympy(eq, assumptions))
 
-    if block.objective:
-        result["objective"] = equation_to_sympy(block.objective, assumptions)
+    for eq in block.objective:
+        result["objective"].append(equation_to_sympy(eq, assumptions))
 
     for eq in block.constraints:
         result["constraints"].append(equation_to_sympy(eq, assumptions))
@@ -128,7 +213,10 @@ def ast_block_to_calibration(
 
             if item.is_calibrating:
                 # Calibrating equation: param = expr -> 0
-                calib_dict[item.calibrating_parameter] = sp.Eq(lhs_sympy, rhs_sympy)
+                # Create parameter symbol with appropriate assumptions
+                param_assumptions = assumptions.get(item.calibrating_parameter, {})
+                calib_param = sp.Symbol(item.calibrating_parameter, **param_assumptions)
+                calib_dict[calib_param] = sp.Eq(lhs_sympy, rhs_sympy)
             # Simple assignment: param = value
             elif hasattr(lhs_sympy, "name"):
                 param_dict[lhs_sympy.name] = rhs_sympy
@@ -177,8 +265,8 @@ def ast_block_to_variables_and_shocks(
         if isinstance(lhs, TimeAwareSymbol):
             variables.append(lhs.set_t(0))
 
-    if block.objective:
-        lhs = ast_to_sympy(block.objective.lhs, assumptions)
+    for eq in block.objective:
+        lhs = ast_to_sympy(eq.lhs, assumptions)
         if isinstance(lhs, TimeAwareSymbol):
             variables.append(lhs.set_t(0))
 
@@ -268,34 +356,41 @@ def ast_model_to_primitives(
     # Build Block objects and solve optimization
     block_dict, assumptions, options, tryreduce = ast_model_to_block_dict(model, simplify_blocks=simplify_blocks)
 
-    # Extract primitives using the same functions as the old parser
-    equations = block_dict_to_equation_list(block_dict)
-    param_dict = block_dict_to_param_dict(block_dict, "param_dict")
-    calib_dict = block_dict_to_param_dict(block_dict, "calib_dict")
-    deterministic_dict = block_dict_to_param_dict(block_dict, "deterministic_dict")
-    variables, shocks = block_dict_to_variables_and_shocks(block_dict)
+    # Extract primitives
+    equations = _block_dict_to_equation_list(block_dict)
+    param_dict = _block_dict_to_param_dict(block_dict, "param_dict")
+    calib_dict = _block_dict_to_param_dict(block_dict, "calib_dict")
+    deterministic_dict = _block_dict_to_param_dict(block_dict, "deterministic_dict")
+    variables, shocks = _block_dict_to_variables_and_shocks(block_dict)
 
     # Extract steady state solutions from STEADY_STATE block
     ss_solution_dict = _extract_ss_solution_dict(model, assumptions)
 
-    # Handle distributions from calibration blocks
+    # Handle distributions from calibration and shock blocks
     distributions = SymbolDictionary()
+    shock_distributions = SymbolDictionary()
+    distribution_param_names: set[str] = set()
+
     for ast_block in model.blocks:
         for item in ast_block.calibration:
             if isinstance(item, GCNDistribution):
                 try:
-                    dist, metadata = ast_to_distribution_with_metadata(item)
+                    dist, _metadata = ast_to_distribution_with_metadata(item)
                     distributions[item.parameter_name] = dist
                 except (ValueError, TypeError):
                     # Distribution has parameter references that can't be resolved yet
                     pass
-        # Also include shock distributions
+
+        # Handle shock distributions - may need CompositeDistribution for parameter references
         for item in ast_block.shock_distributions:
-            try:
-                dist, metadata = ast_to_distribution_with_metadata(item)
-                distributions[item.parameter_name] = dist
-            except (ValueError, TypeError):
-                pass
+            shock_dist = _create_shock_distribution(item, distributions)
+            if shock_dist is not None:
+                shock_distributions[item.parameter_name] = shock_dist
+
+            # Track parameter names used in distribution kwargs
+            for kwarg_value in item.dist_kwargs.values():
+                if isinstance(kwarg_value, str) and not kwarg_value.replace(".", "").replace("-", "").isdigit():
+                    distribution_param_names.add(kwarg_value)
 
     return {
         "equations": equations,
@@ -305,6 +400,8 @@ def ast_model_to_primitives(
         "calib_dict": calib_dict,
         "deterministic_dict": deterministic_dict,
         "distributions": distributions,
+        "shock_distributions": shock_distributions,
+        "distribution_param_names": distribution_param_names,
         "ss_solution_dict": ss_solution_dict,
         "options": options,
         "tryreduce": tryreduce,
@@ -317,8 +414,7 @@ def load_gcn_file(filepath: str | Path, simplify_blocks: bool = True) -> dict:
     """
     Load a GCN file and return model primitives.
 
-    This is the main entry point for loading GCN files. Uses the new AST-based
-    parser by default, but can fall back to the old parser via feature flag.
+    This is the main entry point for loading GCN files.
 
     Parameters
     ----------
@@ -331,53 +427,7 @@ def load_gcn_file(filepath: str | Path, simplify_blocks: bool = True) -> dict:
     -------
     dict
         Dictionary of model primitives ready for Model construction.
-
-    Notes
-    -----
-    The parser can be switched using:
-    - Environment variable: GECONPY_USE_NEW_PARSER=0
-    - Programmatically: gEconpy.parser.loader.set_parser(False)
     """
-    if not _USE_NEW_PARSER:
-        # Use old parser via adapter
-        filepath = Path(filepath)
-        block_dict, assumptions, options, tryreduce, ss_solution_dict, prior_dict = gcn_to_block_dict(
-            filepath, simplify_blocks=simplify_blocks
-        )
-        (
-            equations,
-            param_dict,
-            calib_dict,
-            deterministic_dict,
-            variables,
-            shocks,
-            param_priors,
-            _shock_priors,
-            _eliminated_variables,
-            _singletons,
-        ) = block_dict_to_model_primitives(
-            block_dict,
-            assumptions,
-            tryreduce,
-            prior_dict,
-            simplify_tryreduce=False,
-            simplify_constants=False,
-        )
-        return {
-            "equations": equations,
-            "variables": variables,
-            "shocks": shocks,
-            "param_dict": param_dict,
-            "calib_dict": calib_dict,
-            "deterministic_dict": deterministic_dict,
-            "distributions": param_priors,
-            "ss_solution_dict": ss_solution_dict,
-            "options": options,
-            "tryreduce": tryreduce,
-            "assumptions": assumptions,
-            "block_dict": block_dict,
-        }
-
     result = preprocess_file(filepath, validate=True)
     return ast_model_to_primitives(result.ast, simplify_blocks=simplify_blocks)
 
@@ -395,50 +445,6 @@ def load_gcn_string(source: str) -> dict:
     -------
     dict
         Dictionary of model primitives ready for Model construction.
-
-    Notes
-    -----
-    The parser can be switched using:
-    - Environment variable: GECONPY_USE_NEW_PARSER=0
-    - Programmatically: gEconpy.parser.loader.set_parser(False)
     """
-    if not _USE_NEW_PARSER:
-        # Use old parser via adapter
-
-        parsed_model, prior_dict = preprocess_gcn(source)
-        block_dict, assumptions, options, tryreduce, _ss_solution_dict = parsed_model_to_data(
-            parsed_model, simplify_blocks=False
-        )
-        (
-            equations,
-            param_dict,
-            calib_dict,
-            _deterministic_dict,
-            variables,
-            shocks,
-            param_priors,
-            _shock_priors,
-            _eliminated_variables,
-            _singletons,
-        ) = block_dict_to_model_primitives(
-            block_dict,
-            assumptions,
-            tryreduce,
-            prior_dict,
-            simplify_tryreduce=False,
-            simplify_constants=False,
-        )
-        return {
-            "equations": equations,
-            "variables": variables,
-            "shocks": shocks,
-            "param_dict": param_dict,
-            "calib_dict": calib_dict,
-            "distributions": param_priors,
-            "options": options,
-            "tryreduce": tryreduce,
-            "assumptions": assumptions,
-        }
-
     result = preprocess(source, validate=True)
     return ast_model_to_primitives(result.ast)

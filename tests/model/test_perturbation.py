@@ -78,7 +78,7 @@ def test_log_linearize_model(gcn_file, backend):
         mod.equations,
         mod.shocks,
     )
-    lags, now, leads = make_all_variable_time_combinations(mod.variables)
+    _lags, now, _leads = make_all_variable_time_combinations(mod.variables)
 
     ss_vars = [x.to_ss() for x in mod.variables]
     ss_shocks = [x.to_ss() for x in mod.shocks]
@@ -149,7 +149,7 @@ def test_solve_policy_function(gcn_file, state_variables, backend):
     A, B, C, D = [np.ascontiguousarray(x, dtype="float64") for x in [A, B, C, D]]
 
     gensys_results = solve_policy_function_with_gensys(A, B, C, D, 1e-8)
-    G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
+    G_1, _constant, impact, _f_mat, _f_wt, _y_wt, _gev, _eu, _loose = gensys_results
 
     state_idxs = [i for i, var in enumerate(mod.variables) if var.base_name in state_variables]
     jumper_idxs = [i for i, var in enumerate(mod.variables) if var.base_name not in state_variables]
@@ -164,8 +164,8 @@ def test_solve_policy_function(gcn_file, state_variables, backend):
     (
         T,
         R,
-        result,
-        log_norm,
+        _result,
+        _log_norm,
     ) = solve_policy_function_with_cycle_reduction(A, B, C, D, 100_000, 1e-16, False)
 
     assert not np.allclose(T[:, state_idxs], 0.0)
@@ -200,13 +200,13 @@ def test_cycle_reduction_gradients(op):
         mode="JAX" if JAX_INSTALLED and op is scan_cycle_reduction else "FAST_RUN",
     )
 
-    T_np, R_np, A_bar, B_bar, C_bar = f(A, B, C, D)
+    T_np, _R_np, _A_bar, _B_bar, _C_bar = f(A, B, C, D)
 
     resid = A + B @ T_np + C @ T_np @ T_np
     assert_allclose(resid, 0.0, atol=1e-8, rtol=1e-8)
 
     def cycle_func(A, B, C, D):
-        T, R, *_ = op(A, B, C, D)
+        T, _R, *_ = op(A, B, C, D)
         return T.sum()
 
     verify_grad(cycle_func, pt=[A, B, C, D.astype("float64")], rng=np.random.default_rng())
@@ -221,11 +221,11 @@ def test_pytensor_gensys():
     T1, R1 = cycle_reduction_pt(A_pt, B_pt, C_pt, D_pt)
     T1_grad = pt.grad(T1.sum(), [A_pt, B_pt, C_pt])
 
-    T2, R2, success = gensys_pt(A_pt, B_pt, C_pt, D_pt, 1e-8)
+    T2, R2, _success = gensys_pt(A_pt, B_pt, C_pt, D_pt, 1e-8)
     T2_grad = pt.grad(T2.sum(), [A_pt, B_pt, C_pt])
 
     def gensys_func(A, B, C, D):
-        T, R, _ = gensys_pt(A, B, C, D)
+        T, _R, _ = gensys_pt(A, B, C, D)
         return T.sum()
 
     verify_grad(gensys_func, pt=[A, B, C, D.astype("float64")], rng=np.random.default_rng())
@@ -237,7 +237,7 @@ def test_pytensor_gensys():
         mode="FAST_RUN",
     )
 
-    T1_np, T2_np, R1_np, R2_np, A_bar_1, B_bar_1, C_bar_1, A_bar_2, B_bar_2, C_bar_2 = f(A, B, C, D)
+    _T1_np, _T2_np, _R1_np, _R2_np, A_bar_1, B_bar_1, C_bar_1, A_bar_2, B_bar_2, C_bar_2 = f(A, B, C, D)
 
     assert_allclose(A_bar_1, A_bar_2, atol=1e-8, rtol=1e-8)
     assert_allclose(B_bar_1, B_bar_2, atol=1e-8, rtol=1e-8)

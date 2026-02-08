@@ -3,10 +3,7 @@ import operator
 import pyparsing as pp
 
 from gEconpy.parser.ast import GCNDistribution
-from gEconpy.parser.dist_syntax import (
-    PRELIZ_DIST_WRAPPERS,
-    PRELIZ_DISTS,
-)
+from gEconpy.parser.constants import PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
 
 _SAFE_OPERATORS = {
     "+": operator.add,

@@ -126,8 +126,9 @@ def validate_model(model: GCNModel) -> ValidationErrorCollection:  # noqa: PLR09
                 all_defined_vars.add(eq.lhs.name)
 
         # Objective LHS defines a variable
-        if block.objective and isinstance(block.objective.lhs, Variable):
-            all_defined_vars.add(block.objective.lhs.name)
+        for eq in block.objective:
+            if isinstance(eq.lhs, Variable):
+                all_defined_vars.add(eq.lhs.name)
 
         # Calibration defines parameters
         for item in block.calibration:
@@ -207,16 +208,17 @@ def check_undefined_variables(
         for eq in block.definitions + block.identities:
             if isinstance(eq.lhs, Variable):
                 defined_vars.add(eq.lhs.name)
-        if block.objective and isinstance(block.objective.lhs, Variable):
-            defined_vars.add(block.objective.lhs.name)
+        for eq in block.objective:
+            if isinstance(eq.lhs, Variable):
+                defined_vars.add(eq.lhs.name)
 
     # Collect all used variables
     used_vars = set()
     for block in model.blocks:
         for eq in block.definitions + block.constraints + block.identities:
             used_vars |= collect_variable_names(eq.rhs)
-        if block.objective:
-            used_vars |= collect_variable_names(block.objective.rhs)
+        for eq in block.objective:
+            used_vars |= collect_variable_names(eq.rhs)
 
     # Find undefined
     undefined = used_vars - defined_vars - external
@@ -263,9 +265,9 @@ def check_undefined_parameters(
         for eq in block.definitions + block.constraints + block.identities:
             used_params |= collect_parameter_names(eq.lhs)
             used_params |= collect_parameter_names(eq.rhs)
-        if block.objective:
-            used_params |= collect_parameter_names(block.objective.lhs)
-            used_params |= collect_parameter_names(block.objective.rhs)
+        for eq in block.objective:
+            used_params |= collect_parameter_names(eq.lhs)
+            used_params |= collect_parameter_names(eq.rhs)
 
     # Find undefined
     undefined = used_params - calibrated_params - external

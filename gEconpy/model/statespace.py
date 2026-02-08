@@ -25,9 +25,9 @@ from pymc_extras.statespace.utils.constants import (
 from pytensor import graph_replace
 
 from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perturbation import check_bk_condition_pt
-from gEconpy.parser.parse_distributions import CompositeDistribution
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
 
@@ -164,7 +164,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self, A: pt.TensorVariable, B: pt.TensorVariable, C: pt.TensorVariable, D: pt.TensorVariable
     ) -> tuple[pt.TensorVariable, pt.TensorVariable]:
         if self._solver == "gensys":
-            T, R, success = gensys_pt(A, B, C, D, **self._solver_kwargs)
+            T, R, _success = gensys_pt(A, B, C, D, **self._solver_kwargs)
         elif self._solver == "cycle_reduction":
             T, R = cycle_reduction_pt(A, B, C, D, **self._solver_kwargs)
         else:
@@ -430,7 +430,7 @@ class DSGEStateSpace(PyMCStateSpace):
             strict=False,
         )
 
-        bk_flag, n_forward, n_gt_one = bk_output
+        bk_flag, _n_forward, _n_gt_one = bk_output
 
         if add_norm_check:
             n_vars, n_shocks = R.shape

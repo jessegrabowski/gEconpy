@@ -12,72 +12,8 @@ from gEconpy.parser.loader import (
     ast_model_to_primitives,
     load_gcn_file,
     load_gcn_string,
-    set_parser,
-    use_new_parser,
 )
 from gEconpy.parser.preprocessor import quick_parse
-
-
-class TestFeatureFlag:
-    def test_default_is_new_parser(self):
-        # Save original state
-        original = use_new_parser()
-        try:
-            set_parser(True)
-            assert use_new_parser() is True
-        finally:
-            set_parser(original)
-
-    def test_can_switch_to_old_parser(self):
-        original = use_new_parser()
-        try:
-            set_parser(False)
-            assert use_new_parser() is False
-        finally:
-            set_parser(original)
-
-    def test_can_switch_back_to_new_parser(self):
-        original = use_new_parser()
-        try:
-            set_parser(False)
-            set_parser(True)
-            assert use_new_parser() is True
-        finally:
-            set_parser(original)
-
-
-class TestLoadWithOldParser:
-    @pytest.fixture(autouse=True)
-    def use_old_parser(self):
-        original = use_new_parser()
-        set_parser(False)
-        yield
-        set_parser(original)
-
-    @pytest.fixture
-    def gcn_dir(self):
-        return Path(__file__).parent.parent / "_resources" / "test_gcns"
-
-    def test_load_file_with_old_parser(self, gcn_dir):
-        gcn_path = gcn_dir / "one_block_1.gcn"
-        if not gcn_path.exists():
-            pytest.skip(f"Test file not found: {gcn_path}")
-
-        result = load_gcn_file(gcn_path)
-        assert "equations" in result
-        assert "variables" in result
-
-    def test_load_string_with_old_parser(self):
-        source = """
-        block TEST
-        {
-            identities { Y[] = C[]; };
-            calibration { alpha = 0.35; };
-        };
-        """
-        result = load_gcn_string(source)
-        assert "equations" in result
-        assert "param_dict" in result
 
 
 class TestAstBlockToEquations:
@@ -131,7 +67,9 @@ class TestAstBlockToEquations:
         result = ast_block_to_equations(block)
 
         assert result["objective"] is not None
-        eq, _metadata = result["objective"]
+        [
+            (eq, _metadata),
+        ] = result["objective"]
         assert isinstance(eq, sp.Eq)
 
     def test_extracts_constraints_with_lagrange(self):

@@ -118,7 +118,7 @@ filterwarnings = [
     'ignore:The `broadcastable` keyword is deprecated; use `shape`:DeprecationWarning',
 
     # Scipy lambdify can easily hit numerical issues that are not relevant to our tests
-    'ignore:invalid value encountered in scalar power::RuntimeWarning',
+    'ignore:invalid value encountered in scalar power:RuntimeWarning',
 
 ]
 

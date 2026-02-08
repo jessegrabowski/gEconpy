@@ -17,6 +17,7 @@ from preliz.distributions.distributions import Distribution
 from scipy import linalg
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
+from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import (
     GensysFailedException,
@@ -34,7 +35,6 @@ from gEconpy.model.perturbation import (
     statespace_to_gEcon_representation,
 )
 from gEconpy.model.steady_state import system_to_steady_state
-from gEconpy.parser.parse_distributions import CompositeDistribution
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 from gEconpy.solvers.gensys import (
     interpret_gensys_output,
@@ -172,7 +172,7 @@ def validate_policy_function(A, B, C, D, T, R, tol: float = 1e-8, verbose: bool 
     P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
 
     resid_norms = residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
-    norm_deterministic, norm_stochastic = resid_norms
+    norm_deterministic, _norm_stochastic = resid_norms
 
     if verbose:
         _log.info(f"Norm of deterministic part: {norm_deterministic:0.9f}")
@@ -1361,7 +1361,7 @@ class Model:
 
         if solver == "gensys":
             gensys_results = solve_policy_function_with_gensys(A, B, C, D, tol)
-            G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys_results
+            G_1, _constant, impact, _f_mat, _f_wt, _y_wt, _gev, eu, _loose = gensys_results
 
             success = all(x == 1 for x in eu[:2])
 
@@ -1388,7 +1388,7 @@ class Model:
                 T,
                 R,
                 result,
-                log_norm,
+                _log_norm,
             ) = solve_policy_function_with_cycle_reduction(A, B, C, D, max_iter, tol, verbose)
             if T is None:
                 if on_failure == "error":
@@ -1947,7 +1947,7 @@ class ShockSpec:
 
 def _validate_irf_shock_arguments(*values_with_names: tuple[str, Any]) -> None:
     """Ensure at most one of the provided options is non-None."""
-    provided_names, provided_values = zip(*[(n, v) for n, v in values_with_names if v is not None], strict=False)
+    provided_names, _provided_values = zip(*[(n, v) for n, v in values_with_names if v is not None], strict=False)
     if len(provided_names) > 1:
         names = ", ".join(n for n, _ in provided_names)
         raise ValueError(f"Only one of {names} may be specified, got {len(provided_names)}.")
@@ -2093,7 +2093,7 @@ def _simulate_linear_system(T: np.ndarray, R: np.ndarray, shock_traj: np.ndarray
     """Simulate a linear system :math:`x_t = T x_{t-1} + R e_t`, given a shock trajectory :math:`e_t`."""
     T = np.asarray(T)
     R = np.asarray(R)
-    T_len, n_shocks = shock_traj.shape
+    T_len, _n_shocks = shock_traj.shape
     n_vars = T.shape[0]
 
     out = np.zeros((T_len, n_vars), dtype=float)

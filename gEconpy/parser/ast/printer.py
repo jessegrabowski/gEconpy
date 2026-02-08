@@ -183,7 +183,7 @@ def print_block(block: GCNBlock, indent: str = "    ") -> str:
     if block.objective:
         lines.append(f"{indent}objective")
         lines.append(f"{indent}{{")
-        lines.append(f"{indent}{indent}{print_equation(block.objective)};")
+        lines.extend(f"{indent}{indent}{print_equation(eq)};" for eq in block.objective)
         lines.append(f"{indent}}};")
         lines.append("")
 
