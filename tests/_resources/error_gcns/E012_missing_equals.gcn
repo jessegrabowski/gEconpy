@@ -1,0 +1,8 @@
+# Error: No equals sign in equation
+block UTILITY
+{
+    identities
+    {
+        Y[] + C[] + I[];
+    };
+};

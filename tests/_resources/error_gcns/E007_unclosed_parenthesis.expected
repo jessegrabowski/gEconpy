@@ -1,0 +1,13 @@
+error[E007]: Unbalanced parentheses. Found '';''
+  --> E007_unclosed_parenthesis.gcn:6:28
+     |
+   4 |     identities
+   5 |     {
+   6 |         U[] = log(C[] + I[];
+     |                            ^ unbalanced parentheses
+   7 |     };
+   8 | };
+     |
+   = note: Count opening and closing parentheses
+   = note: Check function calls have closing ')'
+   = note: Use an editor with parenthesis matching

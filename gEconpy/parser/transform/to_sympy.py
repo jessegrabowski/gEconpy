@@ -73,7 +73,7 @@ class ASTToSympyConverter:
 
         Returns
         -------
-        sp.Basic
+        expr : sp.Basic
             The sympy representation.
         """
         match node:
@@ -156,7 +156,7 @@ def ast_to_sympy(node: Node, assumptions: dict[str, dict[str, bool]] | None = No
 
     Returns
     -------
-    sp.Basic
+    expr : sp.Basic
         The sympy representation.
     """
     converter = ASTToSympyConverter(assumptions)
@@ -178,7 +178,7 @@ def equation_to_sympy(
 
     Returns
     -------
-    tuple[sp.Eq, dict]
+    result : tuple of (sp.Eq, dict)
         The sympy equation and a metadata dictionary containing:
         - is_calibrating: bool
         - calibrating_parameter: sp.Symbol or None
@@ -221,7 +221,7 @@ def block_to_sympy(
 
     Returns
     -------
-    dict
+    equations : dict
         A dictionary with keys for each component type containing lists of
         (equation, metadata) tuples.
     """
@@ -266,7 +266,7 @@ def model_to_sympy(
 
     Returns
     -------
-    dict
+    equations : dict
         A dictionary mapping block names to their converted equations.
     """
     assumptions = model.assumptions

@@ -1,15 +1,12 @@
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import preliz as pz
 
 from preliz.distributions.distributions import Distribution
 
 from gEconpy.exceptions import InvalidDistributionException
-from gEconpy.parser.ast import GCNDistribution
+from gEconpy.parser.ast import GCNDistribution, GCNModel
 from gEconpy.parser.constants import PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
-
-if TYPE_CHECKING:
-    from gEconpy.parser.ast import GCNModel
 
 
 def ast_to_distribution(node: GCNDistribution) -> Distribution:
@@ -23,7 +20,7 @@ def ast_to_distribution(node: GCNDistribution) -> Distribution:
 
     Returns
     -------
-    Distribution
+    dist : Distribution
         A PreliZ distribution object.
     """
     dist_name = node.dist_name
@@ -65,7 +62,7 @@ def ast_to_distribution_with_metadata(
 
     Returns
     -------
-    tuple[Distribution, dict]
+    result : tuple of (Distribution, dict)
         The distribution and a metadata dictionary containing:
         - parameter_name: str
         - initial_value: float | None
@@ -98,7 +95,7 @@ def distributions_from_calibration(
 
     Returns
     -------
-    dict[str, tuple[Distribution, dict]]
+    distributions : dict, str to (Distribution, dict) tuple
         Dictionary mapping parameter names to (distribution, metadata) tuples.
     """
     result = {}
@@ -111,7 +108,7 @@ def distributions_from_calibration(
     return result
 
 
-def distributions_from_model(model: "GCNModel") -> dict[str, tuple[Distribution, dict[str, Any]]]:
+def distributions_from_model(model: GCNModel) -> dict[str, tuple[Distribution, dict[str, Any]]]:
     """
     Extract all distributions from a GCNModel.
 
@@ -122,7 +119,7 @@ def distributions_from_model(model: "GCNModel") -> dict[str, tuple[Distribution,
 
     Returns
     -------
-    dict[str, tuple[Distribution, dict]]
+    distributions : dict, str to (Distribution, dict) tuple
         Dictionary mapping parameter names to (distribution, metadata) tuples.
     """
     result = {}

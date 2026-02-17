@@ -1,0 +1,14 @@
+error[E010]: Invalid time index '[abc]' for variable 'K'. Found '[abc]'
+  --> E010_invalid_time_index.gcn:6:9
+     |
+   4 |     identities
+   5 |     {
+   6 |         K[abc] = I[];
+     |         ^^^^^ invalid time index '[abc]'
+   7 |     };
+   8 | };
+     |
+   = note: Use Y[] for current period
+   = note: Use Y[-1] for lagged values
+   = note: Use Y[1] for lead values
+   = note: Use Y[ss] for steady state

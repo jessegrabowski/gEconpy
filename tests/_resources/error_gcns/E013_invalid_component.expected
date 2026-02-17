@@ -1,0 +1,12 @@
+error[E013]: Unknown component 'foobar'. Found 'foobar'
+  --> E013_invalid_component.gcn:4:5
+     |
+   2 | block HOUSEHOLD
+   3 | {
+   4 |     foobar
+     |     ^^^^^^ unknown block component
+   5 |     {
+   6 |         Y[] = C[];
+     |
+   = note: Check spelling of component name
+   = note: Valid components: definitions, controls, objective, constraints, identities, shocks, calibration

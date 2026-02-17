@@ -1,0 +1,11 @@
+error[E016]: Component 'IDENTITIES' found outside of block. Found 'IDENTITIES'
+  --> E016_component_outside_block.gcn:2:1
+     |
+   1 | # Component identities used outside of a block
+   2 | identities {
+     | ^^^^^^^^^^ component outside block
+   3 |     Y[] = C[] + I[];
+   4 | };
+     |
+   = note: Wrap the component in a block: block NAME { ... };
+   = note: Check that the block's opening brace is in the right place

@@ -1,4 +1,92 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum
+
+import pyparsing as pp
+
+from gEconpy.parser.error_catalog import ErrorCode
+
+
+class Severity(Enum):
+    """Severity level for parse errors."""
+
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
+    HINT = "hint"
+
+
+class GCNParseFailure(pp.ParseFatalException):
+    """
+    Custom parse exception that carries structured error data.
+
+    This extends pyparsing's ParseFatalException to include:
+    - An ErrorCode from our catalog
+    - The found token/content for better error messages
+    - Optional suggestions for typo correction
+
+    Data is encoded in the message to survive pyparsing's exception wrapping.
+    Format: "message||CODE||found||suggestion1,suggestion2"
+    """
+
+    SEPARATOR = "||GCN||"
+
+    def __init__(
+        self,
+        s: str,
+        loc: int = 0,
+        msg: str = "",
+        code: ErrorCode = ErrorCode.E000,
+        found: str = "",
+        suggestions: list[str] | None = None,
+    ):
+        suggestions_list = suggestions or []
+        suggestions_str = ",".join(suggestions_list)
+        encoded_msg = self.SEPARATOR.join((msg, code.name, found, suggestions_str))
+        super().__init__(s, loc, encoded_msg)
+
+        # Also store as attributes for direct access if exception isn't wrapped
+        self.error_code = code
+        self.gcn_found = found
+        self.suggestions = suggestions_list
+
+    @classmethod
+    def decode(cls, exc: pp.ParseBaseException) -> tuple[str, ErrorCode, str, list[str]]:
+        """
+        Decode error data from an exception message.
+
+        Returns (message, code, found, suggestions).
+        If not encoded, returns (original_msg, E000, "", []).
+        """
+        msg = str(exc.msg) if hasattr(exc, "msg") else str(exc)
+
+        if cls.SEPARATOR not in msg:
+            found = exc.found if hasattr(exc, "found") and exc.found else ""
+            return msg, ErrorCode.E000, found, []
+
+        parts = msg.split(cls.SEPARATOR)
+        expected_parts = 4  # message, code, found, suggestions
+        if len(parts) != expected_parts:
+            return msg, ErrorCode.E000, "", []
+
+        message, code_str, found, suggestions_str = parts
+        try:
+            code = ErrorCode[code_str]
+        except KeyError:
+            code = ErrorCode.E000
+        suggestions = [s for s in suggestions_str.split(",") if s]
+        return message, code, found, suggestions
+
+    def copy(self) -> "GCNParseFailure":
+        """Create a copy of this exception (used by pyparsing caching)."""
+        return GCNParseFailure(
+            self.pstr,
+            self.loc,
+            # Extract original message (without encoding)
+            self.msg.split(self.SEPARATOR)[0] if self.SEPARATOR in self.msg else self.msg,
+            code=self.error_code,
+            found=self.gcn_found,
+            suggestions=self.suggestions,
+        )
 
 
 @dataclass(frozen=True)
@@ -12,6 +100,10 @@ class ParseLocation:
         The 1-based line number where the error occurred.
     column : int
         The 1-based column number where the error occurred.
+    end_line : int, optional
+        The 1-based line number where the error ends (for span highlighting).
+    end_column : int, optional
+        The 1-based column number where the error ends.
     source_line : str, optional
         The full text of the line where the error occurred.
     filename : str, optional
@@ -34,8 +126,19 @@ class ParseLocation:
 
     line: int
     column: int
+    end_line: int | None = None
+    end_column: int | None = None
     source_line: str = ""
     filename: str = ""
+
+    def to_lsp_range(self) -> dict:
+        """Convert to LSP Range format (0-indexed)."""
+        end_line = self.end_line if self.end_line is not None else self.line
+        end_col = self.end_column if self.end_column is not None else self.column + 1
+        return {
+            "start": {"line": self.line - 1, "character": self.column - 1},
+            "end": {"line": end_line - 1, "character": end_col - 1},
+        }
 
     def format_pointer(self, pointer_char: str = "^") -> str:
         """
@@ -48,15 +151,18 @@ class ParseLocation:
 
         Returns
         -------
-        str
+        formatted_pointer : str
             The source line followed by a pointer line.
         """
         if not self.source_line:
             return ""
 
-        # Adjust column to be 0-based for string indexing
         col_index = max(0, self.column - 1)
-        pointer_line = " " * col_index + pointer_char
+        if self.end_column is not None and self.end_line == self.line:
+            pointer_len = max(1, self.end_column - self.column)
+            pointer_line = " " * col_index + pointer_char * pointer_len
+        else:
+            pointer_line = " " * col_index + pointer_char
         return f"{self.source_line}\n{pointer_line}"
 
     def format_location(self) -> str:
@@ -65,7 +171,7 @@ class ParseLocation:
 
         Returns
         -------
-        str
+        location : str
             A string like "file.gcn:5:12" or "line 5, column 12".
         """
         if self.filename:
@@ -90,20 +196,17 @@ class GCNParseError(Exception):
     location : ParseLocation, optional
         The location in the source where the error occurred.
     suggestions : list of str, optional
-        Suggested fixes or alternatives.
+        Suggested fixes or alternatives (shown as "help: Did you mean...").
     context : str, optional
         Additional context about the error (e.g., block name).
-
-    Attributes
-    ----------
-    message : str
-        The main error message.
-    location : ParseLocation or None
-        The source location if available.
-    suggestions : list of str
-        List of suggested fixes.
-    context : str
-        Additional context string.
+    code : ErrorCode, optional
+        Error code (e.g., "E001", "W002").
+    severity : Severity, optional
+        Error severity ("error" or "warning"). Default is "error".
+    annotation : str, optional
+        Short explanation shown after the caret pointer (e.g., "undefined parameter").
+    notes : list of str, optional
+        Additional notes shown after the error (e.g., "Parameters must be defined...").
 
     Examples
     --------
@@ -134,16 +237,24 @@ class GCNParseError(Exception):
         location: ParseLocation | None = None,
         suggestions: list[str] | None = None,
         context: str = "",
+        code: ErrorCode | None = None,
+        severity: Severity = Severity.ERROR,
+        annotation: str = "",
+        notes: list[str] | None = None,
     ):
         self.message = message
         self.location = location
         self.suggestions = suggestions or []
         self.context = context
+        self.code = code
+        self.severity = severity
+        self.annotation = annotation
+        self.notes = notes or []
         super().__init__(self._format_message())
 
     def _format_message(self) -> str:
         """Format the complete error message with location and suggestions."""
-        parts = [self.message]
+        parts = [f"[{self.code.name}] {self.message}"] if self.code else [self.message]
 
         if self.context:
             parts.append(f"  in {self.context}")
@@ -164,6 +275,44 @@ class GCNParseError(Exception):
 
         return "\n".join(parts)
 
+    def to_lsp_diagnostic(self) -> dict:
+        """
+        Convert to LSP Diagnostic format for editor integration.
+
+        Returns a dictionary conforming to the Language Server Protocol
+        Diagnostic specification.
+        """
+        severity_map = {
+            Severity.ERROR: 1,
+            Severity.WARNING: 2,
+            Severity.INFO: 3,
+            Severity.HINT: 4,
+        }
+
+        if self.location:
+            range_dict = self.location.to_lsp_range()
+        else:
+            range_dict = {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": 0, "character": 0},
+            }
+
+        diagnostic: dict = {
+            "range": range_dict,
+            "message": self.message,
+            "severity": severity_map.get(self.severity, 1),
+            "source": "gEconpy",
+        }
+
+        if self.code:
+            diagnostic["code"] = self.code.name
+            diagnostic["codeDescription"] = {"href": f"https://geconpy.readthedocs.io/errors/{self.code.name}.html"}
+
+        if self.suggestions:
+            diagnostic["data"] = {"suggestions": self.suggestions}
+
+        return diagnostic
+
     def with_location(self, location: ParseLocation) -> "GCNParseError":
         """
         Create a new error with the given location.
@@ -178,7 +327,7 @@ class GCNParseError(Exception):
 
         Returns
         -------
-        GCNParseError
+        error : GCNParseError
             A new error instance with the location set.
         """
         return self.__class__(
@@ -186,6 +335,10 @@ class GCNParseError(Exception):
             location=location,
             suggestions=self.suggestions,
             context=self.context,
+            code=self.code,
+            severity=self.severity,
+            annotation=self.annotation,
+            notes=self.notes,
         )
 
     def with_context(self, context: str) -> "GCNParseError":
@@ -199,7 +352,7 @@ class GCNParseError(Exception):
 
         Returns
         -------
-        GCNParseError
+        error : GCNParseError
             A new error instance with the context set.
         """
         return self.__class__(
@@ -207,49 +360,11 @@ class GCNParseError(Exception):
             location=self.location,
             suggestions=self.suggestions,
             context=context,
+            code=self.code,
+            severity=self.severity,
+            annotation=self.annotation,
+            notes=self.notes,
         )
-
-
-class GCNLexerError(GCNParseError):
-    """
-    Error during tokenization/lexing of GCN source.
-
-    Raised when the lexer encounters characters or sequences it cannot
-    recognize as valid tokens.
-
-    Parameters
-    ----------
-    message : str
-        Description of what went wrong during tokenization.
-    invalid_text : str, optional
-        The text that could not be tokenized.
-    location : ParseLocation, optional
-        Where in the source the error occurred.
-
-    Examples
-    --------
-    .. testcode::
-
-        from gEconpy.parser.errors import GCNLexerError, ParseLocation
-
-        err = GCNLexerError(
-            "Unexpected character",
-            invalid_text="@",
-            location=ParseLocation(line=3, column=15)
-        )
-    """
-
-    def __init__(
-        self,
-        message: str,
-        invalid_text: str = "",
-        location: ParseLocation | None = None,
-        suggestions: list[str] | None = None,
-    ):
-        self.invalid_text = invalid_text
-        if invalid_text and invalid_text not in message:
-            message = f"{message}: '{invalid_text}'"
-        super().__init__(message=message, location=location, suggestions=suggestions)
 
 
 class GCNGrammarError(GCNParseError):
@@ -291,6 +406,11 @@ class GCNGrammarError(GCNParseError):
         found: str = "",
         location: ParseLocation | None = None,
         context: str = "",
+        code: ErrorCode = ErrorCode.E000,
+        severity: Severity = Severity.ERROR,
+        annotation: str = "",
+        notes: list[str] | None = None,
+        suggestions: list[str] | None = None,
     ):
         self.expected = expected if isinstance(expected, list) else ([expected] if expected else [])
         self.found = found
@@ -311,7 +431,16 @@ class GCNGrammarError(GCNParseError):
         elif self.found:
             message = f"{message}. Found '{self.found}'"
 
-        super().__init__(message=message, location=location, context=context)
+        super().__init__(
+            message=message,
+            location=location,
+            suggestions=suggestions,
+            context=context,
+            code=code,
+            severity=severity,
+            annotation=annotation,
+            notes=notes,
+        )
 
 
 class GCNSemanticError(GCNParseError):
@@ -353,6 +482,8 @@ class GCNSemanticError(GCNParseError):
         location: ParseLocation | None = None,
         suggestions: list[str] | None = None,
         context: str = "",
+        code: ErrorCode | None = None,
+        severity: Severity = Severity.ERROR,
     ):
         self.symbol_name = symbol_name
         if symbol_name and symbol_name not in message:
@@ -362,203 +493,148 @@ class GCNSemanticError(GCNParseError):
             location=location,
             suggestions=suggestions,
             context=context,
+            code=code,
+            severity=severity,
         )
 
 
-@dataclass
-class ValidationError:
+class GCNErrorCollection(Exception):
     """
-    A single validation issue found during AST validation.
+    A collection of multiple parse/validation errors.
 
-    This is a lightweight container used during validation passes
-    before being converted to a full GCNSemanticError if needed.
+    This exception is raised when multiple errors are collected during
+    parsing or validation, allowing all errors to be reported at once
+    rather than stopping at the first error.
 
-    Attributes
+    Parameters
     ----------
-    message : str
-        Description of the issue.
-    severity : str
-        One of 'error', 'warning', 'info'.
-    location : ParseLocation, optional
-        Where in the source the issue was found.
-    suggestions : list of str
-        Suggested fixes.
+    errors : list of GCNParseError
+        The collected errors.
+    source : str, optional
+        The source text being parsed (for context).
 
     Examples
     --------
     .. testcode::
 
-        from gEconpy.parser.errors import ValidationError, ParseLocation
+        from gEconpy.parser.errors import GCNErrorCollection, GCNSemanticError, ParseLocation
 
-        issue = ValidationError(
-            message="Variable 'X' used but never defined",
-            severity="error",
-            location=ParseLocation(line=10, column=5)
-        )
-        if issue.is_error:
-            raise issue.to_exception()
+        errors = [
+            GCNSemanticError("Undefined variable 'X'", location=ParseLocation(1, 5)),
+            GCNSemanticError("Undefined variable 'Y'", location=ParseLocation(2, 5)),
+        ]
+        exc = GCNErrorCollection(errors)
+        print(len(exc))
 
     .. testoutput::
 
-        Traceback (most recent call last):
-            ...
-        gEconpy.parser.errors.GCNSemanticError: Variable 'X' used but never defined
-          at line 10, column 5
+        2
     """
 
-    message: str
-    severity: str = "error"  # 'error', 'warning', 'info'
-    location: ParseLocation | None = None
-    suggestions: list[str] = field(default_factory=list)
+    def __init__(
+        self,
+        errors: list[GCNParseError],
+        source: str | None = None,
+    ):
+        self.errors = errors
+        self.source = source
+        super().__init__(self._format_message())
+
+    def _format_message(self) -> str:
+        """Format all errors with separators."""
+        if not self.errors:
+            return "No errors"
+
+        if len(self.errors) == 1:
+            return str(self.errors[0])
+
+        parts = [f"Found {len(self.errors)} errors:"]
+        for i, error in enumerate(self.errors, 1):
+            parts.append(f"\n[{i}] {error}")
+
+        return "".join(parts)
+
+    def __len__(self) -> int:
+        return len(self.errors)
+
+    def __iter__(self):
+        return iter(self.errors)
+
+    def __getitem__(self, index: int) -> GCNParseError:
+        return self.errors[index]
 
     @property
-    def is_error(self) -> bool:
-        """Return True if this is an error (not just a warning)."""
-        return self.severity == "error"
+    def has_errors(self) -> bool:
+        """Return True if there are any errors."""
+        return len(self.errors) > 0
 
-    @property
-    def is_warning(self) -> bool:
-        """Return True if this is a warning."""
-        return self.severity == "warning"
-
-    def to_exception(self) -> GCNSemanticError:
-        """
-        Convert this validation error to an exception.
-
-        Returns
-        -------
-        GCNSemanticError
-            An exception that can be raised.
-        """
-        return GCNSemanticError(
-            message=self.message,
-            location=self.location,
-            suggestions=self.suggestions,
-        )
-
-    def __str__(self) -> str:
-        prefix = f"[{self.severity.upper()}]"
-        if self.location:
-            return f"{prefix} {self.location}: {self.message}"
-        return f"{prefix} {self.message}"
+    def to_lsp_diagnostics(self) -> list[dict]:
+        """Convert all errors to LSP Diagnostic format."""
+        return [err.to_lsp_diagnostic() for err in self.errors]
 
 
-class ValidationErrorCollection:
+class ErrorCollector:
     """
-    A collection of validation errors and warnings.
+    Helper class for collecting multiple errors during parsing.
 
-    This class accumulates validation issues during an AST validation pass
-    and provides methods to check if there are errors and raise them.
+    Use this to accumulate errors during a parsing pass and then
+    raise them all at once.
+
+    Parameters
+    ----------
+    source : str, optional
+        The source text being parsed.
 
     Examples
     --------
     .. testcode::
 
-        from gEconpy.parser.errors import ValidationErrorCollection, ParseLocation
+        from gEconpy.parser.errors import ErrorCollector, GCNSemanticError
 
-        loc = ParseLocation(line=10, column=5)
-        errors = ValidationErrorCollection()
-        errors.add_error("Undefined variable 'X'", location=loc)
-        errors.add_warning("Variable 'Y' defined but never used")
-        print(errors.has_errors)
-        print(len(errors.warnings))
+        collector = ErrorCollector()
+        collector.add(GCNSemanticError("Error 1"))
+        collector.add(GCNSemanticError("Error 2"))
+        print(len(collector))
 
     .. testoutput::
 
-        True
-        1
+        2
     """
 
-    def __init__(self):
-        self._errors: list[ValidationError] = []
+    def __init__(self, source: str | None = None):
+        self.errors: list[GCNParseError] = []
+        self.source = source
 
-    def add(self, error: ValidationError) -> None:
-        """Add a validation error to the collection."""
-        self._errors.append(error)
+    def add(self, error: GCNParseError) -> None:
+        """Add an error to the collection."""
+        self.errors.append(error)
 
-    def add_error(
-        self,
-        message: str,
-        location: ParseLocation | None = None,
-        suggestions: list[str] | None = None,
-    ) -> None:
-        """Add an error-level issue."""
-        self.add(
-            ValidationError(
-                message=message,
-                severity="error",
-                location=location,
-                suggestions=suggestions or [],
-            )
-        )
+    def raise_if_errors(self) -> None:
+        """Raise GCNErrorCollection if there are any errors."""
+        if self.errors:
+            raise GCNErrorCollection(self.errors, self.source)
 
-    def add_warning(
-        self,
-        message: str,
-        location: ParseLocation | None = None,
-        suggestions: list[str] | None = None,
-    ) -> None:
-        """Add a warning-level issue."""
-        self.add(
-            ValidationError(
-                message=message,
-                severity="warning",
-                location=location,
-                suggestions=suggestions or [],
-            )
-        )
+    def raise_first(self) -> None:
+        """Raise the first error as an exception."""
+        for error in self.errors:
+            if getattr(error, "severity", Severity.ERROR) == Severity.ERROR:
+                raise error
 
     @property
     def has_errors(self) -> bool:
         """Return True if there are any error-level issues."""
-        return any(e.is_error for e in self._errors)
+        return any(getattr(e, "severity", Severity.ERROR) == Severity.ERROR for e in self.errors)
 
     @property
-    def errors(self) -> list[ValidationError]:
-        """Return all error-level issues."""
-        return [e for e in self._errors if e.is_error]
-
-    @property
-    def warnings(self) -> list[ValidationError]:
+    def warnings(self) -> list[GCNParseError]:
         """Return all warning-level issues."""
-        return [e for e in self._errors if e.is_warning]
-
-    @property
-    def all_issues(self) -> list[ValidationError]:
-        """Return all issues."""
-        return list(self._errors)
-
-    def raise_first(self) -> None:
-        """Raise the first error as an exception."""
-        for error in self._errors:
-            if error.is_error:
-                raise error.to_exception()
-
-    def raise_all(self) -> None:
-        """
-        Raise an exception with all errors combined.
-
-        Raises
-        ------
-        GCNSemanticError
-            An exception containing all error messages.
-        """
-        error_list = self.errors
-        if not error_list:
-            return
-
-        if len(error_list) == 1:
-            raise error_list[0].to_exception()
-
-        combined_message = f"Found {len(error_list)} errors:\n"
-        combined_message += "\n".join(f"  {i + 1}. {e.message}" for i, e in enumerate(error_list))
-        raise GCNSemanticError(combined_message)
+        return [e for e in self.errors if getattr(e, "severity", Severity.ERROR) == Severity.WARNING]
 
     def __len__(self) -> int:
-        return len(self._errors)
+        return len(self.errors)
 
     def __bool__(self) -> bool:
-        return len(self._errors) > 0
+        return len(self.errors) > 0
 
     def __iter__(self):
-        return iter(self._errors)
+        return iter(self.errors)

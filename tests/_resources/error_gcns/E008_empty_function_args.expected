@@ -1,0 +1,12 @@
+error[E008]: Empty function call 'exp()'. Found 'exp()'
+  --> E008_empty_function_args.gcn:6:15
+     |
+   4 |     identities
+   5 |     {
+   6 |         Y[] = exp() + K[];
+     |               ^^^^^ empty function arguments
+   7 |     };
+   8 | };
+     |
+   = note: Add an argument to the function: log(C[])
+   = note: Check if the argument was accidentally deleted

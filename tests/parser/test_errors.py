@@ -1,13 +1,14 @@
 import pytest
 
+from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import (
+    ErrorCollector,
+    GCNErrorCollection,
     GCNGrammarError,
-    GCNLexerError,
     GCNParseError,
     GCNSemanticError,
     ParseLocation,
-    ValidationError,
-    ValidationErrorCollection,
+    Severity,
 )
 
 
@@ -147,25 +148,6 @@ class TestGCNParseError:
         assert new_err.message == err.message
 
 
-class TestGCNLexerError:
-    def test_basic_lexer_error(self):
-        err = GCNLexerError("Unexpected character")
-        assert "Unexpected character" in str(err)
-
-    def test_lexer_error_with_invalid_text(self):
-        err = GCNLexerError("Unexpected character", invalid_text="@")
-        msg = str(err)
-        assert "Unexpected character" in msg
-        assert "'@'" in msg
-
-    def test_lexer_error_with_location(self):
-        loc = ParseLocation(line=3, column=15, source_line="    alpha = @value;")
-        err = GCNLexerError("Unexpected character", invalid_text="@", location=loc)
-        msg = str(err)
-        assert "line 3" in msg
-        assert "@" in msg
-
-
 class TestGCNGrammarError:
     def test_basic_grammar_error(self):
         err = GCNGrammarError("Unexpected token")
@@ -219,150 +201,78 @@ class TestGCNSemanticError:
         assert "Consumption" in msg
 
 
-class TestValidationError:
-    def test_error_creation(self):
-        err = ValidationError(message="Something wrong", severity="error")
-        assert err.message == "Something wrong"
-        assert err.severity == "error"
-        assert err.is_error
-        assert not err.is_warning
+class TestGCNParseErrorLSP:
+    def test_to_lsp_diagnostic_basic(self):
+        err = GCNParseError("Test error")
+        diag = err.to_lsp_diagnostic()
+        assert diag["message"] == "Test error"
+        assert diag["severity"] == 1
+        assert diag["source"] == "gEconpy"
 
-    def test_warning_creation(self):
-        warn = ValidationError(message="Something suspicious", severity="warning")
-        assert warn.is_warning
-        assert not warn.is_error
+    def test_to_lsp_diagnostic_with_location(self):
+        loc = ParseLocation(line=5, column=10, end_line=5, end_column=15)
+        err = GCNParseError("Test error", location=loc)
+        diag = err.to_lsp_diagnostic()
+        assert diag["range"]["start"]["line"] == 4
+        assert diag["range"]["start"]["character"] == 9
+        assert diag["range"]["end"]["line"] == 4
+        assert diag["range"]["end"]["character"] == 14
 
-    def test_to_exception(self):
-        loc = ParseLocation(line=5, column=10)
-        err = ValidationError(
-            message="Undefined variable 'X'",
-            severity="error",
-            location=loc,
-            suggestions=["Y"],
-        )
-        exc = err.to_exception()
-        assert isinstance(exc, GCNSemanticError)
-        assert "Undefined variable" in str(exc)
+    def test_to_lsp_diagnostic_with_code(self):
+        err = GCNParseError("Test error", code=ErrorCode.E001)
+        diag = err.to_lsp_diagnostic()
+        assert diag["code"] == "E001"
 
-    def test_str_with_location(self):
-        loc = ParseLocation(line=5, column=10)
-        err = ValidationError(message="Bad thing", severity="error", location=loc)
-        s = str(err)
-        assert "[ERROR]" in s
-        assert "line 5" in s
-        assert "Bad thing" in s
-
-    def test_str_without_location(self):
-        err = ValidationError(message="Bad thing", severity="warning")
-        s = str(err)
-        assert "[WARNING]" in s
-        assert "Bad thing" in s
+    def test_to_lsp_diagnostic_warning_severity(self):
+        err = GCNParseError("Warning", severity=Severity.WARNING)
+        diag = err.to_lsp_diagnostic()
+        assert diag["severity"] == 2
 
 
-class TestValidationErrorCollection:
+class TestGCNErrorCollection:
     def test_empty_collection(self):
-        coll = ValidationErrorCollection()
-        assert len(coll) == 0
-        assert not coll.has_errors
-        assert coll.errors == []
-        assert coll.warnings == []
+        exc = GCNErrorCollection([])
+        assert len(exc) == 0
+        assert not exc.has_errors
 
-    def test_add_error(self):
-        coll = ValidationErrorCollection()
-        coll.add_error("Something wrong")
-        assert len(coll) == 1
-        assert coll.has_errors
-        assert len(coll.errors) == 1
+    def test_single_error(self):
+        errors = [GCNSemanticError("Error 1")]
+        exc = GCNErrorCollection(errors)
+        assert len(exc) == 1
+        assert exc.has_errors
 
-    def test_add_warning(self):
-        coll = ValidationErrorCollection()
-        coll.add_warning("Something suspicious")
-        assert len(coll) == 1
-        assert not coll.has_errors
-        assert len(coll.warnings) == 1
-
-    def test_add_multiple(self):
-        coll = ValidationErrorCollection()
-        coll.add_error("Error 1")
-        coll.add_warning("Warning 1")
-        coll.add_error("Error 2")
-
-        assert len(coll) == 3
-        assert len(coll.errors) == 2
-        assert len(coll.warnings) == 1
-
-    def test_raise_first(self):
-        coll = ValidationErrorCollection()
-        coll.add_error("First error")
-        coll.add_error("Second error")
-
-        with pytest.raises(GCNSemanticError) as exc_info:
-            coll.raise_first()
-        assert "First error" in str(exc_info.value)
-
-    def test_raise_first_skips_warnings(self):
-        coll = ValidationErrorCollection()
-        coll.add_warning("A warning")
-        coll.add_error("The error")
-
-        with pytest.raises(GCNSemanticError) as exc_info:
-            coll.raise_first()
-        assert "The error" in str(exc_info.value)
-
-    def test_raise_first_no_errors(self):
-        coll = ValidationErrorCollection()
-        coll.add_warning("Just a warning")
-        coll.raise_first()
-
-    def test_raise_all_single(self):
-        coll = ValidationErrorCollection()
-        coll.add_error("Only error")
-
-        with pytest.raises(GCNSemanticError) as exc_info:
-            coll.raise_all()
-        assert "Only error" in str(exc_info.value)
-
-    def test_raise_all_multiple(self):
-        coll = ValidationErrorCollection()
-        coll.add_error("Error 1")
-        coll.add_error("Error 2")
-        coll.add_error("Error 3")
-
-        with pytest.raises(GCNSemanticError) as exc_info:
-            coll.raise_all()
-        msg = str(exc_info.value)
-        assert "Found 3 errors" in msg
-        assert "Error 1" in msg
-        assert "Error 2" in msg
-        assert "Error 3" in msg
-
-    def test_raise_all_no_errors(self):
-        coll = ValidationErrorCollection()
-        coll.add_warning("Just a warning")
-        coll.raise_all()
+    def test_multiple_errors(self):
+        errors = [
+            GCNSemanticError("Error 1", location=ParseLocation(1, 5)),
+            GCNSemanticError("Error 2", location=ParseLocation(3, 10)),
+        ]
+        exc = GCNErrorCollection(errors)
+        assert len(exc) == 2
 
     def test_iteration(self):
-        coll = ValidationErrorCollection()
-        coll.add_error("Error 1")
-        coll.add_warning("Warning 1")
+        errors = [GCNSemanticError("Error 1"), GCNSemanticError("Error 2")]
+        exc = GCNErrorCollection(errors)
+        assert len(list(exc)) == 2
 
-        issues = list(coll)
-        assert len(issues) == 2
 
-    def test_bool_empty(self):
-        coll = ValidationErrorCollection()
-        assert not coll
+class TestErrorCollector:
+    def test_empty_collector(self):
+        collector = ErrorCollector()
+        assert len(collector) == 0
+        assert not collector
 
-    def test_bool_non_empty(self):
-        coll = ValidationErrorCollection()
-        coll.add_warning("Something")
-        assert coll
+    def test_add_error(self):
+        collector = ErrorCollector()
+        collector.add(GCNSemanticError("Error 1"))
+        assert len(collector) == 1
 
-    def test_add_with_location_and_suggestions(self):
-        coll = ValidationErrorCollection()
-        loc = ParseLocation(line=10, column=5)
-        coll.add_error("Undefined 'X'", location=loc, suggestions=["Y", "Z"])
+    def test_raise_if_errors_raises_collection(self):
+        collector = ErrorCollector()
+        collector.add(GCNSemanticError("Error 1"))
+        with pytest.raises(GCNErrorCollection):
+            collector.raise_if_errors()
 
-        err = coll.errors[0]
-        assert err.location == loc
-        assert err.suggestions == ["Y", "Z"]
+    def test_raise_if_errors_noop_when_empty(self):
+
+        collector = ErrorCollector()
+        collector.raise_if_errors()

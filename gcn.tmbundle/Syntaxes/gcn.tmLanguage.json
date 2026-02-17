@@ -1,0 +1,69 @@
+{
+  "name": "GCN",
+  "scopeName": "source.gcn",
+  "fileTypes": ["gcn", "GCN"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#keyword" },
+    { "include": "#tag" },
+    { "include": "#number" },
+    { "include": "#timeindex" },
+    { "include": "#distribution" },
+    { "include": "#operator" },
+    { "include": "#identifier" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        { "name": "comment.line.number-sign.gcn", "match": "#.*$" }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "name": "keyword.control.gcn",
+          "match": "\\b(block|options|tryreduce|assumptions)\\b"
+        },
+        {
+          "name": "keyword.other.component.gcn",
+          "match": "\\b(definitions|controls|objective|constraints|identities|shocks|calibration)\\b"
+        }
+      ]
+    },
+    "tag": {
+      "patterns": [
+        { "name": "entity.name.tag.gcn", "match": "@[A-Za-z_][A-Za-z0-9_]*" }
+      ]
+    },
+    "number": {
+      "patterns": [
+        { "name": "constant.numeric.gcn", "match": "\\b\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b" }
+      ]
+    },
+    "timeindex": {
+      "patterns": [
+        { "name": "constant.other.timeindex.gcn", "match": "\\[(?:-?\\d+|ss)?\\]" }
+      ]
+    },
+    "distribution": {
+      "patterns": [
+        {
+          "name": "support.function.distribution.gcn",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\s*(?=\\()"
+        }
+      ]
+    },
+    "operator": {
+      "patterns": [
+        { "name": "keyword.operator.gcn", "match": "->|~|=|\\+|-|\\*|/|:" },
+        { "name": "punctuation.separator.gcn", "match": ",|;" },
+        { "name": "punctuation.bracket.gcn", "match": "[\\{\\}\\(\\)\\[\\]]" }
+      ]
+    },
+    "identifier": {
+      "patterns": [
+        { "name": "variable.other.gcn", "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b" }
+      ]
+    }
+  }
+}

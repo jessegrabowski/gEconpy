@@ -1,0 +1,8 @@
+# Error: Empty function arguments
+block PRODUCTION
+{
+    identities
+    {
+        Y[] = exp() + K[];
+    };
+};

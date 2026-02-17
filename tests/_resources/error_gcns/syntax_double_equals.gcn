@@ -1,0 +1,8 @@
+# Error: Double equals sign in equation
+block MARKET
+{
+    identities
+    {
+        Y[] = C[] = I[];
+    };
+};

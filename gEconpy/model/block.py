@@ -19,12 +19,7 @@ from gEconpy.utilities import (
 
 
 class Block:
-    """
-    The Block class holds equations and parameters associated with each block of the DSGE model.
-
-    Holds methods to solve their associated optimization problem. Blocks should be created via
-    the `from_sympy` class method or through the parser.
-    """
+    """The Block class holds equations and parameters associated with each block of the DSGE model."""
 
     #    TODO: Split components out into their own class/protocol and let them handle their own parsing?
     #    TODO: Refactor this into an abstract class with basic functionality, then create some child classes for
@@ -104,38 +99,6 @@ class Block:
 
         self._get_variable_list()
         self._get_param_dict_and_calibrating_equations()
-
-    @classmethod
-    def from_sympy(
-        cls,
-        name: str,
-        definitions: dict[int, sp.Eq] | None = None,
-        controls: list[TimeAwareSymbol] | None = None,
-        objective: dict[int, sp.Eq] | None = None,
-        constraints: dict[int, sp.Eq] | None = None,
-        identities: dict[int, sp.Eq] | None = None,
-        calibration: dict[int, sp.Eq] | None = None,
-        shocks: list[TimeAwareSymbol] | None = None,
-        multipliers: dict[int, TimeAwareSymbol | None] | None = None,
-        equation_flags: dict[int, dict[str, bool]] | None = None,
-    ) -> "Block":
-        """
-        Create a Block directly from sympy equations.
-
-        This is an alias for the constructor for backwards compatibility.
-        """
-        return cls(
-            name=name,
-            definitions=definitions,
-            controls=controls,
-            objective=objective,
-            constraints=constraints,
-            identities=identities,
-            calibration=calibration,
-            shocks=shocks,
-            multipliers=multipliers,
-            equation_flags=equation_flags,
-        )
 
     def __str__(self):
         return (

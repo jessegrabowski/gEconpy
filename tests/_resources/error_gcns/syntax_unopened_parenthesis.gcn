@@ -1,0 +1,8 @@
+# Error: Unopened parenthesis (extra closing paren)
+block UTILITY
+{
+    identities
+    {
+        U[] = C[] + I[]);
+    };
+};

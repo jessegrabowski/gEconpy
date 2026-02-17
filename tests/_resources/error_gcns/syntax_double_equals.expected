@@ -1,0 +1,13 @@
+error[E001]: Missing semicolon. Found ''Y''
+  --> syntax_double_equals.gcn:6:9
+     |
+   4 |     identities
+   5 |     {
+   6 |         Y[] = C[] = I[];
+     |         ^ missing semicolon
+   7 |     };
+   8 | };
+     |
+   = note: Add ';' at the end of the statement
+   = note: Check that each equation ends with ';'
+   = note: Check that each block component ends with '};'

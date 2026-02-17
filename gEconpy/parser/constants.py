@@ -35,6 +35,16 @@ BLOCK_COMPONENTS = [
 
 TIME_INDEX_DICT = {"ss": "ss", "t": 0, "tL1": -1, "t1": 1}
 
+GCN_ASSUMPTIONS = [
+    "positive",
+    "negative",
+    "nonpositive",
+    "nonnegative",
+    "real",
+    "integer",
+    "finite",
+]
+
 SYMPY_ASSUMPTIONS = [
     "finite",
     "infinite",

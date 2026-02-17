@@ -1,0 +1,8 @@
+# Error: Colon not followed by multiplier name
+block HOUSEHOLD
+{
+    constraints
+    {
+        C[] + I[] = Y[] : ;
+    };
+};
