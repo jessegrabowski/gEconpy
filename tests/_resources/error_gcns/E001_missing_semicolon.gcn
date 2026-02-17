@@ -1,0 +1,9 @@
+# Error: Missing semicolon after equation
+block HOUSEHOLD
+{
+    identities
+    {
+        Y[] = C[] + I[]
+        X[] = K[];
+    };
+};

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from gEconpy.parser.ast import GCNModel
-from gEconpy.parser.errors import GCNSemanticError
+from gEconpy.parser.errors import GCNGrammarError, GCNSemanticError
 from gEconpy.parser.preprocessor import (
     ParseResult,
     preprocess,
@@ -13,9 +13,9 @@ from gEconpy.parser.preprocessor import (
 
 
 class TestQuickParse:
-    def test_empty_returns_model(self):
-        result = quick_parse("")
-        assert isinstance(result, GCNModel)
+    def test_empty_raises_error(self):
+        with pytest.raises(GCNGrammarError):
+            quick_parse("")
 
     def test_simple_block(self):
         source = """
@@ -214,7 +214,7 @@ class TestPreprocessWithAllFeatures:
         result = preprocess(source)
 
         assert result.options["output logfile"] is True
-        assert "U[]" in result.tryreduce
+        assert "U" in result.tryreduce
         assert "C" in result.assumptions
         assert len(result.blocks) == 1
 
@@ -281,22 +281,22 @@ class TestValidation:
 
 
 class TestEdgeCases:
-    def test_empty_source(self):
-        result = preprocess("")
-        assert result.ast.blocks == []
+    def test_empty_source_raises(self):
+        with pytest.raises(GCNGrammarError):
+            preprocess("")
 
-    def test_only_comments(self):
+    def test_only_comments_raises(self):
         source = """
         # This is a comment
         # Another comment
         """
-        result = preprocess(source)
-        assert result.ast.blocks == []
+        with pytest.raises(GCNGrammarError):
+            preprocess(source)
 
-    def test_whitespace_only(self):
+    def test_whitespace_only_raises(self):
         source = "   \n\n\t\t   \n   "
-        result = preprocess(source)
-        assert result.ast.blocks == []
+        with pytest.raises(GCNGrammarError):
+            preprocess(source)
 
     def test_multiline_equation(self):
         source = """

@@ -1,0 +1,8 @@
+# Error: Missing right-hand side of equation
+block FIRM
+{
+    identities
+    {
+        Y[] = ;
+    };
+};

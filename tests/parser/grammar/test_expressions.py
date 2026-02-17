@@ -14,6 +14,7 @@ from gEconpy.parser.ast import (
     UnaryOp,
     Variable,
 )
+from gEconpy.parser.errors import GCNGrammarError
 from gEconpy.parser.grammar.expressions import parse_expression
 
 
@@ -21,9 +22,23 @@ class TestAtoms:
     @pytest.mark.parametrize(
         "text,expected",
         [
+            # Integers
             ("42", 42.0),
+            ("007", 7.0),
+            # Floats
             ("3.14", 3.14),
+            ("123.", 123.0),
+            (".5", 0.5),
+            (".123", 0.123),
+            # Scientific notation
             ("1e10", 1e10),
+            ("1E10", 1e10),
+            ("1e+10", 1e10),
+            ("1e-10", 1e-10),
+            ("1.5e10", 1.5e10),
+            (".5e10", 0.5e10),
+            ("123.e10", 123e10),
+            # Negative (handled by unary minus)
             ("-5", -5.0),
         ],
     )
@@ -34,6 +49,11 @@ class TestAtoms:
         else:
             assert isinstance(result, Number)
             assert result.value == expected
+
+    def test_number_rejects_partial_match(self):
+        # 123abc should not parse as number 123 followed by garbage
+        with pytest.raises(GCNGrammarError):
+            parse_expression("123abc")
 
     def test_parameter(self):
         result = parse_expression("alpha")
@@ -125,6 +145,20 @@ class TestOperatorPrecedence:
         assert result.op == Operator.POW
         assert result.right.op == Operator.POW
 
+    def test_addition_left_associative(self):
+        # a + b + c should parse as (a + b) + c
+        result = parse_expression("a + b + c")
+        assert result.op == Operator.ADD
+        assert result.left.op == Operator.ADD
+        assert result.left.left == Parameter(name="a")
+
+    def test_multiplication_left_associative(self):
+        # a * b * c should parse as (a * b) * c
+        result = parse_expression("a * b * c")
+        assert result.op == Operator.MUL
+        assert result.left.op == Operator.MUL
+        assert result.left.left == Parameter(name="a")
+
 
 class TestFunctionCalls:
     def test_single_arg_function(self):
@@ -140,10 +174,9 @@ class TestFunctionCalls:
         assert result.func_name == "exp"
         assert isinstance(result.args[0], BinaryOp)
 
-    def test_function_with_no_args(self):
-        result = parse_expression("func()")
-        assert isinstance(result, FunctionCall)
-        assert result.args == ()
+    def test_function_with_no_args_raises(self):
+        with pytest.raises(GCNGrammarError):
+            parse_expression("func()")
 
 
 class TestExpectation:
@@ -351,9 +384,9 @@ class TestRealWorldExpressions:
         assert isinstance(result.right, UnaryOp)
 
     def test_negative_base_to_power(self):
-        # -x ^ 2 should be -(x^2), not (-x)^2
         expr = "-x ^ 2"
         result = parse_expression(expr)
-        assert isinstance(result, UnaryOp)
-        assert result.op == Operator.NEG
-        assert result.operand.op == Operator.POW
+        assert isinstance(result, BinaryOp)
+        assert result.op == Operator.POW
+        assert isinstance(result.left, UnaryOp)
+        assert result.left.op == Operator.NEG

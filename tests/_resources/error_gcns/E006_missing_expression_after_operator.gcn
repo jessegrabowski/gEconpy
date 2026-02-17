@@ -1,0 +1,8 @@
+# Error: Missing expression after + operator
+block MARKET
+{
+    identities
+    {
+        P[] = D[] + ;
+    };
+};

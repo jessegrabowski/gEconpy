@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from gEconpy.parser.errors import ParseLocation
+from gEconpy.parser.errors import ParseLocation
 
 
 class TimeIndex:
@@ -496,7 +494,7 @@ def collect_nodes_of_type(node: Node, node_type: type) -> set:
 
     Returns
     -------
-    set
+    result : set
         Set of all nodes of the specified type.
     """
     if isinstance(node, node_type):

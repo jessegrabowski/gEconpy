@@ -1,0 +1,6 @@
+# Unknown distribution name
+block HOUSEHOLD {
+    calibration {
+        alpha ~ UnknownDist(a=1, b=2) = 0.5;
+    };
+};

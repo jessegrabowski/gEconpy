@@ -1,0 +1,10 @@
+# Error: Missing semicolon in multi-line equation
+block PRODUCTION
+{
+    identities
+    {
+        Y[] = A[] * K[-1] ^ alpha
+              * L[] ^ (1 - alpha)
+        Z[] = X[];
+    };
+};

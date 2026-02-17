@@ -10,12 +10,15 @@ from gEconpy.parser.ast import (
     collect_parameter_names,
     collect_variable_names,
 )
+from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import (
-    ValidationErrorCollection,
+    ErrorCollector,
+    GCNSemanticError,
+    Severity,
 )
 
 
-def validate_block(block: GCNBlock) -> ValidationErrorCollection:  # noqa: PLR0912
+def validate_block(block: GCNBlock) -> ErrorCollector:  # noqa: PLR0912
     """
     Validate a single block for semantic errors.
 
@@ -26,17 +29,19 @@ def validate_block(block: GCNBlock) -> ValidationErrorCollection:  # noqa: PLR09
 
     Returns
     -------
-    ValidationErrorCollection
+    errors : ErrorCollector
         Collection of validation errors found.
     """
-    errors = ValidationErrorCollection()
+    errors = ErrorCollector()
 
     # Check for duplicate control variables
     control_names = [v.name for v in block.controls]
     seen_controls = set()
     for name in control_names:
         if name in seen_controls:
-            errors.add_error(f"Duplicate control variable '{name}' in block {block.name}")
+            errors.add(
+                GCNSemanticError(f"Duplicate control variable '{name}' in block {block.name}", code=ErrorCode.E101)
+            )
         seen_controls.add(name)
 
     # Check for duplicate shock variables
@@ -44,7 +49,9 @@ def validate_block(block: GCNBlock) -> ValidationErrorCollection:  # noqa: PLR09
     seen_shocks = set()
     for name in shock_names:
         if name in seen_shocks:
-            errors.add_error(f"Duplicate shock variable '{name}' in block {block.name}")
+            errors.add(
+                GCNSemanticError(f"Duplicate shock variable '{name}' in block {block.name}", code=ErrorCode.E101)
+            )
         seen_shocks.add(name)
 
     # Check for duplicate calibration parameters
@@ -61,21 +68,35 @@ def validate_block(block: GCNBlock) -> ValidationErrorCollection:  # noqa: PLR09
             continue
 
         if param_name in calibration_params:
-            errors.add_error(f"Duplicate calibration for parameter '{param_name}' in block {block.name}")
+            errors.add(
+                GCNSemanticError(
+                    f"Duplicate calibration for parameter '{param_name}' in block {block.name}", code=ErrorCode.E101
+                )
+            )
         calibration_params.add(param_name)
 
     # Check that objective exists if controls exist (optimization problem)
     if block.controls and not block.objective:
-        errors.add_warning(f"Block {block.name} has controls but no objective function")
+        errors.add(
+            GCNSemanticError(
+                f"Block {block.name} has controls but no objective function",
+                code=ErrorCode.W002,
+                severity=Severity.WARNING,
+            )
+        )
 
     # Check that constraints exist if objective exists
     if block.objective and not block.constraints:
-        errors.add_warning(f"Block {block.name} has objective but no constraints")
+        errors.add(
+            GCNSemanticError(
+                f"Block {block.name} has objective but no constraints", code=ErrorCode.W003, severity=Severity.WARNING
+            )
+        )
 
     return errors
 
 
-def validate_model(model: GCNModel) -> ValidationErrorCollection:  # noqa: PLR0912
+def validate_model(model: GCNModel) -> ErrorCollector:  # noqa: PLR0912
     """
     Validate a complete model for semantic errors.
 
@@ -86,23 +107,23 @@ def validate_model(model: GCNModel) -> ValidationErrorCollection:  # noqa: PLR09
 
     Returns
     -------
-    ValidationErrorCollection
+    errors : ErrorCollector
         Collection of validation errors found.
     """
-    errors = ValidationErrorCollection()
+    errors = ErrorCollector()
 
     # Validate each block
     for block in model.blocks:
         block_errors = validate_block(block)
         for error in block_errors:
-            errors._errors.append(error)
+            errors.add(error)
 
     # Check for duplicate block names
     block_names = [b.name for b in model.blocks]
     seen_blocks = set()
     for name in block_names:
         if name in seen_blocks:
-            errors.add_error(f"Duplicate block name: {name}")
+            errors.add(GCNSemanticError(f"Duplicate block name: {name}", code=ErrorCode.E100))
         seen_blocks.add(name)
 
     # Collect all defined variables and parameters across blocks
@@ -146,14 +167,18 @@ def validate_model(model: GCNModel) -> ValidationErrorCollection:  # noqa: PLR09
             elif isinstance(item, GCNEquation) and isinstance(item.lhs, Parameter):
                 param_definitions[item.lhs.name].append(block.name)
 
-    for param_name, block_names in param_definitions.items():
-        if len(block_names) > 1:
-            errors.add_error(f"Parameter '{param_name}' defined in multiple blocks: {', '.join(block_names)}")
+    for param_name, blocks in param_definitions.items():
+        if len(blocks) > 1:
+            errors.add(
+                GCNSemanticError(
+                    f"Parameter '{param_name}' defined in multiple blocks: {', '.join(blocks)}", code=ErrorCode.E101
+                )
+            )
 
     return errors
 
 
-def validate_equation(eq: GCNEquation) -> ValidationErrorCollection:
+def validate_equation(eq: GCNEquation) -> ErrorCollector:
     """
     Validate a single equation.
 
@@ -164,14 +189,14 @@ def validate_equation(eq: GCNEquation) -> ValidationErrorCollection:
 
     Returns
     -------
-    ValidationErrorCollection
+    errors : ErrorCollector
         Collection of validation errors found.
     """
-    errors = ValidationErrorCollection()
+    errors = ErrorCollector()
 
     # Check that calibrating equations have a parameter on LHS or RHS
     if eq.is_calibrating and eq.calibrating_parameter is None:
-        errors.add_error("Calibrating equation has no calibrating parameter")
+        errors.add(GCNSemanticError("Calibrating equation has no calibrating parameter"))
 
     return errors
 
@@ -179,7 +204,7 @@ def validate_equation(eq: GCNEquation) -> ValidationErrorCollection:
 def check_undefined_variables(
     model: GCNModel,
     external_variables: set[str] | None = None,
-) -> ValidationErrorCollection:
+) -> ErrorCollector:
     """
     Check for variables used but not defined.
 
@@ -187,15 +212,15 @@ def check_undefined_variables(
     ----------
     model : GCNModel
         The model to check.
-    external_variables : set[str], optional
+    external_variables : set of str, optional
         Set of variable names that are defined externally (e.g., from data).
 
     Returns
     -------
-    ValidationErrorCollection
+    errors : ErrorCollector
         Collection of validation errors for undefined variables.
     """
-    errors = ValidationErrorCollection()
+    errors = ErrorCollector()
     external = external_variables or set()
 
     # Collect all defined variables
@@ -223,7 +248,7 @@ def check_undefined_variables(
     # Find undefined
     undefined = used_vars - defined_vars - external
     for var in sorted(undefined):
-        errors.add_warning(f"Variable '{var}' is used but not defined")
+        errors.add(GCNSemanticError(f"Variable '{var}' is used but not defined", severity=Severity.WARNING))
 
     return errors
 
@@ -231,7 +256,7 @@ def check_undefined_variables(
 def check_undefined_parameters(
     model: GCNModel,
     external_parameters: set[str] | None = None,
-) -> ValidationErrorCollection:
+) -> ErrorCollector:
     """
     Check for parameters used but not calibrated.
 
@@ -239,15 +264,15 @@ def check_undefined_parameters(
     ----------
     model : GCNModel
         The model to check.
-    external_parameters : set[str], optional
+    external_parameters : set of str, optional
         Set of parameter names that are defined externally.
 
     Returns
     -------
-    ValidationErrorCollection
+    errors : ErrorCollector
         Collection of validation errors for undefined parameters.
     """
-    errors = ValidationErrorCollection()
+    errors = ErrorCollector()
     external = external_parameters or set()
 
     # Collect all calibrated parameters
@@ -272,7 +297,7 @@ def check_undefined_parameters(
     # Find undefined
     undefined = used_params - calibrated_params - external
     for param in sorted(undefined):
-        errors.add_warning(f"Parameter '{param}' is used but not calibrated")
+        errors.add(GCNSemanticError(f"Parameter '{param}' is used but not calibrated", severity=Severity.WARNING))
 
     return errors
 
@@ -281,7 +306,7 @@ def full_validation(
     model: GCNModel,
     external_variables: set[str] | None = None,
     external_parameters: set[str] | None = None,
-) -> ValidationErrorCollection:
+) -> ErrorCollector:
     """
     Run full validation on a model.
 
@@ -289,31 +314,28 @@ def full_validation(
     ----------
     model : GCNModel
         The model to validate.
-    external_variables : set[str], optional
+    external_variables : set of str, optional
         Set of externally defined variable names.
-    external_parameters : set[str], optional
+    external_parameters : set of str, optional
         Set of externally defined parameter names.
 
     Returns
     -------
-    ValidationErrorCollection
+    errors : ErrorCollector
         All validation errors and warnings.
     """
-    errors = ValidationErrorCollection()
+    errors = ErrorCollector()
 
-    # Basic model validation
     model_errors = validate_model(model)
     for e in model_errors:
-        errors._errors.append(e)
+        errors.add(e)
 
-    # Check undefined variables (as warnings)
     var_errors = check_undefined_variables(model, external_variables)
     for e in var_errors:
-        errors._errors.append(e)
+        errors.add(e)
 
-    # Check undefined parameters (as warnings)
     param_errors = check_undefined_parameters(model, external_parameters)
     for e in param_errors:
-        errors._errors.append(e)
+        errors.add(e)
 
     return errors

@@ -1,12 +1,8 @@
-from typing import TYPE_CHECKING
-
 from IPython.core.display_functions import display
 from IPython.display import HTML
 
+from gEconpy.model.block import Block
 from gEconpy.parser.loader import load_gcn_file
-
-if TYPE_CHECKING:
-    from gEconpy.model.block import Block
 
 
 def get_css() -> str:
@@ -103,13 +99,13 @@ def get_css() -> str:
     """
 
 
-def generate_html(blocks: list["Block"]) -> HTML:
+def generate_html(blocks: list[Block]) -> HTML:
     """
     Represent a model in HTML.
 
     Parameters
     ----------
-    blocks : list[Block]
+    blocks : list of Block
         List of blocks to represent
     """
     html_parts = []

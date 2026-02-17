@@ -1,0 +1,5 @@
+# Missing closing brace for block
+block HOUSEHOLD {
+    identities {
+        Y[] = C[] + I[];
+    };

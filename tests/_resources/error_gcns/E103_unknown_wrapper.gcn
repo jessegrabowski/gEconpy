@@ -1,0 +1,6 @@
+# Unknown distribution wrapper
+block HOUSEHOLD {
+    calibration {
+        alpha ~ UnknownWrap(Beta(a=1, b=2)) = 0.5;
+    };
+};

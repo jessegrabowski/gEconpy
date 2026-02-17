@@ -2,7 +2,7 @@
 Bridge to convert new parser AST to Block objects.
 
 This module converts the AST directly to sympy equations and creates Block
-objects using Block.from_sympy(), bypassing the old token-based parsing.
+objects.
 """
 
 from collections import defaultdict
@@ -101,7 +101,7 @@ def ast_block_to_block(
     assumptions: dict[str, dict[str, bool]] | None = None,
 ) -> Block:
     """
-    Convert a GCNBlock AST directly to a Block object using Block.from_sympy().
+    Convert a GCNBlock AST directly to a Block objec.
 
     Parameters
     ----------
@@ -112,7 +112,7 @@ def ast_block_to_block(
 
     Returns
     -------
-    Block
+    block : Block
         A Block object ready for solve_optimization().
     """
     assumptions = assumptions or defaultdict(dict)
@@ -150,7 +150,7 @@ def ast_block_to_block(
 
     calibration, eq_num = _convert_calibration(ast_block.calibration, assumptions, eq_num, equation_flags, multipliers)
 
-    return Block.from_sympy(
+    return Block(
         name=ast_block.name,
         definitions=definitions,
         controls=controls,
@@ -207,7 +207,7 @@ def ast_model_to_block_dict(
     """
     Convert a GCNModel AST to a dictionary of Block objects.
 
-    This creates Block objects directly from the AST using Block.from_sympy(),
+    This creates Block objects directly from the AST using Block,
     then calls solve_optimization() on each block.
 
     Parameters
@@ -221,7 +221,7 @@ def ast_model_to_block_dict(
 
     Returns
     -------
-    dict[str, Block]
+    block_dict : dict, str to Block
         Dictionary mapping block names to Block objects.
     """
     if assumptions is None:

@@ -1,0 +1,12 @@
+# Typo in assumption name
+assumptions {
+    postive {
+        alpha;
+    };
+};
+
+block HOUSEHOLD {
+    identities {
+        Y[] = alpha * C[];
+    };
+};

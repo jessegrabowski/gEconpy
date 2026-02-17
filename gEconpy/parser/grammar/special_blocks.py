@@ -4,219 +4,137 @@ from collections import defaultdict
 
 import pyparsing as pp
 
-from sympy.core.assumptions import _assume_rules
+from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS, GCN_ASSUMPTIONS
+from gEconpy.parser.error_catalog import ErrorCode
+from gEconpy.parser.errors import GCNParseFailure
+from gEconpy.parser.grammar.statements import VARIABLE_LIST, VARIABLE_REF
+from gEconpy.parser.grammar.tokens import (
+    COMMENT,
+    EQUALS,
+    IDENTIFIER,
+    KW_ASSUMPTIONS,
+    KW_FALSE,
+    KW_OPTIONS,
+    KW_TRUE,
+    KW_TRYREDUCE,
+    LBRACE,
+    RBRACE,
+    SEMI,
+)
+from gEconpy.parser.suggestions import suggest_assumption
 
-from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS, SYMPY_ASSUMPTIONS
-from gEconpy.parser.validation import find_typos_and_guesses
-from gEconpy.utilities import flatten_list
+OPTION_KEY = pp.Combine(IDENTIFIER + pp.ZeroOrMore(pp.White(" ") + IDENTIFIER))
+OPTION_VALUE = (
+    KW_TRUE.copy().set_parse_action(lambda _: True) | KW_FALSE.copy().set_parse_action(lambda _: False) | IDENTIFIER
+)
+OPTION_ENTRY = pp.Group(OPTION_KEY("key") - EQUALS - OPTION_VALUE("value") - SEMI)
+OPTIONS_BLOCK = KW_OPTIONS.suppress() - LBRACE - pp.ZeroOrMore(OPTION_ENTRY)("entries") - RBRACE - SEMI
 
 
-def _parse_options_content(content: str) -> dict[str, bool | str]:
-    """Parse the content of an options block into a dictionary."""
+def _build_options(tokens) -> dict[str, bool | str]:
     result = {}
-    content = re.sub("[{}]", "", content)
-    lines = [line.strip() for line in content.split(";") if line.strip()]
-
-    for line in lines:
-        if "=" not in line:
-            continue
-        flag, value = line.split("=", 1)
-        value = value.strip()
-        if value.lower() == "true":
-            value = True
-        elif value.lower() == "false":
-            value = False
-        result[flag.strip()] = value
-
+    for entry in tokens.entries:
+        result[entry.key] = entry.value
     return result
 
 
-def _parse_tryreduce_content(content: str) -> list[str]:
-    """Parse the content of a tryreduce block into a list of variable names."""
-    content = re.sub("[{};]", "", content).strip()
-    if not content:
+OPTIONS_BLOCK.set_parse_action(_build_options)
+OPTIONS_BLOCK.ignore(COMMENT)
+
+TRYREDUCE_BLOCK = KW_TRYREDUCE.suppress() - LBRACE - pp.Optional(VARIABLE_LIST("variables") + SEMI) - RBRACE - SEMI
+
+
+def _build_tryreduce(tokens) -> list[str]:
+    if not tokens.variables:
         return []
-    return [x.strip().replace(",", "") for x in content.split() if x.strip()]
+    return [v.name for v in tokens.variables]
 
 
-def _extract_assumption_sub_blocks(text: str) -> dict[str, list[str]]:
-    """Extract assumption sub-blocks using pyparsing."""
-    LBRACE, RBRACE, SEMI, _COMMA = map(pp.Suppress, "{};,")
-    BLOCK_END = RBRACE + SEMI
-    header = pp.Keyword("assumptions")
-    VARIABLE = pp.Word(pp.alphas, pp.alphanums + "_" + "[]").set_name("variable")
-    PARAM = pp.Word(pp.alphas, pp.alphanums + "_").set_name("parameter")
-    BLOCK_NAME = pp.Word(pp.alphas, pp.alphanums + "_")
+TRYREDUCE_BLOCK.set_parse_action(lambda t: [_build_tryreduce(t)])
+TRYREDUCE_BLOCK.ignore(COMMENT)
 
-    VAR_LIST = pp.DelimitedList((VARIABLE | PARAM), delim=",").set_name("var_list")
-    VAR_LINE = pp.Group(VAR_LIST + SEMI).set_name("variable_list")
-
-    ANYTHING = pp.Group(pp.Regex("[^{};]+") + SEMI).set_name("generic_line")
-
-    LINE = VAR_LINE | ANYTHING
-
-    SUBBLOCK = pp.Forward()
-    SUBBLOCK <<= pp.Dict(pp.Group((BLOCK_NAME + pp.Group(LBRACE + (LINE | SUBBLOCK) + BLOCK_END)) | LINE))
-
-    LAYERED_BLOCK = pp.Forward()
-    LAYERED_BLOCK <<= pp.Dict(pp.Group(header + LBRACE + pp.OneOrMore(LAYERED_BLOCK | SUBBLOCK) + BLOCK_END))
-
-    return LAYERED_BLOCK.parse_string(text).as_dict()["assumptions"]
+ASSUMPTION_NAME = pp.one_of(GCN_ASSUMPTIONS, caseless=True)("assumption")
+_KNOWN_ASSUMPTIONS = frozenset(a.lower() for a in GCN_ASSUMPTIONS)
 
 
-def _validate_assumptions(block_dict: dict[str, list[str]]) -> None:
-    """Verify that all keys are valid sympy assumptions."""
-    for assumption in block_dict:
-        if assumption not in SYMPY_ASSUMPTIONS:
-            best_guess, _ = find_typos_and_guesses([assumption], SYMPY_ASSUMPTIONS)
-            message = f'Assumption "{assumption}" is not a valid Sympy assumption.'
-            if best_guess is not None:
-                message += f' Did you mean "{best_guess}"?'
-            raise ValueError(message)
+def _unknown_assumption_fail(s: str, loc: int, toks) -> None:
+    name = toks[0]
+    suggestions = suggest_assumption(name)
+    raise GCNParseFailure(
+        s,
+        loc,
+        f"Unknown assumption '{name}'",
+        code=ErrorCode.E015,
+        found=name,
+        suggestions=suggestions,
+    )
 
 
-def _create_assumption_kwargs(
-    assumption_dicts: dict[str, list[str]],
-) -> dict[str, dict[str, bool]]:
-    """Convert assumption sub-blocks into per-variable assumption dictionaries."""
+UNKNOWN_ASSUMPTION = (
+    (IDENTIFIER("unknown_name") + pp.FollowedBy(LBRACE))
+    .add_condition(lambda _s, _loc, toks: toks[0].lower() not in _KNOWN_ASSUMPTIONS)
+    .set_parse_action(_unknown_assumption_fail)
+)
+
+ASSUMPTION_ITEM = VARIABLE_REF | IDENTIFIER.copy().set_parse_action(lambda t: t[0])
+ASSUMPTION_LIST = pp.DelimitedList(ASSUMPTION_ITEM)
+
+VALID_ASSUMPTION_SUBBLOCK = pp.Group(ASSUMPTION_NAME - LBRACE - ASSUMPTION_LIST("variables") - SEMI - RBRACE - SEMI)
+ASSUMPTION_SUBBLOCK = VALID_ASSUMPTION_SUBBLOCK | UNKNOWN_ASSUMPTION
+
+ASSUMPTIONS_BLOCK = KW_ASSUMPTIONS.suppress() - LBRACE - pp.ZeroOrMore(ASSUMPTION_SUBBLOCK)("subblocks") - RBRACE - SEMI
+
+
+def _build_assumptions(tokens) -> dict[str, dict[str, bool]]:
     assumption_kwargs = defaultdict(DEFAULT_ASSUMPTIONS.copy)
-    user_assumptions = defaultdict(dict)
 
-    for assumption, variable_list in assumption_dicts.items():
-        for var in flatten_list(variable_list):
-            base_var = re.sub(r"\[\]", "", var)
-            user_assumptions[base_var][assumption] = True
-            assumption_kwargs[base_var][assumption] = True
+    for subblock in tokens.subblocks:
+        assumption_name = subblock.assumption.lower()
+        for item in subblock.variables:
+            var_name = item.name if hasattr(item, "name") else str(item)
+            assumption_kwargs[var_name][assumption_name] = True
 
-    all_variables = set(flatten_list(list(assumption_dicts.values())))
+    return dict(assumption_kwargs)
 
-    for var in all_variables:
-        base_var = re.sub(r"\[\]", "", var)
 
-        for k, v in DEFAULT_ASSUMPTIONS.items():
-            implications = dict(_assume_rules.full_implications[(k, v)])
-            for user_k, user_v in user_assumptions[base_var].items():
-                if ((user_k == k) and (user_v == v)) or (user_k not in implications):
-                    continue
-                if implications[user_k] != user_v:
-                    del assumption_kwargs[base_var][k]
+ASSUMPTIONS_BLOCK.set_parse_action(_build_assumptions)
+ASSUMPTIONS_BLOCK.ignore(COMMENT)
 
-    return assumption_kwargs
+SPECIAL_BLOCK = OPTIONS_BLOCK | TRYREDUCE_BLOCK | ASSUMPTIONS_BLOCK
 
 
 def parse_options(text: str) -> dict[str, bool | str]:
-    """
-    Parse an options block from GCN text.
-
-    Parameters
-    ----------
-    text : str
-        The full options block text, e.g.:
-        "options { output logfile = TRUE; output LaTeX = FALSE; };"
-
-    Returns
-    -------
-    dict[str, bool | str]
-        Dictionary of option names to values.
-    """
-    match = re.search(r"options\s*\{(.*?)\};", text, re.DOTALL | re.IGNORECASE)
-    if not match:
-        return {}
-    return _parse_options_content(match.group(1))
+    """Parse an options block from GCN text."""
+    try:
+        for result, _start, _end in OPTIONS_BLOCK.scan_string(text):
+            return result[0]
+    except pp.ParseException:
+        pass
+    return {}
 
 
 def parse_tryreduce(text: str) -> list[str]:
-    """
-    Parse a tryreduce block from GCN text.
-
-    Parameters
-    ----------
-    text : str
-        The full tryreduce block text, e.g.:
-        "tryreduce { U[], TC[]; };"
-
-    Returns
-    -------
-    list[str]
-        List of variable names to try to reduce.
-    """
-    match = re.search(r"tryreduce\s*\{(.*?)\};", text, re.DOTALL | re.IGNORECASE)
-    if not match:
-        return []
-    return _parse_tryreduce_content(match.group(1))
+    """Parse a tryreduce block from GCN text."""
+    try:
+        for result, _start, _end in TRYREDUCE_BLOCK.scan_string(text):
+            return result[0]
+    except pp.ParseException:
+        pass
+    return []
 
 
 def parse_assumptions(text: str) -> dict[str, dict[str, bool]]:
-    """
-    Parse an assumptions block from GCN text.
-
-    Parameters
-    ----------
-    text : str
-        The full assumptions block text, e.g.:
-        "assumptions { positive { C[], K[]; }; negative { TC[]; }; };"
-
-    Returns
-    -------
-    dict[str, dict[str, bool]]
-        Dictionary mapping variable names to their assumption dictionaries.
-    """
-    if "assumptions" not in text.lower():
-        return defaultdict(DEFAULT_ASSUMPTIONS.copy)
-
-    # Extract just the assumptions block
-    match = re.search(r"assumptions\s*\{", text, re.IGNORECASE)
-    if not match:
-        return defaultdict(DEFAULT_ASSUMPTIONS.copy)
-
-    # Find the matching closing brace
-    start = match.start()
-    brace_start = match.end() - 1
-    depth = 0
-    pos = brace_start
-
-    while pos < len(text):
-        if text[pos] == "{":
-            depth += 1
-        elif text[pos] == "}":
-            depth -= 1
-            if depth == 0:
-                break
-        pos += 1
-
-    # Include the closing };
-    end = pos + 1
-    if end < len(text) and text[end] == ";":
-        end += 1
-
-    assumptions_block = text[start:end]
-
-    # Check if block is empty
-    inner = re.sub(r"assumptions\s*\{|\};?", "", assumptions_block).strip()
-    if not inner:
-        return defaultdict(DEFAULT_ASSUMPTIONS.copy)
-
-    sub_blocks = _extract_assumption_sub_blocks(assumptions_block)
-    _validate_assumptions(sub_blocks)
-    return _create_assumption_kwargs(sub_blocks)
+    """Parse an assumptions block from GCN text."""
+    try:
+        for result, _start, _end in ASSUMPTIONS_BLOCK.scan_string(text):
+            return result[0]
+    except pp.ParseException:
+        pass
+    return defaultdict(DEFAULT_ASSUMPTIONS.copy)
 
 
 def extract_special_block_content(text: str, block_name: str) -> str | None:
-    """
-    Extract the raw content of a special block from text.
-
-    Parameters
-    ----------
-    text : str
-        The GCN text to search.
-    block_name : str
-        The name of the block to extract ("options", "tryreduce", or "assumptions").
-
-    Returns
-    -------
-    str | None
-        The block content including braces, or None if not found.
-    """
+    """Extract the raw content of a special block from text."""
     pattern = rf"{block_name}\s*\{{.*?\}};"
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     if match:
@@ -225,20 +143,19 @@ def extract_special_block_content(text: str, block_name: str) -> str | None:
 
 
 def remove_special_block(text: str, block_name: str) -> str:
-    """
-    Remove a special block from text.
-
-    Parameters
-    ----------
-    text : str
-        The GCN text.
-    block_name : str
-        The name of the block to remove.
-
-    Returns
-    -------
-    str
-        The text with the block removed.
-    """
+    """Remove a special block from text."""
     pattern = rf"{block_name}\s*\{{.*?\}};"
     return re.sub(pattern, "", text, flags=re.DOTALL | re.IGNORECASE)
+
+
+__all__ = [
+    "ASSUMPTIONS_BLOCK",
+    "OPTIONS_BLOCK",
+    "SPECIAL_BLOCK",
+    "TRYREDUCE_BLOCK",
+    "extract_special_block_content",
+    "parse_assumptions",
+    "parse_options",
+    "parse_tryreduce",
+    "remove_special_block",
+]

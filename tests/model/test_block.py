@@ -528,7 +528,7 @@ class TestBlockFromSympy:
         identities = {0: sp.Eq(Y, C)}
         equation_flags = {0: {}}
 
-        block = Block.from_sympy(
+        block = Block(
             name="TEST",
             identities=identities,
             equation_flags=equation_flags,
@@ -575,7 +575,7 @@ class TestBlockFromSympy:
         }
         equation_flags = {0: {}, 1: {}, 2: {"is_calibrating": False}}
 
-        new_block = Block.from_sympy(
+        new_block = Block(
             name="HOUSEHOLD",
             identities=identities,
             calibration=calibration,
@@ -610,7 +610,7 @@ class TestBlockFromSympy:
         multipliers = {0: None, 1: lambda_}
         equation_flags = {0: {}, 1: {}}
 
-        block = Block.from_sympy(
+        block = Block(
             name="HOUSEHOLD",
             objective=objective,
             constraints=constraints,

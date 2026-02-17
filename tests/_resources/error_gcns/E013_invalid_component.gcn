@@ -1,0 +1,8 @@
+# Error: Completely invalid component name
+block HOUSEHOLD
+{
+    foobar
+    {
+        Y[] = C[];
+    };
+};

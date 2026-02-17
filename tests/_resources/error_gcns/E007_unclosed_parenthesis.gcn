@@ -1,0 +1,8 @@
+# Error: Unclosed parenthesis in function call
+block UTILITY
+{
+    identities
+    {
+        U[] = log(C[] + I[];
+    };
+};

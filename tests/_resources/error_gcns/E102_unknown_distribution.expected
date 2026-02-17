@@ -1,0 +1,12 @@
+error[E102]: Unknown distribution 'UnknownDist'. Found 'UnknownDist'
+  --> E102_unknown_distribution.gcn:4:16
+     |
+   2 | block HOUSEHOLD {
+   3 |     calibration {
+   4 |         alpha ~ UnknownDist(a=1, b=2) = 0.5;
+     |                ^^^^^^^^^^^ unknown distribution
+   5 |     };
+   6 | };
+     |
+   = note: Check spelling of distribution name
+   = note: Common distributions: Normal, Beta, Gamma, Uniform, Exponential, HalfNormal

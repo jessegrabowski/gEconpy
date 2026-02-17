@@ -1,0 +1,4 @@
+# Component identities used outside of a block
+identities {
+    Y[] = C[] + I[];
+};

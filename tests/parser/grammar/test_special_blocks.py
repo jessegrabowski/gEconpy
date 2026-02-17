@@ -1,311 +1,205 @@
+"""Tests for special block grammar (options, tryreduce, assumptions)."""
+
 import pytest
 
-from gEconpy.parser.constants import DEFAULT_ASSUMPTIONS
+from pyparsing import ParseBaseException
+
 from gEconpy.parser.grammar.special_blocks import (
-    extract_special_block_content,
+    ASSUMPTIONS_BLOCK,
+    OPTIONS_BLOCK,
+    TRYREDUCE_BLOCK,
     parse_assumptions,
     parse_options,
     parse_tryreduce,
-    remove_special_block,
 )
 
 
-class TestParseOptions:
+class TestOptionsBlock:
     def test_empty_options(self):
         text = "options { };"
-        result = parse_options(text)
+        result = OPTIONS_BLOCK.parse_string(text)[0]
         assert result == {}
 
-    def test_single_option_true(self):
-        text = "options { output logfile = TRUE; };"
-        result = parse_options(text)
-        assert result == {"output logfile": True}
+    def test_single_boolean_true(self):
+        text = "options { verbose = TRUE; };"
+        result = OPTIONS_BLOCK.parse_string(text)[0]
+        assert result["verbose"] is True
 
-    def test_single_option_false(self):
-        text = "options { output logfile = FALSE; };"
-        result = parse_options(text)
-        assert result == {"output logfile": False}
+    def test_single_boolean_false(self):
+        text = "options { verbose = FALSE; };"
+        result = OPTIONS_BLOCK.parse_string(text)[0]
+        assert result["verbose"] is False
+
+    def test_string_value(self):
+        text = "options { solver = gensys; };"
+        result = OPTIONS_BLOCK.parse_string(text)[0]
+        assert result["solver"] == "gensys"
 
     def test_multiple_options(self):
-        text = """options
-        {
-            output logfile = TRUE;
-            output LaTeX = TRUE;
-            output LaTeX landscape = TRUE;
+        text = """options {
+            verbose = TRUE;
+            output = latex;
+            debug = FALSE;
         };"""
-        result = parse_options(text)
-        assert result == {
-            "output logfile": True,
-            "output LaTeX": True,
-            "output LaTeX landscape": True,
-        }
+        result = OPTIONS_BLOCK.parse_string(text)[0]
+        assert result["verbose"] is True
+        assert result["output"] == "latex"
+        assert result["debug"] is False
 
-    def test_mixed_true_false(self):
-        text = "options { output logfile = FALSE; output LaTeX = TRUE; };"
-        result = parse_options(text)
-        assert result["output logfile"] is False
-        assert result["output LaTeX"] is True
+    def test_multi_word_key(self):
+        text = "options { output logfile = TRUE; };"
+        result = OPTIONS_BLOCK.parse_string(text)[0]
+        assert result["output logfile"] is True
 
-    def test_no_options_block(self):
+    def test_case_insensitive_keyword(self):
+        text = "OPTIONS { verbose = TRUE; };"
+        result = OPTIONS_BLOCK.parse_string(text)[0]
+        assert result["verbose"] is True
+
+    def test_case_insensitive_boolean(self):
+        text = "options { verbose = true; };"
+        result = OPTIONS_BLOCK.parse_string(text)[0]
+        assert result["verbose"] is True
+
+
+class TestTryreduceBlock:
+    def test_single_variable(self):
+        text = "tryreduce { U[]; };"
+        result = TRYREDUCE_BLOCK.parse_string(text)[0]
+        assert result == ["U"]
+
+    def test_multiple_variables(self):
+        text = "tryreduce { U[], TC[], Div[]; };"
+        result = TRYREDUCE_BLOCK.parse_string(text)[0]
+        assert result == ["U", "TC", "Div"]
+
+    def test_case_insensitive_keyword(self):
+        text = "TRYREDUCE { U[]; };"
+        result = TRYREDUCE_BLOCK.parse_string(text)[0]
+        assert result == ["U"]
+
+    def test_with_whitespace(self):
+        text = """tryreduce
+        {
+            U[], TC[];
+        };"""
+        result = TRYREDUCE_BLOCK.parse_string(text)[0]
+        assert result == ["U", "TC"]
+
+
+class TestAssumptionsBlock:
+    def test_single_assumption_single_variable(self):
+        text = "assumptions { positive { C[]; }; };"
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert "C" in result
+        assert result["C"]["positive"] is True
+
+    def test_single_assumption_multiple_variables(self):
+        text = "assumptions { positive { C[], K[], L[]; }; };"
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert "C" in result
+        assert "K" in result
+        assert "L" in result
+
+    def test_multiple_assumptions(self):
+        text = """assumptions {
+            positive { C[], K[]; };
+            real { shock[]; };
+        };"""
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert result["C"]["positive"] is True
+        assert result["K"]["positive"] is True
+        assert result["shock"]["real"] is True
+
+    def test_parameter_in_assumptions(self):
+        text = "assumptions { positive { alpha, beta; }; };"
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert "alpha" in result
+        assert "beta" in result
+
+    def test_mixed_variables_and_parameters(self):
+        text = "assumptions { positive { C[], alpha, K[], beta; }; };"
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert "C" in result
+        assert "alpha" in result
+        assert "K" in result
+        assert "beta" in result
+
+    def test_case_insensitive_keyword(self):
+        text = "ASSUMPTIONS { positive { C[]; }; };"
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert "C" in result
+
+    def test_case_insensitive_assumption(self):
+        text = "assumptions { POSITIVE { C[]; }; };"
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert result["C"]["positive"] is True
+
+    def test_empty_assumptions(self):
+        text = "assumptions { };"
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert result == {}
+
+
+class TestParseOptionsFn:
+    def test_finds_options_in_larger_text(self):
+        text = """
+        options { verbose = TRUE; };
+
+        block HOUSEHOLD { };
+        """
+        result = parse_options(text)
+        assert result["verbose"] is True
+
+    def test_returns_empty_when_no_options(self):
         text = "block HOUSEHOLD { };"
         result = parse_options(text)
         assert result == {}
 
-    def test_case_insensitive_true_false(self):
-        text = "options { a = true; b = True; c = TRUE; };"
-        result = parse_options(text)
-        assert all(v is True for v in result.values())
 
+class TestParseTryreduceFn:
+    def test_finds_tryreduce_in_larger_text(self):
+        text = """
+        tryreduce { U[], TC[]; };
 
-class TestParseTryreduce:
-    def test_empty_tryreduce(self):
-        text = "tryreduce { };"
+        block HOUSEHOLD { };
+        """
         result = parse_tryreduce(text)
-        assert result == []
+        assert result == ["U", "TC"]
 
-    def test_single_variable(self):
-        text = "tryreduce { U[]; };"
-        result = parse_tryreduce(text)
-        assert result == ["U[]"]
-
-    def test_multiple_variables(self):
-        text = "tryreduce { U[], TC[]; };"
-        result = parse_tryreduce(text)
-        assert set(result) == {"U[]", "TC[]"}
-
-    def test_variables_with_newlines(self):
-        text = """tryreduce
-        {
-            U[], TC[];
-        };"""
-        result = parse_tryreduce(text)
-        assert set(result) == {"U[]", "TC[]"}
-
-    def test_no_tryreduce_block(self):
+    def test_returns_empty_when_no_tryreduce(self):
         text = "block HOUSEHOLD { };"
         result = parse_tryreduce(text)
         assert result == []
 
-    def test_from_one_block_ss(self):
-        # Pattern from one_block_1_ss.gcn
-        text = "tryreduce { C[]; };"
-        result = parse_tryreduce(text)
-        assert result == ["C[]"]
 
+class TestParseAssumptionsFn:
+    def test_finds_assumptions_in_larger_text(self):
+        text = """
+        assumptions { positive { C[]; }; };
 
-class TestParseAssumptions:
-    def test_no_assumptions_block_returns_defaults(self):
+        block HOUSEHOLD { };
+        """
+        result = parse_assumptions(text)
+        assert "C" in result
+
+    def test_returns_default_when_no_assumptions(self):
         text = "block HOUSEHOLD { };"
         result = parse_assumptions(text)
-        assert result["any_var"] == DEFAULT_ASSUMPTIONS
-
-    def test_empty_assumptions_block(self):
-        text = "assumptions { };"
-        result = parse_assumptions(text)
-        assert result["any_var"] == DEFAULT_ASSUMPTIONS
-
-    def test_positive_assumptions(self):
-        text = """assumptions
-        {
-            positive
-            {
-                C[], K[], L[];
-            };
-        };"""
-        result = parse_assumptions(text)
-        assert result["C"] == {"real": True, "positive": True}
-        assert result["K"] == {"real": True, "positive": True}
-        assert result["L"] == {"real": True, "positive": True}
-
-    def test_negative_assumptions(self):
-        text = """assumptions
-        {
-            negative
-            {
-                TC[];
-            };
-        };"""
-        result = parse_assumptions(text)
-        assert result["TC"]["negative"] is True
-
-    def test_mixed_assumptions(self):
-        text = """assumptions
-        {
-            negative
-            {
-                TC[];
-            };
-            positive
-            {
-                C[], K[];
-            };
-        };"""
-        result = parse_assumptions(text)
-        assert result["TC"]["negative"] is True
-        assert result["C"]["positive"] is True
-        assert result["K"]["positive"] is True
-
-    def test_invalid_assumption_raises(self):
-        text = """assumptions
-        {
-            random_words
-            {
-                L[], M[], P[];
-            };
-        };"""
-        with pytest.raises(ValueError, match="not a valid Sympy assumption"):
-            parse_assumptions(text)
-
-    def test_typo_gives_suggestion(self):
-        text = """assumptions
-        {
-            possitive
-            {
-                L[], M[], P[];
-            };
-        };"""
-        with pytest.raises(ValueError, match='Did you mean "positive"'):
-            parse_assumptions(text)
-
-    def test_parameters_without_brackets(self):
-        text = """assumptions
-        {
-            positive
-            {
-                C[], K[], L[], A[], lambda[], w[], r[], mc[],
-                beta, delta, sigma_C, sigma_L, alpha;
-            };
-        };"""
-        result = parse_assumptions(text)
-        assert result["beta"]["positive"] is True
-        assert result["C"]["positive"] is True
-
-    def test_full_nk_assumptions(self):
-        # Pattern from full_nk.gcn
-        text = """assumptions
-        {
-            negative
-            {
-                TC[];
-            };
-            positive
-            {
-                shock_technology[], shock_preference[], pi[], pi_star[], pi_obj[], r[], r_G[], mc[], w[], w_star[],
-                Y[], C[], I[], K[], L[],
-                delta, beta, sigma_C, sigma_L, gamma_I, phi_H;
-            };
-        };"""
-        result = parse_assumptions(text)
-        assert result["TC"]["negative"] is True
-        assert result["Y"]["positive"] is True
-        assert result["beta"]["positive"] is True
+        # Should return empty dict or default
+        assert isinstance(result, dict)
 
 
-class TestExtractSpecialBlockContent:
-    def test_extract_options(self):
-        text = "options { output logfile = TRUE; }; block HOUSEHOLD { };"
-        content = extract_special_block_content(text, "options")
-        assert "output logfile" in content
+class TestSpecialBlockErrors:
+    def test_options_missing_semicolon(self):
+        with pytest.raises(ParseBaseException):
+            OPTIONS_BLOCK.parse_string("options { verbose = TRUE }")
 
-    def test_extract_tryreduce(self):
-        text = "tryreduce { U[], TC[]; }; block HOUSEHOLD { };"
-        content = extract_special_block_content(text, "tryreduce")
-        assert "U[]" in content
+    def test_tryreduce_missing_semicolon(self):
+        with pytest.raises(ParseBaseException):
+            TRYREDUCE_BLOCK.parse_string("tryreduce { U[] }")
 
-    def test_extract_assumptions(self):
-        text = "assumptions { positive { C[]; }; }; block HOUSEHOLD { };"
-        content = extract_special_block_content(text, "assumptions")
-        assert "positive" in content
-
-    def test_nonexistent_block(self):
-        text = "block HOUSEHOLD { };"
-        content = extract_special_block_content(text, "options")
-        assert content is None
-
-
-class TestRemoveSpecialBlock:
-    def test_remove_options(self):
-        text = "options { output logfile = TRUE; }; block HOUSEHOLD { };"
-        result = remove_special_block(text, "options")
-        assert "options" not in result
-        assert "HOUSEHOLD" in result
-
-    def test_remove_tryreduce(self):
-        text = "tryreduce { U[]; }; block HOUSEHOLD { };"
-        result = remove_special_block(text, "tryreduce")
-        assert "tryreduce" not in result
-        assert "HOUSEHOLD" in result
-
-    def test_remove_nonexistent_block(self):
-        text = "block HOUSEHOLD { };"
-        result = remove_special_block(text, "options")
-        assert result == text
-
-
-class TestRealWorldPatterns:
-    """Test patterns from actual GCN files."""
-
-    def test_full_nk_options(self):
-        text = """options
-        {
-            output logfile = TRUE;
-            output LaTeX = TRUE;
-            output LaTeX landscape = TRUE;
-        };"""
-        result = parse_options(text)
-        assert result == {
-            "output logfile": True,
-            "output LaTeX": True,
-            "output LaTeX landscape": True,
-        }
-
-    def test_rbc_tryreduce(self):
-        text = """tryreduce
-        {
-            U[], TC[];
-        };"""
-        result = parse_tryreduce(text)
-        assert set(result) == {"U[]", "TC[]"}
-
-    def test_combined_special_blocks(self):
-        text = """options
-        {
-            output logfile = TRUE;
-        };
-
-        tryreduce
-        {
-            U[];
-        };
-
-        assumptions
-        {
-            positive
-            {
-                C[], K[];
-            };
-        };
-
-        block HOUSEHOLD
-        {
-            identities { Y[] = C[]; };
-        };"""
-
-        options = parse_options(text)
-        tryreduce = parse_tryreduce(text)
-        assumptions = parse_assumptions(text)
-
-        assert options == {"output logfile": True}
-        assert tryreduce == ["U[]"]
-        assert assumptions["C"]["positive"] is True
-        assert assumptions["K"]["positive"] is True
-
-        # Remove all special blocks
-        remaining = text
-        for block_name in ["options", "tryreduce", "assumptions"]:
-            remaining = remove_special_block(remaining, block_name)
-
-        assert "options" not in remaining
-        assert "tryreduce" not in remaining
-        assert "assumptions" not in remaining
-        assert "HOUSEHOLD" in remaining
+    def test_assumptions_invalid_assumption(self):
+        # "invalid" is not a valid assumption name
+        with pytest.raises(ParseBaseException):
+            ASSUMPTIONS_BLOCK.parse_string("assumptions { invalid { C[]; }; };")

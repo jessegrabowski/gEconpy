@@ -1,0 +1,12 @@
+error[E014]: Unknown tag '@invalid'. Found '@invalid'
+  --> E014_invalid_tag.gcn:6:9
+     |
+   4 |     identities
+   5 |     {
+   6 |         @invalid
+     |         ^^^^^^^^ unknown equation tag
+   7 |         Y[] = C[];
+   8 |     };
+     |
+   = note: Check spelling of tag name
+   = note: Valid tags: @exclude

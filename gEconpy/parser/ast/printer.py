@@ -37,7 +37,7 @@ def print_expression(node: Node, parent_precedence: int = 0) -> str:  # noqa: PL
 
     Returns
     -------
-    str
+    output : str
         String representation of the expression.
     """
     match node:
@@ -93,7 +93,7 @@ def print_equation(eq: GCNEquation) -> str:
 
     Returns
     -------
-    str
+    output : str
         String representation of the equation.
     """
     lhs_str = print_expression(eq.lhs)
@@ -121,7 +121,7 @@ def print_distribution(dist: GCNDistribution) -> str:
 
     Returns
     -------
-    str
+    output : str
         String representation of the distribution.
     """
     # Build distribution kwargs string
@@ -157,7 +157,7 @@ def print_block(block: GCNBlock, indent: str = "    ") -> str:
 
     Returns
     -------
-    str
+    output : str
         String representation of the block.
     """
     lines = [f"block {block.name}", "{"]
@@ -241,7 +241,7 @@ def print_model(model: GCNModel, indent: str = "    ") -> str:
 
     Returns
     -------
-    str
+    output : str
         String representation of the model.
     """
     sections = []

@@ -1,0 +1,11 @@
+error[E002]: Unbalanced braces. Found 'end of text'
+  --> E002_unclosed_brace.gcn:6:1
+     |
+   4 |         Y[] = C[] + I[];
+   5 |     };
+   6 |
+     | ^^^^^^^^^^^ unbalanced braces
+     |
+   = note: Count opening and closing braces to find the mismatch
+   = note: Check indentation to find missing braces
+   = note: Use an editor with brace matching

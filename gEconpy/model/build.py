@@ -1,4 +1,5 @@
 import logging
+import sys
 
 from pathlib import Path
 from warnings import warn
@@ -11,6 +12,8 @@ from pytensor import graph_replace
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.exceptions import ExtraParameterError, ExtraParameterWarning, OrphanParameterError
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
 from gEconpy.model.perturbation import compile_linearized_system
@@ -22,11 +25,22 @@ from gEconpy.model.steady_state import (
     simplify_provided_ss_equations,
     system_to_steady_state,
 )
+from gEconpy.parser.errors import GCNErrorCollection, GCNParseError
+from gEconpy.parser.formatting import ErrorFormatter
 from gEconpy.parser.loader import load_gcn_file
-from gEconpy.parser.validation import validate_results
 from gEconpy.utilities import get_name, substitute_repeatedly
 
 _log = logging.getLogger(__name__)
+
+
+def _print_parse_error(error: GCNParseError | GCNErrorCollection, gcn_path: Path) -> None:
+    """Format and print a parse error to stderr."""
+    formatter = ErrorFormatter()
+    if isinstance(error, GCNErrorCollection):
+        print(formatter.format_error_collection(error), file=sys.stderr)
+    else:
+        source = gcn_path.read_text() if gcn_path.exists() else None
+        print(formatter.format_error(error, source), file=sys.stderr)
 
 
 def split_out_hyper_params(
@@ -72,6 +86,144 @@ def _block_dict_to_sub_dict(block_dict):
                 for eq in group_dict.values():
                     sub_dict[eq.lhs] = eq.rhs
     return sub_dict
+
+
+def check_for_orphan_params(equations: list[sp.Expr], param_dict: SymbolDictionary) -> None:
+    """
+    Check for parameters used in equations but not defined in param_dict.
+
+    Parameters
+    ----------
+    equations : list of sp.Expr
+        Model equations.
+    param_dict : SymbolDictionary
+        Dictionary of defined parameters.
+
+    Raises
+    ------
+    OrphanParameterError
+        If orphan parameters are found.
+    """
+    parameters = list(param_dict.to_sympy().keys())
+    param_equations = [x for x in param_dict.values() if isinstance(x, sp.Expr)]
+
+    orphans = [
+        atom
+        for eq in equations
+        for atom in eq.atoms()
+        if (
+            isinstance(atom, sp.Symbol)
+            and not isinstance(atom, TimeAwareSymbol)
+            and atom not in parameters
+            and not any(eq.has(atom) for eq in param_equations)
+        )
+    ]
+
+    if len(orphans) > 0:
+        raise OrphanParameterError(orphans)
+
+
+def check_for_extra_params(
+    equations: list[sp.Expr],
+    param_dict: SymbolDictionary,
+    on_unused_parameters: str = "raise",
+    distribution_atoms: set[sp.Symbol] | None = None,
+) -> None:
+    """
+    Check for parameters defined but not used in any equations.
+
+    Parameters
+    ----------
+    equations : list of sp.Expr
+        Model equations.
+    param_dict : SymbolDictionary
+        Dictionary of defined parameters.
+    on_unused_parameters : str
+        How to handle unused parameters: "raise", "warn", or "ignore".
+    distribution_atoms : set of sp.Symbol, optional
+        Atoms used in distribution definitions (e.g., shock standard deviations).
+
+    Raises
+    ------
+    ExtraParameterError
+        If extra parameters are found and on_unused_parameters="raise".
+    """
+    parameters = list(param_dict.to_sympy().keys())
+    param_equations = [x for x in param_dict.values() if isinstance(x, sp.Expr)]
+
+    all_atoms = {atom for eq in equations + param_equations for atom in eq.atoms()}
+    if distribution_atoms:
+        all_atoms |= distribution_atoms
+    extras = [parameter for parameter in parameters if parameter not in all_atoms]
+
+    if len(extras) > 0:
+        if on_unused_parameters == "raise":
+            raise ExtraParameterError(extras)
+        if on_unused_parameters == "warn":
+            warn(ExtraParameterWarning(extras), stacklevel=2)
+
+
+def validate_results(
+    equations: list[sp.Expr],
+    steady_state_relationships: list[sp.Expr],
+    param_dict: SymbolDictionary,
+    calib_dict: SymbolDictionary,
+    deterministic_dict: SymbolDictionary,
+    on_unused_parameters: str = "raise",
+    distributions: SymbolDictionary | None = None,
+    distribution_param_names: set[str] | None = None,
+) -> None:
+    """
+    Validate parsed model results for orphan and extra parameters.
+
+    Parameters
+    ----------
+    equations : list of sp.Expr
+        Model equations.
+    steady_state_relationships : list of sp.Expr
+        Steady-state equations.
+    param_dict : SymbolDictionary
+        Dictionary of parameters.
+    calib_dict : SymbolDictionary
+        Dictionary of calibrating equations.
+    deterministic_dict : SymbolDictionary
+        Dictionary of deterministic relationships.
+    on_unused_parameters : str
+        How to handle unused parameters: "raise", "warn", or "ignore".
+    distributions : SymbolDictionary, optional
+        Dictionary of distributions (for shock priors, etc.).
+    distribution_param_names : set of str, optional
+        Parameter names used in distribution definitions (e.g., shock standard deviations).
+    """
+    joint_dict = param_dict | calib_dict | deterministic_dict
+    check_for_orphan_params(equations + steady_state_relationships, joint_dict)
+
+    # Extract atoms used in distribution parameters
+    distribution_atoms: set[sp.Symbol] = set()
+    if distributions:
+        for dist in distributions.values():
+            if hasattr(dist, "args"):
+                for arg in dist.args:
+                    if isinstance(arg, sp.Expr):
+                        distribution_atoms |= arg.atoms(sp.Symbol)
+
+    # Also add parameter names referenced in shock distributions
+    if distribution_param_names:
+        # Get sympy version of joint_dict to match symbols properly
+        sympy_dict = joint_dict.to_sympy()
+        for param_name in distribution_param_names:
+            # Find matching symbol in sympy_dict
+            for sym in sympy_dict:
+                if str(sym) == param_name:
+                    distribution_atoms.add(sym)
+                    break
+
+    check_for_extra_params(
+        equations + steady_state_relationships,
+        joint_dict,
+        on_unused_parameters,
+        distribution_atoms=distribution_atoms,
+    )
 
 
 def _apply_simplifications(
@@ -266,20 +418,27 @@ def model_from_gcn(
     backend: BACKENDS = "numpy",
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters="raise",
+    show_errors: bool = True,
     **kwargs,
 ) -> Model:
     gcn_path = Path(gcn_path)
-    objects, dictionaries, functions, _cache, priors, options = _compile_gcn(
-        gcn_path,
-        simplify_blocks=simplify_blocks,
-        simplify_tryreduce=simplify_tryreduce,
-        simplify_constants=simplify_constants,
-        verbose=verbose,
-        backend=backend,
-        error_function=error_function,
-        on_unused_parameters=on_unused_parameters,
-        **kwargs,
-    )
+
+    try:
+        objects, dictionaries, functions, _cache, priors, options = _compile_gcn(
+            gcn_path,
+            simplify_blocks=simplify_blocks,
+            simplify_tryreduce=simplify_tryreduce,
+            simplify_constants=simplify_constants,
+            verbose=verbose,
+            backend=backend,
+            error_function=error_function,
+            on_unused_parameters=on_unused_parameters,
+            **kwargs,
+        )
+    except (GCNErrorCollection, GCNParseError) as e:
+        if show_errors:
+            _print_parse_error(e, gcn_path)
+        raise
 
     variables, shocks, equations, ss_relationships = objects
     param_dict, hyper_param_dict, deterministic_dict, calib_dict = dictionaries
@@ -330,20 +489,29 @@ def statespace_from_gcn(
     on_unused_parameters="raise",
     log_linearize: bool = True,
     not_loglin_variables: list[str] | None = None,
+    show_errors: bool = True,
     **kwargs,
 ):
-    objects, dictionaries, functions, cache, priors, options = _compile_gcn(
-        gcn_path,
-        simplify_blocks=simplify_blocks,
-        simplify_tryreduce=simplify_tryreduce,
-        simplify_constants=simplify_constants,
-        verbose=verbose,
-        backend="pytensor",
-        error_function=error_function,
-        on_unused_parameters=on_unused_parameters,
-        return_symbolic=True,
-        **kwargs,
-    )
+
+    gcn_path = Path(gcn_path)
+
+    try:
+        objects, dictionaries, functions, cache, priors, options = _compile_gcn(
+            gcn_path,
+            simplify_blocks=simplify_blocks,
+            simplify_tryreduce=simplify_tryreduce,
+            simplify_constants=simplify_constants,
+            verbose=verbose,
+            backend="pytensor",
+            error_function=error_function,
+            on_unused_parameters=on_unused_parameters,
+            return_symbolic=True,
+            **kwargs,
+        )
+    except (GCNErrorCollection, GCNParseError) as e:
+        if show_errors:
+            _print_parse_error(e, gcn_path)
+        raise
 
     variables, shocks, equations, _ss_relationships = objects
     param_dict, hyper_param_dict, _deterministic_dict, calib_dict = dictionaries

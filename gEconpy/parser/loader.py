@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import sympy as sp
 
@@ -8,6 +8,7 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import DuplicateParameterError
+from gEconpy.model.block import Block
 from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel
 from gEconpy.parser.constants import STEADY_STATE_NAMES
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
@@ -15,9 +16,6 @@ from gEconpy.parser.transform.to_block import ast_model_to_block_dict
 from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_metadata
 from gEconpy.parser.transform.to_sympy import ast_to_sympy, equation_to_sympy
 from gEconpy.utilities import substitute_repeatedly
-
-if TYPE_CHECKING:
-    from gEconpy.model.block import Block
 
 PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
 
@@ -39,7 +37,7 @@ class ModelPrimitives:
     options: dict[str, str]
     tryreduce: list[TimeAwareSymbol]
     assumptions: dict[str, dict[str, bool]]
-    block_dict: dict[str, "Block"] = field(repr=False)
+    block_dict: dict[str, Block] = field(repr=False)
 
 
 def _create_shock_distribution(
@@ -49,9 +47,9 @@ def _create_shock_distribution(
     """
     Create a CompositeDistribution for shock distributions with parameter references.
 
-    Shock distributions like `epsilon[] ~ Normal(mu=0, sigma=sigma_A)` where `sigma_A`
-    is a parameter need to be converted to CompositeDistribution objects that link
-    the shock's distribution parameter to the hyper-parameter and its prior.
+    Shock distributions like `epsilon[] ~ Normal(mu=0, sigma=sigma_A)` where `sigma_A` is a parameter need to be
+    converted to CompositeDistribution objects that link the shock's distribution parameter to the hyper-parameter and
+    its prior.
 
     Parameters
     ----------
@@ -62,7 +60,7 @@ def _create_shock_distribution(
 
     Returns
     -------
-    CompositeDistribution or None
+    distribution : CompositeDistribution, optional
         A CompositeDistribution if the shock has parameter references, None otherwise.
     """
     if item.dist_name != "Normal":
@@ -104,7 +102,7 @@ def _create_shock_distribution(
     )
 
 
-def _block_dict_to_equation_list(block_dict: dict[str, "Block"]) -> list[sp.Expr]:
+def _block_dict_to_equation_list(block_dict: dict[str, Block]) -> list[sp.Expr]:
     """Extract all system equations from a dictionary of Block objects."""
     equations = []
     for block in block_dict.values():
@@ -112,9 +110,7 @@ def _block_dict_to_equation_list(block_dict: dict[str, "Block"]) -> list[sp.Expr
     return equations
 
 
-def _block_dict_to_param_dict(
-    block_dict: dict[str, "Block"], dict_name: PARAM_DICTS = "param_dict"
-) -> SymbolDictionary:
+def _block_dict_to_param_dict(block_dict: dict[str, Block], dict_name: PARAM_DICTS = "param_dict") -> SymbolDictionary:
     """Extract and merge parameter dictionaries from all blocks."""
     param_dict = SymbolDictionary()
     duplicates = set()
@@ -133,7 +129,7 @@ def _block_dict_to_param_dict(
 
 
 def _block_dict_to_variables_and_shocks(
-    block_dict: dict[str, "Block"],
+    block_dict: dict[str, Block],
 ) -> tuple[list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     """Extract variables and shocks from all blocks."""
     variables = []
@@ -169,7 +165,7 @@ def ast_block_to_equations(
 
     Returns
     -------
-    dict
+    equations : dict
         Dictionary with keys for each component type containing
         lists of (equation, metadata) tuples.
     """
@@ -212,7 +208,7 @@ def ast_block_to_calibration(
 
     Returns
     -------
-    tuple[SymbolDictionary, SymbolDictionary, SymbolDictionary]
+    calibration : tuple of (SymbolDictionary, SymbolDictionary, SymbolDictionary)
         param_dict, calib_dict, distributions
     """
     assumptions = assumptions or {}
@@ -263,7 +259,7 @@ def ast_block_to_variables_and_shocks(
 
     Returns
     -------
-    tuple[list, list]
+    vars_and_shocks : tuple of (list, list)
         List of variables, list of shocks.
     """
     assumptions = assumptions or {}
@@ -351,12 +347,12 @@ def _extract_tryreduce(
     ----------
     model : GCNModel
         The model AST containing tryreduce strings like "Pi[]", "U[]".
-    variables : list[TimeAwareSymbol]
+    variables : list of TimeAwareSymbol
         List of model variables to match against.
 
     Returns
     -------
-    list[TimeAwareSymbol]
+    tryreduce : list of TimeAwareSymbol
         List of variables marked for reduction.
     """
     tryreduce = []
@@ -388,7 +384,7 @@ def ast_model_to_primitives(
 
     Returns
     -------
-    ModelPrimitives
+    primitives : ModelPrimitives
         Dataclass containing all extracted model primitives.
     """
     # Extract model-level properties
@@ -470,7 +466,7 @@ def load_gcn_file(filepath: str | Path, simplify_blocks: bool = True) -> ModelPr
 
     Returns
     -------
-    ModelPrimitives
+    primitives : ModelPrimitives
         Dataclass containing model primitives ready for Model construction.
     """
     result = preprocess_file(filepath, validate=True)
@@ -488,7 +484,7 @@ def load_gcn_string(source: str) -> ModelPrimitives:
 
     Returns
     -------
-    ModelPrimitives
+    primitives : ModelPrimitives
         Dataclass containing model primitives ready for Model construction.
     """
     result = preprocess(source, validate=True)

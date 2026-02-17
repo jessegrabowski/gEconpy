@@ -1,0 +1,8 @@
+# Error: Invalid time index (not a number or ss)
+block CAPITAL
+{
+    identities
+    {
+        K[abc] = I[];
+    };
+};

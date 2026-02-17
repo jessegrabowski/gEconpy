@@ -1,0 +1,8 @@
+# Error: Missing left-hand side of equation
+block FIRM
+{
+    identities
+    {
+        = C[] + I[];
+    };
+};

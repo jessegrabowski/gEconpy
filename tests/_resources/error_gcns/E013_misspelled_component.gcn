@@ -1,0 +1,8 @@
+# Error: Misspelled component name (identites instead of identities)
+block FIRM
+{
+    identites
+    {
+        Y[] = K[] * L[];
+    };
+};

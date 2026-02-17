@@ -1,0 +1,12 @@
+error[E005]: Missing left-hand side of equation. Found '='
+  --> E005_missing_lhs.gcn:6:9
+     |
+   4 |     identities
+   5 |     {
+   6 |         = C[] + I[];
+     |         ^ missing left-hand side of equation
+   7 |     };
+   8 | };
+     |
+   = note: Add an expression after the '='
+   = note: Check if the equation was accidentally truncated

@@ -9,6 +9,7 @@ import sympy as sp
 from numpy.testing import assert_allclose
 from scipy import optimize
 
+from gEconpy.model.build import validate_results
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
 from gEconpy.model.steady_state import (
@@ -17,7 +18,6 @@ from gEconpy.model.steady_state import (
     system_to_steady_state,
 )
 from gEconpy.parser.loader import load_gcn_file
-from gEconpy.parser.validation import validate_results
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 

@@ -3,8 +3,8 @@ from typing import Any
 
 from gEconpy.parser.ast import GCNModel
 from gEconpy.parser.ast.validation import full_validation
-from gEconpy.parser.errors import ValidationErrorCollection
-from gEconpy.parser.grammar.model import parse_gcn
+from gEconpy.parser.errors import ErrorCollector
+from gEconpy.parser.grammar.gcn_file import parse_gcn
 from gEconpy.parser.transform.to_distribution import distributions_from_model
 from gEconpy.parser.transform.to_sympy import model_to_sympy
 
@@ -25,12 +25,12 @@ class ParseResult:
         self.ast = ast
         self.source = source
         self.filename = filename
-        self._validation_errors: ValidationErrorCollection | None = None
+        self._validation_errors: ErrorCollector | None = None
         self._sympy_equations: dict | None = None
         self._distributions: dict | None = None
 
     @property
-    def validation_errors(self) -> ValidationErrorCollection:
+    def validation_errors(self) -> ErrorCollector:
         """Lazily compute validation errors."""
         if self._validation_errors is None:
             self._validation_errors = full_validation(self.ast)
@@ -75,7 +75,7 @@ class ParseResult:
         """Convenience accessor for variable assumptions."""
         return self.ast.assumptions
 
-    def validate(self, raise_on_error: bool = True) -> ValidationErrorCollection:
+    def validate(self, raise_on_error: bool = True) -> ErrorCollector:
         """
         Run validation and optionally raise on errors.
 
@@ -86,7 +86,7 @@ class ParseResult:
 
         Returns
         -------
-        ValidationErrorCollection
+        errors : ErrorCollector
             The validation errors and warnings.
         """
         errors = self.validation_errors
@@ -104,9 +104,7 @@ def preprocess(
     Parse and preprocess a GCN source string.
 
     This is the main entry point for parsing GCN files. It handles:
-    - Comment removal
-    - Distribution extraction
-    - Block parsing
+    - Parsing via pyparsing grammar
     - AST construction
     - Optional validation
 
@@ -121,23 +119,19 @@ def preprocess(
 
     Returns
     -------
-    ParseResult
+    result : ParseResult
         The parsing result containing AST and metadata.
 
     Raises
     ------
-    GCNParseError
+    GCNGrammarError
         If there are syntax errors in the source.
     GCNSemanticError
         If validate=True and there are semantic errors.
     """
-    # Parse the source into an AST
-    ast = parse_gcn(source)
-
-    # Create result
+    ast = parse_gcn(source, filename=filename or "<string>")
     result = ParseResult(ast=ast, source=source, filename=filename)
 
-    # Optionally validate
     if validate:
         result.validate(raise_on_error=False)
 
@@ -160,12 +154,12 @@ def preprocess_file(
 
     Returns
     -------
-    ParseResult
+    result : ParseResult
         The parsing result containing AST and metadata.
     """
     filepath = Path(filepath)
-    source = filepath.read_text()
-    return preprocess(source, filename=str(filepath), validate=validate)
+    content = filepath.read_text()
+    return preprocess(content, filename=str(filepath), validate=validate)
 
 
 def quick_parse(source: str) -> GCNModel:
@@ -182,7 +176,7 @@ def quick_parse(source: str) -> GCNModel:
 
     Returns
     -------
-    GCNModel
+    model : GCNModel
         The parsed AST.
     """
     return parse_gcn(source)

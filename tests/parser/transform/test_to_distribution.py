@@ -3,7 +3,7 @@ import pytest
 
 from gEconpy.exceptions import InvalidDistributionException
 from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Number, Parameter
-from gEconpy.parser.grammar.distributions import parse_distribution
+from gEconpy.parser.grammar import parse_distribution
 from gEconpy.parser.transform.to_distribution import (
     ast_to_distribution,
     ast_to_distribution_with_metadata,
@@ -170,30 +170,30 @@ class TestFromParsedStrings:
     """Test conversion from parsed distribution strings."""
 
     def test_normal_from_string(self):
-        node = parse_distribution("x ~ Normal(mu=0, sigma=1)")
+        node = parse_distribution("x ~ Normal(mu=0, sigma=1);")
         dist = ast_to_distribution(node)
         assert isinstance(dist, pz.Normal)
 
     def test_beta_with_initial_value(self):
-        node = parse_distribution("alpha ~ Beta(alpha=2, beta=5) = 0.35")
+        node = parse_distribution("alpha ~ Beta(alpha=2, beta=5) = 0.35;")
         dist, metadata = ast_to_distribution_with_metadata(node)
         assert isinstance(dist, pz.Beta)
         assert metadata["initial_value"] == 0.35
 
     def test_maxent_from_string(self):
-        node = parse_distribution("beta ~ maxent(Beta(), lower=0.95, upper=0.999) = 0.99")
+        node = parse_distribution("beta ~ maxent(Beta(), lower=0.95, upper=0.999) = 0.99;")
         dist, metadata = ast_to_distribution_with_metadata(node)
         assert isinstance(dist, pz.Beta)
         assert metadata["initial_value"] == 0.99
 
     def test_gamma_from_string(self):
-        node = parse_distribution("tau ~ Gamma(alpha=2, beta=1) = 2.1")
+        node = parse_distribution("tau ~ Gamma(alpha=2, beta=1) = 2.1;")
         dist, metadata = ast_to_distribution_with_metadata(node)
         assert isinstance(dist, pz.Gamma)
         assert metadata["initial_value"] == 2.1
 
     def test_half_normal_from_string(self):
-        node = parse_distribution("sigma ~ HalfNormal(sigma=5) = 1.0")
+        node = parse_distribution("sigma ~ HalfNormal(sigma=5) = 1.0;")
         dist = ast_to_distribution(node)
         assert isinstance(dist, pz.HalfNormal)
 
@@ -301,28 +301,28 @@ class TestRealWorldExamples:
     """Test patterns from actual GCN files."""
 
     def test_rbc_beta(self):
-        node = parse_distribution("beta ~ maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99")
+        node = parse_distribution("beta ~ maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99;")
         _dist, metadata = ast_to_distribution_with_metadata(node)
         assert metadata["parameter_name"] == "beta"
         assert metadata["initial_value"] == 0.99
 
     def test_rbc_delta(self):
-        node = parse_distribution("delta ~ maxent(Beta(), lower=0.01, upper=0.05, mass=0.99) = 0.02")
+        node = parse_distribution("delta ~ maxent(Beta(), lower=0.01, upper=0.05, mass=0.99) = 0.02;")
         _dist, metadata = ast_to_distribution_with_metadata(node)
         assert metadata["parameter_name"] == "delta"
 
     def test_rbc_sigma_c(self):
-        node = parse_distribution("sigma_C ~ maxent(Gamma(), lower=1.01, upper=10.0, mass=0.99) = 1.5")
+        node = parse_distribution("sigma_C ~ maxent(Gamma(), lower=1.01, upper=10.0, mass=0.99) = 1.5;")
         _dist, metadata = ast_to_distribution_with_metadata(node)
         assert metadata["parameter_name"] == "sigma_C"
 
     def test_open_rbc_alpha(self):
-        node = parse_distribution("alpha ~ Beta(alpha=5, beta=5) = 0.32")
+        node = parse_distribution("alpha ~ Beta(alpha=5, beta=5) = 0.32;")
         dist, metadata = ast_to_distribution_with_metadata(node)
         assert isinstance(dist, pz.Beta)
         assert metadata["initial_value"] == 0.32
 
     def test_rho_parameter(self):
-        node = parse_distribution("rho_A ~ Beta(alpha=3, beta=1) = 0.42")
+        node = parse_distribution("rho_A ~ Beta(alpha=3, beta=1) = 0.42;")
         _dist, metadata = ast_to_distribution_with_metadata(node)
         assert metadata["parameter_name"] == "rho_A"

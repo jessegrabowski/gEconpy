@@ -1,0 +1,9 @@
+# Error: Invalid equation tag (@invalid instead of @exclude)
+block TEST
+{
+    identities
+    {
+        @invalid
+        Y[] = C[];
+    };
+};

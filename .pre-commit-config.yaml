@@ -28,6 +28,10 @@ repos:
   hooks:
     - id: no-print-statements
       types: [python]
+      exclude: |
+        (?x)(scripts/regenerate_expected_gcn_errors.py |
+             tests/parser/test_expected_errors.py
+        )
 
 - repo: https://github.com/MarcoGorelli/absolufy-imports
   rev: v0.3.1

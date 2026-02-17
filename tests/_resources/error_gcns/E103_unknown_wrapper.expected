@@ -1,0 +1,12 @@
+error[E103]: Unknown distribution wrapper 'UnknownWrap'. Found 'UnknownWrap'
+  --> E103_unknown_wrapper.gcn:4:16
+     |
+   2 | block HOUSEHOLD {
+   3 |     calibration {
+   4 |         alpha ~ UnknownWrap(Beta(a=1, b=2)) = 0.5;
+     |                ^^^^^^^^^^^ unknown wrapper
+   5 |     };
+   6 | };
+     |
+   = note: Check spelling of wrapper name
+   = note: Valid wrappers: Truncated, Censored, MaxEnt

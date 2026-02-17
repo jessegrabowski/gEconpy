@@ -1,0 +1,13 @@
+error[E013]: Unknown component 'identites'. Found 'identites'
+  --> E013_misspelled_component.gcn:4:5
+     |
+   2 | block FIRM
+   3 | {
+   4 |     identites
+     |     ^^^^^^^^^ unknown block component
+   5 |     {
+   6 |         Y[] = K[] * L[];
+     |
+   = note: Did you mean 'identities'?
+   = note: Check spelling of component name
+   = note: Valid components: definitions, controls, objective, constraints, identities, shocks, calibration
