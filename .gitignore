@@ -204,3 +204,4 @@ tags
 [._]*.un~
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,vim
+/.github/copilot-instructions.md
