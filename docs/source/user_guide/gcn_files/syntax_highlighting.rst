@@ -3,24 +3,6 @@ Syntax Highlighting
 
 gEconpy includes a TextMate grammar bundle that provides syntax highlighting for GCN files in most modern editors. The bundle is located in the ``gcn.tmbundle`` directory in the gEconpy repository.
 
-Features
---------
-
-The grammar provides highlighting for:
-
-- **Block keywords**: ``block``, ``options``, ``tryreduce``, ``assumptions``
-- **Block components**: ``definitions``, ``controls``, ``objective``, ``constraints``, ``identities``, ``shocks``, ``calibration``
-- **Assumption keywords**: ``positive``, ``negative``, ``nonnegative``, ``nonpositive``, ``real``, ``integer``, ``finite``
-- **Variables with time indices**: ``C[]``, ``K[-1]``, ``Y[ss]``
-- **Expectation operator**: ``E[][...]``
-- **Lagrange multipliers**: ``: lambda[]``
-- **Calibration targets**: ``-> param``
-- **Tags**: ``@exclude``
-- **Prior distributions**: ``Normal``, ``Beta``, ``Gamma``, etc.
-- **Distribution wrappers**: ``maxent``, ``Censored``, ``Truncated``, ``Hurdle``
-- **Mathematical functions**: ``log``, ``exp``, ``sqrt``, etc.
-- **Comments**: ``# comment``
-
 
 Installation
 ------------
@@ -69,26 +51,3 @@ Copy ``gcn.tmbundle/Syntaxes/gcn.tmLanguage.json`` to your Sublime Text packages
 - **macOS**: ``~/Library/Application Support/Sublime Text/Packages/User/``
 - **Linux**: ``~/.config/sublime-text/Packages/User/``
 - **Windows**: ``%APPDATA%\Sublime Text\Packages\User\``
-
-
-Troubleshooting
----------------
-
-Variables not highlighting in PyCharm
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-If variables like ``C[]``, ``K[-1]``, ``Y[ss]`` are not highlighting:
-
-1. **Restart PyCharm completely** (not just reload the bundle)
-2. **Invalidate caches**: Use **File → Invalidate Caches → Invalidate and Restart**
-3. **Re-add the bundle**: Remove and re-add via **Settings → Editor → TextMate Bundles**
-4. **Verify file association**: Ensure ``.gcn`` files are associated with the GCN file type under **Settings → Editor → File Types**
-
-
-Color scheme doesn't show all scopes
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Some color schemes may not have colors assigned for all TextMate scopes. You can customize scope colors in:
-
-- **PyCharm**: **Settings → Editor → Color Scheme → TextMate**
-- **VS Code**: Edit your ``settings.json`` and add ``editor.tokenColorCustomizations``
