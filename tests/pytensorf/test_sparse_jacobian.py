@@ -56,26 +56,6 @@ class TestSparseJacobian:
         expected = np.diag([2.0, 4.0, 6.0])
         np.testing.assert_allclose(f(1.0, 2.0, 3.0), expected)
 
-    def test_vector_element_variables(self):
-        x = pt.vector("x", shape=(4,))
-        eq1 = x[0] ** 2 + x[1]  # depends on x[0], x[1]
-        eq2 = x[2] - x[3] ** 2  # depends on x[2], x[3]
-        eq3 = x[0] + x[2]  # depends on x[0], x[2]
-
-        variables = [x[i] for i in range(4)]
-        equations = [eq1, eq2, eq3]
-
-        jac = sparse_jacobian(equations, variables, return_sparse=False, use_vectorized_jacobian=True)
-        f = function([x], jac)
-
-        # At x=[1,2,3,4]:
-        # eq1: d/dx0=2*1=2, d/dx1=1, d/dx2=0, d/dx3=0
-        # eq2: d/dx0=0, d/dx1=0, d/dx2=1, d/dx3=-2*4=-8
-        # eq3: d/dx0=1, d/dx1=0, d/dx2=1, d/dx3=0
-        expected = np.array([[2.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, -8.0], [1.0, 0.0, 1.0, 0.0]])
-        result = f(np.array([1.0, 2.0, 3.0, 4.0]))
-        np.testing.assert_allclose(result, expected)
-
 
 class TestSparseJacobianBenchmark:
     def build_system(self, n_eq: int, seed: int = 42) -> tuple[list[TensorVariable], list[TensorVariable]]:

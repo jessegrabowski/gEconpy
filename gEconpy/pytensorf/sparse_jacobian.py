@@ -5,80 +5,10 @@ import numpy as np
 import pytensor.tensor as pt
 
 from pytensor import sparse as pts
-from pytensor.graph.traversal import ancestors, explicit_graph_inputs
+from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.sparse.variable import SparseVariable
-from pytensor.tensor.subtensor import AdvancedSubtensor, AdvancedSubtensor1, Subtensor
 from pytensor.tensor.variable import TensorVariable
 from scipy import sparse
-
-
-def _get_used_indices(equation: TensorVariable, vector: TensorVariable) -> set[int]:
-    """Find which indices of a vector are used in an equation.
-
-    Traverses the computation graph to find Subtensor operations that
-    access elements of the given vector.
-
-    Parameters
-    ----------
-    equation : TensorVariable
-        The equation to analyze.
-    vector : TensorVariable
-        The vector variable to find index accesses for.
-
-    Returns
-    -------
-    indices : set of int
-        The set of constant integer indices accessed from the vector.
-    """
-    indices: set[int] = set()
-
-    for node in ancestors([equation]):
-        if not hasattr(node, "owner") or node.owner is None:
-            continue
-
-        op = node.owner.op
-        if not isinstance(op, (Subtensor, AdvancedSubtensor, AdvancedSubtensor1)):
-            continue
-
-        inputs = node.owner.inputs
-        if inputs[0] is not vector:
-            continue
-
-        # Extract the index value if it's a constant
-        if len(inputs) > 1:
-            idx = inputs[1]
-            if hasattr(idx, "data"):
-                indices.add(int(idx.data))
-
-    return indices
-
-
-def _classify_variables(
-    variables: Sequence[TensorVariable],
-) -> tuple[dict[TensorVariable, dict[int, int]], dict[TensorVariable, int]]:
-    """Classify variables into vector elements and scalars.
-
-    Returns
-    -------
-    vector_to_cols : dict
-        Map from root vector -> {index: column position}
-    scalar_to_col : dict
-        Map from scalar variable -> column position
-    """
-    vector_to_cols: dict[TensorVariable, dict[int, int]] = {}
-    scalar_to_col: dict[TensorVariable, int] = {}
-
-    for j, var in enumerate(variables):
-        if var.owner is not None and isinstance(var.owner.op, (Subtensor, AdvancedSubtensor, AdvancedSubtensor1)):
-            inputs = var.owner.inputs
-            vector = inputs[0]
-            if len(inputs) > 1 and hasattr(inputs[1], "data"):
-                idx = int(inputs[1].data)
-                vector_to_cols.setdefault(vector, {})[idx] = j
-        else:
-            scalar_to_col[var] = j
-
-    return vector_to_cols, scalar_to_col
 
 
 def _get_jacobian_connectivity(
@@ -109,26 +39,15 @@ def _get_jacobian_connectivity(
     rows: list[int] = []
     cols: list[int] = []
 
-    vector_to_cols, scalar_to_col = _classify_variables(variables)
+    scalar_to_col: dict[TensorVariable, int] = {var: j for j, var in enumerate(variables)}
 
     for i, eq in enumerate(equations):
         eq_inputs = set(explicit_graph_inputs(eq))
 
-        # Check scalar variables
         for var, j in scalar_to_col.items():
             if var in eq_inputs:
                 rows.append(i)
                 cols.append(j)
-
-        # Check vector element variables
-        for vector, idx_to_col in vector_to_cols.items():
-            if vector not in eq_inputs:
-                continue
-            used_indices = _get_used_indices(eq, vector)
-            for idx, j in idx_to_col.items():
-                if idx in used_indices:
-                    rows.append(i)
-                    cols.append(j)
 
     return np.asarray(rows, dtype=int), np.asarray(cols, dtype=int)
 
@@ -263,19 +182,6 @@ def sparse_jacobian(
     N = len(equations)
     M = len(variables)
 
-    # Identify root vectors and build mapping from variable index to (root, idx)
-    # For scalar variables, the root is the variable itself with idx=None
-    root_vectors: dict[TensorVariable, list[tuple[int, int | None]]] = {}
-
-    vector_to_cols, scalar_to_col = _classify_variables(variables)
-
-    # Build root_vectors from the classification
-    for vector, idx_to_col in vector_to_cols.items():
-        root_vectors[vector] = [(col, idx) for idx, col in idx_to_col.items()]
-
-    for scalar, col in scalar_to_col.items():
-        root_vectors[scalar] = [(col, None)]
-
     sparsity = sparse.coo_array((np.ones_like(rows, dtype=bool), (rows, cols)), (N, M))
     output_connectivity = sparsity @ sparsity.T
 
@@ -287,25 +193,7 @@ def sparse_jacobian(
     projection_matrix = np.equal.outer(np.arange(n_colors, dtype=int), output_coloring).astype(float)
     projected_eqs = projection_matrix @ pt.stack(equations)
 
-    # Compute Jacobian wrt each root vector and extract relevant columns
-    jac_columns: dict[int, TensorVariable] = {}
-
-    for root, col_idx_pairs in root_vectors.items():
-        # Differentiate projected equations wrt this root
-        root_jac = pt.jacobian(
-            projected_eqs, root, vectorize=use_vectorized_jacobian
-        )  # shape: (n_colors, root_size) or (n_colors,) for scalar
-
-        for var_col, vec_idx in col_idx_pairs:
-            if vec_idx is None:
-                # Scalar root - root_jac shape is (n_colors,)
-                jac_columns[var_col] = root_jac
-            else:
-                # Vector root - extract the column for this index
-                jac_columns[var_col] = root_jac[:, vec_idx]
-
-    # Build the compressed jacobian by stacking columns in order
-    compressed_jac = pt.stack([jac_columns[j] for j in range(M)], axis=-1)
+    compressed_jac = pt.stack(pt.jacobian(projected_eqs, variables, vectorize=use_vectorized_jacobian), axis=-1)
 
     compressed_index = (output_coloring[rows], cols)
     data = compressed_jac[compressed_index]
