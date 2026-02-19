@@ -2,9 +2,9 @@ User Guide
 ==========
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
    dsge_intro
-   gcn_files
+   gcn_files/index
    example_model
    estimation
