@@ -1,0 +1,33 @@
+{
+  "name": "gcn",
+  "displayName": "GCN (gEconpy)",
+  "description": "Syntax highlighting for GCN files used by gEconpy DSGE modeling",
+  "version": "0.1.0",
+  "publisher": "gEconpy",
+  "engines": {
+    "vscode": "^1.50.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "gcn",
+        "aliases": ["GCN", "gcn"],
+        "extensions": [".gcn", ".GCN"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gcn",
+        "scopeName": "source.gcn",
+        "path": "./Syntaxes/gcn.tmLanguage.json"
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jessegrabowski/gEconpy"
+  },
+  "license": "MIT"
+}

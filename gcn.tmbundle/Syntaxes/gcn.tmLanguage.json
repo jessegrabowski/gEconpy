@@ -1,69 +1,80 @@
 {
   "name": "GCN",
   "scopeName": "source.gcn",
-  "fileTypes": ["gcn", "GCN"],
+  "fileTypes": ["gcn"],
   "patterns": [
     { "include": "#comment" },
-    { "include": "#keyword" },
+    { "include": "#block-declaration" },
+    { "include": "#special-block-keyword" },
+    { "include": "#component-keyword" },
+    { "include": "#assumption-keyword" },
     { "include": "#tag" },
-    { "include": "#number" },
-    { "include": "#timeindex" },
+    { "include": "#expectation-operator" },
     { "include": "#distribution" },
-    { "include": "#operator" },
-    { "include": "#identifier" }
+    { "include": "#variable-with-time" },
+    { "include": "#number" }
   ],
   "repository": {
     "comment": {
-      "patterns": [
-        { "name": "comment.line.number-sign.gcn", "match": "#.*$" }
-      ]
+      "name": "comment.line.number-sign.gcn",
+      "match": "#.*$"
     },
-    "keyword": {
-      "patterns": [
-        {
-          "name": "keyword.control.gcn",
-          "match": "\\b(block|options|tryreduce|assumptions)\\b"
-        },
-        {
-          "name": "keyword.other.component.gcn",
-          "match": "\\b(definitions|controls|objective|constraints|identities|shocks|calibration)\\b"
-        }
-      ]
+
+    "block-declaration": {
+      "match": "\\b(block)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.gcn" },
+        "2": { "name": "entity.name.function.gcn" }
+      }
     },
+
+    "component-keyword": {
+      "name": "keyword.control.gcn",
+      "match": "\\b(definitions|controls|objective|constraints|identities|shocks|calibration)\\b"
+    },
+
+    "special-block-keyword": {
+      "name": "keyword.control.gcn",
+      "match": "\\b(options|tryreduce|assumptions)\\b"
+    },
+
+    "assumption-keyword": {
+      "name": "keyword.control.gcn",
+      "match": "\\b(positive|negative|nonpositive|nonnegative|real|integer|finite)\\b"
+    },
+
     "tag": {
-      "patterns": [
-        { "name": "entity.name.tag.gcn", "match": "@[A-Za-z_][A-Za-z0-9_]*" }
-      ]
+      "name": "entity.name.tag.gcn",
+      "match": "@[A-Za-z_][A-Za-z0-9_]*"
     },
-    "number": {
-      "patterns": [
-        { "name": "constant.numeric.gcn", "match": "\\b\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b" }
-      ]
+
+    "expectation-operator": {
+      "match": "\\b(E)\\s*(\\[\\s*\\])",
+      "captures": {
+        "1": { "name": "keyword.other.gcn" },
+        "2": { "name": "keyword.other.gcn" }
+      }
     },
-    "timeindex": {
-      "patterns": [
-        { "name": "constant.other.timeindex.gcn", "match": "\\[(?:-?\\d+|ss)?\\]" }
-      ]
-    },
+
     "distribution": {
-      "patterns": [
-        {
-          "name": "support.function.distribution.gcn",
-          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\s*(?=\\()"
-        }
-      ]
+      "match": "~\\s*(maxent|truncated)?\\s*\\(?\\s*(Beta|Gamma|Normal|HalfNormal|Exponential|Uniform|LogNormal|StudentT|Cauchy|InverseGamma|Weibull|Pareto|Dirichlet|Bernoulli|Binomial|Poisson|NegativeBinomial|Geometric|Categorical|DiscreteUniform)",
+      "captures": {
+        "1": { "name": "keyword.other.gcn" },
+        "2": { "name": "constant.language.gcn" }
+      }
     },
-    "operator": {
-      "patterns": [
-        { "name": "keyword.operator.gcn", "match": "->|~|=|\\+|-|\\*|/|:" },
-        { "name": "punctuation.separator.gcn", "match": ",|;" },
-        { "name": "punctuation.bracket.gcn", "match": "[\\{\\}\\(\\)\\[\\]]" }
-      ]
+
+    "variable-with-time": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(\\[)\\s*(-?\\d+|ss)?\\s*(\\])",
+      "captures": {
+        "1": { "name": "entity.name.function.gcn" },
+        "3": { "name": "constant.numeric.gcn" }
+      }
     },
-    "identifier": {
-      "patterns": [
-        { "name": "variable.other.gcn", "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b" }
-      ]
+
+    "number": {
+      "name": "constant.numeric.gcn",
+      "match": "(?<!\\w)\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?(?!\\w)"
     }
   }
 }
