@@ -17,8 +17,12 @@ New features, which are not backwards compatible to R, also exist:
 
 gEconpy is still in an unfinished alpha state, but I encourage anyone interested in DSGE modeling to give it a try and and report any bugs you might find.
 
-## Contributing:
+## Contributing
 Contributions from anyone are welcome, regardless of previous experience. Please check the Issues tab for open issues, or to create a new issue.
+
+## Syntax Highlighting
+
+gEconpy includes a TextMate grammar bundle for syntax highlighting of GCN files in VS Code, PyCharm, Sublime Text, and other editors. The bundle is located in the `gcn.tmbundle` directory. See the documentation for installation instructions.
 
 # Representing a DSGE Model
 Like the R package gEcon, gEconpy uses .GCN files to represent a DSGE model. A GCN file is divided into blocks, each of which represents an optimization problem. Here the household block from a Real Business Cycle (RBC) model:
