@@ -61,6 +61,7 @@ dev = [
     "pre-commit",
     "pytest",
     "pytest-cov",
+    "pytest-benchmark",
     "versioneer",
     "numdifftools"
 ]
