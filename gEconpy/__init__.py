@@ -24,6 +24,7 @@ from gEconpy.model.model import (
     stationary_covariance_matrix,
     summarize_perturbation_solution,
 )
+from gEconpy.model.perfect_foresight.solve import solve_perfect_foresight
 from gEconpy.model.statespace import data_from_prior
 from gEconpy.model.steady_state import print_steady_state
 from gEconpy.parser.html import print_gcn_file
@@ -56,6 +57,7 @@ __all__ = [
     "print_gcn_file",
     "print_steady_state",
     "simulate",
+    "solve_perfect_foresight",
     "solvers",
     "statespace_from_gcn",
     "stationary_covariance_matrix",
