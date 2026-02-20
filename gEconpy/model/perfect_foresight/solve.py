@@ -100,7 +100,7 @@ def _build_trajectory_dataframe(x: np.ndarray, var_names: list[str], T: int) -> 
 
 def solve_perfect_foresight(
     model: "Model",
-    T: int,
+    simulation_length: int,
     initial_conditions: dict[str, float] | None = None,
     terminal_conditions: dict[str, float] | None = None,
     shocks: dict[str, np.ndarray] | None = None,
@@ -114,7 +114,7 @@ def solve_perfect_foresight(
     ----------
     model : Model
         The DSGE model to solve.
-    T : int
+    simulation_length : int
         Number of time periods for the simulation.
     initial_conditions : dict of str to float, optional
         Initial values for state variables at t=-1. Keys are variable base names.
@@ -151,7 +151,7 @@ def solve_perfect_foresight(
         # Simulate transition from 90% of steady state capital
         trajectory, result = solve_perfect_foresight(
             model,
-            T=100,
+            simulation_length=100,
             initial_conditions={"K": ss_dict["K_ss"] * 0.9},
         )
         trajectory.plot()
@@ -160,7 +160,7 @@ def solve_perfect_foresight(
     terminal_conditions = terminal_conditions or {}
     compile_kwargs = compile_kwargs or {}
 
-    problem = compile_perfect_foresight_problem(model, T, **compile_kwargs)
+    problem = compile_perfect_foresight_problem(model, simulation_length, **compile_kwargs)
     ss_dict = model.steady_state(verbose=False)
 
     var_names = problem.var_names
@@ -171,15 +171,15 @@ def solve_perfect_foresight(
         shocks,
         var_names,
         problem.shock_names,
-        T,
+        simulation_length,
     )
 
-    x0 = np.tile([ss_dict.get(f"{name}_ss", 1.0) for name in var_names], T)
+    x0 = np.tile([ss_dict.get(f"{name}_ss", 1.0) for name in var_names], simulation_length)
 
     y_initial = np.array([initial_conditions.get(name, ss_dict.get(f"{name}_ss", 1.0)) for name in var_names])
     y_terminal = np.array([terminal_conditions.get(name, ss_dict.get(f"{name}_ss", 1.0)) for name in var_names])
 
-    shock_matrix = _build_shock_matrix(shocks, problem.shock_names, T)
+    shock_matrix = _build_shock_matrix(shocks, problem.shock_names, simulation_length)
 
     param_dict = model.parameters()
     params = tuple(param_dict[name] for name in problem.param_names)
@@ -195,5 +195,5 @@ def solve_perfect_foresight(
         maxiter=maxiter,
     )
 
-    trajectory = _build_trajectory_dataframe(result.x, var_names, T)
+    trajectory = _build_trajectory_dataframe(result.x, var_names, simulation_length)
     return trajectory, result

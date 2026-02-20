@@ -7,7 +7,7 @@ def validate_perfect_foresight_inputs(
     shocks: dict[str, np.ndarray] | None,
     var_names: list[str],
     shock_names: list[str],
-    T: int,
+    simulation_length: int,
 ) -> None:
     """Validate inputs to solve_perfect_foresight.
 
@@ -23,7 +23,7 @@ def validate_perfect_foresight_inputs(
         Valid variable names from the model.
     shock_names : list of str
         Valid shock names from the model.
-    T : int
+    simulation_length : int
         Number of time periods.
 
     Raises
@@ -48,5 +48,5 @@ def validate_perfect_foresight_inputs(
             raise ValueError(f"Unknown shocks: {invalid_shocks}. Valid: {shock_names}")
 
         for name, values in shocks.items():
-            if len(values) != T:
-                raise ValueError(f"Shock '{name}' has length {len(values)}, expected {T}")
+            if len(values) != simulation_length:
+                raise ValueError(f"Shock '{name}' has length {len(values)}, expected {simulation_length}")

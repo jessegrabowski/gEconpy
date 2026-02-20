@@ -13,7 +13,7 @@ class TestValidation:
                 shocks=None,
                 var_names=["K", "C"],
                 shock_names=["epsilon"],
-                T=10,
+                simulation_length=10,
             )
 
     def test_invalid_shock_raises(self):
@@ -24,7 +24,7 @@ class TestValidation:
                 shocks={"not_a_shock": np.ones(10)},
                 var_names=["K", "C"],
                 shock_names=["epsilon"],
-                T=10,
+                simulation_length=10,
             )
 
     def test_wrong_shock_length_raises(self):
@@ -35,5 +35,5 @@ class TestValidation:
                 shocks={"epsilon": np.ones(5)},
                 var_names=["K", "C"],
                 shock_names=["epsilon"],
-                T=10,
+                simulation_length=10,
             )
