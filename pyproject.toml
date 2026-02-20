@@ -53,6 +53,7 @@ dependencies = [
     "sympytensor",
     "ipython",
     "xarray",
+    "networkx"
   ]
 
 [project.optional-dependencies]
@@ -60,6 +61,7 @@ dev = [
     "pre-commit",
     "pytest",
     "pytest-cov",
+    "pytest-benchmark",
     "versioneer",
     "numdifftools"
 ]

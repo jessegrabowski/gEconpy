@@ -1,0 +1,49 @@
+options
+{
+    linear = True;
+};
+
+block STEADY_STATE
+{
+    identities
+    {
+        # Steady state values (deviations are zero in linear model)
+        x[ss] = 0;
+        pi[ss] = 0;
+        i[ss] = 0;
+        rn[ss] = 0;
+    };
+};
+
+block NEW_KEYNESIAN
+{
+    identities
+    {
+        # IS curve (Euler equation)
+        x[] = E[][x[1]] - (1/sigma) * (i[] - E[][pi[1]] - rn[]);
+
+        # New Keynesian Phillips Curve
+        pi[] = beta * E[][pi[1]] + kappa * x[];
+
+        # Taylor rule (no smoothing - no endogenous lag)
+        i[] = phi_pi * pi[] + phi_x * x[];
+
+        # Exogenous natural rate (Wicksellian) shock - AR(1)
+        rn[] = rho * rn[-1] + epsilon_rn[];
+    };
+
+    shocks
+    {
+        epsilon_rn[];
+    };
+
+    calibration
+    {
+        beta   = 0.99;
+        sigma  = 1.0;
+        kappa  = 0.10;
+        phi_pi = 1.50;  # Taylor principle: phi_pi > 1 for determinacy
+        phi_x  = 0.00;
+        rho    = 0.80;
+    };
+};

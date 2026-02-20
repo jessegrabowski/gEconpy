@@ -23,12 +23,14 @@ dependencies:
   - pymc-extras>=0.8.0
   - better-optimize
   - nutpie
+  - networkx
 
   # Testing dependencies
   - pre-commit
   - pytest-cov>=2.5
   - pytest>=3.0
   - pytest-env
+  - pytest-benchmark
 
   - pip
   - pip:

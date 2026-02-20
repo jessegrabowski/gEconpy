@@ -24,6 +24,7 @@ dependencies:
   - ipython
   - notebook<7
   - nutpie
+  - networkx
   - sympytensor
   - pymc-extras>=0.8.0
 
@@ -48,6 +49,7 @@ dependencies:
   - pytest
   - pytest-env
   - pytest-cov
+  - pytest-benchmark
   - pandas-datareader
 
   - pip:

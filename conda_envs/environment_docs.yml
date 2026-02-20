@@ -23,6 +23,7 @@ dependencies:
   - sympytensor
   - jax
   - nutpie
+  - networkx
 
   # Extra dependencies for docs build
   - ipython

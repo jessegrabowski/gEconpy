@@ -1,0 +1,37 @@
+options
+{
+    linear = True;
+};
+
+block STEADY_STATE
+{
+    identities
+    {
+        x[ss] = 0;
+        y[ss] = 0;
+    };
+};
+
+block VAR_SYSTEM
+{
+    identities
+    {
+        # Simple VAR(1) system - purely backward looking
+        x[] = rho_xx * x[-1] + rho_xy * y[-1] + epsilon_x[];
+        y[] = rho_yx * x[-1] + rho_yy * y[-1] + epsilon_y[];
+    };
+
+    shocks
+    {
+        epsilon_x[];
+        epsilon_y[];
+    };
+
+    calibration
+    {
+        rho_xx = 0.8;
+        rho_xy = 0.1;
+        rho_yx = 0.05;
+        rho_yy = 0.7;
+    };
+};
