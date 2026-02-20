@@ -5,6 +5,8 @@ import numpy as np
 import pytensor.tensor as pt
 
 from pytensor import sparse as pts
+from pytensor.gradient import Lop
+from pytensor.graph.replace import graph_replace, vectorize_graph
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.sparse.variable import SparseVariable
 from pytensor.tensor.variable import TensorVariable
@@ -147,7 +149,6 @@ def _coo_to_csc(
 def sparse_jacobian(
     equations: Sequence[TensorVariable],
     variables: Sequence[TensorVariable],
-    use_vectorized_jacobian: bool = True,
     return_sparse: bool = False,
 ) -> TensorVariable | SparseVariable:
     """Compute a (potentially) sparse Jacobian matrix.
@@ -163,9 +164,6 @@ def sparse_jacobian(
     variables : Sequence of TensorVariable
         The variables with respect to which derivatives are taken.
         Can be scalars or indexed elements of a vector (e.g., x[i]).
-    use_vectorized_jacobian : bool
-        If True, use PyTensor's vectorized Jacobian computation to compute derivatives for all equations. Otherwise,
-        a scan is used.
     return_sparse : bool, default False
         If True, return a sparse CSC matrix. Otherwise return a dense matrix.
 
@@ -181,6 +179,7 @@ def sparse_jacobian(
 
     N = len(equations)
     M = len(variables)
+    eval_points = [pt.dscalar(f"p_{i}") for i in range(N)]
 
     sparsity = sparse.coo_array((np.ones_like(rows, dtype=bool), (rows, cols)), (N, M))
     output_connectivity = sparsity @ sparsity.T
@@ -191,9 +190,14 @@ def sparse_jacobian(
         raise ValueError(f"Coloring size {output_coloring.size} does not match number of equations {sparsity.shape[0]}")
 
     projection_matrix = np.equal.outer(np.arange(n_colors, dtype=int), output_coloring).astype(float)
-    projected_eqs = projection_matrix @ pt.stack(equations)
 
-    compressed_jac = pt.stack(pt.jacobian(projected_eqs, variables, vectorize=use_vectorized_jacobian), axis=-1)
+    jvp_stack = pt.stack(
+        Lop(equations, variables, eval_points, disconnected_inputs="ignore", return_disconnected="zero")
+    )
+    P = pt.dvector("P", shape=(N,))
+    jvp_stack = graph_replace(jvp_stack, {p: P[i] for i, p in enumerate(eval_points)})
+
+    compressed_jac = vectorize_graph(jvp_stack, replace={P: pt.as_tensor_variable(projection_matrix)})
 
     compressed_index = (output_coloring[rows], cols)
     data = compressed_jac[compressed_index]
@@ -202,5 +206,4 @@ def sparse_jacobian(
         data_csc, indices_csc, indptr_csc, shape = _coo_to_csc(rows, cols, data, (N, M))
         return pts.CSC(data_csc, indices_csc, indptr_csc, shape)
 
-    dense = pt.zeros((N, M))
-    return dense[rows, cols].set(data)
+    return pt.zeros((N, M))[rows, cols].set(data)

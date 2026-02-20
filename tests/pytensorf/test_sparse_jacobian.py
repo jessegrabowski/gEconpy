@@ -36,8 +36,8 @@ class TestSparseJacobian:
         jac_dense = sparse_jacobian([eq1, eq2], [x1, x2, y1, y2], return_sparse=False)
         jac_sparse = sparse_jacobian([eq1, eq2], [x1, x2, y1, y2], return_sparse=True)
 
-        f_dense = function([x1, x2, y1, y2], jac_dense)
-        f_sparse = function([x1, x2, y1, y2], pts.dense_from_sparse(jac_sparse))
+        f_dense = function([x1, x2, y1, y2], jac_dense, on_unused_input="ignore")
+        f_sparse = function([x1, x2, y1, y2], pts.dense_from_sparse(jac_sparse), on_unused_input="ignore")
 
         vals = (1.0, 2.0, 3.0, 4.0)
         np.testing.assert_allclose(f_dense(*vals), f_sparse(*vals))
@@ -58,22 +58,41 @@ class TestSparseJacobian:
 
 
 class TestSparseJacobianBenchmark:
-    def build_system(self, n_eq: int, seed: int = 42) -> tuple[list[TensorVariable], list[TensorVariable]]:
-        rng = np.random.default_rng(seed)
-        n_vars = n_eq + 1
+    @staticmethod
+    def build_system(
+        n_eq: int,
+        rng=None,
+        min_terms: int = 1,
+        max_terms: int = 4,
+        coef_range=(0.5, 2.0),
+        ops=(pt.identity, pt.sin, pt.cos, pt.exp, lambda x: x**2, lambda x: x**3),
+    ):
+        rng = np.random.default_rng(rng)
+
+        n_vars = n_eq
         variables = [pt.dscalar(f"x{i}") for i in range(n_vars)]
 
-        ops = [pt.sin, pt.cos, pt.exp, lambda x: x**2, lambda x: x**3]
+        vars_per_eq = rng.integers(min_terms, max_terms + 1, size=n_eq)
+
+        seed_vars = rng.permutation(n_vars)
+
         equations = []
+        all_vars = np.arange(n_vars)
 
+        lo, hi = coef_range
         for i in range(n_eq):
-            term_vars = [variables[i], variables[i + 1]]
+            chosen = [int(seed_vars[i])]
+            n_extra = int(vars_per_eq[i]) - 1
 
-            eq = 0
-            for var in term_vars:
+            if n_extra > 0:
+                candidates = all_vars[all_vars != chosen[0]]
+                extra_idx = rng.choice(candidates, size=min(n_extra, n_vars - 1), replace=False)
+                chosen.extend(map(int, extra_idx))
+
+            eq = pt.constant(0.0)
+            for j in chosen:
                 op = rng.choice(ops)
-                coef = rng.uniform(0.5, 2.0)
-                eq = eq + coef * op(var)
+                eq = eq + rng.uniform(lo, hi) * op(variables[j])
             equations.append(eq)
 
         return variables, equations
@@ -81,8 +100,8 @@ class TestSparseJacobianBenchmark:
     @pytest.mark.parametrize("n_eq", [5, 10, 20, 50, 100, 500])
     def test_sparse_jacobian(self, n_eq, benchmark):
         variables, equations = self.build_system(n_eq=n_eq)
-        jac = sparse_jacobian(equations, variables, return_sparse=False, use_vectorized_jacobian=True)
-        fn = pytensor.function(variables, jac, mode="JAX")
+        jac = sparse_jacobian(equations, variables, return_sparse=False)
+        fn = pytensor.function(variables, jac, on_unused_input="ignore", mode="JAX")
 
         test_values = dict.fromkeys([var.name for var in variables], 1.0)
 
@@ -96,7 +115,7 @@ class TestSparseJacobianBenchmark:
     def test_dense_jacobian(self, n_eq, benchmark):
         variables, equations = self.build_system(n_eq=n_eq)
         dense_jac = pt.stack(pt.jacobian(pt.stack(equations), variables, vectorize=True), axis=-1)
-        fn = pytensor.function(variables, dense_jac, mode="JAX")
+        fn = pytensor.function(variables, dense_jac, on_unused_input="ignore", mode="JAX")
 
         test_values = dict.fromkeys([var.name for var in variables], 1.0)
 
