@@ -105,10 +105,9 @@ def solve_perfect_foresight(
     terminal_conditions: dict[str, float] | None = None,
     shocks: dict[str, np.ndarray] | None = None,
     compile_kwargs: dict | None = None,
-    tol: float = 1e-10,
-    maxiter: int = 100,
+    optimize_kwargs: dict | None = None,
 ) -> tuple[pd.DataFrame, OptimizeResult]:
-    """Solve the model under perfect foresight using Newton iteration.
+    """Solve the model under perfect foresight.
 
     Parameters
     ----------
@@ -127,10 +126,8 @@ def solve_perfect_foresight(
         values are arrays of length T. If None, all shocks are set to zero.
     compile_kwargs : dict, optional
         Additional arguments passed to pytensor.function when compiling.
-    tol : float, default 1e-10
-        Convergence tolerance for the Newton solver.
-    maxiter : int, default 100
-        Maximum number of Newton iterations.
+    optimize_kwargs : dict, optional
+        Additional arguments passed to sparse_newton when solving.
 
     Returns
     -------
@@ -159,6 +156,7 @@ def solve_perfect_foresight(
     initial_conditions = initial_conditions or {}
     terminal_conditions = terminal_conditions or {}
     compile_kwargs = compile_kwargs or {}
+    optimize_kwargs = optimize_kwargs or {}
 
     problem = compile_perfect_foresight_problem(model, simulation_length, **compile_kwargs)
     ss_dict = model.steady_state(verbose=False)
@@ -187,13 +185,7 @@ def solve_perfect_foresight(
     def system(x, y_init, y_term, shock_mat, param_vals, prob):
         return _compute_stacked_residuals_and_jacobian(x, y_init, y_term, shock_mat, param_vals, prob)
 
-    result = sparse_newton(
-        system,
-        x0,
-        args=(y_initial, y_terminal, shock_matrix, params, problem),
-        tol=tol,
-        maxiter=maxiter,
-    )
+    result = sparse_newton(system, x0, args=(y_initial, y_terminal, shock_matrix, params, problem), **optimize_kwargs)
 
     trajectory = _build_trajectory_dataframe(result.x, var_names, simulation_length)
     return trajectory, result
