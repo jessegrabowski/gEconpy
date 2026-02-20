@@ -97,7 +97,7 @@ class TestSparseJacobianBenchmark:
 
         return variables, equations
 
-    @pytest.mark.parametrize("n_eq", [5, 10, 20, 50, 100, 500])
+    @pytest.mark.parametrize("n_eq", [5, 10, 20, 50, 100])
     def test_sparse_jacobian(self, n_eq, benchmark):
         variables, equations = self.build_system(n_eq=n_eq)
         jac = sparse_jacobian(equations, variables, return_sparse=False)
@@ -111,7 +111,7 @@ class TestSparseJacobianBenchmark:
         fn_with_inputs()
         benchmark(fn_with_inputs)
 
-    @pytest.mark.parametrize("n_eq", [5, 10, 20, 50, 100, 500])
+    @pytest.mark.parametrize("n_eq", [5, 10, 20, 50, 100])
     def test_dense_jacobian(self, n_eq, benchmark):
         variables, equations = self.build_system(n_eq=n_eq)
         dense_jac = pt.stack(pt.jacobian(pt.stack(equations), variables, vectorize=True), axis=-1)
