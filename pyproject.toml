@@ -53,6 +53,7 @@ dependencies = [
     "sympytensor",
     "ipython",
     "xarray",
+    "networkx"
   ]
 
 [project.optional-dependencies]

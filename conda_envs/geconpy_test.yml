@@ -23,6 +23,7 @@ dependencies:
   - pymc-extras>=0.8.0
   - better-optimize
   - nutpie
+  - networkx
 
   # Testing dependencies
   - pre-commit
