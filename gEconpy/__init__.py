@@ -5,7 +5,6 @@ from importlib.metadata import version
 
 from gEconpy import (
     classes,
-    numbaf,  #  noqa: F401
     parser,
     plotting,
     solvers,

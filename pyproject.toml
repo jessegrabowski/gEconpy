@@ -205,13 +205,6 @@ lines-between-types = 1
     "ARG002", # Allow unused arguments in Pytensor Op classes
 ]
 
-'gEconpy/numbaf/*.py' = [
-    'ARG001', # Allow unused arguments in numba overloads
-    'PLR0915', # Allow long functions in numba overloads
-    'C901',  # Allow high complexity in numba overloads
-
-]
-
 'gEconpy/parser/*.py' = [
     'PLR0915', # Allow long functions in parser
     'C901',  # Allow high complexity in parser

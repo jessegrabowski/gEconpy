@@ -4,7 +4,6 @@ from functools import wraps
 from inspect import signature
 from typing import Literal
 
-import numba as nb
 import numpy as np
 import pandas as pd
 import pytensor.tensor as pt
@@ -18,7 +17,6 @@ from scipy import linalg
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import BACKENDS, compile_function
-from gEconpy.numbaf.overloads import nb_ordqz
 from gEconpy.solvers.gensys import _gensys_setup
 from gEconpy.utilities import eq_to_ss, get_name, simplify_matrix
 
@@ -361,14 +359,12 @@ def check_perturbation_solution(A, B, C, D, T, R, tol=1e-8):
     _log.info(f"Norm of stochastic part:    {norm_stochastic:0.9f}")
 
 
-# TODO: Cannot cache this I think because of the call to ordqz -- test if this is true
-@nb.njit(cache=False)
 def _compute_solution_eigenvalues(A, B, C, D, tol=1e-8) -> np.array:
     Gamma_0, Gamma_1, _, _, _ = _gensys_setup(A, B, C, D, tol)
 
     # Using scipy instead of qzdiv appears to offer a huge speedup for nearly the same answer; some eigenvalues
     # have sign flip relative to qzdiv -- does it matter?
-    A, B, _alpha, _beta, _Q, _Z = nb_ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
+    A, B, _alpha, _beta, _Q, _Z = linalg.ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
 
     eigenval = np.diag(B) / (np.diag(A) + tol)
     n_eigs = len(eigenval)
