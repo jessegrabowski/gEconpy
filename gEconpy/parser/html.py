@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from IPython.core.display_functions import display
 from IPython.display import HTML
 
@@ -145,13 +147,13 @@ def generate_html(blocks: list[Block]) -> HTML:
     return HTML(final_html)
 
 
-def print_gcn_file(gcn_path: str) -> None:
+def print_gcn_file(gcn_path: str | Path) -> None:
     """
     Display a model in HTML.
 
     Parameters
     ----------
-    gcn_path : str
+    gcn_path : str or Path
         Path to the GCN file
     """
     result = load_gcn_file(gcn_path, simplify_blocks=False)
