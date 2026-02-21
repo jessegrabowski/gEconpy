@@ -63,7 +63,8 @@ dev = [
     "pytest-cov",
     "pytest-benchmark",
     "versioneer",
-    "numdifftools"
+    "numdifftools",
+    "asv"
 ]
 
 docs = [
@@ -186,6 +187,11 @@ max-complexity = 10
 lines-between-types = 1
 
 [tool.ruff.lint.per-file-ignores]
+'benchmarks/*.py' = [
+    "PLC0415", # Allow imports inside the setup method of asv benchmarks
+    "ARG002", # Allow unused arguments in asv benchmark setup methods
+]
+
 'gEconpy/solvers/gensys.py' = [
     "ARG002", # Allow unused arguments in Pytensor Op classes
 ]

@@ -56,4 +56,5 @@ dependencies:
       - numdifftools
       - jax>0.9
       - corner
+      - asv
       - -e ../.

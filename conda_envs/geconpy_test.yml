@@ -36,3 +36,4 @@ dependencies:
   - pip:
       - numdifftools
       - jax
+      - asv
