@@ -7,9 +7,9 @@ GCN Parser
 .. toctree::
     :maxdepth: 2
 
-    parser/file_loaders
-    parser/gEcon_parser
-    parser/parse_distributions
-    parser/parse_equations
-    parser/parse_plaintext
-    parser/validation
+    parser/loader
+    parser/preprocessor
+    parser/errors
+    parser/grammar
+    parser/ast
+    parser/transform

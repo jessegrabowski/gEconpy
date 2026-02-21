@@ -130,7 +130,7 @@ def linearize_model(
     Notes
     -----
     Convert the non-linear model to its log-linear approximation using a first-order Taylor expansion around the
-    deterministic steady state. The specific method of log-linearization is taken from ..[1]
+    deterministic steady state. The specific method of log-linearization is taken from [1]_.
 
     .. math::
         F_1 T y_{t-1} + F_2 @ T @ y_t + F_3 @ T @ y_{t+1} + F4 \varepsilon_t = 0
@@ -168,7 +168,9 @@ def linearize_model(
 
     References
     ----------
-    [1] gEcon User's Guide, page 54, equation 9.9.
+    .. [1] Klima, G., Podemski, K., Retkiewicz-Wijtiwiak, K., and Sowińska, A.E.
+       "gEcon: General Equilibrium Economic Modelling Language and Solution Framework."
+       R package version 1.2.1 (2021). See User's Guide, page 54, equation 9.9.
     """
     if order != 1:
         raise NotImplementedError("Only order = 1 linearization is currently implemented.")
@@ -389,9 +391,9 @@ def check_bk_condition(
     return_value: Literal["dataframe", "bool", None] = "dataframe",
 ) -> bool | pd.DataFrame | None:
     """
-    Compute the generalized eigenvalues of system in the form presented in [1].
+    Compute the generalized eigenvalues of system in the form presented in [1]_.
 
-    Per [2], the number of unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of
+    Per [2]_, the number of unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of
     forward-looking variables. Failing this test suggests timing problems in the definition of the model.
 
     Parameters
@@ -428,6 +430,13 @@ def check_bk_condition(
           satisfied, False otherwise.
         - Eigenvalues, pd.DataFrame, if return_value is 'df', returns a dataframe containing the real and imaginary
           components of the system's, eigenvalues, along with their modulus.
+
+    References
+    ----------
+    .. [1] Sims, Christopher A. "Solving linear rational expectations models."
+       *Computational Economics* 20.1-2 (2002): 1-20.
+    .. [2] Blanchard, O.J. and Kahn, C.M. "The solution of linear difference models under
+       rational expectations." *Econometrica* 48.5 (1980): 1305-1311.
     """
     if return_value not in ["dataframe", "bool", None]:
         raise ValueError(f'Unknown return type "{return_value}"')
@@ -507,9 +516,10 @@ def check_bk_condition_pt(
     """
     Check the Blanchard-Kahn condition for a model.
 
-    Compute the generalized eigenvalues of system in the form presented in [1]. Per [2], the number of
-    unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of forward-looking variables. Failing
-    this test suggests timing problems in the definition of the model.
+    Compute the generalized eigenvalues of system in the form presented in [1]_.
+    Per [2]_, the number of unstable eigenvalues (:math:`|v| > 1`) should not be greater
+    than the number of forward-looking variables. Failing this test suggests timing problems in the definition of
+    the model.
 
     Parameters
     ----------
@@ -535,5 +545,12 @@ def check_bk_condition_pt(
         Number of forward-looking variables in the model.
     n_greater_than_one: int
         Number of eigenvalues greater than one in modulus.
+
+    References
+    ----------
+    .. [1] Sims, Christopher A. "Solving linear rational expectations models."
+       *Computational Economics* 20.1-2 (2002): 1-20.
+    .. [2] Blanchard, O.J. and Kahn, C.M. "The solution of linear difference models under
+       rational expectations." *Econometrica* 48.5 (1980): 1305-1311.
     """
     return BlanchardKahnCondition(tol=tol)(A, B, C, D)

@@ -1,19 +1,20 @@
 """
 Sphinx plugin to run generate a gallery for notebooks.
 
-Modified from the pymc project, whihch modified the seaborn project, which modified the mpld3 project.
+Modified from the pymc project, which modified the seaborn project, which modified the mpld3 project.
 """
 
 import base64
 import json
 import os
 import shutil
+import subprocess
+
+from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import sphinx
 
@@ -36,7 +37,7 @@ Example Gallery
 """
 
 SECTION_TEMPLATE = """
-.. _{section_id}:
+.. _gallery-{section_id}:
 
 {section_title}
 {underlines}
@@ -59,6 +60,21 @@ folder_title_map = {
     "estimation": "Estimation",
     "case_study": "Case Studies",
 }
+
+
+def is_tracked_by_git(filepath):
+    """Check if a file is tracked by git."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(filepath)],
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        # git not available, assume all files are valid
+        return True
+    else:
+        return result.returncode == 0
 
 
 def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
@@ -115,6 +131,13 @@ class NotebookGenerator:
         return None
 
     def gen_previews(self):
+        if self.png_path.exists():
+            logger.info(
+                f"Custom thumbnail already exists for {self.basename}, skipping extraction",
+                type="thumbnail_extractor",
+            )
+            return
+
         preview = self.extract_preview_pic()
         if preview is not None:
             with self.png_path.open("wb") as buff:
@@ -131,17 +154,15 @@ class NotebookGenerator:
 def main(app):
     logger.info("Starting thumbnail extractor.")
 
-    os.chdir(app.builder.srcdir)
     working_dir = Path.cwd()
-
-    logger.info(f"Current working directory: {working_dir}")
+    os.chdir(app.builder.srcdir)
 
     file = [HEAD]
 
     for folder, title in folder_title_map.items():
         file.append(SECTION_TEMPLATE.format(section_title=title, section_id=folder, underlines="-" * len(title)))
 
-        thumbnail_dir = working_dir / "_thumbnails" / folder
+        thumbnail_dir = Path("_thumbnails") / folder
         if not thumbnail_dir.exists():
             Path.mkdir(thumbnail_dir, parents=True)
 
@@ -159,6 +180,13 @@ def main(app):
         nb_paths = sorted(Path("examples", folder).glob("*.ipynb"))
 
         for nb_path in nb_paths:
+            if not is_tracked_by_git(nb_path):
+                logger.info(
+                    f"Skipping {nb_path.name}, not tracked by git",
+                    type="thumbnail_extractor",
+                )
+                continue
+
             nbg = NotebookGenerator(filename=nb_path, root_dir=Path(".."), folder=folder)
             nbg.gen_previews()
 

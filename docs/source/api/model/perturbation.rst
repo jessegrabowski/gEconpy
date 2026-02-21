@@ -16,7 +16,7 @@ Perturbation
 Helper Functions
 ****************
 
-.. automodule:: gEconpy.model.perturbation
+.. currentmodule:: gEconpy.model.perturbation
 
 .. autosummary::
     :toctree: generated/
@@ -31,7 +31,7 @@ Helper Functions
 Pytensor Ops
 ************
 
-.. automodule:: gEconpy.model.perturbation
+.. currentmodule:: gEconpy.model.perturbation
 
 .. autosummary::
     :toctree: generated/

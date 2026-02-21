@@ -8,4 +8,5 @@ Classes
     :maxdepth: 2
 
     classes/containers
+    classes/distributions
     classes/time_aware_symbol

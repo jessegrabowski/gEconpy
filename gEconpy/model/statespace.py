@@ -192,6 +192,15 @@ class DSGEStateSpace(PyMCStateSpace):
         return Z
 
     def make_symbolic_graph(self):
+        """
+        Build the symbolic statespace graph for the DSGE model.
+
+        This method constructs the PyTensor computational graph representing the linearized DSGE model
+        in state-space form. It sets up the transition and selection matrices from the perturbation
+        solution, configures the observation equation, and initializes state covariances.
+
+        The method should only be called after :meth:`configure` has been called.
+        """
         if not self._configured:
             if self.verbose:
                 _log.info("Statespace model construction complete, but call the .configure method to finalize.")

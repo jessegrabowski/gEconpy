@@ -393,7 +393,7 @@ def gensys(
     Christopher Sim's gensys.
 
     Solves rational expectations equations by partitioning the system into stable and unstable roots,
-    then eliminating the unstable roots via QZ decomposition.
+    then eliminating the unstable roots via QZ decomposition, as described in [1]_.
 
     System given as:
 
@@ -472,7 +472,8 @@ def gensys(
 
     References
     ----------
-    .. [1] Sims, Christopher A. "Solving linear rational expectations models." Computational Economics 20.1-2 (2002): 1.
+    .. [1] Sims, Christopher A. "Solving linear rational expectations models."
+       *Computational Economics* 20.1-2 (2002): 1-20.
 
     Notes
     -----

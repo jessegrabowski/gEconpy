@@ -27,7 +27,7 @@ def nb_cycle_reduction(
     tol: float = 1e-7,
 ) -> tuple[np.ndarray | None, np.ndarray | None, str, float]:
     """
-    Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1].
+    Solve quadratic matrix equation of the form :math:`A_0 x^2 + A_1 x + A_2 = 0` via cycle reduction algorithm of [1]_.
 
     Useful in the DSGE context to solve for the of the policy function, g, with respect to state vector y.
 
@@ -64,10 +64,8 @@ def nb_cycle_reduction(
 
     References
     ----------
-    ..[1] D.A. Bini, G. Latouche, B. Meini (2002), "Solving matrix polynomial equations
-          arising in queueing problems", Linear Algebra and its Applications 340, pp. 222-244
-    ..[2]
-
+    .. [1] Bini, D.A., Latouche, G., and Meini, B. "Solving matrix polynomial equations
+       arising in queueing problems." *Linear Algebra and its Applications* 340 (2002): 222-244.
     """
     result = "Optimization successful"
     log_norm = 0
@@ -276,7 +274,7 @@ def solve_policy_function_with_cycle_reduction(
     verbose: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, str, float]:
     """
-    Solve quadratic matrix equation of the form $A0x^2 + A1x + A2 = 0$ via cycle reduction algorithm of [1].
+    Solve quadratic matrix equation of the form :math:`A_0 x^2 + A_1 x + A_2 = 0` via cycle reduction algorithm of [1]_.
 
     Returns policy function matrix T and shock impact matrix R, which together define a linear DSGE system.
 
@@ -312,6 +310,11 @@ def solve_policy_function_with_cycle_reduction(
         String describing result of the cycle reduction algorithm
     log_norm: float
         Log L1 matrix norm of the first matrix (A2 -> A1 -> A0) that did not converge.
+
+    References
+    ----------
+    .. [1] Bini, D.A., Latouche, G., and Meini, B. "Solving matrix polynomial equations
+       arising in queueing problems." *Linear Algebra and its Applications* 340 (2002): 222-244.
     """
     # Sympy gives back integers in the case of x/dx = 1, which can screw up the dtypes when passing to numba if
     # a Jacobian matrix is all constants (i.e. dF/d_shocks) -- cast everything to float64 here to avoid

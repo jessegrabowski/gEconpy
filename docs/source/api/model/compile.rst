@@ -9,7 +9,6 @@ Compile
 
     compile_function
     compile_to_numpy
-    compile_to_numba
     compile_to_pytensor_function
 
 
@@ -17,7 +16,7 @@ Compile
 Function Wrappers
 *****************
 
-.. automodule:: gEconpy.model.compile
+.. currentmodule:: gEconpy.model.compile
 
 .. autosummary::
     :toctree: generated/

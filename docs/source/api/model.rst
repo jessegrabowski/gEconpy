@@ -12,6 +12,7 @@ Model
     model/compile
     model/model
     model/parameters
+    model/perfect_foresight
     model/perturbation
     model/simplification
     model/statespace
