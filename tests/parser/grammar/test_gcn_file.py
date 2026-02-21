@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from gEconpy.data.examples import get_example_gcn
 from gEconpy.parser.ast import GCNModel
 from gEconpy.parser.errors import GCNGrammarError
 from gEconpy.parser.grammar.gcn_file import parse_gcn
@@ -365,11 +366,6 @@ class TestParseGCNFiles:
     def gcn_dir(self):
         return Path(__file__).parent.parent.parent / "_resources" / "test_gcns"
 
-    @pytest.fixture
-    def gcn_files_dir(self):
-
-        return Path(__file__).parent.parent.parent.parent / "GCN Files"
-
     def test_parse_one_block_1(self, gcn_dir):
         gcn_path = gcn_dir / "one_block_1.gcn"
         if not gcn_path.exists():
@@ -381,8 +377,8 @@ class TestParseGCNFiles:
         assert len(model.blocks) == 1
         assert model.blocks[0].name == "HOUSEHOLD"
 
-    def test_parse_rbc(self, gcn_files_dir):
-        gcn_path = gcn_files_dir / "RBC.gcn"
+    def test_parse_rbc(self):
+        gcn_path = get_example_gcn("RBC")
         if not gcn_path.exists():
             pytest.skip(f"Test file not found: {gcn_path}")
 

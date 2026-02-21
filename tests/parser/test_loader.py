@@ -5,6 +5,7 @@ import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.data.examples import get_example_gcn
 from gEconpy.parser.loader import (
     ast_block_to_calibration,
     ast_block_to_equations,
@@ -312,12 +313,8 @@ class TestLoadGcnFile:
 
 
 class TestIntegrationWithRealFiles:
-    @pytest.fixture
-    def gcn_files_dir(self):
-        return Path(__file__).parent.parent.parent / "GCN Files"
-
-    def test_load_rbc_gcn(self, gcn_files_dir):
-        gcn_path = gcn_files_dir / "RBC.gcn"
+    def test_load_rbc_gcn(self):
+        gcn_path = get_example_gcn("RBC")
         if not gcn_path.exists():
             pytest.skip(f"Test file not found: {gcn_path}")
 
