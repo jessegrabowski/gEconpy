@@ -5,6 +5,7 @@ from importlib.metadata import version
 
 from gEconpy import (
     classes,
+    data,
     parser,
     plotting,
     solvers,
@@ -45,6 +46,7 @@ __all__ = [
     "check_bk_condition",
     "check_steady_state",
     "classes",
+    "data",
     "data_from_prior",
     "exceptions",
     "impulse_response_function",

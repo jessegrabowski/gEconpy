@@ -1,0 +1,40 @@
+{
+    "version": 1,
+    "project": "gEconpy",
+    "project_url": "https://github.com/jessegrabowski/gEconpy",
+    "repo": ".",
+    "branches": ["main"],
+    "environment_type": "conda",
+    "conda_channels": ["conda-forge", "nodefaults"],
+    "benchmark_timeout": 300,
+    "build_command": [
+        "python -m pip install . --no-build-isolation -v"
+    ],
+    "install_command": [],
+    "matrix": {
+        "numpy": [],
+        "numba": [],
+        "scipy": [],
+        "sympy": [],
+        "sympytensor": [],
+        "pyparsing": [],
+        "pandas": [],
+        "xarray": [],
+        "matplotlib": [],
+        "arviz": [],
+        "statsmodels": [],
+        "pymc": [],
+        "pytensor": [],
+        "preliz": [],
+        "ipython": [],
+        "pymc-extras": [],
+        "better-optimize": [],
+        "nutpie": [],
+        "networkx": [],
+        "pytest": [],
+        "pytest-benchmark": []
+    },
+    "env_dir": ".asv/env",
+    "results_dir": ".asv/results",
+    "html_dir": ".asv/html"
+}
