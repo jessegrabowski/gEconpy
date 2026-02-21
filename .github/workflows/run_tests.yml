@@ -74,9 +74,9 @@ jobs:
         shell: bash -leo pipefail {0}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - uses: mamba-org/setup-micromamba@add3a49764cedee8ee24e82dfde87f5bc2914462 # v2.0.7
 
-    - uses: mamba-org/setup-micromamba@v2
       with:
         environment-file: conda_envs/geconpy_test.yml
         create-args: >-
@@ -107,7 +107,7 @@ jobs:
         MATRIX_ID: ${{ steps.matrix-id.outputs.id }}
 
     - name: Upload coverage file
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
         name: coverage-${{ steps.matrix-id.outputs.id }}
         path: coverage/coverage-${{ steps.matrix-id.outputs.id }}.xml
@@ -129,12 +129,12 @@ jobs:
     needs: [all-checks]
     if: ${{ needs.all-checks.result == 'success' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.13"
 
@@ -143,14 +143,14 @@ jobs:
           python -m pip install -U coverage>=5.1 coveralls
 
       - name: Download coverage file
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: coverage-*
           path: coverage
           merge-multiple: true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
           directory: ./coverage/
           fail_ci_if_error: true
