@@ -19,7 +19,7 @@ def o1_policy_function_adjoints(
 
     The matrix quadratic equation is of the form:
 
-    ..math::
+    .. math::
 
         A + BT + CTT = 0
 

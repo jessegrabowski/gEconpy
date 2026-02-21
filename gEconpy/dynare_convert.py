@@ -246,7 +246,7 @@ def make_mod_file(
     """
     Generate a string representation of a Dynare model file for a dynamic stochastic general equilibrium (DSGE) model.
 
-    For more information, see [1].
+    For more information, see [1]_.
 
     Parameters
     ----------
@@ -268,7 +268,8 @@ def make_mod_file(
 
     References
     ----------
-    ..[1] Adjemian, Stéphane, et al. "Dynare: Reference manual, version 4." (2011).
+    .. [1] Adjemian, S., Bastani, H., Juillard, M., Mihoubi, F., Perendia, G., Ratto, M.,
+       and Villemot, S. "Dynare: Reference Manual, Version 4." *CEPREMAP* (2011).
     """
     mod_blocks = [
         write_variable_declarations(model, linewidth=linewidth),

@@ -8,11 +8,12 @@ API
     :titlesonly:
 
     api/classes
+    api/data
     api/dynare_convert
     api/exceptions
     api/model
-    api/numbaf
     api/parser
     api/plotting
+    api/pytensorf
     api/solvers
     api/utilities

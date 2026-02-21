@@ -223,7 +223,7 @@ def validate_user_steady_state_simple(
     Because the first equation will reduce to :math:`-0.5` after simple substitution. On the other hand, this system
     would not be marked at :math:`x_1 = 0.5`:
 
-    ..math::
+    .. math::
 
         \begin{align}
             x_1 - x_2 &= 0 \\
@@ -231,7 +231,7 @@ def validate_user_steady_state_simple(
             x_3 - 1 &= 0
         \end{align}
 
-    Clearly this can be reduced to :math:`x_1 = 1$`, but no effort is made to perform these substitutions, so the error
+    Clearly this can be reduced to :math:`x_1 = 1`, but no effort is made to perform these substitutions, so the error
     will not be flagged. In general, these substitutions are non-trivial, and attempting to solve results in significant
     time cost.
 
@@ -423,7 +423,7 @@ class Model:
     @property
     def params(self) -> list[sp.Symbol]:
         """
-        List of parameters in the model, stored as Sympy ``Symbol``s.
+        List of parameters in the model, stored as :class:`sympy.Symbol` objects.
 
         Parameters are fixed values in the model, associated with the structural equations of the model. These are
         sometimes called "deep parameters" because of their (supposed) microeconomic foundations.
@@ -433,7 +433,7 @@ class Model:
     @property
     def hyper_params(self) -> list[sp.Symbol]:
         """
-        List of hyperparameters in the model, stored as Sympy ``Symbol``s.
+        List of hyperparameters in the model, stored as :class:`sympy.Symbol` objects.
 
         Hyperparameters are parameters associated with the distribution of shocks in the model, for example the
         standard deviation of a normally distributed shock.
@@ -443,7 +443,7 @@ class Model:
     @property
     def deterministic_params(self) -> list[sp.Symbol]:
         """
-        List of deterministic parameters in the model, stored as Sympy ``Symbol``s.
+        List of deterministic parameters in the model, stored as :class:`sympy.Symbol` objects.
 
         Deterministic parameters are parameters defined as functions of other parameters in the model. They are
         not directly calibrated, but are instead derived deterministically from other parameters.
@@ -455,7 +455,7 @@ class Model:
         """
         Dictionary of prior distributions for the model parameters.
 
-        The dictionary keys are parameter names, and the values are instances of a subclass of ``preliz.Distribution``.
+        The dictionary keys are parameter names, and the values are instances of :class:`preliz.Distribution`.
         """
         return self._priors[0]
 
@@ -464,14 +464,14 @@ class Model:
         """
         Dictionary of prior distributions for the model shocks.
 
-        The dictionary keys are shock names, and the values are instances of a subclass of ``preliz.Distribution``.
+        The dictionary keys are shock names, and the values are instances of :class:`preliz.Distribution`.
         """
         return self._priors[1]
 
     @property
     def calibrated_params(self) -> list[sp.Symbol]:
         """
-        List of calibrated parameters in the model, stored as Sympy ``Symbol``s.
+        List of calibrated parameters in the model, stored as :class:`sympy.Symbol` objects.
 
         Calibrated parameters are pseudo-parameters whose values are an implicit function of the model parameters.
         Each calibrated parameter must be associated with a function of steady-state variables. This function is added

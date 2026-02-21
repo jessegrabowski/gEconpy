@@ -485,7 +485,7 @@ class Block:
 
         By setting up the following Lagrangian:
 
-        ..math::
+        .. math::
             :nowrap:
 
             L = Sum_{t=0}^\infty \text{Objective} - lambda_1 * \text{constraint}_1 - ... - \lambda_n *

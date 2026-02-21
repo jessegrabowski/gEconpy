@@ -11,6 +11,10 @@
         "python -m pip install . --no-build-isolation -v"
     ],
     "install_command": [],
+    "dvcs": "git",
+    "regressions_first_commits": {
+        ".*": "7ae3366"
+    },
     "matrix": {
         "numpy": [],
         "numba": [],

@@ -15,8 +15,6 @@ copyright = "2022-2025, Jesse Grabowski"
 language = "en"
 html_baseurl = "github.com/jessegrabowski/gEconpy"
 
-docnames = []
-
 version = gEconpy.__version__
 on_readthedocs = os.environ.get("READTHEDOCS", None)
 rtd_version = os.environ.get("READTHEDOCS_VERSION", "")
@@ -42,21 +40,16 @@ extensions = [
     "myst_nb",
     "sphinx_design",
     "sphinx_copybutton",
-    "sphinxcontrib.bibtex",
     "sphinx_codeautolink",
     "generate_gallery",
     "sphinx.ext.autodoc",
     "numpydoc",
-    "sphinx.ext.doctest",
-    "sphinx.ext.extlinks",
-    "sphinx.ext.todo",
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.autosummary",
-    "matplotlib.sphinxext.plot_directive",
-    "IPython.sphinxext.ipython_console_highlighting",
-    "IPython.sphinxext.ipython_directive",
 ]
 
+# Make autosectionlabel use document path as prefix to avoid duplicate labels
+autosectionlabel_prefix_document = True
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -163,32 +156,13 @@ myst_substitutions = {
 }
 
 nb_execution_mode = "off"
-nbsphinx_execute = "never"
-nbsphinx_allow_errors = True
-
-
-# -- Bibtex config  -------------------------------------------------
-bibtex_bibfiles = ["references.bib"]
-bibtex_default_style = "unsrt"
-bibtex_reference_style = "author_year"
-
-# -- ABlog config  -------------------------------------------------
-# blog_baseurl = "https://docs.pymc.io/projects/examples/en/latest/"
-# blog_title = "PyMC Examples"
-# blog_path = "blog"
-# blog_authors = {
-#     "contributors": ("PyMC Contributors", "https://docs.pymc.io"),
-# }
-# blog_default_author = "contributors"
-# post_show_prev_next = False
-# fontawesome_included = True
 
 
 # -- Intersphinx Mapping -------------------------------------------------
 intersphinx_mapping = {
     "arviz": ("https://python.arviz.org/en/latest/", None),
     "pytensor": ("https://pytensor.readthedocs.io/en/latest/", None),
-    "pmx": ("https://www.pymc.io/projects/experimental/en/latest", None),
+    "pmx": ("https://www.pymc.io/projects/extras/en/latest", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "myst": ("https://myst-parser.readthedocs.io/en/latest", None),
     "myst-nb": ("https://myst-nb.readthedocs.io/en/latest/", None),
@@ -196,10 +170,5 @@ intersphinx_mapping = {
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
     "xarray": ("https://docs.xarray.dev/en/stable/", None),
     "sympy": ("https://docs.sympy.org/latest/", None),
+    "preliz": ("https://preliz.readthedocs.io/en/latest/", None),
 }
-
-# OpenGraph config
-# use default readthedocs integration aka no config here
-
-# codeautolink_autodoc_inject = False
-# codeautolink_concat_default = True
