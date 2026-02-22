@@ -18,6 +18,7 @@ from gEconpy.parser.ast import (
     GCNModel,
     Tag,
 )
+from gEconpy.parser.transform.expand_time_indices import expand_block_time_indices
 from gEconpy.parser.transform.to_sympy import ast_to_sympy
 
 
@@ -283,10 +284,10 @@ def ast_model_to_block_dict(
         if block_name_upper in ("STEADYSTATE", "SS"):
             continue
 
-        # Convert AST directly to Block using from_sympy
-        block = ast_block_to_block(ast_block, assumptions, source=source)
+        expanded_block = expand_block_time_indices(ast_block)
 
-        # Solve optimization (derives FOCs, creates Lagrange multipliers)
+        block = ast_block_to_block(expanded_block, assumptions, source=source)
+
         block.solve_optimization(try_simplify=simplify_blocks)
         block_dict[block.name] = block
 

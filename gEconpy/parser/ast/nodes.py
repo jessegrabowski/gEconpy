@@ -497,20 +497,10 @@ def collect_nodes_of_type(node: Node, node_type: type) -> set:
     result : set
         Set of all nodes of the specified type.
     """
-    if isinstance(node, node_type):
-        return {node}
-    if isinstance(node, BinaryOp):
-        return collect_nodes_of_type(node.left, node_type) | collect_nodes_of_type(node.right, node_type)
-    if isinstance(node, UnaryOp):
-        return collect_nodes_of_type(node.operand, node_type)
-    if isinstance(node, FunctionCall):
-        result: set = set()
-        for arg in node.args:
-            result |= collect_nodes_of_type(arg, node_type)
-        return result
-    if isinstance(node, Expectation):
-        return collect_nodes_of_type(node.expr, node_type)
-    return set()
+    # Deferred import to avoid circular dependency (visitor imports from nodes)
+    from gEconpy.parser.ast.visitor import collect_nodes_of_type as _collect  # noqa: PLC0415
+
+    return _collect(node, node_type)
 
 
 def collect_variable_names(node: Node) -> set[str]:
