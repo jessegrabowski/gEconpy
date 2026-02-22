@@ -23,6 +23,7 @@ from gEconpy.parser.ast.nodes import (
     collect_parameter_names,
     collect_variable_names,
 )
+from gEconpy.parser.ast.visitor import NodeTransformer, NodeVisitor
 
 __all__ = [
     "STEADY_STATE",
@@ -37,6 +38,8 @@ __all__ = [
     "GCNEquation",
     "GCNModel",
     "Node",
+    "NodeTransformer",
+    "NodeVisitor",
     "Number",
     "Operator",
     "Parameter",
