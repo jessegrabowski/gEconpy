@@ -75,11 +75,50 @@ INVALID_TIME_INDEX_VAR = (
 
 EXPR = pp.Forward()
 
-VARIABLE = (IDENTIFIER + TIME_INDEX).set_parse_action(lambda t: Variable(name=t[0], time_index=t[1]))
 
-PARAMETER = (IDENTIFIER + ~pp.FollowedBy(pp.Literal("[") | pp.Literal("("))).set_parse_action(
-    lambda t: Parameter(name=t[0])
-)
+def _parse_variable(s: str, loc: int, toks) -> Variable:
+    line = pp.lineno(loc, s)
+    col = pp.col(loc, s)
+    lines = s.splitlines()
+    source_line = lines[line - 1] if 0 < line <= len(lines) else ""
+
+    name = toks[0]
+    time_index = toks[1]
+    # Estimate token length (name + [] or [time])
+    time_str = str(time_index) if time_index != T else ""
+    token_len = len(name) + 2 + len(time_str)
+
+    location = ParseLocation(
+        line=line,
+        column=col,
+        end_line=line,
+        end_column=col + token_len,
+        source_line=source_line,
+    )
+    return Variable(name=name, time_index=time_index, location=location)
+
+
+VARIABLE = (IDENTIFIER + TIME_INDEX).set_parse_action(_parse_variable)
+
+
+def _parse_parameter(s: str, loc: int, toks) -> Parameter:
+    line = pp.lineno(loc, s)
+    col = pp.col(loc, s)
+    lines = s.splitlines()
+    source_line = lines[line - 1] if 0 < line <= len(lines) else ""
+
+    name = toks[0]
+    location = ParseLocation(
+        line=line,
+        column=col,
+        end_line=line,
+        end_column=col + len(name),
+        source_line=source_line,
+    )
+    return Parameter(name=name, location=location)
+
+
+PARAMETER = (IDENTIFIER + ~pp.FollowedBy(pp.Literal("[") | pp.Literal("("))).set_parse_action(_parse_parameter)
 
 _EMPTY_BRACKETS = pp.Literal("[]")
 _OPEN_BRACKET = pp.Literal("[")

@@ -368,6 +368,7 @@ def _extract_tryreduce(
 def ast_model_to_primitives(
     model: GCNModel,
     simplify_blocks: bool = False,
+    source: str | None = None,
 ) -> ModelPrimitives:
     """
     Convert a GCNModel to model primitives.
@@ -381,6 +382,8 @@ def ast_model_to_primitives(
         The model to convert.
     simplify_blocks : bool, optional
         Whether to simplify block equations during optimization.
+    source : str, optional
+        The source code of the GCN file, for rich error reporting.
 
     Returns
     -------
@@ -392,7 +395,7 @@ def ast_model_to_primitives(
     options = model.options
 
     # Build Block objects and solve optimization
-    block_dict = ast_model_to_block_dict(model, assumptions=assumptions, simplify_blocks=simplify_blocks)
+    block_dict = ast_model_to_block_dict(model, assumptions=assumptions, simplify_blocks=simplify_blocks, source=source)
 
     # Extract primitives from blocks
     equations = _block_dict_to_equation_list(block_dict)
@@ -470,7 +473,7 @@ def load_gcn_file(filepath: str | Path, simplify_blocks: bool = True) -> ModelPr
         Dataclass containing model primitives ready for Model construction.
     """
     result = preprocess_file(filepath, validate=True)
-    return ast_model_to_primitives(result.ast, simplify_blocks=simplify_blocks)
+    return ast_model_to_primitives(result.ast, simplify_blocks=simplify_blocks, source=result.source)
 
 
 def load_gcn_string(source: str) -> ModelPrimitives:
@@ -488,4 +491,4 @@ def load_gcn_string(source: str) -> ModelPrimitives:
         Dataclass containing model primitives ready for Model construction.
     """
     result = preprocess(source, validate=True)
-    return ast_model_to_primitives(result.ast)
+    return ast_model_to_primitives(result.ast, source=result.source)

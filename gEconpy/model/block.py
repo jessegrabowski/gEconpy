@@ -9,6 +9,7 @@ from gEconpy.exceptions import (
     MultipleObjectiveFunctionsException,
     OptimizationProblemNotDefinedException,
 )
+from gEconpy.parser.errors import ParseLocation
 from gEconpy.utilities import (
     diff_through_time,
     expand_subs_for_all_times,
@@ -38,6 +39,8 @@ class Block:
         shocks: list[TimeAwareSymbol] | None = None,
         multipliers: dict[int, TimeAwareSymbol | None] | None = None,
         equation_flags: dict[int, dict[str, bool]] | None = None,
+        source: str | None = None,
+        symbol_locations: dict[str, ParseLocation] | None = None,
     ) -> None:
         """
         Initialize a Block from sympy equations.
@@ -64,6 +67,11 @@ class Block:
             Dictionary mapping constraint indices to Lagrange multipliers.
         equation_flags : dict[int, dict[str, bool]], optional
             Dictionary mapping equation indices to flag dictionaries.
+        source : str, optional
+            The source code of the GCN file, for rich error reporting.
+        symbol_locations : dict, optional
+            Dictionary mapping symbol names to their ParseLocation in the source.
+            Used for rich error reporting during validation.
         """
         self.name = name
         self.short_name = "".join(word[0] for word in name.split("_"))
@@ -85,6 +93,10 @@ class Block:
         self.multipliers = multipliers or {}
         self.eliminated_variables: list[sp.Symbol] = []
         self.equation_flags = equation_flags or {}
+
+        # Store source info for rich error reporting
+        self._source = source
+        self._symbol_locations = symbol_locations or {}
 
         # Count equations
         self.n_equations = sum(
@@ -169,7 +181,13 @@ class Block:
                             control_found = True
                             break
                 if not control_found:
-                    raise ControlVariableNotFoundException(self.name, control)
+                    location = self._symbol_locations.get(str(control.base_name))
+                    raise ControlVariableNotFoundException(
+                        self.name,
+                        control,
+                        source=self._source,
+                        location=location,
+                    )
 
         # Validate equation flags
         # - the "is_calibrating" key can only occur in the calibration block
@@ -328,7 +346,10 @@ class Block:
             elif self.equation_flags[idx]["is_calibrating"]:
                 # Calibrating equations can have variables, but they must be in the steady state
                 if not all(x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)):
-                    raise DynamicCalibratingEquationException(eq=eq, block_name=self.name)
+                    location = self._symbol_locations.get(str(param))
+                    raise DynamicCalibratingEquationException(
+                        eq=eq, block_name=self.name, source=self._source, location=location
+                    )
 
                 if param in self.calib_dict:
                     duplicates.append(param)
@@ -351,7 +372,10 @@ class Block:
                     self.deterministic_dict[lhs] = rhs.doit()
 
         if len(duplicates) > 0:
-            raise DuplicateParameterError(duplicates, self.name)
+            # Get location of first duplicate for error reporting
+            first_dup = duplicates[0]
+            location = self._symbol_locations.get(str(first_dup))
+            raise DuplicateParameterError(duplicates, self.name, source=self._source, location=location)
 
     def _build_lagrangian(self) -> sp.Add:
         """Build the Lagrangian associated with the block's optimization program."""

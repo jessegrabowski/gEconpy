@@ -99,6 +99,7 @@ def _convert_equation_list(
 def ast_block_to_block(
     ast_block: GCNBlock,
     assumptions: dict[str, dict[str, bool]] | None = None,
+    source: str | None = None,
 ) -> Block:
     """
     Convert a GCNBlock AST directly to a Block objec.
@@ -109,6 +110,8 @@ def ast_block_to_block(
         The AST block to convert.
     assumptions : dict, optional
         Variable assumptions for sympy symbols.
+    source : str, optional
+        The source code of the GCN file, for rich error reporting.
 
     Returns
     -------
@@ -123,6 +126,18 @@ def ast_block_to_block(
 
     controls = [_variable_to_sympy(v, assumptions) for v in ast_block.controls] if ast_block.controls else None
     shocks = [_variable_to_sympy(v, assumptions) for v in ast_block.shocks] if ast_block.shocks else None
+
+    # Extract symbol locations for rich error reporting
+    # This maps symbol names to their ParseLocation from the AST
+    symbol_locations = {}
+    if ast_block.controls:
+        for var in ast_block.controls:
+            if var.location is not None:
+                symbol_locations[var.name] = var.location
+    if ast_block.shocks:
+        for var in ast_block.shocks:
+            if var.location is not None:
+                symbol_locations[var.name] = var.location
 
     definitions = None
     if ast_block.definitions:
@@ -148,7 +163,12 @@ def ast_block_to_block(
             ast_block.identities, assumptions, eq_num, equation_flags, multipliers
         )
 
-    calibration, eq_num = _convert_calibration(ast_block.calibration, assumptions, eq_num, equation_flags, multipliers)
+    calibration, eq_num, param_locations = _convert_calibration(
+        ast_block.calibration, assumptions, eq_num, equation_flags, multipliers
+    )
+
+    # Merge parameter locations into symbol_locations
+    symbol_locations.update(param_locations)
 
     return Block(
         name=ast_block.name,
@@ -161,6 +181,8 @@ def ast_block_to_block(
         shocks=shocks,
         multipliers=multipliers,
         equation_flags=equation_flags,
+        source=source,
+        symbol_locations=symbol_locations,
     )
 
 
@@ -170,20 +192,43 @@ def _convert_calibration(
     eq_num: int,
     equation_flags: dict,
     multipliers: dict,
-) -> tuple[dict[int, sp.Eq] | None, int]:
-    """Convert calibration items (equations and distributions) to sympy equations."""
+) -> tuple[dict[int, sp.Eq] | None, int, dict]:
+    """
+    Convert calibration items (equations and distributions) to sympy equations.
+
+    Returns
+    -------
+    calibration : dict or None
+        Dictionary of calibration equations.
+    eq_num : int
+        Updated equation number counter.
+    param_locations : dict
+        Dictionary mapping parameter names to their ParseLocation.
+    """
     calib_items = []
+    param_locations = {}
+
     for item in calibration_items:
         if isinstance(item, GCNEquation):
             calib_items.append((item, _equation_to_sympy(item, assumptions)))
-        elif isinstance(item, GCNDistribution) and item.initial_value is not None:
-            param_assumptions = assumptions.get(item.parameter_name, {})
-            param = sp.Symbol(item.parameter_name, **param_assumptions)
-            value = sp.Float(item.initial_value)
-            calib_items.append((None, sp.Eq(param, value)))
+            # For calibrating equations with ->, use the calibrating_parameter name
+            if item.calibrating_parameter and item.location is not None:
+                param_locations[item.calibrating_parameter] = item.location
+            # For simple param = value equations, extract from LHS
+            elif hasattr(item.lhs, "name") and item.location is not None:
+                param_locations[item.lhs.name] = item.location
+        elif isinstance(item, GCNDistribution):
+            if item.initial_value is not None:
+                param_assumptions = assumptions.get(item.parameter_name, {})
+                param = sp.Symbol(item.parameter_name, **param_assumptions)
+                value = sp.Float(item.initial_value)
+                calib_items.append((None, sp.Eq(param, value)))
+            # Store location for distribution parameters
+            if item.location is not None:
+                param_locations[item.parameter_name] = item.location
 
     if not calib_items:
-        return None, eq_num
+        return None, eq_num, param_locations
 
     calibration = {}
     for ast_eq, sympy_eq in calib_items:
@@ -196,13 +241,14 @@ def _convert_calibration(
             multipliers[eq_num] = None
         eq_num += 1
 
-    return calibration, eq_num
+    return calibration, eq_num, param_locations
 
 
 def ast_model_to_block_dict(
     model: GCNModel,
     assumptions: dict[str, dict[str, bool]] | None = None,
     simplify_blocks: bool = False,
+    source: str | None = None,
 ) -> dict[str, Block]:
     """
     Convert a GCNModel AST to a dictionary of Block objects.
@@ -218,6 +264,8 @@ def ast_model_to_block_dict(
         Variable/parameter assumptions. If None, uses model.assumptions.
     simplify_blocks : bool, optional
         Whether to simplify block equations during optimization.
+    source : str, optional
+        The source code of the GCN file, for rich error reporting.
 
     Returns
     -------
@@ -236,7 +284,7 @@ def ast_model_to_block_dict(
             continue
 
         # Convert AST directly to Block using from_sympy
-        block = ast_block_to_block(ast_block, assumptions)
+        block = ast_block_to_block(ast_block, assumptions, source=source)
 
         # Solve optimization (derives FOCs, creates Lagrange multipliers)
         block.solve_optimization(try_simplify=simplify_blocks)
