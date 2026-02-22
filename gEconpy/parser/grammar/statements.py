@@ -11,7 +11,7 @@ from gEconpy.parser.ast import (
 )
 from gEconpy.parser.constants import PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
 from gEconpy.parser.error_catalog import ErrorCode
-from gEconpy.parser.errors import GCNParseFailure
+from gEconpy.parser.errors import GCNParseFailure, ParseLocation
 from gEconpy.parser.grammar.expressions import EXPR
 from gEconpy.parser.grammar.tokens import (
     ARROW,
@@ -38,9 +38,35 @@ def _parse_time_index_content(content: str) -> TimeIndex:
     return TimeIndex(int(content))
 
 
+def _parse_variable_ref(s: str, loc: int, toks) -> Variable:
+    """Parse a variable reference with location tracking."""
+    line = pp.lineno(loc, s)
+    col = pp.col(loc, s)
+    lines = s.splitlines()
+    source_line = lines[line - 1] if 0 < line <= len(lines) else ""
+
+    # Calculate end column based on the full variable text (name + brackets + time)
+    var_text = f"{toks.name}[{toks.time}]"
+    end_column = col + len(var_text)
+
+    location = ParseLocation(
+        line=line,
+        column=col,
+        end_line=line,
+        end_column=end_column,
+        source_line=source_line,
+    )
+
+    return Variable(
+        name=toks.name,
+        time_index=_parse_time_index_content(toks.time),
+        location=location,
+    )
+
+
 VARIABLE_REF = (
     IDENTIFIER("name") + LBRACKET + pp.Optional(TIME_INDEX_CONTENT, default="")("time") + RBRACKET
-).set_parse_action(lambda t: Variable(name=t.name, time_index=_parse_time_index_content(t.time)))
+).set_parse_action(_parse_variable_ref)
 
 VARIABLE_LIST = pp.DelimitedList(VARIABLE_REF)
 
@@ -64,7 +90,38 @@ def _parse_tag(s: str, loc: int, toks):
 TAG = pp.Combine(pp.Literal("@") + IDENTIFIER).set_parse_action(_parse_tag)
 
 LAGRANGE_MULT = COLON + IDENTIFIER("name") + LBRACKET + pp.Optional(TIME_INDEX_CONTENT, default="") + RBRACKET
-CALIBRATING_PARAM = ARROW + IDENTIFIER("param")
+
+
+def _parse_calibrating_param(s: str, loc: int, toks):
+    """Parse calibrating parameter with location tracking."""
+    # Skip past the arrow to find the parameter name location
+    param_name = toks.param
+    # Find actual location of the parameter name (after "->")
+    arrow_pos = s.find("->", loc)
+    if arrow_pos != -1:
+        param_loc = arrow_pos + 2  # Skip past "->"
+        # Skip whitespace
+        while param_loc < len(s) and s[param_loc] in " \t\n":
+            param_loc += 1
+    else:
+        param_loc = loc
+
+    line = pp.lineno(param_loc, s)
+    col = pp.col(param_loc, s)
+    lines = s.splitlines()
+    source_line = lines[line - 1] if 0 < line <= len(lines) else ""
+
+    location = ParseLocation(
+        line=line,
+        column=col,
+        end_line=line,
+        end_column=col + len(param_name),
+        source_line=source_line,
+    )
+    return (param_name, location)
+
+
+CALIBRATING_PARAM = (ARROW + IDENTIFIER("param")).set_parse_action(_parse_calibrating_param)
 
 
 def _missing_lhs_fail(s: str, loc: int, _toks) -> None:
@@ -133,7 +190,38 @@ _VALID_EQUATION = (
 EQUATION = MISSING_LHS | MISSING_RHS | MISSING_EQUALS | _VALID_EQUATION
 
 
-def _build_equation(tokens) -> GCNEquation:
+def _find_location_in_node(node):
+    """Recursively find a location from an AST node or its children."""
+    # Direct location
+    loc = getattr(node, "location", None)
+    if loc is not None:
+        return loc
+
+    # Try left child (for BinaryOp)
+    left = getattr(node, "left", None)
+    if left is not None:
+        loc = _find_location_in_node(left)
+        if loc is not None:
+            return loc
+
+    # Try operand (for UnaryOp)
+    operand = getattr(node, "operand", None)
+    if operand is not None:
+        loc = _find_location_in_node(operand)
+        if loc is not None:
+            return loc
+
+    # Try expr (for Expectation)
+    expr = getattr(node, "expr", None)
+    if expr is not None:
+        loc = _find_location_in_node(expr)
+        if loc is not None:
+            return loc
+
+    return None
+
+
+def _build_equation(s: str, loc: int, tokens) -> GCNEquation:
     tags = frozenset(tokens.tags) if tokens.tags else frozenset()
 
     lagrange_name = None
@@ -142,7 +230,56 @@ def _build_equation(tokens) -> GCNEquation:
 
     calibrating_param = None
     if tokens.calibrating and len(tokens.calibrating) > 0:
-        calibrating_param = tokens.calibrating[0]
+        # calibrating is now a tuple of (name, location)
+        calib_data = tokens.calibrating[0]
+        if isinstance(calib_data, tuple):
+            calibrating_param, _ = calib_data  # Discard parameter location, use LHS location
+        else:
+            calibrating_param = calib_data
+
+    # Always use the LHS location for the equation start
+    lhs_location = _find_location_in_node(tokens.lhs)
+    if lhs_location is not None:
+        line = lhs_location.line
+        col = lhs_location.column
+        source_line = lhs_location.source_line
+    else:
+        line = pp.lineno(loc, s)
+        col = pp.col(loc, s)
+        lines = s.splitlines()
+        source_line = lines[line - 1] if 0 < line <= len(lines) else ""
+
+    # Find the end of the LHS expression
+    # For calibrating equations (with ->), find the arrow and back up
+    # For regular equations, find the equals sign
+    if calibrating_param:
+        # Find "-> param" and determine where LHS ends (at the "= value" part)
+        # The LHS is everything before "= value -> param"
+        # We want to underline from start of expression to end of "= value"
+        arrow_pos = s.find("->", loc)
+        if arrow_pos != -1:
+            end_line = pp.lineno(arrow_pos, s)
+            end_col = pp.col(arrow_pos, s)
+        else:
+            end_line = line
+            end_col = col + 10
+    else:
+        # For regular equations, end_column covers the whole line for now
+        end_loc = s.find(";", loc)
+        if end_loc != -1:
+            end_line = pp.lineno(end_loc, s)
+            end_col = pp.col(end_loc, s) + 1
+        else:
+            end_line = line
+            end_col = col + len(source_line.strip())
+
+    location = ParseLocation(
+        line=line,
+        column=col,
+        end_line=end_line,
+        end_column=end_col,
+        source_line=source_line,
+    )
 
     return GCNEquation(
         lhs=tokens.lhs,
@@ -150,6 +287,7 @@ def _build_equation(tokens) -> GCNEquation:
         lagrange_multiplier=lagrange_name,
         calibrating_parameter=calibrating_param,
         tags=tags,
+        location=location,
     )
 
 

@@ -5,8 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from gEconpy.exceptions import GCNValidationError
 from gEconpy.parser.errors import GCNParseError
 from gEconpy.parser.formatting import ErrorFormatter
+from gEconpy.parser.loader import load_gcn_file
 from gEconpy.parser.preprocessor import preprocess
 
 ERROR_GCNS_DIR = Path(__file__).parent.parent / "_resources" / "error_gcns"
@@ -22,12 +24,23 @@ def get_error_test_cases():
     return cases
 
 
+def get_parse_error_test_cases():
+    """Generate test cases for parse errors (Exxx codes)."""
+    return [(name, gcn, exp) for name, gcn, exp in get_error_test_cases() if not name.startswith("V")]
+
+
+def get_validation_error_test_cases():
+    """Generate test cases for validation errors (Vxxx codes)."""
+    return [(name, gcn, exp) for name, gcn, exp in get_error_test_cases() if name.startswith("V")]
+
+
 @pytest.mark.parametrize(
     "name,gcn_file,expected_file",
-    get_error_test_cases(),
+    get_parse_error_test_cases(),
     ids=lambda x: x if isinstance(x, str) else None,
 )
-def test_error_output_matches_golden_file(name, gcn_file, expected_file):
+def test_parse_error_output_matches_golden_file(name, gcn_file, expected_file):
+    """Test that parse errors (Exxx) match expected output."""
     content = gcn_file.read_text()
     formatter = ErrorFormatter(use_color=False)
 
@@ -38,18 +51,40 @@ def test_error_output_matches_golden_file(name, gcn_file, expected_file):
     expected_output = expected_file.read_text().rstrip("\n")
 
     if actual_output != expected_output:
-        actual_lines = actual_output.splitlines()
-        expected_lines = expected_output.splitlines()
+        _print_diff(actual_output, expected_output, name)
 
-        diff = unified_diff(actual_lines, expected_lines)
-        for line in diff:
-            if line.startswith("-"):
-                print(f"\033[31m{line}\033[0m")
-            elif line.startswith("+"):
-                print(f"\033[32m{line}\033[0m")
-            else:
-                print(line)
-        raise AssertionError(
-            f"Error output for {name} doesn't match expected.\n"
-            f"To update expected file, run the regeneration script in the module docstring."
-        )
+
+@pytest.mark.parametrize(
+    "name,gcn_file,expected_file",
+    get_validation_error_test_cases(),
+    ids=lambda x: x if isinstance(x, str) else None,
+)
+def test_validation_error_output_matches_golden_file(name, gcn_file, expected_file):
+    """Test that validation errors (Vxxx) match expected output."""
+    with pytest.raises(GCNValidationError) as exc_info:
+        load_gcn_file(str(gcn_file))
+
+    actual_output = str(exc_info.value)
+    expected_output = expected_file.read_text().rstrip("\n")
+
+    if actual_output != expected_output:
+        _print_diff(actual_output, expected_output, name)
+
+
+def _print_diff(actual_output: str, expected_output: str, name: str):
+    """Print a colored diff and raise AssertionError."""
+    actual_lines = actual_output.splitlines()
+    expected_lines = expected_output.splitlines()
+
+    diff = unified_diff(actual_lines, expected_lines)
+    for line in diff:
+        if line.startswith("-"):
+            print(f"\033[31m{line}\033[0m")
+        elif line.startswith("+"):
+            print(f"\033[32m{line}\033[0m")
+        else:
+            print(line)
+    raise AssertionError(
+        f"Error output for {name} doesn't match expected.\n"
+        f"To update expected file, run: python scripts/regenerate_expected_gcn_errors.py"
+    )

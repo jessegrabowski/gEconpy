@@ -1,80 +1,169 @@
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.parser.constants import BLOCK_COMPONENTS
+from gEconpy.parser.errors import ParseLocation
 from gEconpy.solvers.gensys import interpret_gensys_output
 
 
-class GCNSyntaxError(ValueError):
-    def __init__(self, block_name: str, key: list[str]):
-        self.block_name = block_name
-        self.key = key
+class GCNValidationError(ValueError):
+    """
+    Base class for validation errors that support rich source location display.
 
-        message = (
-            f"While parsing block {block_name}, found {' '.join(key)} outside of a block component. All "
-            f"equations must be inside components with one of valid component names:"
-            f" {', '.join(BLOCK_COMPONENTS)}"
+    This provides a consistent interface for errors that occur during model validation
+    (post-parsing) and can display the relevant source code with highlighted tokens.
+
+    Parameters
+    ----------
+    message : str
+        The main error message.
+    source : str, optional
+        The full source code of the GCN file.
+    location : ParseLocation, optional
+        The location of the problematic token in the source.
+    annotation : str, optional
+        Short annotation to display under the caret (e.g., "undeclared variable").
+    notes : list of str, optional
+        Additional notes/hints to display at the bottom.
+    filepath : str, optional
+        The file path to display in the error location.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from gEconpy.exceptions import GCNValidationError
+        from gEconpy.parser.errors import ParseLocation
+
+        loc = ParseLocation(line=5, column=12, end_column=15, source_line="    K_t[];")
+        err = GCNValidationError(
+            "Variable K_t not found in equations",
+            source=source_code,
+            location=loc,
+            annotation="undeclared control",
+            notes=["Check that the variable appears in constraints or objective"],
         )
+    """
 
-        super().__init__(message)
+    # Subclasses can override this for specific error codes
+    error_code: str | None = None
+
+    def __init__(
+        self,
+        message: str,
+        source: str | None = None,
+        location: ParseLocation | None = None,
+        annotation: str | None = None,
+        notes: list[str] | None = None,
+        filepath: str | None = None,
+    ):
+        self.base_message = message
+        self.source = source
+        self.location = location
+        self.annotation = annotation
+        self.notes = notes or []
+        self.filepath = filepath
+
+        formatted_message = self._format_message()
+        super().__init__(formatted_message)
+
+    def _format_message(self) -> str:
+        """Format the error message with source context if available."""
+        if self.source is None or self.location is None:
+            return self.base_message
+
+        return self._format_with_source()
+
+    def _format_with_source(self) -> str:
+        """Format the error message in the style of parsing errors."""
+        lines = self.source.splitlines()
+        line = self.location.line
+
+        if line < 1 or line > len(lines):
+            return self.base_message
+
+        parts = []
+
+        # Error header: error[CODE]: message
+        if self.error_code:
+            parts.append(f"error[{self.error_code}]: {self.base_message}")
+        else:
+            parts.append(self.base_message)
+
+        # File location: --> file:line:column
+        filepath = self.filepath or "<source>"
+        col = self.location.column or 1
+        parts.append(f"  --> {filepath}:{line}:{col}")
+
+        # Empty line with just pipe
+        parts.append("     |")
+
+        # Context lines (before, error line, after)
+        start = max(0, line - 2)
+        end = min(len(lines), line + 2)
+
+        # Calculate width needed for line numbers
+        width = len(str(end))
+
+        for i in range(start, end):
+            line_num = i + 1
+            line_content = lines[i]
+            parts.append(f"  {line_num:>{width}} | {line_content}")
+
+            # Add caret and annotation under the error line
+            if line_num == line and self.location.column is not None:
+                # Calculate pointer position
+                col_offset = self.location.column - 1
+                if self.location.end_column is not None:
+                    pointer_len = max(1, self.location.end_column - self.location.column)
+                else:
+                    pointer_len = 3  # Default to 3 carets
+
+                padding = " " * (width + 5 + col_offset)  # 5 = "  " + " | "
+                caret = "^" * pointer_len
+
+                if self.annotation:
+                    parts.append(f"{padding}{caret} {self.annotation}")
+                else:
+                    parts.append(f"{padding}{caret}")
+
+        # Closing pipe
+        parts.append("     |")
+
+        # Notes at the bottom
+        parts.extend(f"   = note: {note}" for note in self.notes)
+
+        return "\n".join(parts)
 
 
-class DistributionParsingError(ValueError):
-    def __init__(self, line):
-        message = (
-            f"While parsing parameter prior distributions, encountered an error in the following line:\n"
-            f"{line}\n"
-            f'Check that distribution is defined using the "~" operator according to the following syntax: '
-            f'"parameter ~ d(a=, b=, ...) = initial_value;"'
-        )
+class DynamicCalibratingEquationException(GCNValidationError):
+    """Raised when a calibrating equation contains variables with non-steady-state time indices."""
 
-        super().__init__(message)
+    error_code = "V001"
 
-
-class MissingParameterValueException(ValueError):
-    def __init__(self, parameter_name):
-        message = (
-            f"The prior distribution associated with parameter {parameter_name} does not appear to have an "
-            f"initial value. Please declare an initial value for all parameters following the syntax: "
-            f"parameter ~ d(a=, b=, ...) = initial_value;. If this is an exogenous shock, make sure it has "
-            f"square brackets [] to indicate it is a variable and not a parameter."
-        )
-
-        super().__init__(message)
-
-
-class InvalidComponentNameException(ValueError):
-    def __init__(self, component_name: str, block_name: str, message=str) -> None:
-        self.component_name = component_name
-        self.block_name = block_name
-        self.message = message
-
-        super().__init__(message)
-
-
-class BlockNotInitializedException(ValueError):
-    def __init__(self, block_name: str) -> None:
-        self.block_name = block_name
-        self.message = (
-            f"Block {self.name} called method _get_param_dict_and_calibrating_equations before "
-            f"initialization. Call initialize_from_dictionary first."
-        )
-
-        super().__init__(self.message)
-
-
-class DynamicCalibratingEquationException(ValueError):
-    def __init__(self, eq: sp.Add, block_name: str):
+    def __init__(
+        self,
+        eq: sp.Add,
+        block_name: str,
+        source: str | None = None,
+        location: ParseLocation | None = None,
+        filepath: str | None = None,
+    ):
         self.eq = eq
         self.block_name = block_name
 
-        self.message = (
-            f"In block {block_name}, calibrating equation {eq} has variables with non-steady-state "
-            f"time values. All calibrating equations must be written in terms of steady-state, "
-            f"in the form X[ss]."
-        )
+        message = f"Calibrating equation in block {block_name} uses non-steady-state variables"
 
-        super().__init__(self.message)
+        super().__init__(
+            message,
+            source=source,
+            location=location,
+            annotation="variables must use [ss] time index",
+            notes=[
+                "Calibrating equations define steady-state relationships",
+                "Use X[ss] instead of X[] for all variables",
+            ],
+            filepath=filepath,
+        )
 
 
 class OptimizationProblemNotDefinedException(ValueError):
@@ -107,18 +196,36 @@ class MultipleObjectiveFunctionsException(ValueError):
         super().__init__(message)
 
 
-class ControlVariableNotFoundException(ValueError):
-    def __init__(self, block_name: str, control: TimeAwareSymbol):
+class ControlVariableNotFoundException(GCNValidationError):
+    """Raised when a declared control variable is not found in the block's equations."""
+
+    error_code = "V002"
+
+    def __init__(
+        self,
+        block_name: str,
+        control: TimeAwareSymbol,
+        source: str | None = None,
+        location: ParseLocation | None = None,
+        filepath: str | None = None,
+    ):
         self.block_name = block_name
         self.control = control
 
-        message = (
-            f"Block {block_name} has {control} declared as a control variable, "
-            f"but this variable was not found among model equations in components definitions,"
-            f" objective, or constraints."
-        )
+        message = f"Control variable '{control}' in block {block_name} not found in equations"
 
-        super().__init__(message)
+        super().__init__(
+            message,
+            source=source,
+            location=location,
+            annotation="undeclared control variable",
+            notes=[
+                "Control variables must appear in the objective or constraints",
+                "Check spelling of the variable name",
+                "Verify the variable has the correct time index",
+            ],
+            filepath=filepath,
+        )
 
 
 class ModelUnknownParameterError(ValueError):
@@ -154,17 +261,6 @@ class SteadyStateNotFoundError(ValueError):
         super().__init__(message)
 
 
-class MultipleSteadyStateBlocksException(ValueError):
-    def __init__(self, ss_block_names: list[str]):
-        message = (
-            f"Found multiple blocks with reserved steady states names: {', '.join(ss_block_names)}. Please pass"
-            f"only up to one steady state block, and do not name any blocks with the reserved steady states "
-            f"names."
-        )
-
-        super().__init__(message)
-
-
 class GensysFailedException(ValueError):
     def __init__(self, eu):
         message = interpret_gensys_output(eu)
@@ -191,40 +287,6 @@ class InvalidDistributionException(ValueError):
         super().__init__(message)
 
 
-class RepeatedParameterException(ValueError):
-    def __init__(self, d_str: str, parameter: str):
-        message = (
-            f'In {d_str}, the parameter "{parameter}" was declared multiple times. Please check the GCN file for typos.'
-        )
-
-        super().__init__(message)
-
-
-class DistributionParameterNotFoundException(ValueError):
-    def __init__(
-        self,
-        variable_name: str,
-        d_name: str,
-        param_name: str,
-        valid_param_names: list[str],
-        maybe_typo: str | None,
-        best_guess: str | None,
-    ):
-        message = (
-            f"No {param_name} parameter was found for the {d_name} distribution associated with model parameter "
-            f'"{variable_name}". Valid aliases for {param_name} are: '
-        )
-        if len(valid_param_names) > 1:
-            message += ", ".join(valid_param_names[:-1]) + f", and {valid_param_names[-1]}."
-        else:
-            message += f"{valid_param_names[0]}."
-
-        if maybe_typo is not None and best_guess is not None:
-            message += f"\n\nFound a similar alias to suspected typo: {maybe_typo}. Did you mean {best_guess}?"
-
-        super().__init__(message)
-
-
 class MultipleParameterDefinitionException(ValueError):
     def __init__(self, variable_name: str, d_name: str, param_name: str, result_list: list[str]) -> None:
         message = (
@@ -236,13 +298,6 @@ class MultipleParameterDefinitionException(ValueError):
         super().__init__(message)
 
 
-class UnusedParameterError(ValueError):
-    def __init__(self, d_name: str, param_name: str) -> None:
-        message = f"{d_name} distributions do not have a {param_name}; do not call this parse method."
-
-        super().__init__(message)
-
-
 class InvalidParameterException(ValueError):
     def __init__(self, dist_name, param_name, valid_params):
         message = (
@@ -250,32 +305,6 @@ class InvalidParameterException(ValueError):
             f"parameters for this distribution are: {', '.join(valid_params)}"
         )
 
-        super().__init__(message)
-
-
-class InvalidMeanException(ValueError):
-    def __init__(self, variable_name, d_name, mean, a, b):
-        message = (
-            f'The mean value of the {d_name} distribution associated with "{variable_name}" is invalid. Given '
-            f"bounds [{a}, {b}], the requested mean {mean} is not possible. If you declare moments of a "
-            f"distribution in the GCN file (such as mu, sigma, mean, or sd) along with upper and lower bounds, "
-            f"gEcon.py will always produce a distribution that matches these moments given these bounds. As a "
-            f"result, you cannot, for example, have a mean of 0 with a lower bound of zero.\n"
-            f'To avoid this behavior, pass "loc" and "scale" parameters, rather than "mean" and "std"'
-            f' parameters. This will produce a truncated distribution centered at "loc" with dispersion "scale",'
-            f"but the moments will NOT be as expected."
-        )
-
-        super().__init__(message)
-
-
-class DistributionOverDefinedException(ValueError):
-    def __init__(self, variable_name, d_name, dist_n_params, n_params_passed, n_constraints):
-        message = (
-            f"The {d_name} distribution associated wth {variable_name} is over-defined. The distribution has "
-            f"{dist_n_params} free parameters, but you passed {n_params_passed} plus {n_constraints} moment "
-            f"conditions."
-        )
         super().__init__(message)
 
 
@@ -318,17 +347,33 @@ class ExtraParameterWarning(UserWarning):
         super().__init__(message)
 
 
-class DuplicateParameterError(ValueError):
-    def __init__(self, extras, block=None):
-        n = len(extras)
-        verb = "was" if n == 1 else "were"
-        location = "calibration blocks"
-        if block is not None:
-            location = f"in {block} calibration block"
-        message = (
-            f"The following parameter{'s' if n > 1 else ''} {verb} were given initial values in {location} more "
-            f"than once: {', '.join([x.name for x in extras])} \n"
-            f"Model parameters should be declared only once. Check your GCN file and remove one of the declarations."
-        )
+class DuplicateParameterError(GCNValidationError):
+    """Raised when a parameter is defined more than once in calibration blocks."""
 
-        super().__init__(message)
+    error_code = "V003"
+
+    def __init__(
+        self,
+        extras,
+        block: str | None = None,
+        source: str | None = None,
+        location: ParseLocation | None = None,
+        filepath: str | None = None,
+    ):
+        len(extras)
+        param_names = ", ".join([x.name for x in extras])
+        block_str = f"block {block}" if block else "calibration blocks"
+
+        message = f"Duplicate parameter declaration in {block_str}"
+
+        super().__init__(
+            message,
+            source=source,
+            location=location,
+            annotation=f"'{param_names}' already defined",
+            notes=[
+                "Each parameter should be declared only once",
+                "Remove the duplicate declaration",
+            ],
+            filepath=filepath,
+        )
