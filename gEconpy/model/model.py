@@ -133,8 +133,7 @@ def add_more_ss_values_wrapper(f_ss: Callable | None, known_variables: SymbolDic
             return known_variables
 
         ss_dict = f_ss(**parameters)
-        ss_dict.update(known_variables)
-        return ss_dict
+        return ss_dict | known_variables
 
     return inner
 
@@ -686,7 +685,10 @@ class Model:
         param_dict = self.parameters(**updates)
         ss_dict = SteadyStateResults()
         ss_system = system_to_steady_state(self.equations, self.shocks)
-        unknown_eq_idx = np.full(len(ss_system), True)
+
+        # The compiled functions include calibration equations, so we need to account for them
+        n_calib_eqs = len(self.calibrated_params)
+        unknown_eq_idx = np.full(len(ss_system) + n_calib_eqs, True)
 
         # The default value is analytic, because that's best if the user gave everything we need to proceed. If he gave
         # nothing though, use minimize as a fallback default.
@@ -713,13 +715,29 @@ class Model:
                         param_dict=param_dict,
                         tol=tol,
                     )
-                    if sum(zero_eq_mask) != len(ss_dict):
-                        n_eliminated = sum(zero_eq_mask)
+                    # Calibration equations are never eliminated by SS values
+                    zero_eq_mask = np.concatenate([zero_eq_mask, np.zeros(n_calib_eqs, dtype=bool)])
+
+                    # Check remaining system is square.
+                    # Only count known values for variables that appear in the SS system
+                    # (variables not in any equation are determined by other constraints)
+                    all_ss_symbols = set().union(*(eq.free_symbols for eq in ss_system))
+                    ss_sympy = ss_dict.to_sympy()
+                    n_relevant_known = sum(1 for var in ss_sympy if var in all_ss_symbols)
+
+                    n_vars = len(self.variables)
+                    n_eqs = len(ss_system)
+                    n_eliminated = sum(zero_eq_mask[: len(ss_system)])
+
+                    n_remaining_vars = n_vars - n_relevant_known + n_calib_eqs
+                    n_remaining_eqs = n_eqs - n_eliminated + n_calib_eqs
+
+                    if n_remaining_vars != n_remaining_eqs:
                         raise ValueError(
                             'Solving a partially provided steady state with how = "root" is only allowed if applying '
                             f"the given values results in a new square system.\n"
-                            f"Found: {len(ss_dict)} provided steady state value{'s' if len(ss_dict) != 1 else ''}\n"
-                            f"Eliminated: {n_eliminated} equation{'s' if n_eliminated != 1 else ''}."
+                            f"Remaining: {n_remaining_vars} variable{'s' if n_remaining_vars != 1 else ''}, "
+                            f"{n_remaining_eqs} equation{'s' if n_remaining_eqs != 1 else ''}."
                         )
                     unknown_eq_idx = ~zero_eq_mask
                 else:
