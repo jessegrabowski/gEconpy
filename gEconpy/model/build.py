@@ -1,4 +1,5 @@
 import logging
+import re
 import sys
 
 from pathlib import Path
@@ -32,6 +33,11 @@ from gEconpy.parser.loader import load_gcn_file
 from gEconpy.utilities import get_name, substitute_repeatedly
 
 _log = logging.getLogger(__name__)
+
+
+def _natural_sort_key(symbol):
+    """Sort key that orders numeric suffixes numerically."""
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", symbol.base_name)]
 
 
 def _print_parse_error(error: GCNParseError | GCNErrorCollection, gcn_path: Path) -> None:
@@ -359,8 +365,8 @@ def _compile_gcn(
 
     steady_state_relationships = [sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()]
 
-    variables = sorted(variables, key=lambda x: x.base_name)
-    shocks = sorted(shocks, key=lambda x: x.base_name)
+    variables = sorted(variables, key=_natural_sort_key)
+    shocks = sorted(shocks, key=_natural_sort_key)
 
     functions, cache = compile_model_ss_functions(
         steady_state_equations,
@@ -617,6 +623,30 @@ def statespace_from_gcn(
     )
 
 
+def _format_ss_var_list(label: str, variables: list, line_width: int = 80) -> str:
+    """Format a labeled list of variable names with wrapping aligned to after the colon."""
+    prefix = f"\t\t{label}: "
+    indent = " " * len(prefix.expandtabs())
+    names = [str(v) for v in variables]
+
+    lines = []
+    current_line = prefix
+    for i, name in enumerate(names):
+        sep = ", " if i < len(names) - 1 else ""
+        candidate = name + sep
+
+        if i == 0:
+            current_line += candidate
+        elif len(current_line.expandtabs()) + len(candidate) > line_width:
+            lines.append(current_line + "\n")
+            current_line = indent + candidate
+        else:
+            current_line += candidate
+
+    lines.append(current_line + "\n")
+    return "".join(lines)
+
+
 def build_report(
     equations: list,
     param_dict: SymbolDictionary,
@@ -697,11 +727,9 @@ def build_report(
     if n_total_ss > 0:
         report += f"\t{n_total_ss} / {n_variables} variables have analytical steady-state values.\n"
         if n_user_provided > 0:
-            var_names = ", ".join(str(v) for v in user_provided_ss_vars)
-            report += f"\t\t{n_user_provided} user-provided: {var_names}\n"
+            report += _format_ss_var_list(f"{n_user_provided} user-provided", user_provided_ss_vars)
         if n_inferred > 0:
-            var_names = ", ".join(str(v) for v in inferred_ss_vars)
-            report += f"\t\t{n_inferred} automatically inferred: {var_names}\n"
+            report += _format_ss_var_list(f"{n_inferred} inferred", inferred_ss_vars)
 
     if n_equations == n_variables:
         report += "Model appears well defined and ready to proceed to solving.\n"

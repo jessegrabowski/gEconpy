@@ -84,9 +84,8 @@ def make_all_variable_time_combinations(
     leads: List[TimeAwareSymbol]
         List of variables shifted to t+1.
     """
-    # Set all variables to time t, remove duplicates, and sort by base name.
-    now = list({x.set_t(0) for x in variables})
-    now = sorted(now, key=lambda x: x.base_name)
+    # Set all variables to time t, preserving the input ordering.
+    now = list(dict.fromkeys(x.set_t(0) for x in variables))
 
     # Create lags and leads by shifting the time of the variables.
     lags = [x.step_backward() for x in now]
