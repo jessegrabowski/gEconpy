@@ -9,16 +9,146 @@ import sympy as sp
 from numpy.testing import assert_allclose
 from scipy import optimize
 
+from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.build import validate_results
 from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
 from gEconpy.model.steady_state import (
     compile_model_ss_functions,
     print_steady_state,
+    propagate_steady_state_through_identities,
     system_to_steady_state,
 )
 from gEconpy.parser.loader import load_gcn_file
 from tests._resources.cache_compiled_models import load_and_cache_model
+
+
+class TestPropagateSteadyStateThroughIdentities:
+    """Tests for steady-state value propagation through solvable equations."""
+
+    def test_propagates_through_lag_chain(self):
+        """Chained identities x__lag1 = x[-1], x__lag2 = x__lag1[-1] all resolve to x_ss."""
+        x = TimeAwareSymbol("x", 0)
+        x_lag1 = TimeAwareSymbol("x__lag1", 0)
+        x_lag2 = TimeAwareSymbol("x__lag2", 0)
+
+        result = propagate_steady_state_through_identities(
+            ss_solution_dict=SymbolDictionary({x.to_ss(): sp.Float(0.0)}),
+            steady_state_equations=[x_lag1.to_ss() - x.to_ss(), x_lag2.to_ss() - x_lag1.to_ss()],
+            variables=[x, x_lag1, x_lag2],
+        )
+
+        assert len(result) == 3
+        assert all(float(result[v.to_ss()]) == 0.0 for v in [x, x_lag1, x_lag2])
+
+    def test_propagates_affine_relationships(self):
+        """Affine equation y = 2*x + 3 is solved when x is known."""
+        x = TimeAwareSymbol("x", 0)
+        y = TimeAwareSymbol("y", 0)
+
+        result = propagate_steady_state_through_identities(
+            ss_solution_dict=SymbolDictionary({x.to_ss(): sp.Float(1.0)}),
+            steady_state_equations=[y.to_ss() - 2 * x.to_ss() - 3],
+            variables=[x, y],
+        )
+
+        assert float(result[y.to_ss()]) == 5.0
+
+    def test_propagates_log_exp_bijections(self):
+        """Bijection log(y) = x is inverted to y = exp(x)."""
+        x = TimeAwareSymbol("x", 0)
+        y = TimeAwareSymbol("y", 0)
+
+        result = propagate_steady_state_through_identities(
+            ss_solution_dict=SymbolDictionary({x.to_ss(): sp.Float(0.0)}),
+            steady_state_equations=[sp.log(y.to_ss()) - x.to_ss()],
+            variables=[x, y],
+        )
+
+        assert float(result[y.to_ss()]) == 1.0
+
+    def test_rejects_multi_solution_equations(self):
+        """Equation x^2 = 4 has two solutions; neither is chosen."""
+        x = TimeAwareSymbol("x", 0)
+        y = TimeAwareSymbol("y", 0)
+
+        result = propagate_steady_state_through_identities(
+            ss_solution_dict=SymbolDictionary({y.to_ss(): sp.Float(4.0)}),
+            steady_state_equations=[x.to_ss() ** 2 - y.to_ss()],
+            variables=[x, y],
+        )
+
+        assert x.to_ss() not in result
+
+    def test_rejects_underdetermined_equations(self):
+        """Equation x + y = z with only z known cannot determine x or y."""
+        x = TimeAwareSymbol("x", 0)
+        y = TimeAwareSymbol("y", 0)
+        z = TimeAwareSymbol("z", 0)
+
+        result = propagate_steady_state_through_identities(
+            ss_solution_dict=SymbolDictionary({z.to_ss(): sp.Float(5.0)}),
+            steady_state_equations=[x.to_ss() + y.to_ss() - z.to_ss()],
+            variables=[x, y, z],
+        )
+
+        assert x.to_ss() not in result and y.to_ss() not in result
+
+    def test_rejects_complex_ces_production_function(self):
+        """CES production function inversion is too complex to attempt."""
+        Y = TimeAwareSymbol("Y", 0)
+        A = TimeAwareSymbol("A", 0)
+        x1 = TimeAwareSymbol("x1", 0)
+        x2 = TimeAwareSymbol("x2", 0)
+        alpha, psi = sp.Symbol("alpha"), sp.Symbol("psi")
+
+        ces_aggregator = (
+            alpha ** (1 / psi) * x1.to_ss() ** ((psi - 1) / psi)
+            + (1 - alpha) ** (1 / psi) * x2.to_ss() ** ((psi - 1) / psi)
+        ) ** (psi / (psi - 1))
+
+        result = propagate_steady_state_through_identities(
+            ss_solution_dict=SymbolDictionary(
+                {
+                    Y.to_ss(): sp.Float(1.0),
+                    A.to_ss(): sp.Float(1.0),
+                    x1.to_ss(): sp.Float(0.5),
+                }
+            ),
+            steady_state_equations=[Y.to_ss() - A.to_ss() * ces_aggregator],
+            variables=[Y, A, x1, x2],
+        )
+
+        assert x2.to_ss() not in result
+
+    def test_empty_input_with_underdetermined_system(self):
+        """Empty input with multiple unknowns per equation returns empty."""
+        x = TimeAwareSymbol("x", 0)
+        y = TimeAwareSymbol("y", 0)
+        # Equation x + y = 0 has two unknowns, cannot be solved
+        result = propagate_steady_state_through_identities(SymbolDictionary(), [x.to_ss() + y.to_ss()], [x, y])
+        assert len(result) == 0
+
+    def test_solves_ar1_log_process(self):
+        """AR(1) in logs: log(A) = rho*log(A[-1]) + epsilon solves to A_ss = 1 when epsilon_ss = 0."""
+        A = TimeAwareSymbol("A", 0)
+        rho = sp.Symbol("rho")
+
+        # In steady state: log(A_ss) = rho * log(A_ss) + 0
+        # => log(A_ss) * (1 - rho) = 0
+        # => log(A_ss) = 0
+        # => A_ss = 1
+        steady_state_eq = sp.log(A.to_ss()) - rho * sp.log(A.to_ss())
+
+        result = propagate_steady_state_through_identities(
+            ss_solution_dict=SymbolDictionary(),
+            steady_state_equations=[steady_state_eq],
+            variables=[A],
+        )
+
+        assert A.to_ss() in result
+        assert float(result[A.to_ss()]) == 1.0
 
 
 def root_and_min_agree_helper(model: Model, **kwargs):
@@ -122,22 +252,21 @@ def test_print_steady_state_report_solver_fails(caplog):
 
 
 def test_incomplete_ss_relationship_raises_with_root():
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED, infer_steady_state=False)
     expected_msg = (
         'Solving a partially provided steady state with how = "root" is only allowed if applying the given '
         "values results in a new square system.\n"
-        "Found: 1 provided steady state value\n"
-        "Eliminated: 0 equations."
+        "Remaining: 4 variables, 5 equations."
     )
     with pytest.raises(
         ValueError,
-        match=expected_msg,
+        match=re.escape(expected_msg),
     ):
         model_1.steady_state(how="root", fixed_values={"K_ss": 3.0})
 
 
 def test_wrong_and_incomplete_ss_relationship_fails_with_minimize():
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED, infer_steady_state=False)
     res = model_1.steady_state(verbose=False, progressbar=False, fixed_values={"K_ss": 3.0})
     assert not res.success
 
@@ -175,7 +304,7 @@ def test_steady_state_matches_analytic():
 def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
     model_2 = load_and_cache_model(
         "one_block_2_no_extra.gcn",
-        backend="numpy",
+        backend="pytensor",
         use_jax=JAX_INSTALLED,
     )
     root_and_min_agree_helper(model_2, verbose=False, progressbar=False)
@@ -184,8 +313,9 @@ def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
 def test_steady_state_matches_analytic_w_calibrated_params():
     model_2 = load_and_cache_model(
         "one_block_2_no_extra.gcn",
-        backend="numpy",
+        backend="pytensor",
         use_jax=JAX_INSTALLED,
+        infer_steady_state=True,
     )
     param_dict = model_2.parameters().to_sympy()
     calib_params = model_2.calibrated_params
@@ -297,7 +427,7 @@ def test_RBC_steady_state_matches_analytic():
 
 @pytest.mark.include_nk
 def test_numerical_solvers_succeed_and_agree_NK():
-    model_4 = load_and_cache_model("full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_4 = load_and_cache_model("full_nk_no_ss.gcn", backend="pytensor", use_jax=JAX_INSTALLED)
 
     # This model's SS can't be solved without some help, so we provide the "obvious" solutions
     # This is almost equivalent to the full_nk_partial_ss.gcn, with a bit less info
@@ -319,7 +449,7 @@ def test_numerical_solvers_succeed_and_agree_NK():
 
 @pytest.mark.include_nk
 def test_steady_state_matches_analytic_NK():
-    model_4 = load_and_cache_model("full_nk_no_ss.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_4 = load_and_cache_model("full_nk_no_ss.gcn", backend="pytensor", use_jax=JAX_INSTALLED)
 
     param_dict = model_4.parameters().to_sympy()
     (

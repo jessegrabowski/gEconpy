@@ -5,7 +5,7 @@ from gEconpy import model_from_gcn, statespace_from_gcn
 
 
 @cache
-def load_and_cache_model(gcn_file, backend, use_jax=False):
+def load_and_cache_model(gcn_file, backend, use_jax=False, infer_steady_state=True):
     compile_kwargs = {}
     if backend == "pytensor" and use_jax:
         compile_kwargs["mode"] = "JAX"
@@ -15,6 +15,7 @@ def load_and_cache_model(gcn_file, backend, use_jax=False):
         gcn_path,
         verbose=False,
         backend=backend,
+        infer_steady_state=infer_steady_state,
         **compile_kwargs,
     )
 

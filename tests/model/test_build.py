@@ -276,6 +276,8 @@ def test_build_report(caplog):
                     6 parameters
                         0 / 6 parameters has a defined prior.
                     0 parameters to calibrate.
+                    1 / 12 variables have analytical steady-state values.
+                        1 inferred: A_ss
                     Model appears well defined and ready to proceed to solving."""
 
     expected_lines = [x.strip() for x in expected_report.strip().split("\n")]
