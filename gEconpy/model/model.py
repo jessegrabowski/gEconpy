@@ -35,6 +35,7 @@ from gEconpy.model.perturbation import (
     statespace_to_gEcon_representation,
 )
 from gEconpy.model.steady_state import system_to_steady_state
+from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 from gEconpy.solvers.gensys import (
     interpret_gensys_output,
@@ -366,6 +367,7 @@ class Model:
         self._equations = equations
         self._params = list(param_dict.to_sympy().keys())
         self.is_linear = is_linear
+        self._backward_looking = not any(x.time_index == 1 for eq in equations for x in eq.atoms(TimeAwareSymbol))
 
         self._hyper_params = list(hyper_param_dict.to_sympy().keys())
         self._deterministic_params = list(deterministic_dict.to_sympy().keys())
@@ -701,7 +703,7 @@ class Model:
             if self.is_linear:
                 # TODO: This is a hack, but if we're a linear model, we need to set all the steady state values
                 #  to zero. But we don't want to modify the underlying f_ss function, so modify it here.
-                ss_dict = SteadyStateResults({x.to_ss(): 0 for x in self.variables}).to_string()
+                ss_dict = SteadyStateResults({x.to_ss(): 0.0 for x in self.variables}).to_string()
 
             if len(ss_dict) != 0 and len(ss_dict) != len(self.variables):
                 if self.is_linear:
@@ -1128,8 +1130,9 @@ class Model:
         Parameters
         ----------
         solver: str, default: 'cycle_reduction'
-            Name of the algorithm to solve the linear solution. Currently "cycle_reduction" and "gensys" are supported.
-            Following Dynare, cycle_reduction is the default, but note that gEcon uses gensys.
+            Name of the algorithm to solve the linear solution. Currently "cycle_reduction", "gensys", and
+            "backward_direct" are supported. Following Dynare, cycle_reduction is the default, but note that gEcon uses
+            gensys.
         log_linearize: bool, default: True
             Whether to log-linearize the model. If False, the model will be solved in levels.
         not_loglin_variables: list of strings, optional
@@ -1377,6 +1380,9 @@ class Model:
 
         assert all(x.flags["C_CONTIGUOUS"] for x in [A, B, C, D])
 
+        if self._backward_looking:
+            solver = "backward_direct"
+
         if solver == "gensys":
             gensys_results = solve_policy_function_with_gensys(A, B, C, D, tol)
             G_1, _constant, impact, _f_mat, _f_wt, _y_wt, _gev, eu, _loose = gensys_results
@@ -1415,8 +1421,17 @@ class Model:
                     if verbose:
                         _log.info(result)
                     return None, None
+        elif solver == "backward_direct":
+            if not self._backward_looking:
+                raise ValueError(
+                    "Solver 'backward_direct' can only be used for models with no forward-looking variables."
+                )
+            T, R = solve_policy_function_with_backward_direct(A, B, C, D)
+
         else:
-            raise NotImplementedError('Only "cycle_reduction" and "gensys" are valid values for solver')
+            raise NotImplementedError(
+                'Only "cycle_reduction", "gensys", and "backward_direct" are valid values for solver'
+            )
 
         if verbose:
             check_perturbation_solution(A, B, C, D, T, R, tol=tol)
