@@ -279,32 +279,136 @@ def simplify_provided_ss_equations(
     ss_solution_dict: SymbolDictionary, variables: list[TimeAwareSymbol]
 ) -> SymbolDictionary:
     """
-    Simplify user-provided steady-state equations by substituting intermediate variables.
+    Substitute intermediate variables out of user-provided steady-state equations.
 
     Parameters
     ----------
     ss_solution_dict : SymbolDictionary
-        Dictionary of steady-state equations from STEADY_STATE block.
+        User-provided steady-state equations from the STEADY_STATE block.
     variables : list of TimeAwareSymbol
         Model variables.
 
     Returns
     -------
     SymbolDictionary
-        Simplified steady-state equations containing only model variables.
+        Steady-state equations containing only model variables.
     """
     if not ss_solution_dict:
         return SymbolDictionary()
 
     ss_variables = [x.to_ss() for x in variables]
-    extra_equations = SymbolDictionary({k: v for k, v in ss_solution_dict.to_sympy().items() if k not in ss_variables})
+    ss_dict_sympy = ss_solution_dict.to_sympy()
+
+    extra_equations = SymbolDictionary({k: v for k, v in ss_dict_sympy.items() if k not in ss_variables})
     if not extra_equations:
         return ss_solution_dict
 
-    simplified_ss_dict = SymbolDictionary({k: v for k, v in ss_solution_dict.to_sympy().items() if k in ss_variables})
-    for var, eq in simplified_ss_dict.items():
-        if not hasattr(eq, "subs"):
-            continue
-        simplified_ss_dict[var] = substitute_repeatedly(eq, extra_equations)
+    simplified = SymbolDictionary({k: v for k, v in ss_dict_sympy.items() if k in ss_variables})
+    for var, eq in simplified.items():
+        if hasattr(eq, "subs"):
+            simplified[var] = substitute_repeatedly(eq, extra_equations)
 
-    return simplified_ss_dict
+    return simplified
+
+
+def _solution_is_simple(expr: sp.Expr, max_nesting_depth: int = 5) -> bool:
+    """Reject solutions with conditionals, unevaluated calculus, or excessive nesting."""
+    if expr.has(sp.Piecewise, sp.Integral, sp.Derivative, sp.I):
+        return False
+
+    def depth(e: sp.Basic, current: int = 0) -> int:
+        """Recursively compute the maximum depth of the Sympy expression tree."""
+        return current if not e.args else max(depth(arg, current + 1) for arg in e.args)
+
+    return depth(expr) <= max_nesting_depth
+
+
+def _try_solve_for_unknown(
+    eq: sp.Expr,
+    unknown: sp.Symbol,
+    known_values: dict[sp.Symbol, sp.Expr],
+    ss_variables: set[sp.Symbol],
+) -> sp.Expr | None:
+    """
+    Attempt to solve a single equation for one unknown after substituting known values.
+
+    Returns the solution only if it is unique and passes simplicity checks.
+    Returns None if the equation cannot be solved or the solution is too complex.
+    """
+    eq_substituted = eq.subs(known_values)
+
+    remaining_ss_vars = eq_substituted.free_symbols & ss_variables
+    if remaining_ss_vars != {unknown}:
+        return None
+
+    try:
+        solutions = sp.solve(eq_substituted, unknown, dict=False)
+    except (NotImplementedError, ValueError, TypeError):
+        return None
+
+    if len(solutions) != 1:
+        return None
+
+    solution = solutions[0]
+    return solution if _solution_is_simple(solution) else None
+
+
+def propagate_steady_state_through_identities(
+    ss_solution_dict: SymbolDictionary,
+    steady_state_equations: list[sp.Expr],
+    variables: list[TimeAwareSymbol],
+    max_iterations: int = 100,
+) -> SymbolDictionary:
+    """
+    Extend user-provided steady-state values by solving simple single-unknown equations.
+
+    Iterates over the equation system, solving any equation that has exactly one unknown
+    after substituting currently-known values. Repeats until no further progress is made.
+
+    The solver is conservative: it only accepts unique solutions that pass simplicity
+    checks (no conditionals, no complex numbers, limited nesting depth).
+
+    Parameters
+    ----------
+    ss_solution_dict : SymbolDictionary
+        User-provided steady-state values.
+    steady_state_equations : list of sp.Expr
+        Model equations in steady-state residual form (each expression equals zero).
+    variables : list of TimeAwareSymbol
+        Model variables.
+    max_iterations : int, default 100
+        Maximum number of passes over the equation system.
+
+    Returns
+    -------
+    SymbolDictionary
+        Original values plus any additional values that could be inferred.
+    """
+    # Use the actual SS symbols from variables to preserve assumptions
+    ss_variables = {x.to_ss() for x in variables}
+
+    # Start with a copy of the input, preserving symbol identity
+    result = ss_solution_dict.to_sympy().copy() if ss_solution_dict else {}
+
+    for _ in range(max_iterations):
+        progress = False
+
+        for eq in steady_state_equations:
+            if not isinstance(eq, sp.Basic):
+                continue
+
+            unknowns = (eq.free_symbols & ss_variables) - set(result.keys())
+            if len(unknowns) != 1:
+                continue
+
+            unknown = next(iter(unknowns))
+            solution = _try_solve_for_unknown(eq, unknown, result, ss_variables)
+
+            if solution is not None:
+                result[unknown] = float(solution) if solution.is_number else solution
+                progress = True
+
+        if not progress:
+            break
+
+    return SymbolDictionary(result)

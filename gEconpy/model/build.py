@@ -22,6 +22,7 @@ from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
     compile_model_ss_functions,
+    propagate_steady_state_through_identities,
     simplify_provided_ss_equations,
     system_to_steady_state,
 )
@@ -254,6 +255,7 @@ def _compile_gcn(
     simplify_blocks: bool = True,
     simplify_tryreduce: bool = True,
     simplify_constants: bool = True,
+    infer_steady_state: bool = True,
     verbose: bool = True,
     backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
@@ -345,6 +347,18 @@ def _compile_gcn(
     )
     steady_state_equations = system_to_steady_state(equations, shocks)
 
+    user_provided_ss_vars = list(ss_solution_dict.to_sympy().keys()) if ss_solution_dict else []
+
+    if infer_steady_state:
+        ss_solution_dict = propagate_steady_state_through_identities(
+            ss_solution_dict, steady_state_equations, variables
+        )
+
+    all_ss_vars = list(ss_solution_dict.to_sympy().keys()) if ss_solution_dict else []
+    inferred_ss_vars = [v for v in all_ss_vars if v not in user_provided_ss_vars]
+
+    steady_state_relationships = [sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()]
+
     variables = sorted(variables, key=lambda x: x.base_name)
     shocks = sorted(shocks, key=lambda x: x.base_name)
 
@@ -389,6 +403,8 @@ def _compile_gcn(
             reduced_vars,
             reduced_params,
             singletons,
+            user_provided_ss_vars,
+            inferred_ss_vars,
         )
 
     objects = (variables, shocks, equations, steady_state_relationships)
@@ -414,6 +430,7 @@ def model_from_gcn(
     simplify_blocks: bool = True,
     simplify_tryreduce: bool = True,
     simplify_constants: bool = True,
+    infer_steady_state: bool = True,
     verbose: bool = True,
     backend: BACKENDS = "numpy",
     error_function: ERROR_FUNCTIONS = "squared",
@@ -429,6 +446,7 @@ def model_from_gcn(
             simplify_blocks=simplify_blocks,
             simplify_tryreduce=simplify_tryreduce,
             simplify_constants=simplify_constants,
+            infer_steady_state=infer_steady_state,
             verbose=verbose,
             backend=backend,
             error_function=error_function,
@@ -610,6 +628,8 @@ def build_report(
     reduced_vars: list | None,
     reduced_params: list | None,
     singletons: list | None,
+    user_provided_ss_vars: list | None = None,
+    inferred_ss_vars: list | None = None,
 ) -> None:
     """
     Write a diagnostic message after building the model.
@@ -618,6 +638,9 @@ def build_report(
     is correctly specified. For example, it is possible to build a model with
     more equations than parameters. This message will warn the user in this case.
     """
+    user_provided_ss_vars = user_provided_ss_vars or []
+    inferred_ss_vars = inferred_ss_vars or []
+
     n_equations = len(equations)
     n_variables = len(variables)
     n_shocks = len(shocks)
@@ -665,6 +688,20 @@ def build_report(
     )
 
     report += f"\t{n_params_to_calibrate} {calib_par_str} to calibrate.\n"
+
+    # Report steady-state information
+    n_user_provided = len(user_provided_ss_vars)
+    n_inferred = len(inferred_ss_vars)
+    n_total_ss = n_user_provided + n_inferred
+
+    if n_total_ss > 0:
+        report += f"\t{n_total_ss} / {n_variables} variables have analytical steady-state values.\n"
+        if n_user_provided > 0:
+            var_names = ", ".join(str(v) for v in user_provided_ss_vars)
+            report += f"\t\t{n_user_provided} user-provided: {var_names}\n"
+        if n_inferred > 0:
+            var_names = ", ".join(str(v) for v in inferred_ss_vars)
+            report += f"\t\t{n_inferred} automatically inferred: {var_names}\n"
 
     if n_equations == n_variables:
         report += "Model appears well defined and ready to proceed to solving.\n"
