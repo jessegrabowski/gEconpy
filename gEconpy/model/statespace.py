@@ -28,13 +28,14 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perturbation import check_bk_condition_pt
+from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct_pt
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
 
 _log = logging.getLogger(__name__)
 floatX = pytensor.config.floatX
 
-SolverType = Literal["gensys", "cycle_reduction", "scan_cycle_reduction"]
+SolverType = Literal["gensys", "cycle_reduction", "scan_cycle_reduction", "backward_direct"]
 valid_solvers = get_args(SolverType)
 
 
@@ -167,6 +168,8 @@ class DSGEStateSpace(PyMCStateSpace):
             T, R, _success = gensys_pt(A, B, C, D, **self._solver_kwargs)
         elif self._solver == "cycle_reduction":
             T, R = cycle_reduction_pt(A, B, C, D, **self._solver_kwargs)
+        elif self._solver == "backward_direct":
+            T, R = solve_policy_function_with_backward_direct_pt(A, B, C, D)
         else:
             T, R, n_steps = scan_cycle_reduction(A, B, C, D, mode=self._mode, **self._solver_kwargs)
             self._n_steps = n_steps
@@ -303,7 +306,8 @@ class DSGEStateSpace(PyMCStateSpace):
         # Validate solver argument
         if solver not in valid_solvers:
             raise ValueError(
-                f'Unknown solver {solver}, expected one of "gensys", "cycle_reduction", or "scan_cycle_reduction"'
+                f'Unknown solver {solver}, expected one of "gensys", "cycle_reduction", '
+                f'"scan_cycle_reduction", or "backward_direct"'
             )
 
         # Check model is identified
@@ -323,6 +327,8 @@ class DSGEStateSpace(PyMCStateSpace):
             solver_kwargs = {"tol": tol}
         elif solver == "cycle_reduction":
             solver_kwargs = {"tol": tol, "max_iter": max_iter}
+        elif solver == "backward_direct":
+            solver_kwargs = {}
         else:
             solver_kwargs = {
                 "tol": tol,

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pymc as pm
 import pytensor
 import pytest
@@ -16,6 +17,7 @@ from tests._resources.cache_compiled_models import (
         "open_rbc.gcn",
         pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
+        "sarima2_12.gcn",
     ],
 )
 def test_statespace_matrices_agree_with_model(gcn_file):
@@ -41,6 +43,7 @@ def test_statespace_matrices_agree_with_model(gcn_file):
         "open_rbc.gcn",
         "full_nk.gcn",
         "rbc_linearized.gcn",
+        "sarima2_12.gcn",
     ],
 )
 def test_model_to_pymc(gcn_file):
@@ -65,7 +68,33 @@ def test_model_to_pymc(gcn_file):
         "open_rbc.gcn",
         pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
+        "sarima2_12.gcn",
     ],
 )
 def test_model_config(gcn_file):
     ss_mod = load_and_cache_statespace(gcn_file)
+
+
+def test_backward_direct_statespace_logp():
+    ss_mod = load_and_cache_statespace("sarima2_12.gcn")
+    ss_mod.configure(
+        observed_states=["x"],
+        solver="backward_direct",
+        verbose=False,
+    )
+
+    rng = np.random.default_rng()
+    n_obs = 100
+    data = pd.DataFrame(
+        rng.normal(size=(n_obs,)),
+        columns=["x"],
+        index=pd.date_range("2000-01-01", periods=n_obs, freq="MS"),
+    )
+
+    with pm.Model() as m:
+        ss_mod.to_pymc()
+        ss_mod.build_statespace_graph(data)
+
+        point = m.initial_point()
+        logp = m.compile_logp()(point)
+        assert np.isfinite(logp)
