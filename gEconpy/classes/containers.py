@@ -198,9 +198,29 @@ class SymbolDictionary(dict):
         self._is_variable.clear()
 
         self.update(d)
-        self._assumptions.update(d._assumptions)
-        self._is_variable.update(d._is_variable)
-        self.is_sympy = d.is_sympy
+
+    def update(self, other=None, **kwargs):
+        """
+        Update the dictionary with key-value pairs from other or kwargs.
+
+        Unlike dict.update, this also merges _assumptions and _is_variable
+        metadata from other SymbolDictionary instances.
+        """
+        if other is None:
+            other = {}
+
+        # Handle SymbolDictionary specially to preserve assumptions
+        if isinstance(other, SymbolDictionary):
+            super().update(other)
+            self._assumptions.update(other._assumptions)
+            self._is_variable.update(other._is_variable)
+            if len(self) == len(other) or not self.is_sympy:
+                self.is_sympy = other.is_sympy
+        else:
+            super().update(other)
+
+        if kwargs:
+            super().update(kwargs)
 
     def to_sympy(self, inplace=False, new_assumptions=None, new_is_variable=None):
         new_assumptions = new_assumptions if new_assumptions is not None else {}

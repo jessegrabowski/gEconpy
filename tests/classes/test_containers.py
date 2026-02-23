@@ -210,6 +210,52 @@ class TestSymbolDictionary(unittest.TestCase):
         self.assertTrue(all(isinstance(x, sp.Symbol) for x in d))
         self.assertTrue(d.is_sympy)
 
+    def test_update_preserves_assumptions(self):
+        X = TimeAwareSymbol("X", 0, positive=True)
+        Y = TimeAwareSymbol("Y", "ss", real=True)
+
+        d1 = SymbolDictionary({self.C: 1, self.A: 2})
+        d2 = SymbolDictionary({X: 3, Y: 4})
+
+        d1.update(d2)
+
+        # Check values were merged
+        self.assertEqual(len(d1), 4)
+        self.assertEqual(d1[X], 3)
+        self.assertEqual(d1[Y], 4)
+
+        # Check assumptions were merged
+        self.assertIn("X", d1._assumptions)
+        self.assertIn("Y", d1._assumptions)
+        self.assertTrue(d1._assumptions["X"]["positive"])
+        self.assertTrue(d1._assumptions["Y"]["real"])
+
+        # Check is_variable was merged
+        self.assertTrue(d1._is_variable["X"])
+        self.assertTrue(d1._is_variable["Y"])
+
+    def test_update_with_string_mode_preserves_assumptions(self):
+        # Test in string mode
+        d1 = self.d.to_string()
+        X = TimeAwareSymbol("X", 0, positive=True)
+        d2 = SymbolDictionary({X: 3}).to_string()
+
+        original_assumptions = d1._assumptions.copy()
+        d1.update(d2)
+
+        # Check assumptions from both dicts are present
+        self.assertIn("X", d1._assumptions)
+        for key in original_assumptions:
+            self.assertIn(key, d1._assumptions)
+
+    def test_update_with_plain_dict_does_not_crash(self):
+        # update() should handle plain dicts gracefully (no assumptions to merge)
+        d1 = SymbolDictionary({"A": 1, "B": 2})
+        d1.update({"C": 3})
+
+        self.assertEqual(len(d1), 3)
+        self.assertEqual(d1["C"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()
