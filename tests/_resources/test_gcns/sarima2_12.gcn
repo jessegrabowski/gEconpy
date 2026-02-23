@@ -24,14 +24,14 @@ block SARIMA_2_12
 
     shocks
     {
-        epsilon[] ~ Normal(mu=0, sigma=sigma);
+        epsilon[] ~ Normal(mu=0, sigma=sigma_epsilon);
     };
 
     calibration
     {
-        rho_1 = 0.95;
-        rho_2 = -0.4;
-        rho_12 = 0.2;
-        sigma = 1.0;
+        rho_1  ~ Normal(mu=0.9, sigma=0.1) = 0.95;
+        rho_2  ~ Normal(mu=-0.3, sigma=0.1) = -0.4;
+        rho_12 ~ Normal(mu=0.2, sigma=0.1) = 0.2;
+        sigma_epsilon ~ HalfNormal(sigma=1) = 1.0;
     };
 };
