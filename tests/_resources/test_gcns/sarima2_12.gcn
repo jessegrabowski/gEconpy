@@ -1,0 +1,37 @@
+options
+{
+    linear = True;
+};
+
+
+block STEADY_STATE
+{
+    identities
+    {
+        x[ss] = 0.0;
+    };
+};
+
+block SARIMA_2_12
+{
+    identities
+    {
+        x[] = rho_1 * x[-1] + rho_2 * x[-2]  # AR(2) part
+            + rho_12 * x[-12]  # Seasonal AR(1) part
+            + rho_1 * rho_12 * x[-13] + rho_12 * rho_2 * x[-14] # Interaction terms
+            + epsilon[];
+    };
+
+    shocks
+    {
+        epsilon[] ~ Normal(mu=0, sigma=sigma);
+    };
+
+    calibration
+    {
+        rho_1 = 0.95;
+        rho_2 = -0.4;
+        rho_12 = 0.2;
+        sigma = 1.0;
+    };
+};
