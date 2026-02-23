@@ -245,6 +245,43 @@ def compile_to_numpy(
     return f, cache
 
 
+def sympy_to_pytensor(
+    inputs: list[sp.Symbol],
+    outputs: list[sp.Symbol | sp.Expr] | sp.MutableDenseMatrix,
+    cache: dict | None = None,
+) -> tuple[list[TensorVariable], list[TensorVariable], dict]:
+    """
+    Convert sympy expressions to pytensor graph nodes.
+
+    This is the sympytensor bridge: it takes sympy symbols and expressions and returns the corresponding pytensor
+    input and output nodes, along with the updated cache that maintains the mapping between sympy and pytensor symbols.
+
+    Parameters
+    ----------
+    inputs : list of sp.Symbol
+        Sympy input symbols.
+    outputs : list of sp.Symbol, sp.Expr, or sp.MutableDenseMatrix
+        Sympy output expressions.
+    cache : dict, optional
+        Dictionary mapping sympytensor cache keys to pytensor variables. Used to maintain a consistent namespace
+        across multiple conversions. Default is an empty dictionary.
+
+    Returns
+    -------
+    input_nodes : list of TensorVariable
+        Pytensor input nodes corresponding to the sympy inputs.
+    output_nodes : list of TensorVariable
+        Pytensor output nodes corresponding to the sympy outputs.
+    cache : dict
+        Updated cache dictionary.
+    """
+    cache = {} if cache is None else cache
+    outputs = [outputs] if not isinstance(outputs, list) else outputs
+    input_nodes = [as_tensor(x, cache) for x in inputs]
+    output_nodes = [output_to_tensor(x, cache) for x in outputs]
+    return input_nodes, output_nodes, cache
+
+
 def compile_to_pytensor_function(
     inputs: list[sp.Symbol],
     outputs: list[sp.Symbol | sp.Expr],
@@ -285,11 +322,7 @@ def compile_to_pytensor_function(
         Pytensor caching information.
     """
     kwargs = _configue_pytensor_kwargs(kwargs)
-    cache = {} if cache is None else cache
-
-    outputs = [outputs] if not isinstance(outputs, list) else outputs
-    input_pt = [as_tensor(x, cache) for x in inputs]
-    output_pt = [output_to_tensor(x, cache) for x in outputs]
+    input_pt, output_pt, cache = sympy_to_pytensor(inputs, outputs, cache)
 
     original_shape = [x.type.shape for x in output_pt]
 
