@@ -19,13 +19,12 @@ dependencies:
   - setuptools
   - statsmodels
   - sympy>=1.14.0
-  - sympytensor
   - pip
   - ipython
   - notebook<7
   - nutpie
   - networkx
-  - sympytensor
+  - sympytensor>=1.4.0
   - pymc-extras>=0.8.0
 
   # For building docs

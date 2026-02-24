@@ -23,7 +23,7 @@ dependencies:
   - ipython
   - nutpie
   - networkx
-  - sympytensor
+  - sympytensor>=1.4.0
   - pymc-extras
 
   - pip:

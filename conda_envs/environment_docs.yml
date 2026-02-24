@@ -20,7 +20,7 @@ dependencies:
   - sympy>=1.14.0
   - pymc-extras>=0.8.0
   - better-optimize
-  - sympytensor
+  - sympytensor>=1.4.0
   - jax
   - nutpie
   - networkx
