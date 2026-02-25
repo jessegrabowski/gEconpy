@@ -50,7 +50,7 @@ dependencies = [
     "scipy",
     "setuptools",
     "sympy>=1.14.0",
-    "sympytensor>=1.4.0",
+    "sympytensor>=1.4.1",
     "ipython",
     "xarray",
     "networkx"
