@@ -24,7 +24,7 @@ dependencies:
   - notebook<7
   - nutpie
   - networkx
-  - sympytensor>=1.4.0
+  - sympytensor>=1.4.1
   - pymc-extras>=0.8.0
 
   # For building docs

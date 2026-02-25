@@ -18,7 +18,7 @@ dependencies:
   - pytensor>=2.37.0
   - preliz>=0.23.0
   - ipython
-  - sympytensor>=1.4.0
+  - sympytensor>=1.4.1
   - pymc-extras>=0.8.0
   - better-optimize
   - nutpie
