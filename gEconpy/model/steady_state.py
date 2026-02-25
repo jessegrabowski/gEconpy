@@ -7,7 +7,6 @@ import sympy as sp
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
-    BACKENDS,
     compile_function,
     dictionary_return_wrapper,
     make_return_dict_and_update_cache,
@@ -61,7 +60,6 @@ def compile_ss_resid_and_sq_err(
     variables: list[TimeAwareSymbol],
     parameters: list[sp.Symbol],
     ss_error: sp.Expr,
-    backend: BACKENDS,
     cache: dict,
     return_symbolic: bool,
     **kwargs,
@@ -73,7 +71,6 @@ def compile_ss_resid_and_sq_err(
     f_ss_resid, cache = compile_function(
         ss_variables + parameters,
         steady_state,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
         stack_return=True,
@@ -84,11 +81,9 @@ def compile_ss_resid_and_sq_err(
     f_ss_jac, cache = compile_function(
         ss_variables + parameters,
         resid_jac,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
-        # for pytensor, the return is a single object; don't stack into a (1,n,n) array
-        stack_return=backend == "numpy",
+        stack_return=False,
         pop_return=True,
         **kwargs,
     )
@@ -104,7 +99,6 @@ def compile_ss_resid_and_sq_err(
     f_ss_error, cache = compile_function(
         ss_variables + parameters,
         [ss_error],
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
         pop_return=True,
@@ -115,7 +109,6 @@ def compile_ss_resid_and_sq_err(
     f_ss_grad, cache = compile_function(
         ss_variables + parameters,
         error_grad,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
         stack_return=True,
@@ -126,11 +119,9 @@ def compile_ss_resid_and_sq_err(
     f_ss_hess, cache = compile_function(
         ss_variables + parameters,
         error_hess,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
-        # error_hess is a list of one element; don't stack into a (1,n,n) array
-        stack_return=backend != "pytensor",
+        stack_return=False,
         pop_return=True,
         **kwargs,
     )
@@ -138,7 +129,6 @@ def compile_ss_resid_and_sq_err(
     f_ss_hessp, cache = compile_function(
         [p, *ss_variables, *parameters],
         hessp,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
         stack_return=True,
@@ -153,7 +143,6 @@ def compile_known_ss(
     ss_solution_dict: SymbolDictionary,
     variables: list[TimeAwareSymbol | sp.Symbol],
     parameters: list[sp.Symbol],
-    backend: BACKENDS,
     cache: dict,
     return_symbolic: bool = False,
     stack_return: bool | None = None,
@@ -183,13 +172,12 @@ def compile_known_ss(
     f_ss, cache = compile_function(
         parameters,
         output_exprs,
-        backend=backend,
         cache=cache,
         stack_return=stack_return,
         return_symbolic=return_symbolic,
         **kwargs,
     )
-    if return_symbolic and backend == "pytensor":
+    if return_symbolic:
         return make_return_dict_and_update_cache(ss_variables, f_ss, cache, TimeAwareSymbol)
 
     return dictionary_return_wrapper(f_ss, output_vars), cache
@@ -203,7 +191,6 @@ def compile_model_ss_functions(
     deterministic_dict,
     calib_dict,
     error_func: ERROR_FUNCTIONS = "squared",
-    backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
     **kwargs,
 ):
@@ -211,7 +198,6 @@ def compile_model_ss_functions(
     f_params, cache = compile_param_dict_func(
         param_dict,
         deterministic_dict,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
     )
@@ -229,7 +215,6 @@ def compile_model_ss_functions(
         ss_solution_dict,
         variables,
         parameters,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
         **kwargs,
@@ -240,7 +225,6 @@ def compile_model_ss_functions(
         variables,
         parameters,
         ss_error,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
         **kwargs,

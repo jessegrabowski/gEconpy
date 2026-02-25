@@ -2,7 +2,6 @@ from collections.abc import Callable
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.model.compile import (
-    BACKENDS,
     compile_function,
     dictionary_return_wrapper,
     make_return_dict_and_update_cache,
@@ -12,7 +11,6 @@ from gEconpy.model.compile import (
 def compile_param_dict_func(
     param_dict: SymbolDictionary,
     deterministic_dict: SymbolDictionary,
-    backend: BACKENDS = "numpy",
     cache: dict | None = None,
     return_symbolic: bool = False,
 ) -> tuple[Callable, dict]:
@@ -29,15 +27,13 @@ def compile_param_dict_func(
     deterministic_dict: SymbolDictionary
         A dictionary of deterministic parameters, with the keys being the parameters and the values being the
         expressions to compute them.
-    backend: str, one of "numpy", "pytensor"
-        The backend to use for the compiled function.
     cache: dict, optional
         A dictionary mapping from pytensor symbols to sympy expressions. Used to prevent duplicate mappings from
         sympy symbol to pytensor symbol from being created. Default is a empty dictionary, implying no other functions
         have been compiled yet.
     return_symbolic: bool, default False
-        When true, if backend is "pytensor", return a symbolic graph representing the computation of parameter values
-        rather than a compiled pytensor function. Ignored if backend is not "pytensor"
+        When true, return a symbolic graph representing the computation of parameter values
+        rather than a compiled pytensor function.
 
     Returns
     -------
@@ -56,14 +52,13 @@ def compile_param_dict_func(
     f, cache = compile_function(
         inputs,
         output_exprs,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
         pop_return=False,
         stack_return=not return_symbolic,
     )
 
-    if return_symbolic and backend == "pytensor":
+    if return_symbolic:
         return make_return_dict_and_update_cache(output_params, f, cache)
 
     return dictionary_return_wrapper(f, output_params), cache
