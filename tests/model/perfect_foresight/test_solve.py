@@ -10,17 +10,17 @@ from tests._resources.cache_compiled_models import load_and_cache_model
 
 @pytest.fixture
 def rbc_model():
-    return load_and_cache_model("one_block_1.gcn", backend="numpy")
+    return load_and_cache_model("one_block_1.gcn")
 
 
 @pytest.fixture
 def backward_var_model():
-    return load_and_cache_model("backward_var.gcn", backend="numpy")
+    return load_and_cache_model("backward_var.gcn")
 
 
 @pytest.fixture
 def forward_model():
-    return load_and_cache_model("3_eq_linear_nk.gcn", backend="numpy")
+    return load_and_cache_model("3_eq_linear_nk.gcn")
 
 
 class TestSolve:

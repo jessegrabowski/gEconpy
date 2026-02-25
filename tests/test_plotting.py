@@ -62,7 +62,7 @@ class TestUtilities(unittest.TestCase):
 class TestPlotSimulation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.model = load_and_cache_model("rbc_linearized.gcn", backend="numpy")
+        cls.model = load_and_cache_model("rbc_linearized.gcn")
         cls.data = simulate(
             cls.model,
             simulation_length=100,
@@ -108,7 +108,7 @@ class TestPlotSimulation(unittest.TestCase):
 
 @pytest.fixture(scope="session")
 def irf_setup():
-    model = load_and_cache_model("full_nk.gcn", backend="numpy")
+    model = load_and_cache_model("full_nk.gcn")
     model.steady_state(verbose=False)
     T, R = model.solve_model(verbose=False, solver="gensys")
     irf = impulse_response_function(
@@ -187,7 +187,7 @@ def test_plot_irf_legend(irf_setup):
 class TestPlotEigenvalues(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
+        cls.model = load_and_cache_model("one_block_1.gcn")
 
     def test_plot_with_defaults(self):
         fig = plot_eigenvalues(
@@ -228,7 +228,7 @@ class TestPlotEigenvalues(unittest.TestCase):
 class TestPlotCovarianceMatrix(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
+        cls.model = load_and_cache_model("one_block_1.gcn")
 
         cls.cov_matrix = stationary_covariance_matrix(
             cls.model,
@@ -262,7 +262,7 @@ class TestPlotCovarianceMatrix(unittest.TestCase):
 class TestPlotACF(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.model = load_and_cache_model("one_block_1.gcn", backend="numpy")
+        cls.model = load_and_cache_model("one_block_1.gcn")
 
         cls.acf = autocorrelation_matrix(
             cls.model,

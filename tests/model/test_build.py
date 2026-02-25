@@ -1,5 +1,4 @@
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -25,24 +24,22 @@ expected_warnings = [
     ],
     ids=["tryreduce", "constants", "no_simplify"],
 )
-def test_build_warns_if_model_not_defined(gcn_file_1, simplify_tryreduce, simplify_constants, expected_warning):
-    with (
-        mock.patch(
-            "pathlib.Path.open",
-            new=mock.mock_open(read_data=gcn_file_1),
-            create=True,
-        ),
-        pytest.warns(UserWarning, match=expected_warning),
-    ):
+def test_build_warns_if_model_not_defined(
+    gcn_file_1, simplify_tryreduce, simplify_constants, expected_warning, tmp_path
+):
+    gcn_path = tmp_path / "test_model.gcn"
+    gcn_path.write_text(gcn_file_1)
+
+    with pytest.warns(UserWarning, match=expected_warning):
         model_from_gcn(
-            gcn_file_1,
+            gcn_path,
             simplify_constants=simplify_constants,
             simplify_tryreduce=simplify_tryreduce,
             verbose=not (simplify_tryreduce or simplify_constants),
         )
 
 
-def test_missing_parameters_raises():
+def test_missing_parameters_raises(tmp_path):
     GCN_file = """
                 block HOUSEHOLD
                 {
@@ -77,20 +74,16 @@ def test_missing_parameters_raises():
                 };
                 """
 
-    with (
-        mock.patch(
-            "pathlib.Path.open",
-            new=mock.mock_open(read_data=GCN_file),
-            create=True,
-        ),
-        pytest.raises(
-            OrphanParameterError,
-            match=r"The following parameter was found among model equations but did not appear in "
-            r"any calibration block: beta",
-        ),
+    gcn_path = tmp_path / "missing_params.gcn"
+    gcn_path.write_text(GCN_file)
+
+    with pytest.raises(
+        OrphanParameterError,
+        match=r"The following parameter was found among model equations but did not appear in "
+        r"any calibration block: beta",
     ):
         model_from_gcn(
-            GCN_file,
+            gcn_path,
             verbose=False,
             simplify_tryreduce=False,
             simplify_constants=False,
@@ -200,7 +193,6 @@ def test_variables_parsed(gcn_path, expected_variables, expected_params, expecte
     model = model_from_gcn(
         file_path,
         verbose=False,
-        backend="numpy",
         mode="FAST_COMPILE",
         simplify_constants=False,
         simplify_tryreduce=False,

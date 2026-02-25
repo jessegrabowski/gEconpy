@@ -23,8 +23,6 @@ from gEconpy.solvers.gensys import gensys_pt, solve_policy_function_with_gensys
 from gEconpy.utilities import eq_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
 
-JAX_INSTALLED = find_spec("jax") is not None
-
 
 def linearize_method_2(variables, equations, shocks, not_loglin_variables=None):
     if not_loglin_variables is None:
@@ -48,9 +46,8 @@ def linearize_method_2(variables, equations, shocks, not_loglin_variables=None):
     return Fs
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
-def test_variables_to_all_times(backend):
-    mod = load_and_cache_model("one_block_1.gcn", backend=backend, use_jax=JAX_INSTALLED)
+def test_variables_to_all_times():
+    mod = load_and_cache_model("one_block_1.gcn")
     variables = mod.variables
     lags, now, leads = make_all_variable_time_combinations(variables)
 
@@ -70,9 +67,8 @@ def test_variables_to_all_times(backend):
         pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
     ],
 )
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
-def test_log_linearize_model(gcn_file, backend):
-    mod = load_and_cache_model(gcn_file, backend=backend, use_jax=JAX_INSTALLED)
+def test_log_linearize_model(gcn_file):
+    mod = load_and_cache_model(gcn_file)
     (A, B, C, D), not_loglin_variable = linearize_model(
         mod.variables,
         mod.equations,
@@ -135,9 +131,8 @@ def test_log_linearize_model(gcn_file, backend):
         ),
     ],
 )
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
-def test_solve_policy_function(gcn_file, state_variables, backend):
-    mod = load_and_cache_model(gcn_file, backend=backend, use_jax=JAX_INSTALLED)
+def test_solve_policy_function(gcn_file, state_variables):
+    mod = load_and_cache_model(gcn_file)
     steady_state_dict = mod.steady_state()
     A, B, C, D = mod.linearize_model(
         order=1,
@@ -182,7 +177,7 @@ def test_solve_policy_function(gcn_file, state_variables, backend):
 )
 @pytest.mark.include_nk
 def test_cycle_reduction_gradients(op):
-    mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    mod = load_and_cache_model("full_nk.gcn")
     A, B, C, D = mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
     A, B, C, D = [np.ascontiguousarray(x, dtype="float64") for x in [A, B, C, D]]
 
@@ -197,7 +192,7 @@ def test_cycle_reduction_gradients(op):
         [A_pt, B_pt, C_pt, D_pt],
         [T, R, *T_grad],
         on_unused_input="raise",
-        mode="JAX" if JAX_INSTALLED and op is scan_cycle_reduction else "FAST_RUN",
+        mode="FAST_RUN",
     )
 
     T_np, _R_np, _A_bar, _B_bar, _C_bar = f(A, B, C, D)
@@ -214,7 +209,7 @@ def test_cycle_reduction_gradients(op):
 
 @pytest.mark.include_nk
 def test_pytensor_gensys():
-    mod = load_and_cache_model("full_nk.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    mod = load_and_cache_model("full_nk.gcn")
     A, B, C, D = mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
 
     A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in list("ABCD"))

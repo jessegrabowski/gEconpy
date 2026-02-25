@@ -12,7 +12,6 @@ from numpy.testing import assert_allclose
 
 from gEconpy.exceptions import GensysFailedException
 from gEconpy.model.build import model_from_gcn
-from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import (
     autocorrelation_matrix,
     build_Q_matrix,
@@ -30,8 +29,6 @@ from tests._resources.cache_compiled_models import load_and_cache_model
 from tests._resources.expected_matrices import expected_linearization_result
 from tests._resources.load_dynare import load_dynare_outputs
 
-JAX_INSTALLED = find_spec("jax") is not None
-
 
 @pytest.fixture
 def rng():
@@ -47,9 +44,8 @@ def rng():
     ],
     ids=["one_block_prior", "one_block_ss", "full_nk"],
 )
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
-def test_model_parameters(gcn_path: str, backend: BACKENDS):
-    model = load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED)
+def test_model_parameters(gcn_path: str):
+    model = load_and_cache_model(gcn_path)
 
     # Test default parameters
     params = model.parameters()
@@ -64,9 +60,8 @@ def test_model_parameters(gcn_path: str, backend: BACKENDS):
     assert model._default_params["beta"] == old_params["beta"]
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
-def test_deterministic_model_parameters(backend: BACKENDS):
-    model = load_and_cache_model("one_block_2.gcn", backend, use_jax=JAX_INSTALLED)
+def test_deterministic_model_parameters():
+    model = load_and_cache_model("one_block_2.gcn")
     params = model.parameters()
 
     # Test numeric expression in calibration block
@@ -78,96 +73,8 @@ def test_deterministic_model_parameters(backend: BACKENDS):
     assert_allclose(params["zeta"], -np.log(0.9))
 
 
-@pytest.mark.parametrize(
-    "gcn_path",
-    [
-        "one_block_1_ss.gcn",
-        "open_rbc.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
-    ],
-    ids=["one_block_prior", "one_block_ss", "full_nk"],
-)
-def test_all_backends_agree_on_parameters(gcn_path):
-    models = [load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED) for backend in ["numpy", "pytensor"]]
-    params = [np.r_[list(model.parameters().values())] for model in models]
-
-    for i in range(2):
-        for j in range(i):
-            assert_allclose(params[i], params[j])
-
-
-@pytest.mark.parametrize(
-    "gcn_path",
-    [
-        "one_block_1_ss.gcn",
-        "open_rbc.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
-    ],
-    ids=["one_block_prior", "one_block_ss", "full_nk"],
-)
-@pytest.mark.parametrize(
-    "func",
-    ["f_ss_error_grad", "f_ss_error_hess", "f_ss_jac"],
-    ids=["grad", "hess", "jac"],
-)
-def test_all_backends_agree_on_functions(gcn_path, func):
-    backends = ["numpy", "pytensor"]
-    models = [load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED) for backend in backends]
-    params = models[0].parameters().to_string()
-    ss_vars = [x.to_ss().name for x in models[0].variables]
-    x0 = dict(zip(ss_vars, np.full(len(models[0].variables), 0.8), strict=False))
-
-    vals = [getattr(model, func)(**params, **x0) for model in models]
-    for i in range(2):
-        for j in range(i):
-            assert_allclose(vals[i], vals[j], err_msg=f"{backends[i]} and {backends[j]} disagree")
-
-
-@pytest.mark.parametrize(
-    "gcn_path",
-    [
-        "rbc_2_block_partial_ss.gcn",
-        pytest.param("full_nk_partial_ss.gcn", marks=pytest.mark.include_nk),
-    ],
-    ids=["two_block", "full_nk"],
-)
-@pytest.mark.parametrize("func", ["f_ss_error_grad", "f_ss_error_hess"], ids=["grad", "hess"])
-def test_scipy_wrapped_functions_agree(gcn_path, func):
-    backend_names = ["numpy", "pytensor"]
-    models = [load_and_cache_model(gcn_path, backend, use_jax=JAX_INSTALLED) for backend in backend_names]
-
-    ss_variables = [x.to_ss() for x in models[0].variables]
-    known_variables = list(models[0].f_ss(**models[0].parameters()).to_sympy().keys())
-
-    vars_to_solve = [var for var in ss_variables if var not in known_variables]
-    unknown_var_idx = np.array([x in vars_to_solve for x in ss_variables], dtype="bool")
-
-    params = models[0].parameters().to_string()
-    x0 = np.full(len(vars_to_solve), 0.8)
-
-    vals = [
-        scipy_wrapper(
-            getattr(model, func),
-            vars_to_solve,
-            unknown_var_idx,
-            unknown_var_idx,
-            model.f_ss,
-        )(x0, params)
-        for model in models
-    ]
-    for i in range(2):
-        for j in range(i):
-            assert_allclose(
-                vals[i],
-                vals[j],
-                err_msg=f"{backend_names[i]} and {backend_names[j]} disagree",
-                rtol=1e-8,
-                atol=1e-8,
-            )
-
-
 def test_linear_model():
-    mod = load_and_cache_model("rbc_linearized.gcn", "numpy", use_jax=JAX_INSTALLED)
+    mod = load_and_cache_model("rbc_linearized.gcn")
     params = mod.parameters()
     ss = mod.steady_state()
 
@@ -177,7 +84,6 @@ def test_linear_model():
     assert not all(x == 0 for x in mod.f_ss(**mod.parameters()))
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 @pytest.mark.parametrize(
     ("gcn_file", "expected_result"),
     [
@@ -248,10 +154,10 @@ def test_linear_model():
     ],
     ids=["one_block", "open_rbc", "nk"],
 )
-def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndarray):
+def test_steady_state(gcn_file: str, expected_result: np.ndarray):
     n = len(expected_result)
 
-    model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(gcn_file)
 
     params = model.parameters()
     ss_dict = model.f_ss(**params)
@@ -266,9 +172,9 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
     grad = model.f_ss_error_grad(**params, **ss_dict)
     hess = model.f_ss_error_hess(**params, **ss_dict)
 
-    assert isinstance(error, float)
-    assert isinstance(grad, np.ndarray)
-    assert isinstance(hess, np.ndarray)
+    assert np.ndim(error) == 0
+    assert hasattr(grad, "shape")
+    assert hasattr(hess, "shape")
 
     assert grad.ndim == 1
     assert hess.ndim == 2
@@ -280,7 +186,6 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
     assert np.all(np.linalg.eigvals(hess) > -1e8)
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 @pytest.mark.parametrize(
     "gcn_file",
     [
@@ -289,8 +194,8 @@ def test_steady_state(backend: BACKENDS, gcn_file: str, expected_result: np.ndar
         pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
     ],
 )
-def test_model_gradient(backend, gcn_file):
-    model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
+def test_model_gradient(gcn_file):
+    model = load_and_cache_model(gcn_file)
 
     ss_result = model.steady_state()
 
@@ -301,7 +206,7 @@ def test_model_gradient(backend, gcn_file):
         atol=1e-12,
     )
 
-    perturbed_point = {k: 0.8 for k, v in ss_result.items()}
+    perturbed_point = {k: np.float64(0.8) for k, v in ss_result.items()}
     test_point = np.array(list(perturbed_point.values()))
 
     grad = model.f_ss_error_grad(**perturbed_point, **model.parameters())
@@ -330,11 +235,10 @@ def test_model_gradient(backend, gcn_file):
         "rbc_with_excluded.gcn",
     ],
 )
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
-def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
+def test_numerical_steady_state(how: str, gcn_file: str):
     # TODO: I was hitting errors when the models were reused, something about the fixed values was breaking stuff.
     #  Need to track this bug down.
-    model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(gcn_file)
     analytic_res = model.steady_state(verbose=False, progressbar=False)
     analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
 
@@ -381,7 +285,7 @@ def test_numerical_steady_state(how: str, gcn_file: str, backend: BACKENDS):
 
 def test_numerical_steady_state_with_calibrated_params():
     file_path = "one_block_2_no_extra.gcn"
-    model = load_and_cache_model(file_path, "numpy", use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(file_path)
 
     res = model.steady_state(
         how="minimize",
@@ -394,10 +298,9 @@ def test_numerical_steady_state_with_calibrated_params():
     assert_allclose(res["L_ss"] / res["K_ss"], 0.36)
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
-def test_steady_state_with_parameter_updates(backend, rng):
+def test_steady_state_with_parameter_updates(rng):
     file_path = "rbc_2_block_ss.gcn"
-    model = load_and_cache_model(file_path, backend, use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(file_path)
 
     delta = rng.beta(1, 1)
     beta = rng.beta(1, 1)
@@ -406,7 +309,6 @@ def test_steady_state_with_parameter_updates(backend, rng):
     assert_allclose(ss_dict["r_ss"], (1 / beta - (1 - delta)))
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 @pytest.mark.parametrize(
     "partial_file, analytic_file",
     [
@@ -417,12 +319,12 @@ def test_steady_state_with_parameter_updates(backend, rng):
         pytest.param("full_nk_partial_ss.gcn", "full_nk.gcn", marks=pytest.mark.include_nk),
     ],
 )
-def test_partially_analytical_steady_state(backend: BACKENDS, partial_file, analytic_file):
-    analytic_model = load_and_cache_model(analytic_file, backend, use_jax=JAX_INSTALLED)
+def test_partially_analytical_steady_state(partial_file, analytic_file):
+    analytic_model = load_and_cache_model(analytic_file)
     analytic_res = analytic_model.steady_state()
     analytic_values = np.array(list(analytic_res.values()))
 
-    partial_model = load_and_cache_model(partial_file, backend, use_jax=JAX_INSTALLED)
+    partial_model = load_and_cache_model(partial_file)
     numeric_res = partial_model.steady_state(
         how="minimize",
         verbose=False,
@@ -454,9 +356,8 @@ def test_partially_analytical_steady_state(backend: BACKENDS, partial_file, anal
     ],
     ids=["one_block_ss", "two_block_ss", "full_nk"],
 )
-@pytest.mark.parametrize("backend", ["numpy"], ids=["numpy"])
-def test_linearize(gcn_file, backend: BACKENDS):
-    model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
+def test_linearize(gcn_file):
+    model = load_and_cache_model(gcn_file)
     steady_state_dict = model.steady_state()
     outputs = model.linearize_model(loglin_negative_ss=True, steady_state=steady_state_dict)
 
@@ -465,9 +366,8 @@ def test_linearize(gcn_file, backend: BACKENDS):
         assert_allclose(out, expected_out, atol=1e-8, err_msg=f"{mat_name} failed")
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
-def test_linearize_with_custom_params(backend, rng):
-    model = load_and_cache_model("one_block_1_ss.gcn", backend, use_jax=JAX_INSTALLED)
+def test_linearize_with_custom_params(rng):
+    model = load_and_cache_model("one_block_1_ss.gcn")
     params = model.parameters(rho=0.5)
     assert params["rho"] == 0.5
 
@@ -542,7 +442,6 @@ def test_outputs_after_gensys_failure(caplog):
     assert R is None
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
 @pytest.mark.parametrize(
     "model_name, log_linearize",
     [
@@ -554,9 +453,9 @@ def test_outputs_after_gensys_failure(caplog):
     ],
     ids=str,
 )
-def test_solve_matches_dynare(backend, model_name, log_linearize):
+def test_solve_matches_dynare(model_name, log_linearize):
     gcn_file = model_name + ".gcn"
-    model = load_and_cache_model(gcn_file, backend, use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(gcn_file)
     T, R = model.solve_model(
         solver="gensys",
         verbose=False,
@@ -714,7 +613,7 @@ def test_build_Q_matrix(rng):
 
 def test_build_Q_matrix_from_dict(rng):
     file_path = "full_nk.gcn"
-    model = load_and_cache_model(file_path, "numpy", use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(file_path)
     shocks = model.shocks
 
     L = rng.normal(size=(4, 4))
@@ -729,7 +628,7 @@ def test_build_Q_matrix_from_dict(rng):
 
 
 def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
-    model = load_and_cache_model("rbc_linearized.gcn", "numpy", use_jax=JAX_INSTALLED)
+    model = load_and_cache_model("rbc_linearized.gcn")
     T, _R = model.solve_model(solver="gensys", verbose=False)
 
     stationary_covariance_matrix(model, T, shock_std=0.1, verbose=False)
@@ -747,7 +646,7 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     ],
 )
 def test_compute_stationary_covariance(caplog, gcn_file):
-    model = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(gcn_file)
     T, R = model.solve_model(solver="gensys", verbose=False)
     n_variables, _n_shocks = R.shape
 
@@ -776,7 +675,7 @@ def test_compute_stationary_covariance(caplog, gcn_file):
     ],
 )
 def test_autocovariance_matrix(gcn_file, rng):
-    model = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(gcn_file)
 
     shocks = model.shocks
     shock_eqs = [eq for eq in model.equations if any(s in eq.atoms() for s in shocks)]
@@ -831,7 +730,7 @@ def setup_cov_arguments(argument, n_shocks, model):
 @pytest.fixture
 def irf_inputs():
     file_path = "one_block_1_ss_2shock.gcn"
-    model = load_and_cache_model(file_path, backend="numpy", use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(file_path)
     T, R = model.solve_model(solver="gensys", verbose=False)
     return model, T, R
 
@@ -947,7 +846,7 @@ class TestIRF:
 )
 @pytest.mark.parametrize("argument", ["shock_std", "shock_std_dict", "shock_cov_matrix"])
 def test_simulate(gcn_file, argument):
-    model = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(gcn_file)
     T, R = model.solve_model(solver="gensys", verbose=False)
     n_variables, n_shocks = R.shape
 
@@ -982,7 +881,7 @@ def test_simulate(gcn_file, argument):
 
 def test_objective_with_complex_discount_factor():
     gcn_file = "rbc_firm_capital.gcn"
-    model = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
+    model = load_and_cache_model(gcn_file)
 
     ss_res = model.steady_state(verbose=False, how="minimize", optimizer_kwargs={"method": "Newton-CG"})
     assert ss_res.success
@@ -995,7 +894,7 @@ def test_objective_with_complex_discount_factor():
     assert bk_success
 
     gcn_file = "rbc_firm_capital_comparison.gcn"
-    model_2 = load_and_cache_model(gcn_file, backend="numpy", use_jax=JAX_INSTALLED)
+    model_2 = load_and_cache_model(gcn_file)
 
     ss_res_2 = model_2.steady_state(verbose=False)
     assert ss_res_2.success

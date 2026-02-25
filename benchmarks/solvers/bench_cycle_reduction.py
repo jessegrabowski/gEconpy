@@ -17,7 +17,7 @@ class CycleReduction:
         self.nb_cycle_reduction = nb_cycle_reduction
 
         # Build model and extract linearization matrices
-        m = model_from_gcn(get_example_gcn(model), verbose=False, backend="numpy")
+        m = model_from_gcn(get_example_gcn(model), verbose=False)
         m.steady_state(verbose=False)
         A, B, C, _D = m.linearize_model(verbose=False)
 
