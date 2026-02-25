@@ -15,7 +15,6 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import ExtraParameterError, ExtraParameterWarning, OrphanParameterError
-from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
 from gEconpy.model.perturbation import compile_linearized_system
 from gEconpy.model.simplification import simplify_constants, simplify_tryreduce
@@ -263,7 +262,6 @@ def _compile_gcn(
     simplify_constants: bool = True,
     infer_steady_state: bool = True,
     verbose: bool = True,
-    backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters="raise",
@@ -376,7 +374,6 @@ def _compile_gcn(
         deterministic_dict,
         calib_dict,
         error_func=error_function,
-        backend=backend,
         return_symbolic=return_symbolic,
         **kwargs,
     )
@@ -392,7 +389,6 @@ def _compile_gcn(
         deterministic_dict,
         calib_dict,
         shocks,
-        backend=backend,
         return_symbolic=return_symbolic,
         cache=cache,
     )
@@ -438,12 +434,67 @@ def model_from_gcn(
     simplify_constants: bool = True,
     infer_steady_state: bool = True,
     verbose: bool = True,
-    backend: BACKENDS = "numpy",
+    mode: str | None = "FAST_COMPILE",
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters="raise",
     show_errors: bool = True,
+    backend: str | None = None,
     **kwargs,
 ) -> Model:
+    """
+    Build a DSGE model from a GCN file.
+
+    Parameters
+    ----------
+    gcn_path : str or Path
+        Path to the GCN file.
+    simplify_blocks : bool, optional
+        Whether to simplify block equations. Default is True.
+    simplify_tryreduce : bool, optional
+        Whether to apply tryreduce simplifications. Default is True.
+    simplify_constants : bool, optional
+        Whether to simplify constants. Default is True.
+    infer_steady_state : bool, optional
+        Whether to infer steady-state values from identities. Default is True.
+    verbose : bool, optional
+        Whether to print a build report. Default is True.
+    mode : str, optional
+        Pytensor compilation mode. ``"FAST_COMPILE"`` uses Python-only execution
+        (no C compilation); ``None`` uses the default pytensor mode (C compilation
+        when available); ``"JAX"`` uses the JAX backend. Default is ``"FAST_COMPILE"``.
+    error_function : str, optional
+        Steady-state error function. Default is ``"squared"``.
+    on_unused_parameters : str, optional
+        How to handle unused parameters: ``"raise"``, ``"warn"``, or ``"ignore"``.
+    show_errors : bool, optional
+        Whether to pretty-print parse errors. Default is True.
+    backend : str, optional
+        .. deprecated::
+            Use ``mode`` instead. ``backend="numpy"`` maps to ``mode="FAST_COMPILE"``,
+            ``backend="pytensor"`` maps to ``mode=None``.
+    **kwargs
+        Additional keyword arguments passed through to ``pytensor.function``.
+
+    Returns
+    -------
+    Model
+        A compiled DSGE model.
+    """
+    if backend is not None:
+        if backend not in ("numpy", "pytensor"):
+            raise ValueError(
+                f"Invalid backend={backend!r}. Allowed values are 'numpy' or 'pytensor'. "
+                "Prefer using the `mode` argument directly instead."
+            )
+        _log.warning(
+            "The `backend` argument is deprecated and will be removed in a future release. "
+            'Use `mode="FAST_COMPILE"` instead of `backend="numpy"`, '
+            'or `mode=None` instead of `backend="pytensor"`.'
+        )
+        mode = "FAST_COMPILE" if backend == "numpy" else None
+
+    kwargs["mode"] = mode
+
     gcn_path = Path(gcn_path)
 
     try:
@@ -454,7 +505,6 @@ def model_from_gcn(
             simplify_constants=simplify_constants,
             infer_steady_state=infer_steady_state,
             verbose=verbose,
-            backend=backend,
             error_function=error_function,
             on_unused_parameters=on_unused_parameters,
             **kwargs,
@@ -497,7 +547,6 @@ def model_from_gcn(
         f_ss_error_hess=f_ss_hess,
         f_ss_error_hessp=f_ss_hessp,
         f_linearize=f_linearize,
-        backend=backend,
         priors=priors,
         is_linear=options.get("linear", False),
     )
@@ -528,7 +577,6 @@ def statespace_from_gcn(
             simplify_constants=simplify_constants,
             infer_steady_state=infer_steady_state,
             verbose=verbose,
-            backend="pytensor",
             error_function=error_function,
             on_unused_parameters=on_unused_parameters,
             return_symbolic=True,

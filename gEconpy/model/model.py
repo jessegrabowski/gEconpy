@@ -25,12 +25,10 @@ from gEconpy.exceptions import (
     PerturbationSolutionNotFoundException,
     SteadyStateNotFoundError,
 )
-from gEconpy.model.compile import BACKENDS
 from gEconpy.model.perturbation import check_bk_condition as _check_bk_condition
 from gEconpy.model.perturbation import (
     check_perturbation_solution,
     make_not_loglin_flags,
-    override_dummy_wrapper,
     residual_norms,
     statespace_to_gEcon_representation,
 )
@@ -45,6 +43,16 @@ from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
 
 VariableType = sp.Symbol | TimeAwareSymbol
 _log = logging.getLogger(__name__)
+
+
+def _to_numpy(res):
+    """Ensure the result is a numpy array.
+
+    Necessary in the event a function was compiled in JAX mode, because scipy wants numpy arrays only.
+    """
+    if isinstance(res, float | int):
+        return res
+    return np.asarray(res)
 
 
 def scipy_wrapper(
@@ -63,7 +71,7 @@ def scipy_wrapper(
                 given_ss = f_ss(**param_dict)
                 ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
                 ss_dict.update(given_ss)
-                res = f(**ss_dict, **param_dict)
+                res = _to_numpy(f(**ss_dict, **param_dict))
 
                 if isinstance(res, float | int):
                     return res
@@ -83,7 +91,7 @@ def scipy_wrapper(
                 p_full = np.zeros(unknown_eq_idxs.shape[0])
                 p_full[unknown_var_idxs] = p
 
-                res = f(p_full, **ss_dict, **param_dict)
+                res = _to_numpy(f(p_full, **ss_dict, **param_dict))
 
                 if isinstance(res, float | int):
                     return res
@@ -98,13 +106,13 @@ def scipy_wrapper(
         @ft.wraps(f)
         def inner(ss_values, param_dict):
             ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
-            return f(**ss_dict, **param_dict)
+            return _to_numpy(f(**ss_dict, **param_dict))
     else:
 
         @ft.wraps(f)
         def inner(ss_values, p, param_dict):
             ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
-            return f(p, **ss_dict, **param_dict)
+            return _to_numpy(f(p, **ss_dict, **param_dict))
 
     return inner
 
@@ -297,7 +305,6 @@ class Model:
         f_ss_error_hess: Callable[[np.ndarray, ...], np.ndarray],
         f_ss_error_hessp: Callable[[np.ndarray, ...], np.ndarray],
         f_linearize: Callable,
-        backend: BACKENDS = "numpy",
         is_linear: bool = False,
     ) -> None:
         """
@@ -394,8 +401,6 @@ class Model:
         self.f_ss = f_ss
         self.f_ss_jac = f_ss_jac
 
-        if backend == "numpy":
-            f_linearize = override_dummy_wrapper(f_linearize, "not_loglin_variable")
         self.f_linearize = f_linearize
 
     @property

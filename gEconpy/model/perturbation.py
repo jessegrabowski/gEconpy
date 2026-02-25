@@ -16,7 +16,7 @@ from scipy import linalg
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.compile import BACKENDS, compile_function
+from gEconpy.model.compile import compile_function
 from gEconpy.solvers.gensys import _gensys_setup
 from gEconpy.utilities import eq_to_ss, get_name, simplify_matrix
 
@@ -266,7 +266,6 @@ def compile_linearized_system(
     deterministic_dict: SymbolDictionary[sp.Symbol, sp.Expr],
     calib_dict: SymbolDictionary[sp.Symbol, float | sp.Expr],
     shocks: list[TimeAwareSymbol],
-    backend: BACKENDS = "numpy",
     return_symbolic: bool = False,
     cache: dict | None = None,
     **kwargs,
@@ -282,7 +281,6 @@ def compile_linearized_system(
     deterministic_dict
     calib_dict
     shocks
-    backend
     return_symbolic
     cache
     kwargs
@@ -292,7 +290,7 @@ def compile_linearized_system(
     f_linearze: Callable
         Function that evaluates the linearized system of equations.
     cache: dict
-        Dictionary mapping sympy symbols to pytensor tensors. Empty if backend is not pytensor
+        Dictionary mapping sympy symbols to pytensor tensors.
     """
     cache = {} if cache is None else cache
 
@@ -308,7 +306,6 @@ def compile_linearized_system(
     f_linearize, cache = compile_function(
         inputs,
         outputs,
-        backend=backend,
         cache=cache,
         return_symbolic=return_symbolic,
         **kwargs,
