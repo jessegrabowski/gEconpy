@@ -12,7 +12,6 @@ from scipy import optimize
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.build import validate_results
-from gEconpy.model.compile import BACKENDS
 from gEconpy.model.model import Model
 from gEconpy.model.steady_state import (
     compile_model_ss_functions,
@@ -189,13 +188,13 @@ def root_and_min_agree_helper(model: Model, **kwargs):
 
 
 def test_solve_ss_with_partial_user_solution():
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_1 = load_and_cache_model("one_block_1.gcn")
     res = model_1.steady_state(verbose=False, progressbar=False)
     assert res.success
 
 
 def test_wrong_user_solutions_raises():
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_1 = load_and_cache_model("one_block_1.gcn")
 
     expected_msg = (
         "User-provide steady state is not valid. The following equations had non-zero residuals "
@@ -207,7 +206,7 @@ def test_wrong_user_solutions_raises():
 
 
 def test_print_steady_state_report_solver_successful(caplog):
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_1 = load_and_cache_model("one_block_1.gcn")
     res = model_1.steady_state(verbose=False, progressbar=False)
 
     expected_output = """A_ss               1.000
@@ -229,7 +228,7 @@ def test_print_steady_state_report_solver_successful(caplog):
 
 
 def test_print_steady_state_report_solver_fails(caplog):
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_1 = load_and_cache_model("one_block_1.gcn")
     result = model_1.steady_state(verbose=False, progressbar=False)
 
     # Spoof a failed solving attempt
@@ -252,7 +251,7 @@ def test_print_steady_state_report_solver_fails(caplog):
 
 
 def test_incomplete_ss_relationship_raises_with_root():
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED, infer_steady_state=False)
+    model_1 = load_and_cache_model("one_block_1.gcn", infer_steady_state=False)
     expected_msg = (
         'Solving a partially provided steady state with how = "root" is only allowed if applying the given '
         "values results in a new square system.\n"
@@ -266,18 +265,18 @@ def test_incomplete_ss_relationship_raises_with_root():
 
 
 def test_wrong_and_incomplete_ss_relationship_fails_with_minimize():
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED, infer_steady_state=False)
+    model_1 = load_and_cache_model("one_block_1.gcn", infer_steady_state=False)
     res = model_1.steady_state(verbose=False, progressbar=False, fixed_values={"K_ss": 3.0})
     assert not res.success
 
 
 def test_numerical_solvers_suceed_and_agree():
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_1 = load_and_cache_model("one_block_1.gcn")
     root_and_min_agree_helper(model_1, verbose=False, progressbar=False)
 
 
 def test_steady_state_matches_analytic():
-    model_1 = load_and_cache_model("one_block_1.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_1 = load_and_cache_model("one_block_1.gcn")
     param_dict = model_1.parameters().to_sympy()
     alpha, beta, delta, gamma, _rho = list(param_dict.keys())
 
@@ -304,8 +303,6 @@ def test_steady_state_matches_analytic():
 def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
     model_2 = load_and_cache_model(
         "one_block_2_no_extra.gcn",
-        backend="pytensor",
-        use_jax=JAX_INSTALLED,
     )
     root_and_min_agree_helper(model_2, verbose=False, progressbar=False)
 
@@ -313,8 +310,6 @@ def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
 def test_steady_state_matches_analytic_w_calibrated_params():
     model_2 = load_and_cache_model(
         "one_block_2_no_extra.gcn",
-        backend="pytensor",
-        use_jax=JAX_INSTALLED,
         infer_steady_state=True,
     )
     param_dict = model_2.parameters().to_sympy()
@@ -371,12 +366,12 @@ def test_steady_state_matches_analytic_w_calibrated_params():
 
 
 def test_numerical_solvers_succeed_and_agree_RBC():
-    model_3 = load_and_cache_model("rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_3 = load_and_cache_model("rbc_2_block.gcn")
     root_and_min_agree_helper(model_3, verbose=False, progressbar=False)
 
 
 def test_RBC_steady_state_matches_analytic():
-    model_3 = load_and_cache_model("rbc_2_block.gcn", backend="numpy", use_jax=JAX_INSTALLED)
+    model_3 = load_and_cache_model("rbc_2_block.gcn")
     param_dict = model_3.parameters().to_sympy()
 
     alpha, beta, delta, _rho_A, sigma_C, sigma_L = list(param_dict.keys())
@@ -427,7 +422,7 @@ def test_RBC_steady_state_matches_analytic():
 
 @pytest.mark.include_nk
 def test_numerical_solvers_succeed_and_agree_NK():
-    model_4 = load_and_cache_model("full_nk_no_ss.gcn", backend="pytensor", use_jax=JAX_INSTALLED)
+    model_4 = load_and_cache_model("full_nk_no_ss.gcn")
 
     # This model's SS can't be solved without some help, so we provide the "obvious" solutions
     # This is almost equivalent to the full_nk_partial_ss.gcn, with a bit less info
@@ -449,7 +444,7 @@ def test_numerical_solvers_succeed_and_agree_NK():
 
 @pytest.mark.include_nk
 def test_steady_state_matches_analytic_NK():
-    model_4 = load_and_cache_model("full_nk_no_ss.gcn", backend="pytensor", use_jax=JAX_INSTALLED)
+    model_4 = load_and_cache_model("full_nk_no_ss.gcn")
 
     param_dict = model_4.parameters().to_sympy()
     (
@@ -569,11 +564,7 @@ def test_steady_state_matches_analytic_NK():
         assert_allclose(answer, numerical_ss_dict[k.name], err_msg=k.name)
 
 
-JAX_INSTALLED = find_spec("jax") is not None
-
-
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
-def test_all_model_functions_return_arrays(backend: BACKENDS):
+def test_all_model_functions_return_arrays():
     primitives = load_gcn_file("tests/_resources/test_gcns/one_block_1_ss.gcn", simplify_blocks=True)
 
     equations = primitives.equations
@@ -593,9 +584,6 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
     )
     steady_state_equations = system_to_steady_state(equations, shocks)
 
-    kwargs = {}
-    if backend == "pytensor":
-        kwargs["mode"] = "JAX" if JAX_INSTALLED else "FAST_RUN"
     (f_params, f_ss, resid_funcs, error_funcs), _cache = compile_model_ss_functions(
         steady_state_equations,
         ss_solution_dict,
@@ -604,8 +592,6 @@ def test_all_model_functions_return_arrays(backend: BACKENDS):
         deterministic_dict,
         calib_dict,
         error_func="squared",
-        backend=backend,
-        **kwargs,
     )
 
     f_ss_resid, f_ss_jac = resid_funcs

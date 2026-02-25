@@ -15,7 +15,7 @@ class Gensys:
         self.solve_gensys = solve_policy_function_with_gensys
 
         # Build model and extract linearization matrices
-        m = model_from_gcn(get_example_gcn(model), verbose=False, backend="numpy")
+        m = model_from_gcn(get_example_gcn(model), verbose=False)
         m.steady_state(verbose=False)
         A, B, C, D = m.linearize_model(verbose=False)
 

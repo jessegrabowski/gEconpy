@@ -33,11 +33,10 @@ def complex_param_system():
     return param_dict, deterministic_dict
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
-def test_compile_param_dict_basic(simple_param_system, backend):
+def test_compile_param_dict_basic(simple_param_system):
     param_dict, deterministic_dict = simple_param_system
 
-    f, _ = compile_param_dict_func(param_dict, deterministic_dict, backend=backend)
+    f, _ = compile_param_dict_func(param_dict, deterministic_dict)
     result = f(alpha=0.3, beta=0.99)
 
     assert isinstance(result, dict)
@@ -45,11 +44,10 @@ def test_compile_param_dict_basic(simple_param_system, backend):
     assert_allclose(result["gamma"], 0.3 + 0.99)
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
-def test_compile_param_dict_complex(complex_param_system, backend):
+def test_compile_param_dict_complex(complex_param_system):
     param_dict, deterministic_dict = complex_param_system
 
-    f, _ = compile_param_dict_func(param_dict, deterministic_dict, backend=backend)
+    f, _ = compile_param_dict_func(param_dict, deterministic_dict)
     result = f(alpha=0.3, beta=0.99, theta=0.5)
 
     assert isinstance(result, dict)
@@ -59,16 +57,15 @@ def test_compile_param_dict_complex(complex_param_system, backend):
     assert_allclose(result["delta"], expected_gamma * 0.5)
 
 
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"])
-def test_compile_param_dict_cache_reuse(complex_param_system, backend):
+def test_compile_param_dict_cache_reuse(complex_param_system):
     param_dict, deterministic_dict = complex_param_system
 
     # First compilation should create cache
     cache = {}
-    f1, cache = compile_param_dict_func(param_dict, deterministic_dict, backend=backend, cache=cache)
+    f1, cache = compile_param_dict_func(param_dict, deterministic_dict, cache=cache)
 
     # Second compilation should reuse cache
-    f2, cache2 = compile_param_dict_func(param_dict, deterministic_dict, backend=backend, cache=cache)
+    f2, cache2 = compile_param_dict_func(param_dict, deterministic_dict, cache=cache)
 
     # Results should be identical
     result1 = f1(alpha=0.3, beta=0.99, theta=0.5)
@@ -81,9 +78,7 @@ def test_compile_param_dict_cache_reuse(complex_param_system, backend):
 def test_compile_param_dict_symbolic(complex_param_system):
     param_dict, deterministic_dict = complex_param_system
 
-    symbolic_result, cache = compile_param_dict_func(
-        param_dict, deterministic_dict, backend="pytensor", return_symbolic=True
-    )
+    symbolic_result, cache = compile_param_dict_func(param_dict, deterministic_dict, return_symbolic=True)
 
     assert isinstance(symbolic_result, dict)
     assert isinstance(cache, dict)
@@ -115,8 +110,7 @@ EXPECTED_PARAM_DICT = {
     ],
     ids=["one_block_simple", "one_block_simple_2"],
 )
-@pytest.mark.parametrize("backend", ["numpy", "pytensor"], ids=["numpy", "pytensor"])
-def test_create_parameter_function(gcn_path, name, backend):
+def test_create_parameter_function(gcn_path, name):
     rng = np.random.default_rng()
     expected = EXPECTED_PARAM_DICT[name]
     filepath = Path("tests") / "_resources" / "test_gcns" / gcn_path
@@ -125,7 +119,7 @@ def test_create_parameter_function(gcn_path, name, backend):
     param_dict = _block_dict_to_param_dict(block_dict, "param_dict")
     deterministic_dict = _block_dict_to_param_dict(block_dict, "deterministic_dict")
 
-    f, _ = compile_param_dict_func(param_dict, deterministic_dict, backend)
+    f, _ = compile_param_dict_func(param_dict, deterministic_dict)
 
     inputs = list(param_dict.keys())
     rng.shuffle(inputs)

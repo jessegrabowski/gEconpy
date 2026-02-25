@@ -6,7 +6,7 @@ from tests._resources.cache_compiled_models import load_and_cache_model
 
 @pytest.fixture
 def rbc_model():
-    return load_and_cache_model("one_block_1.gcn", backend="numpy")
+    return load_and_cache_model("one_block_1.gcn")
 
 
 class TestCompile:

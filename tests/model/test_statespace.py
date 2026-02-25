@@ -22,7 +22,7 @@ from tests._resources.cache_compiled_models import (
 )
 def test_statespace_matrices_agree_with_model(gcn_file):
     ss_mod = load_and_cache_statespace(gcn_file)
-    model = load_and_cache_model(gcn_file, "numpy", use_jax=False)
+    model = load_and_cache_model(gcn_file)
 
     inputs = pm.inputvars(ss_mod.linearized_system)
     input_names = [x.name for x in inputs]

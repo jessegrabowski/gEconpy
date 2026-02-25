@@ -15,7 +15,7 @@ from tests._resources.cache_compiled_models import load_and_cache_model
 
 @pytest.fixture(scope="module")
 def sarima_model():
-    return load_and_cache_model("sarima2_12.gcn", backend="numpy")
+    return load_and_cache_model("sarima2_12.gcn")
 
 
 @pytest.fixture(scope="module")
@@ -29,11 +29,11 @@ class TestBackwardLookingDetection:
         assert sarima_model._backward_looking
 
     def test_forward_looking_model_is_not_backward_looking(self):
-        model = load_and_cache_model("one_block_1.gcn", backend="numpy")
+        model = load_and_cache_model("one_block_1.gcn")
         assert not model._backward_looking
 
     def test_backward_direct_rejects_forward_looking_model(self):
-        model = load_and_cache_model("one_block_1.gcn", backend="numpy")
+        model = load_and_cache_model("one_block_1.gcn")
         with pytest.raises(ValueError, match="backward_direct"):
             model.solve_model(solver="backward_direct", verbose=False)
 
