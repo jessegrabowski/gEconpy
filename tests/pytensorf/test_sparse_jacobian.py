@@ -44,7 +44,6 @@ class TestSparseJacobian:
 
     def test_coloring_compression_preserves_sparsity(self):
         x, y, z = pt.dscalars("x", "y", "z")
-        # Each equation depends on exactly one variable - maximally sparse
         eq1 = x**2
         eq2 = y**2
         eq3 = z**2
@@ -52,9 +51,60 @@ class TestSparseJacobian:
         jac = sparse_jacobian([eq1, eq2, eq3], [x, y, z], return_sparse=False)
         f = function([x, y, z], jac)
 
-        # Should produce diagonal matrix with correct derivatives
         expected = np.diag([2.0, 4.0, 6.0])
         np.testing.assert_allclose(f(1.0, 2.0, 3.0), expected)
+
+    def test_disconnected_variable_produces_zero_column(self):
+        """A variable not appearing in any equation should yield an all-zero column."""
+        x, y, z = pt.dscalars("x", "y", "z")
+        eq1 = x**2
+        eq2 = 3 * y
+
+        jac = sparse_jacobian([eq1, eq2], [x, y, z], return_sparse=False)
+        f = function([x, y, z], jac, on_unused_input="ignore")
+
+        result = f(2.0, 3.0, 99.0)
+        expected = np.array([[4.0, 0.0, 0.0], [0.0, 3.0, 0.0]])
+        np.testing.assert_allclose(result, expected)
+
+    def test_partial_jacobian_matches_full(self):
+        """Computing separate Jacobians per variable group must match the sliced full Jacobian.
+
+        This is the pattern used in perturbation: equations depend on lags, current, leads,
+        and shocks, and we want four separate Jacobian matrices rather than one big one.
+        """
+        x_lag, x_now, x_lead, e = pt.dscalars("x_lag", "x_now", "x_lead", "e")
+        y_lag, y_now, y_lead = pt.dscalars("y_lag", "y_now", "y_lead")
+
+        eq1 = x_lag + 2 * x_now**2 + 3 * x_lead + e
+        eq2 = y_lag**2 - y_now + 4 * y_lead + 0.5 * e
+
+        all_vars = [x_lag, y_lag, x_now, y_now, x_lead, y_lead, e]
+        vals = {v.name: float(i + 1) for i, v in enumerate(all_vars)}
+
+        full = sparse_jacobian([eq1, eq2], all_vars, return_sparse=False)
+        f_full = function(all_vars, full, on_unused_input="ignore")
+        full_result = f_full(**vals)
+
+        groups = [[x_lag, y_lag], [x_now, y_now], [x_lead, y_lead], [e]]
+        col = 0
+        for group in groups:
+            n = len(group)
+            partial = sparse_jacobian([eq1, eq2], group, return_sparse=False)
+            f_partial = function(all_vars, partial, on_unused_input="ignore")
+            np.testing.assert_allclose(f_partial(**vals), full_result[:, col : col + n])
+            col += n
+
+    def test_all_equations_disconnected(self):
+        """When no equation depends on any variable, the result is all zeros."""
+        a, b = pt.dscalars("a", "b")
+        eq1 = pt.constant(1.0)
+        eq2 = pt.constant(2.0)
+
+        jac = sparse_jacobian([eq1, eq2], [a, b], return_sparse=False)
+        f = function([a, b], jac, on_unused_input="ignore")
+
+        np.testing.assert_allclose(f(1.0, 1.0), np.zeros((2, 2)))
 
 
 class TestSparseJacobianBenchmark:
