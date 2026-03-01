@@ -264,9 +264,9 @@ def test_build_report(caplog):
                     The following "variables" were defined as constants and have been substituted away:
                         P_t
                     1 stochastic shock
-                        0 / 1 has a defined prior.
+                         0 / 1 have a defined prior.
                     6 parameters
-                        0 / 6 parameters has a defined prior.
+                         0 / 6 have a defined prior.
                     0 parameters to calibrate.
                     1 / 12 variables have analytical steady-state values.
                         1 inferred: A_ss

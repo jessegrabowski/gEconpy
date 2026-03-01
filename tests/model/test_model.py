@@ -359,7 +359,7 @@ def test_partially_analytical_steady_state(partial_file, analytic_file):
 def test_linearize(gcn_file):
     model = load_and_cache_model(gcn_file)
     steady_state_dict = model.steady_state()
-    outputs = model.linearize_model(loglin_negative_ss=True, steady_state=steady_state_dict)
+    outputs = model.linearize_model(steady_state=steady_state_dict)
 
     for mat_name, out in zip(["A", "B", "C", "D"], outputs, strict=False):
         expected_out = expected_linearization_result[gcn_file][mat_name]
