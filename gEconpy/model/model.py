@@ -359,24 +359,19 @@ class Model:
             the Hessian of the error function f_ss_error with respect to the steady-state variable values x_ss
 
             If f_ss_error is not provided, an error will be raised if a gradient function is passed.
-
         f_ss_error_hessp: Callable, optional
             Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
             the Hessian-vector product of the error function f_ss_error with respect to the steady-state variable
             values x_ss.
-
         f_ss_jac: Callable, optional
             Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
             the Jacobian of the system of model equations f(x_ss, theta) = 0 with respect to the steady-state variable
             values x_ss.
-
-        f_linearize: Callable, optional
-            .. deprecated::
-                Replaced by ``cache``. Linearization is now built on demand.
-
         cache : dict
             Sympytensor cache mapping ``(name, assumptions)`` tuples to pytensor tensor variables. Used to build
             linearization graphs on demand via pytensor autodiff.
+        is_linear : bool, default False
+            Whether the model is linear. Linear models skip log-linearization during perturbation.
         """
         self._variables = variables
         self._shocks = shocks
@@ -1149,7 +1144,7 @@ class Model:
             f, all_graph_inputs = self._linearize_cache[loglin_key]
 
         # Build input values: steady-state variables first, then parameters in graph order
-        ss_values = {k.replace("_ss", ""): v for k, v in steady_state.items()}
+        ss_values = {k.removesuffix("_ss"): v for k, v in steady_state.items()}
         ss_vals = [ss_values[v.base_name] for v in self.variables]
         param_vals = [param_dict[n.name] for n in all_graph_inputs]
 

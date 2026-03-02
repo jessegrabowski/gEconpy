@@ -130,10 +130,11 @@ def linearize_model(
         equations_transformed = [equations_transformed]
     equations_transformed = rewrite_pregrad(equations_transformed)
 
+    n_eq = len(equations_transformed)
     A = sparse_jacobian(equations_transformed, dummies_lags, return_sparse=False)
     B = sparse_jacobian(equations_transformed, dummies_now, return_sparse=False)
     C = sparse_jacobian(equations_transformed, dummies_leads, return_sparse=False)
-    D = sparse_jacobian(equations_transformed, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_vars, 1))
+    D = sparse_jacobian(equations_transformed, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_eq, 0))
 
     A, B, C, D = rewrite_pregrad([graph_replace(m, backward_replace, strict=False) for m in [A, B, C, D]])
 

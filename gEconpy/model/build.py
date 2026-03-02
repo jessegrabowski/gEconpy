@@ -497,7 +497,7 @@ def model_from_gcn(
     simplify_constants: bool = True,
     infer_steady_state: bool = True,
     verbose: bool = True,
-    mode: str | None = "FAST_RUN",
+    mode: str | None = None,
     error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters: str = "raise",
     show_errors: bool = True,
@@ -521,9 +521,9 @@ def model_from_gcn(
         Propagate analytical steady-state solutions through identities.
     verbose : bool, default True
         Print a build report on completion.
-    mode : str or None, default ``'FAST_COMPILE'``
-        Pytensor compilation mode. ``'FAST_COMPILE'`` uses Python-only execution (no C compilation); ``None`` uses
-        the pytensor default (C compilation when available); ``'JAX'`` uses the JAX backend.
+    mode : str or None
+        Pytensor compilation mode. If None, uses the default mode (`FAST_RUN` by default). Check pytensor docs
+        for available modes.
     error_function : str, default ``'squared'``
         Steady-state error function.
     on_unused_parameters : str, default ``'raise'``
