@@ -302,9 +302,9 @@ def solve_perfect_foresight(
 
     .. code-block:: python
 
-        from gEconpy.model import load_gcn
+        import gEconpy as ge
 
-        model = load_gcn("rbc.gcn")
+        model = ge.model_from_gcn("rbc.gcn")
         ss_dict = model.steady_state()
 
         # Simulate transition from 90% of steady state capital
