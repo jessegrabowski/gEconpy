@@ -14,6 +14,7 @@ import xarray as xr
 
 from better_optimize import minimize, root
 from preliz.distributions.distributions import Distribution
+from pytensor.graph.traversal import explicit_graph_inputs
 from scipy import linalg
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
@@ -32,7 +33,11 @@ from gEconpy.model.perturbation import (
     residual_norms,
     statespace_to_gEcon_representation,
 )
+from gEconpy.model.perturbation import (
+    linearize_model as _linearize_model,
+)
 from gEconpy.model.steady_state import system_to_steady_state
+from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 from gEconpy.solvers.gensys import (
@@ -304,7 +309,7 @@ class Model:
         f_ss_error_grad: Callable[[np.ndarray, ...], np.ndarray],
         f_ss_error_hess: Callable[[np.ndarray, ...], np.ndarray],
         f_ss_error_hessp: Callable[[np.ndarray, ...], np.ndarray],
-        f_linearize: Callable,
+        cache: dict,
         is_linear: bool = False,
     ) -> None:
         """
@@ -354,20 +359,19 @@ class Model:
             the Hessian of the error function f_ss_error with respect to the steady-state variable values x_ss
 
             If f_ss_error is not provided, an error will be raised if a gradient function is passed.
-
         f_ss_error_hessp: Callable, optional
             Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
             the Hessian-vector product of the error function f_ss_error with respect to the steady-state variable
             values x_ss.
-
         f_ss_jac: Callable, optional
             Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
             the Jacobian of the system of model equations f(x_ss, theta) = 0 with respect to the steady-state variable
             values x_ss.
-
-        f_linearize: Callable, optional
-            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
-            the first-order approximation of the model around the steady state.
+        cache : dict
+            Sympytensor cache mapping ``(name, assumptions)`` tuples to pytensor tensor variables. Used to build
+            linearization graphs on demand via pytensor autodiff.
+        is_linear : bool, default False
+            Whether the model is linear. Linear models skip log-linearization during perturbation.
         """
         self._variables = variables
         self._shocks = shocks
@@ -401,7 +405,7 @@ class Model:
         self.f_ss = f_ss
         self.f_ss_jac = f_ss_jac
 
-        self.f_linearize = f_linearize
+        self._cache = cache
 
     @property
     def variables(self) -> list[TimeAwareSymbol]:
@@ -1107,10 +1111,44 @@ class Model:
             verbose=verbose,
         )
 
-        A, B, C, D = self.f_linearize(**param_dict, **steady_state, not_loglin_variable=not_loglin_flags)
+        # Convert flag array to a list of variables to log-linearize
+        loglin_vars = [v for v, flag in zip(self.variables, not_loglin_flags, strict=False) if flag == 0]
+        loglin_key = frozenset(v.base_name for v in loglin_vars)
 
-        # Using A.dtype to avoid hard-coding float64 (we might be using float32)
-        # The reason for casting is mostly D, which sometimes comes out as an int32/64 array
+        # Cache the compiled linearization function keyed by the loglin variable set.
+        # The pytensor graph and compiled function are expensive to build but identical
+        # across calls with the same loglin set — only the input values change.
+        if not hasattr(self, "_linearize_cache"):
+            self._linearize_cache = {}
+
+        if loglin_key not in self._linearize_cache:
+            jacobians, ss_input_nodes = _linearize_model(
+                variables=self.variables,
+                equations=self.equations,
+                shocks=self.shocks,
+                cache=self._cache,
+                loglin_variables=loglin_vars,
+            )
+
+            # Discover all graph inputs. ss_input_nodes are the steady-state variable nodes; remaining inputs are
+            # parameters (free, deterministic, or calibrated) that the equations reference.
+            ss_names = {n.name for n in ss_input_nodes}
+            all_graph_inputs = [
+                v for v in explicit_graph_inputs(jacobians) if v.name is not None and v.name not in ss_names
+            ]
+
+            all_inputs = ss_input_nodes + all_graph_inputs
+            f = compile_pytensor_function(all_inputs, jacobians, on_unused_input="ignore")
+            self._linearize_cache[loglin_key] = (f, all_graph_inputs)
+        else:
+            f, all_graph_inputs = self._linearize_cache[loglin_key]
+
+        # Build input values: steady-state variables first, then parameters in graph order
+        ss_values = {k.removesuffix("_ss"): v for k, v in steady_state.items()}
+        ss_vals = [ss_values[v.base_name] for v in self.variables]
+        param_vals = [param_dict[n.name] for n in all_graph_inputs]
+
+        A, B, C, D = f(*ss_vals, *param_vals)
 
         return [np.ascontiguousarray(x, dtype=A.dtype) for x in [A, B, C, D]]
 

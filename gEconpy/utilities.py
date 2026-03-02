@@ -270,25 +270,3 @@ def substitute_repeatedly(expr: sp.Expr, sub_dict: dict[sp.Expr, sp.Expr], max_s
         expr = new_expr
 
     return expr
-
-
-def simplify_matrix(A: sp.MutableMatrix):
-    """
-    Call ``sp.simplify`` on all cells of a matrix.
-
-    Parameters
-    ----------
-    A: sp.MutableMatrix
-        Matrix to simplify
-
-    Returns
-    -------
-    A: sp.MutableMatrix
-        Simplified matrix
-    """
-    for i in range(A.rows):
-        for j in range(A.cols):
-            expr = A[i, j]
-            A[i, j] = sp.simplify(expr)
-
-    return A

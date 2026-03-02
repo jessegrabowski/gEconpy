@@ -1,6 +1,5 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from functools import reduce
 from typing import TYPE_CHECKING
 
 import pytensor
@@ -12,36 +11,11 @@ from sympytensor import as_tensor
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import make_cache_key
+from gEconpy.model.timing import classify_variables_by_timing
 from gEconpy.pytensorf.sparse_jacobian import sparse_jacobian
 
 if TYPE_CHECKING:
     from gEconpy.model.model import Model
-
-
-def _collect_time_aware_atoms(equations: list[sp.Expr]) -> set[TimeAwareSymbol]:
-    """Collect all TimeAwareSymbol atoms from a list of equations."""
-    return reduce(lambda a, b: a.union(b), (eq.atoms(TimeAwareSymbol) for eq in equations), set())
-
-
-def _classify_variables_by_timing(
-    equations: list[sp.Expr],
-    shock_names: list[str],
-) -> tuple[list[TimeAwareSymbol], list[TimeAwareSymbol], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
-    """Classify variables by time index into (vars_tm1, vars_t, vars_tp1, shocks_t)."""
-    all_atoms = _collect_time_aware_atoms(equations)
-    shock_name_set = set(shock_names)
-
-    def is_shock(x: TimeAwareSymbol) -> bool:
-        return x.base_name in shock_name_set
-
-    def vars_at_time(t: int) -> list[TimeAwareSymbol]:
-        return sorted(
-            [x for x in all_atoms if x.time_index == t and not is_shock(x)],
-            key=lambda x: x.base_name,
-        )
-
-    shocks_t = sorted([x for x in all_atoms if is_shock(x)], key=lambda x: x.base_name)
-    return vars_at_time(-1), vars_at_time(0), vars_at_time(1), shocks_t
 
 
 def _build_jacobian_var_lists(
@@ -100,7 +74,7 @@ def _compile_single_period_function(
     shock_names = [s.base_name for s in model.shocks]
     param_names = [p.name for p in model.params]
 
-    vars_tm1, vars_t, vars_tp1, shocks_t = _classify_variables_by_timing(model.equations, shock_names)
+    vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(model.equations, shock_names)
 
     cache: dict = {}
     equations_pt = [as_tensor(eq, cache=cache) for eq in model.equations]

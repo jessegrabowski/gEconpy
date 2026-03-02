@@ -195,7 +195,13 @@ def sparse_jacobian(
         Lop(equations, variables, eval_points, disconnected_inputs="ignore", return_disconnected="zero")
     )
     P = pt.dvector("P", shape=(N,))
-    jvp_stack = graph_replace(jvp_stack, {p: P[i] for i, p in enumerate(eval_points)})
+
+    # When some equations are disconnected from the given variables, Lop returns
+    # literal zeros that don't reference the corresponding eval_points. Only
+    # replace eval_points that actually appear in the graph.
+    jvp_inputs = set(explicit_graph_inputs(jvp_stack))
+    replacements = {p: P[i] for i, p in enumerate(eval_points) if p in jvp_inputs}
+    jvp_stack = graph_replace(jvp_stack, replacements)
 
     compressed_jac = vectorize_graph(jvp_stack, replace={P: pt.as_tensor_variable(projection_matrix)})
 
