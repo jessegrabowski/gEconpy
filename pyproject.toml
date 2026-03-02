@@ -51,6 +51,7 @@ dependencies = [
     "setuptools",
     "sympy>=1.14.0",
     "sympytensor>=1.4.1",
+    "better-optimize>=0.2.1",
     "ipython",
     "xarray",
     "networkx"
