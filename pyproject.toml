@@ -161,6 +161,7 @@ ignore = [
     "RUF002", # Allow Greek letters in docstrings
     "RUF012", # Mutable class attributes without ClassVar
     "PLR0913", # Allow functions with many arguments
+    "PLR2004", # Allow magic numbers
     "TRY003", # Allow custom exception messages
 
     # Allow missing docstrings; enforce style where present
