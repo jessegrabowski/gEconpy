@@ -206,7 +206,7 @@ def qzdiv(
         m = None
         for j in range(i, -1, -1):
             # No idea why -0.1 appears here; it comes from the original MATLAB code.
-            if (root[j, 1] > stake) or (root[j, 1] < -0.1):  # noqa: PLR2004
+            if (root[j, 1] > stake) or (root[j, 1] < -0.1):
                 m = j
                 break
 
