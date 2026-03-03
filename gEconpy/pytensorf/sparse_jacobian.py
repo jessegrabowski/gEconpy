@@ -83,7 +83,7 @@ def _greedy_color(
     ValueError
         If connectivity is not a square 2D matrix.
     """
-    is_2d = connectivity.ndim == 2  # noqa: PLR2004
+    is_2d = connectivity.ndim == 2
     is_square = connectivity.shape[0] == connectivity.shape[1]
     if not (is_2d and is_square):
         raise ValueError(f"Expected square 2D connectivity matrix, got shape {connectivity.shape}")

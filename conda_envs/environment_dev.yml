@@ -42,6 +42,7 @@ dependencies:
   - sphinxcontrib-bibtex
   - pydata-sphinx-theme
   - watermark
+  - better-optimize>=0.2.1
 
   # developer tools
   - pre-commit

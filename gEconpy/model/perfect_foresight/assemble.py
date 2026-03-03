@@ -31,9 +31,20 @@ def assemble_stacked_jacobian(
     sparse.csc_matrix
         Block-tridiagonal sparse Jacobian of shape (T*n_eq, T*n_vars).
     """
-    rows: list[int] = []
-    cols: list[int] = []
-    data: list[float] = []
+    # Count total non-zeros across all blocks to pre-allocate
+    total_nnz = 0
+    for t in range(T):
+        J = period_jacobians[t]
+        total_nnz += np.count_nonzero(J[:, n_vars : 2 * n_vars])  # J_t (always present)
+        if t > 0:
+            total_nnz += np.count_nonzero(J[:, :n_vars])  # J_{t-1}
+        if t < T - 1:
+            total_nnz += np.count_nonzero(J[:, 2 * n_vars : 3 * n_vars])  # J_{t+1}
+
+    rows = np.empty(total_nnz, dtype=np.intp)
+    cols = np.empty(total_nnz, dtype=np.intp)
+    data = np.empty(total_nnz)
+    pos = 0
 
     for t in range(T):
         J_period = period_jacobians[t]
@@ -43,27 +54,30 @@ def assemble_stacked_jacobian(
         J_t = J_period[:, n_vars : 2 * n_vars]
         J_tp1 = J_period[:, 2 * n_vars : 3 * n_vars]
 
-        # J^{-1} block (skip at t=0, initial condition is fixed)
         if t > 0:
             col_offset = (t - 1) * n_vars
             r, c = np.nonzero(J_tm1)
-            rows.extend(row_offset + r)
-            cols.extend(col_offset + c)
-            data.extend(J_tm1[r, c])
+            n = len(r)
+            rows[pos : pos + n] = row_offset + r
+            cols[pos : pos + n] = col_offset + c
+            data[pos : pos + n] = J_tm1[r, c]
+            pos += n
 
-        # J^{0} block
         col_offset = t * n_vars
         r, c = np.nonzero(J_t)
-        rows.extend(row_offset + r)
-        cols.extend(col_offset + c)
-        data.extend(J_t[r, c])
+        n = len(r)
+        rows[pos : pos + n] = row_offset + r
+        cols[pos : pos + n] = col_offset + c
+        data[pos : pos + n] = J_t[r, c]
+        pos += n
 
-        # J^{+1} block (skip at t=T-1, terminal condition is fixed)
         if t < T - 1:
             col_offset = (t + 1) * n_vars
             r, c = np.nonzero(J_tp1)
-            rows.extend(row_offset + r)
-            cols.extend(col_offset + c)
-            data.extend(J_tp1[r, c])
+            n = len(r)
+            rows[pos : pos + n] = row_offset + r
+            cols[pos : pos + n] = col_offset + c
+            data[pos : pos + n] = J_tp1[r, c]
+            pos += n
 
     return sparse.csc_matrix((data, (rows, cols)), shape=(T * n_eq, T * n_vars))

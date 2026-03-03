@@ -20,7 +20,7 @@ dependencies:
   - ipython
   - sympytensor>=1.4.1
   - pymc-extras>=0.8.0
-  - better-optimize
+  - better-optimize>=0.2.1
   - nutpie
   - networkx
 
