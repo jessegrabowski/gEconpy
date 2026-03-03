@@ -348,7 +348,6 @@ def solve_perfect_foresight(
     n_vars = len(var_names)
     var_set = set(var_names)
 
-    conditions_complete = var_set <= initial_conditions.keys() and var_set <= terminal_conditions.keys()
     init_param_kwargs, term_param_kwargs = _extract_boundary_param_kwargs(param_paths)
 
     needs_initial_ss = not (var_set <= initial_conditions.keys())
@@ -366,21 +365,27 @@ def solve_perfect_foresight(
             raise ValueError(f"x0 DataFrame must have {simulation_length} rows, got {len(x0)}")
         x0_vec = x0.reindex(columns=var_names).to_numpy().ravel()
         init_ss_dict = _compute_ss(**init_param_kwargs) if needs_initial_ss else None
-        term_ss_dict = (
-            _compute_ss(**term_param_kwargs)
-            if needs_terminal_ss and term_param_kwargs != init_param_kwargs
-            else init_ss_dict
-        )
+        if needs_terminal_ss:
+            term_ss_dict = (
+                init_ss_dict
+                if init_ss_dict is not None and term_param_kwargs == init_param_kwargs
+                else _compute_ss(**term_param_kwargs)
+            )
+        else:
+            term_ss_dict = None
     elif isinstance(x0, np.ndarray):
         if x0.shape != (simulation_length, n_vars):
             raise ValueError(f"x0 array must have shape ({simulation_length}, {n_vars}), got {x0.shape}")
         x0_vec = x0.ravel()
         init_ss_dict = _compute_ss(**init_param_kwargs) if needs_initial_ss else None
-        term_ss_dict = (
-            _compute_ss(**term_param_kwargs)
-            if needs_terminal_ss and term_param_kwargs != init_param_kwargs
-            else init_ss_dict
-        )
+        if needs_terminal_ss:
+            term_ss_dict = (
+                init_ss_dict
+                if init_ss_dict is not None and term_param_kwargs == init_param_kwargs
+                else _compute_ss(**term_param_kwargs)
+            )
+        else:
+            term_ss_dict = None
     else:
         init_ss_dict = _compute_ss(**init_param_kwargs)
         term_ss_dict = _compute_ss(**term_param_kwargs) if term_param_kwargs != init_param_kwargs else init_ss_dict
@@ -397,14 +402,17 @@ def solve_perfect_foresight(
         simulation_length,
     )
 
-    if conditions_complete:
+    if not needs_initial_ss:
         y_initial = np.array([initial_conditions[name] for name in var_names])
-        y_terminal = np.array([terminal_conditions[name] for name in var_names])
     else:
         y_initial = _ss_dict_to_array(init_ss_dict, var_names)
         for name, val in initial_conditions.items():
             idx = var_names.index(name)
             y_initial[idx] = val
+
+    if not needs_terminal_ss:
+        y_terminal = np.array([terminal_conditions[name] for name in var_names])
+    else:
         y_terminal = _ss_dict_to_array(term_ss_dict, var_names)
         for name, val in terminal_conditions.items():
             idx = var_names.index(name)

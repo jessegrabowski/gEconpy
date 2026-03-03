@@ -158,7 +158,7 @@ def sparse_newton(
     fun: Callable,
     x0: np.ndarray,
     args: tuple = (),
-    tol: float | None = 1e-10,
+    tol: float = 1e-10,
     x_tol: float | None = None,
     f_tol: float | None = None,
     beta: float = 0.5,

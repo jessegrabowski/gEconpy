@@ -195,12 +195,27 @@ class TestX0Dispatch:
         assert result.success
         mock_ss.assert_not_called()
 
+    @pytest.mark.parametrize("x0_type", ["ndarray", "dataframe"])
+    def test_x0_with_full_initial_but_no_terminal_computes_terminal_ss(self, rbc_model, x0_type):
+        ss_dict = rbc_model.steady_state(verbose=False)
+        var_names = [v.base_name for v in rbc_model.variables]
+        simulation_length = 10
+
+        x0_mat = np.tile([ss_dict[f"{name}_ss"] for name in var_names], (simulation_length, 1))
+        full_initial = {name: ss_dict[f"{name}_ss"] for name in var_names}
+
+        x0 = pd.DataFrame(x0_mat, columns=var_names) if x0_type == "dataframe" else x0_mat
+
+        _, result = solve_perfect_foresight(
+            rbc_model, simulation_length=simulation_length, x0=x0, initial_conditions=full_initial
+        )
+        assert result.success
+
     def test_x0_dataframe_reindexes_columns(self, rbc_model):
         ss_dict = rbc_model.steady_state(verbose=False)
         var_names = [v.base_name for v in rbc_model.variables]
         simulation_length = 10
 
-        # Build a DataFrame with columns in reversed order
         reversed_names = list(reversed(var_names))
         x0_df = pd.DataFrame(
             np.tile([ss_dict[f"{name}_ss"] for name in reversed_names], (simulation_length, 1)),

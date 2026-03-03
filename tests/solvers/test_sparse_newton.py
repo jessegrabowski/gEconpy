@@ -77,8 +77,8 @@ def make_singular_system():
     """System with a singular Jacobian at x0 to test fallback behavior."""
 
     def fun(x):
-        res = np.array([x[0] ** 3, x[1] ** 3])
-        jac = sparse.diags(3 * x**2, format="csc")
+        res = np.array([x[0] + x[1] - 3.0, x[0] * x[1] - 2.0])
+        jac = sparse.csc_matrix(np.array([[1.0, 1.0], [x[1], x[0]]]))
         return res, jac
 
     return fun
@@ -153,13 +153,14 @@ class TestSparseNewtonConvergence:
         np.testing.assert_allclose(result.fun, 0.0, atol=1e-10)
 
     def test_singular_jacobian_at_start(self):
-        """The solver should not crash when the initial Jacobian is singular."""
-        result = sparse_newton(make_singular_system(), np.array([0.0, 0.0]), tol=1e-8, maxiter=200)
+        """The solver should fall back to steepest descent when the initial Jacobian is singular."""
+        x0 = np.array([1.0, 1.0])
+        initial_residual = np.linalg.norm(make_singular_system()(x0)[0])
 
-        # The root is at [0, 0] which is exactly x0, but the Jacobian is zero there
-        # so the solver can't verify convergence via the Newton step. It should still
-        # return without crashing.
-        assert isinstance(result.fun, np.ndarray)
+        result = sparse_newton(make_singular_system(), x0, tol=1e-8, maxiter=500)
+
+        assert result.nit > 0, "Solver should attempt iterations (x0 is not the root)"
+        assert np.linalg.norm(result.fun) < initial_residual, "Residual should improve from initial point"
 
 
 class TestSparseNewtonOptions:
@@ -195,3 +196,4 @@ class TestSparseNewtonOptions:
 
         assert result.success
         np.testing.assert_allclose(result.x, [1.0, 2.0], rtol=1e-8)
+        assert nfev_counter["n"] > result.nit + 1, "Line search should backtrack at least once from x0=[100,100]"
