@@ -7,8 +7,11 @@ Steady State
 .. autosummary::
     :toctree: generated/
 
-    steady_state_error_function
-    compile_ss_resid_and_sq_err
+    system_to_steady_state
+    pt_error_from_resid
+    build_root_graphs
+    build_minimize_graphs
     compile_known_ss
-    compile_model_ss_functions
     print_steady_state
+    simplify_provided_ss_equations
+    propagate_steady_state_through_identities

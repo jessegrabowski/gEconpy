@@ -8,8 +8,10 @@ Compile
     :toctree: generated/
 
     compile_function
-    compile_to_numpy
     compile_to_pytensor_function
+    compile_for_scipy
+    pack_and_compile
+    sympy_to_pytensor
 
 
 *****************
@@ -22,6 +24,3 @@ Function Wrappers
     :toctree: generated/
 
     dictionary_return_wrapper
-    stack_return_wrapper
-    pop_return_wrapper
-    array_return_wrapper
