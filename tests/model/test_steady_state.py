@@ -358,7 +358,14 @@ def test_steady_state_matches_analytic_w_calibrated_params():
         "alpha": res.root,
     }
 
-    numerical_ss_dict = model_2.steady_state(verbose=False, progressbar=False)
+    numerical_ss_dict = model_2.steady_state(
+        verbose=False,
+        progressbar=False,
+        how="minimize",
+        use_jac=True,
+        bounds={"alpha": (0.05, 0.7)},
+        optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 50_000}},
+    )
     assert numerical_ss_dict.success
 
     # Test calibration of alpha --> L_ss / K_ss = 0.36
