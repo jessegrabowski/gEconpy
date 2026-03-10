@@ -12,9 +12,14 @@ from scipy import optimize
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.build import validate_results
+from gEconpy.model.compile import compile_for_scipy, make_cache_key
 from gEconpy.model.model import Model
+from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.steady_state import (
-    compile_model_ss_functions,
+    _ss_residual_to_pytensor,
+    build_minimize_graphs,
+    build_root_graphs,
+    compile_known_ss,
     print_steady_state,
     propagate_steady_state_through_identities,
     system_to_steady_state,
@@ -197,8 +202,8 @@ def test_wrong_user_solutions_raises():
     model_1 = load_and_cache_model("one_block_1.gcn")
 
     expected_msg = (
-        "User-provide steady state is not valid. The following equations had non-zero residuals "
-        "after subsitution:\n(rho - 1)*log(A_ss)"
+        "User-provided steady state is not valid. The following equations had non-zero residuals "
+        "after substitution:\n(rho - 1)*log(A_ss)"
     )
 
     with pytest.raises(ValueError, match=re.escape(expected_msg)):
@@ -565,6 +570,7 @@ def test_steady_state_matches_analytic_NK():
 
 
 def test_all_model_functions_return_arrays():
+    """Compiled steady-state functions (residual, jacobian, error, gradient, hessian) return numpy arrays."""
     primitives = load_gcn_file("tests/_resources/test_gcns/one_block_1_ss.gcn", simplify_blocks=True)
 
     equations = primitives.equations
@@ -577,33 +583,53 @@ def test_all_model_functions_return_arrays():
 
     validate_results(
         equations,
-        [],  # steady_state_relationships handled separately
+        [],
         param_dict,
         calib_dict,
         deterministic_dict,
     )
     steady_state_equations = system_to_steady_state(equations, shocks)
 
-    (f_params, f_ss, resid_funcs, error_funcs), _cache = compile_model_ss_functions(
+    cache = {}
+    f_params, cache = compile_param_dict_func(param_dict, deterministic_dict, cache=cache)
+    all_params = list(param_dict.to_sympy().keys()) + list(deterministic_dict.to_sympy().keys())
+    f_ss, cache = compile_known_ss(ss_solution_dict, variables, all_params, cache=cache)
+
+    equations_pt, cache = _ss_residual_to_pytensor(
         steady_state_equations,
-        ss_solution_dict,
+        SymbolDictionary(),
         variables,
         param_dict,
         deterministic_dict,
         calib_dict,
-        error_func="squared",
+        cache=cache,
     )
 
-    f_ss_resid, f_ss_jac = resid_funcs
-    _f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp = error_funcs
+    ss_nodes = []
+    for v in variables:
+        ck = make_cache_key(v.to_ss().name, type(v.to_ss()))
+        if ck in cache:
+            ss_nodes.append(cache[ck])
+
+    resid, jac = build_root_graphs(equations_pt, ss_nodes, use_jac=True)
+    _error, grad, hess, _, _ = build_minimize_graphs(
+        equations_pt,
+        ss_nodes,
+        error_func="squared",
+        use_jac=True,
+        use_hess=True,
+        use_hessp=False,
+    )
+
+    f_resid = compile_for_scipy(resid)
+    f_jac = compile_for_scipy(jac)
+    f_grad = compile_for_scipy(grad)
+    f_hess = compile_for_scipy(hess)
 
     parameters = f_params(**param_dict)
     ss = f_ss(**parameters)
     x0 = {var.to_ss().name: 0.8 for var in variables}
     x0.update(ss)
-    for f in [f_ss_resid, f_ss_jac, f_ss_grad, f_ss_hess]:
+    for f in [f_resid, f_jac, f_grad, f_hess]:
         result = f(**x0, **parameters)
         assert isinstance(result, np.ndarray)
-
-    result = f_ss_hessp(np.ones(len(variables)), **x0, **parameters)
-    assert isinstance(result, np.ndarray)

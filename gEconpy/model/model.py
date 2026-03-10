@@ -1,21 +1,18 @@
 import difflib
-import functools as ft
 import logging
 
 from collections.abc import Callable, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Literal
 
 import numpy as np
-import pandas as pd
 import sympy as sp
-import xarray as xr
 
 from better_optimize import minimize, root
 from preliz.distributions.distributions import Distribution
+from pytensor import tensor as pt
 from pytensor.graph.traversal import explicit_graph_inputs
-from scipy import linalg
+from pytensor.tensor.variable import TensorVariable
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
@@ -23,20 +20,27 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import (
     GensysFailedException,
     ModelUnknownParameterError,
-    PerturbationSolutionNotFoundException,
-    SteadyStateNotFoundError,
 )
-from gEconpy.model.perturbation import check_bk_condition as _check_bk_condition
+from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
+from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import (
     check_perturbation_solution,
     make_not_loglin_flags,
-    residual_norms,
-    statespace_to_gEcon_representation,
 )
 from gEconpy.model.perturbation import (
     linearize_model as _linearize_model,
 )
-from gEconpy.model.steady_state import system_to_steady_state
+from gEconpy.model.statistics import (
+    _maybe_solve_steady_state,
+)
+from gEconpy.model.steady_state import (
+    ERROR_FUNCTIONS,
+    _ss_residual_to_pytensor,
+    build_minimize_graphs,
+    build_root_graphs,
+    compile_known_ss,
+    system_to_steady_state,
+)
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
@@ -48,108 +52,6 @@ from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
 
 VariableType = sp.Symbol | TimeAwareSymbol
 _log = logging.getLogger(__name__)
-
-
-def _to_numpy(res):
-    """Ensure the result is a numpy array.
-
-    Necessary in the event a function was compiled in JAX mode, because scipy wants numpy arrays only.
-    """
-    if isinstance(res, float | int):
-        return res
-    return np.asarray(res)
-
-
-def scipy_wrapper(
-    f: Callable,
-    variables: list[str],
-    unknown_var_idxs: np.ndarray[int | bool],
-    unknown_eq_idxs: np.ndarray[int | bool],
-    f_ss: Callable | None = None,
-    include_p=False,
-) -> Callable:
-    if f_ss is not None:
-        if not include_p:
-
-            @ft.wraps(f)
-            def inner(ss_values, param_dict):
-                given_ss = f_ss(**param_dict)
-                ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
-                ss_dict.update(given_ss)
-                res = _to_numpy(f(**ss_dict, **param_dict))
-
-                if isinstance(res, float | int):
-                    return res
-                if res.ndim == 1:
-                    res = res[unknown_eq_idxs]
-                elif res.ndim == 2:
-                    res = res[unknown_eq_idxs, :][:, unknown_var_idxs]
-                return res
-        else:
-
-            @ft.wraps(f)
-            def inner(ss_values, p, param_dict):
-                given_ss = f_ss(**param_dict)
-                ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
-                ss_dict.update(given_ss)
-
-                p_full = np.zeros(unknown_eq_idxs.shape[0])
-                p_full[unknown_var_idxs] = p
-
-                res = _to_numpy(f(p_full, **ss_dict, **param_dict))
-
-                if isinstance(res, float | int):
-                    return res
-                if res.ndim == 1:
-                    res = res[unknown_eq_idxs]
-                elif res.ndim == 2:
-                    res = res[unknown_eq_idxs, :][:, unknown_var_idxs]
-                return res
-
-    elif not include_p:
-
-        @ft.wraps(f)
-        def inner(ss_values, param_dict):
-            ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
-            return _to_numpy(f(**ss_dict, **param_dict))
-    else:
-
-        @ft.wraps(f)
-        def inner(ss_values, p, param_dict):
-            ss_dict = SymbolDictionary(zip(variables, ss_values, strict=False)).to_string()
-            return _to_numpy(f(p, **ss_dict, **param_dict))
-
-    return inner
-
-
-def add_more_ss_values_wrapper(f_ss: Callable | None, known_variables: SymbolDictionary) -> Callable:
-    """
-    Inject user-provided constant steady state values to the return of the steady state function.
-
-    Parameters
-    ----------
-    f_ss: Callable, Optional
-        Compiled function that maps models parameters to numerical steady state values for variables.
-
-    known_variables: SymbolDictionary
-        Numerical values for model variables in the steady state provided by the user. Keys are expected to be string
-        variable names, and values floats.
-
-    Returns
-    -------
-    Callable
-        A new version of f_ss whose returns always includes the contents of known_variables.
-    """
-
-    @ft.wraps(f_ss)
-    def inner(**parameters):
-        if f_ss is None:
-            return known_variables
-
-        ss_dict = f_ss(**parameters)
-        return ss_dict | known_variables
-
-    return inner
 
 
 def infer_variable_bounds(variable):
@@ -179,115 +81,13 @@ def _initialize_x0(optimizer_kwargs, variables, jitter_x0):
     return x0
 
 
-def validate_policy_function(A, B, C, D, T, R, tol: float = 1e-8, verbose: bool = True) -> None:
-    gEcon_matrices = statespace_to_gEcon_representation(A, T, R, tol)
-
-    P, Q, _, _, A_prime, R_prime, S_prime = gEcon_matrices
-
-    resid_norms = residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
-    norm_deterministic, _norm_stochastic = resid_norms
-
-    if verbose:
-        _log.info(f"Norm of deterministic part: {norm_deterministic:0.9f}")
-        _log.info(f"Norm of stochastic part:    {norm_deterministic:0.9f}")
-
-
-def get_known_equation_mask(
-    steady_state_system: list[sp.Expr],
-    ss_dict: SymbolDictionary[sp.Symbol, float],
-    param_dict: SymbolDictionary[sp.Symbol, float],
-    tol: float = 1e-8,
-) -> np.ndarray:
-    sub_dict = ss_dict.copy() | param_dict.copy()
-    subbed_system = [eq.subs(sub_dict.to_sympy()) for eq in steady_state_system]
-
-    eq_is_zero_mask = [
-        (sp.Abs(subbed_eq) < tol) == True  # noqa: E712
-        for eq, subbed_eq in zip(steady_state_system, subbed_system, strict=False)
-    ]
-
-    return np.array(eq_is_zero_mask)
-
-
-def validate_user_steady_state_simple(
-    steady_state_system: list[sp.Expr],
-    ss_dict: SymbolDictionary[sp.Symbol, float],
-    param_dict: SymbolDictionary[sp.Symbol, float],
-    tol: float = 1e-8,
-) -> None:
-    r"""
-    Perform a "shallow" validation of user-provided steady-state values.
-
-    Insert provided numeric values into the systesm of steady state equations and check for non-zero residuals. This
-    is a "shallow" check in the sense that no effort is made to check dependencies between equations (that is,
-    sp.solve is not called). Partial steady states are allowed -- the function simply looks for numeric, non-zero values
-    after the provided values are substituted. Therefore, passing an incorrect value that would later cause a numeric
-    solver to fail is also not detected.
-
-    For example, the following system would be detected as having an incorrect steady-state: for :math:`x_1 = 0.5` :
-
-    .. math::
-
-        \begin{align}
-            x_1 - 1 &= 0 \\
-            x_2^ - 3 = 0
-        \end{align}
-
-    Because the first equation will reduce to :math:`-0.5` after simple substitution. On the other hand, this system
-    would not be marked at :math:`x_1 = 0.5`:
-
-    .. math::
-
-        \begin{align}
-            x_1 - x_2 &= 0 \\
-            x_2 - x_3 &= 0 \\
-            x_3 - 1 &= 0
-        \end{align}
-
-    Clearly this can be reduced to :math:`x_1 = 1`, but no effort is made to perform these substitutions, so the error
-    will not be flagged. In general, these substitutions are non-trivial, and attempting to solve results in significant
-    time cost.
-
-    Parameters
-    ----------
-    steady_state_system: list of sp.Expr
-        System of model equations with all time indices set to the steady state
-    ss_dict: SymbolDictionary
-        Dictionary of user-provided steady state values. Expected to have TimeAwareSymbol variables as keys and numeric
-        values as values.
-    param_dict: SymbolDictionary
-        Dictionary of parameter values at which to solve for the steady state. Expected to have Symbol variables as
-         keys and numeric values as values.
-    tol: float
-        Radius around zero within which to consider values as zero. Default is 1e-8.
-    """
-    sub_dict = ss_dict.copy() | param_dict.copy()
-    subbed_system = [eq.subs(sub_dict.to_sympy()) for eq in steady_state_system]
-
-    # This has to use equality to check True -- sympy doesn't know the truth value of e.g. |x - 3| < 1e-8. But it does
-    # know that this is NOT the same as True.
-    invalid_equation_strings = [
-        str(eq)
-        for eq, subbed_eq in zip(steady_state_system, subbed_system, strict=False)
-        if (sp.Abs(subbed_eq) < tol) == False  #  noqa
-    ]
-
-    if len(invalid_equation_strings) > 0:
-        msg = (
-            "User-provide steady state is not valid. The following equations had non-zero residuals "
-            "after subsitution:\n"
-        )
-        msg += "\n".join(invalid_equation_strings)
-        raise ValueError(msg)
-
-
 class Model:
     """
-    A Dynamic Stochastic General Equlibrium (DSGE) Model.
+    A Dynamic Stochastic General Equilibrium (DSGE) Model.
 
-    A ``Model`` is a container class for a DSGE model. It has two primary functions: to store all model primitives
-    (variables, parameters, shocks, equations, etc.), and to store compiled functions used to solve the model.
-
+    Stores model primitives (variables, parameters, shocks, equations) and compiles steady-state and linearization
+    functions lazily on first use. Construction accepts raw sympy objects; all graph building and pytensor compilation
+    is deferred to the point of use so that only the graphs actually needed are ever built.
     """
 
     def __init__(
@@ -296,82 +96,49 @@ class Model:
         shocks: list[TimeAwareSymbol],
         equations: list[sp.Expr],
         steady_state_relationships: list[sp.Eq],
+        steady_state_equations: list[sp.Expr],
+        ss_solution_dict: SymbolDictionary,
         param_dict: SymbolDictionary,
         hyper_param_dict: SymbolDictionary,
         deterministic_dict: SymbolDictionary,
         calib_dict: SymbolDictionary,
-        priors: dict[str, Distribution],
-        f_params: Callable[[np.ndarray, ...], SymbolDictionary],
-        f_ss_resid: Callable[[np.ndarray, ...], float],
-        f_ss: Callable[[np.ndarray, ...], SymbolDictionary],
-        f_ss_error: Callable[[np.ndarray, ...], np.ndarray],
-        f_ss_jac: Callable[[np.ndarray, ...], np.ndarray],
-        f_ss_error_grad: Callable[[np.ndarray, ...], np.ndarray],
-        f_ss_error_hess: Callable[[np.ndarray, ...], np.ndarray],
-        f_ss_error_hessp: Callable[[np.ndarray, ...], np.ndarray],
-        cache: dict,
+        priors: tuple,
         is_linear: bool = False,
+        mode: str | None = None,
+        error_func: ERROR_FUNCTIONS = "squared",
     ) -> None:
-        """
-        Container class for DSGE model primitives and compiled functions.
-
-        In general, users should not need to instantiate this class directly. Instead, use
-         :func:`gEconpy.model.build.model_from_gcn` to create a model from a GCN file.
+        """Initialize a DSGE model from sympy primitives.
 
         Parameters
         ----------
-        variables: list[TimeAwareSymbol]
-            List of variables in the model
-        shocks: list[TimeAwareSymbol]
-            List of shocks in the model
-        equations: list[sp.Expr]
-            List of equations in the model
-        param_dict: SymbolDictionary
-            Dictionary of parameters in the model
-        hyper_param_dict: SymbolDictionary
-            Dictionary of parameters used by shock distributions
-        deterministic_dict: SymbolDictionary
-            Dictionary of parameters defined as deterministic functions of other parameters, mapping the
-            deterministic parameter Symbols to the expressions defining them.
-        calib_dict: SymbolDictionary
-            Dictionary of parameters defined as functions of steady-state variables, mapping the calibrated parameter
-            Symbols to the expressions defining them.
-        priors: dict[str, Distribution]
-            Dictionary of prior distributions for the model parameters
-        f_params: Callable
-            Function that returns a dictionary of parameter values given a dictionary of parameter values
-        f_ss_resid: Callable
-            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and
-            evaluates the system of model equations f(x_ss, theta) = 0.
-        f_ss: Callable
-            Function that takes current parameter values and returns a dictionary of steady-state values.
-        f_ss_error: Callable, optional
-            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
-            a scalar error measure of x_ss given theta.
-            If None, the sum of squared residuals returned by f_ss_resid is used.
-        f_ss_error_grad: Callable, optional
-            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
-            the gradients of the error function f_ss_error with respect to the steady-state variable values x_ss
-
-            If f_ss_error is not provided, an error will be raised if a gradient function is passed.
-        f_ss_error_hess: Callable, optional
-            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
-            the Hessian of the error function f_ss_error with respect to the steady-state variable values x_ss
-
-            If f_ss_error is not provided, an error will be raised if a gradient function is passed.
-        f_ss_error_hessp: Callable, optional
-            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
-            the Hessian-vector product of the error function f_ss_error with respect to the steady-state variable
-            values x_ss.
-        f_ss_jac: Callable, optional
-            Function that takes a dictionary of parameter values theta and steady-state variable values x_ss and returns
-            the Jacobian of the system of model equations f(x_ss, theta) = 0 with respect to the steady-state variable
-            values x_ss.
-        cache : dict
-            Sympytensor cache mapping ``(name, assumptions)`` tuples to pytensor tensor variables. Used to build
-            linearization graphs on demand via pytensor autodiff.
-        is_linear : bool, default False
-            Whether the model is linear. Linear models skip log-linearization during perturbation.
+        variables : list of TimeAwareSymbol
+            Model variables.
+        shocks : list of TimeAwareSymbol
+            Exogenous shocks.
+        equations : list of sp.Expr
+            Model equations.
+        steady_state_relationships : list of sp.Eq
+            Analytical steady-state relationships.
+        steady_state_equations : list of sp.Expr
+            Steady-state equations in residual form (each equals zero at the steady state).
+        ss_solution_dict : SymbolDictionary
+            Analytically known steady-state solutions.
+        param_dict : SymbolDictionary
+            Free parameter names and default values.
+        hyper_param_dict : SymbolDictionary
+            Shock distribution hyperparameters.
+        deterministic_dict : SymbolDictionary
+            Deterministic parameter definitions.
+        calib_dict : SymbolDictionary
+            Calibration equations.
+        priors : tuple
+            ``(param_priors, shock_priors)`` — prior distribution dictionaries.
+        is_linear : bool
+            Whether the model is linear.
+        mode : str or None
+            Pytensor compilation mode (e.g. ``'FAST_COMPILE'``, ``'FAST_RUN'``).
+        error_func : str
+            Error metric for minimize-based steady-state solving.
         """
         self._variables = variables
         self._shocks = shocks
@@ -392,20 +159,209 @@ class Model:
         }
 
         self._priors = priors
-
         self._default_params = param_dict.copy()
-        self.f_params = f_params
-        self.f_ss_resid = f_ss_resid
 
-        self.f_ss_error = f_ss_error
-        self.f_ss_error_grad = f_ss_error_grad
-        self.f_ss_error_hess = f_ss_error_hess
-        self.f_ss_error_hessp = f_ss_error_hessp
+        # Sympy primitives stored for lazy graph construction
+        self._steady_state_equations = steady_state_equations
+        self._ss_solution_dict = ss_solution_dict
+        self._param_dict = param_dict
+        self._deterministic_dict = deterministic_dict
+        self._calib_dict = calib_dict
+        self._mode = mode
+        self._error_func = error_func
 
-        self.f_ss = f_ss
-        self.f_ss_jac = f_ss_jac
+        # Lazily populated
+        self._cache: dict | None = None
+        self._f_params: Callable | None = None
+        self._f_ss: Callable | None = None
+        self._equation_tensors: list[TensorVariable] | None = None
+        self._full_equation_tensors: list[TensorVariable] | None = None
 
-        self._cache = cache
+    def _ensure_cache(self) -> dict:
+        """Return the shared sympytensor cache, creating it on first call.
+
+        The cache maps sympy symbol identifiers to pytensor graph nodes and is shared across all graph-building
+        operations (residual, linearization, etc.) to ensure consistent node identity.
+        """
+        if self._cache is None:
+            self._cache = {}
+
+            compile_param_dict_func(self._param_dict, self._deterministic_dict, cache=self._cache, return_symbolic=True)
+        return self._cache
+
+    def _ensure_equation_tensors(self, filter_known: bool = False) -> list[TensorVariable]:
+        """Build and cache the pytensor equation graphs.
+
+        When ``filter_known`` is False (default), all equations are returned with all SS variables and parameters as
+        free inputs. When True, equations that are fully determined by analytically known steady-state values are
+        removed, and the known SS values are substituted into the remaining equations.
+        """
+        if filter_known:
+            if self._equation_tensors is None:
+                cache = self._ensure_cache()
+                self._equation_tensors, _ = _ss_residual_to_pytensor(
+                    self._steady_state_equations,
+                    self._ss_solution_dict,
+                    self._variables,
+                    self._param_dict,
+                    self._deterministic_dict,
+                    self._calib_dict,
+                    cache=cache,
+                )
+            return self._equation_tensors
+
+        if self._full_equation_tensors is None:
+            cache = self._ensure_cache()
+            self._full_equation_tensors, _ = _ss_residual_to_pytensor(
+                self._steady_state_equations,
+                SymbolDictionary(),
+                self._variables,
+                self._param_dict,
+                self._deterministic_dict,
+                self._calib_dict,
+                cache=cache,
+            )
+        return self._full_equation_tensors
+
+    def ss_tensors(self, filter_known: bool = False) -> list[TensorVariable]:
+        """Pytensor scalar variables for the model's steady-state symbols.
+
+        Returns one scalar ``TensorVariable`` per model variable plus calibrated parameter, in model order. Variables
+        are created in the shared sympytensor cache on first access so that repeated calls and downstream
+        graph-building share the same object identity.
+
+        Parameters
+        ----------
+        filter_known : bool
+            If True, exclude variables whose steady-state values are analytically known (from the ``STEADY_STATE``
+            block). Default is False (return all).
+
+        Returns
+        -------
+        list of TensorVariable
+        """
+        cache = self._ensure_cache()
+
+        if filter_known and self._ss_solution_dict:
+            known_names = {safe_to_ss(k).name for k in self._ss_solution_dict.to_sympy()}
+        else:
+            known_names = set()
+
+        all_vars = list(self._variables) + list(self._calib_dict.to_sympy().keys())
+        result = []
+        for v in all_vars:
+            ss_sym = v.to_ss() if hasattr(v, "to_ss") else v
+            if ss_sym.name in known_names:
+                continue
+            cache_key = make_cache_key(ss_sym.name, type(ss_sym))
+            if cache_key not in cache:
+                cache[cache_key] = pt.scalar(name=ss_sym.name, dtype="floatX")
+            result.append(cache[cache_key])
+        return result
+
+    def param_tensors(
+        self,
+        include_free: bool = True,
+        include_deterministic: bool = True,
+        include_calibrated: bool = False,
+    ) -> list[TensorVariable]:
+        """Pytensor scalar variables for the model's parameters.
+
+        By default returns free and deterministic parameters. Use the ``include_*`` flags to select which parameter
+        groups appear in the result.
+
+        Parameters
+        ----------
+        include_free : bool
+            Include free parameters (those with numeric defaults). Default is True.
+        include_deterministic : bool
+            Include deterministic parameters (defined as functions of other parameters). Default is True.
+        include_calibrated : bool
+            Include calibrated parameters (pinned by steady-state equations). Default is False.
+
+        Returns
+        -------
+        list of TensorVariable
+        """
+        cache = self._ensure_cache()
+        param_symbols: list[sp.Symbol] = []
+        if include_free:
+            param_symbols += list(self._param_dict.to_sympy().keys())
+        if include_deterministic:
+            param_symbols += list(self._deterministic_dict.to_sympy().keys())
+        if include_calibrated:
+            param_symbols += list(self._calib_dict.to_sympy().keys())
+
+        result = []
+        for p in param_symbols:
+            cache_key = make_cache_key(p.name, type(p))
+            if cache_key not in cache:
+                cache[cache_key] = pt.scalar(name=p.name, dtype="floatX")
+            result.append(cache[cache_key])
+        return result
+
+    @property
+    def f_params(self) -> Callable:
+        """Compiled function mapping free parameter values to the full parameter dictionary."""
+        if self._f_params is None:
+            f, _cache = compile_param_dict_func(self._param_dict, self._deterministic_dict)
+            self._f_params = f
+        return self._f_params
+
+    @property
+    def f_ss(self) -> Callable | None:
+        """Compiled function mapping parameters to known steady-state values, or None if no analytical solutions."""
+        if self._f_ss is None:
+            if not self._ss_solution_dict:
+                return None
+
+            _, cache = compile_param_dict_func(self._param_dict, self._deterministic_dict)
+            all_params = list(self._param_dict.to_sympy().keys()) + list(self._deterministic_dict.to_sympy().keys())
+            f_ss, _cache = compile_known_ss(
+                self._ss_solution_dict,
+                self._variables,
+                all_params,
+                cache=cache,
+            )
+            self._f_ss = f_ss
+        return self._f_ss
+
+    def equation_tensors(self, filter_known: bool = False) -> list[TensorVariable]:
+        """Pytensor graphs for the model's steady-state equations.
+
+        Returns one scalar ``TensorVariable`` per equation, each equal to zero at the steady state. All variables
+        and parameters in the shared sympytensor cache are used as graph inputs, so the returned graphs share node
+        identity with ``ss_tensors`` and ``param_tensors``.
+
+        Parameters
+        ----------
+        filter_known : bool
+            If True, substitute analytically known steady-state values and drop equations that become fully
+            determined. Default is False (return all equations with all inputs).
+
+        Returns
+        -------
+        list of TensorVariable
+        """
+        return self._ensure_equation_tensors(filter_known=filter_known)
+
+    @property
+    def sympy_to_pytensor_cache(self) -> dict:
+        """Cache mapping sympy symbol identifiers to pytensor graph nodes.
+
+        Maintained across graph-building calls to ensure consistent node identity. Useful for advanced users who need
+        to look up or construct pytensor nodes corresponding to specific model symbols.
+        """
+        return self._ensure_cache()
+
+    @property
+    def _vars_to_solve(self) -> list[sp.Symbol]:
+        """Steady-state variables that must be solved numerically (not provided analytically)."""
+        known_names = (
+            {safe_to_ss(k).name for k in self._ss_solution_dict.to_sympy()} if self._ss_solution_dict else set()
+        )
+        ss_variables = [x.to_ss() for x in self._variables] + list(self._calib_dict.to_sympy().keys())
+        return [v for v in ss_variables if v.name not in known_names]
 
     @property
     def variables(self) -> list[TimeAwareSymbol]:
@@ -580,6 +536,102 @@ class Model:
                 f"unknown to the model: {', '.join(unknown_fixed)}"
             )
 
+    def _linear_steady_state(self) -> SteadyStateResults:
+        """Return the trivial zero steady state for a linear model."""
+        ss_dict = SteadyStateResults({x.to_ss(): 0.0 for x in self.variables}).to_string()
+        ss_dict.success = True
+        return ss_dict
+
+    def _try_analytic_steady_state(
+        self,
+        param_dict: SymbolDictionary,
+        f_ss: Callable | None,
+    ) -> SteadyStateResults | None:
+        """Attempt a pure analytic solve. Returns None if the analytic solution is incomplete."""
+        if f_ss is None:
+            return None
+        ss_dict = f_ss(**param_dict)
+        if len(ss_dict) != len(self.variables):
+            return None
+
+        full_resid = pt.stack(self.equation_tensors())
+        f_resid = compile_for_scipy(full_resid, mode=self._mode)
+        residual = np.asarray(f_resid(**ss_dict, **param_dict))
+        success = np.allclose(residual, 0.0, atol=1e-8)
+
+        result = SteadyStateResults(ss_dict.to_sympy()).to_string()
+        result.success = success
+        if not success:
+            _log.warning(f"Steady State was not found. Sum of square residuals: {np.square(residual).sum()}")
+        return result
+
+    def _evaluate_all_resolved(
+        self,
+        f_ss: Callable | None,
+        param_dict: SymbolDictionary,
+        fixed_values: dict[str, float] | None,
+    ) -> SteadyStateResults:
+        """Build and validate a steady state when every variable is already known (analytically or via fixed_values)."""
+        provided_ss_values = f_ss(**param_dict).to_sympy() if f_ss is not None else {}
+        if fixed_values is not None:
+            provided_ss_values.update({safe_to_ss(self.get(k)): v for k, v in fixed_values.items()})
+
+        full_resid = pt.stack(self.equation_tensors())
+        f_resid = compile_for_scipy(full_resid, mode=self._mode)
+        residual = np.asarray(f_resid(**{str(k): v for k, v in provided_ss_values.items()}, **param_dict))
+
+        ss_variables = [x.to_ss() for x in self.variables] + list(self.calibrated_params)
+        result = SteadyStateResults({x: provided_ss_values[x] for x in ss_variables}).to_string()
+        result.success = np.allclose(residual, 0.0, atol=1e-8)
+        return result
+
+    def _postprocess_numerical_result(
+        self,
+        res,
+        compiled_funcs: dict[str, Callable],
+        vars_to_solve: list[sp.Symbol],
+        f_ss: Callable | None,
+        param_dict: SymbolDictionary,
+        fixed_values: dict[str, float] | None,
+        tol: float,
+        verbose: bool,
+    ) -> SteadyStateResults:
+        """Assemble steady-state dict from optimizer result and run convergence diagnostics."""
+        provided_ss_values = f_ss(**param_dict).to_sympy() if f_ss is not None else {}
+        if fixed_values is not None:
+            provided_ss_values.update({safe_to_ss(self.get(k)): v for k, v in fixed_values.items()})
+
+        optimizer_results = SymbolDictionary({var: res.x[i] for i, var in enumerate(vars_to_solve)})
+        res_dict = optimizer_results | provided_ss_values
+
+        ss_variables = [x.to_ss() for x in self.variables] + list(self.calibrated_params)
+        res_dict = SteadyStateResults({x: res_dict[x] for x in ss_variables}).to_string()
+
+        f_resid_compiled = compiled_funcs["resid"]
+        f_jac_compiled = compiled_funcs.get("jac")
+        f_grad_compiled = compiled_funcs.get("grad")
+
+        def f_resid_for_postprocess(**kw):
+            return np.asarray(f_resid_compiled(**kw, **param_dict))
+
+        def f_jac_for_postprocess(**kw):
+            if f_grad_compiled is not None:
+                return np.asarray(f_grad_compiled(**kw, **param_dict))
+            if f_jac_compiled is not None:
+                resid_val = np.asarray(f_resid_compiled(**kw, **param_dict)).ravel()
+                jac_val = np.asarray(f_jac_compiled(**kw, **param_dict))
+                return 2.0 * jac_val.T @ resid_val
+            return np.zeros(len(vars_to_solve))
+
+        return postprocess_optimizer_res(
+            res=res,
+            res_dict=res_dict,
+            f_resid=f_resid_for_postprocess,
+            f_jac=f_jac_for_postprocess,
+            tol=tol,
+            verbose=verbose,
+        )
+
     def steady_state(
         self,
         how: Literal["analytic", "root", "minimize"] = "analytic",
@@ -676,130 +728,60 @@ class Model:
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
 
-        if fixed_values is None:
-            f_ss = self.f_ss
-
-        else:
-            self._validate_provided_steady_state_variables(list(fixed_values.keys()))
-            fixed_symbols = [safe_to_ss(self.get(x)) for x in fixed_values]
-
-            fixed_dict = SymbolDictionary(
-                dict(zip(fixed_symbols, fixed_values.values(), strict=False)),
-            ).to_string()
-
-            f_ss = add_more_ss_values_wrapper(self.f_ss, fixed_dict)
-
-        # This logic could be made a lot of complex by looking into solver-specific arguments passed via
-        # "options"
         tol = optimizer_kwargs.get("tol", 1e-8)
-
         param_dict = self.parameters(**updates)
-        ss_dict = SteadyStateResults()
-        ss_system = system_to_steady_state(self.equations, self.shocks)
+        f_ss = self.f_ss
 
-        # The compiled functions include calibration equations, so we need to account for them
-        n_calib_eqs = len(self.calibrated_params)
-        unknown_eq_idx = np.full(len(ss_system) + n_calib_eqs, True)
+        if self.is_linear:
+            return self._linear_steady_state()
 
-        # The default value is analytic, because that's best if the user gave everything we need to proceed. If he gave
-        # nothing though, use minimize as a fallback default.
-        if how == "analytic" and f_ss is None:
+        if fixed_values is None:
+            analytic_result = self._try_analytic_steady_state(param_dict, f_ss)
+            if analytic_result is not None:
+                return analytic_result
+
+        if how == "analytic":
             how = "minimize"
+
+        if fixed_values is not None:
+            self._validate_provided_steady_state_variables(list(fixed_values.keys()))
+            equations, vars_to_solve, ss_nodes = self._build_resid_with_fixed_values(fixed_values, param_dict)
         else:
-            # If we have at least some user information, check if its is complete. If it's not, we will minimize
-            # with the user-provided values fixed.
-            ss_dict = f_ss(**param_dict) if f_ss is not None else ss_dict
-            if self.is_linear:
-                # TODO: This is a hack, but if we're a linear model, we need to set all the steady state values
-                #  to zero. But we don't want to modify the underlying f_ss function, so modify it here.
-                ss_dict = SteadyStateResults({x.to_ss(): 0.0 for x in self.variables}).to_string()
+            equations = self.equation_tensors(filter_known=True)
+            ss_nodes = self.ss_tensors(filter_known=True)
+            vars_to_solve = self._vars_to_solve
 
-            if len(ss_dict) != 0 and len(ss_dict) != len(self.variables):
-                if self.is_linear:
-                    raise ValueError(
-                        "If a model is declared linear, the steady state must be provided for all variables."
-                    )
-                if how == "root":
-                    zero_eq_mask = get_known_equation_mask(
-                        steady_state_system=ss_system,
-                        ss_dict=ss_dict,
-                        param_dict=param_dict,
-                        tol=tol,
-                    )
-                    # Calibration equations are never eliminated by SS values
-                    zero_eq_mask = np.concatenate([zero_eq_mask, np.zeros(n_calib_eqs, dtype=bool)])
-
-                    # Check remaining system is square.
-                    # Only count known values for variables that appear in the SS system
-                    # (variables not in any equation are determined by other constraints)
-                    all_ss_symbols = set().union(*(eq.free_symbols for eq in ss_system))
-                    ss_sympy = ss_dict.to_sympy()
-                    n_relevant_known = sum(1 for var in ss_sympy if var in all_ss_symbols)
-
-                    n_vars = len(self.variables)
-                    n_eqs = len(ss_system)
-                    n_eliminated = sum(zero_eq_mask[: len(ss_system)])
-
-                    n_remaining_vars = n_vars - n_relevant_known + n_calib_eqs
-                    n_remaining_eqs = n_eqs - n_eliminated + n_calib_eqs
-
-                    if n_remaining_vars != n_remaining_eqs:
-                        raise ValueError(
-                            'Solving a partially provided steady state with how = "root" is only allowed if applying '
-                            f"the given values results in a new square system.\n"
-                            f"Remaining: {n_remaining_vars} variable{'s' if n_remaining_vars != 1 else ''}, "
-                            f"{n_remaining_eqs} equation{'s' if n_remaining_eqs != 1 else ''}."
-                        )
-                    unknown_eq_idx = ~zero_eq_mask
-                else:
-                    how = "minimize"
-
-            # Or, if we have everything, we're done.
-            elif len(ss_dict) == len(self.variables):
-                resid = self.f_ss_resid(**param_dict, **ss_dict)
-                success = np.allclose(resid, 0.0, atol=1e-8)
-                ss_dict.success = success
-                if not success:
-                    _log.warning(f"Steady State was not found. Sum of square residuals: {np.square(resid).sum()}")
-                return ss_dict
-
-        # Quick and dirty check of user-provided steady-state validity. This is NOT robust at all.
-        validate_user_steady_state_simple(
-            steady_state_system=ss_system,
-            ss_dict=ss_dict,
-            param_dict=param_dict,
-            tol=tol,
-        )
-
-        ss_variables = [x.to_ss() for x in self.variables] + list(self.calibrated_params)
-
-        known_variables = [] if f_ss is None else list(f_ss(**self.parameters()).to_sympy().keys())
-
-        vars_to_solve = [var for var in ss_variables if var not in known_variables]
-        unknown_var_idx = np.array([x in vars_to_solve for x in ss_variables], dtype="bool")
+        if not vars_to_solve:
+            return self._evaluate_all_resolved(f_ss, param_dict, fixed_values)
 
         if how == "root":
-            res = self._solve_steady_state_with_root(
-                f_ss=f_ss,
+            n_eqs = len(equations)
+            n_vars = len(vars_to_solve)
+            if n_eqs != n_vars:
+                raise ValueError(
+                    'Solving a partially provided steady state with how = "root" is only allowed if applying '
+                    f"the given values results in a new square system.\n"
+                    f"Remaining: {n_vars} variable{'s' if n_vars != 1 else ''}, "
+                    f"{n_eqs} equation{'s' if n_eqs != 1 else ''}."
+                )
+            res, compiled_funcs = self._solve_steady_state_with_root(
+                equations,
+                ss_nodes,
+                vars_to_solve,
                 use_jac=use_jac,
-                vars_to_solve=vars_to_solve,
-                unknown_var_idx=unknown_var_idx,
-                unknown_eq_idx=unknown_eq_idx,
                 progressbar=progressbar,
                 optimizer_kwargs=optimizer_kwargs,
                 jitter_x0=jitter_x0,
                 **updates,
             )
-
         elif how == "minimize":
-            res = self._solve_steady_state_with_minimize(
-                f_ss=f_ss,
+            res, compiled_funcs = self._solve_steady_state_with_minimize(
+                equations,
+                ss_nodes,
+                vars_to_solve,
                 use_jac=use_jac,
                 use_hess=use_hess,
                 use_hessp=use_hessp,
-                vars_to_solve=vars_to_solve,
-                unknown_var_idx=unknown_var_idx,
-                unknown_eq_idx=unknown_var_idx,
                 progressbar=progressbar,
                 bounds=bounds,
                 optimizer_kwargs=optimizer_kwargs,
@@ -809,33 +791,118 @@ class Model:
         else:
             raise NotImplementedError()
 
-        provided_ss_values = f_ss(**param_dict).to_sympy() if f_ss is not None else {}
-        optimizer_results = SymbolDictionary({var: res.x[i] for i, var in enumerate(vars_to_solve)})
-        res_dict = optimizer_results | provided_ss_values
-        res_dict = SteadyStateResults({x: res_dict[x] for x in ss_variables}).to_string()
-
-        return postprocess_optimizer_res(
-            res=res,
-            res_dict=res_dict,
-            f_resid=ft.partial(self.f_ss_resid, **param_dict),
-            f_jac=ft.partial(self.f_ss_error_grad, **param_dict),
-            tol=tol,
-            verbose=verbose,
+        return self._postprocess_numerical_result(
+            res,
+            compiled_funcs,
+            vars_to_solve,
+            f_ss,
+            param_dict,
+            fixed_values,
+            tol,
+            verbose,
         )
 
-    def _evaluate_steady_state(self, **updates: float):
-        param_dict = self.parameters(**updates)
-        ss_dict = self.f_ss(**param_dict)
+    def _build_resid_with_fixed_values(
+        self,
+        fixed_values: dict[str, float],
+        param_dict: SymbolDictionary,
+    ) -> tuple[list[TensorVariable], list[sp.Symbol], list[TensorVariable]]:
+        """Build a residual graph with user-supplied fixed values merged into the known-SS dict.
 
-        return self.f_ss_resid(**param_dict, **ss_dict)
+        Equations fully determined by the fixed values alone are validated for consistency. The remaining system
+        is returned for numerical solving.
+        """
+        merged_ss = SymbolDictionary(self._ss_solution_dict.copy() if self._ss_solution_dict else {})
+        for name, value in fixed_values.items():
+            merged_ss[safe_to_ss(self.get(name))] = float(value)
+
+        cache = self._ensure_cache()
+        equations, _ = _ss_residual_to_pytensor(
+            self._steady_state_equations,
+            merged_ss,
+            self._variables,
+            self._param_dict,
+            self._deterministic_dict,
+            self._calib_dict,
+            cache=cache,
+        )
+
+        self._validate_fixed_value_equations(fixed_values, param_dict)
+
+        merged_names = {safe_to_ss(k).name for k in merged_ss.to_sympy()}
+        ss_variables = [x.to_ss() for x in self._variables] + list(self._calib_dict.to_sympy().keys())
+        vars_to_solve = [v for v in ss_variables if v.name not in merged_names]
+
+        ss_nodes = []
+        for v in vars_to_solve:
+            ck = make_cache_key(v.name, type(v))
+            if ck in cache:
+                ss_nodes.append(cache[ck])
+
+        return equations, vars_to_solve, ss_nodes
+
+    def _validate_fixed_value_equations(self, fixed_values: dict[str, float], param_dict: SymbolDictionary) -> None:
+        """Check that equations fully determined by fixed values have zero residuals.
+
+        Only equations whose every SS-variable input is in ``fixed_values`` are evaluated; equations involving any
+        unfixed variable are skipped.
+        """
+        all_equations = self.equation_tensors()
+        cache = self._ensure_cache()
+        fixed_kw = {safe_to_ss(self.get(k)).name: float(v) for k, v in fixed_values.items()}
+
+        all_vars = list(self._variables) + list(self._calib_dict.to_sympy().keys())
+        non_fixed_ids: set[int] = set()
+        for v in all_vars:
+            ss_sym = v.to_ss() if hasattr(v, "to_ss") else v
+            if ss_sym.name not in fixed_kw:
+                ck = make_cache_key(ss_sym.name, type(ss_sym))
+                if ck in cache:
+                    non_fixed_ids.add(id(cache[ck]))
+
+        fully_determined_indices = []
+        for i, eq in enumerate(all_equations):
+            if not any(id(inp) in non_fixed_ids for inp in explicit_graph_inputs(eq)):
+                fully_determined_indices.append(i)
+
+        if not fully_determined_indices:
+            return
+
+        check_kw = {**fixed_kw, **param_dict}
+        determined_eqs = [all_equations[i] for i in fully_determined_indices]
+        determined_resid = pt.stack(determined_eqs)
+        f_resid = compile_for_scipy(determined_resid, mode=self._mode)
+        residuals = np.asarray(f_resid(**check_kw))
+        bad_indices = [fully_determined_indices[j] for j, val in enumerate(residuals) if abs(val) > 1e-8]
+
+        if bad_indices:
+            ss_system = system_to_steady_state(self.equations, self.shocks)
+            bad_strs = [str(ss_system[i]) for i in bad_indices if i < len(ss_system)]
+            raise ValueError(
+                "User-provided steady state is not valid. The following equations had non-zero residuals "
+                "after substitution:\n" + "\n".join(bad_strs)
+            )
+
+    def _evaluate_steady_state(self, **updates: float) -> np.ndarray:
+        """Evaluate the full residual system at the analytical SS values and current parameters."""
+        param_dict = self.parameters(**updates)
+        full_resid = pt.stack(self.equation_tensors())
+        f_resid = compile_for_scipy(full_resid, mode=self._mode)
+        ss_dict = self.f_ss(**param_dict) if self.f_ss else {}
+        return np.asarray(f_resid(**ss_dict, **param_dict))
+
+    def evaluate_residual(self, ss_dict: dict[str, float], param_dict: SymbolDictionary) -> np.ndarray:
+        """Evaluate the steady-state residual at given variable and parameter values."""
+        full_resid = pt.stack(self.equation_tensors())
+        f_resid = compile_for_scipy(full_resid, mode=self._mode)
+        return np.asarray(f_resid(**ss_dict, **param_dict))
 
     def _solve_steady_state_with_root(
         self,
-        f_ss,
+        equations: list[TensorVariable],
+        ss_nodes: list[TensorVariable],
+        vars_to_solve: list[sp.Symbol],
         use_jac: bool = True,
-        vars_to_solve: list[TimeAwareSymbol] | None = None,
-        unknown_var_idx: np.ndarray | None = None,
-        unknown_eq_idx: np.ndarray | None = None,
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
@@ -850,46 +917,43 @@ class Model:
 
         if "options" not in optimizer_kwargs:
             optimizer_kwargs["options"] = {}
-
         if method in ["hybr", "df-sane"]:
             optimizer_kwargs["options"].update({"maxfev": maxiter})
         else:
             optimizer_kwargs["options"].update({"maxiter": maxiter})
 
         x0 = _initialize_x0(optimizer_kwargs, vars_to_solve, jitter_x0)
-
         param_dict = self.parameters(**param_updates)
-        wrapper = ft.partial(
-            scipy_wrapper,
-            variables=vars_to_solve,
-            unknown_var_idxs=unknown_var_idx,
-            unknown_eq_idxs=unknown_eq_idx,
-            f_ss=f_ss,
+
+        resid, jac_graph = build_root_graphs(equations, ss_nodes, use_jac=use_jac)
+
+        f_resid = pack_and_compile(resid, ss_nodes, param_dict=param_dict, mode=self._mode)
+        f_jac = (
+            pack_and_compile(jac_graph, ss_nodes, param_dict=param_dict, mode=self._mode)
+            if jac_graph is not None
+            else None
         )
 
-        f = wrapper(self.f_ss_resid)
-        f_jac = wrapper(self.f_ss_jac) if use_jac else None
+        f_resid_kw = compile_for_scipy(resid, mode=self._mode)
+        f_jac_kw = compile_for_scipy(jac_graph, mode=self._mode) if jac_graph is not None else None
 
         with np.errstate(all="ignore"):
-            return root(
-                f=f,
-                x0=x0,
-                args=(param_dict,),
-                jac=f_jac,
-                method=method,
-                progressbar=progressbar,
-                **optimizer_kwargs,
-            )
+            res = root(f=f_resid, x0=x0, jac=f_jac, method=method, progressbar=progressbar, **optimizer_kwargs)
+
+        compiled_funcs = {"resid": f_resid_kw}
+        if f_jac_kw is not None:
+            compiled_funcs["jac"] = f_jac_kw
+
+        return res, compiled_funcs
 
     def _solve_steady_state_with_minimize(
         self,
-        f_ss,
+        equations: list[TensorVariable],
+        ss_nodes: list[TensorVariable],
+        vars_to_solve: list[sp.Symbol],
         use_jac: bool = True,
         use_hess: bool = False,
         use_hessp: bool = True,
-        vars_to_solve: list[str] | None = None,
-        unknown_var_idx: np.ndarray | None = None,
-        unknown_eq_idx: np.ndarray | None = None,
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
@@ -907,8 +971,8 @@ class Model:
         bound_dict = {x.name: infer_variable_bounds(x) for x in vars_to_solve}
         bound_dict.update(user_bounds)
 
-        bounds = [bound_dict[x.name] for x in vars_to_solve]
-        has_bounds = any(x != (None, None) for x in bounds)
+        bounds_list = [bound_dict[x.name] for x in vars_to_solve]
+        has_bounds = any(x != (None, None) for x in bounds_list)
 
         method = optimizer_kwargs.pop("method", "trust-ncg" if not has_bounds else "trust-constr")
         if method not in ["trust-constr", "L-BFGS-B", "powell"]:
@@ -921,38 +985,66 @@ class Model:
         if method == "L-BFGS-B":
             optimizer_kwargs["options"].update({"maxfun": maxiter})
 
-        param_dict = self.parameters(**param_updates)
-
-        wrapper = ft.partial(
-            scipy_wrapper,
-            variables=vars_to_solve,
-            unknown_var_idxs=unknown_var_idx,
-            unknown_eq_idxs=unknown_eq_idx,
-            f_ss=f_ss,
-        )
-
         if use_hess and use_hessp:
             _log.warning("Both use_hess and use_hessp are set to True. use_hessp will be used.")
             use_hess = False
 
-        f = wrapper(self.f_ss_error)
-        f_jac = wrapper(self.f_ss_error_grad) if use_jac else None
-        f_hess = wrapper(self.f_ss_error_hess) if use_hess else None
-        f_hessp = wrapper(self.f_ss_error_hessp, include_p=True) if use_hessp else None
+        error_graph, grad_graph, hess_graph, hessp_graph, hessp_p = build_minimize_graphs(
+            equations,
+            ss_nodes,
+            error_func=self._error_func,
+            use_jac=use_jac,
+            use_hess=use_hess,
+            use_hessp=use_hessp,
+        )
 
-        return minimize(
-            f=f,
+        param_dict = self.parameters(**param_updates)
+
+        f_error = pack_and_compile(error_graph, ss_nodes, param_dict=param_dict, mode=self._mode)
+        f_grad = (
+            pack_and_compile(grad_graph, ss_nodes, param_dict=param_dict, mode=self._mode)
+            if grad_graph is not None
+            else None
+        )
+        f_hess = (
+            pack_and_compile(hess_graph, ss_nodes, param_dict=param_dict, mode=self._mode)
+            if hess_graph is not None
+            else None
+        )
+
+        # hessp takes a dynamic direction vector that can't be baked into pack_and_compile
+        f_hessp = None
+        if hessp_graph is not None:
+            f_hessp_inner = compile_for_scipy(hessp_graph, mode=self._mode)
+            var_names = [v.name for v in vars_to_solve]
+
+            def f_hessp(x: np.ndarray, p: np.ndarray) -> np.ndarray:
+                kw = dict(zip(var_names, x, strict=True))
+                kw[hessp_p.name] = p
+                return np.asarray(f_hessp_inner(**kw, **param_dict))
+
+        resid = pt.stack(equations) if equations else pt.zeros(0)
+        f_resid_kw = compile_for_scipy(resid, mode=self._mode)
+        f_grad_kw = compile_for_scipy(grad_graph, mode=self._mode) if grad_graph is not None else None
+
+        compiled_funcs = {"resid": f_resid_kw}
+        if f_grad_kw is not None:
+            compiled_funcs["grad"] = f_grad_kw
+
+        res = minimize(
+            f=f_error,
             x0=x0,
-            args=(param_dict,),
-            jac=f_jac,
+            jac=f_grad,
             hess=f_hess,
             hessp=f_hessp,
             method=method,
-            bounds=bounds if has_bounds else None,
+            bounds=bounds_list if has_bounds else None,
             tol=tol,
             progressbar=progressbar,
             **optimizer_kwargs,
         )
+
+        return res, compiled_funcs
 
     def linearize_model(
         self,
@@ -1126,7 +1218,7 @@ class Model:
                 variables=self.variables,
                 equations=self.equations,
                 shocks=self.shocks,
-                cache=self._cache,
+                cache=self._ensure_cache(),
                 loglin_variables=loglin_vars,
             )
 
@@ -1151,6 +1243,55 @@ class Model:
         A, B, C, D = f(*ss_vals, *param_vals)
 
         return [np.ascontiguousarray(x, dtype=A.dtype) for x in [A, B, C, D]]
+
+    def _solve_with_gensys(
+        self,
+        A,
+        B,
+        C,
+        D,
+        n_variables: int,
+        tol: float,
+        verbose: bool,
+        on_failure: str,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        gensys_results = solve_policy_function_with_gensys(A, B, C, D, tol)
+        G_1, _constant, impact, _f_mat, _f_wt, _y_wt, _gev, eu, _loose = gensys_results
+
+        success = all(x == 1 for x in eu[:2])
+        if not success:
+            if on_failure == "error":
+                raise GensysFailedException(eu)
+            if verbose:
+                _log.info(interpret_gensys_output(eu))
+            return None, None
+
+        if verbose:
+            _log.info(interpret_gensys_output(eu))
+
+        T = G_1[:n_variables, :][:, :n_variables]
+        R = impact[:n_variables, :]
+        return T, R
+
+    def _solve_with_cycle_reduction(
+        self,
+        A,
+        B,
+        C,
+        D,
+        max_iter: int,
+        tol: float,
+        verbose: bool,
+        on_failure: str,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        T, R, result, _log_norm = solve_policy_function_with_cycle_reduction(A, B, C, D, max_iter, tol, verbose)
+        if T is None:
+            if on_failure == "error":
+                raise GensysFailedException(result)
+            if verbose:
+                _log.info(result)
+            return None, None
+        return T, R
 
     def solve_model(
         self,
@@ -1282,7 +1423,7 @@ class Model:
            :nowrap:
 
            \[
-           F_g(x_-, u, u_+) = f(g(g(x_-, u), u_+), g(x, u), x_-, u) = 0
+           F_g(x_-, u, u_+) = f(g(g(x_-, u), u_+), g(x_, u), x_-, u) = 0
            \]
 
         The function :math:`g` is unknown, but is implicitly defined by this expression, and can be approximated by a
@@ -1427,1073 +1568,24 @@ class Model:
             solver = "backward_direct"
 
         if solver == "gensys":
-            gensys_results = solve_policy_function_with_gensys(A, B, C, D, tol)
-            G_1, _constant, impact, _f_mat, _f_wt, _y_wt, _gev, eu, _loose = gensys_results
-
-            success = all(x == 1 for x in eu[:2])
-
-            if not success:
-                if on_failure == "error":
-                    raise GensysFailedException(eu)
-                if on_failure == "ignore":
-                    if verbose:
-                        message = interpret_gensys_output(eu)
-                        _log.info(message)
-
-                    return None, None
-
-            if verbose:
-                message = interpret_gensys_output(eu)
-                _log.info(message)
-                _log.info("Policy matrices have been stored in attributes model.P, model.Q, model.R, and model.S")
-
-            T = G_1[:n_variables, :][:, :n_variables]
-            R = impact[:n_variables, :]
-
+            T, R = self._solve_with_gensys(A, B, C, D, n_variables, tol, verbose, on_failure)
         elif solver == "cycle_reduction":
-            (
-                T,
-                R,
-                result,
-                _log_norm,
-            ) = solve_policy_function_with_cycle_reduction(A, B, C, D, max_iter, tol, verbose)
-            if T is None:
-                if on_failure == "error":
-                    raise GensysFailedException(result)
-                if on_failure == "ignore":
-                    if verbose:
-                        _log.info(result)
-                    return None, None
+            T, R = self._solve_with_cycle_reduction(A, B, C, D, max_iter, tol, verbose, on_failure)
         elif solver == "backward_direct":
             if not self._backward_looking:
                 raise ValueError(
                     "Solver 'backward_direct' can only be used for models with no forward-looking variables."
                 )
             T, R = solve_policy_function_with_backward_direct(A, B, C, D)
-
         else:
             raise NotImplementedError(
                 'Only "cycle_reduction", "gensys", and "backward_direct" are valid values for solver'
             )
 
+        if T is None:
+            return None, None
+
         if verbose:
             check_perturbation_solution(A, B, C, D, T, R, tol=tol)
 
         return np.ascontiguousarray(T), np.ascontiguousarray(R)
-
-
-def _maybe_solve_steady_state(
-    model: Model,
-    steady_state: dict | None,
-    steady_state_kwargs: dict | None,
-    parameter_updates: dict | None,
-):
-    if steady_state is None:
-        if model.is_linear:
-            return model.f_ss(**model.parameters(**parameter_updates))
-
-        return model.steady_state(**model.parameters(**parameter_updates), **steady_state_kwargs)
-
-    ss_resid = model.f_ss_resid(**steady_state, **model.parameters(**parameter_updates))
-    FLOAT_ZERO = 1e-8
-    unsatisfied_flags = np.abs(ss_resid) > FLOAT_ZERO
-    unsatisfied_eqs = [f"Equation {i}" for i, flag in enumerate(unsatisfied_flags) if flag]
-
-    if np.any(unsatisfied_flags):
-        raise SteadyStateNotFoundError(unsatisfied_eqs)
-    steady_state.success = True
-
-    return steady_state
-
-
-def _maybe_linearize_model(
-    model: Model,
-    A: np.ndarray | None,
-    B: np.ndarray | None,
-    C: np.ndarray | None,
-    D: np.ndarray | None,
-    **linearize_model_kwargs,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Linearize a model if required, or return the provided matrices.
-
-    Parameters
-    ----------
-    model: Model
-        DSGE model
-    A: np.ndarray, optional
-        Matrix of partial derivatives of model equations with respect to variables at time t-1, evaluated at the
-        steady-state
-    B: np.ndarray, optional
-        Matrix of partial derivatives of model equations with respect to variables at time t, evaluated at the
-        steady-state
-    C: np.ndarray, optional
-        Matrix of partial derivatives of model equations with respect to variables at time t+1, evaluated at the
-        steady-state
-    D: np.ndarray, optional
-        Matrix of partial derivatives of model equations with respect to stochastic innovations, evaluated at the
-        steady-state
-    linearize_model_kwargs
-        Arguments forwarded to the ``model.linearize_model`` method. Ignored if all of A, B, C, and D are provided.
-
-    Returns
-    -------
-    linear_system: np.ndarray, np.ndarray, np.ndarray, np.ndarray
-    """
-    verbose = linearize_model_kwargs.get("verbose", True)
-    n_matrices = sum(x is not None for x in [A, B, C, D])
-
-    if n_matrices < 4 and n_matrices > 0 and verbose:
-        _log.warning(
-            f"Passing an incomplete subset of A, B, C, and D (you passed {n_matrices}) will still trigger "
-            f"``model.linearize_model`` (which might be expensive). Pass all to avoid this, or None to silence "
-            f"this warning."
-        )
-        A = None
-        B = None
-        C = None
-        D = None
-
-    if all(x is None for x in [A, B, C, D]):
-        A, B, C, D = model.linearize_model(**linearize_model_kwargs)
-
-    return A, B, C, D
-
-
-def _maybe_solve_model(
-    model: Model, T: np.ndarray | None, R: np.ndarray | None, **solve_model_kwargs
-) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
-    """
-    Solve for the linearized policy matrix of a model if required, or return the provided T and R.
-
-    Parameters
-    ----------
-    model: Model
-        DSGE Model assoicated with T and R
-    T: np.ndarray, optional
-        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
-        method.
-    R: np.ndarray
-        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
-    **solve_model_kwargs
-        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
-
-    Returns
-    -------
-    T: np.ndarray, optional
-        Transition matrix, approximated to the requested order. Represents the policy function, governing agent's
-        optimal state-conditional actions. If the solver fails, None is returned instead.
-
-    R: np.ndarray, optional
-        Selection matrix, approximated to the requested order. Represents the state- and agent-conditional
-        transmission of stochastic shocks through the economy. If the solver fails, None is returned instead.
-    """
-    n_matrices = sum(x is not None for x in [T, R])
-    if n_matrices == 1:
-        _log.warning(
-            "Passing only one of T or R will still trigger ``model.solve_model`` (which might be expensive). "
-            "Pass both to avoid this, or None to silence this warning."
-        )
-        T = None
-        R = None
-
-    if T is None and R is None:
-        T, R = model.solve_model(**solve_model_kwargs)
-
-    return T, R
-
-
-def _validate_shock_options(
-    shock_std_dict: dict[str, float] | None,
-    shock_cov_matrix: np.ndarray | None,
-    shock_std: float | np.ndarray | list | None,
-    shocks: list[TimeAwareSymbol],
-):
-    n_shocks = len(shocks)
-    n_provided = sum(x is not None for x in [shock_std_dict, shock_cov_matrix, shock_std])
-    if n_provided > 1 or n_provided == 0:
-        raise ValueError(
-            "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. You passed "
-            f"{n_provided}."
-        )
-
-    if shock_cov_matrix is not None and any(s != n_shocks for s in shock_cov_matrix.shape):
-        raise ValueError(
-            f"Incorrect covariance matrix shape. Expected ({n_shocks}, {n_shocks}), found {shock_cov_matrix.shape}"
-        )
-
-    if shock_std_dict is not None:
-        shock_names = [x.base_name for x in shocks]
-        missing = [x for x in shock_std_dict if x not in shock_names]
-        extra = [x for x in shock_names if x not in shock_std_dict]
-        if len(missing) > 0:
-            raise ValueError(
-                f"If shock_std_dict is specified, it must give values for all shocks. The following shocks were not "
-                f"found among the provided keys: {', '.join(missing)}"
-            )
-        if len(extra) > 0:
-            raise ValueError(
-                f"Unexpected shocks in shock_std_dict. The following names were not found among the model shocks: "
-                f"{', '.join(extra)}"
-            )
-
-    if shock_std is not None:
-        if isinstance(shock_std, np.ndarray | list):
-            shock_std = cast(np.ndarray | list, shock_std)
-            if len(shock_std) != n_shocks:
-                raise ValueError(
-                    f"Length of shock_std ({len(shock_std)}) does not match the number of shocks ({n_shocks})"
-                )
-            if not np.all(shock_std > 0):
-                raise ValueError("Shock standard deviations must be positive")
-        elif isinstance(shock_std, int | float):
-            if shock_std < 0:
-                raise ValueError("Shock standard deviation must be positive")
-
-
-def _validate_simulation_options(shock_size, shock_cov, shock_trajectory) -> None:
-    options = [shock_size, shock_cov, shock_trajectory]
-    n_options = sum(x is not None for x in options)
-
-    if n_options != 1:
-        raise ValueError("Specify exactly 1 of shock_size, shock_cov, or shock_trajectory")
-
-
-def build_Q_matrix(
-    model_shocks: list[TimeAwareSymbol],
-    shock_std_dict: dict[str, float] | None = None,
-    shock_cov_matrix: np.ndarray | None = None,
-    shock_std: np.ndarray | list | float | None = None,
-) -> np.array:
-    """
-    Take different options for user input and reconcile them into a covariance matrix.
-
-    Exactly one or zero of shock_dict or shock_cov_matrix should be provided. Then, proceed according to the following
-    logic:
-
-    - If `shock_cov_matrix` is provided, it is Q. Return it.
-    - If `shock_dict` is provided, insert these into a diagonal matrix at locations according to `model_shocks`.
-
-    For values missing from `shock_dict`, or if neither `shock_dict` nor `shock_cov_matrix` are provided:
-
-    - Fill missing values using the mean of the prior defined in `shock_priors`
-    - If no prior is set, fill the value with `default_value`.
-
-    Note that the only way to get off-diagonal elements is to explicitly pass the entire covariance matrix.
-
-    Parameters
-    ----------
-    model_shocks: list of str
-        List of model shock names, used to infer positions in the covariance matrix
-    shock_std_dict: dict, optional
-        Dictionary of shock names and standard deviations to be used to build Q
-    shock_cov_matrix: array, optional
-        An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
-    shock_std: float or sequence of float, optional
-        Standard deviation of all model shocks. If float, the same value will be used for all shocks. If sequence, the
-        length must match the number of shocks.
-
-    Raises
-    ------
-    LinalgError
-        If the provided Q is not positive semi-definite
-    ValueError
-        If both model_shocks and shock_dict are provided
-
-    Returns
-    -------
-    Q: ndarray
-        Shock variance-covariance matrix
-    """
-    _validate_shock_options(
-        shock_std_dict=shock_std_dict,
-        shock_cov_matrix=shock_cov_matrix,
-        shock_std=shock_std,
-        shocks=model_shocks,
-    )
-
-    if shock_cov_matrix is not None:
-        return shock_cov_matrix
-
-    if shock_std_dict is not None:
-        shock_names = [x.base_name for x in model_shocks]
-        indices = [shock_names.index(x) for x in shock_std_dict]
-        Q = np.zeros((len(model_shocks), len(model_shocks)))
-        for i, (_key, value) in enumerate(shock_std_dict.items()):
-            Q[indices[i], indices[i]] = value**2
-        return Q
-
-    return np.eye(len(model_shocks)) * shock_std**2
-
-
-def stationary_covariance_matrix(
-    model: Model,
-    T: np.ndarray | None = None,
-    R: np.ndarray | None = None,
-    shock_std_dict: dict[str, float] | None = None,
-    shock_cov_matrix: np.ndarray | None = None,
-    shock_std: np.ndarray | list | float | None = None,
-    return_df: bool = True,
-    **solve_model_kwargs,
-) -> np.ndarray | pd.DataFrame:
-    """
-    Compute the stationary covariance matrix of the solved system.
-
-    Solution is found by solving the associated discrete lyapunov equation.
-
-    In order to construct the shock covariance matrix, exactly one of shock_dict, shock_cov_matrix, or shock_std should
-    be provided.
-
-    Parameters
-    ----------
-    model: Model
-        DSGE Model assoicated with T and R
-    T: np.ndarray, optional
-        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
-        method.
-    R: np.ndarray
-        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
-    shock_std_dict: dict, optional
-        A dictionary of shock sizes to be used to compute the stationary covariance matrix.
-    shock_cov_matrix: array, optional
-        An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
-    shock_std: float, optional
-        Standard deviation of all model shocks.
-    return_df: bool
-        If True, return the covariance matrix as a DataFrame
-    **solve_model_kwargs
-        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
-
-    Returns
-    -------
-    Sigma: np.ndarray | pd.DataFrame
-        Stationary covariance matrix of the linearized model. Datatype depends on the variable of the ``return_df``
-        argument.
-    """
-    shocks = model.shocks
-    _validate_shock_options(
-        shock_std_dict=shock_std_dict,
-        shock_cov_matrix=shock_cov_matrix,
-        shock_std=shock_std,
-        shocks=shocks,
-    )
-
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-
-    Q = build_Q_matrix(
-        model_shocks=shocks,
-        shock_std_dict=shock_std_dict,
-        shock_cov_matrix=shock_cov_matrix,
-        shock_std=shock_std,
-    )
-
-    RQRT = np.linalg.multi_dot([R, Q, R.T])
-    Sigma = linalg.solve_discrete_lyapunov(T, RQRT)
-
-    if return_df:
-        variables = [x.base_name for x in model.variables]
-        Sigma = pd.DataFrame(Sigma, index=variables, columns=variables)
-
-    return Sigma
-
-
-def check_bk_condition(
-    model: Model,
-    *,
-    A: np.ndarray | None = None,
-    B: np.ndarray | None = None,
-    C: np.ndarray | None = None,
-    D: np.ndarray | None = None,
-    tol=1e-8,
-    on_failure: Literal["raise", "ignore"] = "ignore",
-    return_value: Literal["dataframe", "bool", None] = "dataframe",
-    **linearize_model_kwargs,
-) -> bool | pd.DataFrame | None:
-    """
-    Compute the generalized eigenvalues of system in the form presented in [1].
-
-    Per [2], the number of unstable eigenvalues (:math:`|v| > 1`) should not be greater than the number of
-    forward-looking variables. Failing this test suggests timing problems in the definition of the model.
-
-    Parameters
-    ----------
-    model: Model
-        DSGE model
-    A: np.ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
-        values that are known when decision-making: those with t-1 subscripts.
-    B: np.ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-        are observed when decision-making: those with t subscripts.
-    C: np.ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-        enter in expectation when decision-making: those with t+1 subscripts.
-    D: np.ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
-    verbose: bool, default: True
-        Flag to print the results of the test, otherwise the eigenvalues are returned without comment.
-    on_failure: str, default: 'ignore'
-        Action to take if the Blanchard-Kahn condition is not satisfied. Valid values are 'ignore' and 'raise'.
-    return_value: string, default: 'dataframe'
-        Controls what is returned by the function. Valid values are 'dataframe', 'bool', and 'none'.
-        If df, a dataframe containing eigenvalues is returned. If 'bool', a boolean indicating whether the BK
-        condition is satisfied. If None, nothing is returned.
-    tol: float, 1e-8
-        Tolerance below which numerical values are considered zero
-
-    Returns
-    -------
-    bk_result, bool or pd.DataFrame, optional.
-        Return value requested. Datatype corresponds to what was requested in the ``return_value`` argument:
-
-        - None, If return_value is 'none'
-        - condition_satisfied, bool;  if return_value is 'bool', returns True if the Blanchard-Kahn condition is
-          satisfied, False otherwise.
-        - Eigenvalues, pd.DataFrame, if return_value is 'df', returns a dataframe containing the real and imaginary
-          components of the system's eigenvalues, along with their modulus.
-    """
-    verbose = linearize_model_kwargs.get("verbose", True)
-    A, B, C, D = _maybe_linearize_model(model, A, B, C, D, **linearize_model_kwargs)
-    return _check_bk_condition(
-        A,
-        B,
-        C,
-        D,
-        tol=tol,
-        verbose=verbose,
-        on_failure=on_failure,
-        return_value=return_value,
-    )
-
-
-# @nb.njit(cache=True)
-def _compute_autocovariance_matrix(T, Sigma, n_lags=5, correlation=True):
-    """Compute the autocorrelation matrix for the given state-space model.
-
-    Parameters
-    ----------
-    T: np.ndarray, optional
-        Transition matrix of the solved system.
-    Sigma: np.ndarray
-        Stationary covariance matrix of the linearized model
-    n_lags : int, optional
-        The number of lags for which to compute the autocorrelation matrices.
-    correlation: bool
-        If True, return the autocorrelation matrices instead of the autocovariance matrices.
-
-    Returns
-    -------
-    acov : ndarray
-        An array of shape (n_lags, n_variables, n_variables) whose (i, j, k)-th entry gives the autocorrelation
-        (or autocovaraince) between variables j and k at lag i.
-    """
-    n_vars = T.shape[0]
-    auto_coors = np.empty((n_lags, n_vars, n_vars))
-    std_vec = np.sqrt(np.diag(Sigma))
-
-    normalization_factor = np.outer(std_vec, std_vec) if correlation else np.ones_like(Sigma)
-
-    for i in range(n_lags):
-        auto_coors[i] = np.linalg.matrix_power(T, i) @ Sigma / normalization_factor
-
-    return auto_coors
-
-
-def autocovariance_matrix(
-    model: Model,
-    T: np.ndarray | None = None,
-    R: np.ndarray | None = None,
-    shock_std_dict: dict[str, float] | None = None,
-    shock_cov_matrix: np.ndarray | None = None,
-    shock_std: np.ndarray | list | float | None = None,
-    n_lags: int = 10,
-    correlation=False,
-    return_xr=True,
-    **solve_model_kwargs,
-):
-    """
-    Compute the model's autocovariance matrix using the stationary covariance matrix.
-
-    Alternatively, the autocorrelation matrix can be returned by specifying ``correlation = True``.
-
-    In order to construct the shock covariance matrix, exactly one of shock_dict, shock_cov_matrix, or shock_std should
-    be provided.
-
-    Parameters
-    ----------
-    model: Model
-        DSGE Model associated with T and R
-    T: np.ndarray, optional
-        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
-        method.
-    R: np.ndarray
-        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
-    shock_std_dict: dict, optional
-        A dictionary of shock sizes to be used to compute the stationary covariance matrix.
-    shock_cov_matrix: array, optional
-        An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
-    shock_std: float, optional
-        Standard deviation of all model shocks.
-    n_lags: int
-        Number of lags of auto-covariance and cross-covariance to compute. Default is 10.
-    correlation: bool
-        If True, return the autocorrelation matrices instead of the autocovariance matrices.
-    return_xr: bool
-        If True, return the covariance matrices as a DataArray with dimensions ["variable", "variable_aux", and "lag"].
-        Otherwise returns a 3d numpy array with shape (lag, variable, variable).
-    **solve_model_kwargs
-        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
-
-    Returns
-    -------
-    acorr_mat: DataFrame
-    """
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-
-    Sigma = stationary_covariance_matrix(
-        model,
-        T=T,
-        R=R,
-        shock_dict=shock_std_dict,
-        shock_cov_matrix=shock_cov_matrix,
-        shock_std=shock_std,
-        return_df=False,
-        **solve_model_kwargs,
-    )
-    result = _compute_autocovariance_matrix(T, Sigma, n_lags=n_lags, correlation=correlation)
-
-    if return_xr:
-        variables = [x.base_name for x in model.variables]
-        result = xr.DataArray(
-            result,
-            dims=["lag", "variable", "variable_aux"],
-            coords={
-                "lag": range(n_lags),
-                "variable": variables,
-                "variable_aux": variables,
-            },
-        )
-
-    return result
-
-
-def summarize_perturbation_solution(
-    linear_system: Sequence[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-    perturbation_solution: Sequence[np.ndarray | None, np.ndarray | None],
-    model: Model,
-):
-    A, B, C, D = linear_system
-    T, R = perturbation_solution
-    if T is None or R is None:
-        raise PerturbationSolutionNotFoundException()
-
-    coords = {
-        "equation": np.arange(A.shape[0]).astype(int),
-        "variable": [x.base_name for x in model.variables],
-        "shock": [x.base_name for x in model.shocks],
-    }
-
-    return xr.Dataset(
-        data_vars={
-            "A": (("equation", "variable"), A),
-            "B": (("equation", "variable"), B),
-            "C": (("equation", "variable"), C),
-            "D": (("equation", "shock"), D),
-            "T": (("equation", "variable"), T),
-            "R": (("equation", "shock"), R),
-        },
-        coords=coords,
-    )
-
-
-autocorrelation_matrix = ft.partial(autocovariance_matrix, correlation=True)
-autocorrelation_matrix.__doc__ = autocovariance_matrix.__doc__
-
-
-@dataclass(frozen=True)
-class ShockSpec:
-    """Representation of a shock input used to generate an impulse response function."""
-
-    mode: str  # one of "trajectory",  "cov", or "size"
-    trajectory: np.ndarray | None
-    cov: np.ndarray | None
-    size: float | np.ndarray | dict[str, float] | None
-    orthogonalize: bool
-
-
-def _validate_irf_shock_arguments(*values_with_names: tuple[str, Any]) -> None:
-    """Ensure at most one of the provided options is non-None."""
-    provided_names, _provided_values = zip(*[(n, v) for n, v in values_with_names if v is not None], strict=False)
-    if len(provided_names) > 1:
-        names = ", ".join(n for n, _ in provided_names)
-        raise ValueError(f"Only one of {names} may be specified, got {len(provided_names)}.")
-
-
-def _is_diagonal(M: np.ndarray) -> bool:
-    return np.allclose(M, np.diag(np.diag(M)))
-
-
-def _get_selected_shock_names(spec: ShockSpec, shock_names: list[str]) -> list[str]:
-    """
-    If user passed a dict for shock_size, return only those shock names (in model order).
-
-    Otherwise, return None to indicate all shocks should be used.
-    """
-    if spec.mode == "size" and isinstance(spec.size, dict):
-        if len(spec.size) == 0:
-            raise ValueError("Shock size cannot be empty.")
-
-        unknown_shocks = set(spec.size) - set(shock_names)
-        if unknown_shocks:
-            raise ValueError(f"shock_size dict contains unknown shock names: {unknown_shocks}")
-
-        return [name for name in shock_names if name in spec.size]
-
-    return shock_names
-
-
-def _infer_shocks_are_individual(
-    requested: bool | None,
-    shock_spec: ShockSpec,
-    n_shocks: int,
-) -> bool:
-    # If the user specifically asked for individual shocks (or not), respect it
-    if requested is not None:
-        return requested
-
-    if shock_spec.mode == "size":
-        # scalar, dict, or diagonal vector are all treated as per-shock steps
-        if isinstance(shock_spec.size, int | float | dict):
-            return True
-
-        arr = np.asarray(shock_spec.size)
-        return arr.ndim == 0 or arr.shape == (n_shocks,)
-
-    if shock_spec.mode == "cov":
-        return _is_diagonal(np.asarray(shock_spec.cov))
-
-    if shock_spec.mode == "trajectory":
-        # If a full trajectory is given, default to a single combined IRF unless user asks otherwise
-        return False
-
-    return False
-
-
-def _make_shock_spec(
-    shock_size: float | np.ndarray | dict[str, float] | None,
-    shock_cov: np.ndarray | None,
-    shock_trajectory: np.ndarray | None,
-    orthogonalize_shocks: bool,
-) -> ShockSpec:
-    _validate_irf_shock_arguments(
-        ("shock_size", shock_size),
-        ("shock_cov", shock_cov),
-        ("shock_trajectory", shock_trajectory),
-    )
-
-    mode = "trajectory" if shock_trajectory is not None else "cov" if shock_cov is not None else "size"
-    return ShockSpec(
-        mode=mode, trajectory=shock_trajectory, cov=shock_cov, size=shock_size, orthogonalize=orthogonalize_shocks
-    )
-
-
-def _shock_vector_from_spec(
-    size: float | np.ndarray | dict[str, float] | None,
-    shock_names: Sequence[str],
-) -> np.ndarray:
-    """Return an (n_shocks,) vector for a one-period step size."""
-    n = len(shock_names)
-    if size is None:
-        return np.ones(n)
-    if isinstance(size, int | float):
-        return np.full(n, float(size))
-    if isinstance(size, dict):
-        return np.array([float(size.get(name, 0.0)) for name in shock_names], dtype=float)
-    arr = np.asarray(size, dtype=float)
-    if arr.shape != (n,):
-        raise ValueError(f"shock_size array must have shape ({n},); got {arr.shape}.")
-    return arr
-
-
-def _orthogonal_factor(cov: np.ndarray, make_unit_variance: bool = False) -> np.ndarray:
-    """
-    Compute L such that z ~ N(0, I), e = L @ z has Cov(e)=cov.
-
-    If make_unit_variance=True, return L' whose columns are scaled to unit variance (orthonormal shocks).
-    """
-    L = np.linalg.cholesky(cov)  # lower-triangular
-    if not make_unit_variance:
-        return L
-
-    col_norms = np.linalg.norm(L, axis=0)
-    col_norms[col_norms == 0] = 1.0
-    return L / col_norms
-
-
-def _build_trajectory(
-    spec: ShockSpec,
-    simulation_length: int,
-    n_shocks: int,
-    shock_names: Sequence[str],
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Convert a ShockSpec into a (simulation_length, n_shocks) shock trajectory."""
-    match spec.mode:
-        case "trajectory":
-            traj = np.asarray(spec.trajectory, dtype=float)
-            if traj.ndim != 2 or traj.shape[1] != n_shocks:
-                raise ValueError(f"shock_trajectory must have shape (T, {n_shocks}); got {traj.shape}.")
-
-        case "cov":
-            traj = np.zeros((simulation_length, n_shocks), dtype=float)
-
-            Q = np.asarray(spec.cov, dtype=float)
-            if Q.shape != (n_shocks, n_shocks):
-                raise ValueError(f"shock_cov must be ({n_shocks}, {n_shocks}); got {Q.shape}.")
-            L = _orthogonal_factor(Q, make_unit_variance=False) if spec.orthogonalize else np.linalg.cholesky(Q)
-            e0 = rng.standard_normal(n_shocks)
-            traj[0] = L @ e0
-
-        case "size":
-            traj = np.zeros((simulation_length, n_shocks), dtype=float)
-            shock_size = _shock_vector_from_spec(spec.size, shock_names)
-            traj[0] = shock_size
-
-        case _:
-            raise RuntimeError(f"Unexpected ShockSpec mode: {spec.mode}. You shouldn't get here, please report a bug.")
-
-    return traj
-
-
-def _simulate_linear_system(T: np.ndarray, R: np.ndarray, shock_traj: np.ndarray) -> np.ndarray:
-    """Simulate a linear system :math:`x_t = T x_{t-1} + R e_t`, given a shock trajectory :math:`e_t`."""
-    T = np.asarray(T)
-    R = np.asarray(R)
-    T_len, _n_shocks = shock_traj.shape
-    n_vars = T.shape[0]
-
-    out = np.zeros((T_len, n_vars), dtype=float)
-    for t in range(1, T_len):
-        out[t] = T @ out[t - 1] + R @ shock_traj[t - 1]
-    return out
-
-
-def _irf_to_xarray(
-    data: np.ndarray,
-    variable_names: list[str],
-    shock_names: list[str] | None,
-) -> xr.DataArray:
-    if shock_names is None:
-        coords = {"time": np.arange(data.shape[0]), "variable": list(variable_names)}
-        return xr.DataArray(data, dims=["time", "variable"], coords=coords)
-    coords = {
-        "shock": list(shock_names),
-        "time": np.arange(data.shape[1]),
-        "variable": list(variable_names),
-    }
-    return xr.DataArray(data, dims=["shock", "time", "variable"], coords=coords)
-
-
-def impulse_response_function(
-    model: Model,
-    T: np.ndarray | None = None,
-    R: np.ndarray | None = None,
-    simulation_length: int = 40,
-    shock_size: float | np.ndarray | dict[str, float] | None = None,
-    shock_cov: np.ndarray | None = None,
-    shock_trajectory: np.ndarray | None = None,
-    return_individual_shocks: bool | None = None,
-    orthogonalize_shocks: bool = False,
-    random_seed: int | np.random.RandomState | None = None,
-    **solve_model_kwargs,
-) -> xr.DataArray:
-    """
-    Generate impulse response functions (IRF) from state space model dynamics.
-
-    An impulse response function represents the dynamic response of the state space model
-    to an instantaneous shock applied to the system. This function calculates the IRF
-    based on either provided shock specifications or the posterior state covariance matrix.
-
-    Parameters
-    ----------
-    model: Model
-        DSGE Model object
-    T: np.ndarray, optional
-        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
-        method.
-    R: np.ndarray, optional
-        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
-    simulation_length : int, optional
-        The number of periods to compute the IRFs over. The default is 40.
-    shock_size : float, array, or dict; default=None
-        The size of the shock applied to the system. If specified, it will create a covariance
-        matrix for the shock with diagonal elements equal to `shock_size`:
-
-            - If float, the covariance matrix will be the identity matrix scaled by `shock_size`.
-            - If array, the covariance matrix will be ``diag(shock_size)``. In this case, the length of the
-              provided array must match the number of shocks in the state space model.
-            - If dictionary, a diagonal matrix will be created with entries corresponding to the keys in the
-              dictionary. Shocks that are not specified will be set to zero.
-
-        Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
-    shock_cov : Optional[np.ndarray], default=None
-        A user-specified covariance matrix for the shocks. It should be a 2D numpy array with
-        dimensions (n_shocks, n_shocks), where n_shocks is the number of shocks in the state space model.
-
-        Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
-    shock_trajectory : Optional[np.ndarray], default=None
-        A pre-defined trajectory of shocks applied to the system. It should be a 2D numpy array
-        with dimensions (n, n_shocks), where n is the number of time steps and k_posdef is the
-        number of shocks in the state space model.
-
-        Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
-    return_individual_shocks: bool, optional
-        If True, an IRF will be computed separately for each shock in the model. An additional dimension will be added
-        to the output DataArray to show each shock. This is only valid if `shock_size` is a scalar, dictionary, or if
-        the covariance matrix is diagonal.
-
-        If not specified, this will be set to True if ``shock_size`` if the above conditions are met.
-    orthogonalize_shocks : bool, default=False
-        If True, orthogonalize the shocks using Cholesky decomposition when generating the impulse
-        response. This option is ignored if `shock_trajectory` or `shock_size` are used, or if the covariance matrix is
-        diagonal.
-    random_seed : int, RandomState or Generator, optional
-        Seed for the random number generator.
-    **solve_model_kwargs
-        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
-
-    Returns
-    -------
-    xr.DataArray
-        The IRFs for each variable in the model.
-    """
-    rng = np.random.default_rng(random_seed)
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-
-    spec = _make_shock_spec(shock_size, shock_cov, shock_trajectory, orthogonalize_shocks)
-
-    variable_names = [x.base_name for x in model.variables]
-    shock_names = [x.base_name for x in model.shocks]
-    selected_shock_names = _get_selected_shock_names(spec, [x.base_name for x in model.shocks])
-
-    n_vars = len(variable_names)
-    n_shocks = len(model.shocks)
-    n_selected_shocks = len(selected_shock_names)
-
-    shock_idxs = [i for i, x in enumerate(model.shocks) if x.base_name in selected_shock_names]
-
-    if spec.mode == "trajectory":
-        simulation_length = spec.trajectory.shape[0]
-
-    apply_shocks_individually = _infer_shocks_are_individual(return_individual_shocks, spec, n_selected_shocks)
-
-    if apply_shocks_individually:
-        # Build and simulate one IRF per shock axis
-        data = np.zeros((n_selected_shocks, simulation_length, n_vars), dtype=float)
-
-        if spec.mode == "trajectory":
-            full = np.asarray(spec.trajectory, dtype=float)
-            if full.shape[1] != n_shocks:
-                raise ValueError(f"shock_trajectory must have n_shocks={n_shocks}.")
-            for i, idx in enumerate(shock_idxs):
-                traj = np.zeros_like(full)
-                traj[:, idx] = full[:, idx]
-                data[i] = _simulate_linear_system(T, R, traj)
-        else:
-            # Regardless of how many shocks were chosen by the user, we normalize to a full trajectory for everything
-            # first, then subset only what was requested.
-            base = _build_trajectory(spec, simulation_length, n_shocks, shock_names, rng)
-            for i, idx in enumerate(shock_idxs):
-                traj = np.zeros_like(base)
-                traj[:, idx] = base[:, idx]
-                data[i] = _simulate_linear_system(T, R, traj)
-
-        return _irf_to_xarray(data, variable_names, shock_names=selected_shock_names)
-
-    traj = _build_trajectory(spec, simulation_length, n_shocks, selected_shock_names, rng)
-    data = _simulate_linear_system(T, R, traj)
-    return _irf_to_xarray(data, variable_names, shock_names=None)
-
-
-def simulate(
-    model: Model,
-    T: np.ndarray | None = None,
-    R: np.ndarray | None = None,
-    n_simulations: int = 1,
-    simulation_length: int = 40,
-    shock_std_dict: dict[str, float] | None = None,
-    shock_cov_matrix: np.ndarray | None = None,
-    shock_std: np.ndarray | list | float | np.ndarray = None,
-    random_seed: int | np.random.RandomState | None = None,
-    **solve_model_kwargs,
-) -> xr.DataArray:
-    """
-    Simulate the model over a certain number of time periods.
-
-    Parameters
-    ----------
-    model: Model
-        DSGE Model object
-    T: np.ndarray, optional
-        Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
-        method. Ignored if ``use_param_priors`` is True.
-    R: np.ndarray, optional
-        Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
-        Ignored if ``use_param_priors`` is True.
-    use_param_priors: bool, optional
-        If True, each simulation will be generated using a different random draw from the model's
-        prior distributions. Default is False, in which case a fixed T and R matrix will be used for each simulation.
-        If True, T and R are ignored.
-    n_simulations : int, optional
-        Number of trajectories to simulate. Default is 1.
-    simulation_length : int, optional
-        Length of each simulated trajectory. Default is 40.
-    shock_std_dict: dict, optional
-        Dictionary of shock names and standard deviations to be used to build Q
-    shock_cov_matrix: array, optional
-        An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
-    shock_std: float or sequence, optional
-        Standard deviation of all model shocks.
-    random_seed : int, RandomState or Generator, optional
-        Seed for the random number generator.
-    **solve_model_kwargs
-        Arguments forwarded to the ``solve_model`` method. Ignored if T and R are provided.
-
-    Returns
-    -------
-    xr.DataArray
-        Simulated trajectories.
-    """
-    rng = np.random.default_rng(random_seed)
-    shocks = model.shocks
-    n_shocks = len(shocks)
-
-    _validate_shock_options(
-        shock_std_dict=shock_std_dict,
-        shock_cov_matrix=shock_cov_matrix,
-        shock_std=shock_std,
-        shocks=shocks,
-    )
-
-    Q = build_Q_matrix(
-        model_shocks=shocks,
-        shock_std_dict=shock_std_dict,
-        shock_cov_matrix=shock_cov_matrix,
-        shock_std=shock_std,
-    )
-
-    epsilons = rng.multivariate_normal(
-        mean=np.zeros(n_shocks),
-        cov=Q,
-        size=(n_simulations, simulation_length),
-        method="svd",
-    )
-
-    data = np.zeros((n_simulations, simulation_length, len(model.variables)))
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-
-    for t in range(1, simulation_length):
-        stochastic = np.einsum("nk,sk->sn", R, epsilons[:, t - 1, :])
-        deterministic = np.einsum("nm,sm->sn", T, data[:, t - 1, :])
-        data[:, t, :] = deterministic + stochastic
-
-    return xr.DataArray(
-        data,
-        dims=["simulation", "time", "variable"],
-        coords={
-            "variable": [x.base_name for x in model.variables],
-            "simulation": np.arange(n_simulations),
-            "time": np.arange(simulation_length),
-        },
-    )
-
-
-def matrix_to_dataframe(
-    matrix,
-    model,
-    dim1: str | None = None,
-    dim2: str | None = None,
-    round: None | int = None,
-) -> pd.DataFrame:
-    """
-    Convert a matrix to a DataFrame with variable names as columns and rows.
-
-    Parameters
-    ----------
-    matrix: np.ndarray
-        DSGE matrix to convert to a DataFrame. Each dimension should have shape n_variables or n_shocks.
-    model: Model
-        DSGE model object
-    dim1: str, Optional
-        Name of the first dimension of the matrix. Must be one of "variable", "equation",  or "shock". If None, the
-        function will guess based on the shape of the matrix. In the event that the model has exactly as many
-        variables as shocks, it will guess "variable", so be careful!
-    dim2: str, Optional
-        Name of the second dimension of the matrix. Must be one of "variable", "equation", or "shock". If None, the
-        function will guess based on the shape of the matrix.
-    round: int, Optional
-        Number of decimal places to round the values in the DataFrame. If None, values will not be rounded.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with variable names as columns and rows.
-    """
-    var_names = [x.base_name for x in model.variables]
-    shock_names = [x.base_name for x in model.shocks]
-    equation_names = [f"Equation {i}" for i in range(len(model.equations))]
-
-    coords = {"variable": var_names, "shock": shock_names, "equation": equation_names}
-
-    n_variables = len(var_names)
-    n_shocks = len(shock_names)
-
-    if matrix.ndim != 2:
-        raise ValueError("Matrix must be 2-dimensional")
-
-    for i, ordinal in enumerate(["First", "Secoond"]):
-        if matrix.shape[i] not in [n_variables, n_shocks]:
-            raise ValueError(
-                f"{ordinal} dimension of the matrix must match the number of variables or shocks in the model"
-            )
-
-    if dim1 is None:
-        dim1 = "variable" if matrix.shape[0] == n_variables else "shock"
-    if dim2 is None:
-        dim2 = "variable" if matrix.shape[1] == n_variables else "shock"
-
-    df = pd.DataFrame(
-        matrix,
-        index=coords[dim1],
-        columns=coords[dim2],
-    )
-
-    if round is not None:
-        return df.round(round)
-
-    return df
-
-
-def check_steady_state(
-    model: Model,
-    stead_state: SteadyStateResults | None = None,
-    steady_state_kwargs: dict | None = None,
-    **parameter_updates,
-) -> None:
-    if steady_state_kwargs is None:
-        steady_state_kwargs = {}
-
-    ss_dict = _maybe_solve_steady_state(model, stead_state, steady_state_kwargs, parameter_updates)
-    if ss_dict.success:
-        _log.warning("Steady state successfully found!")
-        return
-
-    parameters = model.parameters(**parameter_updates)
-    residuals = model.f_ss_resid(**ss_dict, **parameters)
-    _log.warning("Steady state NOT successful. The following equations have non-zero residuals:")
-
-    FLOAT_ZERO = 1e-8
-    for resid, eq in zip(residuals, model.equations, strict=False):
-        if np.abs(resid) > FLOAT_ZERO:
-            _log.warning(eq)
-            _log.warning(f"Residual: {resid:0.4f}")

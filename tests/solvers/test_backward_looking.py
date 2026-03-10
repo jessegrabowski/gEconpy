@@ -5,11 +5,8 @@ import pytest
 
 from numpy.testing import assert_allclose
 
-from gEconpy.model.model import (
-    impulse_response_function,
-    simulate,
-    stationary_covariance_matrix,
-)
+from gEconpy.model.simulate import impulse_response_function, simulate
+from gEconpy.model.statistics import stationary_covariance_matrix
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 

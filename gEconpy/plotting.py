@@ -17,8 +17,9 @@ from matplotlib.gridspec import GridSpec
 from scipy import stats
 from xarray_einstats.linalg import diagonal as xr_diagonal
 
-from gEconpy.model.model import Model, check_bk_condition
+from gEconpy.model.model import Model
 from gEconpy.model.statespace import DSGEStateSpace
+from gEconpy.model.statistics import check_bk_condition
 
 
 def set_matplotlib_style():

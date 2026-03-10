@@ -1,13 +1,17 @@
 from collections.abc import Callable
 from functools import wraps
 
+import numpy as np
 import pytensor
 import sympy as sp
 
+from pytensor import tensor as pt
+from pytensor.graph.replace import graph_replace
+from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor import TensorVariable
 from sympytensor import as_tensor
 
-from gEconpy.classes.containers import SteadyStateResults
+from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.pytensorf.compile import compile_pytensor_function
 
 
@@ -250,3 +254,100 @@ def make_return_dict_and_update_cache(
         out_dict[pt_symbol] = value
 
     return out_dict, cache
+
+
+def compile_for_scipy(
+    outputs: TensorVariable | list[TensorVariable],
+    mode: str | None = None,
+) -> Callable:
+    """Compile a pytensor graph into a callable that accepts all inputs as keyword arguments.
+
+    Unused kwargs are silently ignored. Intended for one-off evaluations (e.g. postprocessing at the solution
+    point). For hot-loop scipy calls, use ``pack_and_compile`` instead.
+    """
+    inputs = list(explicit_graph_inputs(outputs))
+    f = compile_pytensor_function(inputs, outputs, mode=mode, on_unused_input="ignore")
+    accepted_names = frozenset(inp.name for inp in f.input_storage)
+
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        return f(*args, **{k: v for k, v in kwargs.items() if k in accepted_names})
+
+    wrapper._inner = f
+    return wrapper
+
+
+def pack_and_compile(
+    outputs: TensorVariable | list[TensorVariable],
+    ss_nodes: list[TensorVariable],
+    param_dict: SymbolDictionary | None = None,
+    mode: str | None = None,
+) -> Callable:
+    """Replace SS variable scalars with ``x_flat[i]`` indexing and compile.
+
+    Only SS nodes that are actual graph inputs are replaced. If ``param_dict`` is provided, parameter values
+    are frozen into the closure and the returned function has signature ``f(x_flat)``; otherwise it is
+    ``f(x_flat, *param_args)``.
+
+    Parameters
+    ----------
+    outputs : TensorVariable or list of TensorVariable
+        Graph outputs to compile.
+    ss_nodes : list of TensorVariable
+        All scalar SS variable nodes, defining the positional layout of ``x_flat``.
+    param_dict : SymbolDictionary, optional
+        Parameter values to freeze into the closure.
+    mode : str, optional
+        Pytensor compilation mode.
+
+    Returns
+    -------
+    callable
+        Compiled function.
+    """
+    graph_inputs = set(explicit_graph_inputs(outputs))
+    active_nodes = [n for n in ss_nodes if n in graph_inputs]
+
+    if not active_nodes:
+        inner = compile_pytensor_function(
+            list(explicit_graph_inputs(outputs)), outputs, mode=mode, on_unused_input="ignore"
+        )
+        accepted = frozenset(inp.name for inp in inner.input_storage)
+        if param_dict is not None:
+            frozen_params = {k: v for k, v in param_dict.items() if k in accepted}
+
+            def f(_x_flat: np.ndarray) -> np.ndarray:
+                return inner(**frozen_params)
+        else:
+
+            def f(_x_flat: np.ndarray, *args) -> np.ndarray:
+                return inner(*args)
+
+        return f
+
+    x_flat = pt.dvector("x_flat")
+    replacements = {node: x_flat[i] for i, node in enumerate(active_nodes)}
+    new_outputs = graph_replace(outputs, replacements, strict=False)
+
+    active_set = set(active_nodes)
+    param_inputs = [v for v in explicit_graph_inputs(outputs) if v not in active_set]
+    all_inputs = [x_flat, *list(param_inputs)]
+    inner = compile_pytensor_function(all_inputs, new_outputs, mode=mode, on_unused_input="ignore")
+
+    need_slice = len(active_nodes) != len(ss_nodes)
+    active_indices = np.array([i for i, n in enumerate(ss_nodes) if n in graph_inputs]) if need_slice else None
+
+    if param_dict is not None:
+        param_names = [v.name for v in param_inputs]
+        frozen_args = tuple(float(param_dict[n]) for n in param_names)
+
+        def f(x_flat: np.ndarray) -> np.ndarray:
+            x = x_flat[active_indices] if need_slice else x_flat
+            return inner(x, *frozen_args)
+    else:
+
+        def f(x_flat: np.ndarray, *args) -> np.ndarray:
+            x = x_flat[active_indices] if need_slice else x_flat
+            return inner(x, *args)
+
+    return f

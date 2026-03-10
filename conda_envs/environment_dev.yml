@@ -54,7 +54,8 @@ dependencies:
 
   - pip:
       - numdifftools
-      - jax>0.9
+      - jax>0.8<0.9.1
+      - flowjax
       - corner
       - asv
       - -e ../.

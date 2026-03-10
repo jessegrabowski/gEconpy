@@ -13,13 +13,18 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import ExtraParameterError, ExtraParameterWarning, OrphanParameterError
+from gEconpy.model.compile import make_cache_key
 from gEconpy.model.model import Model
+from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import linearize_model as _linearize_model
 from gEconpy.model.simplification import simplify_constants, simplify_tryreduce
 from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
-    compile_model_ss_functions,
+    _ss_residual_to_pytensor,
+    build_minimize_graphs,
+    build_root_graphs,
+    compile_known_ss,
     propagate_steady_state_through_identities,
     simplify_provided_ss_equations,
     system_to_steady_state,
@@ -334,15 +339,13 @@ def _compile_gcn(
     simplify_constants: bool = True,
     infer_steady_state: bool = True,
     verbose: bool = True,
-    return_symbolic: bool = False,
-    error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters: str = "raise",
-    **kwargs,
-) -> tuple[tuple, tuple, tuple, dict, tuple, dict]:
+) -> tuple[tuple, tuple, tuple, dict]:
     """
-    Parse a GCN file and compile all steady-state functions.
+    Parse and validate a GCN file, returning raw sympy primitives.
 
-    This is the shared compilation backend for both ``model_from_gcn`` and ``statespace_from_gcn``.
+    No compilation is performed here. Graph building and compilation are deferred to the caller (``Model`` compiles
+    lazily on first use; ``statespace_from_gcn`` builds pytensor graphs directly).
 
     Parameters
     ----------
@@ -358,25 +361,15 @@ def _compile_gcn(
         Propagate analytical steady-state solutions through identities.
     verbose : bool
         Print a build report on completion.
-    return_symbolic : bool
-        If True, return symbolic (graph) representations instead of compiled callables.
-    error_function : str
-        Steady-state error metric (``'squared'``, ``'absolute'``, etc.).
     on_unused_parameters : str
         How to handle unused parameters: ``'raise'``, ``'warn'``, or ``'ignore'``.
-    **kwargs
-        Forwarded to ``compile_model_ss_functions`` (and ultimately ``pytensor.function``).
 
     Returns
     -------
     objects : tuple
-        ``(variables, shocks, equations, steady_state_relationships)``
+        ``(variables, shocks, equations, steady_state_relationships, steady_state_equations, ss_solution_dict)``
     dictionaries : tuple
         ``(param_dict, hyper_param_dict, deterministic_dict, calib_dict)``
-    functions : tuple
-        Compiled (or symbolic) steady-state functions.
-    cache : dict
-        Sympytensor cache mapping sympy symbols to pytensor nodes.
     priors : tuple
         ``(param_priors, shock_priors)``
     options : dict
@@ -450,22 +443,6 @@ def _compile_gcn(
     variables = sorted(variables, key=natural_sort_key)
     shocks = sorted(shocks, key=natural_sort_key)
 
-    functions, cache = compile_model_ss_functions(
-        steady_state_equations,
-        ss_solution_dict,
-        variables,
-        param_dict,
-        deterministic_dict,
-        calib_dict,
-        error_func=error_function,
-        return_symbolic=return_symbolic,
-        **kwargs,
-    )
-
-    f_params, f_ss, resid_funcs, error_funcs = functions
-    f_ss_resid, f_ss_jac = resid_funcs
-    f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp = error_funcs
-
     if verbose:
         build_report(
             equations,
@@ -482,12 +459,11 @@ def _compile_gcn(
             inferred_ss_vars,
         )
 
-    objects = (variables, shocks, equations, steady_state_relationships)
+    objects = (variables, shocks, equations, steady_state_relationships, steady_state_equations, ss_solution_dict)
     dictionaries = (param_dict, hyper_param_dict, deterministic_dict, calib_dict)
-    functions = (f_ss, f_ss_jac, f_params, f_ss_resid, f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp)
     priors = (param_priors, shock_priors)
 
-    return objects, dictionaries, functions, cache, priors, options
+    return objects, dictionaries, priors, options
 
 
 def model_from_gcn(
@@ -502,7 +478,6 @@ def model_from_gcn(
     on_unused_parameters: str = "raise",
     show_errors: bool = True,
     backend: str | None = None,
-    **kwargs,
 ) -> Model:
     """
     Build a DSGE model from a GCN file.
@@ -522,8 +497,8 @@ def model_from_gcn(
     verbose : bool, default True
         Print a build report on completion.
     mode : str or None
-        Pytensor compilation mode. If None, uses the default mode (`FAST_RUN` by default). Check pytensor docs
-        for available modes.
+        Pytensor compilation mode. If None, uses the default mode (``FAST_RUN``). Check pytensor docs for
+        available modes.
     error_function : str, default ``'squared'``
         Steady-state error function.
     on_unused_parameters : str, default ``'raise'``
@@ -534,8 +509,6 @@ def model_from_gcn(
         .. deprecated::
             Use ``mode`` instead. ``backend='numpy'`` maps to ``mode='FAST_COMPILE'``;
             ``backend='pytensor'`` maps to ``mode=None``.
-    **kwargs
-        Forwarded to ``pytensor.function``.
 
     Returns
     -------
@@ -555,50 +528,41 @@ def model_from_gcn(
         )
         mode = "FAST_COMPILE" if backend == "numpy" else None
 
-    kwargs["mode"] = mode
     gcn_path = Path(gcn_path)
 
     try:
-        objects, dictionaries, functions, cache, priors, options = _compile_gcn(
+        objects, dictionaries, priors, options = _compile_gcn(
             gcn_path,
             simplify_blocks=simplify_blocks,
             simplify_tryreduce=simplify_tryreduce,
             simplify_constants=simplify_constants,
             infer_steady_state=infer_steady_state,
             verbose=verbose,
-            error_function=error_function,
             on_unused_parameters=on_unused_parameters,
-            **kwargs,
         )
     except (GCNErrorCollection, GCNParseError) as e:
         if show_errors:
             _print_parse_error(e, gcn_path)
         raise
 
-    variables, shocks, equations, ss_relationships = objects
+    variables, shocks, equations, ss_relationships, steady_state_equations, ss_solution_dict = objects
     param_dict, hyper_param_dict, deterministic_dict, calib_dict = dictionaries
-    f_ss, f_ss_jac, f_params, f_ss_resid, f_ss_error, f_ss_grad, f_ss_hess, f_ss_hessp = functions
 
     return Model(
         variables=variables,
         shocks=shocks,
         equations=equations,
         steady_state_relationships=ss_relationships,
+        steady_state_equations=steady_state_equations,
+        ss_solution_dict=ss_solution_dict,
         param_dict=param_dict,
         hyper_param_dict=hyper_param_dict,
         deterministic_dict=deterministic_dict,
         calib_dict=calib_dict,
-        f_ss=f_ss,
-        f_ss_jac=f_ss_jac,
-        f_params=f_params,
-        f_ss_resid=f_ss_resid,
-        f_ss_error=f_ss_error,
-        f_ss_error_grad=f_ss_grad,
-        f_ss_error_hess=f_ss_hess,
-        f_ss_error_hessp=f_ss_hessp,
-        cache=cache,
         priors=priors,
         is_linear=options.get("linear", False),
+        mode=mode,
+        error_func=error_function,
     )
 
 
@@ -614,7 +578,6 @@ def statespace_from_gcn(
     log_linearize: bool = True,
     not_loglin_variables: list[str] | None = None,
     show_errors: bool = True,
-    **kwargs,
 ) -> DSGEStateSpace:
     """
     Build a symbolic DSGE state-space model from a GCN file.
@@ -647,8 +610,6 @@ def statespace_from_gcn(
         Variable names to exclude from log-linearization.
     show_errors : bool, default True
         Pretty-print parse errors to stderr.
-    **kwargs
-        Forwarded to ``pytensor.function``.
 
     Returns
     -------
@@ -658,34 +619,74 @@ def statespace_from_gcn(
     gcn_path = Path(gcn_path)
 
     try:
-        objects, dictionaries, functions, cache, priors, options = _compile_gcn(
+        objects, dictionaries, priors, options = _compile_gcn(
             gcn_path,
             simplify_blocks=simplify_blocks,
             simplify_tryreduce=simplify_tryreduce,
             simplify_constants=simplify_constants,
             infer_steady_state=infer_steady_state,
             verbose=verbose,
-            error_function=error_function,
             on_unused_parameters=on_unused_parameters,
-            return_symbolic=True,
-            **kwargs,
         )
     except (GCNErrorCollection, GCNParseError) as e:
         if show_errors:
             _print_parse_error(e, gcn_path)
         raise
 
-    variables, shocks, equations, _ss_relationships = objects
-    param_dict, hyper_param_dict, _deterministic_dict, calib_dict = dictionaries
+    variables, shocks, equations, _ss_relationships, steady_state_equations, ss_solution_dict = objects
+    param_dict, hyper_param_dict, deterministic_dict, calib_dict = dictionaries
     param_priors, shock_priors = priors
 
     if calib_dict:
         raise NotImplementedError("Calibration not yet implemented in StateSpace model")
 
-    steady_state_mapping, ss_jac, parameter_mapping, ss_resid, ss_error, ss_grad, ss_hess, _ss_hessp = functions
+    # Build symbolic pytensor graphs for the steady-state and linearization systems
+    cache = {}
+    parameter_mapping, cache = compile_param_dict_func(
+        param_dict,
+        deterministic_dict,
+        cache=cache,
+        return_symbolic=True,
+    )
+
+    all_params = list(param_dict.to_sympy().keys()) + list(deterministic_dict.to_sympy().keys())
+    steady_state_mapping, cache = compile_known_ss(
+        ss_solution_dict,
+        variables,
+        all_params,
+        cache=cache,
+        return_symbolic=True,
+    )
 
     if steady_state_mapping is None or len(steady_state_mapping) != len(variables):
         raise NotImplementedError("Numeric steady state not yet implemented in StateSpace model")
+
+    equations_pt, cache = _ss_residual_to_pytensor(
+        steady_state_equations,
+        SymbolDictionary(),
+        variables,
+        param_dict,
+        deterministic_dict,
+        calib_dict,
+        cache=cache,
+    )
+
+    ss_variables = [x.to_ss() for x in variables]
+    ss_nodes = []
+    for v in ss_variables:
+        ck = make_cache_key(v.name, type(v))
+        if ck in cache:
+            ss_nodes.append(cache[ck])
+
+    ss_resid, ss_jac = build_root_graphs(equations_pt, ss_nodes, use_jac=True)
+    ss_error, ss_grad, ss_hess, _, _ = build_minimize_graphs(
+        equations_pt,
+        ss_nodes,
+        error_func=error_function,
+        use_jac=True,
+        use_hess=True,
+        use_hessp=False,
+    )
 
     if not_loglin_variables is None:
         not_loglin_variables = []

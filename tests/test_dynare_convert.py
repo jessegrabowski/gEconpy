@@ -178,7 +178,7 @@ def test_write_steady_state(model):
         ss_dict[f"{name}_ss"] = float(value)
 
     np.testing.assert_allclose(
-        model.f_ss_resid(**ss_dict, **model.parameters()),
+        model.evaluate_residual(ss_dict, model.parameters()),
         np.zeros(len(ss_dict)),
         atol=1e-3,
         rtol=1e-3,
