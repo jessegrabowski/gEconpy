@@ -13,19 +13,19 @@ from gEconpy import (
 )
 from gEconpy.dynare_convert import make_mod_file
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
-from gEconpy.model.model import (
+from gEconpy.model.perfect_foresight.solve import solve_perfect_foresight
+from gEconpy.model.simulate import impulse_response_function, simulate
+from gEconpy.model.statespace import data_from_prior
+from gEconpy.model.statistics import (
     autocorrelation_matrix,
     autocovariance_matrix,
+    build_Q_matrix,
     check_bk_condition,
     check_steady_state,
-    impulse_response_function,
     matrix_to_dataframe,
-    simulate,
     stationary_covariance_matrix,
     summarize_perturbation_solution,
 )
-from gEconpy.model.perfect_foresight.solve import solve_perfect_foresight
-from gEconpy.model.statespace import data_from_prior
 from gEconpy.model.steady_state import print_steady_state
 from gEconpy.parser.html import print_gcn_file
 
@@ -43,6 +43,7 @@ __version__ = version("gEconpy")
 __all__ = [
     "autocorrelation_matrix",
     "autocovariance_matrix",
+    "build_Q_matrix",
     "check_bk_condition",
     "check_steady_state",
     "classes",

@@ -230,11 +230,10 @@ def test_load_gcn(gcn_file):
     assert mod.f_params is not None
 
     assert mod.f_ss is not None
-    assert mod.f_ss_jac is not None
 
-    assert mod.f_ss_resid is not None
-    assert mod.f_ss_error_grad is not None
-    assert mod.f_ss_error_hess is not None
+    # Verify the model can solve its steady state (this exercises lazy graph building and compilation)
+    ss = mod.steady_state(verbose=False, progressbar=False)
+    assert ss.success
 
 
 def test_loading_fails_if_orphan_parameters():

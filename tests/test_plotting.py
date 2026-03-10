@@ -12,14 +12,13 @@ import pytest
 
 from matplotlib.collections import PathCollection
 
-from gEconpy.model.model import (
+from gEconpy.model.simulate import impulse_response_function, simulate
+from gEconpy.model.statespace import DSGEStateSpace
+from gEconpy.model.statistics import (
     autocorrelation_matrix,
     check_bk_condition,
-    impulse_response_function,
-    simulate,
     stationary_covariance_matrix,
 )
-from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.plotting import (
     plot_acf,
     plot_corner,

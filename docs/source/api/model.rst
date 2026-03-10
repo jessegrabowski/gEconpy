@@ -14,6 +14,8 @@ Model
     model/parameters
     model/perfect_foresight
     model/perturbation
+    model/simulate
     model/simplification
     model/statespace
+    model/statistics
     model/steady_state

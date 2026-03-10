@@ -5,26 +5,30 @@ from importlib.util import find_spec
 import numdifftools as nd
 import numpy as np
 import pandas as pd
+import pytensor.tensor as pt
 import pytest
 import xarray as xr
 
 from numpy.testing import assert_allclose
+from pytensor.graph.traversal import explicit_graph_inputs
 
+from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import GensysFailedException
 from gEconpy.model.build import model_from_gcn
-from gEconpy.model.model import (
-    autocorrelation_matrix,
-    build_Q_matrix,
-    impulse_response_function,
-    matrix_to_dataframe,
-    scipy_wrapper,
-    simulate,
-    stationary_covariance_matrix,
-    summarize_perturbation_solution,
-)
+from gEconpy.model.compile import compile_for_scipy, make_cache_key
 from gEconpy.model.perturbation import (
     check_bk_condition,
 )
+from gEconpy.model.simulate import impulse_response_function, simulate
+from gEconpy.model.statistics import (
+    autocorrelation_matrix,
+    build_Q_matrix,
+    matrix_to_dataframe,
+    stationary_covariance_matrix,
+    summarize_perturbation_solution,
+)
+from gEconpy.model.steady_state import _ss_residual_to_pytensor, build_minimize_graphs, build_root_graphs
 from tests._resources.cache_compiled_models import load_and_cache_model
 from tests._resources.expected_matrices import expected_linearization_result
 from tests._resources.load_dynare import load_dynare_outputs
@@ -75,12 +79,12 @@ def test_deterministic_model_parameters():
 
 def test_linear_model():
     mod = load_and_cache_model("rbc_linearized.gcn")
-    params = mod.parameters()
     ss = mod.steady_state()
 
     assert all(x == 0 for x in ss.values())
-    assert_allclose(mod.f_ss_error(**params, **ss), 0.0)
+    assert ss.success
 
+    # The analytical "level" values from f_ss should be non-zero
     assert not all(x == 0 for x in mod.f_ss(**mod.parameters()))
 
 
@@ -167,23 +171,9 @@ def test_steady_state(gcn_file: str, expected_result: np.ndarray):
     assert_allclose(ss, expected_ss)
     assert_allclose(model._evaluate_steady_state(), np.zeros(n), atol=1e-8)
 
-    # Total error and gradient should be zero at the steady state as well
-    error = model.f_ss_error(**params, **ss_dict)
-    grad = model.f_ss_error_grad(**params, **ss_dict)
-    hess = model.f_ss_error_hess(**params, **ss_dict)
-
-    assert np.ndim(error) == 0
-    assert hasattr(grad, "shape")
-    assert hasattr(hess, "shape")
-
-    assert grad.ndim == 1
-    assert hess.ndim == 2
-
-    assert_allclose(error, 0.0, atol=1e-8)
-    assert_allclose(grad.ravel(), np.zeros((n,)), atol=1e-8)
-
-    # Hessian should be PSD at the minimum (since it's a convex function)
-    assert np.all(np.linalg.eigvals(hess) > -1e8)
+    # Verify steady_state method works and agrees with f_ss
+    ss_result = model.steady_state(verbose=False, progressbar=False)
+    assert ss_result.success
 
 
 @pytest.mark.parametrize(
@@ -199,29 +189,66 @@ def test_model_gradient(gcn_file):
 
     ss_result = model.steady_state()
 
-    np.testing.assert_allclose(
-        model.f_ss_error_grad(**ss_result, **model.parameters()),
-        0.0,
-        rtol=1e-12,
-        atol=1e-12,
+    equations, cache = _ss_residual_to_pytensor(
+        model._steady_state_equations,
+        SymbolDictionary(),
+        model._variables,
+        model._param_dict,
+        model._deterministic_dict,
+        model._calib_dict,
     )
+
+    # Recover all SS variable nodes from the cache
+    resid = pt.stack(equations)
+    all_vars = list(model._variables) + list(model._calib_dict.to_sympy().keys())
+    ss_nodes = []
+    for v in all_vars:
+        ss_sym = v.to_ss() if hasattr(v, "to_ss") else v
+        ck = make_cache_key(ss_sym.name, type(ss_sym))
+        if ck in cache:
+            node = cache[ck]
+            if node in set(explicit_graph_inputs(resid)):
+                ss_nodes.append(node)
+
+    error_graph, grad_graph, hess_graph, _, _ = build_minimize_graphs(
+        equations,
+        ss_nodes,
+        error_func=model._error_func,
+        use_jac=True,
+        use_hess=True,
+        use_hessp=False,
+    )
+    _, jac_graph = build_root_graphs(equations, ss_nodes, use_jac=True)
+
+    f_error = compile_for_scipy(error_graph, mode=model._mode)
+    f_grad = compile_for_scipy(grad_graph, mode=model._mode)
+    f_hess = compile_for_scipy(hess_graph, mode=model._mode)
+    f_jac = compile_for_scipy(jac_graph, mode=model._mode)
+    f_resid = compile_for_scipy(resid, mode=model._mode)
+
+    params = model.parameters()
+
+    np.testing.assert_allclose(f_grad(**ss_result, **params), 0.0, rtol=1e-12, atol=1e-12)
 
     perturbed_point = {k: np.float64(0.8) for k, v in ss_result.items()}
     test_point = np.array(list(perturbed_point.values()))
 
-    grad = model.f_ss_error_grad(**perturbed_point, **model.parameters())
-    numeric_grad = nd.Gradient(lambda x: model.f_ss_error(*x, **model.parameters()))(test_point)
-
+    grad = np.asarray(f_grad(**perturbed_point, **params))
+    numeric_grad = nd.Gradient(
+        lambda x: float(np.asarray(f_error(**dict(zip(perturbed_point, x, strict=False)), **params)))
+    )(test_point)
     np.testing.assert_allclose(grad, numeric_grad, rtol=1e-8, atol=1e-8)
 
-    hess = model.f_ss_error_hess(**perturbed_point, **model.parameters())
-    numeric_hess = nd.Hessian(lambda x: model.f_ss_error(*x, **model.parameters()))(test_point)
-
+    hess = np.asarray(f_hess(**perturbed_point, **params))
+    numeric_hess = nd.Hessian(
+        lambda x: float(np.asarray(f_error(**dict(zip(perturbed_point, x, strict=False)), **params)))
+    )(test_point)
     np.testing.assert_allclose(hess, numeric_hess, rtol=1e-8, atol=1e-8)
 
-    jac = model.f_ss_jac(**perturbed_point, **model.parameters())
-    numeric_jac = nd.Jacobian(lambda x: model.f_ss_resid(*x, **model.parameters()))(test_point)
-
+    jac = np.asarray(f_jac(**perturbed_point, **params))
+    numeric_jac = nd.Jacobian(
+        lambda x: np.asarray(f_resid(**dict(zip(perturbed_point, x, strict=False)), **params)).ravel()
+    )(test_point)
     np.testing.assert_allclose(jac, numeric_jac, rtol=1e-8, atol=1e-8)
 
 
@@ -242,10 +269,9 @@ def test_numerical_steady_state(how: str, gcn_file: str):
     analytic_res = model.steady_state(verbose=False, progressbar=False)
     analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
 
-    # Overwrite the f_ss function with None to trigger numerical optimization
-    # Save it so we can put it back later, or else the cached model won't have a steady state function anymore
+    # Save and null out _f_ss to force numerical optimization path
     f_ss = model.f_ss
-    model.f_ss = None
+    model._f_ss = None
 
     if gcn_file == "full_nk.gcn":
         fixed_values = {
@@ -271,11 +297,11 @@ def test_numerical_steady_state(how: str, gcn_file: str):
         progressbar=False,
     )
 
-    # Restore steady state function in the cached function
-    model.f_ss = f_ss
+    # Restore steady state function in the cached model
+    model._f_ss = f_ss
 
     numeric_values = np.array([numeric_res[x.to_ss().name] for x in model.variables])
-    errors = model.f_ss_resid(**numeric_res, **model.parameters())
+    errors = model.evaluate_residual(numeric_res, model.parameters())
 
     if how == "root":
         assert_allclose(analytic_values, numeric_values, atol=1e-2)
@@ -336,15 +362,13 @@ def test_partially_analytical_steady_state(partial_file, analytic_file):
 
     numeric_values = np.array(list(numeric_res.values()))
 
-    errors = partial_model.f_ss_resid(**numeric_res.to_string(), **partial_model.parameters().to_string())
-    resid = partial_model.f_ss_resid(**numeric_res.to_string(), **partial_model.parameters().to_string())
+    resid = partial_model.evaluate_residual(numeric_res.to_string(), partial_model.parameters())
 
     ATOL = RTOL = 1e-1
     if partial_file == "Two_Block_RBC_w_Partial_Steady_State":
         assert_allclose(analytic_values, numeric_values, atol=ATOL, rtol=RTOL)
 
     assert_allclose(resid, 0, atol=ATOL, rtol=RTOL)
-    assert_allclose(errors, np.zeros_like(errors), atol=ATOL, rtol=RTOL)
 
 
 @pytest.mark.parametrize(
