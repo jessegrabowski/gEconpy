@@ -1,5 +1,3 @@
-    { "include": "#curly-braces" },
-    { "include": "#round-parens" },
 {
   "name": "GCN",
   "scopeName": "source.gcn",
