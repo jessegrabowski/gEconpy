@@ -8,6 +8,7 @@ from gEconpy.parser.grammar.statements import (
     DIST_EXPR,
     DISTRIBUTION,
     EQUATION,
+    MISSING_TILDE,
     VARIABLE_LIST,
     VARIABLE_REF,
 )
@@ -112,7 +113,7 @@ SHOCKS = (KW_SHOCKS.suppress() - LBRACE - pp.ZeroOrMore(SHOCK_ITEM)("shock_items
     _build_shocks
 )
 
-CALIBRATION_ITEM = DISTRIBUTION | EQUATION
+CALIBRATION_ITEM = DISTRIBUTION | MISSING_TILDE | EQUATION
 
 
 def _build_calibration(tokens) -> tuple[str, list[GCNEquation | GCNDistribution]]:
