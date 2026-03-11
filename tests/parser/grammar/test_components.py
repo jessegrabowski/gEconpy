@@ -332,3 +332,27 @@ class TestComponentErrors:
         # controls expects variable list, not equation
         with pytest.raises(pp.ParseBaseException):
             CONTROLS.parse_string("controls { Y[] = C[]; };")
+
+    def test_equals_instead_of_tilde_with_wrapper(self):
+        text = """calibration
+        {
+            beta = maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99;
+        };"""
+        with pytest.raises(pp.ParseFatalException, match="instead of '~'"):
+            CALIBRATION.parse_string(text)
+
+    def test_equals_instead_of_tilde_with_bare_dist(self):
+        text = """calibration
+        {
+            alpha = Beta(alpha=2, beta=5) = 0.35;
+        };"""
+        with pytest.raises(pp.ParseFatalException, match="instead of '~'"):
+            CALIBRATION.parse_string(text)
+
+    def test_equals_instead_of_tilde_error_code(self):
+        text = """calibration
+        {
+            beta = maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99;
+        };"""
+        with pytest.raises(pp.ParseFatalException, match="E009"):
+            CALIBRATION.parse_string(text)

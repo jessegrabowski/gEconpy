@@ -167,21 +167,29 @@ MISSING_EQUALS = (
 ).set_parse_action(_missing_equals_fail)
 
 
-def _check_after_expr(s: str, loc: int, toks):
-    while loc < len(s) and s[loc] in " \t\n":
-        loc += 1
-    if loc < len(s):
-        next_char = s[loc]
-        if next_char in ")]}":
-            raise pp.ParseException(s, loc, f"Unmatched '{next_char}'")
-    return toks
+def _unmatched_close_fail(s: str, loc: int, toks) -> None:
+    char = toks[0]
+    raise GCNParseFailure(
+        s,
+        loc,
+        f"Unmatched '{char}' — extra closing bracket with no matching opener",
+        code=ErrorCode.E007,
+        found=char,
+    )
 
+
+_UNMATCHED_CLOSE = pp.Regex(r"[)\]}]").copy().set_parse_action(_unmatched_close_fail)
+
+# After the RHS expression, check for stray closing brackets before the semicolon.
+# The FollowedBy(Regex) peeks ahead; if we see a closing bracket, match and fail fatally.
+_POST_RHS_CHECK = pp.Optional(_UNMATCHED_CLOSE)
 
 _VALID_EQUATION = (
     pp.ZeroOrMore(TAG)("tags")
     + EXPR("lhs")
     + pp.Suppress(pp.Literal("="))
-    + EXPR("rhs").add_parse_action(_check_after_expr)
+    + EXPR("rhs")
+    + _POST_RHS_CHECK
     + pp.Optional(LAGRANGE_MULT)("lagrange")
     + pp.Optional(CALIBRATING_PARAM)("calibrating")
     + SEMI
@@ -393,6 +401,27 @@ DIST_EXPR = WRAPPED_DIST | DIST_CALL | UNKNOWN_WRAPPER | UNKNOWN_DIST
 DISTRIBUTION = IDENTIFIER("param_name") + TILDE - DIST_EXPR + pp.Optional(EQUALS + _DIST_NUMBER_EXPR)("initial") - SEMI
 
 
+def _missing_tilde_fail(s: str, loc: int, toks) -> None:
+    param_name = toks.param_name
+    dist_or_wrapper = toks.dist_or_wrapper
+    raise GCNParseFailure(
+        s,
+        loc,
+        f"Used '=' instead of '~' for distribution prior on '{param_name}'. "
+        f"Use '{param_name} ~ {dist_or_wrapper}(...)' instead of '{param_name} = {dist_or_wrapper}(...)'",
+        code=ErrorCode.E009,
+        found="=",
+    )
+
+
+MISSING_TILDE = (
+    IDENTIFIER("param_name")
+    + pp.FollowedBy(pp.Literal("=") + (WRAPPER_NAME | DIST_NAME))
+    + pp.Literal("=").suppress()
+    + (WRAPPER_NAME | DIST_NAME)("dist_or_wrapper")
+).set_parse_action(_missing_tilde_fail)
+
+
 def _build_distribution(tokens) -> GCNDistribution:
     param_name = tokens.param_name
     dist_name = tokens.dist_name
@@ -442,6 +471,7 @@ __all__ = [
     "DIST_EXPR",
     "EQUATION",
     "LAGRANGE_MULT",
+    "MISSING_TILDE",
     "TAG",
     "VARIABLE_LIST",
     "VARIABLE_REF",

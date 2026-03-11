@@ -1,0 +1,12 @@
+block HOUSEHOLD
+{
+    identities
+    {
+        Y[] = C[] + I[];
+    };
+
+    calibration
+    {
+        beta = maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99;
+    };
+};
