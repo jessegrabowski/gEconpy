@@ -12,6 +12,8 @@
     { "include": "#expectation-operator" },
     { "include": "#distribution" },
     { "include": "#variable-with-time" },
+    { "include": "#curly-braces" },
+    { "include": "#round-parens" },
     { "include": "#number" }
   ],
   "repository": {
@@ -68,8 +70,36 @@
       "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(\\[)\\s*(-?\\d+|ss)?\\s*(\\])",
       "captures": {
         "1": { "name": "entity.name.function.gcn" },
-        "3": { "name": "constant.numeric.gcn" }
+        "2": { "name": "punctuation.definition.brackets.begin.gcn" },
+        "3": { "name": "constant.numeric.gcn" },
+        "4": { "name": "punctuation.definition.brackets.end.gcn" }
       }
+    },
+
+    "curly-braces": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.block.begin.gcn",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.definition.block.end.gcn",
+          "match": "\\}"
+        }
+      ]
+    },
+
+    "round-parens": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.arguments.begin.gcn",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.definition.arguments.end.gcn",
+          "match": "\\)"
+        }
+      ]
     },
 
     "number": {
