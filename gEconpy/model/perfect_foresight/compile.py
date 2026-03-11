@@ -13,9 +13,58 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import make_cache_key
 from gEconpy.model.timing import classify_variables_by_timing
 from gEconpy.pytensorf.sparse_jacobian import sparse_jacobian
+from gEconpy.utilities import safe_to_ss
 
 if TYPE_CHECKING:
     from gEconpy.model.model import Model
+
+
+def _substitute_steady_state_values(
+    equations: list[sp.Expr],
+    ss_solution_dict,
+) -> list[sp.Expr]:
+    """Replace steady-state variables in equations with their analytic expressions.
+
+    Parameters
+    ----------
+    equations : list of sp.Expr
+        Model equations that may contain ``X_ss`` symbols.
+    ss_solution_dict : SymbolDictionary
+        Analytically known steady-state solutions mapping ``X_ss`` to expressions.
+
+    Returns
+    -------
+    equations : list of sp.Expr
+        Equations with steady-state variables substituted away.
+
+    Raises
+    ------
+    ValueError
+        If any steady-state variables remain that lack analytic solutions.
+    """
+    ss_atoms = {a for eq in equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == "ss"}
+    if not ss_atoms:
+        return equations
+
+    sub_dict = {}
+    if ss_solution_dict:
+        sympy_dict = ss_solution_dict.to_sympy()
+        for atom in ss_atoms:
+            for key, value in sympy_dict.items():
+                if safe_to_ss(key).name == atom.name:
+                    sub_dict[atom] = value
+                    break
+
+    remaining = ss_atoms - set(sub_dict.keys())
+    if remaining:
+        names = ", ".join(sorted(str(a) for a in remaining))
+        raise ValueError(
+            f"Perfect foresight simulation requires all steady-state variables to have analytic "
+            f"solutions, but the following do not: {names}. Provide analytic steady-state values "
+            f"in the STEADY_STATE block of your GCN file."
+        )
+
+    return [eq.subs(sub_dict) for eq in equations]
 
 
 def _build_jacobian_var_lists(
@@ -73,10 +122,11 @@ def _compile_single_period_function(
     """
     shock_names = [s.base_name for s in model.shocks]
 
-    vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(model.equations, shock_names)
+    equations = _substitute_steady_state_values(model.equations, model._ss_solution_dict)
+    vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(equations, shock_names)
 
     cache: dict = {}
-    equations_pt = [as_tensor(eq, cache=cache) for eq in model.equations]
+    equations_pt = [as_tensor(eq, cache=cache) for eq in equations]
 
     def get_pt_var(sym: TimeAwareSymbol) -> pt.TensorVariable:
         return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
