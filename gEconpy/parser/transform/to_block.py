@@ -101,6 +101,7 @@ def ast_block_to_block(
     ast_block: GCNBlock,
     assumptions: dict[str, dict[str, bool]] | None = None,
     source: str | None = None,
+    ss_solution_dict=None,
 ) -> Block:
     """
     Convert a GCNBlock AST directly to a Block objec.
@@ -113,6 +114,9 @@ def ast_block_to_block(
         Variable assumptions for sympy symbols.
     source : str, optional
         The source code of the GCN file, for rich error reporting.
+    ss_solution_dict : SymbolDictionary, optional
+        Analytically known steady-state solutions. Forwarded to Block for
+        resolving calibration expressions that reference steady-state variables.
 
     Returns
     -------
@@ -184,6 +188,7 @@ def ast_block_to_block(
         equation_flags=equation_flags,
         source=source,
         symbol_locations=symbol_locations,
+        ss_solution_dict=ss_solution_dict,
     )
 
 
@@ -250,6 +255,7 @@ def ast_model_to_block_dict(
     assumptions: dict[str, dict[str, bool]] | None = None,
     simplify_blocks: bool = False,
     source: str | None = None,
+    ss_solution_dict=None,
 ) -> dict[str, Block]:
     """
     Convert a GCNModel AST to a dictionary of Block objects.
@@ -267,6 +273,9 @@ def ast_model_to_block_dict(
         Whether to simplify block equations during optimization.
     source : str, optional
         The source code of the GCN file, for rich error reporting.
+    ss_solution_dict : SymbolDictionary, optional
+        Analytically known steady-state solutions. Used to resolve calibration
+        expressions that reference steady-state variables.
 
     Returns
     -------
@@ -286,7 +295,7 @@ def ast_model_to_block_dict(
 
         expanded_block = expand_block_time_indices(ast_block)
 
-        block = ast_block_to_block(expanded_block, assumptions, source=source)
+        block = ast_block_to_block(expanded_block, assumptions, source=source, ss_solution_dict=ss_solution_dict)
 
         block.solve_optimization(try_simplify=simplify_blocks)
         block_dict[block.name] = block

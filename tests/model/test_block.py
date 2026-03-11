@@ -660,3 +660,39 @@ def test_lagged_definition_produces_derivative_in_foc():
     bond_foc = block.system_equations[-1]
     bond_foc = bond_foc.collect(R_star).collect(Phi_B)
     assert bond_foc == expected_bond_foc
+
+
+def test_ss_variable_in_calibration_resolves_to_deterministic_param():
+    gcn = """
+    block STEADY_STATE
+    {
+        identities
+        {
+            Y[ss] = Y_bar;
+        };
+    };
+
+    block HOUSEHOLD
+    {
+        identities
+        {
+            Y[] = A[] * L[];
+        };
+
+        calibration
+        {
+            alpha = 0.5;
+            phi = Y[ss] ^ 2 + alpha;
+            Y_bar = 0.8;
+        };
+    };
+    """
+    result = load_gcn_string(gcn)
+    block = result.block_dict["HOUSEHOLD"]
+
+    alpha = sp.Symbol("alpha")
+    Y_bar = sp.Symbol("Y_bar")
+    phi = sp.Symbol("phi")
+
+    assert phi in block.deterministic_dict
+    assert block.deterministic_dict[phi] == Y_bar**2 + alpha
