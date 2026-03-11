@@ -72,7 +72,6 @@ def _compile_single_period_function(
         Parameter names in input order.
     """
     shock_names = [s.base_name for s in model.shocks]
-    param_names = [p.name for p in model.params]
 
     vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(model.equations, shock_names)
 
@@ -82,12 +81,19 @@ def _compile_single_period_function(
     def get_pt_var(sym: TimeAwareSymbol) -> pt.TensorVariable:
         return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
 
-    def get_pt_param(sym: sp.Symbol) -> pt.TensorVariable:
-        return cache[make_cache_key(sym.name, cls=sp.Symbol)]
+    # Collect parameters that actually appear in the equations (both free and deterministic)
+    all_param_symbols = model.params + model.deterministic_params
+    params_in_equations = []
+    params_pt = []
+    for p in all_param_symbols:
+        key = make_cache_key(p.name, cls=sp.Symbol)
+        if key in cache:
+            params_in_equations.append(p)
+            params_pt.append(cache[key])
+    param_names = [p.name for p in params_in_equations]
 
     vars_t_pt = [get_pt_var(x) for x in vars_t]
     shocks_pt = [get_pt_var(x) for x in shocks_t]
-    params_pt = [get_pt_param(p) for p in model.params]
 
     n_vars = len(vars_t_pt)
     n_shocks = len(shocks_pt)

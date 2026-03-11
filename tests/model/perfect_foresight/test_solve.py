@@ -27,6 +27,11 @@ def forward_model():
     return load_and_cache_model("3_eq_linear_nk.gcn")
 
 
+@pytest.fixture
+def open_rbc_model():
+    return load_and_cache_model("open_rbc.gcn")
+
+
 class TestSolve:
     def test_steady_state_is_fixed_point(self, rbc_model):
         trajectory, result = solve_perfect_foresight(rbc_model, simulation_length=20)
@@ -247,6 +252,38 @@ class TestSteadyStateKwargs:
         with patch.object(type(rbc_model), "steady_state", wraps=rbc_model.steady_state) as mock_ss:
             solve_perfect_foresight(rbc_model, simulation_length=10, steady_state_kwargs={"verbose": True})
             assert mock_ss.call_args[1]["verbose"] is True
+
+
+class TestDeterministicParameters:
+    def test_steady_state_is_fixed_point(self, open_rbc_model):
+        """Models with deterministic parameters (e.g. rstar = 1/beta - 1) should solve correctly."""
+        trajectory, result = solve_perfect_foresight(open_rbc_model, simulation_length=20)
+
+        assert result.success
+        ss = open_rbc_model.steady_state(verbose=False)
+        for var in trajectory.columns:
+            assert_allclose(trajectory[var].values, ss[f"{var}_ss"], rtol=1e-6)
+
+    def test_shock_response_converges(self, open_rbc_model):
+        """Perfect foresight with a shock should converge and trend toward steady state."""
+        simulation_length = 50
+        shock_path = np.zeros(simulation_length)
+        shock_path[0] = 0.01
+
+        trajectory, result = solve_perfect_foresight(
+            open_rbc_model,
+            simulation_length=simulation_length,
+            shocks={"epsilon_A": shock_path},
+        )
+        assert result.success
+
+        # The trajectory should not be constant (the shock had an effect)
+        ss = open_rbc_model.steady_state(verbose=False)
+        ss_vals = np.array([ss[f"{var}_ss"] for var in trajectory.columns])
+        deviations = np.abs(trajectory.values - ss_vals)
+
+        # Deviations should be smaller at the end than right after the shock
+        assert np.sum(deviations[-1]) < np.sum(deviations[1])
 
 
 class TestConditionKeyNormalization:
