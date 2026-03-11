@@ -90,6 +90,7 @@ class Block:
         equation_flags: dict[int, dict[str, bool]] | None = None,
         source: str | None = None,
         symbol_locations: dict[str, ParseLocation] | None = None,
+        ss_solution_dict=None,
     ) -> None:
         """
         Initialize a Block from sympy equations.
@@ -121,6 +122,10 @@ class Block:
         symbol_locations : dict, optional
             Dictionary mapping symbol names to their ParseLocation in the source.
             Used for rich error reporting during validation.
+        ss_solution_dict : SymbolDictionary, optional
+            Analytically known steady-state solutions. Used to resolve calibration
+            expressions that reference steady-state variables (e.g.
+            ``phi_B = f(Y[ss])``).
         """
         self.name = name
         self.short_name = "".join(word[0] for word in name.split("_"))
@@ -146,6 +151,7 @@ class Block:
         # Store source info for rich error reporting
         self._source = source
         self._symbol_locations = symbol_locations or {}
+        self._ss_solution_dict = ss_solution_dict
 
         # Count equations
         self.n_equations = sum(
@@ -410,11 +416,17 @@ class Block:
                 # functions of other parameters that the user wants to keep track of.
 
                 # Check that these are functions of numbers and parameters only
-                if any(isinstance(x, TimeAwareSymbol) for x in atoms):
-                    raise ValueError(
-                        "Parameters defined as functions in the calibration sub-block cannot be functions "
-                        f"of variables. Found:\n\n {eq} in {self.name}"
-                    )
+                ss_vars = [x for x in atoms if isinstance(x, TimeAwareSymbol)]
+                if ss_vars:
+                    # Allow steady-state variable references if we have analytic solutions
+                    rhs = self._try_substitute_ss_values(eq, rhs, ss_vars)
+                    # Re-check: if variables remain after substitution, it's an error
+                    if any(isinstance(x, TimeAwareSymbol) for x in rhs.atoms()):
+                        raise ValueError(
+                            "Parameters defined as functions in the calibration sub-block cannot be functions "
+                            f"of variables. Found:\n\n {eq} in {self.name}"
+                        )
+
                 if eq.lhs in self.deterministic_dict:
                     duplicates.append(lhs)
                 else:
@@ -425,6 +437,66 @@ class Block:
             first_dup = duplicates[0]
             location = self._symbol_locations.get(str(first_dup))
             raise DuplicateParameterError(duplicates, self.name, source=self._source, location=location)
+
+    def _try_substitute_ss_values(
+        self,
+        eq: sp.Eq,
+        rhs: sp.Expr,
+        ss_vars: list[TimeAwareSymbol],
+    ) -> sp.Expr:
+        """Substitute analytic steady-state values into a calibration RHS.
+
+        If all steady-state variables in ``rhs`` have analytic solutions in the
+        model's STEADY_STATE block, substitute them away so the expression
+        becomes a pure function of parameters.
+
+        Parameters
+        ----------
+        eq : sp.Eq
+            The original calibration equation (for error messages).
+        rhs : sp.Expr
+            Right-hand side expression to substitute into.
+        ss_vars : list of TimeAwareSymbol
+            Steady-state variables found in ``rhs``.
+
+        Returns
+        -------
+        sp.Expr
+            The substituted expression.
+        """
+        if not all(x.time_index == "ss" for x in ss_vars):
+            raise ValueError(
+                "Parameters defined as functions in the calibration sub-block cannot be functions "
+                f"of variables. Found:\n\n {eq} in {self.name}"
+            )
+
+        if not self._ss_solution_dict:
+            raise ValueError(
+                f"Calibration expression {eq} in {self.name} references steady-state variables "
+                f"but no STEADY_STATE block with analytic solutions was found."
+            )
+
+        ss_sympy = self._ss_solution_dict.to_sympy()
+        sub_dict = {}
+        missing = []
+        for var in ss_vars:
+            matched = False
+            for key, value in ss_sympy.items():
+                if hasattr(key, "name") and key.name == var.name:
+                    sub_dict[var] = value
+                    matched = True
+                    break
+            if not matched:
+                missing.append(var)
+
+        if missing:
+            names = ", ".join(str(v) for v in missing)
+            raise ValueError(
+                f"Calibration expression {eq} in {self.name} references steady-state variables "
+                f"without analytic solutions: {names}. Provide analytic values in the STEADY_STATE block."
+            )
+
+        return rhs.subs(sub_dict)
 
     def _build_lagrangian(self) -> sp.Add:
         """Build the Lagrangian associated with the block's optimization program."""

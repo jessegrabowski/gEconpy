@@ -394,8 +394,18 @@ def ast_model_to_primitives(
     assumptions = dict(model.assumptions) if model.assumptions else {}
     options = model.options
 
+    # Extract steady state solutions first — blocks need them to resolve
+    # calibration expressions that reference steady-state variables
+    ss_solution_dict = _extract_ss_solution_dict(model, assumptions)
+
     # Build Block objects and solve optimization
-    block_dict = ast_model_to_block_dict(model, assumptions=assumptions, simplify_blocks=simplify_blocks, source=source)
+    block_dict = ast_model_to_block_dict(
+        model,
+        assumptions=assumptions,
+        simplify_blocks=simplify_blocks,
+        source=source,
+        ss_solution_dict=ss_solution_dict,
+    )
 
     # Extract primitives from blocks
     equations = _block_dict_to_equation_list(block_dict)
@@ -406,9 +416,6 @@ def ast_model_to_primitives(
 
     # Convert tryreduce strings to symbols
     tryreduce = _extract_tryreduce(model, variables)
-
-    # Extract steady state solutions from STEADY_STATE block
-    ss_solution_dict = _extract_ss_solution_dict(model, assumptions)
 
     # Handle distributions from calibration and shock blocks
     distributions = SymbolDictionary()
