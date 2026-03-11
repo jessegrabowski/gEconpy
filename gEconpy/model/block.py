@@ -14,9 +14,58 @@ from gEconpy.utilities import (
     diff_through_time,
     expand_subs_for_all_times,
     set_equality_equals_zero,
+    step_equation_backward,
+    step_equation_forward,
     substitute_repeatedly,
     unpack_keys_and_values,
 )
+
+_TARGET_TIME_INDICES = (-1, 0, 1)
+
+
+def _expand_definition_for_all_times(
+    lhs: TimeAwareSymbol,
+    rhs: sp.Expr,
+) -> dict[TimeAwareSymbol, sp.Expr]:
+    """
+    Expand a single definition to cover time indices -1, 0, and +1.
+
+    Given a definition ``X[t0] = f(...)`` at some base time index ``t0``, produce
+    substitution entries for ``X[-1]``, ``X[0]``, and ``X[1]`` by shifting the
+    entire equation by the required offset.
+
+    Parameters
+    ----------
+    lhs : TimeAwareSymbol
+        Left-hand side of the definition
+    rhs : sp.Expr
+        Right-hand side expression
+
+    Returns
+    -------
+    sub_dict : dict of TimeAwareSymbol to sp.Expr
+        Mapping with entries at time indices -1, 0, and +1.
+    """
+    base_t = lhs.time_index
+    sub_dict = {}
+
+    for target_t in _TARGET_TIME_INDICES:
+        offset = target_t - base_t
+        shifted_lhs = lhs
+        shifted_rhs = rhs
+
+        if offset > 0:
+            for _ in range(offset):
+                shifted_lhs = step_equation_forward(shifted_lhs)
+                shifted_rhs = step_equation_forward(shifted_rhs)
+        elif offset < 0:
+            for _ in range(-offset):
+                shifted_lhs = step_equation_backward(shifted_lhs)
+                shifted_rhs = step_equation_backward(shifted_rhs)
+
+        sub_dict[shifted_lhs] = shifted_rhs
+
+    return sub_dict
 
 
 class Block:
@@ -386,7 +435,8 @@ class Block:
 
         if self.definitions is not None:
             definitions = list(self.definitions.values())
-            sub_dict = {eq.lhs: eq.rhs for eq in definitions}
+            for eq in definitions:
+                sub_dict.update(_expand_definition_for_all_times(eq.lhs, eq.rhs))
 
         i = 1
 

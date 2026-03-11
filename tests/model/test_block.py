@@ -627,3 +627,36 @@ class TestBlockFromSympy:
         # Solve should work
         block.solve_optimization()
         assert len(block.system_equations) > 0
+
+
+def test_lagged_definition_produces_derivative_in_foc():
+    """Regression test for https://github.com/jessegrabowski/gEconpy/issues/74."""
+    result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "debt_elastic_premium.gcn")
+    block = result.block_dict["HOUSEHOLD"]
+
+    all_atoms = set()
+    for eq in block.system_equations:
+        all_atoms |= eq.atoms()
+
+    variables = sorted([a for a in all_atoms if isinstance(a, (TimeAwareSymbol, sp.Symbol))], key=str)
+    # sub_dict = dict(zip(variables, rng.uniform(0.1, 1, size=len(variables)), strict=False))
+
+    # bond euler: dL/dB_t = beta * lambda_{t+1} * R_star_t * Phi_B_t * (1 - phi_B * B_t / Y_t) - lambda_t
+    # where Phi_B_t = exp(-phi_B * (B_t / Y_t - B_bar))
+    ns = {str(a): a for a in variables}
+
+    B = ns["B_t"]
+    Y = ns["Y_t"]
+    R_star = ns["R_star_t"]
+    lam = ns["lambda_t"]
+    lam_lead = ns["lambda_t+1"]
+    beta_s = ns["beta"]
+    phi_B = ns["phi_B"]
+    B_bar = ns["B_bar"]
+
+    Phi_B = sp.exp(-phi_B * (-B_bar + B / Y))
+
+    expected_bond_foc = -beta_s * lam_lead * R_star * Phi_B * (phi_B * B / Y - 1) - lam
+    bond_foc = block.system_equations[-1]
+    bond_foc = bond_foc.collect(R_star).collect(Phi_B)
+    assert bond_foc == expected_bond_foc
