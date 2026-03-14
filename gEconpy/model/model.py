@@ -1230,7 +1230,7 @@ class Model:
             ]
 
             all_inputs = ss_input_nodes + all_graph_inputs
-            f = compile_pytensor_function(all_inputs, jacobians, on_unused_input="ignore")
+            f = compile_pytensor_function(all_inputs, jacobians, on_unused_input="ignore", mode=self._mode)
             self._linearize_cache[loglin_key] = (f, all_graph_inputs)
         else:
             f, all_graph_inputs = self._linearize_cache[loglin_key]
