@@ -20,8 +20,9 @@ from gEconpy.solvers.sparse_root.base import (
     validate_fused_fun,
 )
 from gEconpy.solvers.sparse_root.chord import Chord, chord
-from gEconpy.solvers.sparse_root.direction import ChordDirection, DirectionProposal, NewtonDirection
+from gEconpy.solvers.sparse_root.direction import ChordDirection, DirectionProposal, KrylovDirection, NewtonDirection
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking, LineSearchResult, NonmonotoneBacktracking
+from gEconpy.solvers.sparse_root.krylov import InexactNewtonKrylov
 from gEconpy.solvers.sparse_root.newton import NewtonArmijo, newton_armijo
 from gEconpy.solvers.sparse_root.nonmonotone import NewtonNonmonotone
 
@@ -30,7 +31,9 @@ __all__ = [
     "Chord",
     "ChordDirection",
     "DirectionProposal",
+    "InexactNewtonKrylov",
     "IterationStats",
+    "KrylovDirection",
     "LineSearchResult",
     "NewtonArmijo",
     "NewtonDirection",
