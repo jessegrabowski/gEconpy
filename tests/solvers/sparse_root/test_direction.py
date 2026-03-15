@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.sparse as sp
 
-from gEconpy.solvers.sparse_root.direction import ChordDirection, NewtonDirection
+from gEconpy.solvers.sparse_root.direction import ChordDirection, KrylovDirection, NewtonDirection
 
 
 class TestNewtonDirectionFallback:
@@ -50,3 +50,32 @@ class TestChordDirectionSpecific:
         # Call 3: _call_count=3, 3%3==0 -> refresh to jac2, increment to 4
         cd.compute(x, res, jac2)
         np.testing.assert_array_equal(cd._cached_jac.data, jac2.data)
+
+
+class TestKrylovDirectionSpecific:
+    def test_eisenstat_walker_tightens(self, broyden_system):
+        """Forcing term eta should decrease as residual decreases."""
+        fun, x0 = broyden_system
+        kd = KrylovDirection(eta_max=0.9, eisenstat_walker=True)
+        kd.reset()
+
+        res, jac = fun(x0)
+        etas = [kd._eta]
+
+        x = x0.copy()
+        for _ in range(10):
+            proposal = kd.compute(x, res, jac)
+            x = x + proposal.direction
+            res, jac = fun(x)
+            etas.append(kd._eta)
+
+        assert etas[-1] < etas[0]
+
+    def test_fallback_on_bad_krylov(self):
+        """If Krylov solve fails, direction should fall back to gradient."""
+        kd = KrylovDirection(krylov_method="gmres")
+        kd.reset()
+        jac = sp.csc_matrix((2, 2))
+        res = np.array([1.0, 1.0])
+        proposal = kd.compute(np.zeros(2), res, jac)
+        assert "fallback" in proposal.kind
