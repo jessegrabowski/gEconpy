@@ -12,7 +12,7 @@ from gEconpy.model.perfect_foresight.compile import (
     compile_perfect_foresight_problem,
 )
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
-from gEconpy.solvers.sparse_newton import sparse_newton
+from gEconpy.solvers.sparse_root import RootSolver, sparse_root
 
 if TYPE_CHECKING:
     from gEconpy.model.model import Model
@@ -245,7 +245,7 @@ def solve_perfect_foresight(
     shocks: dict[str, np.ndarray] | None = None,
     param_paths: dict[str, float | np.ndarray] | None = None,
     compile_kwargs: dict | None = None,
-    optimize_kwargs: dict | None = None,
+    solver: RootSolver | None = None,
     steady_state_kwargs: dict | None = None,
 ) -> tuple[pd.DataFrame, OptimizeResult]:
     """Solve the model under perfect foresight.
@@ -283,8 +283,10 @@ def solve_perfect_foresight(
         values at t=0 and t=T-1 respectively.
     compile_kwargs : dict, optional
         Additional arguments passed to ``pytensor.function`` when compiling.
-    optimize_kwargs : dict, optional
-        Additional arguments passed to ``sparse_newton`` when solving.
+    solver : RootSolver, optional
+        Root-finding solver instance. Default uses Newton's method with Armijo backtracking
+        (``NewtonArmijo()``). Use :func:`~gEconpy.solvers.sparse_root.newton_armijo` to configure
+        line search parameters, or pass a custom solver.
     steady_state_kwargs : dict, optional
         Additional arguments passed to ``model.steady_state()``. If ``'verbose'`` is not explicitly set, it
         defaults to ``False``.
@@ -339,7 +341,6 @@ def solve_perfect_foresight(
     initial_conditions = _normalize_condition_keys(initial_conditions or {})
     terminal_conditions = _normalize_condition_keys(terminal_conditions or {})
     compile_kwargs = compile_kwargs or {}
-    optimize_kwargs = optimize_kwargs or {}
     steady_state_kwargs = steady_state_kwargs or {}
     steady_state_kwargs.setdefault("verbose", False)
 
@@ -426,8 +427,8 @@ def solve_perfect_foresight(
     def system(x, y_init, y_term, shock_mat, param_vals, prob):
         return _compute_stacked_residuals_and_jacobian(x, y_init, y_term, shock_mat, param_vals, prob)
 
-    result = sparse_newton(
-        system, x0_vec, args=(y_initial, y_terminal, shock_matrix, param_matrix, problem), **optimize_kwargs
+    result = sparse_root(
+        system, x0_vec, args=(y_initial, y_terminal, shock_matrix, param_matrix, problem), solver=solver
     )
 
     trajectory = _build_trajectory_dataframe(result.x, var_names, simulation_length)

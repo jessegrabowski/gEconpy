@@ -83,4 +83,4 @@ def validate_fused_fun(fun: RootFunction, x0: np.ndarray, args: tuple[Any, ...])
     if not isinstance(res, np.ndarray):
         raise TypeError("fun must return residuals as ndarray")
     if not sp.issparse(jac):
-        raise TypeError("fun must return a sparse Jacobian")
+        raise TypeError("fun must return a sparse jacobian")
