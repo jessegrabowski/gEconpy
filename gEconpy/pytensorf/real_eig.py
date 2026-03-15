@@ -4,6 +4,7 @@ import pytensor.tensor as pt
 from pytensor.gradient import DisconnectedType
 from pytensor.graph.basic import Apply
 from pytensor.graph.op import Op
+from pytensor.tensor.blockwise import Blockwise
 
 
 class RealEig(Op):
@@ -17,6 +18,7 @@ class RealEig(Op):
     """
 
     __props__ = ()
+    gufunc_signature = "(m,m)->(m),(m)"
 
     def make_node(self, M):
         M = pt.as_tensor_variable(M)
@@ -60,9 +62,6 @@ class RealEig(Op):
         return [M_bar.real]
 
 
-_real_eig = RealEig()
-
-
 def real_eig(M):
     r"""Compute eigenvalues of a real matrix, returning real and imaginary parts separately.
 
@@ -95,7 +94,7 @@ def real_eig(M):
         grad_re = pt.grad(re.sum(), M)
     """
     M = pt.as_tensor_variable(M)
-    return _real_eig(M)
+    return Blockwise(RealEig())(M)
 
 
 try:
