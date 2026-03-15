@@ -183,11 +183,80 @@ def _compile_single_period_function(
     return f, var_names, [x.base_name for x in shocks_t], param_names
 
 
+def _compile_single_period_residual_function(
+    model: "Model",
+    **compile_kwargs,
+) -> Callable:
+    """Compile single-period residual-only function (no Jacobian).
+
+    This is a cheap evaluation function used during line search to avoid computing the
+    Jacobian at rejected trial points.
+
+    Returns
+    -------
+    f : Callable
+        Pytensor function computing only residuals for one period.
+    """
+    shock_names = [s.base_name for s in model.shocks]
+
+    equations = _substitute_steady_state_values(model.equations, model._ss_solution_dict)
+    vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(equations, shock_names)
+
+    cache: dict = {}
+    equations_pt = [as_tensor(eq, cache=cache) for eq in equations]
+
+    def get_pt_var(sym: TimeAwareSymbol) -> pt.TensorVariable:
+        return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
+
+    all_param_symbols = model.params + model.deterministic_params
+    params_pt = []
+    for p in all_param_symbols:
+        key = make_cache_key(p.name, cls=sp.Symbol)
+        if key in cache:
+            params_pt.append(cache[key])
+
+    vars_t_pt = [get_pt_var(x) for x in vars_t]
+    shocks_pt_list = [get_pt_var(x) for x in shocks_t]
+
+    n_vars = len(vars_t_pt)
+    n_shocks = len(shocks_pt_list)
+    var_names = [x.base_name for x in vars_t]
+
+    tm1_by_name = {x.base_name: get_pt_var(x) for x in vars_tm1}
+    tp1_by_name = {x.base_name: get_pt_var(x) for x in vars_tp1}
+
+    jac_vars_tm1, jac_vars_t, jac_vars_tp1 = _build_jacobian_var_lists(var_names, tm1_by_name, tp1_by_name, vars_t_pt)
+
+    residuals = pt.stack(equations_pt)
+
+    y_tm1_vec = pt.dvector("y_tm1", shape=(n_vars,))
+    y_t_vec = pt.dvector("y_t", shape=(n_vars,))
+    y_tp1_vec = pt.dvector("y_tp1", shape=(n_vars,))
+    x_t_vec = pt.dvector("x_t", shape=(n_shocks,)) if n_shocks > 0 else None
+
+    vec_replacements = _build_vector_replacements(
+        var_names, jac_vars_tm1, jac_vars_t, jac_vars_tp1, shocks_pt_list, y_tm1_vec, y_t_vec, y_tp1_vec, x_t_vec
+    )
+
+    residuals_vec = graph_replace(residuals, vec_replacements, strict=False)
+
+    func_inputs = [y_tm1_vec, y_t_vec, y_tp1_vec]
+    if x_t_vec is not None:
+        func_inputs.append(x_t_vec)
+    func_inputs.extend(params_pt)
+
+    if "on_unused_input" not in compile_kwargs:
+        compile_kwargs["on_unused_input"] = "ignore"
+
+    return pytensor.function(func_inputs, [residuals_vec], **compile_kwargs)
+
+
 @dataclass
 class PerfectForesightProblem:
     """Compiled perfect foresight problem."""
 
     f_resid_and_jac: Callable
+    f_resid_only: Callable | None
     var_names: list[str]
     shock_names: list[str]
     param_names: list[str]
@@ -213,8 +282,10 @@ def compile_perfect_foresight_problem(
 ) -> PerfectForesightProblem:
     """Compile the single-period dynamic function for perfect foresight simulation."""
     f_resid_and_jac, var_names, shock_names, param_names = _compile_single_period_function(model, **compile_kwargs)
+    f_resid_only = _compile_single_period_residual_function(model, **compile_kwargs)
     return PerfectForesightProblem(
         f_resid_and_jac=f_resid_and_jac,
+        f_resid_only=f_resid_only,
         var_names=var_names,
         shock_names=shock_names,
         param_names=param_names,

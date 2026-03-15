@@ -31,15 +31,19 @@ def assemble_stacked_jacobian(
     sparse.csc_matrix
         Block-tridiagonal sparse Jacobian of shape (T*n_eq, T*n_vars).
     """
-    # Count total non-zeros across all blocks to pre-allocate
-    total_nnz = 0
-    for t in range(T):
-        J = period_jacobians[t]
-        total_nnz += np.count_nonzero(J[:, n_vars : 2 * n_vars])  # J_t (always present)
-        if t > 0:
-            total_nnz += np.count_nonzero(J[:, :n_vars])  # J_{t-1}
-        if t < T - 1:
-            total_nnz += np.count_nonzero(J[:, 2 * n_vars : 3 * n_vars])  # J_{t+1}
+    # Compute nonzero masks once from the first period (sparsity pattern is
+    # identical across all periods for a given model).
+    J0 = period_jacobians[0]
+    r_tm1, c_tm1 = np.nonzero(J0[:, :n_vars])
+    r_t, c_t = np.nonzero(J0[:, n_vars : 2 * n_vars])
+    r_tp1, c_tp1 = np.nonzero(J0[:, 2 * n_vars : 3 * n_vars])
+
+    nnz_tm1 = len(r_tm1)
+    nnz_t = len(r_t)
+    nnz_tp1 = len(r_tp1)
+
+    # Interior periods contribute all three blocks; first/last drop one
+    total_nnz = T * nnz_t + (T - 1) * nnz_tm1 + (T - 1) * nnz_tp1
 
     rows = np.empty(total_nnz, dtype=np.intp)
     cols = np.empty(total_nnz, dtype=np.intp)
@@ -50,34 +54,24 @@ def assemble_stacked_jacobian(
         J_period = period_jacobians[t]
         row_offset = t * n_eq
 
-        J_tm1 = J_period[:, :n_vars]
-        J_t = J_period[:, n_vars : 2 * n_vars]
-        J_tp1 = J_period[:, 2 * n_vars : 3 * n_vars]
-
         if t > 0:
             col_offset = (t - 1) * n_vars
-            r, c = np.nonzero(J_tm1)
-            n = len(r)
-            rows[pos : pos + n] = row_offset + r
-            cols[pos : pos + n] = col_offset + c
-            data[pos : pos + n] = J_tm1[r, c]
-            pos += n
+            rows[pos : pos + nnz_tm1] = row_offset + r_tm1
+            cols[pos : pos + nnz_tm1] = col_offset + c_tm1
+            data[pos : pos + nnz_tm1] = J_period[r_tm1, c_tm1]
+            pos += nnz_tm1
 
         col_offset = t * n_vars
-        r, c = np.nonzero(J_t)
-        n = len(r)
-        rows[pos : pos + n] = row_offset + r
-        cols[pos : pos + n] = col_offset + c
-        data[pos : pos + n] = J_t[r, c]
-        pos += n
+        rows[pos : pos + nnz_t] = row_offset + r_t
+        cols[pos : pos + nnz_t] = col_offset + c_t
+        data[pos : pos + nnz_t] = J_period[r_t, n_vars + c_t]
+        pos += nnz_t
 
         if t < T - 1:
             col_offset = (t + 1) * n_vars
-            r, c = np.nonzero(J_tp1)
-            n = len(r)
-            rows[pos : pos + n] = row_offset + r
-            cols[pos : pos + n] = col_offset + c
-            data[pos : pos + n] = J_tp1[r, c]
-            pos += n
+            rows[pos : pos + nnz_tp1] = row_offset + r_tp1
+            cols[pos : pos + nnz_tp1] = col_offset + c_tp1
+            data[pos : pos + nnz_tp1] = J_period[r_tp1, 2 * n_vars + c_tp1]
+            pos += nnz_tp1
 
     return sparse.csc_matrix((data, (rows, cols)), shape=(T * n_eq, T * n_vars))

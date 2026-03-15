@@ -6,16 +6,16 @@ SOLVER_TOL = 1e-10
 SOLVER_MAXITER = 100
 
 
-class SparseNewton:
+class SparseRoot:
     params = [[100, 500, 1000]]
     param_names = ["system_size"]
 
     def setup(self, system_size):
-        from gEconpy.solvers.sparse_newton import sparse_newton
+        from gEconpy.solvers.sparse_root import sparse_root
 
         rng = np.random.default_rng()
 
-        self.sparse_newton = sparse_newton
+        self.sparse_root = sparse_root
         self.x0 = rng.standard_normal(system_size)
 
         # Diagonal dominance ensures the system is well-conditioned
@@ -29,7 +29,7 @@ class SparseNewton:
         self.fun = fun
 
     def time_solve(self, system_size):
-        self.sparse_newton(self.fun, self.x0, tol=SOLVER_TOL, maxiter=SOLVER_MAXITER)
+        self.sparse_root(self.fun, self.x0, tol=SOLVER_TOL, maxiter=SOLVER_MAXITER)
 
     def peakmem_solve(self, system_size):
-        self.sparse_newton(self.fun, self.x0, tol=SOLVER_TOL, maxiter=SOLVER_MAXITER)
+        self.sparse_root(self.fun, self.x0, tol=SOLVER_TOL, maxiter=SOLVER_MAXITER)
