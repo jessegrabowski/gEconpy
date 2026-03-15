@@ -451,6 +451,45 @@ class Model:
         """List of model equations, evaluated at the deterministic steady state."""
         return self._steady_state_relationships
 
+    @property
+    def n_variables(self) -> int:
+        """Number of endogenous variables in the model."""
+        return len(self._variables)
+
+    @property
+    def backward_variables(self) -> list[TimeAwareSymbol]:
+        """Variables that appear at t-1 in at least one equation (state variables)."""
+        if not hasattr(self, "_backward_variables"):
+            lagged = {a.set_t(0) for eq in self._equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == -1}
+            self._backward_variables = [v for v in self._variables if v in lagged]
+        return self._backward_variables
+
+    @property
+    def forward_variables(self) -> list[TimeAwareSymbol]:
+        """Variables that appear at t+1 in at least one equation (forward-looking/jump variables)."""
+        if not hasattr(self, "_forward_variables"):
+            leads = {a.set_t(0) for eq in self._equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == 1}
+            self._forward_variables = [v for v in self._variables if v in leads]
+        return self._forward_variables
+
+    @property
+    def n_backward(self) -> int:
+        """Number of backward-looking (state) variables."""
+        return len(self.backward_variables)
+
+    @property
+    def n_forward(self) -> int:
+        """Number of forward-looking (jump) variables."""
+        return len(self.forward_variables)
+
+    @property
+    def lead_var_idx(self) -> np.ndarray:
+        """Column indices of forward-looking variables in the Jacobian matrices."""
+        if not hasattr(self, "_lead_var_idx"):
+            fwd_set = set(self.forward_variables)
+            self._lead_var_idx = np.array([i for i, v in enumerate(self._variables) if v in fwd_set], dtype=int)
+        return self._lead_var_idx
+
     def parameters(self, **updates: float) -> SymbolDictionary[str, float]:
         """
         Compute the full set of free parameters for the model, including deterministic parameters.

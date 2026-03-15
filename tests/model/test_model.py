@@ -26,6 +26,7 @@ from gEconpy.model.simulate import impulse_response_function, simulate
 from gEconpy.model.statistics import (
     autocorrelation_matrix,
     build_Q_matrix,
+    eigenvalue_sensitivity,
     matrix_to_dataframe,
     stationary_covariance_matrix,
     summarize_perturbation_solution,
@@ -618,6 +619,30 @@ def test_compute_bk_eigenvalues_pt():
     # The two methods (ordqz vs solve+eig) may differ in which eigenvalues they compute,
     # but the count of unstable eigenvalues (modulus > 1) must agree.
     assert (modulus_np > 1).sum() == (modulus_pt > 1).sum()
+
+
+def test_eigenvalue_sensitivity():
+    """Verify eigenvalue_sensitivity returns eigenvalues consistent with compute_bk_eigenvalues."""
+    model = load_and_cache_model("basic_rbc.gcn")
+    A, B, C, D = model.linearize_model(verbose=False)
+
+    # Get eigenvalues from numpy reference
+    re_np, im_np, _ = compute_bk_eigenvalues(A, B, C, D)
+    mod_np = np.sqrt(re_np**2 + im_np**2)
+
+    # Get eigenvalues from sensitivity function
+    ds = eigenvalue_sensitivity(model, verbose=False)
+    mod_pt = ds.eigenvalues.sel(component="modulus").values
+
+    # Filter to finite eigenvalues and compare
+    finite_np = mod_np[(mod_np > 1e-6) & (mod_np < 1e6)]
+    finite_pt = mod_pt[(mod_pt > 1e-6) & (mod_pt < 1e6)]
+
+    assert_allclose(np.sort(finite_np), np.sort(finite_pt), rtol=1e-6)
+
+    # Gradients should be non-trivial for at least some eigenvalue/parameter pairs
+    grad_mags = np.sqrt(ds.gradients.sel(part="real").values ** 2 + ds.gradients.sel(part="imaginary").values ** 2)
+    assert grad_mags.max() > 1e-10
 
 
 def test_summarize_perturbation_solution():

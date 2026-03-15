@@ -19,7 +19,7 @@ from xarray_einstats.linalg import diagonal as xr_diagonal
 
 from gEconpy.model.model import Model
 from gEconpy.model.statespace import DSGEStateSpace
-from gEconpy.model.statistics import check_bk_condition
+from gEconpy.model.statistics import check_bk_condition, eigenvalue_sensitivity
 
 
 def set_matplotlib_style():
@@ -714,6 +714,358 @@ def plot_eigenvalues(
     [spine.set_visible(False) for spine in ax.spines.values()]
     ax.grid(ls="--", lw=0.5)
     ax.set_title(f"Eigenvalues of Model Solution\n{n_infinity} Eigenvalues with Infinity Modulus not shown.")
+    return fig
+
+
+def _compute_axis_limits(
+    re_vals: np.ndarray, im_vals: np.ndarray
+) -> tuple[tuple[float, float], tuple[float, float], float]:
+    """
+    Compute axis limits that zoom to eigenvalue data with padding.
+
+    Returns square limits centered on the data for equal aspect ratio plotting.
+
+    Parameters
+    ----------
+    re_vals : ndarray
+        Real parts of eigenvalues.
+    im_vals : ndarray
+        Imaginary parts of eigenvalues.
+
+    Returns
+    -------
+    xlim : tuple of float
+        (xmin, xmax) axis limits.
+    ylim : tuple of float
+        (ymin, ymax) axis limits.
+    half_range : float
+        Half the axis range (for arrow scaling).
+    """
+    if len(re_vals) == 0:
+        return (-1.5, 1.5), (-1.5, 1.5), 1.5
+
+    re_min, re_max = re_vals.min(), re_vals.max()
+    im_min, im_max = im_vals.min(), im_vals.max()
+
+    re_range = max(re_max - re_min, 0.1)
+    im_range = max(im_max - im_min, 0.1)
+    pad_re = re_range * 0.3
+    pad_im = im_range * 0.3
+
+    xlim = (re_min - pad_re, re_max + pad_re)
+    ylim = (im_min - pad_im, im_max + pad_im)
+
+    x_center = (xlim[0] + xlim[1]) / 2
+    y_center = (ylim[0] + ylim[1]) / 2
+    half_range = max(xlim[1] - xlim[0], ylim[1] - ylim[0]) / 2
+
+    xlim = (x_center - half_range, x_center + half_range)
+    ylim = (y_center - half_range, y_center + half_range)
+
+    return xlim, ylim, half_range
+
+
+def _draw_eigenvalue_panel(
+    ax: plt.Axes,
+    re_plot: np.ndarray,
+    im_plot: np.ndarray,
+    mod_plot: np.ndarray,
+    d_re: np.ndarray,
+    d_im: np.ndarray,
+    param_name: str,
+    param_value: float,
+    perturbation: float,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    plot_circle: bool,
+    show_legend: bool,
+    min_arrow_frac: float,
+) -> None:
+    """
+    Draw a single eigenvalue sensitivity panel.
+
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axes to draw on.
+    re_plot : ndarray
+        Real parts of eigenvalues.
+    im_plot : ndarray
+        Imaginary parts of eigenvalues.
+    mod_plot : ndarray
+        Moduli of eigenvalues.
+    d_re : ndarray
+        Gradient of real part w.r.t. parameter.
+    d_im : ndarray
+        Gradient of imaginary part w.r.t. parameter.
+    param_name : str
+        Parameter name for title.
+    param_value : float
+        Current parameter value (for scaling perturbation).
+    perturbation : float
+        Perturbation size as decimal fraction of parameter value (0.01 = 1%).
+    xlim : tuple of float
+        X-axis limits.
+    ylim : tuple of float
+        Y-axis limits.
+    plot_circle : bool
+        Whether to draw the unit circle.
+    show_legend : bool
+        Whether to show legend on this panel.
+    min_arrow_frac : float
+        Minimum gradient magnitude as fraction of max to draw arrow.
+    """
+    if plot_circle:
+        theta = np.linspace(0, 2 * np.pi, 200)
+        ax.plot(np.cos(theta), np.sin(theta), color="k", lw=1, zorder=1, label="Unit circle")
+
+    stable_mask = mod_plot <= 1.0
+    if stable_mask.any():
+        ax.scatter(
+            re_plot[stable_mask],
+            im_plot[stable_mask],
+            c="tab:blue",
+            s=40,
+            lw=0.5,
+            edgecolor="k",
+            zorder=3,
+            label="Stable (|λ|≤1)",
+        )
+    if (~stable_mask).any():
+        ax.scatter(
+            re_plot[~stable_mask],
+            im_plot[~stable_mask],
+            c="tab:red",
+            s=40,
+            lw=0.5,
+            edgecolor="k",
+            zorder=3,
+            label="Unstable (|λ|>1)",
+        )
+
+    # Compute actual eigenvalue displacement for given perturbation
+    # δλ = (∂λ/∂p) * (p * perturbation)
+    delta_p = param_value * perturbation
+    arrow_re = d_re * delta_p
+    arrow_im = d_im * delta_p
+
+    grad_mags = np.sqrt(d_re**2 + d_im**2)
+    max_grad = grad_mags.max() if grad_mags.size > 0 and grad_mags.max() > 1e-12 else 1.0
+    min_grad_threshold = max_grad * min_arrow_frac
+
+    for i in range(len(re_plot)):
+        if grad_mags[i] > min_grad_threshold:
+            ax.annotate(
+                "",
+                xy=(re_plot[i] + arrow_re[i], im_plot[i] + arrow_im[i]),
+                xytext=(re_plot[i], im_plot[i]),
+                arrowprops={"arrowstyle": "->", "color": "k", "lw": 1},
+                zorder=2,
+            )
+
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.set_aspect("equal")
+    ax.axhline(0, color="gray", lw=0.5, ls="--", zorder=0)
+    ax.axvline(0, color="gray", lw=0.5, ls="--", zorder=0)
+    ax.set_xlabel("Real")
+    ax.set_ylabel("Imaginary")
+    perturbed_value = param_value * (1 + perturbation)
+    ax.set_title(f"{param_name}: {param_value:.4g} → {perturbed_value:.4g}")
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.grid(ls="--", lw=0.5, alpha=0.5)
+
+    if show_legend:
+        ax.legend(loc="best", fontsize="small", framealpha=0.9)
+
+
+def _filter_eigenvalues(
+    sensitivity_data: xr.Dataset,
+    filter_zeros: bool,
+    filter_infinite: bool,
+    zero_tol: float,
+    inf_tol: float | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, xr.Dataset]:
+    """
+    Filter eigenvalues to exclude zeros and infinites.
+
+    Returns filtered real, imaginary, modulus arrays and the filtered dataset.
+    """
+    re_vals = sensitivity_data.eigenvalues.sel(component="real").values
+    im_vals = sensitivity_data.eigenvalues.sel(component="imaginary").values
+    mod_vals = sensitivity_data.eigenvalues.sel(component="modulus").values
+
+    if inf_tol is None:
+        finite_mods = mod_vals[mod_vals < 1e6]
+        inf_tol = max(10 * finite_mods.max(), 10.0) if len(finite_mods) > 0 else 1e6
+
+    mask = np.ones(len(mod_vals), dtype=bool)
+    if filter_zeros:
+        mask &= mod_vals > zero_tol
+    if filter_infinite:
+        mask &= mod_vals < inf_tol
+
+    valid_indices = sensitivity_data.eigenvalue.values[mask]
+    filtered_data = sensitivity_data.sel(eigenvalue=valid_indices)
+
+    return re_vals[mask], im_vals[mask], mod_vals[mask], filtered_data, len(mod_vals) - mask.sum()
+
+
+def _validate_params_to_plot(
+    params_to_plot: list[str] | None,
+    all_params: list[str],
+) -> list[str]:
+    """Validate and return the list of parameters to plot."""
+    if params_to_plot is None:
+        return all_params
+
+    for p in params_to_plot:
+        if p not in all_params:
+            raise ValueError(f"Parameter '{p}' not found. Available: {all_params}")
+    return params_to_plot
+
+
+def plot_eigenvalue_sensitivity(
+    model: Model,
+    sensitivity_data: xr.Dataset | None = None,
+    params_to_plot: list[str] | None = None,
+    perturbation: float = 0.01,
+    filter_zeros: bool = True,
+    filter_infinite: bool = True,
+    zero_tol: float = 1e-6,
+    inf_tol: float | None = None,
+    min_arrow_frac: float = 0.10,
+    n_cols: int | None = None,
+    figsize: tuple[float, float] | None = None,
+    dpi: int | None = None,
+    plot_circle: bool = True,
+    **eigenvalue_sensitivity_kwargs,
+) -> Figure:
+    """
+    Plot eigenvalue sensitivity to parameters on the complex plane.
+
+    For each parameter, creates a subplot showing eigenvalues on the complex plane with
+    the unit circle. Arrows indicate how each eigenvalue moves when the parameter is
+    increased by the specified fraction.
+
+    Parameters
+    ----------
+    model : Model
+        A gEconpy DSGE model.
+    sensitivity_data : Dataset, optional
+        Pre-computed output from ``eigenvalue_sensitivity``. If not provided, it will be
+        computed using ``eigenvalue_sensitivity_kwargs``.
+    params_to_plot : list of str, optional
+        Parameter names to create plots for. If not provided, all parameters are plotted.
+    perturbation : float, default 0.01
+        Size of parameter perturbation as a decimal fraction (0.01 = 1%, 0.10 = 10%).
+        Arrows show eigenvalue movement for this fractional increase in parameter value.
+    filter_zeros : bool, default True
+        Whether to exclude eigenvalues with modulus below ``zero_tol``.
+    filter_infinite : bool, default True
+        Whether to exclude eigenvalues with modulus above ``inf_tol``.
+    zero_tol : float, default 1e-6
+        Threshold below which eigenvalues are considered zero.
+    inf_tol : float, optional
+        Threshold above which eigenvalues are considered infinite. If not provided,
+        defaults to 10x the maximum finite eigenvalue modulus.
+    min_arrow_frac : float, default 0.10
+        Minimum gradient magnitude as fraction of per-parameter maximum required to
+        draw an arrow. Filters out visually insignificant arrows.
+    n_cols : int, optional
+        Number of columns in the subplot grid. Defaults to ``min(4, n_params)``.
+    figsize : tuple of float, optional
+        Figure size in inches. If not provided, computed from number of subplots.
+    dpi : int, optional
+        Figure resolution. Default is 144.
+    plot_circle : bool, default True
+        Whether to draw the unit circle on each subplot.
+    **eigenvalue_sensitivity_kwargs
+        Keyword arguments passed to ``eigenvalue_sensitivity`` if ``sensitivity_data``
+        is not provided (e.g., ``verbose=False``, parameter overrides).
+
+    Returns
+    -------
+    fig: Figure
+        Matplotlib figure containing the sensitivity plots.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from gEconpy.model.build import model_from_gcn
+        from gEconpy.plotting import plot_eigenvalue_sensitivity
+
+        model = model_from_gcn("rbc.gcn")
+
+        # Show eigenvalue movement for 1% parameter increase (default)
+        fig = plot_eigenvalue_sensitivity(model, verbose=False)
+
+        # Show eigenvalue movement for 10% parameter increase
+        fig = plot_eigenvalue_sensitivity(model, perturbation=0.10)
+
+        # Plot only specific parameters
+        fig = plot_eigenvalue_sensitivity(model, params_to_plot=["beta", "delta"])
+    """
+    dpi = dpi or 144
+
+    if sensitivity_data is None:
+        sensitivity_data = eigenvalue_sensitivity(model, **eigenvalue_sensitivity_kwargs)
+
+    re_plot, im_plot, mod_plot, filtered_data, n_filtered = _filter_eigenvalues(
+        sensitivity_data, filter_zeros, filter_infinite, zero_tol, inf_tol
+    )
+
+    all_params = list(sensitivity_data.coords["parameter"].values)
+    params_to_plot = _validate_params_to_plot(params_to_plot, all_params)
+
+    n_params = len(params_to_plot)
+    if n_params == 0:
+        raise ValueError("No parameters to plot.")
+
+    n_cols = n_cols or min(4, n_params)
+    figsize = figsize or (4 * n_cols, 4 * ((n_params + n_cols - 1) // n_cols))
+
+    fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True)
+    gs, plot_locs = prepare_gridspec_figure(n_cols, n_params, figure=fig)
+
+    xlim, ylim, _ = _compute_axis_limits(re_plot, im_plot)
+
+    grad_re = filtered_data.gradients.sel(part="real").values
+    grad_im = filtered_data.gradients.sel(part="imaginary").values
+
+    model_param_names = set(model._default_params.keys())
+    param_updates = {k: v for k, v in eigenvalue_sensitivity_kwargs.items() if k in model_param_names}
+    param_dict = model.parameters(**param_updates)
+
+    for idx, param in enumerate(params_to_plot):
+        ax = fig.add_subplot(gs[plot_locs[idx]])
+        param_idx = all_params.index(param)
+        param_value = float(param_dict.get(param, 1.0))
+
+        _draw_eigenvalue_panel(
+            ax=ax,
+            re_plot=re_plot,
+            im_plot=im_plot,
+            mod_plot=mod_plot,
+            d_re=grad_re[:, param_idx],
+            d_im=grad_im[:, param_idx],
+            param_name=param,
+            param_value=param_value,
+            perturbation=perturbation,
+            xlim=xlim,
+            ylim=ylim,
+            plot_circle=plot_circle,
+            show_legend=(idx == 0),
+            min_arrow_frac=min_arrow_frac,
+        )
+
+    title_parts = [f"Eigenvalue Sensitivity ({perturbation:.1%} perturbation)"]
+    if n_filtered > 0:
+        title_parts.append(f"{n_filtered} zero/infinite eigenvalues not shown")
+    fig.suptitle("\n".join(title_parts))
+
     return fig
 
 
