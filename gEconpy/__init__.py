@@ -6,7 +6,6 @@ from importlib.metadata import version
 from gEconpy import (
     classes,
     data,
-    exceptions,
     parser,
     plotting,
     solvers,
