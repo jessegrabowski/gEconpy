@@ -10,4 +10,4 @@ Solvers
     solvers/cycle_reduction
     solvers/gensys
     solvers/shared
-    solvers/sparse_newton
+    solvers/sparse_root
