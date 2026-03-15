@@ -19,6 +19,8 @@ from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import compile_for_scipy, make_cache_key
 from gEconpy.model.perturbation import (
     check_bk_condition,
+    compute_bk_eigenvalues,
+    compute_bk_eigenvalues_pt,
 )
 from gEconpy.model.simulate import impulse_response_function, simulate
 from gEconpy.model.statistics import (
@@ -408,6 +410,36 @@ def test_linearize_with_custom_params(rng):
     assert A[technology_eq_idx, A_idx] == rho
 
 
+@pytest.mark.parametrize(
+    "gcn_file",
+    [
+        "one_block_1_ss.gcn",
+        "rbc_2_block_ss.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+    ],
+    ids=["one_block_ss", "two_block_ss", "full_nk"],
+)
+def test_symbolic_linearization_returns_pytensor_graphs(gcn_file):
+    model = load_and_cache_model(gcn_file)
+    jacobians, ss_nodes, param_nodes = model.symbolic_linearization(verbose=False)
+
+    assert len(jacobians) == 4
+    assert all(isinstance(j, pt.TensorVariable) for j in jacobians)
+    assert len(ss_nodes) == len(model.variables)
+    assert all(isinstance(n, pt.TensorVariable) for n in ss_nodes)
+    assert all(isinstance(n, pt.TensorVariable) for n in param_nodes)
+
+
+def test_symbolic_linearization_caches():
+    model = load_and_cache_model("one_block_1_ss.gcn")
+    jac1, _ss1, _p1 = model.symbolic_linearization(verbose=False)
+    jac2, _ss2, _p2 = model.symbolic_linearization(verbose=False)
+
+    # Same objects on cache hit
+    for a, b in zip(jac1, jac2, strict=False):
+        assert a is b
+
+
 def test_invalid_solver_raises():
     file_path = "tests/_resources/test_gcns/one_block_1_ss.gcn"
     model = model_from_gcn(file_path, verbose=False)
@@ -542,6 +574,50 @@ def test_check_bk_condition():
 
     bk_res = check_bk_condition(A, B, C, D, return_value="bool", verbose=False)
     assert bk_res
+
+
+def test_compute_bk_eigenvalues():
+    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
+    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    A, B, C, D = model.linearize_model()
+
+    eigvals_real, eigvals_imag, n_forward = compute_bk_eigenvalues(A, B, C, D)
+
+    modulus = np.sqrt(eigvals_real**2 + eigvals_imag**2)
+    n_unstable = (modulus > 1).sum()
+
+    assert n_forward > 0
+    assert n_forward == n_unstable
+
+    # Moduli should be sorted ascending
+    assert np.all(np.diff(modulus) >= -1e-12)
+
+
+def test_compute_bk_eigenvalues_pt():
+    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
+    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    A_np, B_np, C_np, D_np = model.linearize_model()
+
+    eigvals_real_np, eigvals_imag_np, _n_forward = compute_bk_eigenvalues(A_np, B_np, C_np, D_np)
+
+    # Derive lead_var_idx from C the same way _find_lead_variables does
+    lead_var_idx = np.where(np.abs(C_np).sum(axis=0) > 1e-8)[0]
+
+    A_pt = pt.as_tensor_variable(A_np)
+    B_pt = pt.as_tensor_variable(B_np)
+    C_pt = pt.as_tensor_variable(C_np)
+    D_pt = pt.as_tensor_variable(D_np)
+
+    re_pt, im_pt = compute_bk_eigenvalues_pt(A_pt, B_pt, C_pt, D_pt, lead_var_idx)
+    re_val, im_val = re_pt.eval(), im_pt.eval()
+
+    # Moduli must agree between numpy (QZ) and pytensor (eig) versions
+    modulus_np = np.sqrt(eigvals_real_np**2 + eigvals_imag_np**2)
+    modulus_pt = np.sqrt(re_val**2 + im_val**2)
+
+    # The two methods (ordqz vs solve+eig) may differ in which eigenvalues they compute,
+    # but the count of unstable eigenvalues (modulus > 1) must agree.
+    assert (modulus_np > 1).sum() == (modulus_pt > 1).sum()
 
 
 def test_summarize_perturbation_solution():
