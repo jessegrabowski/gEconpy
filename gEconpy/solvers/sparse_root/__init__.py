@@ -19,12 +19,15 @@ from gEconpy.solvers.sparse_root.base import (
     default_failure_message,
     validate_fused_fun,
 )
-from gEconpy.solvers.sparse_root.direction import DirectionProposal, NewtonDirection
+from gEconpy.solvers.sparse_root.chord import Chord, chord
+from gEconpy.solvers.sparse_root.direction import ChordDirection, DirectionProposal, NewtonDirection
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking, LineSearchResult
 from gEconpy.solvers.sparse_root.newton import NewtonArmijo, newton_armijo
 
 __all__ = [
     "ArmijoBacktracking",
+    "Chord",
+    "ChordDirection",
     "DirectionProposal",
     "IterationStats",
     "LineSearchResult",
@@ -33,6 +36,7 @@ __all__ = [
     "RootSolver",
     "SolverState",
     "StepInfo",
+    "chord",
     "newton_armijo",
     "sparse_root",
 ]
