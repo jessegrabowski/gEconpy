@@ -17,7 +17,7 @@ from gEconpy.solvers.sparse_root.base import (
     default_failure_message,
     validate_fused_fun,
 )
-from gEconpy.solvers.sparse_root.newton import NewtonArmijo
+from gEconpy.solvers.sparse_root.line_search import NewtonArmijo
 
 
 def _make_result(state: SolverState, success: bool, message: str) -> OptimizeResult:

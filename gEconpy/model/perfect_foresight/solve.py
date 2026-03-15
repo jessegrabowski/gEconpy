@@ -286,8 +286,8 @@ def solve_perfect_foresight(
         Additional arguments passed to ``pytensor.function`` when compiling.
     solver : RootSolver, optional
         Root-finding solver instance. Default uses Newton's method with Armijo backtracking
-        (``NewtonArmijo()``). Use :func:`~gEconpy.solvers.sparse_root.newton_armijo` to configure
-        line search parameters, or pass a custom solver.
+        (``NewtonArmijo()``). See :mod:`~gEconpy.solvers.sparse_root.line_search` for available
+        solvers, or pass a custom solver.
     steady_state_kwargs : dict, optional
         Additional arguments passed to ``model.steady_state()``. If ``'verbose'`` is not explicitly set, it
         defaults to ``False``.
