@@ -104,7 +104,7 @@ try:
     from pytensor.link.jax.dispatch.basic import jax_funcify
 
     @jax_funcify.register(RealEig)
-    def jax_funcify_RealEig(_op, **_kwargs):
+    def jax_funcify_RealEig(op, node, **kwargs):  # noqa: ARG001
         def real_eig_jax(M):
             eigvals = jnp.linalg.eigvals(M)
             idx = jnp.argsort(jnp.abs(eigvals))
@@ -125,7 +125,7 @@ try:
     )
 
     @register_funcify_default_op_cache_key(RealEig)
-    def numba_funcify_RealEig(_op, _node, **_kwargs):
+    def numba_funcify_RealEig(op, node, **kwargs):  # noqa: ARG001
         @numba_njit
         def real_eig_numba(M):
             M_c = M.astype(np.complex128)
