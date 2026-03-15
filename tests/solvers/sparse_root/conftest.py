@@ -45,6 +45,45 @@ def broyden_system():
     return fun, -np.ones(n)
 
 
+@pytest.fixture
+def singular_system():
+    """System with singular Jacobian at x0=[1,1]. Solution at [1,2] or [2,1]."""
+
+    def fun(x):
+        res = np.array([x[0] + x[1] - 3.0, x[0] * x[1] - 2.0])
+        jac = sp.csc_matrix([[1.0, 1.0], [x[1], x[0]]])
+        return res, jac
+
+    return fun, np.array([1.0, 1.0])
+
+
+@pytest.fixture
+def coupled_nonlinear():
+    """Strongly coupled nonlinear system from scipy F6.
+
+    Uses a preconditioner matrix. Tests solver robustness with coupling.
+    """
+    J0 = np.array([[-4.256, 14.7], [0.8394989, 0.59964207]])
+
+    def fun(x):
+        v = np.array([(x[0] + 3) * (x[1] ** 5 - 7) + 3 * 6, np.sin(x[1] * np.exp(x[0]) - 1)])
+        res = -np.linalg.solve(J0, v)
+
+        eps = 1e-8
+        n = len(x)
+        jac_dense = np.zeros((n, n))
+        for j in range(n):
+            xp = x.copy()
+            xp[j] += eps
+            vp = np.array([(xp[0] + 3) * (xp[1] ** 5 - 7) + 3 * 6, np.sin(xp[1] * np.exp(xp[0]) - 1)])
+            res_p = -np.linalg.solve(J0, vp)
+            jac_dense[:, j] = (res_p - res) / eps
+        jac = sp.csc_matrix(jac_dense)
+        return res, jac
+
+    return fun, np.array([-0.5, 1.4])
+
+
 class CommonSolverTests:
     """Mixin base class providing standard convergence and robustness tests.
 

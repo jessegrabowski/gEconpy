@@ -21,8 +21,9 @@ from gEconpy.solvers.sparse_root.base import (
 )
 from gEconpy.solvers.sparse_root.chord import Chord, chord
 from gEconpy.solvers.sparse_root.direction import ChordDirection, DirectionProposal, NewtonDirection
-from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking, LineSearchResult
+from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking, LineSearchResult, NonmonotoneBacktracking
 from gEconpy.solvers.sparse_root.newton import NewtonArmijo, newton_armijo
+from gEconpy.solvers.sparse_root.nonmonotone import NewtonNonmonotone
 
 __all__ = [
     "ArmijoBacktracking",
@@ -33,6 +34,8 @@ __all__ = [
     "LineSearchResult",
     "NewtonArmijo",
     "NewtonDirection",
+    "NewtonNonmonotone",
+    "NonmonotoneBacktracking",
     "RootSolver",
     "SolverState",
     "StepInfo",
