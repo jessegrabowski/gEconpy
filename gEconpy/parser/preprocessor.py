@@ -158,7 +158,7 @@ def preprocess_file(
         The parsing result containing AST and metadata.
     """
     filepath = Path(filepath)
-    content = filepath.read_text()
+    content = filepath.read_text(encoding="utf-8")
     return preprocess(content, filename=str(filepath), validate=validate)
 
 

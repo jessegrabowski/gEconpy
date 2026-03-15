@@ -106,8 +106,11 @@ class GCNValidationError(ValueError):
 
         for i in range(start, end):
             line_num = i + 1
-            line_content = lines[i]
-            parts.append(f"  {line_num:>{width}} | {line_content}")
+            line_content = lines[i].rstrip()
+            if line_content:
+                parts.append(f"  {line_num:>{width}} | {line_content}")
+            else:
+                parts.append(f"  {line_num:>{width}} |")
 
             # Add caret and annotation under the error line
             if line_num == line and self.location.column is not None:

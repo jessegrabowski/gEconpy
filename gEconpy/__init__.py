@@ -49,7 +49,6 @@ __all__ = [
     "classes",
     "data",
     "data_from_prior",
-    "exceptions",
     "impulse_response_function",
     "make_mod_file",
     "matrix_to_dataframe",

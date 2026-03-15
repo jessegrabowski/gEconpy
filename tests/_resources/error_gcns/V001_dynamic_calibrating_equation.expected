@@ -1,0 +1,11 @@
+error[V001]: Calibrating equation in block HOUSEHOLD uses non-steady-state variables
+  --> <source>:26:9
+     |
+  25 |         # This is wrong - should use K[ss] not K[]
+  26 |         K[] / Y[] = 10 -> K_to_Y;
+               ^^^^^^^^^^^^^^^ variables must use [ss] time index
+  27 |     };
+  28 | };
+     |
+   = note: Calibrating equations define steady-state relationships
+   = note: Use X[ss] instead of X[] for all variables
