@@ -1,12 +1,8 @@
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from gEconpy.solvers.sparse_root.base import (
-    DEFAULT_ARMIJO_BETA,
-    DEFAULT_ARMIJO_C1,
-    DEFAULT_ARMIJO_MAX_ITER,
     IterationStats,
     RootFunction,
     SolverState,
@@ -60,17 +56,3 @@ class Chord:
             stats=state.stats.update(nit=1, nfev=ls.n_evals, njev=ls.n_evals, nsolve=1),
         )
         return new_state, StepInfo(accepted=True, step=step)
-
-
-def chord(
-    recompute_every: int = 5,
-    linear_solver: Callable | None = None,
-    c1: float = DEFAULT_ARMIJO_C1,
-    beta: float = DEFAULT_ARMIJO_BETA,
-    max_iter: int = DEFAULT_ARMIJO_MAX_ITER,
-) -> Chord:
-    """Create a Chord solver with common configuration."""
-    return Chord(
-        direction=ChordDirection(linear_solver=linear_solver, recompute_every=recompute_every),
-        globalization=ArmijoBacktracking(c1=c1, beta=beta, max_iter=max_iter),
-    )

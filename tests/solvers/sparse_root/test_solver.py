@@ -4,7 +4,9 @@ import scipy.sparse as sp
 from conftest import CommonSolverTests
 from scipy.sparse.linalg import gmres
 
-from gEconpy.solvers.sparse_root import NewtonArmijo, newton_armijo, sparse_root
+from gEconpy.solvers.sparse_root import NewtonArmijo, sparse_root
+from gEconpy.solvers.sparse_root.direction import NewtonDirection
+from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 
 
 class TestNewtonArmijoSuite(CommonSolverTests):
@@ -12,10 +14,10 @@ class TestNewtonArmijoSuite(CommonSolverTests):
 
 
 class TestNewtonArmijoSpecific:
-    def test_factory_parameters_propagate(self, quadratic_system):
+    def test_strict_vs_loose_c1(self, quadratic_system):
         fun, _, _ = quadratic_system
-        strict = newton_armijo(c1=0.99)
-        loose = newton_armijo(c1=1e-6)
+        strict = NewtonArmijo(globalization=ArmijoBacktracking(c1=0.99))
+        loose = NewtonArmijo(globalization=ArmijoBacktracking(c1=1e-6))
         r_strict = sparse_root(fun, np.array([100.0, 100.0]), solver=strict, progressbar=False)
         r_loose = sparse_root(fun, np.array([100.0, 100.0]), solver=loose, progressbar=False)
         assert r_loose.nfev <= r_strict.nfev
@@ -26,7 +28,7 @@ class TestNewtonArmijoSpecific:
             return x
 
         fun, x0, x_true = trig_system
-        solver = newton_armijo(linear_solver=gmres_solver)
+        solver = NewtonArmijo(direction=NewtonDirection(linear_solver=gmres_solver))
         result = sparse_root(fun, x0, solver=solver, progressbar=False)
         assert result.success
         np.testing.assert_allclose(result.x, x_true, rtol=1e-6)

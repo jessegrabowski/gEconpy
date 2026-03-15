@@ -12,7 +12,8 @@ from gEconpy.model.perfect_foresight.compile import (
     compile_perfect_foresight_problem,
 )
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
-from gEconpy.solvers.sparse_root import RootSolver, sparse_root
+from gEconpy.solvers.sparse_root import sparse_root
+from gEconpy.solvers.sparse_root.base import RootSolver
 
 if TYPE_CHECKING:
     from gEconpy.model.model import Model
