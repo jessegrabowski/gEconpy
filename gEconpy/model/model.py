@@ -451,6 +451,45 @@ class Model:
         """List of model equations, evaluated at the deterministic steady state."""
         return self._steady_state_relationships
 
+    @property
+    def n_variables(self) -> int:
+        """Number of endogenous variables in the model."""
+        return len(self._variables)
+
+    @property
+    def backward_variables(self) -> list[TimeAwareSymbol]:
+        """Variables that appear at t-1 in at least one equation (state variables)."""
+        if not hasattr(self, "_backward_variables"):
+            lagged = {a.set_t(0) for eq in self._equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == -1}
+            self._backward_variables = [v for v in self._variables if v in lagged]
+        return self._backward_variables
+
+    @property
+    def forward_variables(self) -> list[TimeAwareSymbol]:
+        """Variables that appear at t+1 in at least one equation (forward-looking/jump variables)."""
+        if not hasattr(self, "_forward_variables"):
+            leads = {a.set_t(0) for eq in self._equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == 1}
+            self._forward_variables = [v for v in self._variables if v in leads]
+        return self._forward_variables
+
+    @property
+    def n_backward(self) -> int:
+        """Number of backward-looking (state) variables."""
+        return len(self.backward_variables)
+
+    @property
+    def n_forward(self) -> int:
+        """Number of forward-looking (jump) variables."""
+        return len(self.forward_variables)
+
+    @property
+    def lead_var_idx(self) -> np.ndarray:
+        """Column indices of forward-looking variables in the Jacobian matrices."""
+        if not hasattr(self, "_lead_var_idx"):
+            fwd_set = set(self.forward_variables)
+            self._lead_var_idx = np.array([i for i, v in enumerate(self._variables) if v in fwd_set], dtype=int)
+        return self._lead_var_idx
+
     def parameters(self, **updates: float) -> SymbolDictionary[str, float]:
         """
         Compute the full set of free parameters for the model, including deterministic parameters.
@@ -1046,6 +1085,117 @@ class Model:
 
         return res, compiled_funcs
 
+    def symbolic_linearization(
+        self,
+        order: Literal[1] = 1,
+        log_linearize: bool = True,
+        not_loglin_variables: list[str] | None = None,
+        steady_state: dict | None = None,
+        loglin_negative_ss: bool = False,
+        verbose: bool = True,
+    ) -> tuple[list[TensorVariable], list[TensorVariable], list[TensorVariable]]:
+        r"""
+        Return the symbolic pytensor graphs for the linearized Jacobian matrices.
+
+        Builds (and caches) the four Jacobian matrices ``A, B, C, D`` as pytensor graph nodes representing the
+        first-order approximation of the model around its steady state:
+
+        .. math::
+            A \hat{y}_{t-1} + B \hat{y}_t + C \hat{y}_{t+1} + D \varepsilon_t = 0
+
+        Unlike :meth:`linearize_model`, this method does **not** compile or numerically evaluate the graphs. The
+        returned nodes can be inspected, manipulated, or compiled by the caller.
+
+        Parameters
+        ----------
+        order : int, default 1
+            Order of the Taylor expansion. Only ``order=1`` is currently supported.
+        log_linearize : bool, default True
+            If True, all variables are log-linearized. If False, all variables are left in levels.
+        not_loglin_variables : list of str, optional
+            Variable names to exclude from log-linearization. Ignored if ``log_linearize`` is False.
+        steady_state : dict, optional
+            Steady-state values used to determine which variables have non-positive steady states (and therefore
+            cannot be log-linearized). If not provided, the steady state is solved internally.
+        loglin_negative_ss : bool, default False
+            If True, variables with negative steady-state values are still log-linearized.
+        verbose : bool, default True
+            Log warnings about excluded variables.
+
+        Returns
+        -------
+        jacobians : list of TensorVariable
+            Four pytensor matrix graph nodes ``[A, B, C, D]``.
+        ss_input_nodes : list of TensorVariable
+            Steady-state variable input nodes consumed by the Jacobian graphs.
+        param_input_nodes : list of TensorVariable
+            Parameter input nodes consumed by the Jacobian graphs (discovered via ``explicit_graph_inputs``).
+
+        See Also
+        --------
+        linearize_model : Compile and numerically evaluate the linearized system.
+
+        Examples
+        --------
+        .. code-block:: python
+
+            model = model_from_gcn("rbc.gcn")
+            jacobians, ss_nodes, param_nodes = model.symbolic_linearization()
+            A, B, C, D = jacobians
+
+            # Inspect the pytensor graph
+            import pytensor
+
+            pytensor.dprint(A)
+        """
+        if order != 1:
+            raise NotImplementedError("Only first order linearization is currently supported.")
+
+        if self.is_linear:
+            log_linearize = False
+
+        # A steady state is only needed to decide loglin flags (sign / near-zero checks).
+        # If not provided, solve for one using default parameters.
+        if steady_state is None and log_linearize:
+            if self.is_linear:
+                steady_state = self.f_ss(**self.parameters())
+            else:
+                steady_state = self.steady_state(**self.parameters(), verbose=verbose)
+
+        not_loglin_flags = make_not_loglin_flags(
+            variables=self.variables,
+            calibrated_params=self.calibrated_params,
+            steady_state=steady_state if steady_state is not None else {},
+            log_linearize=log_linearize,
+            not_loglin_variables=not_loglin_variables,
+            loglin_negative_ss=loglin_negative_ss,
+            verbose=verbose,
+        )
+
+        loglin_vars = [v for v, flag in zip(self.variables, not_loglin_flags, strict=False) if flag == 0]
+        loglin_key = frozenset(v.base_name for v in loglin_vars)
+
+        if not hasattr(self, "_symbolic_linearize_cache"):
+            self._symbolic_linearize_cache = {}
+
+        if loglin_key not in self._symbolic_linearize_cache:
+            jacobians, ss_input_nodes = _linearize_model(
+                variables=self.variables,
+                equations=self.equations,
+                shocks=self.shocks,
+                cache=self._ensure_cache(),
+                loglin_variables=loglin_vars,
+            )
+
+            ss_names = {n.name for n in ss_input_nodes}
+            param_input_nodes = [
+                v for v in explicit_graph_inputs(jacobians) if v.name is not None and v.name not in ss_names
+            ]
+
+            self._symbolic_linearize_cache[loglin_key] = (jacobians, ss_input_nodes, param_input_nodes)
+
+        return self._symbolic_linearize_cache[loglin_key]
+
     def linearize_model(
         self,
         order: Literal[1] = 1,
@@ -1193,52 +1343,33 @@ class Model:
                     **steady_state_kwargs,
                 )
 
-        not_loglin_flags = make_not_loglin_flags(
-            variables=self.variables,
-            calibrated_params=self.calibrated_params,
-            steady_state=steady_state,
+        jacobians, ss_input_nodes, param_input_nodes = self.symbolic_linearization(
+            order=order,
             log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
+            steady_state=steady_state,
             loglin_negative_ss=loglin_negative_ss,
             verbose=verbose,
         )
 
-        # Convert flag array to a list of variables to log-linearize
-        loglin_vars = [v for v, flag in zip(self.variables, not_loglin_flags, strict=False) if flag == 0]
-        loglin_key = frozenset(v.base_name for v in loglin_vars)
+        # Cache the compiled function. Since symbolic_linearization returns the same graph objects on cache hit,
+        # the id of the first jacobian node is a stable key.
+        cache_key = id(jacobians[0])
 
-        # Cache the compiled linearization function keyed by the loglin variable set.
-        # The pytensor graph and compiled function are expensive to build but identical
-        # across calls with the same loglin set — only the input values change.
         if not hasattr(self, "_linearize_cache"):
             self._linearize_cache = {}
 
-        if loglin_key not in self._linearize_cache:
-            jacobians, ss_input_nodes = _linearize_model(
-                variables=self.variables,
-                equations=self.equations,
-                shocks=self.shocks,
-                cache=self._ensure_cache(),
-                loglin_variables=loglin_vars,
-            )
-
-            # Discover all graph inputs. ss_input_nodes are the steady-state variable nodes; remaining inputs are
-            # parameters (free, deterministic, or calibrated) that the equations reference.
-            ss_names = {n.name for n in ss_input_nodes}
-            all_graph_inputs = [
-                v for v in explicit_graph_inputs(jacobians) if v.name is not None and v.name not in ss_names
-            ]
-
-            all_inputs = ss_input_nodes + all_graph_inputs
-            f = compile_pytensor_function(all_inputs, jacobians, on_unused_input="ignore", mode=self._mode)
-            self._linearize_cache[loglin_key] = (f, all_graph_inputs)
+        if cache_key not in self._linearize_cache:
+            all_inputs = list(ss_input_nodes) + list(param_input_nodes)
+            f = compile_pytensor_function(all_inputs, jacobians, on_unused_input="ignore")
+            self._linearize_cache[cache_key] = f
         else:
-            f, all_graph_inputs = self._linearize_cache[loglin_key]
+            f = self._linearize_cache[cache_key]
 
         # Build input values: steady-state variables first, then parameters in graph order
         ss_values = {k.removesuffix("_ss"): v for k, v in steady_state.items()}
         ss_vals = [ss_values[v.base_name] for v in self.variables]
-        param_vals = [param_dict[n.name] for n in all_graph_inputs]
+        param_vals = [param_dict[n.name] for n in param_input_nodes]
 
         A, B, C, D = f(*ss_vals, *param_vals)
 

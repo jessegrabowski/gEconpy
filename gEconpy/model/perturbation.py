@@ -8,8 +8,6 @@ import pytensor.tensor as pt
 import sympy as sp
 
 from pymc.pytensorf import rewrite_pregrad
-from pytensor.graph.basic import Apply
-from pytensor.graph.op import Op
 from pytensor.graph.replace import graph_replace
 from pytensor.tensor import TensorVariable
 from scipy import linalg
@@ -18,6 +16,7 @@ from sympytensor import as_tensor
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.timing import make_all_variable_time_combinations
+from gEconpy.pytensorf.real_eig import real_eig
 from gEconpy.pytensorf.sparse_jacobian import sparse_jacobian
 from gEconpy.solvers.gensys import _gensys_setup
 from gEconpy.utilities import get_name
@@ -363,17 +362,100 @@ def check_perturbation_solution(
     _log.info(f"Norm of stochastic part:    {norm_stoch:0.9f}")
 
 
-def _compute_solution_eigenvalues(
+def compute_bk_eigenvalues(
     A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray, tol: float = 1e-8
-) -> np.ndarray:
-    """Compute sorted generalized eigenvalues of the linearized system via ordered QZ decomposition."""
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Compute generalized eigenvalues of the linearized DSGE system for BK condition analysis.
+
+    Builds the Sims (2002) augmented system and computes eigenvalues via ordered QZ decomposition.
+    Eigenvalues are sorted by ascending modulus.
+
+    Parameters
+    ----------
+    A, B, C, D : np.ndarray
+        Jacobian matrices of the linearized DSGE system.
+    tol : float, default 1e-8
+        Tolerance for identifying forward-looking variables.
+
+    Returns
+    -------
+    eigvals_real : np.ndarray
+        Real parts of eigenvalues, sorted by modulus.
+    eigvals_imag : np.ndarray
+        Imaginary parts of eigenvalues, sorted by modulus.
+    n_forward : int
+        Number of forward-looking variables (columns of C with nonzero entries).
+    """
     Gamma_0, Gamma_1, _, _, _ = _gensys_setup(A, B, C, D, tol)
     AA, BB, *_ = linalg.ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
 
     eigenvalues = np.diag(BB) / (np.diag(AA) + tol)
+    idx = np.argsort(np.abs(eigenvalues))
+    eigenvalues = eigenvalues[idx]
 
-    eig = np.column_stack([np.abs(eigenvalues), np.real(eigenvalues), np.imag(eigenvalues)])
-    return eig[np.argsort(eig[:, 0]), :]
+    n_forward = (np.abs(C).sum(axis=0) > tol).sum().astype(int)
+
+    return np.real(eigenvalues), np.imag(eigenvalues), n_forward
+
+
+def compute_bk_eigenvalues_pt(
+    A: TensorVariable,
+    B: TensorVariable,
+    C: TensorVariable,
+    _D: TensorVariable,
+    lead_var_idx: np.ndarray,
+) -> tuple[TensorVariable, TensorVariable]:
+    """Compute symbolic eigenvalues of the linearized DSGE system for BK condition analysis.
+
+    Builds the Sims (2002) augmented system symbolically and computes eigenvalues via
+    ``real_eig``. The result is differentiable with respect to the input matrices.
+
+    Parameters
+    ----------
+    A, B, C, _D : TensorVariable
+        Jacobian matrices of the linearized DSGE system.
+    lead_var_idx : np.ndarray of int
+        Column indices of forward-looking variables (columns of C with nonzero entries).
+        Must be known at graph-build time.
+
+    Returns
+    -------
+    eigvals_real : TensorVariable
+        Real parts of eigenvalues, sorted by modulus.
+    eigvals_imag : TensorVariable
+        Imaginary parts of eigenvalues, sorted by modulus.
+    """
+    lead_var_idx = np.asarray(lead_var_idx)
+    n_vars = A.type.shape[0]
+    if n_vars is None:
+        raise ValueError("A must have a known static shape for symbolic BK eigenvalue computation.")
+
+    I_n = pt.eye(n_vars)
+    Z_n = pt.zeros((n_vars, n_vars))
+
+    # Build augmented matrices (Sims 2002 form)
+    Gamma_0 = pt.vertical_stack(
+        pt.horizontal_stack(B, C),
+        pt.horizontal_stack(-I_n, Z_n),
+    )
+    Gamma_1 = pt.vertical_stack(
+        pt.horizontal_stack(A, Z_n),
+        pt.horizontal_stack(Z_n, I_n),
+    )
+
+    # Row/column selection matching _gensys_setup:
+    # all equation rows (0..n-1) + auxiliary rows for lead variables (n + lead_var_idx)
+    eqs_and_leads_idx = np.concatenate([np.arange(n_vars), lead_var_idx + n_vars])
+    Gamma_0_sel = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
+    Gamma_1_sel = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
+
+    # Gamma_0 may be singular (rank-deficient). Regularize with eps*I so that
+    # infinite eigenvalues become O(1/eps) — still correctly counted as unstable —
+    # while finite eigenvalues near |λ|=1 are perturbed by only O(eps).
+    n_sel = len(eqs_and_leads_idx)
+    G0_reg = -Gamma_0_sel + pt.eye(n_sel) * _FLOAT_ZERO_TOL
+    M = pt.linalg.solve(G0_reg, Gamma_1_sel)
+    return real_eig(M)
 
 
 def check_bk_condition(
@@ -425,9 +507,9 @@ def check_bk_condition(
     if return_value not in ["dataframe", "bool", None]:
         raise ValueError(f'Unknown return type "{return_value}"')
 
-    n_forward = (np.abs(C).sum(axis=0) > tol).sum().astype(int)
-    eig = pd.DataFrame(_compute_solution_eigenvalues(A, B, C, D, tol), columns=["Modulus", "Real", "Imaginary"])
-    n_unstable = (eig["Modulus"] > 1).sum()
+    eigvals_real, eigvals_imag, n_forward = compute_bk_eigenvalues(A, B, C, D, tol)
+    modulus = np.sqrt(eigvals_real**2 + eigvals_imag**2)
+    n_unstable = (modulus > 1).sum()
     satisfied = n_forward == n_unstable
 
     message = (
@@ -450,35 +532,8 @@ def check_bk_condition(
     if return_value is None:
         return None
     if return_value == "dataframe":
-        return eig
+        return pd.DataFrame({"Modulus": modulus, "Real": eigvals_real, "Imaginary": eigvals_imag})
     return satisfied
-
-
-class BlanchardKahnCondition(Op):
-    """Pytensor Op wrapping the Blanchard-Kahn eigenvalue check for use in computation graphs."""
-
-    def __init__(self, tol: float = 1e-8):
-        self.tol = tol
-        super().__init__()
-
-    def make_node(self, A, B, C, D) -> Apply:
-        inputs = list(map(pt.as_tensor, [A, B, C, D]))
-        outputs = [
-            pt.scalar("bk_flag", dtype=bool),
-            pt.scalar("n_forward", dtype=int),
-            pt.scalar("n_unstable", dtype=int),
-        ]
-        return Apply(self, inputs, outputs)
-
-    def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
-        A, B, C, D = inputs
-        n_forward = (np.abs(C).sum(axis=0) > _FLOAT_ZERO_TOL).sum().astype(int)
-        eig = check_bk_condition(A, B, C, D, tol=self.tol, verbose=False, return_value="dataframe")
-        n_unstable = (eig["Modulus"] > 1).sum()
-
-        outputs[0][0] = np.array(n_forward != n_unstable)
-        outputs[1][0] = np.array(n_forward)
-        outputs[2][0] = np.array(n_unstable)
 
 
 def check_bk_condition_pt(
@@ -486,32 +541,32 @@ def check_bk_condition_pt(
     B: TensorVariable,
     C: TensorVariable,
     D: TensorVariable,
-    tol: float = 1e-8,
+    lead_var_idx: np.ndarray,
 ) -> tuple[TensorVariable, TensorVariable, TensorVariable]:
     r"""
-    Pytensor wrapper for the Blanchard-Kahn condition check.
+    Symbolic Blanchard-Kahn condition check using differentiable eigenvalues.
 
     Parameters
     ----------
     A, B, C, D : TensorVariable
         Jacobian matrices of the linearized DSGE system.
-    tol : float, default 1e-8
-        Tolerance below which numerical values are considered zero.
+    lead_var_idx : np.ndarray of int
+        Column indices of forward-looking variables. Must be known at graph-build time.
 
     Returns
     -------
-    bk_flag : TensorVariable (bool scalar)
-        True if the condition is **not** satisfied.
+    bk_satisfied : TensorVariable (bool scalar)
+        True if the Blanchard-Kahn condition IS satisfied.
     n_forward : TensorVariable (int scalar)
         Number of forward-looking variables.
     n_unstable : TensorVariable (int scalar)
         Number of eigenvalues with modulus greater than one.
-
-    References
-    ----------
-    .. [1] Sims, Christopher A. "Solving linear rational expectations models."
-       *Computational Economics* 20.1-2 (2002): 1-20.
-    .. [2] Blanchard, O.J. and Kahn, C.M. "The solution of linear difference models under
-       rational expectations." *Econometrica* 48.5 (1980): 1305-1311.
     """
-    return BlanchardKahnCondition(tol=tol)(A, B, C, D)
+    lead_var_idx = np.asarray(lead_var_idx)
+    n_forward = len(lead_var_idx)
+    eigvals_real, eigvals_imag = compute_bk_eigenvalues_pt(A, B, C, D, lead_var_idx)
+    modulus = pt.sqrt(eigvals_real**2 + eigvals_imag**2)
+    n_unstable = (modulus > 1).sum()
+    bk_satisfied = pt.eq(n_forward, n_unstable)
+
+    return bk_satisfied, pt.constant(n_forward), n_unstable

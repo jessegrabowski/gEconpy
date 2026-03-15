@@ -140,6 +140,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self._bk_output = None
         self._policy_resid = None
         self._n_steps = None
+        self._lead_var_idx: np.ndarray | None = None
 
         self.verbose = verbose
 
@@ -175,6 +176,22 @@ class DSGEStateSpace(PyMCStateSpace):
             self._n_steps = n_steps
 
         return T, R
+
+    @property
+    def lead_var_idx(self) -> np.ndarray:
+        """Column indices of forward-looking variables (variables appearing at t+1 in any equation)."""
+        if self._lead_var_idx is None:
+            idx = []
+            for i, v in enumerate(self.variables):
+                if any(eq.has(v.set_t(1)) for eq in self.equations):
+                    idx.append(i)
+            self._lead_var_idx = np.array(idx, dtype=int)
+        return self._lead_var_idx
+
+    @property
+    def n_forward(self) -> int:
+        """Number of forward-looking variables."""
+        return len(self.lead_var_idx)
 
     def _setup_state_covariance(self):
         if self.full_covariance:
@@ -224,7 +241,7 @@ class DSGEStateSpace(PyMCStateSpace):
             self.linearized_system, constant_replacements, strict=False
         )
 
-        self._bk_output = check_bk_condition_pt(A, B, C, D)
+        self._bk_output = check_bk_condition_pt(A, B, C, D, lead_var_idx=self.lead_var_idx)
 
         T, R = self._setup_policy_matrices(A, B, C, D)
         resid = pt.square(A + B @ T + C @ T @ T).sum()
@@ -448,7 +465,7 @@ class DSGEStateSpace(PyMCStateSpace):
             strict=False,
         )
 
-        bk_flag, _n_forward, _n_gt_one = bk_output
+        bk_satisfied, _n_forward, _n_gt_one = bk_output
 
         if add_norm_check:
             n_vars, n_shocks = R.shape
@@ -482,8 +499,8 @@ class DSGEStateSpace(PyMCStateSpace):
             )
 
         if add_bk_check:
-            pm.Deterministic("bk_flag", bk_flag)
-            pm.Potential("bk_condition_satisfied", pt.switch(pt.eq(bk_flag, 1.0), 0.0, -np.inf))
+            pm.Deterministic("bk_satisfied", bk_satisfied)
+            pm.Potential("bk_condition_satisfied", pt.switch(pt.eq(bk_satisfied, 0.0), -np.inf, 0.0))
 
         if add_solver_success_check:
             policy_resid = pm.Deterministic("policy_resid", policy_resid)

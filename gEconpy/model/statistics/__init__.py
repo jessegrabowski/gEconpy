@@ -5,7 +5,11 @@ from gEconpy.model.statistics.covariance import (
     stationary_covariance_matrix,
 )
 from gEconpy.model.statistics.formatting import matrix_to_dataframe
-from gEconpy.model.statistics.perturbation_diagnostics import check_bk_condition, summarize_perturbation_solution
+from gEconpy.model.statistics.perturbation_diagnostics import (
+    check_bk_condition,
+    eigenvalue_sensitivity,
+    summarize_perturbation_solution,
+)
 from gEconpy.model.statistics.validation import (
     _maybe_linearize_model,
     _maybe_solve_model,
@@ -26,6 +30,7 @@ __all__ = [
     "build_Q_matrix",
     "check_bk_condition",
     "check_steady_state",
+    "eigenvalue_sensitivity",
     "matrix_to_dataframe",
     "stationary_covariance_matrix",
     "summarize_perturbation_solution",

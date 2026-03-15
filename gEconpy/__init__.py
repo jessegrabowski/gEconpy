@@ -28,6 +28,8 @@ from gEconpy.model.statistics import (
 )
 from gEconpy.model.steady_state import print_steady_state
 from gEconpy.parser.html import print_gcn_file
+from gEconpy.pytensorf.real import *  # noqa: F403
+from gEconpy.pytensorf.real_eig import *  # noqa: F403
 
 _log = logging.getLogger(__name__)
 
