@@ -1,0 +1,28 @@
+# Test file for DynamicCalibratingEquationException
+# Calibrating equation uses non-steady-state time index
+
+block HOUSEHOLD {
+    definitions {
+        u[] = C[] ^ (1 - sigma) / (1 - sigma);
+    };
+
+    controls {
+        C[];
+    };
+
+    objective {
+        U[] = u[] + beta * E[][U[1]];
+    };
+
+    constraints {
+        C[] + K[] = Y[] + (1 - delta) * K[-1];
+    };
+
+    calibration {
+        beta = 0.99;
+        sigma = 2.0;
+        delta = 0.025;
+        # This is wrong - should use K[ss] not K[]
+        K[] / Y[] = 10 -> K_to_Y;
+    };
+};

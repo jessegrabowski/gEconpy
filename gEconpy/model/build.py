@@ -44,7 +44,7 @@ def _print_parse_error(error: GCNParseError | GCNErrorCollection, gcn_path: Path
     if isinstance(error, GCNErrorCollection):
         print(formatter.format_error_collection(error), file=sys.stderr)
     else:
-        source = gcn_path.read_text() if gcn_path.exists() else None
+        source = gcn_path.read_text(encoding="utf-8") if gcn_path.exists() else None
         print(formatter.format_error(error, source), file=sys.stderr)
 
 

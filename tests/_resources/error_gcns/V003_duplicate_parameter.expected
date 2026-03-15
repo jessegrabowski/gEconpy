@@ -1,0 +1,11 @@
+error[V003]: Duplicate parameter declaration in block HOUSEHOLD
+  --> <source>:24:9
+     |
+  23 |         beta = 0.99;
+  24 |         alpha = 0.5;
+               ^^^^^^^^^^^^ 'alpha' already defined
+  25 |     };
+  26 | };
+     |
+   = note: Each parameter should be declared only once
+   = note: Remove the duplicate declaration

@@ -1,5 +1,3 @@
-import sys
-
 from difflib import unified_diff
 from pathlib import Path
 
@@ -41,14 +39,14 @@ def get_validation_error_test_cases():
 )
 def test_parse_error_output_matches_golden_file(name, gcn_file, expected_file):
     """Test that parse errors (Exxx) match expected output."""
-    content = gcn_file.read_text()
+    content = gcn_file.read_text(encoding="utf-8")
     formatter = ErrorFormatter(use_color=False)
 
     with pytest.raises(GCNParseError) as exc_info:
         preprocess(content, validate=True, filename=gcn_file.name)
 
     actual_output = formatter.format_error(exc_info.value, content)
-    expected_output = expected_file.read_text().rstrip("\n")
+    expected_output = expected_file.read_text(encoding="utf-8").rstrip("\n")
 
     if actual_output != expected_output:
         _print_diff(actual_output, expected_output, name)
@@ -65,7 +63,7 @@ def test_validation_error_output_matches_golden_file(name, gcn_file, expected_fi
         load_gcn_file(str(gcn_file))
 
     actual_output = str(exc_info.value)
-    expected_output = expected_file.read_text().rstrip("\n")
+    expected_output = expected_file.read_text(encoding="utf-8").rstrip("\n")
 
     if actual_output != expected_output:
         _print_diff(actual_output, expected_output, name)

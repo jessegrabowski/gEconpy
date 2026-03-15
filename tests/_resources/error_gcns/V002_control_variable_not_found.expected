@@ -1,0 +1,12 @@
+error[V002]: Control variable 'K_t' in block HOUSEHOLD not found in equations
+  --> <source>:6:9
+     |
+  5 |     controls {
+  6 |         K[];
+              ^^^ undeclared control variable
+  7 |     };
+  8 |
+     |
+   = note: Control variables must appear in the objective or constraints
+   = note: Check spelling of the variable name
+   = note: Verify the variable has the correct time index

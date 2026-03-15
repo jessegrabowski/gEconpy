@@ -1,0 +1,26 @@
+# Test file for DuplicateParameterError
+# Parameter alpha is defined twice
+
+block HOUSEHOLD {
+    definitions {
+        u[] = C[] ^ (1 - sigma) / (1 - sigma);
+    };
+
+    controls {
+        C[];
+    };
+
+    objective {
+        U[] = u[] + beta * E[][U[1]];
+    };
+
+    constraints {
+        C[] = Y[];
+    };
+
+    calibration {
+        alpha = 0.33;
+        beta = 0.99;
+        alpha = 0.5;
+    };
+};

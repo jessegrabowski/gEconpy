@@ -1,0 +1,13 @@
+error[E009]: Used '=' instead of '~' for distribution prior on 'beta'. Use 'beta ~ maxent(...)' instead of 'beta = maxent(...)'. Found '='
+  --> E009_equals_instead_of_tilde.gcn:10:9
+     |
+   8 |     calibration
+   9 |     {
+  10 |         beta = maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99;
+     |         ^ invalid distribution syntax
+  11 |     };
+  12 | };
+     |
+   = note: Use tilde for distributions: alpha ~ Beta(a=1, b=1)
+   = note: Check distribution name spelling
+   = note: Use '=' for fixed values, '~' for distributions

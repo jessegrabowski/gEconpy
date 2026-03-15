@@ -371,7 +371,7 @@ class TestParseGCNFiles:
         if not gcn_path.exists():
             pytest.skip(f"Test file not found: {gcn_path}")
 
-        text = gcn_path.read_text()
+        text = gcn_path.read_text(encoding="utf-8")
         model = parse_gcn(text)
 
         assert len(model.blocks) == 1
@@ -382,7 +382,7 @@ class TestParseGCNFiles:
         if not gcn_path.exists():
             pytest.skip(f"Test file not found: {gcn_path}")
 
-        text = gcn_path.read_text()
+        text = gcn_path.read_text(encoding="utf-8")
         model = parse_gcn(text)
 
         assert len(model.blocks) >= 2
@@ -394,7 +394,7 @@ class TestParseGCNFiles:
         if not gcn_path.exists():
             pytest.skip(f"Test file not found: {gcn_path}")
 
-        text = gcn_path.read_text()
+        text = gcn_path.read_text(encoding="utf-8")
         model = parse_gcn(text)
 
         assert isinstance(model, GCNModel)

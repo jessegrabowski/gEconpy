@@ -1,0 +1,12 @@
+# Test file for ControlVariableNotFoundException
+# Control variable K[] is declared but not used in any equations
+
+block HOUSEHOLD {
+    controls {
+        K[];
+    };
+
+    objective {
+        U[] = C[];
+    };
+};
