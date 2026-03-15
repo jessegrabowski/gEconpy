@@ -12,8 +12,9 @@ from gEconpy.model.perfect_foresight.compile import (
     compile_perfect_foresight_problem,
 )
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
-from gEconpy.solvers.sparse_root import sparse_root
+from gEconpy.solvers.sparse_root import NewtonArmijo, sparse_root
 from gEconpy.solvers.sparse_root.base import RootSolver
+from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 
 if TYPE_CHECKING:
     from gEconpy.model.model import Model
@@ -88,6 +89,38 @@ def _build_param_matrix(
     return param_matrix
 
 
+def _evaluate_periods(
+    f,
+    y: np.ndarray,
+    y_initial: np.ndarray,
+    y_terminal: np.ndarray,
+    x: np.ndarray,
+    params: np.ndarray,
+    n_vars: int,
+    n_shocks: int,
+    T: int,
+):
+    """Iterate over T periods, calling ``f`` with the appropriate boundary vectors.
+
+    Yields
+    ------
+    t : int
+        Period index.
+    result : tuple
+        Whatever ``f`` returns for that period (residuals, or residuals + Jacobian).
+    """
+    y_mat = y.reshape(T, n_vars)
+    for t in range(T):
+        y_tm1 = y_initial if t == 0 else y_mat[t - 1]
+        y_t = y_mat[t]
+        y_tp1 = y_terminal if t == T - 1 else y_mat[t + 1]
+
+        if n_shocks > 0:
+            yield t, f(y_tm1, y_t, y_tp1, x[t], *params[t])
+        else:
+            yield t, f(y_tm1, y_t, y_tp1, *params[t])
+
+
 def _compute_stacked_residuals_and_jacobian(
     y: np.ndarray,
     y_initial: np.ndarray,
@@ -97,32 +130,42 @@ def _compute_stacked_residuals_and_jacobian(
     problem: PerfectForesightProblem,
 ) -> tuple[np.ndarray, sparse.csc_matrix]:
     """Evaluate the single-period function T times and assemble the stacked system."""
-    n_vars = problem.n_vars
     n_eq = problem.n_eq
-    n_shocks = problem.n_shocks
     T = problem.T
 
-    y_mat = y.reshape(T, n_vars)
     residuals = np.zeros(T * n_eq)
-    jacobians = []
+    jacobians = [None] * T
 
-    for t in range(T):
-        y_tm1 = y_initial if t == 0 else y_mat[t - 1]
-        y_t = y_mat[t]
-        y_tp1 = y_terminal if t == T - 1 else y_mat[t + 1]
-
-        x_t = x[t] if n_shocks > 0 else np.array([])
-
-        if n_shocks > 0:
-            r, J = problem.f_resid_and_jac(y_tm1, y_t, y_tp1, x_t, *params[t])
-        else:
-            r, J = problem.f_resid_and_jac(y_tm1, y_t, y_tp1, *params[t])
-
+    for t, (r, J) in _evaluate_periods(
+        problem.f_resid_and_jac, y, y_initial, y_terminal, x, params, problem.n_vars, problem.n_shocks, T
+    ):
         residuals[t * n_eq : (t + 1) * n_eq] = r
-        jacobians.append(J)
+        jacobians[t] = J
 
-    jac = assemble_stacked_jacobian(jacobians, n_vars, n_eq, T)
+    jac = assemble_stacked_jacobian(jacobians, problem.n_vars, n_eq, T)
     return residuals, jac
+
+
+def _compute_stacked_residuals(
+    y: np.ndarray,
+    y_initial: np.ndarray,
+    y_terminal: np.ndarray,
+    x: np.ndarray,
+    params: np.ndarray,
+    problem: PerfectForesightProblem,
+) -> np.ndarray:
+    """Evaluate residuals only (no Jacobian) for cheap merit evaluation during line search."""
+    n_eq = problem.n_eq
+    T = problem.T
+
+    residuals = np.zeros(T * n_eq)
+
+    for t, (r,) in _evaluate_periods(
+        problem.f_resid_only, y, y_initial, y_terminal, x, params, problem.n_vars, problem.n_shocks, T
+    ):
+        residuals[t * n_eq : (t + 1) * n_eq] = r
+
+    return residuals
 
 
 def _build_trajectory_dataframe(x: np.ndarray, var_names: list[str], T: int) -> pd.DataFrame:
@@ -427,6 +470,20 @@ def solve_perfect_foresight(
 
     def system(x, y_init, y_term, shock_mat, param_vals, prob):
         return _compute_stacked_residuals_and_jacobian(x, y_init, y_term, shock_mat, param_vals, prob)
+
+    # Attach cheap residual-only merit function to the solver's globalization strategy
+    # so line search avoids computing the Jacobian at rejected trial points.
+    if problem.f_resid_only is not None:
+
+        def merit_fun(x, *_args):
+            return _compute_stacked_residuals(x, y_initial, y_terminal, shock_matrix, param_matrix, problem)
+
+        if solver is None:
+            solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
+        else:
+            glob = getattr(solver, "globalization", None)
+            if glob is not None and hasattr(glob, "merit_fun"):
+                glob.merit_fun = merit_fun
 
     result = sparse_root(
         system, x0_vec, args=(y_initial, y_terminal, shock_matrix, param_matrix, problem), solver=solver

@@ -89,7 +89,7 @@ class ChordDirection:
     ) -> DirectionProposal:
         # Refresh cache when needed
         if self._cached_jac is None or self._call_count % self.recompute_every == 0:
-            self._cached_jac = jac.copy()
+            self._cached_jac = jac
         self._call_count += 1
 
         J = self._cached_jac
@@ -188,10 +188,11 @@ class KrylovDirection:
             kind = f"krylov_{self.krylov_method}_gradient_fallback"
 
         # Track for Eisenstat-Walker
+        Jdx = jac @ dx
         self._prev_res_norm = res_norm
-        self._prev_pred_norm = np.linalg.norm(res + jac @ dx)
+        self._prev_pred_norm = np.linalg.norm(res + Jdx)
 
-        slope = float(np.dot(res, jac @ dx))
+        slope = float(res @ Jdx)
         if slope >= 0:
             dx = -dx
             slope = -slope

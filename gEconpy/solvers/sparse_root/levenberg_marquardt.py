@@ -2,7 +2,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
-import scipy.sparse as sp
 
 from scipy.sparse.linalg import spsolve
 
@@ -72,13 +71,17 @@ class LevenbergMarquardt:
         diag_JtJ = np.asarray(JtJ.diagonal()).ravel()
         D_diag = np.maximum(1.0, diag_JtJ)
 
+        # Pre-build the LHS sparsity pattern once; update diagonal per lambda
+        lhs_base = JtJ.tocsc().copy()
+        diag_indices = np.arange(lhs_base.shape[0])
+
         consecutive_rejects = 0
         nfev = 0
 
         while True:
-            # Solve the damped normal equations
-            D_lam = sp.diags(self._lam * D_diag, format="csc")
-            lhs = (JtJ + D_lam).tocsc()
+            # Solve the damped normal equations — update diagonal in-place
+            lhs = lhs_base.copy()
+            lhs[diag_indices, diag_indices] += self._lam * D_diag
 
             try:
                 p = self.linear_solver(lhs, -g)

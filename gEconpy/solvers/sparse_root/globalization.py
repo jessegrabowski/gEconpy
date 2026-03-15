@@ -9,6 +9,7 @@ from gEconpy.solvers.sparse_root.base import (
     DEFAULT_ARMIJO_BETA,
     DEFAULT_ARMIJO_C1,
     DEFAULT_ARMIJO_MAX_ITER,
+    MeritFunction,
     RootFunction,
     merit,
 )
@@ -38,9 +39,30 @@ class GlobalizationStrategy(Protocol):
 
 @dataclass
 class ArmijoBacktracking:
+    """Backtracking line search with the Armijo sufficient decrease condition.
+
+    Parameters
+    ----------
+    c1 : float
+        Sufficient decrease parameter.
+    beta : float
+        Step-size reduction factor.
+    max_iter : int
+        Maximum number of backtracking reductions.
+    merit_fun : callable or None
+        Cheap function ``merit_fun(x, *args) -> residuals`` used to evaluate the merit function during
+        backtracking. When provided, trial points are evaluated with this function instead of the full
+        ``fun`` (which also computes the Jacobian). The full ``fun`` is called once at the accepted point
+        to obtain the Jacobian for the next iteration. This can dramatically reduce cost when the Jacobian
+        is expensive relative to the residuals (e.g. large stacked perfect-foresight systems).
+
+        When ``None`` (default), the full ``fun`` is used for all evaluations.
+    """
+
     c1: float = DEFAULT_ARMIJO_C1
     beta: float = DEFAULT_ARMIJO_BETA
     max_iter: int = DEFAULT_ARMIJO_MAX_ITER
+    merit_fun: MeritFunction | None = None
 
     def search(
         self,
@@ -53,15 +75,28 @@ class ArmijoBacktracking:
         alpha = 1.0
         dx, slope = proposal.direction, proposal.slope
 
-        for n_evals in range(1, self.max_iter + 1):
-            x_trial = x + alpha * dx
-            res_trial, jac_trial = fun(x_trial, *args)
-            phi_trial = merit(res_trial)
+        if self.merit_fun is None:
+            for n_evals in range(1, self.max_iter + 1):
+                x_trial = x + alpha * dx
+                res_trial, jac_trial = fun(x_trial, *args)
+                phi_trial = merit(res_trial)
 
-            if phi_trial <= phi_current + self.c1 * alpha * slope:
-                return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals)
+                if phi_trial <= phi_current + self.c1 * alpha * slope:
+                    return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals)
 
-            alpha *= self.beta
+                alpha *= self.beta
+        else:
+            for n_evals in range(1, self.max_iter + 1):
+                x_trial = x + alpha * dx
+                res_trial = self.merit_fun(x_trial, *args)
+                phi_trial = merit(res_trial)
+
+                if phi_trial <= phi_current + self.c1 * alpha * slope:
+                    # Accepted: evaluate the full function once to get the Jacobian
+                    res_trial, jac_trial = fun(x_trial, *args)
+                    return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals + 1)
+
+                alpha *= self.beta
 
         raise RuntimeError(f"Line search failed after {self.max_iter} reductions")
 
@@ -89,12 +124,16 @@ class NonmonotoneBacktracking:
         Maximum number of backtracking reductions.
     memory : int
         Number of past merit values to keep. ``memory=1`` recovers standard Armijo.
+    merit_fun : callable or None
+        Cheap function ``merit_fun(x, *args) -> residuals`` used to evaluate the merit function during
+        backtracking. See :class:`ArmijoBacktracking` for details.
     """
 
     c1: float = DEFAULT_ARMIJO_C1
     beta: float = DEFAULT_ARMIJO_BETA
     max_iter: int = DEFAULT_ARMIJO_MAX_ITER
     memory: int = 10
+    merit_fun: MeritFunction | None = None
     _phi_history: deque = field(init=False, repr=False, default=None)
 
     def __post_init__(self):
@@ -114,14 +153,26 @@ class NonmonotoneBacktracking:
         alpha = 1.0
         dx, slope = proposal.direction, proposal.slope
 
-        for n_evals in range(1, self.max_iter + 1):
-            x_trial = x + alpha * dx
-            res_trial, jac_trial = fun(x_trial, *args)
-            phi_trial = merit(res_trial)
+        if self.merit_fun is None:
+            for n_evals in range(1, self.max_iter + 1):
+                x_trial = x + alpha * dx
+                res_trial, jac_trial = fun(x_trial, *args)
+                phi_trial = merit(res_trial)
 
-            if phi_trial <= phi_ref + self.c1 * alpha * slope:
-                return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals)
+                if phi_trial <= phi_ref + self.c1 * alpha * slope:
+                    return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals)
 
-            alpha *= self.beta
+                alpha *= self.beta
+        else:
+            for n_evals in range(1, self.max_iter + 1):
+                x_trial = x + alpha * dx
+                res_trial = self.merit_fun(x_trial, *args)
+                phi_trial = merit(res_trial)
+
+                if phi_trial <= phi_ref + self.c1 * alpha * slope:
+                    res_trial, jac_trial = fun(x_trial, *args)
+                    return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals + 1)
+
+                alpha *= self.beta
 
         raise RuntimeError(f"Nonmonotone line search failed after {self.max_iter} reductions")

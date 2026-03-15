@@ -45,7 +45,8 @@ class TestDoglegStep:
         solver = SparseDogleg(delta0=100.0)
         J = sp.csc_matrix(np.eye(2))
         r = np.array([1.0, 2.0])
-        p = solver._compute_dogleg_step(J, r, delta=100.0)
+        g = J.T @ r
+        p = solver._compute_dogleg_step(J, r, g, delta=100.0)
         np.testing.assert_allclose(p, -r, atol=1e-10)
 
     def test_cauchy_outside_region(self):
@@ -53,7 +54,8 @@ class TestDoglegStep:
         solver = SparseDogleg(delta0=0.1)
         J = sp.csc_matrix(np.eye(2))
         r = np.array([10.0, 20.0])
-        p = solver._compute_dogleg_step(J, r, delta=0.1)
+        g = J.T @ r
+        p = solver._compute_dogleg_step(J, r, g, delta=0.1)
         np.testing.assert_allclose(np.linalg.norm(p), 0.1, atol=1e-10)
 
     def test_dogleg_interpolation(self):
@@ -61,5 +63,6 @@ class TestDoglegStep:
         solver = SparseDogleg(delta0=1.5)
         J2 = sp.csc_matrix(np.array([[2.0, 0.0], [0.0, 0.5]]))
         r2 = np.array([1.0, 1.0])
-        p = solver._compute_dogleg_step(J2, r2, delta=1.0)
+        g2 = J2.T @ r2
+        p = solver._compute_dogleg_step(J2, r2, g2, delta=1.0)
         np.testing.assert_allclose(np.linalg.norm(p), 1.0, atol=1e-8)

@@ -51,6 +51,54 @@ class TestNewtonArmijoSpecific:
         assert result.success
         assert nfev_counter["n"] > result.nit + 1
 
+    def test_merit_fun_reduces_jacobian_evaluations(self):
+        """With merit_fun, the full fun should be called fewer times than without."""
+        jac_counter_plain = {"n": 0}
+        jac_counter_merit = {"n": 0}
+
+        def make_fun(counter):
+            def fun(x):
+                counter["n"] += 1
+                return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+            return fun
+
+        def merit_fun(x):
+            return x**2 - np.array([1.0, 4.0])
+
+        x0 = np.array([100.0, 100.0])
+
+        # Use strict c1 to force heavy backtracking
+        solver_plain = NewtonArmijo(globalization=ArmijoBacktracking(c1=0.5))
+        result_plain = sparse_root(make_fun(jac_counter_plain), x0, solver=solver_plain, tol=1e-10, progressbar=False)
+
+        solver_merit = NewtonArmijo(globalization=ArmijoBacktracking(c1=0.5, merit_fun=merit_fun))
+        result_merit = sparse_root(make_fun(jac_counter_merit), x0, solver=solver_merit, tol=1e-10, progressbar=False)
+
+        assert result_plain.success
+        assert result_merit.success
+        np.testing.assert_allclose(result_plain.x, result_merit.x, rtol=1e-8)
+        # merit_fun path should call the full fun fewer times (only at accepted points + init)
+        assert jac_counter_merit["n"] < jac_counter_plain["n"]
+
+    def test_merit_fun_converges_correctly(self):
+        """Solver with merit_fun should produce the same answer as without."""
+
+        def fun(x):
+            res = np.array([x[0] * np.cos(x[1]) - 4, x[1] * x[0] - x[1] - 5])
+            jac = sp.csc_matrix([[np.cos(x[1]), -x[0] * np.sin(x[1])], [x[1], x[0] - 1]])
+            return res, jac
+
+        def merit_fun(x):
+            return np.array([x[0] * np.cos(x[1]) - 4, x[1] * x[0] - x[1] - 5])
+
+        x0 = np.array([1.0, 1.0])
+        solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
+        result = sparse_root(fun, x0, solver=solver, tol=1e-10, progressbar=False)
+
+        assert result.success
+        np.testing.assert_allclose(result.x, [6.50409711, 0.90841421], rtol=1e-6)
+
 
 class TestChordSuite(CommonSolverTests):
     solver = Chord()

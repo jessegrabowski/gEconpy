@@ -15,6 +15,12 @@ class RootFunction(Protocol):
     def __call__(self, x: np.ndarray, *args: Any) -> tuple[np.ndarray, sp.spmatrix]: ...
 
 
+class MeritFunction(Protocol):
+    """Callable that returns only residuals (no Jacobian) for cheap merit evaluation during line search."""
+
+    def __call__(self, x: np.ndarray, *args: Any) -> np.ndarray: ...
+
+
 class RootSolver(Protocol):
     def init(self, fun: RootFunction, x0: np.ndarray, args: tuple[Any, ...]) -> "SolverState": ...
 
@@ -23,7 +29,7 @@ class RootSolver(Protocol):
     ) -> tuple["SolverState", "StepInfo"]: ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class IterationStats:
     nit: int = 0
     nfev: int = 0
@@ -32,13 +38,12 @@ class IterationStats:
     nreject: int = 0
 
     def update(self, nit: int = 0, nfev: int = 0, njev: int = 0, nsolve: int = 0, nreject: int = 0) -> "IterationStats":
-        return IterationStats(
-            self.nit + nit,
-            self.nfev + nfev,
-            self.njev + njev,
-            self.nsolve + nsolve,
-            self.nreject + nreject,
-        )
+        self.nit += nit
+        self.nfev += nfev
+        self.njev += njev
+        self.nsolve += nsolve
+        self.nreject += nreject
+        return self
 
 
 @dataclass(frozen=True, slots=True)

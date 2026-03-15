@@ -56,9 +56,8 @@ class SparseDogleg:
         res, jac = fun(x, *args)
         return SolverState(x=x, res=res, jac=jac, phi=merit(res), stats=IterationStats(nfev=1, njev=1))
 
-    def _compute_dogleg_step(self, J: sp.spmatrix, r: np.ndarray, delta: float) -> np.ndarray:  # noqa: PLR0911
+    def _compute_dogleg_step(self, J: sp.spmatrix, r: np.ndarray, g: np.ndarray, delta: float) -> np.ndarray:  # noqa: PLR0911
         """Compute the dogleg step within the trust region of radius ``delta``."""
-        g = J.T @ r  # gradient of merit function
         Jg = J @ g
 
         # Cauchy step: steepest descent with optimal step length
@@ -118,7 +117,7 @@ class SparseDogleg:
         nfev = 0
 
         while True:
-            p = self._compute_dogleg_step(J, r, self._delta)
+            p = self._compute_dogleg_step(J, r, g, self._delta)
 
             x_trial = state.x + p
             res_trial, jac_trial = fun(x_trial, *args)
