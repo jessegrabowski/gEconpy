@@ -539,6 +539,8 @@ def data_from_prior(
     n_samples: int = 500,
     pct_missing: float = 0,
     random_seed: np.random.Generator | int | None = None,
+    mvn_method: str = "svd",
+    build_statespace_kwargs: dict | None = None,
 ) -> tuple[xr.Dataset, pd.DataFrame, az.InferenceData]:
     """
     Generate artificial data from prior predictive samples.
@@ -561,6 +563,11 @@ def data_from_prior(
         Percentage of missing data to introduce into the generated data. Must be between 0 and 1.
     random_seed: np.random.Generator or int, optional
         Random number generator to use for sampling. If None, the default numpy random number generator is used.
+    mvn_method : str, optional
+        Method to use for sampling from the multivariate normal distribution of the state transitions. Passed to
+        sample_unconditional_posterior.
+    build_statespace_kwargs : dict, optional
+        Additional keyword arguments passed to DSGEStateSpace.build_statespace_graph
 
     Returns
     -------
@@ -572,6 +579,17 @@ def data_from_prior(
         Draws from the prior predictive distribution, plus conditional prior predictive samples.
     """
     rng = np.random.default_rng(random_seed)
+    default_statespace_kwargs = {
+        "add_bk_check": False,
+        "add_solver_success_check": True,
+        "add_norm_check": True,
+        "add_steady_state_penalty": True,
+    }
+
+    if build_statespace_kwargs is None:
+        build_statespace_kwargs = {}
+
+    default_statespace_kwargs.copy().update(build_statespace_kwargs)
 
     if index is None:
         index = pd.date_range(start="1980-01-01", end="2024-11-01", freq="QS-OCT")
@@ -583,13 +601,7 @@ def data_from_prior(
 
     with new_model:
         if "data" not in new_model:
-            statepace_mod.build_statespace_graph(
-                dummy_data,
-                add_bk_check=False,
-                add_solver_success_check=True,
-                add_norm_check=True,
-                add_steady_state_penalty=True,
-            )
+            statepace_mod.build_statespace_graph(dummy_data, **build_statespace_kwargs)
         else:
             pm.set_data({"data": dummy_data.fillna(-9999)})
 
@@ -599,7 +611,9 @@ def data_from_prior(
         )
 
     with warnings.catch_warnings(action="ignore"):
-        prior_trajectories = statepace_mod.sample_unconditional_prior(prior_idata, random_seed=rng)
+        prior_trajectories = statepace_mod.sample_unconditional_prior(
+            prior_idata, random_seed=rng, mvn_method=mvn_method
+        )
 
     prior_idata["unconditional_prior"] = prior_trajectories
 

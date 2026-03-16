@@ -176,8 +176,9 @@ def _simulate_linear_system(T: np.ndarray, R: np.ndarray, shock_traj: np.ndarray
     n_vars = T.shape[0]
 
     out = np.zeros((T_len, n_vars), dtype=float)
+    out[0] = R @ shock_traj[0]
     for t in range(1, T_len):
-        out[t] = T @ out[t - 1] + R @ shock_traj[t - 1]
+        out[t] = T @ out[t - 1] + R @ shock_traj[t]
     return out
 
 
@@ -394,8 +395,9 @@ def simulate(
     data = np.zeros((n_simulations, simulation_length, len(model.variables)))
     T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
 
+    data[:, 0, :] = np.einsum("nk,sk->sn", R, epsilons[:, 0, :])
     for t in range(1, simulation_length):
-        stochastic = np.einsum("nk,sk->sn", R, epsilons[:, t - 1, :])
+        stochastic = np.einsum("nk,sk->sn", R, epsilons[:, t, :])
         deterministic = np.einsum("nm,sm->sn", T, data[:, t - 1, :])
         data[:, t, :] = deterministic + stochastic
 
