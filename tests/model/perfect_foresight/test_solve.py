@@ -83,13 +83,13 @@ class TestBackwardOnlyModel:
         irf = (
             impulse_response_function(
                 backward_var_model,
-                simulation_length=1 + simulation_length,
+                simulation_length=simulation_length,
                 shock_size={"epsilon_x": 0.1},
             )
             .isel(shock=0)
             .to_pandas()
         )
-        assert_allclose(trajectory["x"].values, irf["x"].values[1:])
+        assert_allclose(trajectory["x"].values, irf["x"].values)
 
 
 class TestForwardOnlyModel:
@@ -156,7 +156,7 @@ class TestForwardOnlyModel:
         irf = (
             impulse_response_function(
                 forward_model,
-                simulation_length=1 + simulation_length,
+                simulation_length=simulation_length,
                 shock_size={"epsilon_rn": 0.01},
             )
             .isel(shock=0)
@@ -164,7 +164,7 @@ class TestForwardOnlyModel:
         )
         assert_allclose(
             trajectory[["x", "pi", "i", "rn"]].values,
-            irf[["x", "pi", "i", "rn"]].iloc[1:].values,
+            irf[["x", "pi", "i", "rn"]].values,
             atol=1e-8,
             rtol=1e-8,
         )

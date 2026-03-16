@@ -1,9 +1,13 @@
+import warnings
+
 import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor
 import pytest
 
+from gEconpy import statespace_from_gcn
+from gEconpy.model.statespace import data_from_prior
 from tests._resources.cache_compiled_models import (
     load_and_cache_model,
     load_and_cache_statespace,
@@ -98,3 +102,58 @@ def test_backward_direct_statespace_logp():
         point = m.initial_point()
         logp = m.compile_logp()(point)
         assert np.isfinite(logp)
+
+
+@pytest.mark.filterwarnings("ignore:Provided data contains missing values and will be automatically imputed")
+def test_data_from_prior_with_constant_params():
+    ss_mod = statespace_from_gcn("tests/_resources/test_gcns/rbc_linearized.gcn", verbose=False)
+    ss_mod.configure(
+        observed_states=["Y", "C", "L"],
+        measurement_error=["Y", "C", "L"],
+        constant_params=["beta", "delta"],
+        solver="scan_cycle_reduction",
+        mode="JAX",
+        verbose=False,
+    )
+
+    with pm.Model(coords=ss_mod.coords) as pm_mod:
+        ss_mod.to_pymc()
+        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+        for var_name in ss_mod.observed_states:
+            pm.Gamma(f"error_sigma_{var_name}", alpha=2, beta=100)
+
+    true_params, data, _prior_idata = data_from_prior(
+        ss_mod,
+        pm_mod,
+        n_samples=5,
+        random_seed=42,
+    )
+
+    assert data.shape[1] == 3
+    assert "beta" not in true_params.data_vars
+    assert "delta" not in true_params.data_vars
+
+
+def test_constant_params_auto():
+    ss_mod = statespace_from_gcn("tests/_resources/test_gcns/open_rbc.gcn", verbose=False)
+    ss_mod.configure(
+        observed_states=["Y"],
+        constant_params="auto",
+        solver="scan_cycle_reduction",
+        verbose=False,
+    )
+
+    params_with_priors = set(ss_mod.param_priors.keys())
+    input_param_names = {x.name for x in ss_mod.input_parameters}
+    expected_constant = input_param_names - params_with_priors
+
+    assert len(expected_constant) > 0, "Test requires a model with some prior-less parameters"
+    assert set(ss_mod.constant_parameters) == expected_constant
+
+    # Constant params should not appear in param_names
+    for name in expected_constant:
+        assert name not in ss_mod.param_names
+
+    # Params with priors should still be free
+    for name in params_with_priors:
+        assert name in ss_mod.param_names

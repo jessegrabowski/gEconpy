@@ -71,10 +71,10 @@ class TestBackwardLookingIRF:
 
         irf = impulse_response_function(model, T, R, simulation_length=n_steps, shock_size=1.0)
 
-        # Convention: t=0 is pre-shock, impact lands at t=1
+        # Convention: impact lands at t=0
         expected = np.zeros((n_steps, n_vars))
-        expected[1] = R.squeeze()
-        for t in range(2, n_steps):
+        expected[0] = R.squeeze()
+        for t in range(1, n_steps):
             expected[t] = T @ expected[t - 1]
 
         assert_allclose(irf.values.squeeze(), expected, atol=1e-10)

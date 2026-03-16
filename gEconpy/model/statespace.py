@@ -279,7 +279,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self,
         observed_states: list[str],
         measurement_error: list[str] | None = None,
-        constant_params: list[str] | None = None,
+        constant_params: list[str] | Literal["auto"] | None = None,
         full_shock_covaraince: bool = False,
         solver: SolverType = "gensys",
         mode: str | None = None,
@@ -311,6 +311,9 @@ class DSGEStateSpace(PyMCStateSpace):
         # Validate constant params
         if constant_params is None:
             constant_params = []
+        elif constant_params == "auto":
+            param_prior_names = set(self.param_priors.keys())
+            constant_params = [x.name for x in self.input_parameters if x.name not in param_prior_names]
         else:
             input_param_names = [x.name for x in self.input_parameters]
             unknown_params = [x for x in constant_params if x not in input_param_names]
@@ -374,9 +377,10 @@ class DSGEStateSpace(PyMCStateSpace):
         )
 
         for variable in self.input_parameters:
-            self._tensor_variable_info = self._tensor_variable_info.add(
-                SymbolicVariable(name=variable.name, symbolic_variable=variable)
-            )
+            if variable.name not in constant_params:
+                self._tensor_variable_info = self._tensor_variable_info.add(
+                    SymbolicVariable(name=variable.name, symbolic_variable=variable)
+                )
 
     def set_states(self) -> tuple[State, ...]:
         observed_states = self._obs_state_names if self._obs_state_names is not None else []
@@ -442,7 +446,6 @@ class DSGEStateSpace(PyMCStateSpace):
             missing_fill_value=missing_fill_value,
             cov_jitter=cov_jitter,
             save_kalman_filter_outputs_in_idata=save_kalman_filter_outputs_in_idata,
-            mode=self._mode,
         )
 
         pymc_model = pm.modelcontext(None)
@@ -514,14 +517,17 @@ class DSGEStateSpace(PyMCStateSpace):
         if exclude_priors is None:
             exclude_priors = []
 
+        constant_params = self.constant_parameters if self.constant_parameters is not None else []
+        skip = set(exclude_priors) | set(constant_params)
+
         with pm.modelcontext(None):
             for prior, dist in self.param_priors.items():
-                if prior in exclude_priors:
+                if prior in skip:
                     continue
                 dist.to_pymc(name=prior)
 
             for prior, dist in self.shock_priors.items():
-                if prior in exclude_priors:
+                if prior in skip:
                     continue
                 dist.to_pymc()
 
@@ -533,6 +539,8 @@ def data_from_prior(
     n_samples: int = 500,
     pct_missing: float = 0,
     random_seed: np.random.Generator | int | None = None,
+    mvn_method: str = "svd",
+    build_statespace_kwargs: dict | None = None,
 ) -> tuple[xr.Dataset, pd.DataFrame, az.InferenceData]:
     """
     Generate artificial data from prior predictive samples.
@@ -555,6 +563,11 @@ def data_from_prior(
         Percentage of missing data to introduce into the generated data. Must be between 0 and 1.
     random_seed: np.random.Generator or int, optional
         Random number generator to use for sampling. If None, the default numpy random number generator is used.
+    mvn_method : str, optional
+        Method to use for sampling from the multivariate normal distribution of the state transitions. Passed to
+        sample_unconditional_posterior.
+    build_statespace_kwargs : dict, optional
+        Additional keyword arguments passed to DSGEStateSpace.build_statespace_graph
 
     Returns
     -------
@@ -566,6 +579,17 @@ def data_from_prior(
         Draws from the prior predictive distribution, plus conditional prior predictive samples.
     """
     rng = np.random.default_rng(random_seed)
+    default_statespace_kwargs = {
+        "add_bk_check": False,
+        "add_solver_success_check": True,
+        "add_norm_check": True,
+        "add_steady_state_penalty": True,
+    }
+
+    if build_statespace_kwargs is None:
+        build_statespace_kwargs = {}
+
+    default_statespace_kwargs.copy().update(build_statespace_kwargs)
 
     if index is None:
         index = pd.date_range(start="1980-01-01", end="2024-11-01", freq="QS-OCT")
@@ -577,21 +601,19 @@ def data_from_prior(
 
     with new_model:
         if "data" not in new_model:
-            statepace_mod.build_statespace_graph(
-                dummy_data,
-                add_bk_check=False,
-                add_solver_success_check=True,
-                add_norm_check=True,
-                add_steady_state_penalty=True,
-            )
+            statepace_mod.build_statespace_graph(dummy_data, **build_statespace_kwargs)
         else:
             pm.set_data({"data": dummy_data.fillna(-9999)})
 
     with warnings.catch_warnings(action="ignore"), freeze_dims_and_data(new_model):
-        prior_idata = pm.sample_prior_predictive(n_samples, compile_kwargs={"mode": "JAX"}, random_seed=rng)
+        prior_idata = pm.sample_prior_predictive(
+            n_samples, compile_kwargs={"mode": statepace_mod._mode}, random_seed=rng
+        )
 
     with warnings.catch_warnings(action="ignore"):
-        prior_trajectories = statepace_mod.sample_unconditional_prior(prior_idata, random_seed=rng)
+        prior_trajectories = statepace_mod.sample_unconditional_prior(
+            prior_idata, random_seed=rng, mvn_method=mvn_method
+        )
 
     prior_idata["unconditional_prior"] = prior_trajectories
 
