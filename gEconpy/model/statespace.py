@@ -279,7 +279,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self,
         observed_states: list[str],
         measurement_error: list[str] | None = None,
-        constant_params: list[str] | None = None,
+        constant_params: list[str] | Literal["auto"] | None = None,
         full_shock_covaraince: bool = False,
         solver: SolverType = "gensys",
         mode: str | None = None,
@@ -311,6 +311,9 @@ class DSGEStateSpace(PyMCStateSpace):
         # Validate constant params
         if constant_params is None:
             constant_params = []
+        elif constant_params == "auto":
+            param_prior_names = set(self.param_priors.keys())
+            constant_params = [x.name for x in self.input_parameters if x.name not in param_prior_names]
         else:
             input_param_names = [x.name for x in self.input_parameters]
             unknown_params = [x for x in constant_params if x not in input_param_names]

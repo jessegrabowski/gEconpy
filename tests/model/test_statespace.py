@@ -132,3 +132,28 @@ def test_data_from_prior_with_constant_params():
     assert data.shape[1] == 3
     assert "beta" not in true_params.data_vars
     assert "delta" not in true_params.data_vars
+
+
+def test_constant_params_auto():
+    ss_mod = statespace_from_gcn("tests/_resources/test_gcns/open_rbc.gcn", verbose=False)
+    ss_mod.configure(
+        observed_states=["Y"],
+        constant_params="auto",
+        solver="scan_cycle_reduction",
+        verbose=False,
+    )
+
+    params_with_priors = set(ss_mod.param_priors.keys())
+    input_param_names = {x.name for x in ss_mod.input_parameters}
+    expected_constant = input_param_names - params_with_priors
+
+    assert len(expected_constant) > 0, "Test requires a model with some prior-less parameters"
+    assert set(ss_mod.constant_parameters) == expected_constant
+
+    # Constant params should not appear in param_names
+    for name in expected_constant:
+        assert name not in ss_mod.param_names
+
+    # Params with priors should still be free
+    for name in params_with_priors:
+        assert name in ss_mod.param_names
