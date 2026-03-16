@@ -374,9 +374,10 @@ class DSGEStateSpace(PyMCStateSpace):
         )
 
         for variable in self.input_parameters:
-            self._tensor_variable_info = self._tensor_variable_info.add(
-                SymbolicVariable(name=variable.name, symbolic_variable=variable)
-            )
+            if variable.name not in constant_params:
+                self._tensor_variable_info = self._tensor_variable_info.add(
+                    SymbolicVariable(name=variable.name, symbolic_variable=variable)
+                )
 
     def set_states(self) -> tuple[State, ...]:
         observed_states = self._obs_state_names if self._obs_state_names is not None else []
@@ -442,7 +443,6 @@ class DSGEStateSpace(PyMCStateSpace):
             missing_fill_value=missing_fill_value,
             cov_jitter=cov_jitter,
             save_kalman_filter_outputs_in_idata=save_kalman_filter_outputs_in_idata,
-            mode=self._mode,
         )
 
         pymc_model = pm.modelcontext(None)
@@ -514,14 +514,17 @@ class DSGEStateSpace(PyMCStateSpace):
         if exclude_priors is None:
             exclude_priors = []
 
+        constant_params = self.constant_parameters if self.constant_parameters is not None else []
+        skip = set(exclude_priors) | set(constant_params)
+
         with pm.modelcontext(None):
             for prior, dist in self.param_priors.items():
-                if prior in exclude_priors:
+                if prior in skip:
                     continue
                 dist.to_pymc(name=prior)
 
             for prior, dist in self.shock_priors.items():
-                if prior in exclude_priors:
+                if prior in skip:
                     continue
                 dist.to_pymc()
 
@@ -588,7 +591,9 @@ def data_from_prior(
             pm.set_data({"data": dummy_data.fillna(-9999)})
 
     with warnings.catch_warnings(action="ignore"), freeze_dims_and_data(new_model):
-        prior_idata = pm.sample_prior_predictive(n_samples, compile_kwargs={"mode": "JAX"}, random_seed=rng)
+        prior_idata = pm.sample_prior_predictive(
+            n_samples, compile_kwargs={"mode": statepace_mod._mode}, random_seed=rng
+        )
 
     with warnings.catch_warnings(action="ignore"):
         prior_trajectories = statepace_mod.sample_unconditional_prior(prior_idata, random_seed=rng)
