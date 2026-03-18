@@ -15,7 +15,7 @@ from gEconpy.dynare_convert import make_mod_file
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 from gEconpy.model.perfect_foresight.solve import solve_perfect_foresight
 from gEconpy.model.simulate import impulse_response_function, simulate
-from gEconpy.model.statespace import data_from_prior
+from gEconpy.model.statespace import data_from_prior, prepare_mixed_frequency_data
 from gEconpy.model.statistics import (
     autocorrelation_matrix,
     autocovariance_matrix,
@@ -57,6 +57,7 @@ __all__ = [
     "model_from_gcn",
     "parser",
     "plotting",
+    "prepare_mixed_frequency_data",
     "print_gcn_file",
     "print_steady_state",
     "simulate",

@@ -38,6 +38,8 @@ floatX = pytensor.config.floatX
 SolverType = Literal["gensys", "cycle_reduction", "scan_cycle_reduction", "backward_direct"]
 valid_solvers = get_args(SolverType)
 
+FlowAggregation = Literal["sum", "average"]
+
 
 class DSGEStateSpace(PyMCStateSpace):
     """Core class for estimating DSGE models using PyMC."""
@@ -142,6 +144,12 @@ class DSGEStateSpace(PyMCStateSpace):
         self._n_steps = None
         self._lead_var_idx: np.ndarray | None = None
 
+        # Mixed-frequency state augmentation
+        self._flow_variables: list[str] = []
+        self._aggregation_period: int = 4
+        self._flow_aggregation: FlowAggregation = "sum"
+        self._k_orig_states: int = len(variables)
+
         self.verbose = verbose
 
         k_endog = 1  # to be updated later
@@ -204,12 +212,139 @@ class DSGEStateSpace(PyMCStateSpace):
             self.ssm["state_cov", i, i] = sigma**2
 
     def _make_design_matrix(self):
+        n_cum_lags = self._aggregation_period - 1
+
         Z = np.zeros((self.k_endog, self.k_states))
 
         for i, name in enumerate(self.observed_states):
-            Z[i, self.state_names.index(name)] = 1.0
+            if name in self._flow_variables:
+                # Flow: observation = current value + cumulator lags
+                orig_idx = self._orig_state_names.index(name)
+                flow_pos = self._flow_variables.index(name)
+                cum_start = self._k_orig_states + flow_pos * n_cum_lags
+
+                Z[i, orig_idx] = 1.0
+                Z[i, cum_start : cum_start + n_cum_lags] = 1.0
+
+                if self._flow_aggregation == "average":
+                    Z[i, :] /= self._aggregation_period
+            else:
+                # Stock: direct selector into original state
+                Z[i, self._orig_state_names.index(name)] = 1.0
 
         return Z
+
+    @property
+    def _n_cumulator_states(self) -> int:
+        """Total number of cumulator states added for flow variables."""
+        return len(self._flow_variables) * (self._aggregation_period - 1)
+
+    @property
+    def _orig_state_names(self) -> list[str]:
+        """State names from the original (un-augmented) DSGE model."""
+        return [x.base_name for x in self.variables]
+
+    @property
+    def _cumulator_state_names(self) -> list[str]:
+        """Names of the cumulator auxiliary states."""
+        return [
+            f"{var}_cumulator_lag{lag}" for var in self._flow_variables for lag in range(1, self._aggregation_period)
+        ]
+
+    def _augment_transition(self, T: pt.TensorVariable) -> pt.TensorVariable:
+        """
+        Augment the transition matrix with cumulator rows/columns for flow variables.
+
+        The augmented matrix has the block form::
+
+            T_aug = [ T  |  0              ]
+                    [----|-----------------|
+                    [ F  |  kron(I_n, C)   ]
+
+        where ``C`` is the ``(s-1) × (s-1)`` lower-shift companion matrix (constant, shared
+        by all flow variables), and ``F`` is a loading matrix whose only nonzero rows copy the
+        corresponding flow variable's row from ``T``.
+
+        Parameters
+        ----------
+        T : pt.TensorVariable
+            Original k_orig x k_orig transition matrix from the perturbation solution.
+
+        Returns
+        -------
+        T_aug : pt.TensorVariable
+            Augmented (k_orig + n_cum) x (k_orig + n_cum) transition matrix.
+        """
+        if not self._flow_variables:
+            return T
+
+        k_orig = self._k_orig_states
+        n_flow = len(self._flow_variables)
+        n_cum_lags = self._aggregation_period - 1
+        n_cum = self._n_cumulator_states
+        k_aug = k_orig + n_cum
+
+        # Lower-right: block-diagonal of identical companion shift matrices (constant)
+        # C[i, i-1] = 1 for i >= 1; first row is zero (loaded from F instead)
+        shift = np.zeros((n_cum_lags, n_cum_lags), dtype=floatX)
+        if n_cum_lags > 1:
+            shift[np.arange(1, n_cum_lags), np.arange(n_cum_lags - 1)] = 1.0
+        C = np.kron(np.eye(n_flow, dtype=floatX), shift)
+
+        # Lower-left: loading rows — first cumulator for each flow variable copies T[y_i, :]
+        flow_indices = [self._orig_state_names.index(name) for name in self._flow_variables]
+        F = pt.zeros((n_cum, k_orig), dtype=floatX)
+        for flow_pos, orig_idx in enumerate(flow_indices):
+            F = pt.set_subtensor(F[flow_pos * n_cum_lags, :], T[orig_idx, :])
+
+        # Assemble [[T, 0], [F, C]]
+        T_aug = pt.zeros((k_aug, k_aug), dtype=floatX)
+        T_aug = pt.set_subtensor(T_aug[:k_orig, :k_orig], T)
+        T_aug = pt.set_subtensor(T_aug[k_orig:, :k_orig], F)
+        return pt.set_subtensor(T_aug[k_orig:, k_orig:], C)
+
+    def _augment_selection(self, R: pt.TensorVariable) -> pt.TensorVariable:
+        """
+        Augment the selection matrix with cumulator rows for flow variables.
+
+        The augmented matrix has the block form::
+
+            R_aug = [ R ]
+                    [---]
+                    [ G ]
+
+        where ``G`` has one nonzero row per flow variable (the first cumulator), copying
+        the flow variable's shock response from ``R``.  All other cumulator rows are zero
+        because they are deterministic lag shifts.
+
+        Parameters
+        ----------
+        R : pt.TensorVariable
+            Original k_orig x k_posdef selection matrix.
+
+        Returns
+        -------
+        R_aug : pt.TensorVariable
+            Augmented (k_orig + n_cum) x k_posdef selection matrix.
+        """
+        if not self._flow_variables:
+            return R
+
+        k_orig = self._k_orig_states
+        n_cum_lags = self._aggregation_period - 1
+        n_cum = self._n_cumulator_states
+        k_aug = k_orig + n_cum
+
+        # Loading: first cumulator of each flow variable inherits its shock response
+        flow_indices = [self._orig_state_names.index(name) for name in self._flow_variables]
+        G = pt.zeros((n_cum, self.k_posdef), dtype=floatX)
+        for flow_pos, orig_idx in enumerate(flow_indices):
+            G = pt.set_subtensor(G[flow_pos * n_cum_lags, :], R[orig_idx, :])
+
+        # Assemble [[R], [G]]
+        R_aug = pt.zeros((k_aug, self.k_posdef), dtype=floatX)
+        R_aug = pt.set_subtensor(R_aug[:k_orig, :], R)
+        return pt.set_subtensor(R_aug[k_orig:, :], G)
 
     def make_symbolic_graph(self):
         """
@@ -258,8 +393,11 @@ class DSGEStateSpace(PyMCStateSpace):
         self._policy_resid = resid
         self._ss_resid = ss_resid
 
-        self.ssm["transition", :, :] = T
-        self.ssm["selection", :, :] = R
+        T_aug = self._augment_transition(T)
+        R_aug = self._augment_selection(R)
+
+        self.ssm["transition", :, :] = T_aug
+        self.ssm["selection", :, :] = R_aug
         self.ssm["design", :, :] = self._make_design_matrix()
 
         self._setup_state_covariance()
@@ -273,7 +411,9 @@ class DSGEStateSpace(PyMCStateSpace):
 
         Q = self.ssm["state_cov"]
         method = "direct" if self.use_direct_lyapunov else "bilinear"
-        self.ssm["initial_state_cov", :, :] = pt.linalg.solve_discrete_lyapunov(T, R @ Q @ R.T, method=method)
+        self.ssm["initial_state_cov", :, :] = pt.linalg.solve_discrete_lyapunov(
+            T_aug, R_aug @ Q @ R_aug.T, method=method
+        )
 
     def configure(
         self,
@@ -281,6 +421,9 @@ class DSGEStateSpace(PyMCStateSpace):
         measurement_error: list[str] | None = None,
         constant_params: list[str] | Literal["auto"] | None = None,
         full_shock_covaraince: bool = False,
+        flow_variables: list[str] | None = None,
+        aggregation_period: int = 4,
+        flow_aggregation: FlowAggregation = "sum",
         solver: SolverType = "gensys",
         mode: str | None = None,
         verbose=True,
@@ -289,6 +432,52 @@ class DSGEStateSpace(PyMCStateSpace):
         use_adjoint_gradients: bool = True,
         use_direct_lyapunov: bool = False,
     ):
+        """
+        Configure the statespace model for estimation.
+
+        Parameters
+        ----------
+        observed_states : list of str
+            Names of states to treat as observed.
+        measurement_error : list of str, optional
+            Observed states that have measurement error.
+        constant_params : list of str or "auto", optional
+            Parameters held constant (not estimated). ``"auto"`` freezes all parameters without priors.
+        full_shock_covaraince : bool
+            If True, estimate a full shock covariance matrix instead of diagonal.
+        flow_variables : list of str, optional
+            Observed states that represent flow quantities (e.g. GDP, consumption). When the model
+            frequency is higher than the data frequency, the observation equation for these variables
+            is modified so that the observed value equals the sum (or average) of ``aggregation_period``
+            consecutive high-frequency values. The state vector is augmented with cumulator lags to
+            track the partial sums. Data for flow variables should contain the aggregate value at the
+            last period of each aggregation window, with ``NaN`` at intermediate periods.
+
+            Stock variables (the default for all observed states) are assumed to be point-in-time
+            and need no special treatment beyond ``NaN``-padding at unobserved periods.
+        aggregation_period : int
+            Number of high-frequency periods per low-frequency observation. For example, 4 when
+            fitting a quarterly model with annual data, or 3 for a monthly model with quarterly
+            data. Default is 4.
+        flow_aggregation : str
+            How flow variables are aggregated over the window. ``"sum"`` (default) means the
+            observed value equals the sum of high-frequency values. ``"average"`` divides by
+            ``aggregation_period``.
+        solver : str
+            Perturbation solver to use.
+        mode : str, optional
+            PyTensor compilation mode.
+        verbose : bool
+            Print diagnostic messages.
+        max_iter : int
+            Maximum iterations for iterative solvers.
+        tol : float
+            Convergence tolerance for the solver.
+        use_adjoint_gradients : bool
+            Use adjoint gradients in ``scan_cycle_reduction``.
+        use_direct_lyapunov : bool
+            Use direct (rather than bilinear) Lyapunov solver.
+        """
         # Set up observed states
         unknown_states = [x for x in observed_states if x not in self.state_names]
         if len(unknown_states) > 0:
@@ -307,6 +496,16 @@ class DSGEStateSpace(PyMCStateSpace):
                     f"The following states are not observed, and cannot have measurement error: "
                     f"{', '.join(unknown_states)}"
                 )
+
+        # Validate flow variables
+        if flow_variables is None:
+            flow_variables = []
+        else:
+            unknown_flow = [x for x in flow_variables if x not in observed_states]
+            if len(unknown_flow) > 0:
+                raise ValueError(f"The following flow variables are not in observed_states: {', '.join(unknown_flow)}")
+            if aggregation_period < 2:
+                raise ValueError(f"aggregation_period must be >= 2, got {aggregation_period}")
 
         # Validate constant params
         if constant_params is None:
@@ -360,6 +559,11 @@ class DSGEStateSpace(PyMCStateSpace):
         self.error_states = measurement_error
         self.constant_parameters = constant_params
 
+        # Store mixed-frequency settings
+        self._flow_variables = flow_variables
+        self._aggregation_period = aggregation_period
+        self._flow_aggregation = flow_aggregation
+
         self.full_covariance = full_shock_covaraince
         self.use_direct_lyapunov = use_direct_lyapunov
         self._configured = True
@@ -367,10 +571,14 @@ class DSGEStateSpace(PyMCStateSpace):
         self._solver_kwargs = solver_kwargs
         self._mode = mode
 
+        # Compute augmented state dimension
+        n_cumulator = len(flow_variables) * (aggregation_period - 1)
+        k_states_aug = self._k_orig_states + n_cumulator
+
         # Rebuild the internal statespace representation and kalman filters with the newly resized matrices
         super().__init__(
             k_endog,
-            self.k_states,
+            k_states_aug,
             self.k_posdef,
             measurement_error=len(measurement_error) > 0,
             verbose=verbose,
@@ -385,8 +593,9 @@ class DSGEStateSpace(PyMCStateSpace):
     def set_states(self) -> tuple[State, ...]:
         observed_states = self._obs_state_names if self._obs_state_names is not None else []
         hidden_states = [State(name=x.base_name, observed=False) for x in self.variables]
+        cumulator_states = [State(name=name, observed=False) for name in self._cumulator_state_names]
         observed_states = [State(name=name, observed=True) for name in observed_states]
-        return *hidden_states, *observed_states
+        return *hidden_states, *cumulator_states, *observed_states
 
     def set_parameters(self) -> tuple[Parameter, ...]:
         # TODO: Extract information from assumptions and use them to denote constraints on the parameters
@@ -638,3 +847,79 @@ def data_from_prior(
     statepace_mod._fit_coords = None
 
     return true_params, data, prior_idata
+
+
+def prepare_mixed_frequency_data(
+    low_freq_data: pd.DataFrame,
+    high_freq: str,
+    aggregation_period: int = 4,
+    observation_position: Literal["first", "last"] = "last",
+) -> pd.DataFrame:
+    """
+    Expand low-frequency data to a high-frequency index for mixed-frequency estimation.
+
+    Each low-frequency value is placed at the first or last high-frequency period within
+    its aggregation window, with ``NaN`` at all other periods.  The Kalman filter treats
+    ``NaN`` entries as missing observations.
+
+    The flow-vs-stock distinction is irrelevant here — both are placed identically.  The
+    distinction only matters in :meth:`DSGEStateSpace.configure`, where ``flow_variables``
+    triggers cumulator-state augmentation so the observation equation sums over the window.
+
+    Parameters
+    ----------
+    low_freq_data : pd.DataFrame
+        Observed data at low frequency.  The index should be a ``DatetimeIndex`` at the
+        low-frequency periodicity (e.g. annual).  Each column corresponds to an observed
+        variable.
+    high_freq : str
+        Pandas frequency string for the high-frequency (model) periodicity, e.g. ``"QS"``
+        for quarterly.
+    aggregation_period : int
+        Number of high-frequency periods per low-frequency observation.  Default is 4
+        (annual from quarterly).
+    observation_position : str
+        Whether the low-frequency observation corresponds to the ``"first"`` or ``"last"``
+        high-frequency period in each window.  Default is ``"last"``.
+
+    Returns
+    -------
+    pd.DataFrame
+        High-frequency DataFrame with ``NaN`` at unobserved periods.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        import pandas as pd
+
+        annual = pd.DataFrame(
+            {"GDP": [100, 110], "R": [0.05, 0.04]},
+            index=pd.to_datetime(["2020", "2021"]),
+        )
+        quarterly = prepare_mixed_frequency_data(annual, high_freq="QS")
+    """
+    pos_idx = 0 if observation_position == "first" else aggregation_period - 1
+
+    all_columns = list(low_freq_data.columns)
+    first_date = low_freq_data.index.min()
+    hf_index = pd.date_range(start=first_date, periods=len(low_freq_data) * aggregation_period, freq=high_freq)
+
+    result = pd.DataFrame(np.nan, index=hf_index, columns=all_columns)
+
+    for _, row in low_freq_data.iterrows():
+        lf_date = row.name
+        window_periods = hf_index[(hf_index >= lf_date)][:aggregation_period]
+
+        if len(window_periods) <= pos_idx:
+            continue
+
+        result.loc[window_periods[pos_idx]] = row
+
+    # Trim trailing all-NaN rows beyond the last observation window
+    last_obs_idx = result.last_valid_index()
+    if last_obs_idx is not None:
+        result = result.loc[:last_obs_idx]
+
+    result.index.freq = result.index.inferred_freq
+    return result
