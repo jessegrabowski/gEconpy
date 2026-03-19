@@ -1,7 +1,7 @@
 import logging
 import warnings
 
-from typing import Literal, get_args
+from typing import Literal
 
 import arviz as az
 import numpy as np
@@ -35,10 +35,9 @@ from gEconpy.solvers.gensys import gensys_pt
 _log = logging.getLogger(__name__)
 floatX = pytensor.config.floatX
 
-SolverType = Literal["gensys", "cycle_reduction", "scan_cycle_reduction", "backward_direct"]
-valid_solvers = get_args(SolverType)
-
-FlowAggregation = Literal["sum", "average"]
+VALID_SOLVERS = ("gensys", "cycle_reduction", "scan_cycle_reduction", "backward_direct")
+VALID_AGGREGATIONS = ("sum", "mean", "first", "last")
+CUMULATOR_AGGREGATIONS = ("sum", "mean")
 
 
 class DSGEStateSpace(PyMCStateSpace):
@@ -145,9 +144,8 @@ class DSGEStateSpace(PyMCStateSpace):
         self._lead_var_idx: np.ndarray | None = None
 
         # Mixed-frequency state augmentation
-        self._flow_variables: list[str] = []
+        self._temporal_aggregation: dict[str, str] = {}
         self._aggregation_period: int = 4
-        self._flow_aggregation: FlowAggregation = "sum"
         self._k_orig_states: int = len(variables)
 
         self.verbose = verbose
@@ -213,47 +211,51 @@ class DSGEStateSpace(PyMCStateSpace):
 
     def _make_design_matrix(self):
         n_cum_lags = self._aggregation_period - 1
+        cumulator_vars = self._cumulator_variables
 
         Z = np.zeros((self.k_endog, self.k_states))
 
         for i, name in enumerate(self.observed_states):
-            if name in self._flow_variables:
-                # Flow: observation = current value + cumulator lags
-                orig_idx = self._orig_state_names.index(name)
-                flow_pos = self._flow_variables.index(name)
-                cum_start = self._k_orig_states + flow_pos * n_cum_lags
+            orig_idx = self._orig_state_names.index(name)
+            agg_method = self._temporal_aggregation.get(name)
 
-                Z[i, orig_idx] = 1.0
-                Z[i, cum_start : cum_start + n_cum_lags] = 1.0
+            if agg_method in CUMULATOR_AGGREGATIONS:
+                agg_pos = cumulator_vars.index(name)
+                cum_start = self._k_orig_states + agg_pos * n_cum_lags
 
-                if self._flow_aggregation == "average":
-                    Z[i, :] /= self._aggregation_period
+                weight = 1.0 / self._aggregation_period if agg_method == "mean" else 1.0
+                Z[i, orig_idx] = weight
+                Z[i, cum_start : cum_start + n_cum_lags] = weight
             else:
-                # Stock: direct selector into original state
-                Z[i, self._orig_state_names.index(name)] = 1.0
+                # first, last, or not specified: direct selector
+                Z[i, orig_idx] = 1.0
 
         return Z
 
     @property
     def _n_cumulator_states(self) -> int:
-        """Total number of cumulator states added for flow variables."""
-        return len(self._flow_variables) * (self._aggregation_period - 1)
+        n_cumulator_vars = sum(1 for m in self._temporal_aggregation.values() if m in CUMULATOR_AGGREGATIONS)
+        return n_cumulator_vars * (self._aggregation_period - 1)
+
+    @property
+    def _cumulator_variables(self) -> list[str]:
+        return [var for var, method in self._temporal_aggregation.items() if method in CUMULATOR_AGGREGATIONS]
 
     @property
     def _orig_state_names(self) -> list[str]:
-        """State names from the original (un-augmented) DSGE model."""
         return [x.base_name for x in self.variables]
 
     @property
     def _cumulator_state_names(self) -> list[str]:
-        """Names of the cumulator auxiliary states."""
         return [
-            f"{var}_cumulator_lag{lag}" for var in self._flow_variables for lag in range(1, self._aggregation_period)
+            f"{var}_cumulator_lag{lag}"
+            for var in self._cumulator_variables
+            for lag in range(1, self._aggregation_period)
         ]
 
     def _augment_transition(self, T: pt.TensorVariable) -> pt.TensorVariable:
         """
-        Augment the transition matrix with cumulator rows/columns for flow variables.
+        Augment the transition matrix with cumulator rows/columns for temporally aggregated variables.
 
         The augmented matrix has the block form::
 
@@ -262,8 +264,8 @@ class DSGEStateSpace(PyMCStateSpace):
                     [ F  |  kron(I_n, C)   ]
 
         where ``C`` is the ``(s-1) × (s-1)`` lower-shift companion matrix (constant, shared
-        by all flow variables), and ``F`` is a loading matrix whose only nonzero rows copy the
-        corresponding flow variable's row from ``T``.
+        by all aggregated variables), and ``F`` is a loading matrix with unit selectors that
+        copy each lagged variable value into the first cumulator position.
 
         Parameters
         ----------
@@ -275,29 +277,26 @@ class DSGEStateSpace(PyMCStateSpace):
         T_aug : pt.TensorVariable
             Augmented (k_orig + n_cum) x (k_orig + n_cum) transition matrix.
         """
-        if not self._flow_variables:
+        cumulator_vars = self._cumulator_variables
+        if not cumulator_vars:
             return T
 
         k_orig = self._k_orig_states
-        n_flow = len(self._flow_variables)
+        n_agg = len(cumulator_vars)
         n_cum_lags = self._aggregation_period - 1
         n_cum = self._n_cumulator_states
         k_aug = k_orig + n_cum
 
-        # Lower-right: block-diagonal of identical companion shift matrices (constant)
-        # C[i, i-1] = 1 for i >= 1; first row is zero (loaded from F instead)
         shift = np.zeros((n_cum_lags, n_cum_lags), dtype=floatX)
         if n_cum_lags > 1:
             shift[np.arange(1, n_cum_lags), np.arange(n_cum_lags - 1)] = 1.0
-        C = np.kron(np.eye(n_flow, dtype=floatX), shift)
+        C = np.kron(np.eye(n_agg, dtype=floatX), shift)
 
-        # Lower-left: loading rows — first cumulator for each flow variable copies T[y_i, :]
-        flow_indices = [self._orig_state_names.index(name) for name in self._flow_variables]
+        agg_indices = [self._orig_state_names.index(name) for name in cumulator_vars]
         F = pt.zeros((n_cum, k_orig), dtype=floatX)
-        for flow_pos, orig_idx in enumerate(flow_indices):
-            F = pt.set_subtensor(F[flow_pos * n_cum_lags, :], T[orig_idx, :])
+        for agg_pos, orig_idx in enumerate(agg_indices):
+            F = pt.set_subtensor(F[agg_pos * n_cum_lags, orig_idx], 1.0)
 
-        # Assemble [[T, 0], [F, C]]
         T_aug = pt.zeros((k_aug, k_aug), dtype=floatX)
         T_aug = pt.set_subtensor(T_aug[:k_orig, :k_orig], T)
         T_aug = pt.set_subtensor(T_aug[k_orig:, :k_orig], F)
@@ -305,17 +304,15 @@ class DSGEStateSpace(PyMCStateSpace):
 
     def _augment_selection(self, R: pt.TensorVariable) -> pt.TensorVariable:
         """
-        Augment the selection matrix with cumulator rows for flow variables.
+        Augment the selection matrix with cumulator rows for temporally aggregated variables.
 
         The augmented matrix has the block form::
 
             R_aug = [ R ]
                     [---]
-                    [ G ]
+                    [ 0 ]
 
-        where ``G`` has one nonzero row per flow variable (the first cumulator), copying
-        the flow variable's shock response from ``R``.  All other cumulator rows are zero
-        because they are deterministic lag shifts.
+        The cumulator rows are all zeros because cumulators are deterministic lag copies.
 
         Parameters
         ----------
@@ -327,24 +324,15 @@ class DSGEStateSpace(PyMCStateSpace):
         R_aug : pt.TensorVariable
             Augmented (k_orig + n_cum) x k_posdef selection matrix.
         """
-        if not self._flow_variables:
+        if not self._cumulator_variables:
             return R
 
         k_orig = self._k_orig_states
-        n_cum_lags = self._aggregation_period - 1
         n_cum = self._n_cumulator_states
         k_aug = k_orig + n_cum
 
-        # Loading: first cumulator of each flow variable inherits its shock response
-        flow_indices = [self._orig_state_names.index(name) for name in self._flow_variables]
-        G = pt.zeros((n_cum, self.k_posdef), dtype=floatX)
-        for flow_pos, orig_idx in enumerate(flow_indices):
-            G = pt.set_subtensor(G[flow_pos * n_cum_lags, :], R[orig_idx, :])
-
-        # Assemble [[R], [G]]
         R_aug = pt.zeros((k_aug, self.k_posdef), dtype=floatX)
-        R_aug = pt.set_subtensor(R_aug[:k_orig, :], R)
-        return pt.set_subtensor(R_aug[k_orig:, :], G)
+        return pt.set_subtensor(R_aug[:k_orig, :], R)
 
     def make_symbolic_graph(self):
         """
@@ -421,10 +409,9 @@ class DSGEStateSpace(PyMCStateSpace):
         measurement_error: list[str] | None = None,
         constant_params: list[str] | Literal["auto"] | None = None,
         full_shock_covaraince: bool = False,
-        flow_variables: list[str] | None = None,
+        temporal_aggregation: dict[str, str] | None = None,
         aggregation_period: int = 4,
-        flow_aggregation: FlowAggregation = "sum",
-        solver: SolverType = "gensys",
+        solver: str = "gensys",
         mode: str | None = None,
         verbose=True,
         max_iter: int = 50,
@@ -445,24 +432,24 @@ class DSGEStateSpace(PyMCStateSpace):
             Parameters held constant (not estimated). ``"auto"`` freezes all parameters without priors.
         full_shock_covaraince : bool
             If True, estimate a full shock covariance matrix instead of diagonal.
-        flow_variables : list of str, optional
-            Observed states that represent flow quantities (e.g. GDP, consumption). When the model
-            frequency is higher than the data frequency, the observation equation for these variables
-            is modified so that the observed value equals the sum (or average) of ``aggregation_period``
-            consecutive high-frequency values. The state vector is augmented with cumulator lags to
-            track the partial sums. Data for flow variables should contain the aggregate value at the
-            last period of each aggregation window, with ``NaN`` at intermediate periods.
+        temporal_aggregation : dict of str to {"sum", "mean", "first", "last"}, optional
+            Observed states that require temporal aggregation or explicit low-frequency timing.
 
-            Stock variables (the default for all observed states) are assumed to be point-in-time
-            and need no special treatment beyond ``NaN``-padding at unobserved periods.
+            - ``"sum"``: Flow variables like GDP (observed = sum of ``aggregation_period`` values).
+              Requires cumulator state augmentation.
+            - ``"mean"``: Rates or prices reported as period averages. Requires cumulator augmentation.
+            - ``"last"``: Point-in-time at end of aggregation window. No cumulator needed.
+              Equivalent to omitting the variable, but explicit about timing.
+            - ``"first"``: Point-in-time at start of aggregation window. No cumulator needed.
+              Data should have values at the first period of each window.
+
+            Variables NOT in this dict use a direct selector — suitable for high-frequency
+            observations (no ``NaN`` in data) or low-frequency point-in-time observations.
+            The Kalman filter handles missing values automatically.
         aggregation_period : int
-            Number of high-frequency periods per low-frequency observation. For example, 4 when
-            fitting a quarterly model with annual data, or 3 for a monthly model with quarterly
-            data. Default is 4.
-        flow_aggregation : str
-            How flow variables are aggregated over the window. ``"sum"`` (default) means the
-            observed value equals the sum of high-frequency values. ``"average"`` divides by
-            ``aggregation_period``.
+            Number of model periods per low-frequency observation. For example, 4 when fitting
+            a quarterly model with annual data, or 3 for a monthly model with quarterly data.
+            Default is 4.
         solver : str
             Perturbation solver to use.
         mode : str, optional
@@ -497,15 +484,25 @@ class DSGEStateSpace(PyMCStateSpace):
                     f"{', '.join(unknown_states)}"
                 )
 
-        # Validate flow variables
-        if flow_variables is None:
-            flow_variables = []
+        # Validate temporal_aggregation
+        if temporal_aggregation is None:
+            temporal_aggregation = {}
         else:
-            unknown_flow = [x for x in flow_variables if x not in observed_states]
-            if len(unknown_flow) > 0:
-                raise ValueError(f"The following flow variables are not in observed_states: {', '.join(unknown_flow)}")
-            if aggregation_period < 2:
-                raise ValueError(f"aggregation_period must be >= 2, got {aggregation_period}")
+            unknown_vars = [x for x in temporal_aggregation if x not in observed_states]
+            if unknown_vars:
+                raise ValueError(
+                    f"The following temporal_aggregation variables are not in observed_states: "
+                    f"{', '.join(unknown_vars)}"
+                )
+            invalid_methods = [
+                (var, method) for var, method in temporal_aggregation.items() if method not in VALID_AGGREGATIONS
+            ]
+            if invalid_methods:
+                bad = ", ".join(f"{var}={method!r}" for var, method in invalid_methods)
+                raise ValueError(f"Invalid aggregation methods: {bad}. Must be 'sum', 'mean', 'first', or 'last'.")
+            has_cumulator_vars = any(m in CUMULATOR_AGGREGATIONS for m in temporal_aggregation.values())
+            if has_cumulator_vars and aggregation_period < 2:
+                raise ValueError(f"aggregation_period must be >= 2 for sum/mean aggregation, got {aggregation_period}")
 
         # Validate constant params
         if constant_params is None:
@@ -523,11 +520,8 @@ class DSGEStateSpace(PyMCStateSpace):
                 )
 
         # Validate solver argument
-        if solver not in valid_solvers:
-            raise ValueError(
-                f'Unknown solver {solver}, expected one of "gensys", "cycle_reduction", '
-                f'"scan_cycle_reduction", or "backward_direct"'
-            )
+        if solver not in VALID_SOLVERS:
+            raise ValueError(f"Unknown solver {solver!r}, expected one of {', '.join(repr(s) for s in VALID_SOLVERS)}")
 
         # Check model is identified
         k_endog = len(observed_states)
@@ -559,10 +553,8 @@ class DSGEStateSpace(PyMCStateSpace):
         self.error_states = measurement_error
         self.constant_parameters = constant_params
 
-        # Store mixed-frequency settings
-        self._flow_variables = flow_variables
+        self._temporal_aggregation = temporal_aggregation
         self._aggregation_period = aggregation_period
-        self._flow_aggregation = flow_aggregation
 
         self.full_covariance = full_shock_covaraince
         self.use_direct_lyapunov = use_direct_lyapunov
@@ -571,11 +563,10 @@ class DSGEStateSpace(PyMCStateSpace):
         self._solver_kwargs = solver_kwargs
         self._mode = mode
 
-        # Compute augmented state dimension
-        n_cumulator = len(flow_variables) * (aggregation_period - 1)
+        n_cumulator_vars = sum(1 for m in temporal_aggregation.values() if m in CUMULATOR_AGGREGATIONS)
+        n_cumulator = n_cumulator_vars * (aggregation_period - 1)
         k_states_aug = self._k_orig_states + n_cumulator
 
-        # Rebuild the internal statespace representation and kalman filters with the newly resized matrices
         super().__init__(
             k_endog,
             k_states_aug,

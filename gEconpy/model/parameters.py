@@ -13,6 +13,7 @@ def compile_param_dict_func(
     deterministic_dict: SymbolDictionary,
     cache: dict | None = None,
     return_symbolic: bool = False,
+    mode: str | None = None,
 ) -> tuple[Callable, dict]:
     """
     Compile a function to compute model parameters from given "free" parameters.
@@ -34,6 +35,9 @@ def compile_param_dict_func(
     return_symbolic: bool, default False
         When true, return a symbolic graph representing the computation of parameter values
         rather than a compiled pytensor function.
+    mode : str or None, optional
+        Pytensor compilation mode (e.g. ``'JAX'``, ``'FAST_COMPILE'``).
+        Forwarded to the underlying compiler. Default is None.
 
     Returns
     -------
@@ -56,6 +60,7 @@ def compile_param_dict_func(
         return_symbolic=return_symbolic,
         pop_return=False,
         stack_return=not return_symbolic,
+        mode=mode,
     )
 
     if return_symbolic:

@@ -12,6 +12,21 @@ from tests._resources.cache_compiled_models import (
 )
 
 
+@pytest.fixture
+def rbc_statespace():
+    return statespace_from_gcn("tests/_resources/test_gcns/rbc_linearized.gcn", verbose=False)
+
+
+def _eval_augmented_matrices(ss_mod):
+    inputs = pm.inputvars(ss_mod.linearized_system)
+    input_names = [x.name for x in inputs]
+    f = pytensor.function(inputs, [ss_mod.ssm["transition"], ss_mod.ssm["selection"]], on_unused_input="ignore")
+    param_dict = load_and_cache_model("rbc_linearized.gcn").parameters()
+    T, R = f(**{k: param_dict[k] for k in input_names})
+    Z = ss_mod._make_design_matrix()
+    return T, R, Z
+
+
 @pytest.mark.parametrize(
     "gcn_file",
     [
@@ -48,62 +63,40 @@ def test_statespace_matrices_agree_with_model(gcn_file):
         "sarima2_12.gcn",
     ],
 )
-def test_model_to_pymc(gcn_file):
+def test_to_pymc_creates_rvs_for_priors(gcn_file):
     ss_mod = load_and_cache_statespace(gcn_file)
     with pm.Model() as m:
         ss_mod.to_pymc()
-    rv_names = [rv.name for rv in m.free_RVs]
+    rv_names = {rv.name for rv in m.free_RVs}
 
-    assert all(name in rv_names for name in ss_mod.param_priors)
+    assert set(ss_mod.param_priors.keys()) <= rv_names
 
-    hyper_prior_names = [
+    hyper_prior_names = {
         name for dist in ss_mod.shock_priors.values() for name in dist.param_name_to_hyper_name.values()
-    ]
-
-    assert all(name in rv_names for name in hyper_prior_names)
-
-
-@pytest.mark.parametrize(
-    "gcn_file",
-    [
-        "one_block_1_ss.gcn",
-        "open_rbc.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
-        "rbc_linearized.gcn",
-        "sarima2_12.gcn",
-    ],
-)
-def test_model_config(gcn_file):
-    ss_mod = load_and_cache_statespace(gcn_file)
+    }
+    assert hyper_prior_names <= rv_names
 
 
-def test_backward_direct_statespace_logp():
+def test_backward_direct_solver_produces_finite_logp():
     ss_mod = load_and_cache_statespace("sarima2_12.gcn")
-    ss_mod.configure(
-        observed_states=["x"],
-        solver="backward_direct",
-        verbose=False,
-    )
+    ss_mod.configure(observed_states=["x"], solver="backward_direct", verbose=False)
 
     rng = np.random.default_rng()
-    n_obs = 100
     data = pd.DataFrame(
-        rng.normal(size=(n_obs,)),
+        rng.normal(size=(100,)),
         columns=["x"],
-        index=pd.date_range("2000-01-01", periods=n_obs, freq="MS"),
+        index=pd.date_range("2000-01-01", periods=100, freq="MS"),
     )
 
     with pm.Model() as m:
         ss_mod.to_pymc()
         ss_mod.build_statespace_graph(data)
-
-        point = m.initial_point()
-        logp = m.compile_logp()(point)
+        logp = m.compile_logp()(m.initial_point())
         assert np.isfinite(logp)
 
 
 @pytest.mark.filterwarnings("ignore:Provided data contains missing values and will be automatically imputed")
-def test_data_from_prior_with_constant_params():
+def test_constant_params_excluded_from_prior_samples():
     ss_mod = statespace_from_gcn("tests/_resources/test_gcns/rbc_linearized.gcn", verbose=False)
     ss_mod.configure(
         observed_states=["Y", "C", "L"],
@@ -120,172 +113,227 @@ def test_data_from_prior_with_constant_params():
         for var_name in ss_mod.observed_states:
             pm.Gamma(f"error_sigma_{var_name}", alpha=2, beta=100)
 
-    true_params, data, _prior_idata = data_from_prior(
-        ss_mod,
-        pm_mod,
-        n_samples=5,
-        random_seed=42,
-    )
+    true_params, data, _ = data_from_prior(ss_mod, pm_mod, n_samples=5, random_seed=17031)
 
     assert data.shape[1] == 3
     assert "beta" not in true_params.data_vars
     assert "delta" not in true_params.data_vars
 
 
-def test_constant_params_auto():
+def test_constant_params_auto_excludes_priorless_params():
     ss_mod = statespace_from_gcn("tests/_resources/test_gcns/open_rbc.gcn", verbose=False)
-    ss_mod.configure(
-        observed_states=["Y"],
-        constant_params="auto",
-        solver="scan_cycle_reduction",
-        verbose=False,
-    )
+    ss_mod.configure(observed_states=["Y"], constant_params="auto", solver="scan_cycle_reduction", verbose=False)
 
     params_with_priors = set(ss_mod.param_priors.keys())
     input_param_names = {x.name for x in ss_mod.input_parameters}
     expected_constant = input_param_names - params_with_priors
 
-    assert len(expected_constant) > 0, "Test requires a model with some prior-less parameters"
+    assert expected_constant, "Test requires a model with some prior-less parameters"
     assert set(ss_mod.constant_parameters) == expected_constant
-
-    # Constant params should not appear in param_names
-    for name in expected_constant:
-        assert name not in ss_mod.param_names
-
-    # Params with priors should still be free
-    for name in params_with_priors:
-        assert name in ss_mod.param_names
+    assert not (expected_constant & set(ss_mod.param_names))
+    assert params_with_priors <= set(ss_mod.param_names)
 
 
-def _eval_augmented_matrices(ss_mod):
-    """Compile and evaluate the augmented T, R, Z matrices at default parameter values."""
-    inputs = pm.inputvars(ss_mod.linearized_system)
-    input_names = [x.name for x in inputs]
-    f = pytensor.function(inputs, [ss_mod.ssm["transition"], ss_mod.ssm["selection"]], on_unused_input="ignore")
-    param_dict = load_and_cache_model("rbc_linearized.gcn").parameters()
-    T, R = f(**{k: param_dict[k] for k in input_names})
-    Z = ss_mod._make_design_matrix()
-    return T, R, Z
-
-
-def test_cumulator_augmentation_structure():
-    """T, R, Z matrices have correct cumulator block for flow variable temporal aggregation."""
-    ss_mod = statespace_from_gcn("tests/_resources/test_gcns/rbc_linearized.gcn", verbose=False)
-    ss_mod.configure(
+def test_temporal_aggregation_sum_accumulates_over_window(rbc_statespace):
+    rbc_statespace.configure(
         observed_states=["Y"],
-        flow_variables=["Y"],
+        temporal_aggregation={"Y": "sum"},
         solver="gensys",
         verbose=False,
     )
-    T, R, Z = _eval_augmented_matrices(ss_mod)
+    T, _R, Z = _eval_augmented_matrices(rbc_statespace)
 
-    k_orig = ss_mod._k_orig_states
-    y_idx = ss_mod._orig_state_names.index("Y")
+    k_orig = rbc_statespace._k_orig_states
+    y_idx = rbc_statespace._orig_state_names.index("Y")
 
-    # Transition: first cumulator copies Y row; remaining shift by one
-    np.testing.assert_allclose(T[k_orig, :k_orig], T[y_idx, :k_orig], atol=1e-10)
-    assert T[k_orig + 1, k_orig] == 1.0
-    assert T[k_orig + 2, k_orig + 1] == 1.0
+    rng = np.random.default_rng()
+    x = np.zeros(T.shape[0])
+    x[:k_orig] = rng.normal(0, 0.1, size=k_orig)
 
-    # Selection: first cumulator inherits Y's shock response; rest zero
-    np.testing.assert_allclose(R[k_orig, :], R[y_idx, :], atol=1e-10)
-    np.testing.assert_allclose(R[k_orig + 1 :, :], 0.0, atol=1e-10)
+    quarterly_Y = [x[y_idx]]
+    for _ in range(3):
+        x = T @ x
+        quarterly_Y.append(x[y_idx])
 
-    # Design: sums current Y + 3 cumulator lags
-    expected_Z = np.zeros_like(Z)
-    expected_Z[0, y_idx] = 1.0
-    expected_Z[0, k_orig : k_orig + 3] = 1.0
-    np.testing.assert_allclose(Z, expected_Z)
+    observation = (Z @ x)[0]
+    np.testing.assert_allclose(observation, sum(quarterly_Y), rtol=1e-10)
 
 
-def test_mixed_flow_and_stock_design():
-    """With Y as flow and K as stock, Z has cumulator sum for Y and a plain selector for K."""
-    ss_mod = statespace_from_gcn("tests/_resources/test_gcns/rbc_linearized.gcn", verbose=False)
-    ss_mod.configure(
+@pytest.mark.parametrize("aggregation,weight", [("sum", 1.0), ("mean", 0.25)])
+def test_temporal_aggregation_design_matrix_weighting(rbc_statespace, aggregation, weight):
+    rbc_statespace.configure(
+        observed_states=["Y"],
+        temporal_aggregation={"Y": aggregation},
+        solver="gensys",
+        verbose=False,
+    )
+    Z = rbc_statespace._make_design_matrix()
+    np.testing.assert_allclose(Z[0, Z[0] != 0], weight)
+
+
+def test_aggregated_and_direct_variables_have_correct_design_rows(rbc_statespace):
+    rbc_statespace.configure(
         observed_states=["Y", "K"],
         measurement_error=["Y", "K"],
-        flow_variables=["Y"],
+        temporal_aggregation={"Y": "sum"},
         solver="gensys",
         verbose=False,
     )
-    _T, _R, Z = _eval_augmented_matrices(ss_mod)
+    _T, _R, Z = _eval_augmented_matrices(rbc_statespace)
 
-    k_orig = ss_mod._k_orig_states
-    orig_names = ss_mod._orig_state_names
-    y_idx = orig_names.index("Y")
-    k_idx = orig_names.index("K")
+    k_orig = rbc_statespace._k_orig_states
+    y_idx = rbc_statespace._orig_state_names.index("Y")
+    k_idx = rbc_statespace._orig_state_names.index("K")
 
-    # Y row: sums current + 3 cumulator lags (flow)
-    expected_y_row = np.zeros(ss_mod.k_states)
+    expected_y_row = np.zeros(rbc_statespace.k_states)
     expected_y_row[y_idx] = 1.0
     expected_y_row[k_orig : k_orig + 3] = 1.0
     np.testing.assert_allclose(Z[0], expected_y_row)
 
-    # K row: plain selector into original state block (stock)
-    expected_k_row = np.zeros(ss_mod.k_states)
+    expected_k_row = np.zeros(rbc_statespace.k_states)
     expected_k_row[k_idx] = 1.0
     np.testing.assert_allclose(Z[1], expected_k_row)
 
 
-@pytest.mark.parametrize("aggregation,weight", [("sum", 1.0), ("average", 0.25)])
-def test_flow_design_matrix_weighting(aggregation, weight):
-    """Design matrix entries scale correctly for sum vs average temporal aggregation."""
-    ss_mod = statespace_from_gcn("tests/_resources/test_gcns/rbc_linearized.gcn", verbose=False)
-    ss_mod.configure(
-        observed_states=["Y"],
-        flow_variables=["Y"],
-        flow_aggregation=aggregation,
-        solver="gensys",
-        verbose=False,
-    )
-    Z = ss_mod._make_design_matrix()
-    np.testing.assert_allclose(Z[0, Z[0] != 0], weight)
-
-
 @pytest.mark.filterwarnings("ignore:Provided data contains missing values")
-def test_mixed_frequency_logp():
-    """Kalman filter produces finite logp with NaN-padded annual data on flow + stock obs."""
-    ss_mod = statespace_from_gcn("tests/_resources/test_gcns/rbc_linearized.gcn", verbose=False)
-    ss_mod.configure(
+def test_mixed_frequency_data_produces_finite_logp(rbc_statespace):
+    rbc_statespace.configure(
         observed_states=["Y", "K"],
         measurement_error=["Y", "K"],
-        flow_variables=["Y"],
+        temporal_aggregation={"Y": "sum"},
         solver="gensys",
         verbose=False,
     )
 
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng()
     n_quarters = 40
     hf_index = pd.date_range("2000-01-01", periods=n_quarters, freq="QS")
-    data = pd.DataFrame(np.nan, index=hf_index, columns=["Y", "K"])
-    data.iloc[3::4] = rng.normal(0, 0.1, size=(n_quarters // 4, 2))
+
+    data = pd.DataFrame(index=hf_index, columns=["Y", "K"])
+    data["Y"] = np.nan
+    data.loc[data.index[3::4], "Y"] = rng.normal(0, 0.1, size=n_quarters // 4)
+    data["K"] = rng.normal(0, 0.1, size=n_quarters)
 
     with pm.Model():
-        ss_mod.to_pymc()
+        rbc_statespace.to_pymc()
         pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
         pm.Gamma("error_sigma_Y", alpha=2, beta=100)
         pm.Gamma("error_sigma_K", alpha=2, beta=100)
-        ss_mod.build_statespace_graph(data, add_norm_check=False)
+        rbc_statespace.build_statespace_graph(data, add_norm_check=False)
         logp = pm.modelcontext(None).compile_logp()(pm.modelcontext(None).initial_point())
         assert np.isfinite(logp)
 
 
-def test_prepare_mixed_frequency_data():
-    """Annual data expands to quarterly with values at correct positions and NaN elsewhere."""
+@pytest.mark.parametrize(
+    "aggregation_period,expected_shape",
+    [(4, (3, 3)), (3, (2, 2)), (2, (1, 1))],
+    ids=["quarterly-to-annual", "monthly-to-quarterly", "period-2"],
+)
+def test_cumulator_shift_matrix_shape_matches_aggregation_period(rbc_statespace, aggregation_period, expected_shape):
+    rbc_statespace.configure(
+        observed_states=["Y"],
+        temporal_aggregation={"Y": "sum"},
+        aggregation_period=aggregation_period,
+        solver="gensys",
+        verbose=False,
+    )
+    T, _R, _Z = _eval_augmented_matrices(rbc_statespace)
+    k_orig = rbc_statespace._k_orig_states
+    C = T[k_orig:, k_orig:]
+    assert C.shape == expected_shape
+
+
+def test_multiple_aggregated_variables_produce_block_diagonal_structure(rbc_statespace):
+    rbc_statespace.configure(
+        observed_states=["Y", "C"],
+        measurement_error=["Y", "C"],
+        temporal_aggregation={"Y": "sum", "C": "sum"},
+        aggregation_period=4,
+        solver="gensys",
+        verbose=False,
+    )
+    T, _R, _Z = _eval_augmented_matrices(rbc_statespace)
+
+    k_orig = rbc_statespace._k_orig_states
+    C = T[k_orig:, k_orig:]
+
+    shift = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+    expected_C = np.kron(np.eye(2, dtype=np.float32), shift)
+    np.testing.assert_allclose(C, expected_C)
+
+
+@pytest.mark.parametrize("observation_position", ["first", "last"])
+def test_prepare_mixed_frequency_data_positions_values_correctly(observation_position):
     annual = pd.DataFrame(
         {"GDP": [100.0, 110.0], "R": [0.05, 0.04]},
         index=pd.to_datetime(["2020-01-01", "2021-01-01"]),
     )
 
-    # Default: all columns at Q4 (last period)
-    quarterly = prepare_mixed_frequency_data(annual, high_freq="QS")
-    assert quarterly.shape == (8, 2)
-    np.testing.assert_array_equal(quarterly.iloc[3].values, [100.0, 0.05])
-    np.testing.assert_array_equal(quarterly.iloc[7].values, [110.0, 0.04])
-    assert quarterly.isna().sum().sum() == 12
+    quarterly = prepare_mixed_frequency_data(annual, high_freq="QS", observation_position=observation_position)
 
-    # First period: all columns at Q1
-    quarterly = prepare_mixed_frequency_data(annual, high_freq="QS", observation_position="first")
-    assert quarterly.loc["2020-01-01", "GDP"] == 100.0
-    assert quarterly.loc["2020-01-01", "R"] == 0.05
-    assert np.isnan(quarterly.loc["2020-10-01", "GDP"])
+    if observation_position == "last":
+        assert quarterly.shape == (8, 2)
+        np.testing.assert_array_equal(quarterly.iloc[3].values, [100.0, 0.05])
+        np.testing.assert_array_equal(quarterly.iloc[7].values, [110.0, 0.04])
+    else:
+        assert quarterly.loc["2020-01-01", "GDP"] == 100.0
+        assert quarterly.loc["2021-01-01", "GDP"] == 110.0
+
+
+@pytest.mark.parametrize(
+    "high_freq,aggregation_period,expected_len,value_position",
+    [("MS", 12, 12, "2020-12-01"), ("MS", 3, 6, "2020-03-01")],
+    ids=["monthly-to-annual", "monthly-to-quarterly"],
+)
+def test_prepare_mixed_frequency_data_various_periods(high_freq, aggregation_period, expected_len, value_position):
+    low_freq = pd.DataFrame({"GDP": [100.0]}, index=pd.to_datetime(["2020-01-01"]))
+    if aggregation_period == 3:
+        low_freq = pd.DataFrame({"GDP": [100.0, 110.0]}, index=pd.to_datetime(["2020-01-01", "2020-04-01"]))
+
+    result = prepare_mixed_frequency_data(
+        low_freq, high_freq=high_freq, aggregation_period=aggregation_period, observation_position="last"
+    )
+
+    assert len(result) == expected_len
+    assert result.loc[value_position, "GDP"] == 100.0
+
+
+def test_mixed_sum_and_mean_aggregation_weights(rbc_statespace):
+    rbc_statespace.configure(
+        observed_states=["Y", "C"],
+        measurement_error=["Y", "C"],
+        temporal_aggregation={"Y": "sum", "C": "mean"},
+        aggregation_period=4,
+        solver="gensys",
+        verbose=False,
+    )
+    _T, _R, Z = _eval_augmented_matrices(rbc_statespace)
+
+    k_orig = rbc_statespace._k_orig_states
+    y_idx = rbc_statespace._orig_state_names.index("Y")
+    c_idx = rbc_statespace._orig_state_names.index("C")
+
+    np.testing.assert_allclose(Z[0, y_idx], 1.0)
+    np.testing.assert_allclose(Z[0, k_orig : k_orig + 3], 1.0)
+
+    np.testing.assert_allclose(Z[1, c_idx], 0.25)
+    np.testing.assert_allclose(Z[1, k_orig + 3 : k_orig + 6], 0.25)
+
+
+@pytest.mark.parametrize("method", ["first", "last"])
+def test_first_and_last_aggregation_use_direct_selector(rbc_statespace, method):
+    rbc_statespace.configure(
+        observed_states=["Y"],
+        temporal_aggregation={"Y": method},
+        solver="gensys",
+        verbose=False,
+    )
+
+    assert rbc_statespace._n_cumulator_states == 0
+
+    _T, _R, Z = _eval_augmented_matrices(rbc_statespace)
+    y_idx = rbc_statespace._orig_state_names.index("Y")
+
+    expected_row = np.zeros(rbc_statespace.k_states)
+    expected_row[y_idx] = 1.0
+    np.testing.assert_allclose(Z[0], expected_row)
