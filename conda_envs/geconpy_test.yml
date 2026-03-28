@@ -12,7 +12,7 @@ dependencies:
   - pandas
   - xarray
   - matplotlib
-  - arviz
+  - arviz<1.0
   - statsmodels
   - pymc>=5.27.1
   - pytensor>=2.37.0
