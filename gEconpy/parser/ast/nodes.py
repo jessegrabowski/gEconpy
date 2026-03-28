@@ -112,6 +112,8 @@ class Tag(Enum):
     """
 
     EXCLUDE = "exclude"  # Exclude equation from final system after optimization
+    MINIMIZE = "minimize"  # Treat objective as a minimization problem
+    MAXIMIZE = "maximize"  # Explicitly mark objective as maximization (default)
 
     @classmethod
     def from_string(cls, name: str) -> Tag:
@@ -307,13 +309,19 @@ class GCNEquation(Node):
         )
 
     def has_tag(self, tag: Tag) -> bool:
-        """Check if the equation has a specific tag."""
         return tag in self.tags
 
     @property
     def is_excluded(self) -> bool:
-        """Check if the equation has the @exclude tag."""
         return Tag.EXCLUDE in self.tags
+
+    @property
+    def is_minimize(self) -> bool:
+        return Tag.MINIMIZE in self.tags
+
+    @property
+    def is_maximize(self) -> bool:
+        return Tag.MAXIMIZE in self.tags
 
     @property
     def is_calibrating(self) -> bool:

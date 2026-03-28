@@ -60,6 +60,10 @@ def _extract_flags(eq: GCNEquation) -> dict[str, bool]:
     flags = {}
     if eq.has_tag(Tag.EXCLUDE):
         flags["exclude"] = True
+    if eq.has_tag(Tag.MINIMIZE):
+        flags["minimize"] = True
+    if eq.has_tag(Tag.MAXIMIZE):
+        flags["maximize"] = True
     if eq.calibrating_parameter:
         flags["is_calibrating"] = True
     else:

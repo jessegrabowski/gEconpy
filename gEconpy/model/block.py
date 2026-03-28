@@ -247,9 +247,12 @@ class Block:
         # Validate equation flags
         # - the "is_calibrating" key can only occur in the calibration block
         # - the "exclude" key can only occur in the constraints block
+        # - the "minimize" and "maximize" keys can only occur in the objective block
         valid_flags = {
             "is_calibrating": ["calibration"],
             "exclude": ["constraints"],
+            "minimize": ["objective"],
+            "maximize": ["objective"],
         }
 
         for name, eq_block in zip(
@@ -272,6 +275,25 @@ class Block:
                             f"Equation {eq} in {name} block of {self.name} has an invalid decorator: exclude. "
                             f"This flag should only appear in the constraints block."
                         )
+                    if self.equation_flags[key].get("minimize", False) and name not in valid_flags["minimize"]:
+                        raise ValueError(
+                            f"Equation {eq} in {name} block of {self.name} has an invalid decorator: minimize. "
+                            f"This flag should only appear in the objective block."
+                        )
+                    if self.equation_flags[key].get("maximize", False) and name not in valid_flags["maximize"]:
+                        raise ValueError(
+                            f"Equation {eq} in {name} block of {self.name} has an invalid decorator: maximize. "
+                            f"This flag should only appear in the objective block."
+                        )
+
+        # Check mutual exclusivity of @minimize and @maximize
+        if self.objective is not None:
+            for key in self.objective:
+                flags = self.equation_flags[key]
+                if flags.get("minimize", False) and flags.get("maximize", False):
+                    raise ValueError(
+                        f"Objective equation in block {self.name} has both @minimize and @maximize tags. Use only one."
+                    )
 
         return True
 
@@ -501,6 +523,9 @@ class Block:
     def _build_lagrangian(self) -> sp.Add:
         """Build the Lagrangian associated with the block's optimization program."""
         objective = next(iter(self.objective.values()))
+        obj_key = next(iter(self.objective.keys()))
+        is_minimization = self.equation_flags[obj_key].get("minimize", False)
+
         constraints = self.constraints
         multipliers = self.multipliers
         sub_dict = {}
@@ -512,7 +537,11 @@ class Block:
 
         i = 1
 
-        lagrange = objective.rhs.subs(sub_dict)
+        obj_rhs = objective.rhs.subs(sub_dict)
+        if is_minimization:
+            obj_rhs = -obj_rhs
+
+        lagrange = obj_rhs
         for key, constraint in constraints.items():
             if multipliers[key] is not None:
                 lm = multipliers[key]
@@ -638,6 +667,10 @@ class Block:
             \text{constraint}_n
 
         And taking the derivative with respect to each control variable in turn.
+
+        When the objective equation carries the ``@minimize`` tag, the objective is automatically negated before
+        forming the Lagrangian (i.e. ``minimize f`` is converted to ``maximize -f``). The resulting first-order
+        conditions are those of the corresponding minimization program.
 
         Parameters
         ----------

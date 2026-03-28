@@ -55,7 +55,8 @@ Here is an example of a GCN file that represents a simple RBC model, found in th
 
         objective
         {
-            TC[] = -(r[] * K[-1] + w[] * L[]);
+            @minimize
+            TC[] = r[] * K[-1] + w[] * L[];
         };
 
         constraints
@@ -180,16 +181,21 @@ In the above example, there are two examples of objectives. The household seeks 
 
 In the mathematical notation above, this was written with an infinite sum. These sums cannot be represented in the GCN file, so the user must first convert the sum to a recursive Bellman equation. Notice also that the variable ``u[]``, defined in the ``definitions`` block, is used here to shorten the expression.
 
-The firm seeks to minimize total costs. This is represented by the following block:
+The firm seeks to minimize total costs. This can be written using the ``@minimize`` tag:
 
 .. code-block:: bash
 
     objective
     {
-        TC[] = -(r[] * K[-1] + w[] * L[]);
+        @minimize
+        TC[] = r[] * K[-1] + w[] * L[];
     };
 
-In gEconpy, all objectives must be written as *maximization* problems. Since the firm is minimizing costs, the objective function is written with a minus sign.
+The ``@minimize`` tag tells gEconpy to treat the objective as a minimization problem. Internally, the objective is negated before forming the Lagrangian, so the resulting first-order conditions are those of the corresponding minimization program. The default behavior (when no tag is present) is maximization. An explicit ``@maximize`` tag is also available for clarity, but is not required.
+
+.. note::
+    You could also write a minimization by manually negating the objective: ``TC[] = -(r[] * K[-1] + w[] * L[])``.
+    Be aware that this will result in a negative steady-state value for the ``TC[]`` variable, which has implication for log-linearization. That is, you can't log linearize it, because it's negative.
 
 
 Constraints
@@ -347,6 +353,8 @@ The multiplier associated with the budget constraint has been given the name "la
 
 Internally, first order conditions are solved by first making all substitutions from ``definitions``, then forming the following Lagrangian function:
 ``L = objective.RHS - lm1 * (control_1.LHS - control_1.RHS) - lm2 * (control_2.LHS - control_2.RHS) ... - lm_k * (control_k.LHS - control_k.RHS)``
+
+When the objective carries the ``@minimize`` tag, the objective RHS is negated before forming the Lagrangian, converting the minimization into an equivalent maximization.
 
 Next, the derivative of this Lagrangian is taken with respect to all control variables and all lagrange multipliers. Derivaties are are computed "though time" using ``TimeAwareSymbols``, an extension of a normal Sympy symbol. For a control variable x, the total derivative over time is built up as ``dL[]/dx[] + beta * dL[+1]/dx + beta * beta * dL[+2]/dx[] ...``. This unrolling terminates when ``dL[+n]/dx[] = 0``.
 
