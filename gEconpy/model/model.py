@@ -304,7 +304,7 @@ class Model:
     def f_params(self) -> Callable:
         """Compiled function mapping free parameter values to the full parameter dictionary."""
         if self._f_params is None:
-            f, _cache = compile_param_dict_func(self._param_dict, self._deterministic_dict)
+            f, _cache = compile_param_dict_func(self._param_dict, self._deterministic_dict, mode=self._mode)
             self._f_params = f
         return self._f_params
 
@@ -315,12 +315,13 @@ class Model:
             if not self._ss_solution_dict:
                 return None
 
-            _, cache = compile_param_dict_func(self._param_dict, self._deterministic_dict)
+            _, cache = compile_param_dict_func(self._param_dict, self._deterministic_dict, mode=self._mode)
             all_params = list(self._param_dict.to_sympy().keys()) + list(self._deterministic_dict.to_sympy().keys())
             f_ss, _cache = compile_known_ss(
                 self._ss_solution_dict,
                 self._variables,
                 all_params,
+                mode=self._mode,
                 cache=cache,
             )
             self._f_ss = f_ss
@@ -1361,7 +1362,7 @@ class Model:
 
         if cache_key not in self._linearize_cache:
             all_inputs = list(ss_input_nodes) + list(param_input_nodes)
-            f = compile_pytensor_function(all_inputs, jacobians, on_unused_input="ignore")
+            f = compile_pytensor_function(all_inputs, jacobians, mode=self._mode, on_unused_input="ignore")
             self._linearize_cache[cache_key] = f
         else:
             f = self._linearize_cache[cache_key]
