@@ -70,7 +70,7 @@ VARIABLE_REF = (
 
 VARIABLE_LIST = pp.DelimitedList(VARIABLE_REF)
 
-VALID_TAGS = frozenset(["exclude"])
+VALID_TAGS = frozenset(["exclude", "minimize", "maximize"])
 
 
 def _parse_tag(s: str, loc: int, toks):
