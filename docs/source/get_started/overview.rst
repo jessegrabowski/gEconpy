@@ -82,7 +82,8 @@ As an alternative to setting a parameter value directly, the user can declare a 
 
         objective
         {
-            TC[] = -(r[] * K[-1] + w[] * L[]);
+            @minimize
+            TC[] = r[] * K[-1] + w[] * L[];
         };
 
         constraints
@@ -120,6 +121,8 @@ The multiplier associated with the budget constraint has been given the name "la
 
 Interally, first order conditions are solved by first making all substitutions from ``definitions``, then forming the following Lagrangian function:
 ``L = objective.RHS - lm1 * (control_1.LHS - control_1.RHS) - lm2 * (control_2.LHS - control_2.RHS) ... - lm_k * (control_k.LHS - control_k.RHS)``
+
+When the objective carries the ``@minimize`` tag, the objective RHS is negated before forming the Lagrangian, converting the minimization into an equivalent maximization.
 
 Next, the derivative of this Lagrangian is taken with respect to all control variables and all lagrange multipliers. Derivaties are are computed "though time" using ``TimeAwareSymbols``, an extension of a normal Sympy symbol. For a control variable x, the total derivative over time is built up as ``dL[]/dx[] + beta * dL[+1]/dx + beta * beta * dL[+2]/dx[] ...``. This unrolling terminates when ``dL[+n]/dx[] = 0``.
 

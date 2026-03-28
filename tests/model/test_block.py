@@ -696,3 +696,87 @@ def test_ss_variable_in_calibration_resolves_to_deterministic_param():
 
     assert phi in block.deterministic_dict
     assert block.deterministic_dict[phi] == Y_bar**2 + alpha
+
+
+def test_minimize_tag_produces_correct_firm_focs(rng):
+    """The @minimize tag on a cost-minimization objective should yield the same FOCs as manual negation."""
+    result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "rbc_2_block_minimize.gcn")
+    firm_block = result.block_dict["FIRM"]
+
+    Y = TimeAwareSymbol("Y", 0)
+    TC = TimeAwareSymbol("TC", 0)
+    K = TimeAwareSymbol("K", -1)
+    L = TimeAwareSymbol("L", 0)
+    A = TimeAwareSymbol("A", 0)
+    r = TimeAwareSymbol("r", 0)
+    w = TimeAwareSymbol("w", 0)
+    P = TimeAwareSymbol("P", 0)
+    epsilon = TimeAwareSymbol("epsilon_A", 0)
+    alpha, rho = sp.symbols(["alpha", "rho_A"])
+
+    all_variables = [Y, TC, K, L, A, A.step_backward(), P, r, w, alpha, rho, epsilon]
+    sub_dict = dict(zip(all_variables, rng.uniform(0.1, 1, size=len(all_variables)), strict=False))
+
+    # Hand-derived FOCs for min_{K,L} (r*K + w*L) s.t. Y = A*K^alpha*L^(1-alpha) : P
+    expected_dL_dK = -r + P * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
+    expected_dL_dL = -w + P * A * (1 - alpha) * K**alpha * L ** (-alpha)
+
+    subbed_system = [eq.subs(sub_dict) for eq in firm_block.system_equations]
+
+    for expected_foc in [expected_dL_dK, expected_dL_dL]:
+        assert expected_foc.subs(sub_dict) in subbed_system
+
+
+def test_minimize_and_maximize_on_same_equation_raises():
+    gcn = """
+    block FIRM
+    {
+        controls { L[]; };
+        objective
+        {
+            @minimize
+            @maximize
+            TC[] = w[] * L[];
+        };
+        constraints { Y[] = A[] * L[] : mc[]; };
+    };
+    """
+    with pytest.raises(ValueError, match="both @minimize and @maximize"):
+        load_gcn_string(gcn)
+
+
+_CONSTRAINT_BLOCK = """
+    block B
+    {{
+        controls {{ C[]; }};
+        objective {{ U[] = C[]; }};
+        constraints {{ @{tag} C[] = 1 : lambda[]; }};
+    }};
+"""
+
+_IDENTITY_BLOCK = """
+    block B
+    {{
+        identities {{ @{tag} Y[] = C[]; }};
+    }};
+"""
+
+
+@pytest.mark.parametrize(
+    "tag, gcn_template",
+    [
+        ("minimize", _CONSTRAINT_BLOCK),
+        ("minimize", _IDENTITY_BLOCK),
+        ("maximize", _CONSTRAINT_BLOCK),
+        ("maximize", _IDENTITY_BLOCK),
+    ],
+    ids=[
+        "minimize-on-constraint",
+        "minimize-on-identity",
+        "maximize-on-constraint",
+        "maximize-on-identity",
+    ],
+)
+def test_optimization_tag_on_wrong_component_raises(tag, gcn_template):
+    with pytest.raises(ValueError, match=f"invalid decorator: {tag}"):
+        load_gcn_string(gcn_template.format(tag=tag))
