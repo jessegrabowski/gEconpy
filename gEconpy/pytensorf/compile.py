@@ -2,11 +2,15 @@ from functools import lru_cache
 
 import pytensor
 
-from pymc.pytensorf import rewrite_pregrad
 from pytensor.compile.function.types import Function
 from pytensor.compile.mode import Mode
 from pytensor.compile.profiling import ProfileStats
+from pytensor.graph.rewriting import rewrite_graph
 from pytensor.tensor.variable import TensorVariable
+
+
+def rewrite_pregrad(graph):
+    return rewrite_graph(graph, include=("canonicalize", "stabilize"))
 
 
 @lru_cache(maxsize=128)

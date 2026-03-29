@@ -93,6 +93,19 @@ def sort_dictionary(d):
     return result
 
 
+def _unpickle_symbol_dictionary(cls, items, is_sympy, assumptions, is_variable, extra_attrs):
+    """Reconstruct a SymbolDictionary (or subclass) from pickled state."""
+    d = cls.__new__(cls)
+    # Initialize internal state before any __setitem__ calls
+    d.is_sympy = is_sympy
+    d._assumptions = assumptions
+    d._is_variable = is_variable
+    for k, v in extra_attrs.items():
+        setattr(d, k, v)
+    dict.update(d, items)
+    return d
+
+
 class SymbolDictionary(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -115,6 +128,17 @@ class SymbolDictionary(dict):
 
         self._save_assumptions(keys)
         self._save_is_variable(keys)
+
+    def __reduce__(self):
+        # Default dict pickling calls __setitem__ before __init__, which crashes
+        # because _assumptions doesn't exist yet. Serialize the raw dict contents
+        # and metadata, then reconstruct via __new__ + dict.update (bypassing __setitem__).
+        base_attrs = {"is_sympy", "_assumptions", "_is_variable"}
+        extra_attrs = {k: v for k, v in self.__dict__.items() if k not in base_attrs}
+        return (
+            _unpickle_symbol_dictionary,
+            (type(self), dict(self), self.is_sympy, self._assumptions, self._is_variable, extra_attrs),
+        )
 
     def __or__(self, other: dict):
         if not isinstance(other, dict):

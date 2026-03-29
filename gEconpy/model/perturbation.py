@@ -7,7 +7,6 @@ import pandas as pd
 import pytensor.tensor as pt
 import sympy as sp
 
-from pymc.pytensorf import rewrite_pregrad
 from pytensor.graph.replace import graph_replace
 from pytensor.tensor import TensorVariable
 from scipy import linalg
@@ -16,6 +15,7 @@ from sympytensor import as_tensor
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.timing import make_all_variable_time_combinations
+from gEconpy.pytensorf.compile import rewrite_pregrad
 from gEconpy.pytensorf.real_eig import real_eig
 from gEconpy.pytensorf.sparse_jacobian import sparse_jacobian
 from gEconpy.solvers.gensys import _gensys_setup

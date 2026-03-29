@@ -1,8 +1,14 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.parser.errors import ParseLocation
 from gEconpy.solvers.gensys import interpret_gensys_output
+
+if TYPE_CHECKING:
+    from gEconpy.parser.errors import ParseLocation
 
 
 class GCNValidationError(ValueError):

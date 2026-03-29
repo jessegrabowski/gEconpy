@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
+import warnings
 
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal
 
+import cloudpickle
 import numpy as np
 import pandas as pd
 import pytensor
 import pytensor.tensor as pt
 import xarray as xr
 
-from pymc.pytensorf import rewrite_pregrad
+from rich.progress import Progress
+from scipy.linalg import LinAlgError
 
 from gEconpy.exceptions import PerturbationSolutionNotFoundException
 from gEconpy.model.perturbation import (
@@ -19,13 +23,142 @@ from gEconpy.model.perturbation import (
 )
 from gEconpy.model.perturbation import (
     compute_bk_eigenvalues_pt,
+    residual_norms,
+    statespace_to_gEcon_representation,
+)
+from gEconpy.model.sampling import (
+    sample_from_priors,
+    sample_from_priors_qmc,
+    sample_uniform_from_priors,
 )
 from gEconpy.model.statistics.validation import _maybe_linearize_model
+from gEconpy.pytensorf.compile import rewrite_pregrad
+from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
+from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
+from gEconpy.solvers.gensys import solve_policy_function_with_gensys
 
 if TYPE_CHECKING:
     from gEconpy.model.model import Model
 
 _log = logging.getLogger(__name__)
+
+_SHARED: dict = {"model": None, "kwargs": {}}
+
+
+def _init_worker(model_or_bytes, kwargs: dict, use_pickle: bool = False) -> None:
+    if use_pickle:
+        _SHARED["model"] = cloudpickle.loads(model_or_bytes)
+    else:
+        _SHARED["model"] = model_or_bytes
+    _SHARED["kwargs"] = kwargs
+
+
+def _worker_fn(updates: dict):
+    return _check_one_draw(_SHARED["model"], updates, **_SHARED["kwargs"])
+
+
+def _pick_start_method() -> str:
+    available = multiprocessing.get_all_start_methods()
+    if "fork" in available:
+        return "fork"
+    if "forkserver" in available:
+        return "forkserver"
+    return "spawn"
+
+
+def _solve_perturbation(
+    A: np.ndarray,
+    B: np.ndarray,
+    C: np.ndarray,
+    D: np.ndarray,
+    solver: str,
+    n_variables: int,
+    tol: float,
+    max_iter: int,
+    backward_looking: bool,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Dispatch to the appropriate perturbation solver and return (T, R).
+
+    Returns ``(None, None)`` when the solver fails or reports non-convergence.
+    """
+    effective_solver = "backward_direct" if backward_looking else solver
+
+    if effective_solver == "cycle_reduction":
+        T, R, _result, _log_norm = solve_policy_function_with_cycle_reduction(A, B, C, D, max_iter, tol, False)
+        return (T, R) if T is not None else (None, None)
+
+    if effective_solver == "gensys":
+        G_1, _const, impact, _f_mat, _f_wt, _y_wt, _gev, eu, _loose = solve_policy_function_with_gensys(A, B, C, D, tol)
+        if not all(x == 1 for x in eu[:2]):
+            return None, None
+        return G_1[:n_variables, :n_variables], impact[:n_variables, :]
+
+    if effective_solver == "backward_direct":
+        return solve_policy_function_with_backward_direct(A, B, C, D)
+
+    raise ValueError(f"Unknown solver {solver!r}")
+
+
+_NUMERICAL_ERRORS = (ValueError, ArithmeticError, LinAlgError, RuntimeError)
+
+
+def _check_one_draw(
+    model: Model,
+    updates: dict,
+    solver: str,
+    steady_state_kwargs: dict,
+    linearize_kwargs: dict,
+    tol: float,
+    max_iter: int,
+    norm_tol: float,
+) -> tuple[str | None, float, float]:
+    """Run the full solvability pipeline for one parameter draw.
+
+    Returns
+    -------
+    tuple of (failure_step, norm_deterministic, norm_stochastic)
+        ``failure_step`` is ``None`` on success, or the name of the failing stage.
+        Norms are ``nan`` when not reached.
+    """
+    failure_step: str | None = None
+    deterministic_norm = np.nan
+    stochastic_norm = np.nan
+
+    ss = T = R = None
+    try:
+        ss = model.steady_state(verbose=False, progressbar=False, **steady_state_kwargs, **updates)
+        if not ss.success:
+            failure_step = "steady_state"
+    except _NUMERICAL_ERRORS:
+        failure_step = "steady_state"
+
+    A = B = C = D = None
+    if failure_step is None:
+        try:
+            A, B, C, D = model.linearize_model(steady_state=ss, verbose=False, **linearize_kwargs, **updates)
+            T, R = _solve_perturbation(A, B, C, D, solver, model.n_variables, tol, max_iter, model._backward_looking)
+            if T is None:
+                failure_step = "perturbation"
+        except _NUMERICAL_ERRORS:
+            failure_step = "perturbation"
+
+    if failure_step is None and not bool(_check_bk_condition(A, B, C, D, verbose=False, return_value="bool")):
+        failure_step = "blanchard-kahn"
+
+    if failure_step is None:
+        try:
+            P, Q, _, _, A_prime, R_prime, S_prime = statespace_to_gEcon_representation(A, T, R, tol)
+            deterministic_norm, stochastic_norm = residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
+        except _NUMERICAL_ERRORS:
+            failure_step = "deterministic_norm"
+
+    if failure_step is None:
+        if deterministic_norm > norm_tol:
+            failure_step = "deterministic_norm"
+        elif stochastic_norm > norm_tol:
+            failure_step = "stochastic_norm"
+
+    return failure_step, deterministic_norm, stochastic_norm
 
 
 def summarize_perturbation_solution(
@@ -220,3 +353,223 @@ def eigenvalue_sensitivity(
             "parameter": param_names,
         },
     )
+
+
+def solvability_check(
+    model: Model,
+    samples: pd.DataFrame,
+    *,
+    cores: int = 1,
+    solver: str = "cycle_reduction",
+    steady_state_kwargs: dict | None = None,
+    linearize_kwargs: dict | None = None,
+    tol: float = 1e-8,
+    max_iter: int = 100,
+    norm_tol: float = 1e-8,
+    progressbar: bool = True,
+) -> pd.DataFrame:
+    """Check whether each row of ``samples`` yields a solvable DSGE model.
+
+    Each row is pushed through the full solution pipeline:
+    steady state → linearization → perturbation solve → Blanchard-Kahn check →
+    residual norms. The first step that fails determines the ``failure_step`` label.
+
+    Parameters
+    ----------
+    model : Model
+        A compiled DSGE model. Must have steady-state and linearization
+        functions compiled (i.e. ``model.steady_state()`` must have been called
+        at least once before passing to this function).
+    samples : pd.DataFrame
+        Parameter draws. Column names must be a subset of the model's parameter
+        names. Unspecified parameters use the model's calibrated defaults.
+    cores : int, default 1
+        Number of parallel worker processes. Uses ``fork`` on macOS/Linux for
+        near-linear speedup with zero serialization overhead. Falls back to
+        ``spawn`` on Windows (slower; ~12 s pool startup overhead).
+    solver : str, default ``"cycle_reduction"``
+        Perturbation solver. One of ``"cycle_reduction"``, ``"gensys"``.
+        Backward-looking models always use ``"backward_direct"`` regardless of
+        this setting.
+    steady_state_kwargs : dict, optional
+        Extra keyword arguments forwarded to ``model.steady_state()``.
+    linearize_kwargs : dict, optional
+        Extra keyword arguments forwarded to ``model.linearize_model()``.
+    tol : float, default 1e-8
+        Solver convergence tolerance.
+    max_iter : int, default 100
+        Maximum solver iterations.
+    norm_tol : float, default 1e-8
+        Threshold for deterministic and stochastic residual norms.
+    progressbar : bool, default True
+        Show a ``rich`` progress bar (serial mode only).
+
+    Returns
+    -------
+    pd.DataFrame
+        The input ``samples`` with three additional columns:
+
+        - ``failure_step`` : str or None. ``None`` on success; otherwise the
+          name of the first failing stage: ``"steady_state"``,
+          ``"perturbation"``, ``"blanchard-kahn"``, ``"deterministic_norm"``,
+          or ``"stochastic_norm"``.
+        - ``norm_deterministic`` : float. Deterministic residual norm, or
+          ``nan`` if not reached.
+        - ``norm_stochastic`` : float. Stochastic residual norm, or ``nan``
+          if not reached.
+    """
+    ss_kwargs = steady_state_kwargs or {}
+    lin_kwargs = linearize_kwargs or {}
+
+    shared_kwargs = {
+        "solver": solver,
+        "steady_state_kwargs": ss_kwargs,
+        "linearize_kwargs": lin_kwargs,
+        "tol": tol,
+        "max_iter": max_iter,
+        "norm_tol": norm_tol,
+    }
+
+    param_dicts = [{k: v for k, v in row._asdict().items() if k != "Index"} for row in samples.itertuples()]
+
+    if cores == 1:
+        results = _run_serial(model, param_dicts, shared_kwargs, progressbar)
+    else:
+        results = _run_parallel(model, param_dicts, shared_kwargs, cores)
+
+    failure_steps, norms_det, norms_stoch = zip(*results, strict=False)
+
+    out = samples.copy()
+    out["failure_step"] = list(failure_steps)
+    out["norm_deterministic"] = list(norms_det)
+    out["norm_stochastic"] = list(norms_stoch)
+    return out
+
+
+def _run_serial(
+    model: Model,
+    param_dicts: list[dict],
+    shared_kwargs: dict,
+    progressbar: bool,
+) -> list[tuple]:
+    if progressbar:
+        with Progress() as progress:
+            task = progress.add_task("Checking solvability...", total=len(param_dicts))
+            results = []
+            for updates in param_dicts:
+                results.append(_check_one_draw(model, updates, **shared_kwargs))
+                progress.advance(task)
+        return results
+    return [_check_one_draw(model, updates, **shared_kwargs) for updates in param_dicts]
+
+
+def _run_parallel(
+    model: Model,
+    param_dicts: list[dict],
+    shared_kwargs: dict,
+    cores: int,
+) -> list[tuple]:
+    method = _pick_start_method()
+    use_pickle = method != "fork"
+
+    model_payload = cloudpickle.dumps(model, protocol=-1) if use_pickle else model
+
+    mp_ctx = multiprocessing.get_context(method)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*multi-threaded.*fork.*")
+        with mp_ctx.Pool(
+            cores,
+            initializer=_init_worker,
+            initargs=(model_payload, shared_kwargs, use_pickle),
+        ) as pool:
+            results = list(pool.imap_unordered(_worker_fn, param_dicts))
+    return results
+
+
+def _collect_priors(
+    model: Model,
+    param_subset: list[str] | None = None,
+) -> dict:
+    """Merge model parameter and (optionally) shock priors, then filter.
+
+    Returns
+    -------
+    dict
+        Prior distributions keyed by parameter name.
+
+    Raises
+    ------
+    ValueError
+        If no priors exist or ``param_subset`` contains unknown names.
+    """
+    priors = dict(model.param_priors)
+
+    if not priors:
+        raise ValueError(
+            "Model has no param_priors defined. Use solvability_check with a "
+            "manually constructed samples DataFrame instead."
+        )
+
+    if param_subset is not None:
+        unknown = set(param_subset) - set(priors)
+        if unknown:
+            raise ValueError(f"param_subset contains names not found in model.param_priors: {unknown}")
+        priors = {k: v for k, v in priors.items() if k in param_subset}
+
+    return priors
+
+
+def prior_solvability_check(
+    model: Model,
+    n_samples: int,
+    *,
+    seed: int | np.random.Generator | None = None,
+    param_subset: list[str] | None = None,
+    method: str = "lhs",
+    hdi_prob: float = 0.99,
+    **kwargs,
+) -> pd.DataFrame:
+    """Sample from the model's preliz priors and check solvability.
+
+    Thin wrapper: draws a parameter ``DataFrame`` from the model's prior
+    distributions, then delegates to :func:`solvability_check`.
+
+    Parameters
+    ----------
+    model : Model
+        Must have at least one prior defined via ``param_priors``.
+    n_samples : int
+        Number of parameter draws.
+    seed : int or Generator, optional
+        Random seed.
+    param_subset : list of str, optional
+        If given, only these parameters are sampled; others use model defaults.
+    method : str, default ``"lhs"``
+        Sampling strategy:
+
+        - ``"random"`` — Monte Carlo via ``.rvs()``.
+        - ``"lhs"``, ``"sobol"``, ``"halton"``, ``"poisson_disk"`` — uniform
+          QMC over HDI bounds (recommended).
+        - ``"sobol_ppf"``, ``"halton_ppf"`` — QMC via inverse-CDF.
+    hdi_prob : float, default 0.99
+        HDI probability for bound computation. Ignored for ``"random"`` and
+        ``"*_ppf"`` methods.
+    **kwargs
+        Forwarded to :func:`solvability_check`.
+
+    Returns
+    -------
+    pd.DataFrame
+        See :func:`solvability_check` return value.
+    """
+    priors = _collect_priors(model, param_subset)
+
+    if method == "random":
+        samples = sample_from_priors(priors, n_samples, seed=seed)
+    elif method.endswith("_ppf"):
+        qmc_method = method.removesuffix("_ppf")
+        samples = sample_from_priors_qmc(priors, n_samples, seed=seed, method=qmc_method)
+    else:
+        samples = sample_uniform_from_priors(priors, n_samples, seed=seed, method=method, hdi_prob=hdi_prob)
+
+    return solvability_check(model, samples, **kwargs)

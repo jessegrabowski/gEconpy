@@ -463,160 +463,217 @@ def _prior_validate_params_to_plot(params_to_plot: list[str] | None, params: lis
                 raise ValueError(f'Cannot plot parameter "{param}", it was not found in the provided data.')
 
 
-def _prior_prepare_data(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]]:
-    """Prepare data: drop constants, split failure_step, compute success flag and params list."""
-    plot_data = data.copy()
-    failure_step = plot_data["failure_step"].copy()
-    plot_data.drop(columns=["failure_step"], inplace=True)
+_SOLVABILITY_COLORS = {
+    "steady_state": "tab:red",
+    "perturbation": "tab:orange",
+    "blanchard-kahn": "tab:green",
+    "deterministic_norm": "tab:purple",
+    "stochastic_norm": "tab:pink",
+}
 
-    FLOAT_ZERO = 1e-18
-    constant_cols = plot_data.var() < FLOAT_ZERO
-    plot_data = plot_data.loc[:, ~constant_cols].copy()
+# Columns appended by solvability_check that are NOT parameters.
+_SOLVABILITY_META_COLS = {"failure_step", "norm_deterministic", "norm_stochastic"}
+
+
+def _solv_prepare_data(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]]:
+    """Split solvability DataFrame into plot-ready components.
+
+    Returns
+    -------
+    plot_data : pd.DataFrame
+        Non-constant parameter columns plus a ``success`` boolean column.
+    failure_step : pd.Series
+        Original failure_step column (NaN = success).
+    params : list of str
+        Parameter column names available for plotting.
+    """
+    failure_step = data["failure_step"].copy()
+
+    plot_data = data.drop(columns=_SOLVABILITY_META_COLS.intersection(data.columns))
+
+    constant_mask = plot_data.apply(pd.api.types.is_numeric_dtype) & (plot_data.var() < 1e-18)
+    plot_data = plot_data.loc[:, ~constant_mask].copy()
 
     plot_data["success"] = failure_step.isna()
-    params = plot_data.columns.drop("success").tolist()
+    params = [c for c in plot_data.columns if c != "success"]
     return plot_data, failure_step, params
 
 
-def _prior_hide_upper_triangle_axes(axes: np.ndarray, n_params: int) -> None:
-    """Hide axes in the upper triangle."""
-    for row in range(n_params):
-        for col in range(n_params):
-            if col > row:
-                axes[row][col].set_visible(False)
+def _solv_plot_diagonal(ax: plt.Axes, values: pd.Series, success: pd.Series) -> None:
+    """KDE densities for success (blue) vs failure (red) on a diagonal panel."""
+    for mask, color in [(success, "tab:blue"), (~success, "tab:red")]:
+        subset = values[mask]
+        if len(subset) < 2:
+            continue
+        lo, hi = subset.min(), subset.max()
+        pad = max((hi - lo) * 0.1, abs(lo) * 0.05 + 1e-12)
+        grid = np.linspace(lo - pad, hi + pad, 100)
+        kde = stats.gaussian_kde(subset)
+        density = kde.pdf(grid)
+        ax.plot(grid, density, color=color)
+        ax.fill_between(grid, density, 0, color=color, alpha=0.25)
 
 
-def _prior_plot_diagonal(ax, series: pd.Series, success_mask: pd.Series) -> None:
-    """Draw KDE-like 1D densities for success vs failure on the diagonal."""
-    X_sorted = series.sort_values()
-    X_success = X_sorted[success_mask]
-    X_failure = X_sorted[~success_mask]
-
-    n_success = X_success.shape[0]
-    n_failure = X_failure.shape[0]
-
-    if n_success > 0:
-        success_grid = np.linspace(X_success.min() * 0.9, X_success.max() * 1.1, 100)
-        d_success = stats.gaussian_kde(X_success)
-        ax.plot(success_grid, d_success.pdf(success_grid), color="tab:blue")
-        ax.fill_between(
-            x=success_grid,
-            y1=d_success.pdf(success_grid),
-            y2=0,
-            color="tab:blue",
-            alpha=0.25,
-        )
-
-    if n_failure > 0:
-        failure_grid = np.linspace(X_failure.min() * 0.9, X_failure.max() * 1.1, 100)
-        d_failure = stats.gaussian_kde(X_failure)
-        ax.plot(failure_grid, d_failure.pdf(failure_grid), color="tab:red")
-        ax.fill_between(
-            x=failure_grid,
-            y1=d_failure.pdf(failure_grid),
-            y2=0,
-            color="tab:red",
-            alpha=0.25,
-        )
-
-
-def _prior_plot_offdiag(
-    ax,
+def _solv_plot_offdiag(
+    ax: plt.Axes,
     plot_data: pd.DataFrame,
     failure_step: pd.Series,
     x_name: str,
     y_name: str,
-    color_dict: dict[str, str],
 ) -> None:
-    """Draw success vs failure scatter by reason for off-diagonal panels."""
+    """Scatter success vs failure-by-reason on an off-diagonal panel."""
+    success = plot_data["success"]
     ax.scatter(
-        plot_data.loc[plot_data.success, x_name],
-        plot_data.loc[plot_data.success, y_name],
+        plot_data.loc[success, x_name],
+        plot_data.loc[success, y_name],
         c="tab:blue",
         s=10,
-        label="Model Successfully Fit",
+        label="Success",
     )
 
-    why_failed = failure_step[~plot_data.success]
-    for reason in why_failed.unique():
-        reason_mask = why_failed == reason
+    reasons = failure_step[~success]
+    for reason in reasons.unique():
+        mask = reasons == reason
+        color = _SOLVABILITY_COLORS.get(reason, "tab:gray")
         ax.scatter(
-            plot_data.loc[~plot_data.success, x_name][reason_mask],
-            plot_data.loc[~plot_data.success, y_name][reason_mask],
-            c=color_dict[reason],
+            plot_data.loc[~success, x_name][mask],
+            plot_data.loc[~success, y_name][mask],
+            c=color,
             s=10,
-            label=f"{reason.title()} Failed",
+            label=reason.replace("_", " ").title(),
         )
 
 
-def _prior_finalize_axis(ax, x_name: str, y_name: str, row: int, col: int, n_params: int) -> None:
-    """Apply labels on outer axes, hide spines, and add grid."""
-    if col == 0:
-        ax.set_ylabel(y_name)
-    if row == n_params - 1:
-        ax.set_xlabel(x_name)
-    [spine.set_visible(False) for spine in ax.spines.values()]
-    ax.grid(ls="--", lw=0.5)
+def _solv_format_axes(axes: np.ndarray, params_use: list[str]) -> None:
+    """Apply axis labels, grids, and spine visibility to the solvability grid."""
+    n = len(params_use)
+    for row in range(n):
+        for col in range(n):
+            ax = axes[row][col]
+            if not ax.get_visible():
+                continue
+            if col == 0:
+                ax.set_ylabel(params_use[row])
+            if row == n - 1:
+                ax.set_xlabel(params_use[col])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            ax.grid(ls="--", lw=0.5)
 
 
-def _prior_add_legend_and_title(fig: plt.Figure, axes: np.ndarray) -> None:
-    """Add a compact legend and figure title."""
-    axes[1][0].legend(
-        loc="center",
-        bbox_to_anchor=(0.5, 0.91),
-        bbox_transform=fig.transFigure,
-        ncol=2,
-        fontsize=8,
-        frameon=False,
-    )
-    fig.suptitle("Model Solution Results by Parameter Values", y=0.95)
-
-
-def plot_prior_solvability(
+def plot_solvability(
     data: pd.DataFrame,
     params_to_plot: list[str] | None = None,
-):
-    """
-    Plot the results of sampling from the prior distributions of a GCN and attempting to fit a DSGE model.
+    figsize: tuple[float, float] | None = None,
+    dpi: int = 100,
+) -> plt.Figure:
+    """Pair-plot of solvability results colored by failure stage.
 
-    The solvability plot is a grid of plots that show the distribution of parameter values where model fitting was
-    successful or where it failed. Each plot on the grid shows the distribution of one parameter against another, with
-    successful fits plotted in blue and failed fits plotted in red.
-    """
-    color_dict = {
-        "steady_state": "tab:red",
-        "perturbation": "tab:orange",
-        "blanchard-kahn": "tab:green",
-        "deterministic_norm": "tab:purple",
-        "stochastic_norm": "tab:pink",
-    }
+    Diagonal panels show KDE densities for successful (blue) vs failed (red) draws. Off-diagonal panels show
+    scatter plots colored by the specific failure stage.
 
-    plot_data, failure_step, params = _prior_prepare_data(data)
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Output of :func:`~gEconpy.model.statistics.solvability_check` or
+        :func:`~gEconpy.model.statistics.prior_solvability_check`. Must contain a ``failure_step`` column.
+    params_to_plot : list of str, optional
+        Subset of parameter columns to include. If ``None``, all non-constant numeric columns are plotted.
+    figsize : tuple of float, optional
+        Figure size ``(width, height)`` in inches. Defaults to ``(4 * n_params, 4 * n_params)``.
+    dpi : int, default 100
+        Figure resolution.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    plot_data, failure_step, params = _solv_prepare_data(data)
     _prior_validate_params_to_plot(params_to_plot, params)
 
     params_use = params if params_to_plot is None else params_to_plot
-    n_params = len(params_use)
+    n = len(params_use)
 
-    fig, axes = plt.subplots(n_params, n_params, figsize=(16, 16), dpi=100)
-    _prior_hide_upper_triangle_axes(axes, n_params)
+    if figsize is None:
+        side = max(4.0, min(4.0 * n, 20.0))
+        figsize = (side, side)
 
-    for row in range(n_params):
-        for col in range(n_params):
+    fig, axes = plt.subplots(n, n, figsize=figsize, dpi=dpi)
+    if n == 1:
+        axes = np.array([[axes]])
+
+    for row in range(n):
+        for col in range(n):
             ax = axes[row][col]
-            if not ax.get_visible():
+            if col > row:
+                ax.set_visible(False)
                 continue
 
             y_name = params_use[row]
             x_name = params_use[col]
 
             if row == col:
-                _prior_plot_diagonal(ax, plot_data[x_name], plot_data["success"])
+                _solv_plot_diagonal(ax, plot_data[x_name], plot_data["success"])
             else:
-                _prior_plot_offdiag(ax, plot_data, failure_step, x_name, y_name, color_dict)
+                _solv_plot_offdiag(ax, plot_data, failure_step, x_name, y_name)
 
-            _prior_finalize_axis(ax, x_name, y_name, row, col, n_params)
+    _solv_format_axes(axes, params_use)
 
-    _prior_add_legend_and_title(fig, axes)
+    # Legend from any off-diagonal panel (row=1, col=0 if available)
+    legend_ax = axes[min(1, n - 1)][0] if n > 1 else axes[0][0]
+    handles, labels = legend_ax.get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            loc="center",
+            bbox_to_anchor=(0.5, 0.93),
+            ncol=min(len(handles), 4),
+            fontsize=8,
+            frameon=False,
+        )
+
+    fig.suptitle("Solvability by Parameter Values", y=0.97)
+    return fig
+
+
+def plot_solvability_summary(data: pd.DataFrame, figsize: tuple[float, float] = (8, 1.5), dpi: int = 144) -> plt.Figure:
+    """Stacked horizontal bar showing the proportion of draws at each failure stage.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Output of :func:`~gEconpy.model.statistics.solvability_check`.
+    figsize : tuple of float, default (8, 1.5)
+        Figure size.
+    dpi : int, default 100
+        Figure resolution.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    counts = data["failure_step"].fillna("success").value_counts(normalize=True)
+
+    color_map = {**_SOLVABILITY_COLORS, "success": "tab:blue"}
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    left = 0.0
+    for label in ["success", "steady_state", "perturbation", "blanchard-kahn", "deterministic_norm", "stochastic_norm"]:
+        frac = counts.get(label, 0.0)
+        if frac == 0:
+            continue
+        color = color_map.get(label, "tab:gray")
+        ax.barh(0, frac, left=left, color=color, label=label.replace("_", " ").title(), height=0.6)
+        left += frac
+
+    ax.set_xlim(0, 1)
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=min(len(counts), 6), fontsize=8, frameon=False)
+    ax.set_title("Solvability Summary")
+    fig.tight_layout()
     return fig
 
 
@@ -1752,7 +1809,8 @@ __all__ = [
     "plot_irf",
     "plot_kalman_filter",
     "plot_posterior_with_prior",
-    "plot_prior_solvability",
     "plot_simulation",
+    "plot_solvability",
+    "plot_solvability_summary",
     "prepare_gridspec_figure",
 ]

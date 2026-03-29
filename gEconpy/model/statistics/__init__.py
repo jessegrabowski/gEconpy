@@ -8,6 +8,8 @@ from gEconpy.model.statistics.formatting import matrix_to_dataframe
 from gEconpy.model.statistics.perturbation_diagnostics import (
     check_bk_condition,
     eigenvalue_sensitivity,
+    prior_solvability_check,
+    solvability_check,
     summarize_perturbation_solution,
 )
 from gEconpy.model.statistics.validation import (
@@ -32,6 +34,8 @@ __all__ = [
     "check_steady_state",
     "eigenvalue_sensitivity",
     "matrix_to_dataframe",
+    "prior_solvability_check",
+    "solvability_check",
     "stationary_covariance_matrix",
     "summarize_perturbation_solution",
 ]

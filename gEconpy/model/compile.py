@@ -41,7 +41,7 @@ def dictionary_return_wrapper(f: Callable, outputs: list[sp.Symbol]) -> Callable
         The wrapped function
     """
 
-    @wraps(f)
+    @wraps(f, updated=())
     def inner(*args, **kwargs):
         values = f(*args, **kwargs)
         return SteadyStateResults(zip(outputs, values, strict=False)).to_string()
@@ -269,7 +269,7 @@ def compile_for_scipy(
     f = compile_pytensor_function(inputs, outputs, mode=mode, on_unused_input="ignore")
     accepted_names = frozenset(inp.name for inp in f.input_storage)
 
-    @wraps(f)
+    @wraps(f, updated=())
     def wrapper(*args, **kwargs):
         return f(*args, **{k: v for k, v in kwargs.items() if k in accepted_names})
 
