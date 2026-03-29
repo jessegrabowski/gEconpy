@@ -6,7 +6,6 @@ from warnings import warn
 
 import sympy as sp
 
-from pymc.pytensorf import rewrite_pregrad
 from pytensor import graph_replace
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -33,6 +32,7 @@ from gEconpy.model.timing import natural_sort_key
 from gEconpy.parser.errors import GCNErrorCollection, GCNParseError
 from gEconpy.parser.formatting import ErrorFormatter
 from gEconpy.parser.loader import load_gcn_file
+from gEconpy.pytensorf.compile import rewrite_pregrad
 from gEconpy.utilities import get_name, substitute_repeatedly
 
 _log = logging.getLogger(__name__)
