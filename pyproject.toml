@@ -123,6 +123,9 @@ filterwarnings = [
 
     # Scipy lambdify can easily hit numerical issues that are not relevant to our tests
     'ignore:invalid value encountered in scalar power:RuntimeWarning',
+
+    # Upstream preliz/pytensor_distributions calls pt.random.gamma with deprecated rate arg
+    'ignore:Gamma rate argument is deprecated.*:FutureWarning',
 ]
 
 markers = [
