@@ -59,3 +59,8 @@ dependencies:
       - corner
       - asv
       - -e ../.
+      - pymc @ git+https://github.com/pymc-devs/pymc.git@v6
+      - pytensor @ git+https://github.com/pymc-devs/pytensor.git@v3
+      - preliz @ git+https://github.com/arviz-devs/preliz.git@main
+      - pymc-extras @ git+https://github.com/jessegrabowski/pymc-extras.git@v0.11
+      - sympytensor @ git+https://github.com/jessegrabowski/sympytensor.git@v1.5

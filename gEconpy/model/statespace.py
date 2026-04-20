@@ -3,7 +3,6 @@ import warnings
 
 from typing import Literal
 
-import arviz as az
 import numpy as np
 import pandas as pd
 import pymc as pm
@@ -22,7 +21,7 @@ from pymc_extras.statespace.utils.constants import (
     SHOCK_AUX_DIM,
     SHOCK_DIM,
 )
-from pytensor import graph_replace
+from pytensor.graph.replace import graph_replace
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
@@ -360,7 +359,7 @@ class DSGEStateSpace(PyMCStateSpace):
             else:
                 self._name_to_variable[parameter.name] = parameter
 
-        self._linearized_system_subbed = [A, B, C, D] = pytensor.graph_replace(
+        self._linearized_system_subbed = [A, B, C, D] = graph_replace(
             self.linearized_system, constant_replacements, strict=False
         )
 
@@ -369,7 +368,7 @@ class DSGEStateSpace(PyMCStateSpace):
         T, R = self._setup_policy_matrices(A, B, C, D)
         resid = pt.square(A + B @ T + C @ T @ T).sum()
 
-        ss_resid = pytensor.graph_replace(self.ss_resid, constant_replacements, strict=False)
+        ss_resid = graph_replace(self.ss_resid, constant_replacements, strict=False)
         ss_resid = pt.square(ss_resid).sum()
 
         T = rewrite_pregrad(T)
@@ -741,7 +740,7 @@ def data_from_prior(
     random_seed: np.random.Generator | int | None = None,
     mvn_method: str = "svd",
     build_statespace_kwargs: dict | None = None,
-) -> tuple[xr.Dataset, pd.DataFrame, az.InferenceData]:
+) -> tuple[xr.Dataset, pd.DataFrame, xr.DataTree]:
     """
     Generate artificial data from prior predictive samples.
 
@@ -775,7 +774,7 @@ def data_from_prior(
         True parameters used to generate the data.
     data: pd.DataFrame
         Generated data.
-    prior_idata: az.InferenceData
+    prior_idata: xr.DataTree
         Draws from the prior predictive distribution, plus conditional prior predictive samples.
     """
     rng = np.random.default_rng(random_seed)

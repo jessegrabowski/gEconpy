@@ -87,8 +87,14 @@ jobs:
 
     - name: Install current branch
       run: |
-        pip install -e .
+        pip install -e ".[dev]"
+        pip install --no-deps --force-reinstall "pymc @ git+https://github.com/pymc-devs/pymc.git@v6"
+        pip install --no-deps --force-reinstall "pytensor @ git+https://github.com/pymc-devs/pytensor.git@v3"
+        pip install --no-deps --force-reinstall "preliz @ git+https://github.com/arviz-devs/preliz.git@main"
+        pip install --no-deps --force-reinstall "pymc-extras @ git+https://github.com/jessegrabowski/pymc-extras.git@v0.11"
+        pip install --no-deps --force-reinstall "sympytensor @ git+https://github.com/jessegrabowski/sympytensor.git@v1.5"
         python --version
+        pip check
 
     - name: Create matrix id
       id: matrix-id
