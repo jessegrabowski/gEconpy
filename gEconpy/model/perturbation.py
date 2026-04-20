@@ -50,7 +50,9 @@ def linearize_model(
     use identity substitutions, yielding bare derivatives.
 
     A ``pt.switch`` guard on the steady-state value prevents ``log(negative)`` for variables whose steady states are
-    non-positive. This is a numerical safety net: ``rewrite_pregrad`` does not simplify ``exp(log(x))`` when ``x < 0``.
+    not know to be non-positive. This is a numerical safety net: ``rewrite_pregrad`` does not simplify ``exp(log(x))``
+    when ``x < 0``. This is avoided if a variable is known to be positive or negative via the Assumptions block of the
+    GCN file.
 
     Parameters
     ----------
@@ -114,10 +116,23 @@ def linearize_model(
         dummies_leads.append(lead_tilde)
 
         if i in loglin_set:
-            positive_ss = ss > 0
-            for var, tilde in [(lag, lag_tilde), (curr, curr_tilde), (lead, lead_tilde)]:
-                forward_replace[var] = pt.switch(positive_ss, pt.exp(tilde), tilde)
-                backward_replace[tilde] = pt.switch(positive_ss, pt.log(var), var)
+            assumptions = variables[i].assumptions0
+            known_positive = assumptions.get("positive", False)
+            known_negative = assumptions.get("negative", False)
+            if known_positive:
+                for var, tilde in [(lag, lag_tilde), (curr, curr_tilde), (lead, lead_tilde)]:
+                    forward_replace[var] = pt.exp(tilde)
+                    backward_replace[tilde] = pt.log(var)
+            elif known_negative:
+                # ss > 0 is always false; switch would resolve to identity
+                for var, tilde in [(lag, lag_tilde), (curr, curr_tilde), (lead, lead_tilde)]:
+                    forward_replace[var] = tilde
+                    backward_replace[tilde] = var
+            else:
+                positive_ss = ss > 0
+                for var, tilde in [(lag, lag_tilde), (curr, curr_tilde), (lead, lead_tilde)]:
+                    forward_replace[var] = pt.switch(positive_ss, pt.exp(tilde), tilde)
+                    backward_replace[tilde] = pt.switch(positive_ss, pt.log(var), var)
         else:
             for var, tilde in [(lag, lag_tilde), (curr, curr_tilde), (lead, lead_tilde)]:
                 forward_replace[var] = tilde
