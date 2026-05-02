@@ -83,16 +83,39 @@ def step_equation_backward(eq):
 
 
 def diff_through_time(eq, dx, discount_factor=1):
-    total_dydx = 0
-    next_dydx = 1
+    r"""Differentiate an equation with respect to a time-aware symbol, summing across time shifts.
 
-    while next_dydx != 0:
-        next_dydx = eq.diff(dx)
+    Computes :math:`\sum_{k=0}^{K} \beta^k \cdot \frac{\partial}{\partial dx} \mathrm{step}^k(\mathrm{eq})` where each
+    step shifts every TimeAwareSymbol's time index forward by one. The number of iterations ``K`` is determined by the
+    spread between ``dx``'s time index and the earliest appearance of ``dx``'s base symbol in ``eq``: stepping forward
+    further can only increase the time indices of all instances, so once the leftmost has shifted past ``dx``, no
+    additional contribution is possible.
+
+    Parameters
+    ----------
+    eq : sympy.Expr
+        Equation (typically a Lagrangian) to differentiate.
+    dx : TimeAwareSymbol
+        Variable to differentiate with respect to.
+    discount_factor : sympy.Expr or int, optional
+        Multiplicative discount factor applied at each forward step. Default 1 (no discounting).
+
+    Returns
+    -------
+    total : sympy.Expr
+        Sum of discounted derivatives across all relevant time shifts.
+    """
+    times_in_eq = {a.time_index for a in eq.atoms(TimeAwareSymbol) if a.base_name == dx.base_name}
+    if not times_in_eq:
+        return sp.S.Zero
+    n_iters = max(0, dx.time_index - min(times_in_eq))
+
+    total = sp.S.Zero
+    for _ in range(n_iters + 1):
+        total += eq.diff(dx)
         eq = step_equation_forward(eq) * discount_factor
         discount_factor = step_equation_forward(discount_factor)
-        total_dydx += next_dydx
-
-    return total_dydx
+    return total
 
 
 def substitute_all_equations(eqs, *sub_dicts):
