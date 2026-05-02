@@ -6,22 +6,25 @@ from gEconpy.model.block.registry import register_block
 from gEconpy.utilities import diff_through_time
 
 
-def _decompose_monomial(prod_expr: sp.Expr) -> tuple[sp.Symbol, list[tuple[sp.Symbol, sp.Expr]]] | None:
-    r"""Decompose ``A * prod(x_i ** a_i)`` into ``A`` and the input list ``[(x_i, a_i), ...]``.
+def _decompose_monomial(prod_expr: sp.Expr) -> tuple[sp.Symbol | None, list[tuple[sp.Symbol, sp.Expr]]] | None:
+    r"""Decompose ``[A *] prod(x_i ** a_i)`` into ``A`` and the input list ``[(x_i, a_i), ...]``.
 
     Walks ``Mul.make_args`` and classifies each factor: ``Pow(Symbol, expr)`` is an input, a bare ``Symbol`` is the
-    productivity coefficient ``A``. Rejects expressions containing constants, non-Symbol Pow bases, multiple bare
-    Symbols (ambiguous A), or duplicate input bases.
+    productivity coefficient ``A`` (optional). The leading :math:`A` is optional: many calibrated DSGE models drop it
+    (or absorb it into the share parameters), so :math:`Y = \prod_i x_i^{a_i}` is a legitimate form. Rejects
+    expressions containing constants, non-Symbol Pow bases, multiple bare Symbols (ambiguous A), or duplicate input
+    bases.
 
     Parameters
     ----------
     prod_expr : sympy.Expr
-        Expression assumed to be of the form :math:`A \prod_i x_i^{a_i}`.
+        Expression assumed to be of the form :math:`[A \cdot] \prod_i x_i^{a_i}`.
 
     Returns
     -------
-    decomposition : tuple of (Symbol, list of (Symbol, Expr)) or None
-        ``(A, [(x_1, a_1), ..., (x_k, a_k)])`` on success, None on rejection.
+    decomposition : tuple of (Symbol or None, list of (Symbol, Expr)) or None
+        ``(A, [(x_1, a_1), ..., (x_k, a_k)])`` on success (``A`` is None when no productivity Symbol is present),
+        None on rejection.
     """
     factors = sp.Mul.make_args(prod_expr)
     A = None
@@ -40,7 +43,7 @@ def _decompose_monomial(prod_expr: sp.Expr) -> tuple[sp.Symbol, list[tuple[sp.Sy
         else:
             return None
 
-    if A is None or not inputs:
+    if not inputs:
         return None
 
     bases = [x for x, _ in inputs]
@@ -64,10 +67,11 @@ def _match_cobb_douglas_constraint(constraints: dict[int, sp.Eq] | None) -> dict
     conditions :math:`\partial Y / \partial x_i = a_i Y / x_i` hold for any monomial regardless of the exponent sum.
 
     Match is conservative: requires exactly one constraint, the residual to decompose cleanly into
-    :math:`-Y + A \cdot \prod x_i^{a_i}` (no extra additive terms, no extra multiplicative constants), all input
-    bases :math:`x_i` to be distinct sympy ``Symbol`` instances with explicit ``Pow`` exponents (so a bare
-    ``Y = A * x`` is rejected as ambiguous between a single-input monomial and a degenerate two-Symbol product), and
-    ``Y`` and ``A`` to be distinct ``Symbol`` instances disjoint from the input bases.
+    :math:`-Y + [A \cdot] \prod x_i^{a_i}` (no extra additive terms, no extra multiplicative constants beyond the
+    optional leading productivity Symbol :math:`A`), all input bases :math:`x_i` to be distinct sympy ``Symbol``
+    instances with explicit ``Pow`` exponents (so a bare ``Y = A * x`` is rejected as ambiguous between a single-input
+    monomial and a degenerate two-Symbol product), and ``Y`` plus the input bases to all be distinct ``Symbol``
+    instances.
 
     Parameters
     ----------
@@ -77,7 +81,8 @@ def _match_cobb_douglas_constraint(constraints: dict[int, sp.Eq] | None) -> dict
     Returns
     -------
     match : dict or None
-        On match, ``{"idx": int, "Y": Symbol, "A": Symbol, "inputs": list of (Symbol, Expr)}``. Otherwise None.
+        On match, ``{"idx": int, "Y": Symbol, "A": Symbol or None, "inputs": list of (Symbol, Expr)}``. Otherwise
+        None.
     """
     if not constraints or len(constraints) != 1:
         return None
@@ -106,8 +111,11 @@ def _match_cobb_douglas_constraint(constraints: dict[int, sp.Eq] | None) -> dict
             continue
         A, inputs = decomp
 
-        all_syms = {Y_sym, A, *(x for x, _ in inputs)}
-        if len(all_syms) != len(inputs) + 2:
+        all_syms = {Y_sym, *(x for x, _ in inputs)}
+        if A is not None:
+            all_syms.add(A)
+        expected_count = len(inputs) + (2 if A is not None else 1)
+        if len(all_syms) != expected_count:
             continue
 
         return {"idx": idx, "Y": Y_sym, "A": A, "inputs": inputs}

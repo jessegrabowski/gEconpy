@@ -254,3 +254,25 @@ class TestParameterizationVariants:
         shares = dict(m["inputs"])
         assert shares[x1] == alpha ** (1 / psi)
         assert shares[x2] == 1 - alpha
+
+    def test_no_leading_productivity(self):
+        """``Y = (alpha * x1^rho + (1-alpha) * x2^rho)^(1/rho)`` — productivity absorbed into shares or set to 1."""
+        Y, x1, x2, alpha, rho = sp.symbols("Y x1 x2 alpha rho")
+        constraints = {0: sp.Eq(Y, (alpha * x1**rho + (1 - alpha) * x2**rho) ** (1 / rho))}
+        m = _match_ces_constraint(constraints)
+        assert m is not None
+        assert m["A"] is None
+        assert sp.simplify(m["s"] - rho) == 0
+        shares = dict(m["inputs"])
+        assert shares[x1] == alpha
+        assert shares[x2] == 1 - alpha
+
+    def test_no_leading_productivity_canonical_form(self):
+        """No-A in canonical (psi-1)/psi spelling: ``Y = (alpha^(1/psi) x1^s + (1-alpha)^(1/psi) x2^s)^(1/s)``."""
+        Y, x1, x2, alpha, psi = sp.symbols("Y x1 x2 alpha psi")
+        s = (psi - 1) / psi
+        inner = alpha ** (1 / psi) * x1**s + (1 - alpha) ** (1 / psi) * x2**s
+        constraints = {0: sp.Eq(Y, inner ** (1 / s))}
+        m = _match_ces_constraint(constraints)
+        assert m is not None
+        assert m["A"] is None

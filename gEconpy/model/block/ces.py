@@ -6,22 +6,24 @@ from gEconpy.model.block.registry import register_block
 from gEconpy.utilities import diff_through_time
 
 
-def _decompose_ces_outer(prod_term: sp.Expr) -> tuple[sp.Symbol, sp.Add, sp.Expr] | None:
-    r"""Decompose ``A * (inner_sum)^outer_exp`` into its three pieces.
+def _decompose_ces_outer(prod_term: sp.Expr) -> tuple[sp.Symbol | None, sp.Add, sp.Expr] | None:
+    r"""Decompose ``[A *] (inner_sum)^outer_exp`` into its three pieces.
 
-    Walks ``Mul.make_args`` and demands exactly one bare ``Symbol`` (productivity ``A``) and one ``Pow`` whose base is
-    an ``Add`` (the inner CES bracket). Anything else — extra constants, multiple Pows, Pow whose base is not an
-    Add — is rejected.
+    Walks ``Mul.make_args`` and demands at most one bare ``Symbol`` (productivity ``A``, optional) and exactly one
+    ``Pow`` whose base is an ``Add`` (the inner CES bracket). The leading ``A`` is optional: many calibrated DSGE
+    models drop it (or absorb it into the shares), so :math:`Y = (\sum_i \text{share}_i \cdot x_i^s)^{1/s}` is a
+    legitimate form. Rejects anything else: extra constants, multiple Pows, Pow whose base is not an Add.
 
     Parameters
     ----------
     prod_term : sympy.Expr
-        Expression assumed to take the form :math:`A \cdot (\sum_i \text{share}_i \cdot x_i^s)^{1/s}`.
+        Expression assumed to take the form :math:`[A \cdot] (\sum_i \text{share}_i \cdot x_i^s)^{1/s}`.
 
     Returns
     -------
-    decomposition : tuple of (Symbol, Add, Expr) or None
-        ``(A, inner_sum, outer_exp)`` on success, None on rejection.
+    decomposition : tuple of (Symbol or None, Add, Expr) or None
+        ``(A, inner_sum, outer_exp)`` on success (``A`` is None when no leading productivity term is present),
+        None on rejection.
     """
     A = None
     pow_factor = None
@@ -36,7 +38,7 @@ def _decompose_ces_outer(prod_term: sp.Expr) -> tuple[sp.Symbol, sp.Add, sp.Expr
             pow_factor = f
         else:
             return None
-    if A is None or pow_factor is None:
+    if pow_factor is None:
         return None
     inner_sum, outer_exp = pow_factor.args
     return A, inner_sum, outer_exp
@@ -118,9 +120,11 @@ def _match_ces_constraint(constraints: dict[int, sp.Eq] | None) -> dict | None:
     not depend on the share's internal structure.
 
     Match is conservative: requires exactly one constraint, the residual to decompose cleanly into
-    :math:`-Y + A \cdot (\text{inner})^{1/s}` (no extra additive terms, no extra multiplicative constants), the inner
-    bracket to be a sum of terms each containing exactly one ``Pow`` of a ``Symbol`` with a shared exponent :math:`s`,
-    and the outer exponent to satisfy :math:`\text{outer\_exp} \cdot s = 1` (the defining CES algebraic identity).
+    :math:`-Y + [A \cdot] (\text{inner})^{1/s}` (no extra additive terms, no extra multiplicative constants beyond the
+    optional leading productivity Symbol :math:`A`), the inner bracket to be a sum of terms each containing exactly
+    one ``Pow`` of a ``Symbol`` with a shared exponent :math:`s`, and the outer exponent to satisfy
+    :math:`\text{outer\_exp} \cdot s = 1` (the defining CES algebraic identity). The leading :math:`A` is optional;
+    when absent, the closed-form FOC drops the :math:`A^s` factor.
 
     Parameters
     ----------
@@ -166,8 +170,11 @@ def _match_ces_constraint(constraints: dict[int, sp.Eq] | None) -> dict | None:
             continue
         s, inputs = inner
 
-        all_syms = {Y_sym, A, *(x for x, _ in inputs)}
-        if len(all_syms) != len(inputs) + 2:
+        all_syms = {Y_sym, *(x for x, _ in inputs)}
+        if A is not None:
+            all_syms.add(A)
+        expected_count = len(inputs) + (2 if A is not None else 1)
+        if len(all_syms) != expected_count:
             continue
 
         return {"idx": idx, "Y": Y_sym, "A": A, "s": s, "inputs": inputs}
@@ -305,6 +312,9 @@ class CESBlock(Block):
 
         for x_i, share_i in self._ces_match["inputs"]:
             if control == x_i:
-                return obj_term + mu * share_i * A**s * (Y / x_i) ** (1 - s)
+                # If the user wrote the constraint without a leading productivity ``A``, the closed-form FOC drops
+                # the ``A^s`` factor entirely.
+                productivity_factor = A**s if A is not None else sp.S.One
+                return obj_term + mu * share_i * productivity_factor * (Y / x_i) ** (1 - s)
 
         return diff_through_time(lagrange, control, discount_factor)

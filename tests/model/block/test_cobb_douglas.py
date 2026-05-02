@@ -179,3 +179,22 @@ class TestDetectionConservatism:
         Y, A, x1, x2, a1 = sp.symbols("Y A x1 x2 a1")
         constraints = {0: sp.Eq(Y, A * x1**a1 * x2 ** (1 - a1))}
         assert CobbDouglasBlock.detect(constraints, objective=None, identities=None) is False
+
+    def test_no_leading_productivity(self):
+        """``Y = x1^a1 * x2^(1-a1)`` — productivity absorbed or set to 1; closed-form FOC works without A."""
+        Y, x1, x2, a1 = sp.symbols("Y x1 x2 a1")
+        constraints = {0: sp.Eq(Y, x1**a1 * x2 ** (1 - a1))}
+        m = _match_cobb_douglas_constraint(constraints)
+        assert m is not None
+        assert m["A"] is None
+        inputs = dict(m["inputs"])
+        assert set(inputs.keys()) == {x1, x2}
+
+    def test_no_leading_productivity_arbitrary_arity(self):
+        """No-A k=3 case: ``Y = x1^a * x2^b * x3^c``."""
+        Y, x1, x2, x3, a, b, c = sp.symbols("Y x1 x2 x3 a b c")
+        constraints = {0: sp.Eq(Y, x1**a * x2**b * x3**c)}
+        m = _match_cobb_douglas_constraint(constraints)
+        assert m is not None
+        assert m["A"] is None
+        assert len(m["inputs"]) == 3
