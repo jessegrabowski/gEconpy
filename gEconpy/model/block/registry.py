@@ -55,9 +55,6 @@ def dispatch_block(
     Parameters mirror :class:`Block.__init__` exactly so the dispatcher is a drop-in replacement for ``Block(...)`` at
     the parser construction site.
     """
-    # Import the form modules so they register themselves on first dispatch. After the first call this is a no-op.
-    import gEconpy.model.block.production  # noqa: F401, PLC0415 — side-effect import for registration
-
     kwargs = {
         "name": name,
         "definitions": definitions,
