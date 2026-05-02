@@ -2,6 +2,19 @@ import sympy as sp
 
 from sympy.core.cache import cacheit
 
+# Domain defaults injected into every parsed Symbol unless the user's ``assumptions`` block overrides them.
+# ``real``: every DSGE quantity (variable, parameter, shock, multiplier) is real-valued. ``finite``: every DSGE
+# quantity is finite — no extended-real ±infinity. Together these give sympy enough type information to apply many
+# simplifications it would otherwise refuse on bare Symbols. ``positive``, ``nonzero``, ``integer`` are intentionally
+# NOT defaulted: those are domain-specific (e.g. Lagrange multipliers can be negative, shocks are zero in steady
+# state) and stay opt-in via the ``assumptions`` block.
+DEFAULT_ASSUMPTIONS: dict[str, bool] = {"real": True, "finite": True}
+
+
+def merge_assumptions(user_assumptions: dict[str, bool] | None) -> dict[str, bool]:
+    """Merge :data:`DEFAULT_ASSUMPTIONS` with user-declared assumptions; user values win on conflict."""
+    return {**DEFAULT_ASSUMPTIONS, **(user_assumptions or {})}
+
 
 class TimeAwareSymbol(sp.Symbol):
     """

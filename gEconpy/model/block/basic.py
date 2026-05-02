@@ -1,7 +1,7 @@
 import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS, TimeAwareSymbol
 from gEconpy.exceptions import (
     ControlVariableNotFoundException,
     DuplicateParameterError,
@@ -542,7 +542,7 @@ class Block:
             if multipliers[key] is not None:
                 lm = multipliers[key]
             else:
-                lm = TimeAwareSymbol(f"lambda__{self.short_name}_{i}", 0)
+                lm = TimeAwareSymbol(f"lambda__{self.short_name}_{i}", 0, **DEFAULT_ASSUMPTIONS)
                 self.multipliers[i] = lm
                 i += 1
 

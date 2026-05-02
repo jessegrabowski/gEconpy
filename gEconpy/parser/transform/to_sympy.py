@@ -4,7 +4,7 @@ from typing import Any
 
 import sympy as sp
 
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, merge_assumptions
 from gEconpy.parser.ast import (
     BinaryOp,
     Expectation,
@@ -102,11 +102,11 @@ class ASTToSympyConverter:
         return sp.Float(node.value)
 
     def _convert_parameter(self, node: Parameter) -> sp.Symbol:
-        assumptions = self.assumptions.get(node.name, {})
+        assumptions = merge_assumptions(self.assumptions.get(node.name))
         return sp.Symbol(node.name, **assumptions)
 
     def _convert_variable(self, node: Variable) -> TimeAwareSymbol:
-        assumptions = self.assumptions.get(node.name, {})
+        assumptions = merge_assumptions(self.assumptions.get(node.name))
         time_index = node.time_index
 
         if time_index.is_steady_state:
@@ -194,13 +194,13 @@ def equation_to_sympy(
     }
 
     if eq.is_calibrating and eq.calibrating_parameter:
-        param_assumptions = (assumptions or {}).get(eq.calibrating_parameter, {})
+        param_assumptions = merge_assumptions((assumptions or {}).get(eq.calibrating_parameter))
         metadata["calibrating_parameter"] = sp.Symbol(eq.calibrating_parameter, **param_assumptions)
         # For calibrating equations, rearrange to: param = lhs - rhs
         sympy_eq = sp.Eq(metadata["calibrating_parameter"], sympy_eq.lhs - sympy_eq.rhs)
 
     if eq.lagrange_multiplier:
-        mult_assumptions = (assumptions or {}).get(eq.lagrange_multiplier, {})
+        mult_assumptions = merge_assumptions((assumptions or {}).get(eq.lagrange_multiplier))
         metadata["lagrange_multiplier"] = TimeAwareSymbol(eq.lagrange_multiplier, 0, **mult_assumptions)
 
     return sympy_eq, metadata

@@ -25,6 +25,7 @@ from gEconpy.parser.transform.to_sympy import (
     equation_to_sympy,
     model_to_sympy,
 )
+from tests.conftest import parsed_symbol, parsed_symbols, parsed_var
 
 
 class TestConvertAtoms:
@@ -85,7 +86,7 @@ class TestConvertOperations:
             right=Parameter(name="b"),
         )
         result = ast_to_sympy(node)
-        a, b = sp.symbols("a b")
+        a, b = parsed_symbols("a b")
         assert result == a + b
 
     def test_subtraction(self):
@@ -95,7 +96,7 @@ class TestConvertOperations:
             right=Parameter(name="b"),
         )
         result = ast_to_sympy(node)
-        a, b = sp.symbols("a b")
+        a, b = parsed_symbols("a b")
         assert result == a - b
 
     def test_multiplication(self):
@@ -105,7 +106,7 @@ class TestConvertOperations:
             right=Parameter(name="b"),
         )
         result = ast_to_sympy(node)
-        a, b = sp.symbols("a b")
+        a, b = parsed_symbols("a b")
         assert result == a * b
 
     def test_division(self):
@@ -115,7 +116,7 @@ class TestConvertOperations:
             right=Parameter(name="b"),
         )
         result = ast_to_sympy(node)
-        a, b = sp.symbols("a b")
+        a, b = parsed_symbols("a b")
         assert result == a / b
 
     def test_power(self):
@@ -125,13 +126,13 @@ class TestConvertOperations:
             right=Parameter(name="alpha"),
         )
         result = ast_to_sympy(node)
-        K, alpha = sp.symbols("K alpha")
+        K, alpha = parsed_symbols("K alpha")
         assert result == K**alpha
 
     def test_negation(self):
         node = UnaryOp(op=Operator.NEG, operand=Parameter(name="x"))
         result = ast_to_sympy(node)
-        x = sp.Symbol("x")
+        x = parsed_symbol("x")
         assert result == -x
 
     def test_nested_operations(self):
@@ -146,7 +147,7 @@ class TestConvertOperations:
             right=Parameter(name="c"),
         )
         result = ast_to_sympy(node)
-        a, b, c = sp.symbols("a b c")
+        a, b, c = parsed_symbols("a b c")
         assert result == (a + b) * c
 
 
@@ -154,19 +155,19 @@ class TestConvertFunctions:
     def test_log(self):
         node = FunctionCall(func_name="log", args=(Parameter(name="x"),))
         result = ast_to_sympy(node)
-        x = sp.Symbol("x")
+        x = parsed_symbol("x")
         assert result == sp.log(x)
 
     def test_exp(self):
         node = FunctionCall(func_name="exp", args=(Parameter(name="x"),))
         result = ast_to_sympy(node)
-        x = sp.Symbol("x")
+        x = parsed_symbol("x")
         assert result == sp.exp(x)
 
     def test_sqrt(self):
         node = FunctionCall(func_name="sqrt", args=(Parameter(name="x"),))
         result = ast_to_sympy(node)
-        x = sp.Symbol("x")
+        x = parsed_symbol("x")
         assert result == sp.sqrt(x)
 
     def test_nested_function(self):
@@ -176,7 +177,7 @@ class TestConvertFunctions:
             args=(FunctionCall(func_name="exp", args=(Parameter(name="x"),)),),
         )
         result = ast_to_sympy(node)
-        x = sp.Symbol("x")
+        x = parsed_symbol("x")
         assert result == sp.log(sp.exp(x))
 
 
@@ -327,8 +328,8 @@ class TestRealEquations:
         node = parse_expression("log(C[]) + log(L[])")
         result = ast_to_sympy(node)
 
-        C = TimeAwareSymbol("C", 0)
-        L = TimeAwareSymbol("L", 0)
+        C = parsed_var("C", 0)
+        L = parsed_var("L", 0)
         expected = sp.log(C) + sp.log(L)
         assert result == expected
 
@@ -337,9 +338,9 @@ class TestRealEquations:
         node = parse_expression("u[] + beta * E[][U[1]]")
         result = ast_to_sympy(node)
 
-        u = TimeAwareSymbol("u", 0)
-        beta = sp.Symbol("beta")
-        U1 = TimeAwareSymbol("U", 1)
+        u = parsed_var("u", 0)
+        beta = parsed_symbol("beta")
+        U1 = parsed_var("U", 1)
         expected = u + beta * U1
         assert result == expected
 
@@ -348,10 +349,10 @@ class TestRealEquations:
         node = parse_expression("A[] * K[-1] ^ alpha * L[] ^ (1 - alpha)")
         result = ast_to_sympy(node)
 
-        A = TimeAwareSymbol("A", 0)
-        K = TimeAwareSymbol("K", -1)
-        L = TimeAwareSymbol("L", 0)
-        alpha = sp.Symbol("alpha")
+        A = parsed_var("A", 0)
+        K = parsed_var("K", -1)
+        L = parsed_var("L", 0)
+        alpha = parsed_symbol("alpha")
         expected = A * K**alpha * L ** (1 - alpha)
         assert result == expected
 
@@ -360,10 +361,10 @@ class TestRealEquations:
         lhs = parse_expression("sigma / beta * (E[][C[1]] - C[])")
         result = ast_to_sympy(lhs)
 
-        sigma = sp.Symbol("sigma")
-        beta = sp.Symbol("beta")
-        C = TimeAwareSymbol("C", 0)
-        C1 = TimeAwareSymbol("C", 1)
+        sigma = parsed_symbol("sigma")
+        beta = parsed_symbol("beta")
+        C = parsed_var("C", 0)
+        C1 = parsed_var("C", 1)
         expected = sigma / beta * (C1 - C)
         assert result == expected
 
@@ -372,9 +373,9 @@ class TestRealEquations:
         node = parse_expression("(1 - delta) * K[-1] + delta * I[]")
         result = ast_to_sympy(node)
 
-        delta = sp.Symbol("delta")
-        K = TimeAwareSymbol("K", -1)
-        I = TimeAwareSymbol("I", 0)
+        delta = parsed_symbol("delta")
+        K = parsed_var("K", -1)
+        I = parsed_var("I", 0)
         expected = (1 - delta) * K + delta * I
         assert result == expected
 
@@ -383,8 +384,8 @@ class TestRealEquations:
         node = parse_expression("L[ss] / K[ss]")
         result = ast_to_sympy(node)
 
-        L_ss = TimeAwareSymbol("L", "ss")
-        K_ss = TimeAwareSymbol("K", "ss")
+        L_ss = parsed_var("L", "ss")
+        K_ss = parsed_var("K", "ss")
         expected = L_ss / K_ss
         assert result == expected
 
@@ -400,9 +401,9 @@ class TestRealEquations:
         node = parse_expression("rho_A * A[-1] + epsilon_A[]")
         result = ast_to_sympy(node)
 
-        rho_A = sp.Symbol("rho_A")
-        A = TimeAwareSymbol("A", -1)
-        epsilon_A = TimeAwareSymbol("epsilon_A", 0)
+        rho_A = parsed_symbol("rho_A")
+        A = parsed_var("A", -1)
+        epsilon_A = parsed_var("epsilon_A", 0)
         expected = rho_A * A + epsilon_A
         assert result == expected
 
@@ -425,7 +426,7 @@ class TestCalibratingEquationConversion:
         assert metadata["is_calibrating"] is True
         assert metadata["calibrating_parameter"].name == "alpha"
         # The equation should be: alpha = lhs - rhs
-        assert result.lhs == sp.Symbol("alpha")
+        assert result.lhs == parsed_symbol("alpha")
 
 
 class TestAssumptionsPropagation:

@@ -14,7 +14,7 @@ from gEconpy.parser.constants import STEADY_STATE_NAMES
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
 from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_metadata
-from gEconpy.parser.transform.to_sympy import ast_to_sympy, equation_to_sympy
+from gEconpy.parser.transform.to_sympy import ast_to_sympy, equation_to_sympy, merge_assumptions
 from gEconpy.utilities import flatten_substitution_dict
 
 PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
@@ -231,7 +231,7 @@ def ast_block_to_calibration(
             if item.is_calibrating:
                 # Calibrating equation: param = expr -> 0
                 # Create parameter symbol with appropriate assumptions
-                param_assumptions = assumptions.get(item.calibrating_parameter, {})
+                param_assumptions = merge_assumptions(assumptions.get(item.calibrating_parameter))
                 calib_param = sp.Symbol(item.calibrating_parameter, **param_assumptions)
                 calib_dict[calib_param] = sp.Eq(lhs_sympy, rhs_sympy)
             # Simple assignment: param = value

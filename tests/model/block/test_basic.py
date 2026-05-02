@@ -18,7 +18,7 @@ from gEconpy.parser.loader import load_gcn_file, load_gcn_string
 from gEconpy.parser.preprocessor import preprocess
 from gEconpy.parser.transform.to_block import ast_block_to_block
 from gEconpy.utilities import set_equality_equals_zero, unpack_keys_and_values
-from tests.conftest import TEST_GCNS
+from tests.conftest import TEST_GCNS, parsed_symbol, parsed_symbols, parsed_var
 
 
 def get_block_from_string(gcn_string: str, block_name: str = "HOUSEHOLD") -> Block:
@@ -262,53 +262,53 @@ class TestBlockCases:
     def test_lagrange_parsing(self, block):
         n_nones = [0 if x is None else 1 for x in list(block.multipliers.values())]
         assert sum(n_nones) == 2
-        assert block.multipliers[3] == TimeAwareSymbol("lambda", 0)
-        assert block.multipliers[4] == TimeAwareSymbol("q", 0)
+        assert block.multipliers[3] == parsed_var("lambda", 0)
+        assert block.multipliers[4] == parsed_var("q", 0)
 
     def test_extract_discount_factor_on_Bellman_eq(self, block):
         df = block._get_discount_factor()
         assert df.name == "beta"
 
     def test_extract_discount_factor_on_static_eq(self, block):
-        PI = TimeAwareSymbol("Pi", 0)
-        P = TimeAwareSymbol("P", 0)
-        Y = TimeAwareSymbol("Y", 0)
-        r = TimeAwareSymbol("r", 0)
-        w = TimeAwareSymbol("w", 0)
-        L = TimeAwareSymbol("L", 0)
-        K = TimeAwareSymbol("K", 0)
+        PI = parsed_var("Pi", 0)
+        P = parsed_var("P", 0)
+        Y = parsed_var("Y", 0)
+        r = parsed_var("r", 0)
+        w = parsed_var("w", 0)
+        L = parsed_var("L", 0)
+        K = parsed_var("K", 0)
 
         block.objective = {0: sp.Eq(PI, P * Y - r * K - w * L)}
         df = block._get_discount_factor()
         assert np.allclose(float(df), 1.0)
 
     def test_extract_discount_factor_on_lagged_eq(self, block):
-        PI = TimeAwareSymbol("Pi", 0)
-        P = TimeAwareSymbol("P", 0)
-        Y = TimeAwareSymbol("Y", 0)
-        r = TimeAwareSymbol("r", 0)
-        w = TimeAwareSymbol("w", 0)
-        L = TimeAwareSymbol("L", 0)
-        K = TimeAwareSymbol("K", -1)
+        PI = parsed_var("Pi", 0)
+        P = parsed_var("P", 0)
+        Y = parsed_var("Y", 0)
+        r = parsed_var("r", 0)
+        w = parsed_var("w", 0)
+        L = parsed_var("L", 0)
+        K = parsed_var("K", -1)
 
         block.objective = {0: sp.Eq(PI, P * Y - r * K - w * L)}
         df = block._get_discount_factor()
         assert np.allclose(float(df), 1)
 
     def test_household_lagrangian_function(self, block):
-        U = TimeAwareSymbol("U", 1)
-        Y = TimeAwareSymbol("Y", 0, positive=True)
-        C = TimeAwareSymbol("C", 0, positive=True)
-        I = TimeAwareSymbol("I", 0, positive=True)
-        K = TimeAwareSymbol("K", 0, positive=True)
-        L = TimeAwareSymbol("L", 0, positive=True)
-        A = TimeAwareSymbol("A", 0, positive=True)
-        lamb = TimeAwareSymbol("lambda", 0)
-        lamb_H_1 = TimeAwareSymbol("lambda__H_1", 0)
-        q = TimeAwareSymbol("q", 0)
+        U = parsed_var("U", 1)
+        Y = parsed_var("Y", 0, positive=True)
+        C = parsed_var("C", 0, positive=True)
+        I = parsed_var("I", 0, positive=True)
+        K = parsed_var("K", 0, positive=True)
+        L = parsed_var("L", 0, positive=True)
+        A = parsed_var("A", 0, positive=True)
+        lamb = parsed_var("lambda", 0)
+        lamb_H_1 = parsed_var("lambda__H_1", 0)
+        q = parsed_var("q", 0)
 
-        alpha, beta, delta, theta, tau = sp.symbols(["alpha", "beta", "delta", "theta", "tau"], positive=True)
-        Theta, zeta = sp.symbols(["Theta", "zeta"])
+        alpha, beta, delta, theta, tau = parsed_symbols(["alpha", "beta", "delta", "theta", "tau"], positive=True)
+        Theta, zeta = parsed_symbols(["Theta", "zeta"])
 
         utility = (C**theta * (1 - L) ** (1 - theta)) ** (1 - tau) / (1 - tau)
         mkt_clearing = C + I - Y
@@ -331,22 +331,22 @@ class TestBlockCases:
         assert all(set_equality_equals_zero(eq) in block.system_equations for eq in identities)
         assert objective in block.system_equations
 
-        U = TimeAwareSymbol("U", 1)
-        Y = TimeAwareSymbol("Y", 0, positive=True)
-        C = TimeAwareSymbol("C", 0, positive=True)
-        I = TimeAwareSymbol("I", 0, positive=True)
-        K = TimeAwareSymbol("K", 0, positive=True)
-        L = TimeAwareSymbol("L", 0, positive=True)
-        A = TimeAwareSymbol("A", 0, positive=True)
-        lamb = TimeAwareSymbol("lambda", 0)
-        lamb_H_1 = TimeAwareSymbol("lambda__H_1", 0)
-        q = TimeAwareSymbol("q", 0)
-        eps = TimeAwareSymbol("epsilon", 0)
+        U = parsed_var("U", 1)
+        Y = parsed_var("Y", 0, positive=True)
+        C = parsed_var("C", 0, positive=True)
+        I = parsed_var("I", 0, positive=True)
+        K = parsed_var("K", 0, positive=True)
+        L = parsed_var("L", 0, positive=True)
+        A = parsed_var("A", 0, positive=True)
+        lamb = parsed_var("lambda", 0)
+        lamb_H_1 = parsed_var("lambda__H_1", 0)
+        q = parsed_var("q", 0)
+        eps = parsed_var("epsilon", 0)
 
-        alpha, beta, delta, theta, tau, rho = sp.symbols(
+        alpha, beta, delta, theta, tau, rho = parsed_symbols(
             ["alpha", "beta", "delta", "theta", "tau", "rho"], positive=True
         )
-        Theta, zeta = sp.symbols("Theta, zeta")
+        Theta, zeta = parsed_symbols("Theta, zeta")
 
         all_variables = [
             U,
@@ -395,14 +395,14 @@ class TestBlockCases:
         result = load_gcn_file(TEST_GCNS / "rbc_2_block.gcn")
         block = result.block_dict["FIRM"]
 
-        Y = TimeAwareSymbol("Y", 0)
-        K = TimeAwareSymbol("K", -1)
-        L = TimeAwareSymbol("L", 0)
-        A = TimeAwareSymbol("A", 0)
-        r = TimeAwareSymbol("r", 0)
-        w = TimeAwareSymbol("w", 0)
-        P = TimeAwareSymbol("P", 0)
-        alpha, _rho = sp.symbols(["alpha", "rho"])
+        Y = parsed_var("Y", 0)
+        K = parsed_var("K", -1)
+        L = parsed_var("L", 0)
+        A = parsed_var("A", 0)
+        r = parsed_var("r", 0)
+        w = parsed_var("w", 0)
+        P = parsed_var("P", 0)
+        alpha, _rho = parsed_symbols(["alpha", "rho"])
 
         tc = -(r * K + w * L)
         prod = Y - A * K**alpha * L ** (1 - alpha)
@@ -415,16 +415,16 @@ class TestBlockCases:
         firm_block = result.block_dict["FIRM"]
         firm_block.solve_optimization()
 
-        Y = TimeAwareSymbol("Y", 0)
-        TC = TimeAwareSymbol("TC", 0)
-        K = TimeAwareSymbol("K", -1)
-        L = TimeAwareSymbol("L", 0)
-        A = TimeAwareSymbol("A", 0)
-        r = TimeAwareSymbol("r", 0)
-        w = TimeAwareSymbol("w", 0)
-        P = TimeAwareSymbol("P", 0)
-        epsilon = TimeAwareSymbol("epsilon_A", 0)
-        alpha, rho = sp.symbols(["alpha", "rho_A"])
+        Y = parsed_var("Y", 0)
+        TC = parsed_var("TC", 0)
+        K = parsed_var("K", -1)
+        L = parsed_var("L", 0)
+        A = parsed_var("A", 0)
+        r = parsed_var("r", 0)
+        w = parsed_var("w", 0)
+        P = parsed_var("P", 0)
+        epsilon = parsed_var("epsilon_A", 0)
+        alpha, rho = parsed_symbols(["alpha", "rho_A"])
 
         # Sample random values for all symbols EXCEPT Y, which is set
         # consistently with the production constraint Y = A*K^alpha*L^(1-alpha).
@@ -452,11 +452,11 @@ class TestBlockCases:
     def test_get_param_dict_and_calibrating_equations(self, block):
         block.solve_optimization(try_simplify=False)
 
-        _alpha, theta, beta, delta, tau, rho = sp.symbols(
+        _alpha, theta, beta, delta, tau, rho = parsed_symbols(
             ["alpha", "theta", "beta", "delta", "tau", "rho"], positive=True
         )
-        K = TimeAwareSymbol("K", 0, positive=True).to_ss()
-        L = TimeAwareSymbol("L", 0, positive=True).to_ss()
+        K = parsed_var("K", 0, positive=True).to_ss()
+        L = parsed_var("L", 0, positive=True).to_ss()
 
         answer = {theta: 0.357, beta: 1 / 1.01, delta: 0.02, tau: 2, rho: 0.95}
         assert all(key in block.param_dict for key in answer)
@@ -517,8 +517,8 @@ def test_block_with_exlcuded_equation():
 
 class TestBlockFromSympy:
     def test_from_sympy_creates_valid_block(self):
-        C = TimeAwareSymbol("C", 0)
-        Y = TimeAwareSymbol("Y", 0)
+        C = parsed_var("C", 0)
+        Y = parsed_var("Y", 0)
 
         identities = {0: sp.Eq(Y, C)}
         equation_flags = {0: {}}
@@ -554,12 +554,12 @@ class TestBlockFromSympy:
         loaded_block.solve_optimization()
 
         # Create sympy objects for from_sympy constructor
-        Y = TimeAwareSymbol("Y", 0)
-        C = TimeAwareSymbol("C", 0)
-        I = TimeAwareSymbol("I", 0)
-        K = TimeAwareSymbol("K", 0)
-        K_lag = TimeAwareSymbol("K", -1)
-        delta = sp.Symbol("delta")
+        Y = parsed_var("Y", 0)
+        C = parsed_var("C", 0)
+        I = parsed_var("I", 0)
+        K = parsed_var("K", 0)
+        K_lag = parsed_var("K", -1)
+        delta = parsed_symbol("delta")
 
         identities = {
             0: sp.Eq(Y, C + I),
@@ -589,13 +589,13 @@ class TestBlockFromSympy:
             assert float(loaded_block.param_dict[key]) == float(new_block.param_dict[key])
 
     def test_from_sympy_with_optimization_problem(self):
-        U = TimeAwareSymbol("U", 0)
-        U_next = TimeAwareSymbol("U", 1)
-        C = TimeAwareSymbol("C", 0)
-        L = TimeAwareSymbol("L", 0)
-        w = TimeAwareSymbol("w", 0)
-        lambda_ = TimeAwareSymbol("lambda", 0)
-        beta = sp.Symbol("beta")
+        U = parsed_var("U", 0)
+        U_next = parsed_var("U", 1)
+        C = parsed_var("C", 0)
+        L = parsed_var("L", 0)
+        w = parsed_var("w", 0)
+        lambda_ = parsed_var("lambda", 0)
+        beta = parsed_symbol("beta")
 
         objective = {0: sp.Eq(U, sp.log(C) - L + beta * U_next)}
         constraints = {1: sp.Eq(C, w * L)}
@@ -685,9 +685,9 @@ def test_ss_variable_in_calibration_resolves_to_deterministic_param():
     result = load_gcn_string(gcn)
     block = result.block_dict["HOUSEHOLD"]
 
-    alpha = sp.Symbol("alpha")
-    Y_bar = sp.Symbol("Y_bar")
-    phi = sp.Symbol("phi")
+    alpha = parsed_symbol("alpha")
+    Y_bar = parsed_symbol("Y_bar")
+    phi = parsed_symbol("phi")
 
     assert phi in block.deterministic_dict
     assert block.deterministic_dict[phi] == Y_bar**2 + alpha
@@ -698,16 +698,16 @@ def test_minimize_tag_produces_correct_firm_focs(rng):
     result = load_gcn_file(TEST_GCNS / "rbc_2_block_minimize.gcn")
     firm_block = result.block_dict["FIRM"]
 
-    Y = TimeAwareSymbol("Y", 0)
-    TC = TimeAwareSymbol("TC", 0)
-    K = TimeAwareSymbol("K", -1)
-    L = TimeAwareSymbol("L", 0)
-    A = TimeAwareSymbol("A", 0)
-    r = TimeAwareSymbol("r", 0)
-    w = TimeAwareSymbol("w", 0)
-    P = TimeAwareSymbol("P", 0)
-    epsilon = TimeAwareSymbol("epsilon_A", 0)
-    alpha, rho = sp.symbols(["alpha", "rho_A"])
+    Y = parsed_var("Y", 0)
+    TC = parsed_var("TC", 0)
+    K = parsed_var("K", -1)
+    L = parsed_var("L", 0)
+    A = parsed_var("A", 0)
+    r = parsed_var("r", 0)
+    w = parsed_var("w", 0)
+    P = parsed_var("P", 0)
+    epsilon = parsed_var("epsilon_A", 0)
+    alpha, rho = parsed_symbols(["alpha", "rho_A"])
 
     # Sample Y consistently with the production constraint so the chain-rule
     # and closed-form FOC representations agree numerically. See test_firm_FOC

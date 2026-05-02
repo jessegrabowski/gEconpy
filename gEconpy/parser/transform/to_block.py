@@ -12,7 +12,7 @@ from gEconpy.parser.ast import (
     Tag,
 )
 from gEconpy.parser.transform.expand_time_indices import expand_block_time_indices
-from gEconpy.parser.transform.to_sympy import ast_to_sympy
+from gEconpy.parser.transform.to_sympy import ast_to_sympy, merge_assumptions
 
 
 def _equation_to_sympy(
@@ -27,7 +27,7 @@ def _equation_to_sympy(
     # For calibrating equations with `-> param`, rewrite as `Eq(param, rhs - lhs)`
     # This matches what Block._get_param_dict_and_calibrating_equations expects
     if eq.calibrating_parameter:
-        param_assumptions = assumptions.get(eq.calibrating_parameter, {})
+        param_assumptions = merge_assumptions(assumptions.get(eq.calibrating_parameter))
         param = sp.Symbol(eq.calibrating_parameter, **param_assumptions)
         # The calibrating equation form is: original_lhs = original_rhs -> param
         # Block expects: param = original_rhs - original_lhs (as equation to solve)
@@ -72,7 +72,7 @@ def _extract_multiplier(
         return None
     assumptions = assumptions or {}
     name = eq.lagrange_multiplier
-    var_assumptions = assumptions.get(name, {})
+    var_assumptions = merge_assumptions(assumptions.get(name))
     return TimeAwareSymbol(name, 0, **var_assumptions)
 
 
@@ -220,7 +220,7 @@ def _convert_calibration(
                 param_locations[item.lhs.name] = item.location
         elif isinstance(item, GCNDistribution):
             if item.initial_value is not None:
-                param_assumptions = assumptions.get(item.parameter_name, {})
+                param_assumptions = merge_assumptions(assumptions.get(item.parameter_name))
                 param = sp.Symbol(item.parameter_name, **param_assumptions)
                 value = sp.Float(item.initial_value)
                 calib_items.append((None, sp.Eq(param, value)))
