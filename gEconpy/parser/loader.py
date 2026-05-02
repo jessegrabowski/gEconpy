@@ -15,7 +15,7 @@ from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
 from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_metadata
 from gEconpy.parser.transform.to_sympy import ast_to_sympy, equation_to_sympy
-from gEconpy.utilities import substitute_repeatedly
+from gEconpy.utilities import flatten_substitution_dict
 
 PARAM_DICTS = Literal["param_dict", "deterministic_dict", "calib_dict"]
 
@@ -307,25 +307,27 @@ def _extract_ss_solution_dict(model: GCNModel, assumptions: dict) -> SymbolDicti
         return SymbolDictionary()
 
     ss_block = ss_blocks[0]
-    sub_dict = SymbolDictionary()
-    steady_state_dict = SymbolDictionary()
 
-    # Process definitions first (they define substitution rules)
+    # Definitions and identities both contribute substitution rules; identities are
+    # additionally surfaced as steady-state values. Build one combined dict in source
+    # order so dependencies resolve forward, then flatten it once via topo-sort. After
+    # flattening, every value references no other keys, so no fixed-point loop is
+    # needed downstream.
+    sub_dict: dict[sp.Expr, sp.Expr] = {}
+    identity_keys: list[sp.Expr] = []
+
     for eq in ss_block.definitions:
         sympy_eq = _equation_to_sympy_simple(eq, assumptions)
         sub_dict[sympy_eq.lhs] = sympy_eq.rhs
 
-    # Process identities (these define the steady state values)
     for eq in ss_block.identities:
         sympy_eq = _equation_to_sympy_simple(eq, assumptions)
-        subbed_rhs = substitute_repeatedly(sympy_eq.rhs, sub_dict)
-        steady_state_dict[sympy_eq.lhs] = subbed_rhs
-        sub_dict[sympy_eq.lhs] = subbed_rhs
+        sub_dict[sympy_eq.lhs] = sympy_eq.rhs
+        identity_keys.append(sympy_eq.lhs)
 
-    # Substitute within steady state dict
-    for k, eq in steady_state_dict.items():
-        steady_state_dict[k] = substitute_repeatedly(eq, steady_state_dict)
+    flat = flatten_substitution_dict(sub_dict)
 
+    steady_state_dict = SymbolDictionary({k: flat[k] for k in identity_keys})
     return steady_state_dict.sort_keys().to_string().values_to_float()
 
 

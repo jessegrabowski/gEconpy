@@ -31,7 +31,7 @@ from gEconpy.parser.errors import GCNErrorCollection, GCNParseError
 from gEconpy.parser.formatting import ErrorFormatter
 from gEconpy.parser.loader import load_gcn_file
 from gEconpy.pytensorf.compile import rewrite_pregrad
-from gEconpy.utilities import get_name, substitute_repeatedly
+from gEconpy.utilities import flatten_substitution_dict, get_name
 
 _log = logging.getLogger(__name__)
 
@@ -284,8 +284,9 @@ def _resolve_deterministic_params(
         Parameters that were eliminated because they no longer appear in any equation.
     """
     deterministic_dict.to_sympy(inplace=True)
-    for param, expr in deterministic_dict.items():
-        deterministic_dict[param] = substitute_repeatedly(expr, deterministic_dict)
+    flat = flatten_substitution_dict(dict(deterministic_dict))
+    for param in deterministic_dict:
+        deterministic_dict[param] = flat[param]
 
     all_equations = equations + steady_state_relationships
     reduced_params = []

@@ -13,10 +13,10 @@ from gEconpy.parser.errors import ParseLocation
 from gEconpy.utilities import (
     diff_through_time,
     expand_subs_for_all_times,
+    flatten_substitution_dict,
     set_equality_equals_zero,
     step_equation_backward,
     step_equation_forward,
-    substitute_repeatedly,
     unpack_keys_and_values,
 )
 
@@ -302,12 +302,7 @@ class Block:
         if self.definitions is None:
             return
 
-        sub_dict = {eq.lhs: eq.rhs for eq in self.definitions.values()}
-
-        for var, eq in sub_dict.items():
-            if not hasattr(eq, "subs"):
-                continue
-            sub_dict[var] = substitute_repeatedly(eq, sub_dict)
+        sub_dict = flatten_substitution_dict({eq.lhs: eq.rhs for eq in self.definitions.values()})
 
         self.definitions = {k: sp.Eq(v.lhs, v.rhs.subs(sub_dict)) for k, v in self.definitions.items()}
 
@@ -335,8 +330,9 @@ class Block:
             multipliers = [x for x in multipliers if x is not None]
 
         all_equations = [eq for eqs_list in [objective, constraints, identities] for eq in eqs_list]
+        flat_sub_dict = flatten_substitution_dict(sub_dict) if sub_dict else {}
         for eq in all_equations:
-            atoms = substitute_repeatedly(eq, sub_dict).atoms()
+            atoms = eq.subs(flat_sub_dict).atoms() if flat_sub_dict else eq.atoms()
             variables = [x for x in atoms if isinstance(x, TimeAwareSymbol)]
             for variable in variables:
                 if variable.to_ss() not in self.variables:

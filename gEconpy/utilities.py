@@ -262,34 +262,62 @@ def get_name(x: str | sp.Symbol, base_name=False) -> str:
     return None
 
 
-def substitute_repeatedly(expr: sp.Expr, sub_dict: dict[sp.Expr, sp.Expr], max_subs: int = 10) -> sp.Expr:
+def flatten_substitution_dict(
+    sub_dict: dict[sp.Expr, sp.Expr],
+) -> dict[sp.Expr, sp.Expr]:
     """
-    Repeatedly call ``expr = expr.sub(sub_dict)``.
+    Resolve a substitution dictionary so each value references no other keys.
 
-    Used when substitutions in ``sub_dict`` themselves require substitution.
+    Walks the dependency DAG of ``sub_dict`` in topological order, substituting each
+    RHS through its already-resolved predecessors exactly once. After the pass, any
+    ``expr.subs(flat_dict)`` call converges in a single sweep — much faster than
+    iterating substitutions to a fixed point when the dict has many cross-references
+    (e.g. a STEADY_STATE block whose hints chain through each other).
 
     Parameters
     ----------
-    expr: sp.Expr
-        Expression to substitute into
-    sub_dict: dict of sp.Expr, sp.Expr
-        Dictionary of substitutions
-    max_subs: int
-        Maximum number of substitutions to make. If the number of substitutions exceeds this number, the function
-        will return the expression as is.
+    sub_dict : dict mapping sympy symbol to sympy expression
+        Substitutions, possibly with values that reference other keys.
 
     Returns
     -------
-    substituted_expr: sp.Expr
-        The expression with all substitutions made.
+    flat_dict : dict mapping sympy symbol to sympy expression
+        Same keys as the input, with values fully resolved against each other.
+
+    Raises
+    ------
+    ValueError
+        If the dependency graph contains a cycle.
     """
-    if isinstance(expr, int | float):
-        return expr
+    keys = set(sub_dict)
+    deps: dict[sp.Expr, set[sp.Expr]] = {}
+    for k, v in sub_dict.items():
+        if isinstance(v, sp.Basic):
+            deps[k] = (v.free_symbols & keys) - {k}
+        else:
+            deps[k] = set()
 
-    for _i in range(max_subs):
-        new_expr = expr.subs(sub_dict)
-        if not any(new_expr.has(x) for x in sub_dict):
-            return new_expr
-        expr = new_expr
+    flat: dict[sp.Expr, sp.Expr] = {}
+    visiting: set[sp.Expr] = set()
 
-    return expr
+    def resolve(key: sp.Expr) -> sp.Expr:
+        if key in flat:
+            return flat[key]
+        if key in visiting:
+            raise ValueError(f"Cycle detected in substitution dictionary involving {key}")
+        visiting.add(key)
+
+        value = sub_dict[key]
+        for dep in deps[key]:
+            resolve(dep)
+        if deps[key] and isinstance(value, sp.Basic):
+            value = value.subs({d: flat[d] for d in deps[key]})
+
+        visiting.discard(key)
+        flat[key] = value
+        return value
+
+    for key in sub_dict:
+        resolve(key)
+
+    return flat
