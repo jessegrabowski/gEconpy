@@ -732,7 +732,7 @@ class Block:
             # )
 
         for control in controls:
-            foc = diff_through_time(lagrange, control, discount_factor)
+            foc = self._compute_foc(control, lagrange, discount_factor)
             self.system_equations.append(foc.powsimp())
 
         if try_simplify:
@@ -740,6 +740,16 @@ class Block:
 
         # Update the variable list
         self._get_variable_list()
+
+    def _compute_foc(self, control: TimeAwareSymbol, lagrange: sp.Expr, discount_factor: sp.Expr | int) -> sp.Expr:
+        """Compute the first-order condition for a single control variable.
+
+        The default implementation differentiates the Lagrangian through time via :func:`diff_through_time`.
+        Specialized :class:`Block` subclasses (e.g. :class:`gEconpy.model.block.production.CobbDouglasBlock`)
+        override this to emit closed-form FOCs without invoking :func:`sympy.diff` on the constraint, sidestepping the
+        chain-rule expansion that dominates compile time on common functional forms.
+        """
+        return diff_through_time(lagrange, control, discount_factor)
 
     def __html_repr__(self) -> str:
         """
