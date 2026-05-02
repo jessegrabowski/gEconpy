@@ -745,7 +745,7 @@ class Block:
         """Compute the first-order condition for a single control variable.
 
         The default implementation differentiates the Lagrangian through time via :func:`diff_through_time`.
-        Specialized :class:`Block` subclasses (e.g. :class:`gEconpy.model.block.production.CobbDouglasBlock`)
+        Specialized :class:`Block` subclasses (e.g. :class:`gEconpy.model.block.cobb_douglas.CobbDouglasBlock`)
         override this to emit closed-form FOCs without invoking :func:`sympy.diff` on the constraint, sidestepping the
         chain-rule expansion that dominates compile time on common functional forms.
         """
