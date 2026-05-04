@@ -3,13 +3,14 @@ import warnings
 from itertools import product
 from typing import Any, Literal, cast
 
-import arviz as az
+import arviz_stats as azs
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
 
+from arviz_plots import plot_dist
 from matplotlib.colors import Colormap
 from matplotlib.dates import DateFormatter, YearLocator
 from matplotlib.figure import Figure
@@ -1642,7 +1643,7 @@ def plot_kalman_filter(
     time_idx = idata.coords["time"]
 
     means = idata[output_name].sel(**{state_name: vars_to_plot}).mean(dim=["chain", "draw"])
-    hdis = az.hdi(idata[output_name].sel(**{state_name: vars_to_plot}), prob=0.95, skipna=True)
+    hdis = azs.hdi(idata[output_name].sel(**{state_name: vars_to_plot}), prob=0.95, skipna=True)
 
     for idx, variable in enumerate(vars_to_plot):
         axis = fig.add_subplot(gs[plot_locs[idx]])
@@ -1731,34 +1732,38 @@ def plot_posterior_with_prior(
     fig_kwargs=None,
     plot_posterior_kwargs=None,
 ) -> plt.Figure:
-    if true_values is None:
-        ref_val = None
-    else:
-        ref_val = np.r_[*[true_values[name].values.ravel() for name in var_names]].tolist()
-
     if fig_kwargs is None:
-        n_rows = len(var_names) // n_cols
-        fig_kwargs = {"figsize": (14, n_rows * 3), "dpi": 144, "layout": "constrained"}
+        n_rows = max(1, -(-len(var_names) // n_cols))
+        fig_kwargs = {"figsize": (14, n_rows * 3), "dpi": 144}
     if plot_posterior_kwargs is None:
-        plot_posterior_kwargs = {"textsize": 10}
+        plot_posterior_kwargs = {}
 
-    fig = plt.figure(**fig_kwargs)
-    gs, locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=len(var_names), figure=fig)
-    [fig.add_subplot(gs[loc]) for loc in locs]
-
-    axes = az.plot_posterior(
+    pc = plot_dist(
         idata,
         var_names=var_names,
-        ref_val=ref_val,
-        ax=np.array(fig.axes),
+        kind="kde",
+        ci_kind="hdi",
+        ci_prob=0.94,
+        point_estimate="mean",
+        backend="matplotlib",
+        figure_kwargs=fig_kwargs,
+        cols=["__variable__"],
+        col_wrap=n_cols,
         **plot_posterior_kwargs,
     )
 
-    for axis in axes.ravel():
-        var_name, *_coords = axis.get_title().split("\n")
+    fig = pc.viz["figure"].item()
+    axes_ds = pc.viz["plot"]
 
+    for var_name in var_names:
+        if var_name not in axes_ds:
+            continue
+        axis = axes_ds[var_name].item()
         if var_name in prior_dict:
             prior_dict[var_name].plot_pdf(ax=axis, legend=False, color="tab:orange")
+        if true_values is not None and var_name in true_values:
+            for v in np.atleast_1d(true_values[var_name].values).ravel():
+                axis.axvline(v, ls="--", c="k", lw=1.0)
 
     return fig
 
@@ -1776,7 +1781,7 @@ def plot_estimated_matrix(
     fig, ax = plt.subplots(n_shocks, n_shocks, **subplot_kwargs)
 
     mu = idata.posterior[matrix_name].mean(dim=["chain", "draw"])
-    hdi = az.hdi(idata.posterior[matrix_name])
+    hdi = azs.hdi(idata.posterior[matrix_name])
     ax[0, 0].set(xlim=(-1.05, 1.05), ylim=(-1.05, 1.05))
 
     for i, j in product(range(n_shocks), range(n_shocks)):
