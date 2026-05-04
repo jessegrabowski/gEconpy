@@ -187,12 +187,16 @@ class DSGEStateSpace(PyMCStateSpace):
     def _setup_state_covariance(self):
         if self.full_covariance:
             state_cov = self.make_and_register_variable("state_cov", shape=(self.k_posdef, self.k_posdef))
-            self.ssm["state_cov", :, :] = state_cov
+            self.ssm["state_cov"] = pt.assume(state_cov, positive_definite=True)[None, :, :]
             return
 
-        for i, shock in enumerate(self.shocks):
-            sigma = self.make_and_register_variable(f"sigma_{shock.base_name}", shape=())
-            self.ssm["state_cov", i, i] = sigma**2
+        # ``pt.diag(stack(...))`` is auto-tagged diagonal by AssumptionFeature, which propagates
+        # symmetric/PSD through the congruence rule (R Q R'), enabling cholesky-based solves and
+        # significant speedups in compile_dlogp for HMC sampling. The string-only setter
+        # bypasses the SetSubtensor wrap that the slice-form would impose.
+        sigmas = [self.make_and_register_variable(f"sigma_{shock.base_name}", shape=()) for shock in self.shocks]
+        Q = pt.diag(pt.stack([s**2 for s in sigmas]))
+        self.ssm["state_cov"] = Q[None, :, :]
 
     def _make_design_matrix(self):
         n_cum_lags = self._aggregation_period - 1
@@ -376,9 +380,16 @@ class DSGEStateSpace(PyMCStateSpace):
         self._setup_state_covariance()
 
         if self.measurement_error:
-            for i, state in enumerate(self.error_states):
-                sigma = self.make_and_register_variable(f"error_sigma_{state}", shape=())
-                self.ssm["obs_cov", i, i] = sigma**2
+            sigmas = [self.make_and_register_variable(f"error_sigma_{state}", shape=()) for state in self.error_states]
+            variances = pt.stack([s**2 for s in sigmas])
+            if len(sigmas) == self.k_endog:
+                H = pt.diag(variances)
+            else:
+                # Mirror the previous semantics: sigmas land at positions 0..len(error_states)-1
+                # of an (k_endog, k_endog) zero matrix.
+                diag_vec = pt.zeros((self.k_endog,))[: len(sigmas)].set(variances)
+                H = pt.diag(diag_vec)
+            self.ssm["obs_cov"] = H[None, :, :]
 
         self.ssm["initial_state", :] = pt.zeros(self.k_states)
 
