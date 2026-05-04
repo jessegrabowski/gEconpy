@@ -274,7 +274,6 @@ class DSGEStateSpace(PyMCStateSpace):
         n_agg = len(cumulator_vars)
         n_cum_lags = self._aggregation_period - 1
         n_cum = self._n_cumulator_states
-        k_aug = k_orig + n_cum
 
         shift = np.zeros((n_cum_lags, n_cum_lags), dtype=floatX)
         if n_cum_lags > 1:
@@ -286,10 +285,16 @@ class DSGEStateSpace(PyMCStateSpace):
         for agg_pos, orig_idx in enumerate(agg_indices):
             F = pt.set_subtensor(F[agg_pos * n_cum_lags, orig_idx], 1.0)
 
-        T_aug = pt.zeros((k_aug, k_aug), dtype=floatX)
-        T_aug = pt.set_subtensor(T_aug[:k_orig, :k_orig], T)
-        T_aug = pt.set_subtensor(T_aug[k_orig:, :k_orig], F)
-        return pt.set_subtensor(T_aug[k_orig:, k_orig:], C)
+        # Build via ``pt.block`` so ``local_block_dot_to_block_of_dots`` can split
+        # downstream ``T_aug @ x`` into block-of-dots and drop the zero top-right
+        # block contribution entirely.
+        zero_block = pt.zeros((k_orig, n_cum), dtype=floatX)
+        return pt.block(
+            [
+                [T, zero_block],
+                [F, pt.constant(C)],
+            ]
+        )
 
     def _augment_selection(self, R: pt.TensorVariable) -> pt.TensorVariable:
         """
@@ -316,12 +321,10 @@ class DSGEStateSpace(PyMCStateSpace):
         if not self._cumulator_variables:
             return R
 
-        k_orig = self._k_orig_states
         n_cum = self._n_cumulator_states
-        k_aug = k_orig + n_cum
 
-        R_aug = pt.zeros((k_aug, self.k_posdef), dtype=floatX)
-        return pt.set_subtensor(R_aug[:k_orig, :], R)
+        zeros = pt.zeros((n_cum, self.k_posdef), dtype=floatX)
+        return pt.join(-2, R, zeros)
 
     def make_symbolic_graph(self):
         """
