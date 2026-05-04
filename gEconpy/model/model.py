@@ -1213,7 +1213,7 @@ class Model:
         steady_state: dict | None = None,
         loglin_negative_ss: bool = False,
         verbose: bool = True,
-    ) -> tuple[list[TensorVariable], list[TensorVariable], list[TensorVariable]]:
+    ) -> tuple[list[TensorVariable], list[TensorVariable], list[TensorVariable], np.ndarray, np.ndarray]:
         r"""
         Return the symbolic pytensor graphs for the linearized Jacobian matrices.
 
@@ -1245,11 +1245,18 @@ class Model:
         Returns
         -------
         jacobians : list of TensorVariable
-            Four pytensor matrix graph nodes ``[A, B, C, D]``.
+            Four pytensor matrix graph nodes ``[A, B, C, D]``. Rows are in
+            ``self.eq_order`` and the variable axis (cols of A/B/C) is in
+            ``self.var_order``; D's columns are shocks (no permutation).
         ss_input_nodes : list of TensorVariable
             Steady-state variable input nodes consumed by the Jacobian graphs.
         param_input_nodes : list of TensorVariable
-            Parameter input nodes consumed by the Jacobian graphs (discovered via ``explicit_graph_inputs``).
+            Parameter input nodes consumed by the Jacobian graphs (discovered via
+            ``explicit_graph_inputs``).
+        eq_order : ndarray of int
+            Equation row permutation actually applied (a copy of ``self.eq_order``).
+        var_order : ndarray of int
+            Variable column permutation actually applied (a copy of ``self.var_order``).
 
         See Also
         --------
@@ -1260,7 +1267,7 @@ class Model:
         .. code-block:: python
 
             model = model_from_gcn("rbc.gcn")
-            jacobians, ss_nodes, param_nodes = model.symbolic_linearization()
+            jacobians, ss_nodes, param_nodes, eq_order, var_order = model.symbolic_linearization()
             A, B, C, D = jacobians
 
             # Inspect the pytensor graph
@@ -1299,12 +1306,14 @@ class Model:
             self._symbolic_linearize_cache = {}
 
         if loglin_key not in self._symbolic_linearize_cache:
-            jacobians, ss_input_nodes = _linearize_model(
+            jacobians, ss_input_nodes, eq_order, var_order = _linearize_model(
                 variables=self.variables,
                 equations=self.equations,
                 shocks=self.shocks,
                 cache=self._ensure_cache(),
                 loglin_variables=loglin_vars,
+                eq_order=self.eq_order,
+                var_order=self.var_order,
             )
 
             ss_names = {n.name for n in ss_input_nodes}
@@ -1312,7 +1321,13 @@ class Model:
                 v for v in explicit_graph_inputs(jacobians) if v.name is not None and v.name not in ss_names
             ]
 
-            self._symbolic_linearize_cache[loglin_key] = (jacobians, ss_input_nodes, param_input_nodes)
+            self._symbolic_linearize_cache[loglin_key] = (
+                jacobians,
+                ss_input_nodes,
+                param_input_nodes,
+                eq_order,
+                var_order,
+            )
 
         return self._symbolic_linearize_cache[loglin_key]
 
@@ -1463,7 +1478,7 @@ class Model:
                     **steady_state_kwargs,
                 )
 
-        jacobians, ss_input_nodes, param_input_nodes = self.symbolic_linearization(
+        jacobians, ss_input_nodes, param_input_nodes, eq_order, var_order = self.symbolic_linearization(
             order=order,
             log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
@@ -1492,6 +1507,20 @@ class Model:
         param_vals = [param_dict[n.name] for n in param_input_nodes]
 
         A, B, C, D = f(*ss_vals, *param_vals)
+
+        # Internal computation reorders equations into ``self.eq_order`` (rows) and
+        # variables into ``self.var_order`` (columns of A/B/C; D's cols are shocks).
+        # Undo both so the user sees A/B/C/D in original equation × variable order.
+        inv_eq = self.inv_eq_order
+        inv_var = self.inv_var_order
+        eq_is_id = np.array_equal(eq_order, np.arange(len(eq_order)))
+        var_is_id = np.array_equal(var_order, np.arange(len(var_order)))
+        if not eq_is_id:
+            A, B, C, D = (M[inv_eq] for M in (A, B, C, D))
+        if not var_is_id:
+            A = A[:, inv_var]
+            B = B[:, inv_var]
+            C = C[:, inv_var]
 
         return [np.ascontiguousarray(x, dtype=A.dtype) for x in [A, B, C, D]]
 

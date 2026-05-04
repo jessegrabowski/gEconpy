@@ -450,19 +450,21 @@ def test_linearize_with_custom_params(rng):
 )
 def test_symbolic_linearization_returns_pytensor_graphs(gcn_file):
     model = load_and_cache_model(gcn_file)
-    jacobians, ss_nodes, param_nodes = model.symbolic_linearization(verbose=False)
+    jacobians, ss_nodes, param_nodes, eq_order, var_order = model.symbolic_linearization(verbose=False)
 
     assert len(jacobians) == 4
     assert all(isinstance(j, pt.TensorVariable) for j in jacobians)
     assert len(ss_nodes) == len(model.variables)
     assert all(isinstance(n, pt.TensorVariable) for n in ss_nodes)
     assert all(isinstance(n, pt.TensorVariable) for n in param_nodes)
+    assert eq_order.shape == (len(model.equations),)
+    assert var_order.shape == (len(model.variables),)
 
 
 def test_symbolic_linearization_caches():
     model = load_and_cache_model("one_block_1_ss.gcn")
-    jac1, _ss1, _p1 = model.symbolic_linearization(verbose=False)
-    jac2, _ss2, _p2 = model.symbolic_linearization(verbose=False)
+    jac1, _ss1, _p1, _eo1, _vo1 = model.symbolic_linearization(verbose=False)
+    jac2, _ss2, _p2, _eo2, _vo2 = model.symbolic_linearization(verbose=False)
 
     # Same objects on cache hit
     for a, b in zip(jac1, jac2, strict=False):

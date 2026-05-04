@@ -33,7 +33,9 @@ def linearize_model(
     cache: dict | None = None,
     loglin_variables: list[TimeAwareSymbol] | None = None,
     order: int = 1,
-) -> tuple[list[TensorVariable], list[TensorVariable]]:
+    eq_order: np.ndarray | None = None,
+    var_order: np.ndarray | None = None,
+) -> tuple[list[TensorVariable], list[TensorVariable], np.ndarray, np.ndarray]:
     r"""
     Compute the log-linearized Jacobian matrices of a DSGE model using pytensor autodiff.
 
@@ -69,14 +71,30 @@ def linearize_model(
         Variables to log-linearize. If None, all variables are log-linearized.
     order : int, default 1
         Order of approximation. Only ``order=1`` is currently supported.
+    eq_order : ndarray of int, optional
+        Permutation of equation indices placing equations in
+        ``[static | lag-only | lead-only | both]`` order so A's and C's structural-zero
+        row blocks become contiguous. Computed from the equations if not supplied.
+    var_order : ndarray of int, optional
+        Permutation of variable indices placing variables in
+        ``[static | predetermined-only | mixed | forward-only]`` order so A's and C's
+        structural-zero column blocks become contiguous. Computed from the equations if
+        not supplied.
 
     Returns
     -------
     jacobians : list of TensorVariable
-        Four pytensor matrix graph nodes ``[A, B, C, D]``.
+        Four pytensor matrix graph nodes ``[A, B, C, D]``. Rows are in ``eq_order`` and
+        the variable axis (cols of A/B/C) is in ``var_order``; D's columns are shocks
+        (no permutation).
     ss_input_nodes : list of TensorVariable
-        Steady-state variable input nodes needed to evaluate the Jacobians. Parameter nodes are also embedded in the
-        graph but must be discovered by the caller via ``explicit_graph_inputs``.
+        Steady-state variable input nodes needed to evaluate the Jacobians. Parameter
+        nodes are also embedded in the graph but must be discovered by the caller via
+        ``explicit_graph_inputs``.
+    eq_order_out : ndarray of int
+        The equation permutation actually applied (same as ``eq_order`` if supplied).
+    var_order_out : ndarray of int
+        The variable permutation actually applied (same as ``var_order`` if supplied).
     """
     if order != 1:
         raise NotImplementedError("Only order = 1 linearization is currently implemented.")
@@ -145,10 +163,133 @@ def linearize_model(
     equations_transformed = rewrite_pregrad(equations_transformed)
 
     n_eq = len(equations_transformed)
-    A = sparse_jacobian(equations_transformed, dummies_lags, return_sparse=False)
-    B = sparse_jacobian(equations_transformed, dummies_now, return_sparse=False)
-    C = sparse_jacobian(equations_transformed, dummies_leads, return_sparse=False)
-    D = sparse_jacobian(equations_transformed, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_eq, 0))
+    n_var = len(dummies_leads)
+
+    # Classify equations by which time-shifts they reference (S=static, L=lag-only,
+    # E=lead-only, B=both) and variables by their incidence (s, p, m, f). Build
+    # ``eq_order`` / ``var_order`` from these if the caller didn't supply them.
+    eq_has_lag = np.array([any(v.set_t(-1) in eq.atoms(TimeAwareSymbol) for v in variables) for eq in equations])
+    eq_has_lead = np.array([any(v.set_t(1) in eq.atoms(TimeAwareSymbol) for v in variables) for eq in equations])
+    var_has_lag = np.zeros(len(variables), dtype=bool)
+    var_has_lead = np.zeros(len(variables), dtype=bool)
+    for eq in equations:
+        atoms = eq.atoms(TimeAwareSymbol)
+        for j, v in enumerate(variables):
+            if v.set_t(-1) in atoms:
+                var_has_lag[j] = True
+            if v.set_t(1) in atoms:
+                var_has_lead[j] = True
+    n_S = int((~eq_has_lag & ~eq_has_lead).sum())
+    n_L = int((eq_has_lag & ~eq_has_lead).sum())
+    n_E = int((~eq_has_lag & eq_has_lead).sum())
+    n_B_eq = int((eq_has_lag & eq_has_lead).sum())
+    n_s = int((~var_has_lag & ~var_has_lead).sum())
+    n_p = int((var_has_lag & ~var_has_lead).sum())
+    n_m = int((var_has_lag & var_has_lead).sum())
+    n_f = int((~var_has_lag & var_has_lead).sum())
+
+    if eq_order is None:
+        eq_order_local = np.concatenate(
+            [
+                np.where(~eq_has_lag & ~eq_has_lead)[0],
+                np.where(eq_has_lag & ~eq_has_lead)[0],
+                np.where(~eq_has_lag & eq_has_lead)[0],
+                np.where(eq_has_lag & eq_has_lead)[0],
+            ]
+        )
+    else:
+        eq_order_local = np.asarray(eq_order, dtype=int)
+    if var_order is None:
+        var_order_local = np.concatenate(
+            [
+                np.where(~var_has_lag & ~var_has_lead)[0],
+                np.where(var_has_lag & ~var_has_lead)[0],
+                np.where(var_has_lag & var_has_lead)[0],
+                np.where(~var_has_lag & var_has_lead)[0],
+            ]
+        )
+    else:
+        var_order_local = np.asarray(var_order, dtype=int)
+
+    # Permute the variable dummies to columns-permuted order so sparse_jacobian's
+    # output columns line up with [s | p | m | f]. The Jacobian variable list is
+    # what determines the result's column ordering.
+    dummies_lags_perm = [dummies_lags[j] for j in var_order_local]
+    dummies_now_perm = [dummies_now[j] for j in var_order_local]
+    dummies_leads_perm = [dummies_leads[j] for j in var_order_local]
+
+    # A is nonzero only in (L | B) rows × (p | m) cols: 4 cells out of 16.
+    # C is nonzero only in (E | B) rows × (m | f) cols.
+    # B has no useful block-zero structure; D's columns are shocks (no var perm).
+    use_split = n_eq > 0 and n_var > 0 and (n_L + n_B_eq) > 0 and (n_E + n_B_eq) > 0
+
+    if use_split:
+        permuted_eqs = [equations_transformed[i] for i in eq_order_local]
+
+        # B and D: just permute (rows by eq_order, cols by var_order for B; D unchanged)
+        B = sparse_jacobian(permuted_eqs, dummies_now_perm, return_sparse=False)
+        D = sparse_jacobian(permuted_eqs, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_eq, 0))
+
+        # A: compute only the (L+B) × (p+m) submatrix
+        a_active_eqs = permuted_eqs[n_S : n_S + n_L] + permuted_eqs[n_S + n_L + n_E :]
+        a_active_vars = dummies_lags_perm[n_s : n_s + n_p + n_m]
+        if a_active_eqs and a_active_vars:
+            A_active = sparse_jacobian(a_active_eqs, a_active_vars, return_sparse=False)
+            A_L = A_active[:n_L]
+            A_B = A_active[n_L:]
+        else:
+            A_L = pt.zeros((n_L, n_p + n_m))
+            A_B = pt.zeros((n_B_eq, n_p + n_m))
+
+        # Build the 4×4 grid for A. The (L,p|m) and (B,p|m) cells contain A_L / A_B;
+        # all other cells are structurally zero. Keep the [s | p | m | f] column order.
+        def _row(zeros_left, mid, zeros_right, n_row):
+            parts = []
+            if zeros_left > 0:
+                parts.append(pt.zeros((n_row, zeros_left)))
+            parts.append(mid)
+            if zeros_right > 0:
+                parts.append(pt.zeros((n_row, zeros_right)))
+            return parts
+
+        A_rows = []
+        if n_S > 0:
+            A_rows.append([pt.zeros((n_S, n_var))])
+        if n_L > 0:
+            A_rows.append(_row(n_s, A_L, n_f, n_L))
+        if n_E > 0:
+            A_rows.append([pt.zeros((n_E, n_var))])
+        if n_B_eq > 0:
+            A_rows.append(_row(n_s, A_B, n_f, n_B_eq))
+        A = pt.block(A_rows)
+
+        # C: compute only the (E+B) × (m+f) submatrix
+        c_active_eqs = permuted_eqs[n_S + n_L :]
+        c_active_vars = dummies_leads_perm[n_s + n_p :]
+        if c_active_eqs and c_active_vars:
+            C_active = sparse_jacobian(c_active_eqs, c_active_vars, return_sparse=False)
+            C_E = C_active[:n_E]
+            C_B = C_active[n_E:]
+        else:
+            C_E = pt.zeros((n_E, n_m + n_f))
+            C_B = pt.zeros((n_B_eq, n_m + n_f))
+
+        C_rows = []
+        if n_S + n_L > 0:
+            C_rows.append([pt.zeros((n_S + n_L, n_var))])
+        if n_E > 0:
+            C_rows.append([pt.zeros((n_E, n_s + n_p)), C_E])
+        if n_B_eq > 0:
+            C_rows.append([pt.zeros((n_B_eq, n_s + n_p)), C_B])
+        C = pt.block(C_rows)
+    else:
+        # Degenerate: no useful 4-class split — fall back to plain dense Jacobians,
+        # still applying any user-supplied permutations.
+        permuted_eqs = [equations_transformed[i] for i in eq_order_local]
+        A = sparse_jacobian(permuted_eqs, dummies_lags_perm, return_sparse=False)
+        B = sparse_jacobian(permuted_eqs, dummies_now_perm, return_sparse=False)
+        C = sparse_jacobian(permuted_eqs, dummies_leads_perm, return_sparse=False)
+        D = sparse_jacobian(permuted_eqs, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_eq, 0))
 
     A, B, C, D = rewrite_pregrad([graph_replace(m, backward_replace, strict=False) for m in [A, B, C, D]])
 
@@ -163,7 +304,14 @@ def linearize_model(
 
     A, B, C, D = [graph_replace(m, ss_replace, strict=False) for m in [A, B, C, D]]
 
-    return [A, B, C, D], list(ss_pt)
+    # Row order reflects the [S|L|E|B] equation permutation; column order reflects the
+    # [s|p|m|f] variable permutation. Downstream solvers consume A/B/C/D and emit T/R in
+    # the *permuted* variable order — the statespace boundary applies ``inv_var_order``
+    # to map T/R back to user variable order, and ``Model.linearize_model`` applies
+    # ``inv_eq_order`` / ``inv_var_order`` before returning matrices to the user.
+    eq_order_out = eq_order_local
+    var_order_out = var_order_local
+    return [A, B, C, D], list(ss_pt), eq_order_out, var_order_out
 
 
 def make_not_loglin_flags(

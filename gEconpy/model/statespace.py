@@ -55,6 +55,7 @@ class DSGEStateSpace(PyMCStateSpace):
         steady_state_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         ss_resid: pt.TensorVariable,
         linearized_system: list[pt.TensorVariable],
+        var_order: np.ndarray | None = None,
         filter_type: str = "standard",
         verbose: bool = True,
     ):
@@ -111,6 +112,15 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self.linearized_system = linearized_system
 
+        # Variable column permutation applied by ``linearize_model`` to expose A's and C's
+        # block-zero column structure. T/R returned by the solver have rows AND columns
+        # in this permuted order; the solver call site applies ``inv_var_order`` to put
+        # them back into the user's variable order before they reach the Kalman path.
+        if var_order is None:
+            var_order = np.arange(len(variables))
+        self.var_order = np.asarray(var_order, dtype=int)
+        self.inv_var_order = np.argsort(self.var_order)
+
         self.full_covariance = False
         self.constant_parameters = []
         self._configured = False
@@ -165,6 +175,13 @@ class DSGEStateSpace(PyMCStateSpace):
         else:
             T, R, n_steps = scan_cycle_reduction(A, B, C, D, mode=self._mode, **self._solver_kwargs)
             self._n_steps = n_steps
+
+        # T comes back in the *permuted* variable order on both axes; R on its rows.
+        # Map back to the user's variable order so the Kalman filter sees user variables.
+        if not np.array_equal(self.var_order, np.arange(len(self.var_order))):
+            inv = self.inv_var_order
+            T = T[inv][:, inv]
+            R = R[inv]
 
         return T, R
 
@@ -356,7 +373,10 @@ class DSGEStateSpace(PyMCStateSpace):
             self.linearized_system, constant_replacements, strict=False
         )
 
-        self._bk_output = check_bk_condition_pt(A, B, C, D, lead_var_idx=self.lead_var_idx)
+        # A/B/C have columns in ``var_order`` (D's columns are shocks). Translate
+        # ``lead_var_idx`` from original variable positions to permuted positions.
+        permuted_lead_var_idx = self.inv_var_order[self.lead_var_idx]
+        self._bk_output = check_bk_condition_pt(A, B, C, D, lead_var_idx=permuted_lead_var_idx)
 
         T, R = self._setup_policy_matrices(A, B, C, D)
         resid = pt.square(A + B @ T + C @ T @ T).sum()
