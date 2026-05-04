@@ -3,7 +3,7 @@ import logging
 
 from collections.abc import Callable, Sequence
 from copy import deepcopy
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import numpy as np
 import sympy as sp
@@ -80,6 +80,87 @@ def _initialize_x0(optimizer_kwargs, variables, jitter_x0):
         x0 += rng.normal(scale=1e-4, size=n_variables)
 
     return x0
+
+
+class DROrder(NamedTuple):
+    """Decision-rule (DR) ordering of variables and equations for block-triangular exposure.
+
+    Variables are partitioned into ``[static | pred_only | mixed | forward_only]`` by their
+    time-shift profile across all equations; equations into ``[static | lag_only |
+    lead_only | both]`` by which time-shifts they reference. Reordering A/B/C/D by
+    ``var_order`` (columns) and ``eq_order`` (rows) puts their structural-zero blocks
+    contiguously so ``pt.block(...)`` + ``local_block_dot_to_block_of_dots`` can drop them.
+
+    Apply ``inv_var_order`` to T's rows AND columns and to R's rows when handing back to
+    the Kalman path or the user, so user-visible state vector layout is preserved.
+    Equation reordering does not propagate to T/R, only to A/B/C/D rows themselves.
+    """
+
+    var_order: np.ndarray  # variable column permutation [s | p | m | f]
+    inv_var_order: np.ndarray  # inverse: undoes var_order on T rows/cols, R rows
+    eq_order: np.ndarray  # equation row permutation [S | L | E | B]
+    inv_eq_order: np.ndarray  # inverse: undoes eq_order on A/B/C/D rows
+    n_static_var: int
+    n_pred_only_var: int
+    n_mixed_var: int
+    n_forward_only_var: int
+    n_static_eq: int
+    n_lag_only_eq: int
+    n_lead_only_eq: int
+    n_both_eq: int
+
+    @classmethod
+    def from_model(cls, variables, equations) -> "DROrder":
+        # Variable classes from time-shift incidence across all equations
+        n_var = len(variables)
+        v_lag = np.zeros(n_var, dtype=bool)
+        v_lead = np.zeros(n_var, dtype=bool)
+        for eq in equations:
+            atoms = eq.atoms(TimeAwareSymbol)
+            for j, v in enumerate(variables):
+                if v.set_t(-1) in atoms:
+                    v_lag[j] = True
+                if v.set_t(1) in atoms:
+                    v_lead[j] = True
+        v_static = np.where(~v_lag & ~v_lead)[0]
+        v_pred = np.where(v_lag & ~v_lead)[0]
+        v_mixed = np.where(v_lag & v_lead)[0]
+        v_fwd = np.where(~v_lag & v_lead)[0]
+        var_order = np.concatenate([v_static, v_pred, v_mixed, v_fwd])
+
+        # Equation classes from same per-equation incidence
+        n_eq = len(equations)
+        e_lag = np.zeros(n_eq, dtype=bool)
+        e_lead = np.zeros(n_eq, dtype=bool)
+        for i, eq in enumerate(equations):
+            atoms = eq.atoms(TimeAwareSymbol)
+            for v in variables:
+                if v.set_t(-1) in atoms:
+                    e_lag[i] = True
+                if v.set_t(1) in atoms:
+                    e_lead[i] = True
+                if e_lag[i] and e_lead[i]:
+                    break
+        e_static = np.where(~e_lag & ~e_lead)[0]
+        e_lag_only = np.where(e_lag & ~e_lead)[0]
+        e_lead_only = np.where(~e_lag & e_lead)[0]
+        e_both = np.where(e_lag & e_lead)[0]
+        eq_order = np.concatenate([e_static, e_lag_only, e_lead_only, e_both])
+
+        return cls(
+            var_order=var_order,
+            inv_var_order=np.argsort(var_order),
+            eq_order=eq_order,
+            inv_eq_order=np.argsort(eq_order),
+            n_static_var=len(v_static),
+            n_pred_only_var=len(v_pred),
+            n_mixed_var=len(v_mixed),
+            n_forward_only_var=len(v_fwd),
+            n_static_eq=len(e_static),
+            n_lag_only_eq=len(e_lag_only),
+            n_lead_only_eq=len(e_lead_only),
+            n_both_eq=len(e_both),
+        )
 
 
 class Model:
@@ -496,6 +577,38 @@ class Model:
             fwd_set = set(self.forward_variables)
             self._lead_var_idx = np.array([i for i, v in enumerate(self._variables) if v in fwd_set], dtype=int)
         return self._lead_var_idx
+
+    @property
+    def dr_order(self) -> DROrder:
+        """Decision-rule order classifying variables and equations into block-triangular form.
+
+        See :class:`DROrder` for the layout. Cached on first access. Individual
+        ``var_order`` / ``eq_order`` / ``inv_var_order`` / ``inv_eq_order`` properties
+        delegate to this for convenience.
+        """
+        if not hasattr(self, "_dr_order"):
+            self._dr_order = DROrder.from_model(self._variables, self._equations)
+        return self._dr_order
+
+    @property
+    def var_order(self) -> np.ndarray:
+        """Column permutation reordering variables as ``[static | pred_only | mixed | forward_only]``."""
+        return self.dr_order.var_order
+
+    @property
+    def inv_var_order(self) -> np.ndarray:
+        """Inverse of ``var_order``. Apply to T's rows AND columns and R's rows to undo."""
+        return self.dr_order.inv_var_order
+
+    @property
+    def eq_order(self) -> np.ndarray:
+        """Row permutation reordering equations as ``[static | lag_only | lead_only | both]``."""
+        return self.dr_order.eq_order
+
+    @property
+    def inv_eq_order(self) -> np.ndarray:
+        """Inverse of ``eq_order``. Apply to A/B/C/D rows to undo."""
+        return self.dr_order.inv_eq_order
 
     def parameters(self, **updates: float) -> SymbolDictionary[str, float]:
         """
