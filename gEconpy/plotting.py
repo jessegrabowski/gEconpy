@@ -1732,6 +1732,8 @@ def plot_posterior_with_prior(
     fig_kwargs=None,
     plot_posterior_kwargs=None,
 ) -> plt.Figure:
+    var_names = list(var_names)
+
     if fig_kwargs is None:
         n_rows = max(1, -(-len(var_names) // n_cols))
         fig_kwargs = {"figsize": (14, n_rows * 3), "dpi": 144}
