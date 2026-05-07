@@ -54,7 +54,6 @@ class DSGEStateSpace(PyMCStateSpace):
         shock_priors: SymbolDictionary[str, CompositeDistribution],
         parameter_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         steady_state_mapping: dict[pt.TensorVariable, pt.TensorVariable],
-        ss_resid: pt.TensorVariable,
         linearized_system: list[pt.TensorVariable],
         var_order: np.ndarray | None = None,
         filter_type: str = "standard",
@@ -87,9 +86,6 @@ class DSGEStateSpace(PyMCStateSpace):
             deterministic.
         steady_state_mapping: dict
             Symbolic function mapping input parameters to the steady state values of the model
-        ss_resid: pt.TensorVariable
-            Symbolic vector of (signed) residuals of the steady state equations. Used as a penalty term
-            during PyMC sampling to flag parameter draws whose analytical SS does not satisfy the FOCs.
         linearized_system: list of pt.TensorVariable
             List of four symbolic expressions representing the linearized system of equations as partial
             jacobians of the model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with
@@ -108,8 +104,6 @@ class DSGEStateSpace(PyMCStateSpace):
         self.parameter_mapping = parameter_mapping
         self.steady_state_mapping = steady_state_mapping
         self.input_parameters = [x for x in parameter_mapping if x.name in param_dict]
-
-        self.ss_resid = ss_resid
 
         self.linearized_system = linearized_system
 
@@ -132,7 +126,6 @@ class DSGEStateSpace(PyMCStateSpace):
         self._mode = None
         self._linearized_system_subbed: list | None = None
         self._policy_graph: list | None = None
-        self._ss_resid: pt.TensorVariable | None = None
 
         self._bk_output = None
         self._policy_resid = None
@@ -216,8 +209,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         # ``pt.diag(stack(...))`` is auto-tagged diagonal by AssumptionFeature, which propagates
         # symmetric/PSD through the congruence rule (R Q R'), enabling cholesky-based solves and
-        # significant speedups in compile_dlogp for HMC sampling. The string-only setter
-        # bypasses the SetSubtensor wrap that the slice-form would impose.
+        # significant speedups in compile_dlogp for HMC sampling.
         sigmas = [self.make_and_register_variable(f"sigma_{shock.base_name}", shape=()) for shock in self.shocks]
         Q = pt.diag(pt.stack([s**2 for s in sigmas]))
         self.ssm["state_cov"] = Q
@@ -389,24 +381,19 @@ class DSGEStateSpace(PyMCStateSpace):
         T, R = self._setup_policy_matrices(A, B, C, D)
         resid = pt.square(A + B @ T + C @ T @ T).sum()
 
-        ss_resid = graph_replace(self.ss_resid, constant_replacements, strict=False)
-        ss_resid = pt.square(ss_resid).sum()
-
         T = rewrite_pregrad(T)
         R = rewrite_pregrad(R)
         resid = rewrite_pregrad(resid)
-        ss_resid = rewrite_pregrad(ss_resid)
 
         self._policy_graph = [T, R]
         self._policy_resid = resid
-        self._ss_resid = ss_resid
 
         T_aug = self._augment_transition(T)
         R_aug = self._augment_selection(R)
 
-        self.ssm["transition", :, :] = T_aug
-        self.ssm["selection", :, :] = R_aug
-        self.ssm["design", :, :] = self._make_design_matrix()
+        self.ssm["transition"] = T_aug
+        self.ssm["selection"] = R_aug
+        self.ssm["design"] = self._make_design_matrix()
 
         Q = self._setup_state_covariance()
 
@@ -422,12 +409,10 @@ class DSGEStateSpace(PyMCStateSpace):
                 H = pt.diag(diag_vec)
             self.ssm["obs_cov"] = H
 
-        self.ssm["initial_state", :] = pt.zeros(self.k_states)
+        self.ssm["initial_state"] = pt.zeros(self.k_states)
 
         method = "direct" if self.use_direct_lyapunov else "bilinear"
-        self.ssm["initial_state_cov", :, :] = pt.linalg.solve_discrete_lyapunov(
-            T_aug, R_aug @ Q @ R_aug.T, method=method
-        )
+        self.ssm["initial_state_cov"] = pt.linalg.solve_discrete_lyapunov(T_aug, R_aug @ Q @ R_aug.T, method=method)
 
     def configure(
         self,
@@ -663,8 +648,7 @@ class DSGEStateSpace(PyMCStateSpace):
         add_norm_check: bool = True,
         add_bk_check: bool = False,
         add_solver_success_check: bool = False,
-        add_steady_state_penalty: bool = True,
-        resid_penalty: float = 1.0,
+        solver_tol: float = 1e-8,
     ) -> None:
         super().build_statespace_graph(
             data=data,
@@ -688,8 +672,8 @@ class DSGEStateSpace(PyMCStateSpace):
             n_steps = graph_replace(self._n_steps, replace=replacement_dict, strict=False)
             pm.Deterministic("n_cycle_steps", n_steps.astype(int))
 
-        policy_resid, *bk_output, ss_resid = graph_replace(
-            [self._policy_resid, *self._bk_output, self._ss_resid],
+        policy_resid, *bk_output = graph_replace(
+            [self._policy_resid, *self._bk_output],
             replace=replacement_dict,
             strict=False,
         )
@@ -697,6 +681,9 @@ class DSGEStateSpace(PyMCStateSpace):
         bk_satisfied, _n_forward, _n_gt_one = bk_output
 
         if add_norm_check:
+            # Diagnostics-only: expose the deterministic and stochastic recursion residuals
+            # as Deterministics for posterior inspection. No Potential is added because the
+            # solver-convergence check below already gates the logp.
             n_vars, n_shocks = R.shape
             tm1_grid = np.array([[eq.has(var.set_t(-1)) for var in self.variables] for eq in self.equations])
             t_grid = np.array([[eq.has(var.set_t(0)) for var in self.variables] for eq in self.equations])
@@ -715,29 +702,19 @@ class DSGEStateSpace(PyMCStateSpace):
             R_prime = T[:, state_var_mask]
             S_prime = QQ[:, shock_idx]
 
-            norm_deterministic = pm.Deterministic(
-                "deterministic_norm",
-                pt.linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P),
-            )
-            norm_stochastic = pm.Deterministic("stochastic_norm", pt.linalg.norm(B @ S_prime + C @ R_prime @ Q + D))
-
-            # Add penalty terms to the likelihood to rule out invalid solutions
-            pm.Potential(
-                "solution_norm_penalty",
-                -resid_penalty * (norm_deterministic + norm_stochastic),
-            )
+            pm.Deterministic("deterministic_norm", pt.linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P))
+            pm.Deterministic("stochastic_norm", pt.linalg.norm(B @ S_prime + C @ R_prime @ Q + D))
 
         if add_bk_check:
             pm.Deterministic("bk_satisfied", bk_satisfied)
             pm.Potential("bk_condition_satisfied", pt.switch(pt.eq(bk_satisfied, 0.0), -np.inf, 0.0))
 
         if add_solver_success_check:
-            policy_resid = pm.Deterministic("policy_resid", policy_resid)
-            pm.Potential("policy_resid_penalty", -resid_penalty * policy_resid)
-
-        if add_steady_state_penalty:
-            ss_resid = pm.Deterministic("ss_resid", ss_resid)
-            pm.Potential("steady_state_resid_penalty", -resid_penalty * ss_resid)
+            pm.Deterministic("policy_resid", policy_resid)
+            pm.Potential(
+                "policy_resid_within_tol",
+                pt.switch(pt.lt(policy_resid, solver_tol), 0.0, -np.inf),
+            )
 
     def to_pymc(self, exclude_priors: list[str] | None = None):
         if exclude_priors is None:

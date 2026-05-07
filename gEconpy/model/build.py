@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 from warnings import warn
 
-import pytensor.tensor as pt
 import sympy as sp
 
 from pytensor.graph.replace import graph_replace
@@ -20,7 +19,6 @@ from gEconpy.model.simplification import simplify_constants, simplify_tryreduce
 from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
-    _ss_residual_to_pytensor,
     compile_known_ss,
     propagate_steady_state_through_identities,
     simplify_provided_ss_equations,
@@ -632,7 +630,7 @@ def statespace_from_gcn(
             _print_parse_error(e, gcn_path)
         raise
 
-    variables, shocks, equations, _ss_relationships, steady_state_equations, ss_solution_dict = objects
+    variables, shocks, equations, _ss_relationships, _steady_state_equations, ss_solution_dict = objects
     param_dict, hyper_param_dict, deterministic_dict, calib_dict = dictionaries
     param_priors, shock_priors = priors
 
@@ -659,21 +657,6 @@ def statespace_from_gcn(
 
     if steady_state_mapping is None or len(steady_state_mapping) != len(variables):
         raise NotImplementedError("Numeric steady state not yet implemented in StateSpace model")
-
-    equations_pt, cache = _ss_residual_to_pytensor(
-        steady_state_equations,
-        SymbolDictionary(),
-        variables,
-        param_dict,
-        deterministic_dict,
-        calib_dict,
-        cache=cache,
-    )
-
-    # DSGEStateSpace only consumes ss_resid (squared into a penalty in _setup_ss_model).
-    # The Jacobian / error / gradient / Hessian graphs that the model_from_gcn path needs
-    # for numerical SS solving are discarded here, so don't build them.
-    ss_resid = pt.stack(equations_pt) if equations_pt else pt.zeros(0)
 
     if not_loglin_variables is None:
         not_loglin_variables = []
@@ -709,7 +692,6 @@ def statespace_from_gcn(
     }
     replacements = parameter_mapping | steady_state_mapping
 
-    ss_resid = graph_replace(ss_resid, replacements, strict=False)
     A, B, C, D = rewrite_pregrad(graph_replace([A, B, C, D], replacements, strict=False))
 
     return DSGEStateSpace(
@@ -722,7 +704,6 @@ def statespace_from_gcn(
         shock_priors=shock_priors,
         parameter_mapping=parameter_mapping,
         steady_state_mapping=steady_state_mapping,
-        ss_resid=ss_resid,
         linearized_system=[A, B, C, D],
         var_order=var_order,
         filter_type=filter_type,
