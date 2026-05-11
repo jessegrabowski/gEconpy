@@ -553,11 +553,42 @@ class Model:
         return self._backward_variables
 
     @property
-    def forward_variables(self) -> list[TimeAwareSymbol]:
-        """Variables that appear at t+1 in at least one equation (forward-looking/jump variables)."""
-        if not hasattr(self, "_forward_variables"):
+    def symbolic_forward_variables(self) -> list[TimeAwareSymbol]:
+        """Variables appearing at t+1 in any equation (purely syntactic).
+
+        Included if any equation textually contains a ``TimeAwareSymbol`` atom with
+        ``time_index == 1``. This is the parser-level notion of "forward-looking".
+
+        For BK / perturbation purposes, use ``forward_variables`` instead.
+        """
+        if not hasattr(self, "_symbolic_forward_variables"):
             leads = {a.set_t(0) for eq in self._equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == 1}
-            self._forward_variables = [v for v in self._variables if v in leads]
+            self._symbolic_forward_variables = [v for v in self._variables if v in leads]
+        return self._symbolic_forward_variables
+
+    @property
+    def forward_variables(self) -> list[TimeAwareSymbol]:
+        """Forward-looking (jump) variables.
+
+        A variable is forward-looking if its column in the linearized lead-Jacobian
+        ``C`` (from ``A x[t-1] + B x[t] + C x[t+1] + D eps = 0``) has any
+        non-negligible entry. This is the Blanchard-Kahn-relevant set: BK requires
+        the number of unstable eigenvalues to equal ``len(forward_variables)``.
+
+        Computed via the first-order linearization (which solves the steady state if
+        needed) on first access; cached. If linearization is unavailable — e.g., no
+        SS exists with the current parameters — falls back to the syntactic count
+        from ``symbolic_forward_variables``.
+        """
+        if not hasattr(self, "_forward_variables"):
+            try:
+                _, _, C_lin, _ = self.linearize_model(verbose=False)
+                tol = 1e-8
+                col_sums = np.abs(C_lin).sum(axis=0)
+                self._forward_variables = [v for v, s in zip(self._variables, col_sums, strict=False) if s > tol]
+            except Exception:
+                # Fall back to the syntactic count if linearization fails.
+                self._forward_variables = list(self.symbolic_forward_variables)
         return self._forward_variables
 
     @property
@@ -567,12 +598,19 @@ class Model:
 
     @property
     def n_forward(self) -> int:
-        """Number of forward-looking (jump) variables."""
+        """Number of forward-looking (jump) variables. See ``forward_variables``."""
         return len(self.forward_variables)
 
     @property
+    def n_symbolic_forward(self) -> int:
+        return len(self.symbolic_forward_variables)
+
+    @property
     def lead_var_idx(self) -> np.ndarray:
-        """Column indices of forward-looking variables in the Jacobian matrices."""
+        """Column indices of forward-looking variables in the Jacobian matrices.
+
+        Derived from ``forward_variables`` (the dynamic / BK-relevant set).
+        """
         if not hasattr(self, "_lead_var_idx"):
             fwd_set = set(self.forward_variables)
             self._lead_var_idx = np.array([i for i, v in enumerate(self._variables) if v in fwd_set], dtype=int)
