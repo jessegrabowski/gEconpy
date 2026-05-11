@@ -706,6 +706,7 @@ def statespace_from_gcn(
         steady_state_mapping=steady_state_mapping,
         linearized_system=[A, B, C, D],
         var_order=var_order,
+        log_linearized_variables=[v.base_name for v in loglin_vars],
         filter_type=filter_type,
         verbose=verbose,
     )

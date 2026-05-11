@@ -56,6 +56,7 @@ class DSGEStateSpace(PyMCStateSpace):
         steady_state_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         linearized_system: list[pt.TensorVariable],
         var_order: np.ndarray | None = None,
+        log_linearized_variables: list[str] | None = None,
         filter_type: str = "standard",
         verbose: bool = True,
     ):
@@ -90,6 +91,10 @@ class DSGEStateSpace(PyMCStateSpace):
             List of four symbolic expressions representing the linearized system of equations as partial
             jacobians of the model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with
             respect to exogenous shocks (D), each evaluated at the (symbolic) steady state.
+        log_linearized_variables: list of str, optional
+            Base names of variables that were log-linearized when building ``linearized_system``. Used by
+            ``configure(ss_obs_intercept=...)`` to decide whether an observation intercept entry is
+            ``log(v_ss(p))`` (log-linearized) or ``v_ss(p)`` (level-linearized).
         verbose: bool
             If True, show diagnostic messages.
         """
@@ -136,6 +141,9 @@ class DSGEStateSpace(PyMCStateSpace):
         self._temporal_aggregation: dict[str, str] = {}
         self._aggregation_period: int = 4
         self._k_orig_states: int = len(variables)
+
+        self._log_linearized_variables: set[str] = set(log_linearized_variables or [])
+        self._ss_obs_intercept_states: list[str] = []
 
         self.verbose = verbose
 
@@ -237,6 +245,52 @@ class DSGEStateSpace(PyMCStateSpace):
                 Z[i, orig_idx] = 1.0
 
         return Z
+
+    def _make_obs_intercept(self) -> pt.TensorVariable:
+        """
+        Build the observation-intercept vector ``d``.
+
+        The predicted observable matches the user's data units when the data is *not* in
+        deviation form. For each observed state ``v``:
+
+        - If ``v`` is in ``self._ss_obs_intercept_states``, the entry is
+          ``log(v_ss(p))`` (log-linearized variables) or ``v_ss(p)`` (level-linearized
+          variables). The framework re-evaluates ``v_ss(p)`` on every parameter draw via
+          ``steady_state_mapping``.
+        - Otherwise, the entry is zero (matches the previous behavior, for users who
+          pre-demean / pre-detrend their data).
+
+        Temporal aggregation: ``sum``-aggregated observations get the per-period
+        intercept multiplied by ``aggregation_period``; ``mean``, ``first``, ``last``,
+        and the default no-aggregation case keep the single-period value.
+        """
+        # Keys of ``steady_state_mapping`` are pytensor TensorVariables named ``<varname>_ss``.
+        ss_by_name = {k.name: v for k, v in self.steady_state_mapping.items()}
+        ss_set = set(self._ss_obs_intercept_states)
+        entries: list[pt.TensorVariable] = []
+        for name in self.observed_states:
+            if name not in ss_set:
+                entries.append(pt.zeros((), dtype=floatX))
+                continue
+
+            ss_key = f"{name}_ss"
+            if ss_key not in ss_by_name:
+                raise ValueError(
+                    f"ss_obs_intercept requested for {name!r}, but no symbolic steady state "
+                    f"is available for it. This usually means the variable was eliminated "
+                    f"by tryreduce or has no analytic SS."
+                )
+            v_ss_expr = ss_by_name[ss_key]
+
+            base = pt.log(v_ss_expr) if name in self._log_linearized_variables else v_ss_expr
+
+            agg = self._temporal_aggregation.get(name)
+            if agg == "sum":
+                entries.append(self._aggregation_period * base)
+            else:
+                entries.append(base)
+
+        return pt.stack(entries).astype(floatX)
 
     @property
     def _n_cumulator_states(self) -> int:
@@ -394,6 +448,8 @@ class DSGEStateSpace(PyMCStateSpace):
         self.ssm["transition"] = T_aug
         self.ssm["selection"] = R_aug
         self.ssm["design"] = self._make_design_matrix()
+        if self._ss_obs_intercept_states:
+            self.ssm["obs_intercept"] = self._make_obs_intercept()
 
         Q = self._setup_state_covariance()
 
@@ -422,6 +478,7 @@ class DSGEStateSpace(PyMCStateSpace):
         full_shock_covaraince: bool = False,
         temporal_aggregation: dict[str, str] | None = None,
         aggregation_period: int = 4,
+        ss_obs_intercept: list[str] | None = None,
         solver: str = "gensys",
         mode: str | None = None,
         verbose=True,
@@ -461,6 +518,18 @@ class DSGEStateSpace(PyMCStateSpace):
             Number of model periods per low-frequency observation. For example, 4 when fitting
             a quarterly model with annual data, or 3 for a monthly model with quarterly data.
             Default is 4.
+        ss_obs_intercept : list of str, optional
+            Observed states for which to populate ``ssm["obs_intercept"]`` with a
+            parameter-dependent steady-state value, re-evaluated on every parameter draw.
+            For each entry, the intercept is ``log(v_ss(p))`` if the variable was
+            log-linearized when building the model and ``v_ss(p)`` if it was
+            level-linearized. Observed states *not* in this list keep an
+            ``obs_intercept`` of zero. Use this when the data for that series is already in
+            deviation form (HP-cycled, demeaned, etc.).
+
+            Defaults to ``None``, which is equivalent to an empty list. Pass
+            ``observed_states`` to enable per-draw SS subtraction for every observed
+            series.
         solver : str
             Perturbation solver to use.
         mode : str, optional
@@ -515,6 +584,19 @@ class DSGEStateSpace(PyMCStateSpace):
             if has_cumulator_vars and aggregation_period < 2:
                 raise ValueError(f"aggregation_period must be >= 2 for sum/mean aggregation, got {aggregation_period}")
 
+        # Validate ss_obs_intercept
+        if ss_obs_intercept is None:
+            ss_obs_intercept = []
+        else:
+            unknown_vars = [x for x in ss_obs_intercept if x not in observed_states]
+            if unknown_vars:
+                raise ValueError(
+                    f"The following ss_obs_intercept entries are not in observed_states: {', '.join(unknown_vars)}"
+                )
+            ss_unknown = [name for name in ss_obs_intercept if not any(v.base_name == name for v in self.variables)]
+            if ss_unknown:
+                raise ValueError(f"ss_obs_intercept references unknown model variables: {', '.join(ss_unknown)}")
+
         # Validate constant params
         if constant_params is None:
             constant_params = []
@@ -566,6 +648,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self._temporal_aggregation = temporal_aggregation
         self._aggregation_period = aggregation_period
+        self._ss_obs_intercept_states = ss_obs_intercept
 
         self.full_covariance = full_shock_covaraince
         self.use_direct_lyapunov = use_direct_lyapunov
