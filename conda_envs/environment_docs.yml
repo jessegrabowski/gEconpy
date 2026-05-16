@@ -6,8 +6,8 @@ dependencies:
   # Core dependencies
   - python=3.12
   - pip
-  - pymc>=5.27.1
-  - pytensor>=2.37.0
+  - pymc>=5.27.1,<6
+  - pytensor>=2.37.0,<3
   - matplotlib
   - numba
   - numpy
