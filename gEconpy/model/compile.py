@@ -149,7 +149,10 @@ def sympy_to_pytensor(
     cse_candidates = [(i, o) for i, o in enumerate(outputs) if isinstance(o, sp.Basic)]
     if cse and len(cse_candidates) > 1:
         idxs, exprs = zip(*cse_candidates, strict=True)
-        substitutions, reduced = sp.cse(list(exprs), optimizations="basic")
+        # Name the CSE temporaries with a dunder prefix sp.cse's default (x0, x1,
+        # ...) could otherwise collide with a model variable or parameter, both
+        # in sp.cse itself and in the shared sympytensor cache keyed below.
+        substitutions, reduced = sp.cse(list(exprs), symbols=sp.numbered_symbols("__cse_tmp_"), optimizations="basic")
         # Build intermediates in topo order — reduced[i] references them by Symbol
         # name, so plant each into the cache under sympytensor's key shape before
         # converting the reduced outputs.
