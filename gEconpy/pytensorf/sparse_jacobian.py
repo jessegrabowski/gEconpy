@@ -131,19 +131,23 @@ def _coo_to_csc(
     shape : tuple of int
         Shape of the sparse matrix.
     """
-    rows_pt = pt.as_tensor_variable(np.asarray(rows, dtype=int))
-    cols_pt = pt.as_tensor_variable(np.asarray(cols, dtype=int))
+    # ``rows``/``cols`` are known at graph-build time, so the CSC index arrays are
+    # computed in numpy and passed to ``CSC`` as constants. Only ``data`` stays
+    # symbolic. Building ``indices``/``indptr`` from symbolic graphs instead makes
+    # the CSC op evaluate to wrong values on pytensor 3.0.x.
+    rows = np.asarray(rows, dtype=int)
+    cols = np.asarray(cols, dtype=int)
     _n_rows, n_cols = shape
 
-    order = pt.argsort(cols_pt)
+    order = np.argsort(cols, kind="stable")
     csc_data = data[order]
-    csc_indices = rows_pt[order]
-    sorted_cols = cols_pt[order]
+    csc_indices = rows[order].astype("int32")
+    sorted_cols = cols[order]
 
-    counts = pt.bincount(sorted_cols, minlength=n_cols)
-    csc_indptr = pt.concatenate([pt.as_tensor([0]), pt.cumsum(counts).astype("int64")])
+    counts = np.bincount(sorted_cols, minlength=n_cols)
+    csc_indptr = np.concatenate([[0], np.cumsum(counts)]).astype("int32")
 
-    return csc_data, csc_indices, csc_indptr, shape
+    return csc_data, pt.as_tensor_variable(csc_indices), pt.as_tensor_variable(csc_indptr), shape
 
 
 def sparse_jacobian(
