@@ -7,8 +7,8 @@ channels:
 dependencies:
   # Core dependencies
   - python=3.12
-  - pymc>=5.27.1,<6
-  - pytensor>=2.37.0,<3
+  - pymc>=6.0.0
+  - pytensor>=3.0.0
   - matplotlib
   - numba
   - numpy
@@ -24,8 +24,9 @@ dependencies:
   - notebook<7
   - nutpie
   - networkx
-  - sympytensor>=1.4.1
-  - pymc-extras>=0.8.0
+  - sympytensor>=2.0.0
+  - pymc-extras>=0.11.0
+  - jax>=0.9
 
   # For building docs
   - ipython
@@ -54,7 +55,6 @@ dependencies:
 
   - pip:
       - numdifftools
-      - jax>0.8,<0.9.1
       - flowjax
       - corner
       - asv
