@@ -14,8 +14,8 @@ dependencies:
   - matplotlib
   - arviz<1.0
   - statsmodels
-  - pymc>=5.27.1
-  - pytensor>=2.37.0
+  - pymc>=5.27.1,<6
+  - pytensor>=2.37.0,<3
   - preliz>=0.23.0
   - ipython
   - sympytensor>=1.4.1
