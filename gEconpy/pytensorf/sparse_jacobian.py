@@ -5,8 +5,8 @@ import numpy as np
 import pytensor.tensor as pt
 
 from pytensor import sparse as pts
-from pytensor.gradient import Lop
-from pytensor.graph.replace import graph_replace, vectorize_graph
+from pytensor.gradient import pullback
+from pytensor.graph.replace import graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.sparse.variable import SparseVariable
 from pytensor.tensor.variable import TensorVariable
@@ -192,18 +192,31 @@ def sparse_jacobian(
     projection_matrix = np.equal.outer(np.arange(n_colors, dtype=int), output_coloring).astype(float)
 
     jvp_stack = pt.stack(
-        Lop(equations, variables, eval_points, disconnected_inputs="ignore", return_disconnected="zero")
+        pullback(equations, variables, eval_points, disconnected_inputs="ignore", return_disconnected="zero")
     )
     P = pt.dvector("P", shape=(N,))
 
-    # When some equations are disconnected from the given variables, Lop returns
+    # When some equations are disconnected from the given variables, pullback returns
     # literal zeros that don't reference the corresponding eval_points. Only
     # replace eval_points that actually appear in the graph.
     jvp_inputs = set(explicit_graph_inputs(jvp_stack))
     replacements = {p: P[i] for i, p in enumerate(eval_points) if p in jvp_inputs}
     jvp_stack = graph_replace(jvp_stack, replacements)
 
-    compressed_jac = vectorize_graph(jvp_stack, replace={P: pt.as_tensor_variable(projection_matrix)})
+    # Stack per-color JVPs rather than feeding a single 2D projection_matrix constant to
+    # vectorize_graph. Row slices of a 2D constant become strided views in the optimized
+    # graph, which numba's make_constant_array then routes through add_dynamic_addr,
+    # defeating the numba cache. Passing each row as its own C-contiguous 1D constant
+    # keeps the baked constants cacheable.
+    compressed_jac = pt.stack(
+        [
+            graph_replace(
+                jvp_stack,
+                {P: pt.as_tensor_variable(np.ascontiguousarray(projection_matrix[c]))},
+            )
+            for c in range(n_colors)
+        ]
+    )
 
     compressed_index = (output_coloring[rows], cols)
     data = compressed_jac[compressed_index]

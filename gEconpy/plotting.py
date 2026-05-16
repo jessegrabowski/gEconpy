@@ -265,7 +265,7 @@ def plot_simulation(
 
 
 def _irf_to_mapping(
-    irf: az.InferenceData | list[az.InferenceData] | dict[str, az.InferenceData],
+    irf: xr.DataTree | list[xr.DataTree] | dict[str, xr.DataTree],
 ) -> dict[str, xr.DataArray]:
     """Normalize IRF input into a mapping of scenario name -> DataArray."""
     if isinstance(irf, xr.DataArray):
@@ -382,7 +382,7 @@ def _add_shocks_legend(
 
 
 def plot_irf(
-    irf: az.InferenceData | list[az.InferenceData] | dict[str, az.InferenceData],
+    irf: xr.DataTree | list[xr.DataTree] | dict[str, xr.DataTree],
     vars_to_plot: str | list[str] | None = None,
     shocks_to_plot: str | list[str] | None = None,
     n_cols: int | None = None,
@@ -1581,7 +1581,7 @@ def plot_corner(
 
 
 def plot_kalman_filter(
-    idata: az.InferenceData,
+    idata: xr.DataTree,
     data: pd.DataFrame,
     kalman_output: Literal["predicted", "filtered", "smoothed"] = "predicted",
     group: Literal["prior", "posterior"] = "posterior",
@@ -1642,7 +1642,7 @@ def plot_kalman_filter(
     time_idx = idata.coords["time"]
 
     means = idata[output_name].sel(**{state_name: vars_to_plot}).mean(dim=["chain", "draw"])
-    hdis = az.hdi(idata[output_name].sel(**{state_name: vars_to_plot}), hdi_prob=0.95, skipna=True)[output_name]
+    hdis = az.hdi(idata[output_name].sel(**{state_name: vars_to_plot}), prob=0.95, skipna=True)
 
     for idx, variable in enumerate(vars_to_plot):
         axis = fig.add_subplot(gs[plot_locs[idx]])
@@ -1776,7 +1776,7 @@ def plot_estimated_matrix(
     fig, ax = plt.subplots(n_shocks, n_shocks, **subplot_kwargs)
 
     mu = idata.posterior[matrix_name].mean(dim=["chain", "draw"])
-    hdi = az.hdi(idata.posterior[matrix_name]).state_chol_corr
+    hdi = az.hdi(idata.posterior[matrix_name])
     ax[0, 0].set(xlim=(-1.05, 1.05), ylim=(-1.05, 1.05))
 
     for i, j in product(range(n_shocks), range(n_shocks)):

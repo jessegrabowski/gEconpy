@@ -5,380 +5,410 @@ import pytensor.tensor as pt
 
 from pytensor.graph.basic import Apply
 from pytensor.graph.op import Op
-from scipy import linalg
+from pytensor.link.numba.dispatch import basic as numba_basic
+from pytensor.link.numba.dispatch.basic import register_funcify_default_op_cache_key
+
+# `_lu_solve`'s overload stub and inner impl have mismatched arities (the impl
+# unpacks the (lu, piv) tuple), so numba rejects direct calls. Use the
+# lower-level `_getrs` instead — its stub and impl both take (LU, B, IPIV, trans,
+# overwrite_b) and it returns (X, info).
+from pytensor.link.numba.dispatch.linalg.decomposition.lu_factor import _lu_factor
+from pytensor.link.numba.dispatch.linalg.decomposition.qz import _qz_complex_sort_eig
+from pytensor.link.numba.dispatch.linalg.solvers.lu_solve import _getrs
+from pytensor.link.numba.dispatch.linalg.solvers.triangular import _solve_triangular
 
 from gEconpy.solvers.shared import (
     o1_policy_function_adjoints,
     pt_compute_selection_matrix,
 )
 
-# A very small number
 EPSILON = np.spacing(1)
 floatX = pytensor.config.floatX
 
 
 @nb.njit(cache=True)
-def neg_conj_flip(x):
-    x_conj = x.conj()
-    x[:] = np.array((-x_conj[1], x_conj[0]))
-    return x
-
-
-@nb.njit(
-    [
-        "UniTuple(c16[::1, :], 4)(i8, c16[::1, :], c16[::1, :], c16[::1, :], c16[::1, :])",
-        "UniTuple(f8[::1, :], 4)(i8, f8[::1, :], f8[::1, :] ,f8[::1, :], f8[::1, :])",
-    ],
-    cache=True,
-)
-def qzswitch(
-    i: int, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Christopher Sim's qzswitch.
-
-    Takes upper-triangular matrices A, B, orthonormal matrices Q, Z, and interchanges diagonal elements i and i+1 of
-    both A and B, while maintaining Q'AZ' and Q'BZ' unchanged. If diagonal elements of A and B are zero at matching
-    positions, the returned A will have zeros at both positions on the diagonal. This is natural behavior if this
-    routine is used to drive all zeros on the diagonal of A to the lower right, but in this case the qz transformation
-    is not unique and it is not possible simply to switch the positions of the diagonal elements of both A and B.
-
-    Parameters
-    ----------
-    i : int
-        Index of matrix diagonal to switch.
-    A : np.ndarray
-        Upper-triangular matrix.
-    B : np.ndarray
-        Upper-triangular matrix.
-    Q : np.ndarray
-        Matrix of left Schur vectors.
-    Z : np.ndarray
-        Matrix of right Schur vectors.
-
-    Returns
-    -------
-    tuple of np.ndarray
-        Contains four elements:
-            A : np.ndarray
-                Upper-triangular matrix with switched diagonal elements.
-            B : np.ndarray
-                Upper-triangular matrix with switched diagonal elements.
-            Q : np.ndarray
-                Orthonormal matrix of left Schur vectors.
-            Z : np.ndarray
-                Orthonormal matrix of right Schur vectors.
-
-    Notes
-    -----
-    Originally part of gensys. Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
-    """
-    eps = np.spacing(1)
-
-    a = A[i, i]
-    b = A[i, i + 1]
-    c = A[i + 1, i + 1]
-    d = B[i, i]
-    e = B[i, i + 1]
-    f = B[i + 1, i + 1]
-
-    wz = np.empty((2, 2), dtype=A.dtype)
-    xy = np.empty((2, 2), dtype=A.dtype)
-
-    if (abs(c) < eps) & (abs(f) < eps):
-        if abs(a) < eps:
-            return A, B, Q, Z
-
-        wz_row = np.array((b, -a))
-        wz_inner = (wz_row * wz_row.conj()).sum()
-        wz_row = wz_row / np.sqrt(wz_inner)
-
-        wz[:, 0] = wz_row
-        wz[:, 1] = neg_conj_flip(wz_row)
-        xy[:] = np.eye(2).astype(wz.dtype)
-
-    elif (abs(a) < eps) & (abs(d) < eps):
-        if abs(c) < eps:
-            return A, B, Q, Z
-        xy_row = np.array((c, -b))
-        xy_inner = (xy_row * xy_row.conj()).sum()
-        xy_row = xy_row / np.sqrt(xy_inner)
-
-        xy[:, 0] = neg_conj_flip(xy_row)
-        xy[:, 1] = xy_row
-        wz[:] = np.eye(2).astype(xy.dtype)
-
-    else:
-        wz_row = np.array((c * e - f * b, (c * d - f * a).conjugate()))
-        xy_row = np.array(((b * d - e * a).conjugate(), (c * d - f * a).conjugate()))
-
-        wz_inner = (wz_row * wz_row.conj()).sum()
-        xy_inner = (xy_row * xy_row.conj()).sum()
-
-        n = np.sqrt(wz_inner)
-        m = np.sqrt(xy_inner)
-
-        if np.abs(m) < eps * 100:
-            return A, B, Q, Z
-
-        wz_row = wz_row / n
-        xy_row = xy_row / m
-
-        # xy = np.row_stack((xy, neg_conj_flip(xy)))
-        xy[0, :] = xy_row
-        xy[1, :] = neg_conj_flip(xy_row)
-
-        # wz = np.row_stack((wz, neg_conj_flip(wz)))
-        wz[0, :] = wz_row
-        wz[1, :] = neg_conj_flip(wz_row)
-
-    idx_slice = slice(i, i + 2)
-
-    A[idx_slice, :] = xy @ np.asfortranarray(A[idx_slice, :])
-    B[idx_slice, :] = xy @ np.asfortranarray(B[idx_slice, :])
-    Q[idx_slice, :] = xy @ np.asfortranarray(Q[idx_slice, :])
-
-    A[:, idx_slice] = np.asfortranarray(A[:, idx_slice]) @ wz
-    B[:, idx_slice] = np.asfortranarray(B[:, idx_slice]) @ wz
-    Z[:, idx_slice] = np.asfortranarray(Z[:, idx_slice]) @ wz
-
-    return A, B, Q, Z
-
-
-@nb.njit(
-    [
-        "UniTuple(c16[::1, :], 4)(f8, c16[::1, :], c16[::1, :] ,c16[::1, :], c16[::1, :])",
-        "UniTuple(f8[::1, :], 4)(f8, f8[::1, :], f8[::1, :] ,f8[::1, :], f8[::1, :])",
-    ],
-    cache=True,
-)
-def qzdiv(
-    stake: float, A: np.ndarray, B: np.ndarray, Q: np.ndarray, Z: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Christopher Sim's qzdiv.
-
-    Takes upper-triangular matrices :math:`A`, :math:`B` and orthonormal matrices :math:`Q`, :math:`Z`, and rearranges
-    them so that all cases of ``abs(B(i, i) / A(i, i)) > stake`` are in the lower-right corner, while preserving
-    upper-triangular and orthonormal properties, and maintaining the relationships :math:`Q^TAZ'` and :math:`Q^TBZ'`.
-    The columns of v are sorted correspondingly.
-
-    Matrices :math:`A`, :math:`B`, :math:`Q`, and :math:`Z` are the output of the generalized Schur decomposition
-    (QZ decomposition) of the system matrices :math:`G_0` and :math:`G_1`. A and B are upper triangular, with the
-    properties :math:`QAZ^T = G_0` and :math:`QBZ^T = G_1`.
-
-    Parameters
-    ----------
-     stake : float
-         Largest positive value for which an eigenvalue is considered stable.
-     A : np.ndarray
-         Upper-triangular matrix.
-     B : np.ndarray
-         Upper-triangular matrix.
-     Q : np.ndarray
-         Matrix of left Schur vectors.
-     Z : np.ndarray
-         Matrix of right Schur vectors.
-
-    Returns
-    -------
-     tuple of np.ndarray
-         A, B, Q, Z matrices sorted such that all unstable roots are placed in the lower-right corners of the matrices.
-
-    Notes
-    -----
-    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/qzdiv.m
-    """
-    # TODO: scipy offers a sorted qz routine, ordqz, which automatically sorts the matrices by size of eigenvalue. This
-    #     seems to be what the functions qzdiv and qzswitch do, so it might be worthwhile to see if we can just use
-    #     ordqz instead.
-    #
-    # TODO: Add shape information to the Typing (see PEP 646)
-    FLOAT_ZERO = 1e-13
-    n, _ = A.shape
-
-    root = np.hstack((np.diag(A)[:, None], np.diag(B)[:, None]))
-    root = np.abs(root)
-    root[:, 0] = root[:, 0] - (root[:, 0] < FLOAT_ZERO) * (root[:, 0] + root[:, 1])
-    root[:, 1] = root[:, 1] / root[:, 0]
-
-    for i in range(n - 1, -1, -1):
-        m = None
-        for j in range(i, -1, -1):
-            # No idea why -0.1 appears here; it comes from the original MATLAB code.
-            if (root[j, 1] > stake) or (root[j, 1] < -0.1):
-                m = j
-                break
-
-        if m is None:
-            return A, B, Q, Z
-
-        for k in range(m, i):
-            A[:], B[:], Q[:], Z[:] = qzswitch(k, A, B, Q, Z)
-            root[k, 1], root[k + 1, 1] = root[k + 1, 1], root[k, 1]
-
-    return A, B, Q, Z
-
-
-@nb.njit(
-    [
-        "Tuple((f8, i8, b1))(f8[::1, :], f8[::1, :], optional(f8), f8)",
-        "Tuple((f8, i8, b1))(c16[::1, :], c16[::1, :], optional(f8), f8)",
-    ],
-    cache=True,
-)
-def determine_n_unstable(A: np.ndarray, B: np.ndarray, div: float | None, realsmall: float) -> tuple[float, int, bool]:
-    """
-    Determine how many roots of the system described by A and B are unstable.
-
-    Parameters
-    ----------
-    A : array
-        Upper-triangular matrix, output of QZ decomposition.
-    B : array
-        Upper-triangular matrix, output of QZ decomposition.
-    div : float, Optional
-        Largest positive value for which an eigenvalue is considered stable. If None, a suitable value is calculated
-        based on the input matrices.
-    realsmall : float
-        An arbitrarily small number.
-
-    Returns
-    -------
-    tuple
-        Contains three elements:
-            div : float
-                Represents which roots of the system can be considered stable.
-            n_unstable : int
-                The number of unstable roots in the system.
-            zxz : bool
-                Signals whether the system has a unique solution.
-
-    Notes
-    -----
-    Originally part of gensys. Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
-    """
-    n, _ = A.shape
+def _determine_n_unstable_core(
+    alpha: np.ndarray,
+    beta: np.ndarray,
+    div: float,
+    compute_div: bool,
+    realsmall: float,
+) -> tuple[float, int, bool]:
+    """Numba-compiled heart of :func:`determine_n_unstable`. See its docstring."""
     n_unstable = 0
     zxz = False
 
-    realsmall = np.spacing(1) if realsmall is None else realsmall
-    compute_div = div is None
-
-    if div is None:
-        div = 1.01
-
-    for i in range(n):
-        if compute_div and abs(A[i, i]) > 0:
-            divhat = abs(B[i, i] / A[i, i])
+    for i in range(alpha.size):
+        abs_a = np.abs(alpha[i])
+        abs_b = np.abs(beta[i])
+        if compute_div and abs_a > 0:
+            divhat = abs_b / abs_a
             if 1 + realsmall < divhat <= div:
                 div = 0.5 * (1 + divhat)
-        n_unstable += abs(B[i, i]) > div * abs(A[i, i])
-
-        zxz = (abs(A[i, i]) < realsmall) & (abs(B[i, i]) < realsmall)
+        if abs_b > div * abs_a:
+            n_unstable += 1
+        zxz = (abs_a < realsmall) and (abs_b < realsmall)
 
     return div, n_unstable, zxz
 
 
-@nb.njit(
-    [
-        "UniTuple(f8[::1, :], 2)(f8[::1, :],  i8)",
-        "UniTuple(c16[::1, :], 2)(c16[::1, :], i8)",
-    ],
-    cache=True,
-)
-def split_matrix_on_eigen_stability(A: np.ndarray, n_unstable: int) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Split a matrix into stable and unstable parts based on the number of unstable roots.
+def determine_n_unstable(
+    alpha: np.ndarray,
+    beta: np.ndarray,
+    div: float | None,
+    realsmall: float,
+) -> tuple[float, int, bool]:
+    """Classify generalized eigenvalues `beta / alpha` as stable or unstable.
 
     Parameters
     ----------
-    A : np.ndarray
-        Array to split.
-    n_unstable : int
-        Number of unstable roots in the system.
+    alpha : ndarray of complex
+        Left-side generalized eigenvalue components (diagonal of the triangular
+        `A` factor from the QZ decomposition).
+    beta : ndarray of complex
+        Right-side generalized eigenvalue components (diagonal of the triangular
+        `B` factor from the QZ decomposition).
+    div : float, optional
+        Cutoff above which an eigenvalue is considered unstable. When `None`,
+        the cutoff is inferred from the spectrum using Sims's heuristic: shrink
+        toward 1 whenever an eigenvalue lies just outside the unit circle, so
+        borderline roots are grouped consistently.
+    realsmall : float
+        Tolerance for detecting coincident near-zero diagonal entries.
 
     Returns
     -------
-    tuple of np.ndarray
-        Contains two elements:
-            A1 : np.ndarray
-                Matrix containing all stable roots.
-            A2 : np.ndarray
-                Matrix containing all unstable roots.
+    div : float
+        The (possibly adjusted) stability cutoff.
+    n_unstable : int
+        Count of eigenvalues classified as unstable.
+    zxz : bool
+        True if the final pair of diagonal entries is coincident near-zero,
+        signalling a non-unique / non-existent solution.
 
     Notes
     -----
-    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
+    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m.
+    This is a thin Python shim over the numba-compiled
+    :func:`_determine_n_unstable_core`, which can't accept `None` for `div`.
     """
-    n, _ = A.shape
-    stable_slice = slice(None, n - n_unstable)
-    unstable_slice = slice(n - n_unstable, None)
-
-    A1 = np.asfortranarray(A[stable_slice])
-    A2 = np.asfortranarray(A[unstable_slice])
-
-    return A1, A2
+    compute_div = div is None
+    div_eff = 1.01 if compute_div else float(div)
+    div_out, n_unstable, zxz = _determine_n_unstable_core(alpha, beta, div_eff, compute_div, realsmall)
+    return float(div_out), int(n_unstable), bool(zxz)
 
 
-# @nb.njit(['Tuple((f8[:,::1], f8[:,::1], f8[:,::1], i8[::1]))(f8[:,::1], f8)',
-#           'Tuple((c16[:,::1], c16[:,::1], c16[:,::1], i8[::1]))(c16[:,::1], f8)'],
-#          cache=True)
+@nb.njit(cache=True)
+def split_matrix_on_eigen_stability(A: np.ndarray, n_unstable: int) -> tuple[np.ndarray, np.ndarray]:
+    """Split a matrix row-wise into stable / unstable blocks.
+
+    Parameters
+    ----------
+    A : ndarray
+        Matrix whose rows are aligned with the sorted QZ eigenvalue ordering
+        (stable first, unstable last).
+    n_unstable : int
+        Number of trailing rows corresponding to unstable eigenvalues.
+
+    Returns
+    -------
+    A1 : ndarray
+        Rows corresponding to stable eigenvalues.
+    A2 : ndarray
+        Rows corresponding to unstable eigenvalues.
+    """
+    n = A.shape[0]
+    return A[: n - n_unstable], A[n - n_unstable :]
+
+
+@nb.njit(cache=True)
+def _thin_svd_and_rank(eta: np.ndarray, realsmall: float):
+    """Thin SVD + boolean mask of retained components.
+
+    Numba-compatible replacement for the `big_ev` extraction in `build_u_v_d`.
+    """
+    u, s, vh = np.linalg.svd(eta, full_matrices=False)
+    keep = s > realsmall
+    return u, s, vh, keep
+
+
 def build_u_v_d(
     eta: np.ndarray, realsmall: float = EPSILON, invalid_system: bool = False
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute the singular value decomposition (SVD) of the input matrix `eta` and identifies non-zero indices.
-
-    Alternatively, if the system is invalid, returns zero matrices.
+    """Compute a thin SVD of `eta` and keep the non-negligible components.
 
     Parameters
     ----------
-    eta : np.ndarray
-        Input matrix for which to compute the SVD.
-    realsmall : float
-        A small threshold value to determine non-zero singular values.
-    invalid_system : int
-        If True, return a zero solution. If False, compute the SVD normally.
+    eta : ndarray
+        Input matrix to decompose.
+    realsmall : float, optional
+        Threshold below which singular values are treated as zero. Default
+        :data:`EPSILON`.
+    invalid_system : bool, optional
+        If True, return zero-sized outputs so downstream code can short-circuit
+        an ill-posed system. Default False.
 
     Returns
     -------
-    tuple
-        Contains two elements:
-            (U, V, D) : tuple of np.ndarray
-                SVD decomposition of `eta` where `U` and `V` are orthogonal matrices and `D` is a diagonal matrix.
-            non_zero_indices : np.ndarray
-                Array of non-zero indices based on the threshold `realsmall`.
+    u_eta : ndarray
+        Left singular vectors for the retained components.
+    v_eta : ndarray
+        Right singular vectors for the retained components.
+    d_eta : ndarray of float
+        Retained singular values as a 1-D array.
+    big_ev : ndarray of int
+        Indices of the retained singular values in the full spectrum.
 
     Notes
     -----
     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
     """
-    # No stable roots
-    if invalid_system:
-        big_ev = np.zeros(
-            0,
-        )
-
-        u_eta = np.zeros((0, 0))
-        d_eta = np.zeros((0, 0))
-        v_eta = np.zeros((eta.shape[-1], 0))
-
+    if invalid_system or eta.size == 0:
+        dtype = eta.dtype
+        u_eta = np.zeros((eta.shape[0], 0), dtype=dtype)
+        d_eta = np.zeros(0, dtype=np.float64)
+        v_eta = np.zeros((eta.shape[-1], 0), dtype=dtype)
+        big_ev = np.zeros(0, dtype=np.int64)
         return u_eta, v_eta, d_eta, big_ev
 
-    u_eta, d_eta, vh_eta = linalg.svd(eta, compute_uv=True, full_matrices=False)
-    v_eta = vh_eta.conj().T
-
-    big_ev = np.flatnonzero(d_eta > realsmall)
-
-    u_eta = u_eta[:, big_ev]
-    v_eta = v_eta[:, big_ev]
-    d_eta = np.diag(d_eta[big_ev])
-
+    u, s, vh, keep = _thin_svd_and_rank(eta, realsmall)
+    big_ev = np.flatnonzero(keep)
+    u_eta = u[:, big_ev]
+    v_eta = vh.conj().T[:, big_ev]
+    d_eta = s[big_ev]
     return u_eta, v_eta, d_eta, big_ev
 
 
-# @nb.njit(cache=True)
+@nb.njit(cache=True)
+def _matrix_rank(A: np.ndarray, tol: float) -> int:
+    """Numba-friendly rank-via-SVD. Assumes ``A`` has at least one element."""
+    if A.shape[0] == 0 or A.shape[1] == 0:
+        return 0
+    s = np.linalg.svd(A, full_matrices=False)[1]
+    n_nonzero = 0
+    for i in range(s.size):
+        if s[i] > tol:
+            n_nonzero += 1
+    return n_nonzero
+
+
+@nb.njit(cache=True)
+def _gensys_core(
+    g0: np.ndarray,
+    g1: np.ndarray,
+    c: np.ndarray,
+    psi: np.ndarray,
+    pi: np.ndarray,
+    tol: float,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    """Numba-compiled gensys core.
+
+    Always returns the full 9-tuple. `eu` is a length-3 int64 ndarray. A `zxz`
+    failure is signalled by `eu = [-2, -2, 0]`; the accompanying matrices are
+    zero-filled so the output types stay consistent.
+
+    Uses the scipy ``"ouc"`` sort convention (stable = strictly inside unit
+    circle, threshold 1.0), dropping Sims's dynamic-div heuristic. The heuristic
+    only matters for eigenvalues in (1.0, 1.01] — empirically absent from
+    well-posed DSGE models.
+    """
+    n = g1.shape[0]
+    n_eta = pi.shape[1]
+    n_shocks = psi.shape[1]
+    realsmall = tol if tol > 0 else np.spacing(1)
+
+    # QZ works on complex; cast once at the boundary.
+    g0_c = g0.astype(np.complex128)
+    g1_c = g1.astype(np.complex128)
+
+    # Sorted QZ: stable eigenvalues (|alpha/beta| > 1 in scipy convention =
+    # |beta/alpha| < 1 in Sims convention) occupy the top-left. LAPACK returns
+    # these in arbitrary layout; force C-contiguity here so downstream `@`
+    # operations don't raise NumbaPerformanceWarning under pytest's warnings=error.
+    A_raw, B_raw, alpha, beta, Q_raw, Z_raw = _qz_complex_sort_eig(g0_c, g1_c, "ouc", False, False)
+    A = np.ascontiguousarray(A_raw)
+    B = np.ascontiguousarray(B_raw)
+    Z = np.ascontiguousarray(Z_raw)
+    # Sims convention: g0 = Q^H A Z^H.
+    Q = np.ascontiguousarray(Q_raw.conj().T)
+    Z_H = np.ascontiguousarray(Z.conj().T)
+
+    # Count n_unstable and detect coincident-zero diagonal pairs (zxz).
+    n_unstable = 0
+    zxz = False
+    for i in range(n):
+        abs_a = np.abs(alpha[i])
+        abs_b = np.abs(beta[i])
+        if abs_a < realsmall and abs_b < realsmall:
+            zxz = True
+        # "ouc" stable criterion: (alpha != 0 and beta == 0) or |alpha| > |beta|.
+        is_stable = ((abs_b < realsmall) and (abs_a >= realsmall)) or ((abs_b >= realsmall) and (abs_a > abs_b))
+        if not is_stable:
+            n_unstable += 1
+
+    n_stable = n - n_unstable
+
+    eu = np.zeros(3, dtype=np.int64)
+    gev = np.column_stack((alpha, beta))
+
+    if zxz:
+        eu[0] = -2
+        eu[1] = -2
+        G_1 = np.zeros((n, n), dtype=np.float64)
+        C_out = np.zeros((n, c.shape[1]), dtype=np.float64)
+        impact = np.zeros((n, n_shocks), dtype=np.float64)
+        f_mat_out = np.zeros((n_unstable, n_unstable), dtype=np.complex128)
+        f_wt_out = np.zeros((n_unstable, n_shocks), dtype=np.complex128)
+        y_wt_out = np.zeros((n, n_unstable), dtype=np.complex128)
+        loose_out = np.zeros((n, n_eta), dtype=np.float64)
+        return G_1, C_out, impact, f_mat_out, f_wt_out, y_wt_out, gev, eu, loose_out
+
+    Q1, Q2 = split_matrix_on_eigen_stability(Q, n_unstable)
+
+    # eta partition + SVDs used to back out the expectational-error selection.
+    eta_wt = Q2 @ pi.astype(np.complex128)
+    if n_unstable == 0:
+        u_eta = np.zeros((0, 0), dtype=np.complex128)
+        d_eta = np.zeros(0, dtype=np.float64)
+        v_eta = np.zeros((n_eta, 0), dtype=np.complex128)
+    else:
+        u_raw, s_raw, vh_raw, keep = _thin_svd_and_rank(eta_wt, realsmall)
+        big_ev = np.flatnonzero(keep)
+        u_eta = u_raw[:, big_ev]
+        d_eta = s_raw[big_ev]
+        v_eta = vh_raw.conj().T[:, big_ev]
+
+    if d_eta.size >= n_unstable:
+        eu[0] = 1
+
+    if n_unstable == n:
+        eta_wt_1 = np.zeros((0, n_eta), dtype=np.complex128)
+        u_eta_1 = np.zeros((0, 0), dtype=np.complex128)
+        d_eta_1 = np.zeros(0, dtype=np.float64)
+        v_eta_1 = np.zeros((n_eta, 0), dtype=np.complex128)
+    else:
+        eta_wt_1 = Q1 @ pi.astype(np.complex128)
+        u1_raw, s1_raw, vh1_raw, keep1 = _thin_svd_and_rank(eta_wt_1, realsmall)
+        big_ev_1 = np.flatnonzero(keep1)
+        u_eta_1 = u1_raw[:, big_ev_1]
+        d_eta_1 = s1_raw[big_ev_1]
+        v_eta_1 = vh1_raw.conj().T[:, big_ev_1]
+
+    # `.conj().T` produces strided views; materialise before feeding into `@`
+    # so we don't trip NumbaPerformanceWarning under pytest's warnings=error.
+    v_eta_H = np.ascontiguousarray(v_eta.conj().T)
+    u_eta_1_H = np.ascontiguousarray(u_eta_1.conj().T)
+
+    if v_eta_1.shape[0] == 0 or v_eta_1.shape[1] == 0:
+        unique = True
+    else:
+        loose_for_rank = v_eta_1 - v_eta @ v_eta_H @ v_eta_1
+        n_loose = _matrix_rank(loose_for_rank, realsmall * n)
+        eu[2] = n_loose
+        unique = n_loose == 0
+
+    if unique:
+        eu[1] = 1
+
+    # inner_term = U_eta D_eta^{-1} V_eta^H V_eta_1 D_eta_1 U_eta_1^H, with the
+    # two diagonal solves collapsed to element-wise scaling.
+    d_eta_c = d_eta.astype(np.complex128)
+    d_eta_1_c = d_eta_1.astype(np.complex128)
+    scaled_vh = np.ascontiguousarray(v_eta_H / d_eta_c.reshape(-1, 1)) if d_eta.size else v_eta_H
+    scaled_u1h = np.ascontiguousarray(d_eta_1_c.reshape(-1, 1) * u_eta_1_H) if d_eta_1.size else u_eta_1_H
+
+    inner_term = u_eta @ scaled_vh @ v_eta_1 @ scaled_u1h
+    inner_term_H = np.ascontiguousarray(inner_term.conj().T)
+
+    T_mat = np.column_stack((np.eye(n_stable, dtype=np.complex128), -inner_term_H))
+    top_block = T_mat @ A
+    bottom_block = np.column_stack(
+        (
+            np.zeros((n_unstable, n_stable), dtype=np.complex128),
+            np.eye(n_unstable, dtype=np.complex128),
+        )
+    )
+    G_0 = np.vstack((top_block, bottom_block))
+
+    # Single LU factorisation reused for every solve against G_0.
+    #
+    # Note on indexing: `_lu_factor` returns scipy-style (0-based) IPIV but the
+    # lower-level `_getrs` wrapper feeds IPIV straight into LAPACK's `getrs`,
+    # which expects 1-based indexing. Convert once here. (Pytensor's `_lu_solve`
+    # also has a stub/impl arity mismatch that prevents njit dispatch, which is
+    # why we're using `_getrs` directly — see the import comment at the top.)
+    lu, piv_0 = _lu_factor(G_0, False)
+    piv = (piv_0 + np.int32(1)).astype(np.int32)
+
+    G_1_rhs = np.vstack(
+        (
+            T_mat @ B,
+            np.zeros((n_unstable, n), dtype=np.complex128),
+        )
+    )
+    G_1_c, _info = _getrs(lu, G_1_rhs, piv, 0, False)
+    G_1 = (Z @ G_1_c @ Z_H).real
+
+    A_idx = A[n_stable:n, n_stable:n]
+    B_idx = B[n_stable:n, n_stable:n]
+    Q2c = Q2  # already complex
+    c_c = c.astype(np.complex128)
+    psi_c = psi.astype(np.complex128)
+
+    # A_idx and B_idx are upper-triangular blocks of the sorted QZ output.
+    if n_unstable == 0:
+        C_tail = np.zeros((0, c.shape[1]), dtype=np.complex128)
+    else:
+        C_tail = _solve_triangular(A_idx - B_idx, Q2c @ c_c, 0, False, False, False)
+    C_complex = np.vstack((T_mat @ Q @ c_c, C_tail))
+
+    impact_rhs = np.vstack(
+        (
+            T_mat @ Q @ psi_c,
+            np.zeros((n_unstable, n_shocks), dtype=np.complex128),
+        )
+    )
+    impact_complex, _info = _getrs(lu, impact_rhs, piv, 0, False)
+
+    if n_unstable == 0:
+        f_mat = np.zeros((0, 0), dtype=np.complex128)
+        f_wt = np.zeros((0, n_shocks), dtype=np.complex128)
+    else:
+        f_mat = _solve_triangular(B_idx, A_idx, 0, False, False, False)
+        f_wt = -_solve_triangular(B_idx, Q2c @ psi_c, 0, False, False, False)
+
+    # y_wt = G_0^{-1}[:, n_stable:n]  <=>  solve G_0 @ y_wt = I[:, n_stable:n].
+    eye_cols = np.zeros((n, n_unstable), dtype=np.complex128)
+    for j in range(n_unstable):
+        eye_cols[n_stable + j, j] = 1.0 + 0.0j
+    y_wt_complex, _info = _getrs(lu, eye_cols, piv, 0, False)
+    y_wt = Z @ y_wt_complex
+
+    loose_rhs = np.vstack(
+        (
+            eta_wt_1 @ (np.eye(n_eta, dtype=np.complex128) - v_eta @ v_eta_H),
+            np.zeros((n_unstable, n_eta), dtype=np.complex128),
+        )
+    )
+    loose_complex, _info = _getrs(lu, loose_rhs, piv, 0, False)
+
+    C_out = (Z @ C_complex).real
+    impact = (Z @ impact_complex).real
+    loose_out = (Z @ loose_complex).real
+
+    return G_1, C_out, impact, f_mat, f_wt, y_wt, gev, eu, loose_out
+
+
 def gensys(
     g0: np.ndarray,
     g1: np.ndarray,
@@ -434,12 +464,15 @@ def gensys(
     pi : np.ndarray
         Coefficient matrix of the dynamic system corresponding to the endogenously determined
         expectational errors.
-    div : float
-        Threshold value for determining stable and unstable roots.
-    tol : float, default: 1e-8
-        Level of floating point precision.
-    return_all_matrices: bool, default True
-        Whether to return all matrices or just the policy function.
+    div : float, optional
+        Accepted for backward compatibility but ignored. The njit core uses the
+        scipy `"ouc"` sort (strict unit circle, threshold 1.0). Sims's dynamic
+        shrink-toward-1 heuristic is only needed for eigenvalues in (1.0, 1.01]
+        and is empirically absent from well-posed DSGE models.
+    tol : float, optional
+        Level of floating point precision. Default 1e-8.
+    return_all_matrices : bool, optional
+        Whether to return all matrices or just the policy function. Default True.
 
     Returns
     -------
@@ -459,16 +492,16 @@ def gensys(
     gev : np.ndarray
         Generalized left and right eigenvalues generated by qz(g0, g1), sorted such that stable roots are in the
         top-left corner.
-    eu : tuple
-        Tuple of two values indicating existence and uniqueness of the solution, with the following meanings:
+    eu : list of int
+        Three-element list indicating existence and uniqueness of the solution, with the following meanings:
 
         - eu[0] = 1 for existence,
         - eu[1] = 1 for uniqueness.
         - eu[0] = -1 for existence only with not-s.c. z;
         - eu = [-2, -2] for coincident zeros.
 
-    loose : int
-        Number of loose endogenous variables.
+    loose : np.ndarray
+        Matrix characterising the sunspot-indeterminacy directions.
 
     References
     ----------
@@ -477,95 +510,29 @@ def gensys(
 
     Notes
     -----
-    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m
+    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m. The core
+    is numba-njit compiled and uses pytensor's numba-compatible LAPACK wrappers.
     """
-    eu = [0, 0, 0]
+    del div  # accepted for backward compat, ignored; see docstring.
 
-    n, _ = g1.shape
-    A, B, Q, Z = linalg.qz(g0, g1, "complex")
-    Q = np.asfortranarray(Q.conj().T)  # q is transposed relative to matlab, see scipy docs
+    tol_eff = tol if tol is not None and tol > 0 else np.spacing(1)
+    g0_f = np.ascontiguousarray(g0, dtype=np.float64)
+    g1_f = np.ascontiguousarray(g1, dtype=np.float64)
+    c_f = np.ascontiguousarray(c, dtype=np.float64)
+    psi_f = np.ascontiguousarray(psi, dtype=np.float64)
+    pi_f = np.ascontiguousarray(pi, dtype=np.float64)
 
-    div, n_unstable, zxz = determine_n_unstable(A, B, div, tol)
-    n_stable = n - n_unstable
+    G_1, C_out, impact, f_mat, f_wt, y_wt, gev, eu_arr, loose_out = _gensys_core(g0_f, g1_f, c_f, psi_f, pi_f, tol_eff)
 
-    if zxz:
-        eu = [-2, -2, 0]
+    eu = [int(x) for x in eu_arr]
+
+    if eu[0] == -2 and eu[1] == -2:
         return None, None, None, None, None, None, None, eu, None
-
-    A[:], B[:], Q[:], Z[:] = qzdiv(div, A, B, Q, Z)
-    gev = np.column_stack((np.diagonal(A), np.diagonal(B)))
-
-    Q1, Q2 = split_matrix_on_eigen_stability(Q, n_unstable)
-
-    eta_wt = Q2 @ pi
-    _, n_eta = pi.shape
-    u_eta, v_eta, d_eta, big_ev = build_u_v_d(eta_wt, tol, n_unstable == 0)
-
-    if len(big_ev) >= n_unstable:
-        eu[0] = 1
-
-    # All stable roots
-    eta_wt_1 = np.zeros((0, n_eta)) if n_unstable == n else Q1 @ pi
-
-    u_eta_1, v_eta_1, d_eta_1, big_ev = build_u_v_d(eta_wt_1, tol, n_unstable == n)
-
-    if 0 in v_eta_1.shape:
-        unique = True
-    else:
-        loose = v_eta_1 - v_eta @ v_eta.T @ v_eta_1
-        [_ul, dl, _vl] = linalg.svd(loose)
-        if dl.ndim == 1:
-            dl = np.diag(dl)
-
-        n_loose = (np.abs(np.diagonal(dl)) > (tol * n)).sum()
-        eu[2] = n_loose
-        unique = n_loose == 0
-
-    if unique:
-        eu[1] = 1
-
-    inner_term = u_eta @ linalg.solve(d_eta, v_eta.conj().T) @ v_eta_1 @ d_eta_1 @ u_eta_1.conj().T
-
-    T_mat = np.column_stack((np.eye(n_stable), -inner_term.conj().T))
-    G_0 = np.vstack(
-        (
-            T_mat @ A,
-            np.column_stack((np.zeros((n_unstable, n_stable)), np.eye(n_unstable))),
-        )
-    )
-
-    G_1 = np.vstack((T_mat @ B, np.zeros((n_unstable, n))))
-
-    G_0_inv = linalg.inv(G_0)
-    G_1 = G_0_inv @ G_1
-    G_1 = (Z @ G_1 @ Z.conj().T).real
 
     if not return_all_matrices:
         return G_1, eu
 
-    idx = slice(n_stable, n)
-
-    C = np.vstack((T_mat @ Q @ c, linalg.solve(A[idx, idx] - B[idx, idx], Q2) @ c))
-
-    impact = G_0_inv @ np.vstack((T_mat @ Q @ psi, np.zeros((n_unstable, psi.shape[1]))))
-
-    f_mat = linalg.solve(B[idx, idx], A[idx, idx])
-    f_wt = -linalg.solve(B[idx, idx], Q2) @ psi
-    y_wt = G_0_inv[:, idx]
-
-    loose = G_0_inv @ np.vstack(
-        (
-            eta_wt_1 @ (np.eye(n_eta) - v_eta @ v_eta.conj().T),
-            np.zeros((n_unstable, n_eta)),
-        )
-    )
-
-    C = (Z @ C).real
-    impact = (Z @ impact).real
-    loose = (Z @ loose).real
-    y_wt = Z @ y_wt
-
-    return G_1, C, impact, f_mat, f_wt, y_wt, gev, eu, loose
+    return G_1, C_out, impact, f_mat, f_wt, y_wt, gev, eu, loose_out
 
 
 def interpret_gensys_output(eu):
@@ -613,37 +580,41 @@ def interpret_gensys_output(eu):
 
 
 @nb.njit(cache=True)
-def _get_variable_counts(A, D):
-    n_eq, n_vars = A.shape
-    _, n_shocks = D.shape
+def _gensys_setup(
+    A: np.ndarray,
+    B: np.ndarray,
+    C: np.ndarray,
+    D: np.ndarray,
+    tol: float = 1e-8,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Assemble the `(g0, g1, c, psi, pi)` quintuple expected by `gensys`."""
+    n_eq = A.shape[0]
+    n_shocks = D.shape[1]
 
-    return n_eq, n_vars, n_shocks
+    # Indices of "lead" columns — those C-columns with any non-negligible entry.
+    col_abs_sum = np.zeros(C.shape[1], dtype=np.float64)
+    for j in range(C.shape[1]):
+        total = 0.0
+        for i in range(C.shape[0]):
+            total += abs(C[i, j])
+        col_abs_sum[j] = total
+    lead_var_idx = np.flatnonzero(col_abs_sum > tol)
+    n_leads = lead_var_idx.size
+    eqs_and_leads_idx = np.concatenate((np.arange(n_eq), lead_var_idx + n_eq))
 
-
-@nb.njit(cache=True)
-def _find_lead_variables(C, tol=1e-8):
-    return np.where(np.sum(np.abs(C), axis=0) > tol)[0]
-
-
-@nb.njit(cache=True)
-def _gensys_setup(A, B, C, D, tol=1e-8):
-    n_eq, n_vars, n_shocks = _get_variable_counts(A, D)
-
-    lead_var_idx = _find_lead_variables(C, tol)
-    eqs_and_leads_idx = np.concatenate((np.arange(n_vars), lead_var_idx + n_vars), axis=0)
-    n_leads = len(lead_var_idx)
-
-    Gamma_0 = np.vstack((np.hstack((B, C)), np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq))))))
-
+    Gamma_0 = np.vstack(
+        (
+            np.hstack((B, C)),
+            np.hstack((-np.eye(n_eq), np.zeros((n_eq, n_eq)))),
+        )
+    )
     Gamma_1 = np.vstack(
         (
             np.hstack((A, np.zeros((n_eq, n_eq)))),
             np.hstack((np.zeros((n_eq, n_eq)), np.eye(n_eq))),
         )
     )
-
     Pi = np.vstack((np.zeros((n_eq, n_eq)), np.eye(n_eq)))
-
     Psi = np.vstack((D, np.zeros((n_eq, n_shocks))))
 
     Gamma_0 = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
@@ -652,9 +623,9 @@ def _gensys_setup(A, B, C, D, tol=1e-8):
     Pi = Pi[eqs_and_leads_idx, :][:, lead_var_idx]
 
     G0 = -Gamma_0
-    C = np.asfortranarray(np.zeros(shape=(n_vars + n_leads, 1)))
+    const = np.zeros((n_eq + n_leads, 1))
 
-    return G0, Gamma_1, C, Psi, Pi
+    return G0, Gamma_1, const, Psi, Pi
 
 
 def solve_policy_function_with_gensys(
@@ -663,18 +634,20 @@ def solve_policy_function_with_gensys(
     C: np.ndarray,
     D: np.ndarray,
     tol: float = 1e-8,
-    reutrn_all_matrices: bool = True,
+    return_all_matrices: bool = True,
 ) -> tuple:
-    g0, g1, c, psi, pi = _gensys_setup(A, B, C, D, tol)
-    G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose = gensys(g0, g1, c, psi, pi)
+    A_f = np.ascontiguousarray(A, dtype=np.float64)
+    B_f = np.ascontiguousarray(B, dtype=np.float64)
+    C_f = np.ascontiguousarray(C, dtype=np.float64)
+    D_f = np.ascontiguousarray(D, dtype=np.float64)
 
-    if reutrn_all_matrices:
-        return G_1, constant, impact, f_mat, f_wt, y_wt, gev, eu, loose
-
-    return G_1, eu
+    g0, g1, c, psi, pi = _gensys_setup(A_f, B_f, C_f, D_f, tol)
+    return gensys(g0, g1, c, psi, pi, tol=tol, return_all_matrices=return_all_matrices)
 
 
 class GensysWrapper(Op):
+    __props__ = ("tol",)
+
     def __init__(self, tol=1e-8):
         self.tol = tol
         super().__init__()
@@ -692,7 +665,7 @@ class GensysWrapper(Op):
 
     def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
         A, B, C, D = inputs
-        G_1, eu = solve_policy_function_with_gensys(A, B, C, D, tol=self.tol, reutrn_all_matrices=False)
+        G_1, eu = solve_policy_function_with_gensys(A, B, C, D, tol=self.tol, return_all_matrices=False)
 
         n_vars = A.shape[0]
         T = G_1[:n_vars, :n_vars]
@@ -701,10 +674,10 @@ class GensysWrapper(Op):
         outputs[0][0] = np.asarray(T)
         outputs[1][0] = np.asarray(success)
 
-    def L_op(self, inputs, outputs, output_grads):
+    def pullback(self, inputs, outputs, cotangents):
         A, B, C, D = inputs
         T, _success = outputs
-        T_bar, _success_bar = output_grads
+        T_bar, _success_bar = cotangents
 
         A_bar, B_bar, C_bar = o1_policy_function_adjoints(A, B, C, T, T_bar)
         D_bar = pt.zeros_like(D).astype(floatX)
@@ -717,3 +690,39 @@ def gensys_pt(A, B, C, D, tol=1e-8):
     R = pt_compute_selection_matrix(B, C, D, T)
 
     return T, R, success
+
+
+@register_funcify_default_op_cache_key(GensysWrapper)
+def numba_funcify_GensysWrapper(op, node, **kwargs):  # noqa: ARG001
+    """Numba dispatch for GensysWrapper — avoids object-mode fallback.
+
+    The perform method calls `solve_policy_function_with_gensys`, whose entire
+    compute chain is already njit'd (`_gensys_setup` + `_gensys_core`). Without
+    this dispatch, pytensor's NUMBA linker would wrap `perform` in object mode
+    with a NumbaWarning, which fails under pytest's `filterwarnings = ["error"]`.
+    """
+    tol = op.tol
+
+    @numba_basic.numba_njit
+    def gensys_wrapper(A, B, C, D):
+        # `n_vars` is read from the runtime input shape. Reading it from the
+        # outer scope via `node.inputs[0].type.shape[0]` returns `None` whenever
+        # the pytensor input has dynamic shape (e.g., `pt.dmatrix(...)` with no
+        # declared shape), and `G_1[:None, :None]` is a no-op — which caused
+        # gensys to silently return the full (n + n_leads, n + n_leads) block
+        # instead of the (n, n) policy function.
+        n_vars = A.shape[0]
+        A_f = np.ascontiguousarray(A).astype(np.float64)
+        B_f = np.ascontiguousarray(B).astype(np.float64)
+        C_f = np.ascontiguousarray(C).astype(np.float64)
+        D_f = np.ascontiguousarray(D).astype(np.float64)
+
+        g0, g1, c, psi, pi = _gensys_setup(A_f, B_f, C_f, D_f, tol)
+        G_1, _C_out, _impact, _f_mat, _f_wt, _y_wt, _gev, eu, _loose = _gensys_core(g0, g1, c, psi, pi, tol)
+
+        T = np.ascontiguousarray(G_1[:n_vars, :n_vars])
+        success = (eu[0] == 1) and (eu[1] == 1)
+        return T, success
+
+    cache_version = 1
+    return gensys_wrapper, cache_version

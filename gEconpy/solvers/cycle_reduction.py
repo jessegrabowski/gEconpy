@@ -1,3 +1,4 @@
+import numba as nb
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
@@ -5,6 +6,10 @@ import pytensor.tensor as pt
 from pytensor.compile import get_mode
 from pytensor.compile.builders import OpFromGraph
 from pytensor.graph import Apply, Op
+from pytensor.link.numba.dispatch import basic as numba_basic
+from pytensor.link.numba.dispatch.basic import register_funcify_default_op_cache_key
+from pytensor.link.numba.dispatch.linalg.decomposition.lu_factor import _lu_factor
+from pytensor.link.numba.dispatch.linalg.solvers.lu_solve import _getrs
 
 from gEconpy.model.perturbation import _log
 from gEconpy.solvers.shared import (
@@ -147,14 +152,62 @@ def nb_solve_shock_matrix(B: np.ndarray, C: np.ndarray, D: np.ndarray, G_1: np.n
 
 
 def _linear_policy_jvp(inputs, outputs, output_grads):
+    # CycleReductionWrapper exposes a single output (T); scan_cycle_reduction's
+    # OpFromGraph exposes two (T, n_steps). Either way only T carries gradient.
     A, B, C = inputs
-    [T] = outputs
-    [T_bar] = output_grads
+    T = outputs[0]
+    T_bar = output_grads[0]
 
     return o1_policy_function_adjoints(A, B, C, T, T_bar)
 
 
+@nb.njit(cache=True)
+def _cycle_reduction_core(
+    A0: np.ndarray, A1: np.ndarray, A2: np.ndarray, max_iter: int, tol: float
+) -> tuple[np.ndarray, bool]:
+    """Numba-compiled core of `nb_cycle_reduction`."""
+    A0_initial = A0.copy()
+    A1_hat = A1.copy()
+
+    converged = False
+    for _ in range(int(max_iter)):
+        # Factor A1 once, solve twice. `_getrs` wants 1-based LAPACK IPIV (the
+        # reverse convention of `_lu_factor`, see the note in gensys.py).
+        lu, piv_0 = _lu_factor(A1, False)
+        piv = (piv_0 + np.int32(1)).astype(np.int32)
+        # A1 \ A0 and A1 \ A2 as separate (n, n) solves; each is an in-place
+        # triangular back-sub on its own buffer.
+        A1_inv_A0, _info0 = _getrs(lu, np.ascontiguousarray(A0), piv, 0, False)
+        A1_inv_A2, _info2 = _getrs(lu, np.ascontiguousarray(A2), piv, 0, False)
+
+        # Four sub-block products: expand of `[A0; A2] @ A1⁻¹ @ [A0 A2]`.
+        A0_A1inv_A0 = A0 @ A1_inv_A0
+        A0_A1inv_A2 = A0 @ A1_inv_A2
+        A2_A1inv_A0 = A2 @ A1_inv_A0
+        A2_A1inv_A2 = A2 @ A1_inv_A2
+
+        A1 = A1 - A0_A1inv_A2 - A2_A1inv_A0
+        A1_hat = A1_hat - A2_A1inv_A0
+        A0 = -A0_A1inv_A0
+        A2 = -A2_A1inv_A2
+
+        A0_L1_norm = np.linalg.norm(A0, ord=1)
+        if A0_L1_norm < tol:
+            A2_L1_norm = np.linalg.norm(A2, ord=1)
+            if A2_L1_norm < tol:
+                converged = True
+                break
+        elif np.isnan(A0_L1_norm):
+            break
+
+    T = -np.linalg.solve(A1_hat, A0_initial) if converged else np.zeros_like(A0_initial)
+
+    return T, converged
+
+
 class CycleReductionWrapper(Op):
+    __props__ = ("max_iter", "tol")
+
     def __init__(self, max_iter=1000, tol=1e-9):
         self.max_iter = int(max_iter)
         self.tol = tol
@@ -172,14 +225,39 @@ class CycleReductionWrapper(Op):
 
         outputs[0][0] = np.asarray(T)
 
-    def L_op(self, inputs, outputs, output_grads):
-        return _linear_policy_jvp(inputs, outputs, output_grads)
+    def pullback(self, inputs, outputs, cotangents):
+        return _linear_policy_jvp(inputs, outputs, cotangents)
 
 
 def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
     T = CycleReductionWrapper(max_iter=max_iter, tol=tol)(A, B, C)
     R = pt_compute_selection_matrix(B, C, D, T)
     return T, R
+
+
+@register_funcify_default_op_cache_key(CycleReductionWrapper)
+def numba_funcify_CycleReductionWrapper(op, node, **kwargs):  # noqa: ARG001
+    """Numba dispatch for CycleReductionWrapper — avoids object-mode fallback.
+
+    `perform` calls `nb_cycle_reduction`, which is pure-Python for historical
+    reasons (the old `@nb.njit` decorator was commented out due to a Windows CI
+    issue) and returns a mix of ndarray / None / str / float. The dispatch
+    instead routes to `_cycle_reduction_core`, an njit'd variant returning only
+    ``(T, success)`` — the only outputs `CycleReductionWrapper` exposes.
+    """
+    max_iter = op.max_iter
+    tol = op.tol
+
+    @numba_basic.numba_njit
+    def cycle_reduction(A, B, C):
+        A_f = np.ascontiguousarray(A).astype(np.float64)
+        B_f = np.ascontiguousarray(B).astype(np.float64)
+        C_f = np.ascontiguousarray(C).astype(np.float64)
+        T, _converged = _cycle_reduction_core(A_f, B_f, C_f, max_iter, tol)
+        return T
+
+    cache_version = 1
+    return cycle_reduction, cache_version
 
 
 def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7, mode=None) -> pt.Variable:
@@ -253,7 +331,7 @@ def scan_cycle_reduction(
     ScanCycleReducation = OpFromGraph(
         inputs=[A, B, C],
         outputs=output,
-        lop_overrides=_linear_policy_jvp if use_adjoint_gradients else None,
+        pullback=_linear_policy_jvp if use_adjoint_gradients else None,
         name="ScanCycleReduction",
         inline=True,
     )

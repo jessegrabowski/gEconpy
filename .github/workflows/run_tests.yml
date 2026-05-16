@@ -90,6 +90,7 @@ jobs:
       run: |
         pip install -e .
         python --version
+        pip check
 
     - name: Create matrix id
       id: matrix-id

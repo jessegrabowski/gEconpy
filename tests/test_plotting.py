@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 import pytest
+import xarray as xr
 
 from matplotlib.collections import PathCollection
 
@@ -329,7 +330,7 @@ def pm_mod(ss_mod) -> pm.Model:
 
 
 @pytest.fixture(scope="session")
-def prior_idata(pm_mod, ss_mod) -> tuple[az.InferenceData, pd.DataFrame]:
+def prior_idata(pm_mod, ss_mod) -> tuple[xr.DataTree, pd.DataFrame]:
     with warnings.catch_warnings(action="ignore"):
         with pm_mod:
             prior = pm.sample_prior_predictive(25)

@@ -2,9 +2,8 @@ from functools import lru_cache
 
 import pytensor
 
-from pytensor.compile.function.types import Function
+from pytensor.compile.executor import Function
 from pytensor.compile.mode import Mode
-from pytensor.compile.profiling import ProfileStats
 from pytensor.graph.rewriting import rewrite_graph
 from pytensor.tensor.variable import TensorVariable
 
@@ -20,12 +19,10 @@ def _compile_cached(
     mode: str | Mode | None = None,
     updates: tuple[tuple[TensorVariable, TensorVariable], ...] | None = None,
     givens: tuple[tuple[TensorVariable, TensorVariable], ...] | None = None,
-    no_default_updates: bool = False,
     accept_inplace: bool = False,
     name: str | None = None,
     rebuild_strict: bool = True,
     allow_input_downcast: bool | None = None,
-    profile: bool | ProfileStats | None = None,
     on_unused_input: str | None = "ignore",
     trust_input: bool = False,
 ) -> Function:
@@ -41,12 +38,10 @@ def _compile_cached(
         mode=mode,
         updates=dict(updates) if updates is not None else None,
         givens=dict(givens) if givens is not None else None,
-        no_default_updates=no_default_updates,
         accept_inplace=accept_inplace,
         name=name,
         rebuild_strict=rebuild_strict,
         allow_input_downcast=allow_input_downcast,
-        profile=profile,
         on_unused_input=on_unused_input,
         trust_input=trust_input,
     )
@@ -58,12 +53,10 @@ def compile_pytensor_function(
     mode: str | Mode | None = None,
     updates: dict[TensorVariable, TensorVariable] | list[tuple[TensorVariable, TensorVariable]] | None = None,
     givens: dict[TensorVariable, TensorVariable] | list[tuple[TensorVariable, TensorVariable]] | None = None,
-    no_default_updates: bool = False,
     accept_inplace: bool = False,
     name: str | None = None,
     rebuild_strict: bool = True,
     allow_input_downcast: bool | None = None,
-    profile: bool | ProfileStats | None = None,
     on_unused_input: str | None = "ignore",
     trust_input: bool = False,
 ) -> Function:
@@ -92,8 +85,6 @@ def compile_pytensor_function(
         Expressions for shared variable updates.
     givens : dict or list of tuples, optional
         Substitutions to apply before compiling.
-    no_default_updates : bool
-        If True, do not perform default updates on shared variables.
     accept_inplace : bool
         If True, accept graph with in-place operations.
     name : str, optional
@@ -102,8 +93,6 @@ def compile_pytensor_function(
         If True, require inputs to match graph exactly.
     allow_input_downcast : bool, optional
         If True, allow numeric inputs to be silently downcast.
-    profile : bool or ProfileStats, optional
-        If True, enable profiling.
     on_unused_input : str, optional
         What to do if an input is unused. Default is ``"ignore"``.
     trust_input : bool
@@ -127,12 +116,10 @@ def compile_pytensor_function(
         mode=mode,
         updates=frozen_updates,
         givens=frozen_givens,
-        no_default_updates=no_default_updates,
         accept_inplace=accept_inplace,
         name=name,
         rebuild_strict=rebuild_strict,
         allow_input_downcast=allow_input_downcast,
-        profile=profile,
         on_unused_input=on_unused_input,
         trust_input=trust_input,
     )
