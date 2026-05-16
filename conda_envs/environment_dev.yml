@@ -22,7 +22,7 @@ dependencies:
   - pip
   - ipython
   - notebook<7
-  - nutpie
+  - nutpie>=0.16.10
   - networkx
   - sympytensor>=2.0.0
   - pymc-extras>=0.11.0

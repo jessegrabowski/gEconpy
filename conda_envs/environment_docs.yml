@@ -22,7 +22,7 @@ dependencies:
   - better-optimize>=0.2.1
   - sympytensor>=2.0.0
   - jax
-  - nutpie
+  - nutpie>=0.16.10
   - networkx
 
   # Extra dependencies for docs build
