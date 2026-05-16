@@ -30,6 +30,8 @@ def _sympy_jacobians(variables, equations, shocks, not_loglin_variables=None):
     if not_loglin_variables is None:
         not_loglin_variables = []
     not_loglin_variables += [x.base_name for x in shocks]
+    # Variables declared negative cannot be log-linearized
+    not_loglin_variables += [v.base_name for v in variables if v.assumptions0.get("negative", False)]
 
     lags, now, leads = make_all_variable_time_combinations(variables)
     matrices = []
@@ -79,6 +81,7 @@ class TestLinearizeModel:
         [
             "one_block_1.gcn",
             "rbc_2_block.gcn",
+            "open_rbc.gcn",
             pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         ],
     )
@@ -110,6 +113,7 @@ class TestLinearizeModel:
         [
             "one_block_1.gcn",
             "rbc_2_block.gcn",
+            "open_rbc.gcn",
             pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         ],
     )

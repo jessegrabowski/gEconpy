@@ -5,8 +5,8 @@ channels:
 dependencies:
   # Core dependencies
   - python=3.12
-  - pymc>=5.27.1,<6
-  - pytensor>=2.37.0,<3
+  - pymc>=6.0.0
+  - pytensor>=3.0.0
   - matplotlib
   - numba
   - numpy
@@ -17,14 +17,12 @@ dependencies:
   - statsmodels
   - preliz>=0.23.0
   - sympy>=1.14.0
-  - pymc-extras>=0.8.0
+  - pymc-extras>=0.11.0
   - better-optimize>=0.2.1
-  - preliz
   - ipython
-  - nutpie
+  - nutpie>=0.16.10
   - networkx
-  - sympytensor>=1.4.1
-  - pymc-extras
+  - sympytensor>=2.0.0
 
   - pip:
       - jax>0.8

@@ -4,7 +4,9 @@ from pytensor.tensor import TensorVariable
 
 
 def stabilize(x, jitter=1e-16):
-    return x + jitter * pt.eye(x.shape[0])
+    n = x.shape[0]
+    idx = pt.arange(n)
+    return x[idx, idx].inc(jitter)
 
 
 def o1_policy_function_adjoints(

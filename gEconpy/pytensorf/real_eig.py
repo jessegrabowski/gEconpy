@@ -36,9 +36,9 @@ class RealEig(Op):
         outputs[0][0] = np.real(eigvals).astype(M.dtype)
         outputs[1][0] = np.imag(eigvals).astype(M.dtype)
 
-    def L_op(self, inputs, outputs, output_grads):
+    def pullback(self, inputs, outputs, cotangents):
         (M,) = inputs
-        g_real, g_imag = output_grads
+        g_real, g_imag = cotangents
 
         if isinstance(g_real.type, DisconnectedType):
             g_real = pt.zeros_like(outputs[0])

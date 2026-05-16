@@ -5,8 +5,8 @@ import numpy as np
 import pytensor.tensor as pt
 
 from pytensor import sparse as pts
-from pytensor.gradient import Lop
-from pytensor.graph.replace import graph_replace, vectorize_graph
+from pytensor.gradient import pullback
+from pytensor.graph.replace import graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.sparse.variable import SparseVariable
 from pytensor.tensor.variable import TensorVariable
@@ -131,19 +131,23 @@ def _coo_to_csc(
     shape : tuple of int
         Shape of the sparse matrix.
     """
-    rows_pt = pt.as_tensor_variable(np.asarray(rows, dtype=int))
-    cols_pt = pt.as_tensor_variable(np.asarray(cols, dtype=int))
+    # ``rows``/``cols`` are known at graph-build time, so the CSC index arrays are
+    # computed in numpy and passed to ``CSC`` as constants. Only ``data`` stays
+    # symbolic. Building ``indices``/``indptr`` from symbolic graphs instead makes
+    # the CSC op evaluate to wrong values on pytensor 3.0.x.
+    rows = np.asarray(rows, dtype=int)
+    cols = np.asarray(cols, dtype=int)
     _n_rows, n_cols = shape
 
-    order = pt.argsort(cols_pt)
+    order = np.argsort(cols, kind="stable")
     csc_data = data[order]
-    csc_indices = rows_pt[order]
-    sorted_cols = cols_pt[order]
+    csc_indices = rows[order].astype("int32")
+    sorted_cols = cols[order]
 
-    counts = pt.bincount(sorted_cols, minlength=n_cols)
-    csc_indptr = pt.concatenate([pt.as_tensor([0]), pt.cumsum(counts).astype("int64")])
+    counts = np.bincount(sorted_cols, minlength=n_cols)
+    csc_indptr = np.concatenate([[0], np.cumsum(counts)]).astype("int32")
 
-    return csc_data, csc_indices, csc_indptr, shape
+    return csc_data, pt.as_tensor_variable(csc_indices), pt.as_tensor_variable(csc_indptr), shape
 
 
 def sparse_jacobian(
@@ -192,18 +196,31 @@ def sparse_jacobian(
     projection_matrix = np.equal.outer(np.arange(n_colors, dtype=int), output_coloring).astype(float)
 
     jvp_stack = pt.stack(
-        Lop(equations, variables, eval_points, disconnected_inputs="ignore", return_disconnected="zero")
+        pullback(equations, variables, eval_points, disconnected_inputs="ignore", return_disconnected="zero")
     )
     P = pt.dvector("P", shape=(N,))
 
-    # When some equations are disconnected from the given variables, Lop returns
+    # When some equations are disconnected from the given variables, pullback returns
     # literal zeros that don't reference the corresponding eval_points. Only
     # replace eval_points that actually appear in the graph.
     jvp_inputs = set(explicit_graph_inputs(jvp_stack))
     replacements = {p: P[i] for i, p in enumerate(eval_points) if p in jvp_inputs}
     jvp_stack = graph_replace(jvp_stack, replacements)
 
-    compressed_jac = vectorize_graph(jvp_stack, replace={P: pt.as_tensor_variable(projection_matrix)})
+    # Stack per-color JVPs rather than feeding a single 2D projection_matrix constant to
+    # vectorize_graph. Row slices of a 2D constant become strided views in the optimized
+    # graph, which numba's make_constant_array then routes through add_dynamic_addr,
+    # defeating the numba cache. Passing each row as its own C-contiguous 1D constant
+    # keeps the baked constants cacheable.
+    compressed_jac = pt.stack(
+        [
+            graph_replace(
+                jvp_stack,
+                {P: pt.as_tensor_variable(np.ascontiguousarray(projection_matrix[c]))},
+            )
+            for c in range(n_colors)
+        ]
+    )
 
     compressed_index = (output_coloring[rows], cols)
     data = compressed_jac[compressed_index]

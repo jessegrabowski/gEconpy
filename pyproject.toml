@@ -41,15 +41,15 @@ dependencies = [
     "numba",
     "numpy",
     "pandas",
-    "pytensor>=2.37.0,<3",
-    "pymc>=5.27.1,<6",
-    "pymc_extras>=0.8.0",
+    "pytensor>=3.0.0",
+    "pymc>=6.0.0",
+    "pymc_extras>=0.11.0",
     "preliz>=0.23.0",
     "pyparsing",
     "scipy",
     "setuptools",
     "sympy>=1.14.0",
-    "sympytensor>=1.4.1",
+    "sympytensor>=2.0.0",
     "better-optimize>=0.2.1",
     "ipython",
     "xarray",
@@ -125,6 +125,11 @@ filterwarnings = [
 
     # Upstream preliz/pytensor_distributions calls pt.random.gamma with deprecated rate arg
     'ignore:Gamma rate argument is deprecated.*:FutureWarning',
+
+    # Upstream preliz/pytensor_distributions builds RandomVariable Ops without return_next_rng
+    'ignore:RandomVariable Ops will stop hiding the rng output.*:DeprecationWarning',
+
+    'ignore:.*is faster on contiguous arrays.*:numba.core.errors.NumbaPerformanceWarning',
 ]
 
 markers = [
@@ -198,6 +203,9 @@ lines-between-types = 1
 
 'gEconpy/solvers/gensys.py' = [
     "ARG002", # Allow unused arguments in Pytensor Op classes
+    "C901",    # Allow high complexity in the gensys core loop
+    "PLR0912", # Allow many branches (zxz / n_unstable edge cases)
+    "PLR0915", # Allow many statements — gensys is naturally long
 ]
 
 'gEconpy/solvers/cycle_reduction.py' = [

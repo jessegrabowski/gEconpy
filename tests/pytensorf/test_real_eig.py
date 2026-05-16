@@ -36,11 +36,13 @@ class TestRealEig:
         np_eigvals = np_eigvals[np.argsort(np.abs(np_eigvals))]
 
         # Moduli must match exactly
-        assert_allclose(np.sqrt(r**2 + i**2), np.abs(np_eigvals))
+        assert_allclose(np.sqrt(r**2 + i**2), np.abs(np_eigvals), atol=1e-12)
         # Real parts match (conjugate pairs have equal real parts)
-        assert_allclose(r, np.real(np_eigvals))
-        # Imaginary parts match up to sign within conjugate pairs
-        assert_allclose(np.abs(i), np.abs(np.imag(np_eigvals)))
+        assert_allclose(r, np.real(np_eigvals), atol=1e-12)
+        # Imaginary parts match up to sign within conjugate pairs. A real
+        # eigenvalue yields exactly 0 from numpy but O(1e-16) noise from the
+        # Schur-based Op, so an absolute tolerance is required here.
+        assert_allclose(np.abs(i), np.abs(np.imag(np_eigvals)), atol=1e-12)
 
     @pytest.mark.parametrize("case", ["real", "imag", "combined"], ids=str)
     def test_grad(self, test_matrix, rng, case):

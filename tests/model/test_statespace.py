@@ -18,7 +18,7 @@ def rbc_statespace():
 
 
 def _eval_augmented_matrices(ss_mod):
-    inputs = pm.inputvars(ss_mod.linearized_system)
+    inputs = pm.pytensorf.inputvars(ss_mod.linearized_system)
     input_names = [x.name for x in inputs]
     f = pytensor.function(inputs, [ss_mod.ssm["transition"], ss_mod.ssm["selection"]], on_unused_input="ignore")
     param_dict = load_and_cache_model("rbc_linearized.gcn").parameters()
@@ -41,7 +41,7 @@ def test_statespace_matrices_agree_with_model(gcn_file):
     ss_mod = load_and_cache_statespace(gcn_file)
     model = load_and_cache_model(gcn_file)
 
-    inputs = pm.inputvars(ss_mod.linearized_system)
+    inputs = pm.pytensorf.inputvars(ss_mod.linearized_system)
     input_names = [x.name for x in inputs]
     f = pytensor.function(inputs, ss_mod.linearized_system, on_unused_input="ignore")
     mod_matrices = model.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})

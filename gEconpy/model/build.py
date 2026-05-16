@@ -6,7 +6,7 @@ from warnings import warn
 
 import sympy as sp
 
-from pytensor import graph_replace
+from pytensor.graph.replace import graph_replace
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
