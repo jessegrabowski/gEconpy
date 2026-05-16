@@ -9,6 +9,7 @@ from pytensor.graph import Apply, Op
 from pytensor.link.numba.dispatch import basic as numba_basic
 from pytensor.link.numba.dispatch.basic import register_funcify_default_op_cache_key
 from pytensor.link.numba.dispatch.linalg.decomposition.lu_factor import _lu_factor
+from pytensor.link.numba.dispatch.linalg.solvers.general import _solve_gen
 from pytensor.link.numba.dispatch.linalg.solvers.lu_solve import _getrs
 
 from gEconpy.model.perturbation import _log
@@ -200,7 +201,13 @@ def _cycle_reduction_core(
         elif np.isnan(A0_L1_norm):
             break
 
-    T = -np.linalg.solve(A1_hat, A0_initial) if converged else np.zeros_like(A0_initial)
+    # ``_solve_gen`` returns NaN-filled output on LAPACK INFO error instead of
+    # raising — lets the sampler reject the draw rather than abort the run.
+    if converged:
+        X = _solve_gen(A1_hat, A0_initial, False, False, False, False)
+        T = -X
+    else:
+        T = np.zeros_like(A0_initial)
 
     return T, converged
 
