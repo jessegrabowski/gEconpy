@@ -5,19 +5,12 @@ import pytensor
 from pytensor.compile.function.types import Function
 from pytensor.compile.mode import Mode
 from pytensor.compile.profiling import ProfileStats
-from pytensor.graph.replace import clone_replace
 from pytensor.graph.rewriting import rewrite_graph
 from pytensor.tensor.variable import TensorVariable
 
 
 def rewrite_pregrad(graph):
-    # rewrite_graph rewrites its input nodes in place (clone=False default).
-    # Callers pass graphs built on memoized, shared tensors (e.g.
-    # Model._equation_tensors); in-place rewriting corrupts them for every later
-    # consumer. clone_replace copies the graph while sharing the input leaves, so
-    # the rewritten copy still composes with caller-held inputs; rewrite_graph
-    # then mutates only the throwaway clone.
-    return rewrite_graph(clone_replace(graph), include=("canonicalize", "stabilize"))
+    return rewrite_graph(graph, include=("canonicalize", "stabilize"))
 
 
 @lru_cache(maxsize=128)

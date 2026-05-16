@@ -11,6 +11,7 @@ import sympy as sp
 from better_optimize import minimize, root
 from preliz.distributions.distributions import Distribution
 from pytensor import tensor as pt
+from pytensor.graph.replace import clone_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor.variable import TensorVariable
 
@@ -334,6 +335,10 @@ class Model:
         and parameters in the shared sympytensor cache are used as graph inputs, so the returned graphs share node
         identity with ``ss_tensors`` and ``param_tensors``.
 
+        Each call returns a fresh clone (input leaves shared). The built graphs are memoized internally as immutable
+        masters; consumers compile them, and compilation rewrites graphs in place, so handing out the master directly
+        would let one consumer corrupt it for the next.
+
         Parameters
         ----------
         filter_known : bool
@@ -344,7 +349,8 @@ class Model:
         -------
         list of TensorVariable
         """
-        return self._ensure_equation_tensors(filter_known=filter_known)
+        master = self._ensure_equation_tensors(filter_known=filter_known)
+        return clone_replace(master)
 
     @property
     def sympy_to_pytensor_cache(self) -> dict:
