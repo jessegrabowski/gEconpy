@@ -707,6 +707,7 @@ def statespace_from_gcn(
         linearized_system=[A, B, C, D],
         var_order=var_order,
         log_linearized_variables=[v.base_name for v in loglin_vars],
+        sympytensor_cache=cache,
         filter_type=filter_type,
         verbose=verbose,
     )
