@@ -69,7 +69,6 @@ def compile_function(
     outputs: list[Union[sp.Symbol, sp.Expr]]
         The outputs of the function.
 
-
     cache: dict, optional
         A dictionary mapping from pytensor symbols to sympy expressions. Used to prevent duplicate mappings from
         sympy symbol to pytensor symbol from being created. Default is an empty dictionary.
@@ -97,9 +96,6 @@ def compile_function(
 
 
 def _sympytensor_cache_key(sym: sp.Symbol) -> tuple:
-    # Mirrors the key shape sympytensor.as_tensor builds for a plain Symbol. If
-    # sympytensor changes its key format the planted entries miss and we silently
-    # rebuild duplicates — incorrect speed, never incorrect output.
     return (sym.name, type(sym), (), "floatX", ())
 
 
