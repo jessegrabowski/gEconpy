@@ -49,6 +49,18 @@ def test_statespace_matrices_agree_with_model(gcn_file):
     param_dict = model.parameters()
     ss_matrices = f(**{k: param_dict[k] for k in input_names})
 
+    # ``ss_mod.linearized_system`` rows are permuted by ``ss_mod.dr_order.eq_order`` and
+    # the variable axis (cols of A/B/C) by ``ss_mod.var_order``; ``model.linearize_model``
+    # un-permutes both before returning. Apply the same un-permutation here.
+    inv_eq = np.argsort(model.eq_order)
+    inv_var = ss_mod.inv_var_order
+    A_ss, B_ss, C_ss, D_ss = ss_matrices
+    A_ss = A_ss[inv_eq][:, inv_var]
+    B_ss = B_ss[inv_eq][:, inv_var]
+    C_ss = C_ss[inv_eq][:, inv_var]
+    D_ss = D_ss[inv_eq]
+    ss_matrices = [A_ss, B_ss, C_ss, D_ss]
+
     for mod_matrix, ss_matrix in zip(mod_matrices, ss_matrices, strict=False):
         np.testing.assert_allclose(mod_matrix, ss_matrix, atol=1e-8, rtol=1e-8)
 

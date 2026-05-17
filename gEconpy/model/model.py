@@ -3,7 +3,7 @@ import logging
 
 from collections.abc import Callable, Sequence
 from copy import deepcopy
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import numpy as np
 import sympy as sp
@@ -80,6 +80,87 @@ def _initialize_x0(optimizer_kwargs, variables, jitter_x0):
         x0 += rng.normal(scale=1e-4, size=n_variables)
 
     return x0
+
+
+class DROrder(NamedTuple):
+    """Decision-rule (DR) ordering of variables and equations for block-triangular exposure.
+
+    Variables are partitioned into ``[static | pred_only | mixed | forward_only]`` by their
+    time-shift profile across all equations; equations into ``[static | lag_only |
+    lead_only | both]`` by which time-shifts they reference. Reordering A/B/C/D by
+    ``var_order`` (columns) and ``eq_order`` (rows) puts their structural-zero blocks
+    contiguously so ``block(...)`` + ``local_block_dot_to_block_of_dots`` can drop them.
+
+    Apply ``inv_var_order`` to T's rows AND columns and to R's rows when handing back to
+    the Kalman path or the user, so user-visible state vector layout is preserved.
+    Equation reordering does not propagate to T/R, only to A/B/C/D rows themselves.
+    """
+
+    var_order: np.ndarray  # variable column permutation [s | p | m | f]
+    inv_var_order: np.ndarray  # inverse: undoes var_order on T rows/cols, R rows
+    eq_order: np.ndarray  # equation row permutation [S | L | E | B]
+    inv_eq_order: np.ndarray  # inverse: undoes eq_order on A/B/C/D rows
+    n_static_var: int
+    n_pred_only_var: int
+    n_mixed_var: int
+    n_forward_only_var: int
+    n_static_eq: int
+    n_lag_only_eq: int
+    n_lead_only_eq: int
+    n_both_eq: int
+
+    @classmethod
+    def from_model(cls, variables, equations) -> "DROrder":
+        # Variable classes from time-shift incidence across all equations
+        n_var = len(variables)
+        v_lag = np.zeros(n_var, dtype=bool)
+        v_lead = np.zeros(n_var, dtype=bool)
+        for eq in equations:
+            atoms = eq.atoms(TimeAwareSymbol)
+            for j, v in enumerate(variables):
+                if v.set_t(-1) in atoms:
+                    v_lag[j] = True
+                if v.set_t(1) in atoms:
+                    v_lead[j] = True
+        v_static = np.where(~v_lag & ~v_lead)[0]
+        v_pred = np.where(v_lag & ~v_lead)[0]
+        v_mixed = np.where(v_lag & v_lead)[0]
+        v_fwd = np.where(~v_lag & v_lead)[0]
+        var_order = np.concatenate([v_static, v_pred, v_mixed, v_fwd])
+
+        # Equation classes from same per-equation incidence
+        n_eq = len(equations)
+        e_lag = np.zeros(n_eq, dtype=bool)
+        e_lead = np.zeros(n_eq, dtype=bool)
+        for i, eq in enumerate(equations):
+            atoms = eq.atoms(TimeAwareSymbol)
+            for v in variables:
+                if v.set_t(-1) in atoms:
+                    e_lag[i] = True
+                if v.set_t(1) in atoms:
+                    e_lead[i] = True
+                if e_lag[i] and e_lead[i]:
+                    break
+        e_static = np.where(~e_lag & ~e_lead)[0]
+        e_lag_only = np.where(e_lag & ~e_lead)[0]
+        e_lead_only = np.where(~e_lag & e_lead)[0]
+        e_both = np.where(e_lag & e_lead)[0]
+        eq_order = np.concatenate([e_static, e_lag_only, e_lead_only, e_both])
+
+        return cls(
+            var_order=var_order,
+            inv_var_order=np.argsort(var_order),
+            eq_order=eq_order,
+            inv_eq_order=np.argsort(eq_order),
+            n_static_var=len(v_static),
+            n_pred_only_var=len(v_pred),
+            n_mixed_var=len(v_mixed),
+            n_forward_only_var=len(v_fwd),
+            n_static_eq=len(e_static),
+            n_lag_only_eq=len(e_lag_only),
+            n_lead_only_eq=len(e_lead_only),
+            n_both_eq=len(e_both),
+        )
 
 
 class Model:
@@ -472,11 +553,42 @@ class Model:
         return self._backward_variables
 
     @property
-    def forward_variables(self) -> list[TimeAwareSymbol]:
-        """Variables that appear at t+1 in at least one equation (forward-looking/jump variables)."""
-        if not hasattr(self, "_forward_variables"):
+    def symbolic_forward_variables(self) -> list[TimeAwareSymbol]:
+        """Variables appearing at t+1 in any equation (purely syntactic).
+
+        Included if any equation textually contains a ``TimeAwareSymbol`` atom with
+        ``time_index == 1``. This is the parser-level notion of "forward-looking".
+
+        For BK / perturbation purposes, use ``forward_variables`` instead.
+        """
+        if not hasattr(self, "_symbolic_forward_variables"):
             leads = {a.set_t(0) for eq in self._equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == 1}
-            self._forward_variables = [v for v in self._variables if v in leads]
+            self._symbolic_forward_variables = [v for v in self._variables if v in leads]
+        return self._symbolic_forward_variables
+
+    @property
+    def forward_variables(self) -> list[TimeAwareSymbol]:
+        """Forward-looking (jump) variables.
+
+        A variable is forward-looking if its column in the linearized lead-Jacobian
+        ``C`` (from ``A x[t-1] + B x[t] + C x[t+1] + D eps = 0``) has any
+        non-negligible entry. This is the Blanchard-Kahn-relevant set: BK requires
+        the number of unstable eigenvalues to equal ``len(forward_variables)``.
+
+        Computed via the first-order linearization (which solves the steady state if
+        needed) on first access; cached. If linearization is unavailable — e.g., no
+        SS exists with the current parameters — falls back to the syntactic count
+        from ``symbolic_forward_variables``.
+        """
+        if not hasattr(self, "_forward_variables"):
+            try:
+                _, _, C_lin, _ = self.linearize_model(verbose=False)
+                tol = 1e-8
+                col_sums = np.abs(C_lin).sum(axis=0)
+                self._forward_variables = [v for v, s in zip(self._variables, col_sums, strict=False) if s > tol]
+            except Exception:
+                # Fall back to the syntactic count if linearization fails.
+                self._forward_variables = list(self.symbolic_forward_variables)
         return self._forward_variables
 
     @property
@@ -486,16 +598,55 @@ class Model:
 
     @property
     def n_forward(self) -> int:
-        """Number of forward-looking (jump) variables."""
+        """Number of forward-looking (jump) variables. See ``forward_variables``."""
         return len(self.forward_variables)
 
     @property
+    def n_symbolic_forward(self) -> int:
+        return len(self.symbolic_forward_variables)
+
+    @property
     def lead_var_idx(self) -> np.ndarray:
-        """Column indices of forward-looking variables in the Jacobian matrices."""
+        """Column indices of forward-looking variables in the Jacobian matrices.
+
+        Derived from ``forward_variables`` (the dynamic / BK-relevant set).
+        """
         if not hasattr(self, "_lead_var_idx"):
             fwd_set = set(self.forward_variables)
             self._lead_var_idx = np.array([i for i, v in enumerate(self._variables) if v in fwd_set], dtype=int)
         return self._lead_var_idx
+
+    @property
+    def dr_order(self) -> DROrder:
+        """Decision-rule order classifying variables and equations into block-triangular form.
+
+        See :class:`DROrder` for the layout. Cached on first access. Individual
+        ``var_order`` / ``eq_order`` / ``inv_var_order`` / ``inv_eq_order`` properties
+        delegate to this for convenience.
+        """
+        if not hasattr(self, "_dr_order"):
+            self._dr_order = DROrder.from_model(self._variables, self._equations)
+        return self._dr_order
+
+    @property
+    def var_order(self) -> np.ndarray:
+        """Column permutation reordering variables as ``[static | pred_only | mixed | forward_only]``."""
+        return self.dr_order.var_order
+
+    @property
+    def inv_var_order(self) -> np.ndarray:
+        """Inverse of ``var_order``. Apply to T's rows AND columns and R's rows to undo."""
+        return self.dr_order.inv_var_order
+
+    @property
+    def eq_order(self) -> np.ndarray:
+        """Row permutation reordering equations as ``[static | lag_only | lead_only | both]``."""
+        return self.dr_order.eq_order
+
+    @property
+    def inv_eq_order(self) -> np.ndarray:
+        """Inverse of ``eq_order``. Apply to A/B/C/D rows to undo."""
+        return self.dr_order.inv_eq_order
 
     def parameters(self, **updates: float) -> SymbolDictionary[str, float]:
         """
@@ -1100,7 +1251,7 @@ class Model:
         steady_state: dict | None = None,
         loglin_negative_ss: bool = False,
         verbose: bool = True,
-    ) -> tuple[list[TensorVariable], list[TensorVariable], list[TensorVariable]]:
+    ) -> tuple[list[TensorVariable], list[TensorVariable], list[TensorVariable], np.ndarray, np.ndarray]:
         r"""
         Return the symbolic pytensor graphs for the linearized Jacobian matrices.
 
@@ -1132,11 +1283,18 @@ class Model:
         Returns
         -------
         jacobians : list of TensorVariable
-            Four pytensor matrix graph nodes ``[A, B, C, D]``.
+            Four pytensor matrix graph nodes ``[A, B, C, D]``. Rows are in
+            ``self.eq_order`` and the variable axis (cols of A/B/C) is in
+            ``self.var_order``; D's columns are shocks (no permutation).
         ss_input_nodes : list of TensorVariable
             Steady-state variable input nodes consumed by the Jacobian graphs.
         param_input_nodes : list of TensorVariable
-            Parameter input nodes consumed by the Jacobian graphs (discovered via ``explicit_graph_inputs``).
+            Parameter input nodes consumed by the Jacobian graphs (discovered via
+            ``explicit_graph_inputs``).
+        eq_order : ndarray of int
+            Equation row permutation actually applied (a copy of ``self.eq_order``).
+        var_order : ndarray of int
+            Variable column permutation actually applied (a copy of ``self.var_order``).
 
         See Also
         --------
@@ -1147,7 +1305,7 @@ class Model:
         .. code-block:: python
 
             model = model_from_gcn("rbc.gcn")
-            jacobians, ss_nodes, param_nodes = model.symbolic_linearization()
+            jacobians, ss_nodes, param_nodes, eq_order, var_order = model.symbolic_linearization()
             A, B, C, D = jacobians
 
             # Inspect the pytensor graph
@@ -1186,12 +1344,14 @@ class Model:
             self._symbolic_linearize_cache = {}
 
         if loglin_key not in self._symbolic_linearize_cache:
-            jacobians, ss_input_nodes = _linearize_model(
+            jacobians, ss_input_nodes, eq_order, var_order = _linearize_model(
                 variables=self.variables,
                 equations=self.equations,
                 shocks=self.shocks,
                 cache=self._ensure_cache(),
                 loglin_variables=loglin_vars,
+                eq_order=self.eq_order,
+                var_order=self.var_order,
             )
 
             ss_names = {n.name for n in ss_input_nodes}
@@ -1199,7 +1359,13 @@ class Model:
                 v for v in explicit_graph_inputs(jacobians) if v.name is not None and v.name not in ss_names
             ]
 
-            self._symbolic_linearize_cache[loglin_key] = (jacobians, ss_input_nodes, param_input_nodes)
+            self._symbolic_linearize_cache[loglin_key] = (
+                jacobians,
+                ss_input_nodes,
+                param_input_nodes,
+                eq_order,
+                var_order,
+            )
 
         return self._symbolic_linearize_cache[loglin_key]
 
@@ -1350,7 +1516,7 @@ class Model:
                     **steady_state_kwargs,
                 )
 
-        jacobians, ss_input_nodes, param_input_nodes = self.symbolic_linearization(
+        jacobians, ss_input_nodes, param_input_nodes, eq_order, var_order = self.symbolic_linearization(
             order=order,
             log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
@@ -1379,6 +1545,20 @@ class Model:
         param_vals = [param_dict[n.name] for n in param_input_nodes]
 
         A, B, C, D = f(*ss_vals, *param_vals)
+
+        # Internal computation reorders equations into ``self.eq_order`` (rows) and
+        # variables into ``self.var_order`` (columns of A/B/C; D's cols are shocks).
+        # Undo both so the user sees A/B/C/D in original equation × variable order.
+        inv_eq = self.inv_eq_order
+        inv_var = self.inv_var_order
+        eq_is_id = np.array_equal(eq_order, np.arange(len(eq_order)))
+        var_is_id = np.array_equal(var_order, np.arange(len(var_order)))
+        if not eq_is_id:
+            A, B, C, D = (M[inv_eq] for M in (A, B, C, D))
+        if not var_is_id:
+            A = A[:, inv_var]
+            B = B[:, inv_var]
+            C = C[:, inv_var]
 
         return [np.ascontiguousarray(x, dtype=A.dtype) for x in [A, B, C, D]]
 

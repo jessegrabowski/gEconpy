@@ -311,11 +311,15 @@ def eigenvalue_sensitivity(
     if steady_state is None:
         steady_state = model.steady_state(**param_dict, verbose=verbose, **steady_state_kwargs)
 
-    jacobians, ss_nodes, param_nodes = model.symbolic_linearization(steady_state=steady_state, verbose=False)
+    jacobians, ss_nodes, param_nodes, _eq_order, _var_order = model.symbolic_linearization(
+        steady_state=steady_state, verbose=False
+    )
     A_sym, B_sym, C_sym, D_sym = jacobians
     param_names = [p.name for p in param_nodes]
 
-    lead_var_idx = model.lead_var_idx
+    # A/B/C have columns in ``var_order``; translate ``lead_var_idx`` (positions in
+    # original variable order) to positions in the permuted column order.
+    lead_var_idx = model.inv_var_order[model.lead_var_idx]
     eigvals_re_pt, eigvals_im_pt = compute_bk_eigenvalues_pt(A_sym, B_sym, C_sym, D_sym, lead_var_idx)
     eigvals_re_pt = rewrite_pregrad(eigvals_re_pt)
     eigvals_im_pt = rewrite_pregrad(eigvals_im_pt)

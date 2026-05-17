@@ -691,7 +691,11 @@ def statespace_from_gcn(
 
     loglin_vars = [v for v in variables if v.base_name not in not_loglin_variables] if log_linearize else []
 
-    [A, B, C, D], _ss_inputs = _linearize_model(
+    # Internal path — equation reordering is a no-op for downstream solvers (T/R are
+    # variable-indexed). The order is computed once and cached on the Model in
+    # ``Model.dr_order``; here we don't have a Model handle yet (this build creates the
+    # DSGEStateSpace), so we let ``_linearize_model`` compute it on its own.
+    [A, B, C, D], _ss_inputs, _eq_order, var_order = _linearize_model(
         variables=variables,
         equations=equations,
         shocks=shocks,
@@ -720,6 +724,7 @@ def statespace_from_gcn(
         steady_state_mapping=steady_state_mapping,
         ss_resid=ss_resid,
         linearized_system=[A, B, C, D],
+        var_order=var_order,
         filter_type=filter_type,
         verbose=verbose,
     )

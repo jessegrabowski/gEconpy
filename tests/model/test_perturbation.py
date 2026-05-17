@@ -49,6 +49,22 @@ def _sympy_jacobians(variables, equations, shocks, not_loglin_variables=None):
     return matrices
 
 
+def _unpermute_abcd(matrices, eq_order, var_order):
+    """Undo the [eq_order rows, var_order cols] permutation applied by ``linearize_model``.
+
+    A/B/C have rows in ``eq_order`` and cols in ``var_order``; D has rows in ``eq_order``
+    and shock cols (no permutation). Returns matrices in original equation/variable order.
+    """
+    inv_eq = np.argsort(eq_order)
+    inv_var = np.argsort(var_order)
+    A, B, C, D = matrices
+    A = A[inv_eq][:, inv_var]
+    B = B[inv_eq][:, inv_var]
+    C = C[inv_eq][:, inv_var]
+    D = D[inv_eq]
+    return [A, B, C, D]
+
+
 def _compile_and_eval(mod, jacobians, ss_nodes):
     """Compile a list of pytensor Jacobian graphs and evaluate at dummy SS values."""
     ss_names = {n.name for n in ss_nodes}
@@ -88,7 +104,7 @@ class TestLinearizeModel:
     def test_loglin_matches_sympy(self, gcn_file):
         mod = load_and_cache_model(gcn_file)
 
-        jacobians, ss_inputs = linearize_model(
+        jacobians, ss_inputs, eq_order, var_order = linearize_model(
             mod.variables,
             mod.equations,
             mod.shocks,
@@ -96,6 +112,7 @@ class TestLinearizeModel:
             loglin_variables=mod.variables,
         )
         actual = _compile_and_eval(mod, jacobians, ss_inputs)
+        actual = _unpermute_abcd(actual, eq_order, var_order)
 
         expected_mats = _sympy_jacobians(mod.variables, mod.equations, mod.shocks)
         subs = {
@@ -120,7 +137,7 @@ class TestLinearizeModel:
     def test_no_loglin_matches_sympy(self, gcn_file):
         mod = load_and_cache_model(gcn_file)
 
-        jacobians, ss_inputs = linearize_model(
+        jacobians, ss_inputs, eq_order, var_order = linearize_model(
             mod.variables,
             mod.equations,
             mod.shocks,
@@ -128,6 +145,7 @@ class TestLinearizeModel:
             loglin_variables=[],
         )
         actual = _compile_and_eval(mod, jacobians, ss_inputs)
+        actual = _unpermute_abcd(actual, eq_order, var_order)
 
         all_excluded = [x.base_name for x in mod.variables]
         expected_mats = _sympy_jacobians(mod.variables, mod.equations, mod.shocks, not_loglin_variables=all_excluded)

@@ -27,6 +27,7 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perturbation import check_bk_condition_pt
+from gEconpy.pytensorf.block import block
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct_pt
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
@@ -55,6 +56,7 @@ class DSGEStateSpace(PyMCStateSpace):
         steady_state_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         ss_resid: pt.TensorVariable,
         linearized_system: list[pt.TensorVariable],
+        var_order: np.ndarray | None = None,
         filter_type: str = "standard",
         verbose: bool = True,
     ):
@@ -111,6 +113,15 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self.linearized_system = linearized_system
 
+        # Variable column permutation applied by ``linearize_model`` to expose A's and C's
+        # block-zero column structure. T/R returned by the solver have rows AND columns
+        # in this permuted order; the solver call site applies ``inv_var_order`` to put
+        # them back into the user's variable order before they reach the Kalman path.
+        if var_order is None:
+            var_order = np.arange(len(variables))
+        self.var_order = np.asarray(var_order, dtype=int)
+        self.inv_var_order = np.argsort(self.var_order)
+
         self.full_covariance = False
         self.constant_parameters = []
         self._configured = False
@@ -166,6 +177,13 @@ class DSGEStateSpace(PyMCStateSpace):
             T, R, n_steps = scan_cycle_reduction(A, B, C, D, mode=self._mode, **self._solver_kwargs)
             self._n_steps = n_steps
 
+        # T comes back in the *permuted* variable order on both axes; R on its rows.
+        # Map back to the user's variable order so the Kalman filter sees user variables.
+        if not np.array_equal(self.var_order, np.arange(len(self.var_order))):
+            inv = self.inv_var_order
+            T = T[inv][:, inv]
+            R = R[inv]
+
         return T, R
 
     @property
@@ -185,14 +203,25 @@ class DSGEStateSpace(PyMCStateSpace):
         return len(self.lead_var_idx)
 
     def _setup_state_covariance(self):
+        """Build the ``state_cov`` SSM matrix and return it.
+
+        The returned matrix is also the one the Lyapunov solve for ``initial_state_cov``
+        consumes.
+        """
         if self.full_covariance:
             state_cov = self.make_and_register_variable("state_cov", shape=(self.k_posdef, self.k_posdef))
-            self.ssm["state_cov", :, :] = state_cov
-            return
+            Q = pt.assume(state_cov, positive_definite=True)
+            self.ssm["state_cov"] = Q
+            return Q
 
-        for i, shock in enumerate(self.shocks):
-            sigma = self.make_and_register_variable(f"sigma_{shock.base_name}", shape=())
-            self.ssm["state_cov", i, i] = sigma**2
+        # ``pt.diag(stack(...))`` is auto-tagged diagonal by AssumptionFeature, which propagates
+        # symmetric/PSD through the congruence rule (R Q R'), enabling cholesky-based solves and
+        # significant speedups in compile_dlogp for HMC sampling. The string-only setter
+        # bypasses the SetSubtensor wrap that the slice-form would impose.
+        sigmas = [self.make_and_register_variable(f"sigma_{shock.base_name}", shape=()) for shock in self.shocks]
+        Q = pt.diag(pt.stack([s**2 for s in sigmas]))
+        self.ssm["state_cov"] = Q
+        return Q
 
     def _make_design_matrix(self):
         n_cum_lags = self._aggregation_period - 1
@@ -270,7 +299,6 @@ class DSGEStateSpace(PyMCStateSpace):
         n_agg = len(cumulator_vars)
         n_cum_lags = self._aggregation_period - 1
         n_cum = self._n_cumulator_states
-        k_aug = k_orig + n_cum
 
         shift = np.zeros((n_cum_lags, n_cum_lags), dtype=floatX)
         if n_cum_lags > 1:
@@ -282,10 +310,16 @@ class DSGEStateSpace(PyMCStateSpace):
         for agg_pos, orig_idx in enumerate(agg_indices):
             F = pt.set_subtensor(F[agg_pos * n_cum_lags, orig_idx], 1.0)
 
-        T_aug = pt.zeros((k_aug, k_aug), dtype=floatX)
-        T_aug = pt.set_subtensor(T_aug[:k_orig, :k_orig], T)
-        T_aug = pt.set_subtensor(T_aug[k_orig:, :k_orig], F)
-        return pt.set_subtensor(T_aug[k_orig:, k_orig:], C)
+        # Build via ``block`` so ``local_block_dot_to_block_of_dots`` can split
+        # downstream ``T_aug @ x`` into block-of-dots and drop the zero top-right
+        # block contribution entirely.
+        zero_block = pt.zeros((k_orig, n_cum), dtype=floatX)
+        return block(
+            [
+                [T, zero_block],
+                [F, pt.constant(C)],
+            ]
+        )
 
     def _augment_selection(self, R: pt.TensorVariable) -> pt.TensorVariable:
         """
@@ -312,12 +346,10 @@ class DSGEStateSpace(PyMCStateSpace):
         if not self._cumulator_variables:
             return R
 
-        k_orig = self._k_orig_states
         n_cum = self._n_cumulator_states
-        k_aug = k_orig + n_cum
 
-        R_aug = pt.zeros((k_aug, self.k_posdef), dtype=floatX)
-        return pt.set_subtensor(R_aug[:k_orig, :], R)
+        zeros = pt.zeros((n_cum, self.k_posdef), dtype=floatX)
+        return pt.join(-2, R, zeros)
 
     def make_symbolic_graph(self):
         """
@@ -349,7 +381,10 @@ class DSGEStateSpace(PyMCStateSpace):
             self.linearized_system, constant_replacements, strict=False
         )
 
-        self._bk_output = check_bk_condition_pt(A, B, C, D, lead_var_idx=self.lead_var_idx)
+        # A/B/C have columns in ``var_order`` (D's columns are shocks). Translate
+        # ``lead_var_idx`` from original variable positions to permuted positions.
+        permuted_lead_var_idx = self.inv_var_order[self.lead_var_idx]
+        self._bk_output = check_bk_condition_pt(A, B, C, D, lead_var_idx=permuted_lead_var_idx)
 
         T, R = self._setup_policy_matrices(A, B, C, D)
         resid = pt.square(A + B @ T + C @ T @ T).sum()
@@ -373,16 +408,22 @@ class DSGEStateSpace(PyMCStateSpace):
         self.ssm["selection", :, :] = R_aug
         self.ssm["design", :, :] = self._make_design_matrix()
 
-        self._setup_state_covariance()
+        Q = self._setup_state_covariance()
 
         if self.measurement_error:
-            for i, state in enumerate(self.error_states):
-                sigma = self.make_and_register_variable(f"error_sigma_{state}", shape=())
-                self.ssm["obs_cov", i, i] = sigma**2
+            sigmas = [self.make_and_register_variable(f"error_sigma_{state}", shape=()) for state in self.error_states]
+            variances = pt.stack([s**2 for s in sigmas])
+            if len(sigmas) == self.k_endog:
+                H = pt.diag(variances)
+            else:
+                # Mirror the previous semantics: sigmas land at positions 0..len(error_states)-1
+                # of an (k_endog, k_endog) zero matrix.
+                diag_vec = pt.zeros((self.k_endog,))[: len(sigmas)].set(variances)
+                H = pt.diag(diag_vec)
+            self.ssm["obs_cov"] = H
 
         self.ssm["initial_state", :] = pt.zeros(self.k_states)
 
-        Q = self.ssm["state_cov"]
         method = "direct" if self.use_direct_lyapunov else "bilinear"
         self.ssm["initial_state_cov", :, :] = pt.linalg.solve_discrete_lyapunov(
             T_aug, R_aug @ Q @ R_aug.T, method=method
