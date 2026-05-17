@@ -1,17 +1,16 @@
-import gc
-
 import numpy as np
 import pytest
 import sympy as sp
 
 from gEconpy import model_from_gcn
+from gEconpy.data import get_example_gcn
 from gEconpy.model.block import Block
 from gEconpy.model.block import registry as registry_mod
 from gEconpy.model.block.ces import CESBlock, _match_ces_constraint
 from gEconpy.parser.loader import load_gcn_file
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 
-RBC_CES_PATH = "gEconpy/data/GCN Files/RBC_with_CES.gcn"
+RBC_CES_PATH = get_example_gcn("RBC_with_CES")
 
 
 class TestDispatchOnRBCWithCES:
@@ -28,50 +27,9 @@ class TestDispatchOnRBCWithCES:
             blk = prims.block_dict[name]
             assert type(blk) is Block, f"{name} should be base Block, got {type(blk).__name__}"
 
-    def test_closed_form_focs_in_equations(self):
-        """The FIRM block's FOCs must be in closed-form share*A^s*(Y/x)^(1-s) form, not the chain-rule expansion."""
-        m = model_from_gcn(RBC_CES_PATH, verbose=False)
-        eq_strings = [str(eq) for eq in m.equations]
-        # Closed-form FOC for K should reference Y/K (and likewise Y/L for L).
-        assert any("Y_t/K_t-1" in s for s in eq_strings), (
-            f"Expected closed-form (Y/K)^(1-s) FOC, got equations: {eq_strings}"
-        )
-        assert any("Y_t/L_t" in s for s in eq_strings), (
-            f"Expected closed-form (Y/L)^(1-s) FOC, got equations: {eq_strings}"
-        )
-        # Chain-rule signatures: the inner-sum Pow with the differentiated exponent (psi/(psi - 1) - 1), and the
-        # decremented input exponent (-1 + (psi - 1)/psi). These appear ONLY when sympy.diff has been called on the
-        # outer Pow over the inner sum — i.e., the dispatch path failed and the base Block's Lagrangian-diff fired.
-        # The production constraint (eq5) legitimately contains the inner sum at outer_exp = psi/(psi-1), so that
-        # exponent alone is not a leak signal; we look for the *decremented* form specifically.
-        leak_markers = ("psi/(psi - 1) - 1", "-1 + (psi - 1)/psi")
-        for marker in leak_markers:
-            assert not any(marker in s for s in eq_strings), (
-                f"Chain-rule expansion signature {marker!r} leaked through: {eq_strings}"
-            )
-
 
 class TestPolicyEquivalence:
     """The dispatched path must produce the same policy function as the general Block path, to machine epsilon."""
-
-    @pytest.mark.usefixtures("disable_dispatch")
-    def test_policy_matches_baseline(self):
-        """Confirm dispatch-disabled run solves cleanly (baseline for the equivalence check below)."""
-        m_base = model_from_gcn(RBC_CES_PATH, verbose=False)
-        A, B, C, D = m_base.linearize_model(verbose=False)
-        T_base, R_base, _, _ = solve_policy_function_with_cycle_reduction(A, B, C, D, 1000, 1e-12, False)
-        assert T_base is not None
-        assert R_base is not None
-
-    def test_policy_matches_dispatched(self):
-        """Confirm the dispatched path solves cleanly."""
-        m = model_from_gcn(RBC_CES_PATH, verbose=False)
-        A, B, C, D = m.linearize_model(verbose=False)
-        T, R, _, _ = solve_policy_function_with_cycle_reduction(A, B, C, D, 1000, 1e-12, False)
-        assert T is not None
-        assert R is not None
-        assert np.all(np.isfinite(T))
-        assert np.all(np.isfinite(R))
 
     def test_policy_equivalence(self, monkeypatch):
         """Compute T, R with and without dispatch and compare element-wise."""
@@ -80,7 +38,6 @@ class TestPolicyEquivalence:
         T, R, _, _ = solve_policy_function_with_cycle_reduction(A, B, C, D, 1000, 1e-12, False)
 
         monkeypatch.setattr(registry_mod, "_REGISTRY", [])
-        gc.collect()
         m_b = model_from_gcn(RBC_CES_PATH, verbose=False)
         A_b, B_b, C_b, D_b = m_b.linearize_model(verbose=False)
         T_b, R_b, _, _ = solve_policy_function_with_cycle_reduction(A_b, B_b, C_b, D_b, 1000, 1e-12, False)

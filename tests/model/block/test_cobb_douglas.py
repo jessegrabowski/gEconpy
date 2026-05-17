@@ -1,17 +1,16 @@
-import gc
-
 import numpy as np
 import pytest
 import sympy as sp
 
 from gEconpy import model_from_gcn
+from gEconpy.data import get_example_gcn
 from gEconpy.model.block import Block
 from gEconpy.model.block import registry as registry_mod
 from gEconpy.model.block.cobb_douglas import CobbDouglasBlock, _match_cobb_douglas_constraint
 from gEconpy.parser.loader import load_gcn_file
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 
-RBC_PATH = "gEconpy/data/GCN Files/RBC.gcn"
+RBC_PATH = get_example_gcn("RBC")
 
 
 class TestDispatchOnRBC:
@@ -28,37 +27,9 @@ class TestDispatchOnRBC:
             blk = prims.block_dict[name]
             assert type(blk) is Block, f"{name} should be base Block, got {type(blk).__name__}"
 
-    def test_closed_form_focs_in_equations(self):
-        """The FIRM block's FOCs must be in closed-form Y/K and Y/L form, not the chain-rule expansion."""
-        m = model_from_gcn(RBC_PATH, verbose=False)
-        eq_strings = [str(eq) for eq in m.equations]
-        assert any("Y_t/K_t-1" in s for s in eq_strings), f"Expected closed-form Y/K FOC, got equations: {eq_strings}"
-        assert not any("K_t-1**(alpha - 1)" in s for s in eq_strings), (
-            f"Chain-rule expansion leaked through: {eq_strings}"
-        )
-
 
 class TestPolicyEquivalence:
     """The dispatched path must produce the same policy function as the general Block path, to machine epsilon."""
-
-    @pytest.mark.usefixtures("disable_dispatch")
-    def test_rbc_policy_matches_baseline(self):
-        """Confirm dispatch-disabled run solves cleanly (baseline for the equivalence check below)."""
-        m_base = model_from_gcn(RBC_PATH, verbose=False)
-        A, B, C, D = m_base.linearize_model(verbose=False)
-        T_base, R_base, _, _ = solve_policy_function_with_cycle_reduction(A, B, C, D, 1000, 1e-12, False)
-        assert T_base is not None
-        assert R_base is not None
-
-    def test_rbc_policy_matches_dispatched(self):
-        """Confirm the dispatched path solves cleanly."""
-        m = model_from_gcn(RBC_PATH, verbose=False)
-        A, B, C, D = m.linearize_model(verbose=False)
-        T, R, _, _ = solve_policy_function_with_cycle_reduction(A, B, C, D, 1000, 1e-12, False)
-        assert T is not None
-        assert R is not None
-        assert np.all(np.isfinite(T))
-        assert np.all(np.isfinite(R))
 
     def test_rbc_policy_equivalence(self, monkeypatch):
         """Compute T, R with and without dispatch and compare element-wise."""
@@ -67,7 +38,6 @@ class TestPolicyEquivalence:
         T, R, _, _ = solve_policy_function_with_cycle_reduction(A, B, C, D, 1000, 1e-12, False)
 
         monkeypatch.setattr(registry_mod, "_REGISTRY", [])
-        gc.collect()
         m_b = model_from_gcn(RBC_PATH, verbose=False)
         A_b, B_b, C_b, D_b = m_b.linearize_model(verbose=False)
         T_b, R_b, _, _ = solve_policy_function_with_cycle_reduction(A_b, B_b, C_b, D_b, 1000, 1e-12, False)

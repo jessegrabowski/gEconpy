@@ -1,8 +1,20 @@
+import pytest
 import sympy as sp
 
 from gEconpy.model.block import Block, dispatch_block
 from gEconpy.model.block import registry as registry_mod
 from gEconpy.model.block.registry import register_block
+
+
+def _stub_block(detect_result):
+    """Build a fresh, unregistered Block subclass whose ``detect`` returns a constant."""
+
+    class _Stub(Block):
+        @classmethod
+        def detect(cls, *args, **kwargs):
+            return detect_result
+
+    return _Stub
 
 
 class TestDispatchAPI:
@@ -13,90 +25,62 @@ class TestDispatchAPI:
         b = dispatch_block(name="EMPTY")
         assert type(b) is Block
 
-    def test_block_import_still_works(self):
-        """Existing ``from gEconpy.model.block import Block`` must continue to resolve."""
-        from gEconpy.model.block import Block as B  # noqa: PLC0415
-
-        assert B is Block
-
 
 class TestRegistryMechanism:
     """Subclass registration via :func:`register_block` and dispatch ordering."""
 
     def test_register_block_appends_subclass(self, monkeypatch):
-        """The decorator appends the class to the registry in declaration order."""
+        """The decorator appends the class to the registry."""
         monkeypatch.setattr(registry_mod, "_REGISTRY", [])
-
-        @register_block
-        class _FakeBlock(Block):
-            @classmethod
-            def detect(cls, constraints, objective, identities):
-                return False
-
-        assert _FakeBlock in registry_mod._REGISTRY
+        stub = _stub_block(detect_result=False)
+        register_block(stub)
+        assert stub in registry_mod._REGISTRY
 
     def test_register_block_is_idempotent(self, monkeypatch):
         """Re-registering the same class is a no-op (no duplicate entries)."""
         monkeypatch.setattr(registry_mod, "_REGISTRY", [])
+        stub = _stub_block(detect_result=False)
+        register_block(stub)
+        register_block(stub)
+        assert registry_mod._REGISTRY.count(stub) == 1
 
-        @register_block
-        class _FakeBlock(Block):
-            @classmethod
-            def detect(cls, constraints, objective, identities):
-                return False
+    def test_register_block_rejects_non_block(self):
+        """register_block must reject anything that is not a Block subclass."""
 
-        register_block(_FakeBlock)
-        assert registry_mod._REGISTRY.count(_FakeBlock) == 1
+        class _NotABlock:
+            pass
+
+        with pytest.raises(TypeError, match="Block subclass"):
+            register_block(_NotABlock)
 
     def test_dispatch_returns_first_matching_subclass(self, monkeypatch):
         """The dispatcher walks the registry in order and constructs the first match."""
-
-        class _AlwaysMatch(Block):
-            @classmethod
-            def detect(cls, constraints, objective, identities):
-                return True
-
-        class _NeverMatch(Block):
-            @classmethod
-            def detect(cls, constraints, objective, identities):
-                return False
-
-        monkeypatch.setattr(registry_mod, "_REGISTRY", [_AlwaysMatch, _NeverMatch])
-        b = dispatch_block(name="X")
-        assert isinstance(b, _AlwaysMatch)
+        always, never = _stub_block(detect_result=True), _stub_block(detect_result=False)
+        monkeypatch.setattr(registry_mod, "_REGISTRY", [always, never])
+        assert isinstance(dispatch_block(name="X"), always)
 
     def test_dispatch_order_matters(self, monkeypatch):
         """If two subclasses both match, the earlier one wins (registration order is precedence)."""
+        first, second = _stub_block(detect_result=True), _stub_block(detect_result=True)
 
-        class _FirstMatch(Block):
-            @classmethod
-            def detect(cls, constraints, objective, identities):
-                return True
+        monkeypatch.setattr(registry_mod, "_REGISTRY", [first, second])
+        assert isinstance(dispatch_block(name="X"), first)
 
-        class _SecondMatch(Block):
-            @classmethod
-            def detect(cls, constraints, objective, identities):
-                return True
-
-        monkeypatch.setattr(registry_mod, "_REGISTRY", [_FirstMatch, _SecondMatch])
-        assert isinstance(dispatch_block(name="X"), _FirstMatch)
-
-        monkeypatch.setattr(registry_mod, "_REGISTRY", [_SecondMatch, _FirstMatch])
-        assert isinstance(dispatch_block(name="X"), _SecondMatch)
+        monkeypatch.setattr(registry_mod, "_REGISTRY", [second, first])
+        assert isinstance(dispatch_block(name="X"), second)
 
 
 class TestDispatchDetectArgs:
-    """The dispatcher passes the same constraint/objective/identity dicts to every subclass's ``detect``."""
+    """The dispatcher passes the constraint/objective/identity dicts through to each subclass's ``detect``."""
 
     def test_detect_receives_kwargs(self, monkeypatch):
+        """detect() sees the exact dicts dispatch_block was given."""
         seen = {}
 
         class _Recorder(Block):
             @classmethod
             def detect(cls, constraints, objective, identities):
-                seen["constraints"] = constraints
-                seen["objective"] = objective
-                seen["identities"] = identities
+                seen.update(constraints=constraints, objective=objective, identities=identities)
                 return False
 
         monkeypatch.setattr(registry_mod, "_REGISTRY", [_Recorder])
