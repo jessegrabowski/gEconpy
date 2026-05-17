@@ -1787,7 +1787,8 @@ def plot_estimated_matrix(
     n_shocks = dsge_mod.k_posdef
     subplot_kwargs = subplot_kwargs or {}
 
-    fig, ax = plt.subplots(n_shocks, n_shocks, **subplot_kwargs)
+    # squeeze=False keeps ax a 2-D array even for a single shock, so ax[i, j] stays valid.
+    fig, ax = plt.subplots(n_shocks, n_shocks, squeeze=False, **subplot_kwargs)
 
     mu = idata.posterior[matrix_name].mean(dim=["chain", "draw"])
     hdi = azs.hdi(idata.posterior[matrix_name])
