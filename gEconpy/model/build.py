@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from warnings import warn
 
+import pytensor.tensor as pt
 import sympy as sp
 
 from pytensor.graph.replace import graph_replace
@@ -12,7 +13,6 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import ExtraParameterError, ExtraParameterWarning, OrphanParameterError
-from gEconpy.model.compile import make_cache_key
 from gEconpy.model.model import Model
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import linearize_model as _linearize_model
@@ -21,8 +21,6 @@ from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
     _ss_residual_to_pytensor,
-    build_minimize_graphs,
-    build_root_graphs,
     compile_known_ss,
     propagate_steady_state_through_identities,
     simplify_provided_ss_equations,
@@ -573,11 +571,11 @@ def statespace_from_gcn(
     simplify_constants: bool = True,
     infer_steady_state: bool = True,
     verbose: bool = True,
-    error_function: ERROR_FUNCTIONS = "squared",
     on_unused_parameters: str = "raise",
     log_linearize: bool = True,
     not_loglin_variables: list[str] | None = None,
     show_errors: bool = True,
+    filter_type: str = "standard",
 ) -> DSGEStateSpace:
     """
     Build a symbolic DSGE state-space model from a GCN file.
@@ -600,8 +598,6 @@ def statespace_from_gcn(
         Propagate analytical steady-state solutions through identities.
     verbose : bool, default True
         Print a build report on completion.
-    error_function : str, default ``'squared'``
-        Steady-state error function.
     on_unused_parameters : str, default ``'raise'``
         How to handle unused parameters: ``'raise'``, ``'warn'``, or ``'ignore'``.
     log_linearize : bool, default True
@@ -610,6 +606,8 @@ def statespace_from_gcn(
         Variable names to exclude from log-linearization.
     show_errors : bool, default True
         Pretty-print parse errors to stderr.
+    filter_type : str, default ``'standard'``
+        Kalman-filter variant to use in the underlying ``PyMCStateSpace``.
 
     Returns
     -------
@@ -671,22 +669,10 @@ def statespace_from_gcn(
         cache=cache,
     )
 
-    ss_variables = [x.to_ss() for x in variables]
-    ss_nodes = []
-    for v in ss_variables:
-        ck = make_cache_key(v.name, type(v))
-        if ck in cache:
-            ss_nodes.append(cache[ck])
-
-    ss_resid, ss_jac = build_root_graphs(equations_pt, ss_nodes, use_jac=True)
-    ss_error, ss_grad, ss_hess, _, _ = build_minimize_graphs(
-        equations_pt,
-        ss_nodes,
-        error_func=error_function,
-        use_jac=True,
-        use_hess=True,
-        use_hessp=False,
-    )
+    # DSGEStateSpace only consumes ss_resid (squared into a penalty in _setup_ss_model).
+    # The Jacobian / error / gradient / Hessian graphs that the model_from_gcn path needs
+    # for numerical SS solving are discarded here, so don't build them.
+    ss_resid = pt.stack(equations_pt) if equations_pt else pt.zeros(0)
 
     if not_loglin_variables is None:
         not_loglin_variables = []
@@ -718,11 +704,7 @@ def statespace_from_gcn(
     }
     replacements = parameter_mapping | steady_state_mapping
 
-    ss_resid, ss_jac, ss_error, ss_grad, ss_hess = graph_replace(
-        [ss_resid, ss_jac, ss_error, ss_grad, ss_hess],
-        replacements,
-        strict=False,
-    )
+    ss_resid = graph_replace(ss_resid, replacements, strict=False)
     A, B, C, D = rewrite_pregrad(graph_replace([A, B, C, D], replacements, strict=False))
 
     return DSGEStateSpace(
@@ -735,12 +717,9 @@ def statespace_from_gcn(
         shock_priors=shock_priors,
         parameter_mapping=parameter_mapping,
         steady_state_mapping=steady_state_mapping,
-        ss_jac=ss_jac,
         ss_resid=ss_resid,
-        ss_error=ss_error,
-        ss_error_grad=ss_grad,
-        ss_error_hess=ss_hess,
         linearized_system=[A, B, C, D],
+        filter_type=filter_type,
         verbose=verbose,
     )
 

@@ -53,12 +53,9 @@ class DSGEStateSpace(PyMCStateSpace):
         shock_priors: SymbolDictionary[str, CompositeDistribution],
         parameter_mapping: dict[pt.TensorVariable, pt.TensorVariable],
         steady_state_mapping: dict[pt.TensorVariable, pt.TensorVariable],
-        ss_jac: pt.TensorVariable,
         ss_resid: pt.TensorVariable,
-        ss_error: pt.TensorVariable,
-        ss_error_grad: pt.TensorVariable,
-        ss_error_hess: pt.TensorVariable,
         linearized_system: list[pt.TensorVariable],
+        filter_type: str = "standard",
         verbose: bool = True,
     ):
         """
@@ -88,16 +85,9 @@ class DSGEStateSpace(PyMCStateSpace):
             deterministic.
         steady_state_mapping: dict
             Symbolic function mapping input parameters to the steady state values of the model
-        ss_jac: pt.TensorVariable
-            Symbolic Jacobian of the steady state equations
         ss_resid: pt.TensorVariable
-            Symbolic vector of (signed) residuals of the steady state equations
-        ss_error: pt.TensorVariable
-            Symbolic scalar-valued error function used to minimize the steady state residuals.
-        ss_error_grad: pt.TensorVariable
-            Symbolic gradient of the steady state error function
-        ss_error_hess: pt.TensorVariable
-            Symbolic hessian of the steady state error function
+            Symbolic vector of (signed) residuals of the steady state equations. Used as a penalty term
+            during PyMC sampling to flag parameter draws whose analytical SS does not satisfy the FOCs.
         linearized_system: list of pt.TensorVariable
             List of four symbolic expressions representing the linearized system of equations as partial
             jacobians of the model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with
@@ -117,11 +107,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self.steady_state_mapping = steady_state_mapping
         self.input_parameters = [x for x in parameter_mapping if x.name in param_dict]
 
-        self.ss_jac = ss_jac
         self.ss_resid = ss_resid
-        self.ss_error = ss_error
-        self.ss_error_grad = ss_error_grad
-        self.ss_error_hess = ss_error_hess
 
         self.linearized_system = linearized_system
 
@@ -157,7 +143,7 @@ class DSGEStateSpace(PyMCStateSpace):
             k_endog,
             k_states,
             k_posdef,
-            filter_type="standard",
+            filter_type=filter_type,
             verbose=False,
             measurement_error=False,
         )

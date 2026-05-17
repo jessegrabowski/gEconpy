@@ -9,6 +9,7 @@ from pytensor.tensor.variable import TensorVariable
 
 
 def rewrite_pregrad(graph):
+    """Run canonicalize + stabilize on a graph before gradient propagation."""
     return rewrite_graph(graph, include=("canonicalize", "stabilize"))
 
 
