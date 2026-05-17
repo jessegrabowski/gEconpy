@@ -15,7 +15,7 @@ class TestDispatchAPI:
 
     def test_block_import_still_works(self):
         """Existing ``from gEconpy.model.block import Block`` must continue to resolve."""
-        from gEconpy.model.block import Block as B
+        from gEconpy.model.block import Block as B  # noqa: PLC0415
 
         assert B is Block
 

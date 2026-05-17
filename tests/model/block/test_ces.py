@@ -171,7 +171,10 @@ class TestParameterizationVariants:
     """The matcher must accept the various ``s`` and share spellings that show up across DSGE practice."""
 
     def test_direct_exponent_form(self):
-        """``Y = A * (alpha * x1^rho + (1-alpha) * x2^rho)^(1/rho)`` — direct-exponent parameterization, simple shares."""
+        """Direct-exponent parameterization with simple shares.
+
+        ``Y = A * (alpha * x1^rho + (1-alpha) * x2^rho)^(1/rho)``
+        """
         Y, A, x1, x2, alpha, rho = sp.symbols("Y A x1 x2 alpha rho")
         constraints = {0: sp.Eq(Y, A * (alpha * x1**rho + (1 - alpha) * x2**rho) ** (1 / rho))}
         m = _match_ces_constraint(constraints)
