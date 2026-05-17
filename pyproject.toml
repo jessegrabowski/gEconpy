@@ -218,6 +218,10 @@ lines-between-types = 1
     "ARG002", # Allow unused arguments in Pytensor Op classes
 ]
 
+'gEconpy/pytensorf/block.py' = [
+    "C901", # Vendored from pytensor verbatim; keep upstream structure
+]
+
 'gEconpy/model/*.py' = [
     "C901" ,  # Allow high complexity in model definition
     "PLR0912", # Allow many branches

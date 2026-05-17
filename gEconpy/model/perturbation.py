@@ -15,6 +15,7 @@ from sympytensor import as_tensor
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.timing import make_all_variable_time_combinations
+from gEconpy.pytensorf.block import block
 from gEconpy.pytensorf.compile import rewrite_pregrad
 from gEconpy.pytensorf.real_eig import real_eig
 from gEconpy.pytensorf.sparse_jacobian import sparse_jacobian
@@ -261,7 +262,7 @@ def linearize_model(
             A_rows.append([pt.zeros((n_E, n_var))])
         if n_B_eq > 0:
             A_rows.append(_row(n_s, A_B, n_f, n_B_eq))
-        A = pt.block(A_rows)
+        A = block(A_rows)
 
         # C: compute only the (E+B) × (m+f) submatrix
         c_active_eqs = permuted_eqs[n_S + n_L :]
@@ -281,7 +282,7 @@ def linearize_model(
             C_rows.append([pt.zeros((n_E, n_s + n_p)), C_E])
         if n_B_eq > 0:
             C_rows.append([pt.zeros((n_B_eq, n_s + n_p)), C_B])
-        C = pt.block(C_rows)
+        C = block(C_rows)
     else:
         # Degenerate: no useful 4-class split — fall back to plain dense Jacobians,
         # still applying any user-supplied permutations.

@@ -89,7 +89,7 @@ class DROrder(NamedTuple):
     time-shift profile across all equations; equations into ``[static | lag_only |
     lead_only | both]`` by which time-shifts they reference. Reordering A/B/C/D by
     ``var_order`` (columns) and ``eq_order`` (rows) puts their structural-zero blocks
-    contiguously so ``pt.block(...)`` + ``local_block_dot_to_block_of_dots`` can drop them.
+    contiguously so ``block(...)`` + ``local_block_dot_to_block_of_dots`` can drop them.
 
     Apply ``inv_var_order`` to T's rows AND columns and to R's rows when handing back to
     the Kalman path or the user, so user-visible state vector layout is preserved.

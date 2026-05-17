@@ -27,6 +27,7 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perturbation import check_bk_condition_pt
+from gEconpy.pytensorf.block import block
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct_pt
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
@@ -302,11 +303,11 @@ class DSGEStateSpace(PyMCStateSpace):
         for agg_pos, orig_idx in enumerate(agg_indices):
             F = pt.set_subtensor(F[agg_pos * n_cum_lags, orig_idx], 1.0)
 
-        # Build via ``pt.block`` so ``local_block_dot_to_block_of_dots`` can split
+        # Build via ``block`` so ``local_block_dot_to_block_of_dots`` can split
         # downstream ``T_aug @ x`` into block-of-dots and drop the zero top-right
         # block contribution entirely.
         zero_block = pt.zeros((k_orig, n_cum), dtype=floatX)
-        return pt.block(
+        return block(
             [
                 [T, zero_block],
                 [F, pt.constant(C)],
