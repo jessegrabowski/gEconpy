@@ -1,5 +1,4 @@
 from difflib import unified_diff
-from pathlib import Path
 
 import pytest
 
@@ -8,8 +7,7 @@ from gEconpy.parser.errors import GCNParseError
 from gEconpy.parser.formatting import ErrorFormatter
 from gEconpy.parser.loader import load_gcn_file
 from gEconpy.parser.preprocessor import preprocess
-
-ERROR_GCNS_DIR = Path(__file__).parent.parent / "_resources" / "error_gcns"
+from tests.conftest import ERROR_GCNS as ERROR_GCNS_DIR
 
 
 def get_error_test_cases():

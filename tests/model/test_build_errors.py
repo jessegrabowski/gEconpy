@@ -1,14 +1,13 @@
-from pathlib import Path
-
 import pytest
 
 from gEconpy.model.build import model_from_gcn
 from gEconpy.parser.errors import GCNGrammarError, GCNParseError
+from tests.conftest import ERROR_GCNS
 
 
 @pytest.fixture
 def error_gcns_dir():
-    return Path(__file__).parent.parent / "_resources" / "error_gcns"
+    return ERROR_GCNS
 
 
 class TestModelBuildErrors:

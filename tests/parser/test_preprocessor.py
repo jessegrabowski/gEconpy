@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from gEconpy.parser.ast import GCNModel
@@ -10,6 +8,7 @@ from gEconpy.parser.preprocessor import (
     preprocess_file,
     quick_parse,
 )
+from tests.conftest import TEST_GCNS
 
 
 class TestQuickParse:
@@ -231,7 +230,7 @@ class TestPreprocessWithAllFeatures:
 class TestPreprocessFile:
     @pytest.fixture
     def gcn_dir(self):
-        return Path(__file__).parent.parent / "_resources" / "test_gcns"
+        return TEST_GCNS
 
     def test_parse_existing_file(self, gcn_dir):
         gcn_path = gcn_dir / "one_block_1.gcn"

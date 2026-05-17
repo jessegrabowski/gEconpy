@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 import sympy as sp
 
@@ -15,6 +13,7 @@ from gEconpy.parser.loader import (
     load_gcn_string,
 )
 from gEconpy.parser.preprocessor import quick_parse
+from tests.conftest import TEST_GCNS
 
 
 class TestAstBlockToEquations:
@@ -288,7 +287,7 @@ class TestLoadGcnString:
 class TestLoadGcnFile:
     @pytest.fixture
     def gcn_dir(self):
-        return Path(__file__).parent.parent / "_resources" / "test_gcns"
+        return TEST_GCNS
 
     def test_load_existing_file(self, gcn_dir):
         gcn_path = gcn_dir / "one_block_1.gcn"
