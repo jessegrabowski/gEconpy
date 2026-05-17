@@ -25,6 +25,8 @@ def register_block(cls: type[Block]) -> type[Block]:
     cls : type
         The class, unchanged. Returned to support decorator usage.
     """
+    if not (isinstance(cls, type) and issubclass(cls, Block)):
+        raise TypeError(f"register_block expects a Block subclass, got {cls!r}")
     if cls in _REGISTRY:
         return cls
     _REGISTRY.append(cls)
