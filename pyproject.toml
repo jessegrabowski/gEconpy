@@ -106,6 +106,8 @@ minversion = "6.0"
 xfail_strict=true
 log_cli=true
 log_cli_level="INFO"
+# Force the non-interactive matplotlib backend so plotting tests never open a window.
+env = ["MPLBACKEND=Agg"]
 filterwarnings = [
     "error",
     # JAX issues an over-eager warning if os.fork() is called when the JAX module is loaded, even if JAX isn't being used
