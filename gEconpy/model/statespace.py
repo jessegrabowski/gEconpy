@@ -203,10 +203,16 @@ class DSGEStateSpace(PyMCStateSpace):
         return len(self.lead_var_idx)
 
     def _setup_state_covariance(self):
+        """Build the ``state_cov`` SSM matrix and return it.
+
+        The returned matrix is also the one the Lyapunov solve for ``initial_state_cov``
+        consumes.
+        """
         if self.full_covariance:
             state_cov = self.make_and_register_variable("state_cov", shape=(self.k_posdef, self.k_posdef))
-            self.ssm["state_cov"] = pt.assume(state_cov, positive_definite=True)[None, :, :]
-            return
+            Q = pt.assume(state_cov, positive_definite=True)
+            self.ssm["state_cov"] = Q
+            return Q
 
         # ``pt.diag(stack(...))`` is auto-tagged diagonal by AssumptionFeature, which propagates
         # symmetric/PSD through the congruence rule (R Q R'), enabling cholesky-based solves and
@@ -214,7 +220,8 @@ class DSGEStateSpace(PyMCStateSpace):
         # bypasses the SetSubtensor wrap that the slice-form would impose.
         sigmas = [self.make_and_register_variable(f"sigma_{shock.base_name}", shape=()) for shock in self.shocks]
         Q = pt.diag(pt.stack([s**2 for s in sigmas]))
-        self.ssm["state_cov"] = Q[None, :, :]
+        self.ssm["state_cov"] = Q
+        return Q
 
     def _make_design_matrix(self):
         n_cum_lags = self._aggregation_period - 1
@@ -401,7 +408,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self.ssm["selection", :, :] = R_aug
         self.ssm["design", :, :] = self._make_design_matrix()
 
-        self._setup_state_covariance()
+        Q = self._setup_state_covariance()
 
         if self.measurement_error:
             sigmas = [self.make_and_register_variable(f"error_sigma_{state}", shape=()) for state in self.error_states]
@@ -413,11 +420,10 @@ class DSGEStateSpace(PyMCStateSpace):
                 # of an (k_endog, k_endog) zero matrix.
                 diag_vec = pt.zeros((self.k_endog,))[: len(sigmas)].set(variances)
                 H = pt.diag(diag_vec)
-            self.ssm["obs_cov"] = H[None, :, :]
+            self.ssm["obs_cov"] = H
 
         self.ssm["initial_state", :] = pt.zeros(self.k_states)
 
-        Q = self.ssm["state_cov"]
         method = "direct" if self.use_direct_lyapunov else "bilinear"
         self.ssm["initial_state_cov", :, :] = pt.linalg.solve_discrete_lyapunov(
             T_aug, R_aug @ Q @ R_aug.T, method=method
