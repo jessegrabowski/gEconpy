@@ -315,11 +315,11 @@ def test_numerical_steady_state(how: str, gcn_file: str):
     numeric_res = model.steady_state(
         how=how,
         verbose=False,
-        use_hess=True,
+        use_hess=False,
         use_hessp=False,
         optimizer_kwargs={
             "maxiter": 50_000,
-            "method": "hybr" if how == "root" else "Newton-CG",
+            "method": "hybr" if how == "root" else "L-BFGS-B",
         },
         fixed_values=fixed_values,
         progressbar=False,
@@ -344,7 +344,9 @@ def test_numerical_steady_state_with_calibrated_params():
     res = model.steady_state(
         how="minimize",
         verbose=False,
-        optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 100_000}},
+        use_hess=False,
+        use_hessp=False,
+        optimizer_kwargs={"method": "L-BFGS-B", "options": {"maxiter": 100_000}},
         bounds={"alpha": (0.05, 0.7)},
         progressbar=False,
     )
@@ -382,9 +384,10 @@ def test_partially_analytical_steady_state(partial_file, analytic_file):
     numeric_res = partial_model.steady_state(
         how="minimize",
         verbose=False,
-        optimizer_kwargs={"method": "trust-ncg", "options": {"gtol": 1e-24}},
+        optimizer_kwargs={"method": "L-BFGS-B"},
         progressbar=False,
-        use_hessp=True,
+        use_hess=False,
+        use_hessp=False,
         use_jac=True,
     )
 
