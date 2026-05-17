@@ -246,6 +246,7 @@ lines-between-types = 1
     'D106',  # Missing docstring for public method -- unittest test subclasses don't need docstrings
     "PLR2004", # Allow magic numbers in test files
     "E741", # Allow single letter variable names in test files (e.g. I for investment)
+    "ARG003", # Allow unused arguments in test-double classmethods implementing an interface
 ]
 
 'docs/source/examples/*/*.ipynb' = [

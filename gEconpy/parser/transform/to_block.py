@@ -1,16 +1,9 @@
-"""
-Bridge to convert new parser AST to Block objects.
-
-This module converts the AST directly to sympy equations and creates Block
-objects.
-"""
-
 from collections import defaultdict
 
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.block import Block
+from gEconpy.model.block import Block, dispatch_block
 from gEconpy.parser.ast import (
     GCNBlock,
     GCNDistribution,
@@ -38,9 +31,8 @@ def _equation_to_sympy(
         param = sp.Symbol(eq.calibrating_parameter, **param_assumptions)
         # The calibrating equation form is: original_lhs = original_rhs -> param
         # Block expects: param = original_rhs - original_lhs (as equation to solve)
-        # Actually, Block stores param -> original_rhs in calib_dict
-        # where original_rhs is derived from solving original_lhs = original_rhs for param
-        # For now, just put param on LHS and the RHS expression
+        # Actually, Block stores param -> original_rhs in calib_dict where original_rhs is derived from solving
+        # original_lhs = original_rhs for param. For now, just put param on LHS and the RHS expression
         return sp.Eq(param, rhs - lhs)
 
     return sp.Eq(lhs, rhs)
@@ -136,8 +128,7 @@ def ast_block_to_block(
     controls = [_variable_to_sympy(v, assumptions) for v in ast_block.controls] if ast_block.controls else None
     shocks = [_variable_to_sympy(v, assumptions) for v in ast_block.shocks] if ast_block.shocks else None
 
-    # Extract symbol locations for rich error reporting
-    # This maps symbol names to their ParseLocation from the AST
+    # Extract symbol locations for rich error reporting. This maps symbol names to their ParseLocation from the AST
     symbol_locations = {}
     if ast_block.controls:
         for var in ast_block.controls:
@@ -179,7 +170,7 @@ def ast_block_to_block(
     # Merge parameter locations into symbol_locations
     symbol_locations.update(param_locations)
 
-    return Block(
+    return dispatch_block(
         name=ast_block.name,
         definitions=definitions,
         controls=controls,
@@ -264,8 +255,7 @@ def ast_model_to_block_dict(
     """
     Convert a GCNModel AST to a dictionary of Block objects.
 
-    This creates Block objects directly from the AST using Block,
-    then calls solve_optimization() on each block.
+    This creates Block objects directly from the AST using Block, then calls solve_optimization() on each block.
 
     Parameters
     ----------

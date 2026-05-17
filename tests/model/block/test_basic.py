@@ -1,8 +1,6 @@
 import re
 import unittest
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import sympy as sp
@@ -20,8 +18,7 @@ from gEconpy.parser.loader import load_gcn_file, load_gcn_string
 from gEconpy.parser.preprocessor import preprocess
 from gEconpy.parser.transform.to_block import ast_block_to_block
 from gEconpy.utilities import set_equality_equals_zero, unpack_keys_and_values
-
-ROOT = Path(__file__).parent.parent.absolute()
+from tests.conftest import TEST_GCNS
 
 
 def get_block_from_string(gcn_string: str, block_name: str = "HOUSEHOLD") -> Block:
@@ -224,7 +221,7 @@ def test_invalid_decorator_raises():
 
 @pytest.fixture
 def block():
-    result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "one_block_2.gcn")
+    result = load_gcn_file(TEST_GCNS / "one_block_2.gcn")
     return result.block_dict["HOUSEHOLD"]
 
 
@@ -395,7 +392,7 @@ class TestBlockCases:
             assert np.float32(solution.subs(sub_dict)) in subbed_system
 
     def test_firm_block_lagrange_parsing(self):
-        result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "rbc_2_block.gcn")
+        result = load_gcn_file(TEST_GCNS / "rbc_2_block.gcn")
         block = result.block_dict["FIRM"]
 
         Y = TimeAwareSymbol("Y", 0)
@@ -414,7 +411,7 @@ class TestBlockCases:
         assert (block._build_lagrangian() - L).simplify() == 0
 
     def test_firm_FOC(self, rng):
-        result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "rbc_2_block.gcn")
+        result = load_gcn_file(TEST_GCNS / "rbc_2_block.gcn")
         firm_block = result.block_dict["FIRM"]
         firm_block.solve_optimization()
 
@@ -429,30 +426,28 @@ class TestBlockCases:
         epsilon = TimeAwareSymbol("epsilon_A", 0)
         alpha, rho = sp.symbols(["alpha", "rho_A"])
 
-        all_variables = [
-            Y,
-            TC,
-            K,
-            L,
-            A,
-            A.step_backward(),
-            P,
-            r,
-            w,
-            alpha,
-            rho,
-            epsilon,
-        ]
+        # Sample random values for all symbols EXCEPT Y, which is set
+        # consistently with the production constraint Y = A*K^alpha*L^(1-alpha).
+        # The chain-rule and closed-form FOCs only agree at points where the
+        # production residual is zero, so this constraint is required for the
+        # representation-agnostic numerical equivalence check below.
+        rest_vars = [TC, K, L, A, A.step_backward(), P, r, w, alpha, rho, epsilon]
+        sub_dict = dict(zip(rest_vars, rng.uniform(0.1, 1, size=len(rest_vars)), strict=False))
+        sub_dict[Y] = float(sub_dict[A] * sub_dict[K] ** sub_dict[alpha] * sub_dict[L] ** (1 - sub_dict[alpha]))
 
-        sub_dict = dict(zip(all_variables, rng.uniform(0, 1, size=len(all_variables)), strict=False))
-
+        # Hand-derived FOCs in the chain-rule representation (what the
+        # general Block.solve_optimization emits). The CobbDouglasBlock
+        # specialization emits the algebraically equivalent closed form
+        # (alpha*Y/K, (1-alpha)*Y/L). Either representation must produce
+        # the same numerical value at any point on the production manifold.
         dL_dK = -r + P * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
         dL_dL = -w + P * A * (1 - alpha) * K**alpha * L ** (-alpha)
 
-        subbed_system = [eq.subs(sub_dict) for eq in firm_block.system_equations]
-
-        for solution in [dL_dK, dL_dL]:
-            assert solution.subs(sub_dict) in subbed_system
+        subbed_system = [float(eq.subs(sub_dict)) for eq in firm_block.system_equations]
+        for expected in [float(dL_dK.subs(sub_dict)), float(dL_dL.subs(sub_dict))]:
+            assert any(abs(actual - expected) < 1e-10 for actual in subbed_system), (
+                f"Expected FOC value {expected} not found in system_equations (values: {subbed_system})"
+            )
 
     def test_get_param_dict_and_calibrating_equations(self, block):
         block.solve_optimization(try_simplify=False)
@@ -512,7 +507,7 @@ class TestBlockCases:
 
 
 def test_block_with_exlcuded_equation():
-    result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "rbc_with_excluded.gcn")
+    result = load_gcn_file(TEST_GCNS / "rbc_with_excluded.gcn")
     block = result.block_dict["HOUSEHOLD"]
     block.solve_optimization()
 
@@ -631,7 +626,7 @@ class TestBlockFromSympy:
 
 def test_lagged_definition_produces_derivative_in_foc():
     """Regression test for https://github.com/jessegrabowski/gEconpy/issues/74."""
-    result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "debt_elastic_premium.gcn")
+    result = load_gcn_file(TEST_GCNS / "debt_elastic_premium.gcn")
     block = result.block_dict["HOUSEHOLD"]
 
     all_atoms = set()
@@ -700,7 +695,7 @@ def test_ss_variable_in_calibration_resolves_to_deterministic_param():
 
 def test_minimize_tag_produces_correct_firm_focs(rng):
     """The @minimize tag on a cost-minimization objective should yield the same FOCs as manual negation."""
-    result = load_gcn_file(ROOT / "_resources" / "test_gcns" / "rbc_2_block_minimize.gcn")
+    result = load_gcn_file(TEST_GCNS / "rbc_2_block_minimize.gcn")
     firm_block = result.block_dict["FIRM"]
 
     Y = TimeAwareSymbol("Y", 0)
@@ -714,17 +709,23 @@ def test_minimize_tag_produces_correct_firm_focs(rng):
     epsilon = TimeAwareSymbol("epsilon_A", 0)
     alpha, rho = sp.symbols(["alpha", "rho_A"])
 
-    all_variables = [Y, TC, K, L, A, A.step_backward(), P, r, w, alpha, rho, epsilon]
-    sub_dict = dict(zip(all_variables, rng.uniform(0.1, 1, size=len(all_variables)), strict=False))
+    # Sample Y consistently with the production constraint so the chain-rule
+    # and closed-form FOC representations agree numerically. See test_firm_FOC
+    # for the same rationale.
+    rest_vars = [TC, K, L, A, A.step_backward(), P, r, w, alpha, rho, epsilon]
+    sub_dict = dict(zip(rest_vars, rng.uniform(0.1, 1, size=len(rest_vars)), strict=False))
+    sub_dict[Y] = float(sub_dict[A] * sub_dict[K] ** sub_dict[alpha] * sub_dict[L] ** (1 - sub_dict[alpha]))
 
     # Hand-derived FOCs for min_{K,L} (r*K + w*L) s.t. Y = A*K^alpha*L^(1-alpha) : P
     expected_dL_dK = -r + P * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
     expected_dL_dL = -w + P * A * (1 - alpha) * K**alpha * L ** (-alpha)
 
-    subbed_system = [eq.subs(sub_dict) for eq in firm_block.system_equations]
+    subbed_system = [float(eq.subs(sub_dict)) for eq in firm_block.system_equations]
 
-    for expected_foc in [expected_dL_dK, expected_dL_dL]:
-        assert expected_foc.subs(sub_dict) in subbed_system
+    for expected_foc in [float(expected_dL_dK.subs(sub_dict)), float(expected_dL_dL.subs(sub_dict))]:
+        assert any(abs(actual - expected_foc) < 1e-10 for actual in subbed_system), (
+            f"Expected FOC value {expected_foc} not found in system_equations (values: {subbed_system})"
+        )
 
 
 def test_minimize_and_maximize_on_same_equation_raises():
