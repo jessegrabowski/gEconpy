@@ -1,13 +1,12 @@
 """Tests for complete GCN file grammar."""
 
-from pathlib import Path
-
 import pytest
 
 from gEconpy.data.examples import get_example_gcn
 from gEconpy.parser.ast import GCNModel
 from gEconpy.parser.errors import GCNGrammarError
 from gEconpy.parser.grammar.gcn_file import parse_gcn
+from tests.conftest import TEST_GCNS
 
 
 class TestGCNFileBasic:
@@ -364,7 +363,7 @@ class TestParseGCNFiles:
 
     @pytest.fixture
     def gcn_dir(self):
-        return Path(__file__).parent.parent.parent / "_resources" / "test_gcns"
+        return TEST_GCNS
 
     def test_parse_one_block_1(self, gcn_dir):
         gcn_path = gcn_dir / "one_block_1.gcn"

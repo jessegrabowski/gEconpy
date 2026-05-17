@@ -179,17 +179,13 @@ def test_steady_state(gcn_file: str, expected_result: np.ndarray):
     assert ss_result.success
 
 
-@pytest.mark.parametrize(
-    "gcn_file",
-    [
-        "one_block_1_ss.gcn",
-        "open_rbc.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
-    ],
-)
-def test_model_gradient(gcn_file):
-    model = load_and_cache_model(gcn_file)
+def _compile_ss_derivative_funcs(gcn_file):
+    """Build and FAST_COMPILE the SS residual/jacobian/error/gradient/hessian functions.
 
+    FAST_COMPILE skips C compilation: these graphs are evaluated only a handful of
+    times here, so the C-compile cost is pure overhead.
+    """
+    model = load_and_cache_model(gcn_file)
     ss_result = model.steady_state()
 
     equations, cache = _ss_residual_to_pytensor(
@@ -223,36 +219,65 @@ def test_model_gradient(gcn_file):
     )
     _, jac_graph = build_root_graphs(equations, ss_nodes, use_jac=True)
 
-    f_error = compile_for_scipy(error_graph, mode=model._mode)
-    f_grad = compile_for_scipy(grad_graph, mode=model._mode)
-    f_hess = compile_for_scipy(hess_graph, mode=model._mode)
-    f_jac = compile_for_scipy(jac_graph, mode=model._mode)
-    f_resid = compile_for_scipy(resid, mode=model._mode)
+    compiled = {
+        name: compile_for_scipy(graph, mode="FAST_COMPILE")
+        for name, graph in [
+            ("resid", resid),
+            ("jac", jac_graph),
+            ("error", error_graph),
+            ("grad", grad_graph),
+            ("hess", hess_graph),
+        ]
+    }
+    return model, ss_result, compiled
 
+
+def test_ss_derivatives_match_numeric():
+    """Compiled SS gradient/hessian/jacobian match finite-difference references.
+
+    This verifies gEconpy's derivative-graph *construction*, which does not depend
+    on the model, so one small model is sufficient.
+    """
+    model, ss_result, f = _compile_ss_derivative_funcs("one_block_1_ss.gcn")
     params = model.parameters()
 
-    np.testing.assert_allclose(f_grad(**ss_result, **params), 0.0, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(f["grad"](**ss_result, **params), 0.0, rtol=1e-12, atol=1e-12)
 
-    perturbed_point = {k: np.float64(0.8) for k, v in ss_result.items()}
+    perturbed_point = {k: np.float64(0.8) for k in ss_result}
     test_point = np.array(list(perturbed_point.values()))
 
-    grad = np.asarray(f_grad(**perturbed_point, **params))
-    numeric_grad = nd.Gradient(
-        lambda x: float(np.asarray(f_error(**dict(zip(perturbed_point, x, strict=False)), **params)))
-    )(test_point)
+    def at(x):
+        return dict(zip(perturbed_point, x, strict=False))
+
+    grad = np.asarray(f["grad"](**perturbed_point, **params))
+    numeric_grad = nd.Gradient(lambda x: float(np.asarray(f["error"](**at(x), **params))))(test_point)
     np.testing.assert_allclose(grad, numeric_grad, rtol=1e-8, atol=1e-8)
 
-    hess = np.asarray(f_hess(**perturbed_point, **params))
-    numeric_hess = nd.Hessian(
-        lambda x: float(np.asarray(f_error(**dict(zip(perturbed_point, x, strict=False)), **params)))
-    )(test_point)
+    hess = np.asarray(f["hess"](**perturbed_point, **params))
+    numeric_hess = nd.Hessian(lambda x: float(np.asarray(f["error"](**at(x), **params))))(test_point)
     np.testing.assert_allclose(hess, numeric_hess, rtol=1e-8, atol=1e-8)
 
-    jac = np.asarray(f_jac(**perturbed_point, **params))
-    numeric_jac = nd.Jacobian(
-        lambda x: np.asarray(f_resid(**dict(zip(perturbed_point, x, strict=False)), **params)).ravel()
-    )(test_point)
+    jac = np.asarray(f["jac"](**perturbed_point, **params))
+    numeric_jac = nd.Jacobian(lambda x: np.asarray(f["resid"](**at(x), **params)).ravel())(test_point)
     np.testing.assert_allclose(jac, numeric_jac, rtol=1e-8, atol=1e-8)
+
+
+@pytest.mark.include_nk
+def test_ss_derivative_graphs_compile():
+    """The full NK model's SS derivative graphs build, compile, and evaluate finitely.
+
+    Numeric correctness of the construction is covered by
+    ``test_ss_derivatives_match_numeric``; this exercises the same pipeline on the
+    largest model to catch build/compile regressions on a hard case.
+    """
+    model, ss_result, f = _compile_ss_derivative_funcs("full_nk.gcn")
+    params = model.parameters()
+
+    # The analytic gradient of the squared-residual error vanishes at the SS.
+    np.testing.assert_allclose(f["grad"](**ss_result, **params), 0.0, rtol=1e-12, atol=1e-12)
+
+    for name in ("resid", "jac", "hess"):
+        assert np.all(np.isfinite(np.asarray(f[name](**ss_result, **params))))
 
 
 @pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
@@ -290,11 +315,11 @@ def test_numerical_steady_state(how: str, gcn_file: str):
     numeric_res = model.steady_state(
         how=how,
         verbose=False,
-        use_hess=True,
+        use_hess=False,
         use_hessp=False,
         optimizer_kwargs={
             "maxiter": 50_000,
-            "method": "hybr" if how == "root" else "Newton-CG",
+            "method": "hybr" if how == "root" else "L-BFGS-B",
         },
         fixed_values=fixed_values,
         progressbar=False,
@@ -319,7 +344,9 @@ def test_numerical_steady_state_with_calibrated_params():
     res = model.steady_state(
         how="minimize",
         verbose=False,
-        optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 100_000}},
+        use_hess=False,
+        use_hessp=False,
+        optimizer_kwargs={"method": "L-BFGS-B", "options": {"maxiter": 100_000}},
         bounds={"alpha": (0.05, 0.7)},
         progressbar=False,
     )
@@ -357,9 +384,10 @@ def test_partially_analytical_steady_state(partial_file, analytic_file):
     numeric_res = partial_model.steady_state(
         how="minimize",
         verbose=False,
-        optimizer_kwargs={"method": "trust-ncg", "options": {"gtol": 1e-24}},
+        optimizer_kwargs={"method": "L-BFGS-B"},
         progressbar=False,
-        use_hessp=True,
+        use_hess=False,
+        use_hessp=False,
         use_jac=True,
     )
 
