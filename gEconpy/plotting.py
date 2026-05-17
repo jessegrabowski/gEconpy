@@ -15,6 +15,7 @@ from matplotlib.colors import Colormap
 from matplotlib.dates import DateFormatter, YearLocator
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
 from scipy import stats
 from xarray_einstats.linalg import diagonal as xr_diagonal
 
@@ -354,8 +355,10 @@ def _plot_irf_panel(
         )
 
     if add_scenario_legend and len(scenario_names) > 1 and scenario_names[0] != "":
-        lines = axis.get_lines()
-        axis.legend(handles=lines, labels=scenario_names)
+        # One handle per scenario, carrying the scenario's line style (scenarios
+        # are distinguished by style; colour encodes the shock).
+        handles = [Line2D([], [], color="k", ls=markers[idx % len(markers)]) for idx in range(len(scenario_names))]
+        axis.legend(handles=handles, labels=scenario_names)
 
     axis.set(title=variable)
     if not show_xticks:
@@ -379,6 +382,10 @@ def _add_shocks_legend(
             "bbox_to_anchor": (0.5, 1.0),
         }
     handles = fig.axes[0].get_lines()
+    if shocks_to_plot is not None:
+        # With multiple scenarios the first panel holds n_scenarios * n_shocks lines;
+        # the first n_shocks (scenario 0) already carry every shock colour.
+        handles = handles[: len(shocks_to_plot)]
     fig.legend(handles=handles, labels=shocks_to_plot, **legend_kwargs)
 
 
