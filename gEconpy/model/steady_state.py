@@ -21,7 +21,7 @@ from gEconpy.model.compile import (
 )
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.pytensorf.sparse_jacobian import sparse_jacobian
-from gEconpy.utilities import eq_to_ss, safe_to_ss, substitute_repeatedly
+from gEconpy.utilities import eq_to_ss, flatten_substitution_dict, safe_to_ss
 
 _log = logging.getLogger(__name__)
 
@@ -404,9 +404,10 @@ def simplify_provided_ss_equations(
         return ss_solution_dict
 
     simplified = SymbolDictionary({k: v for k, v in ss_dict_sympy.items() if k in ss_variables})
+    flat_extras = flatten_substitution_dict(dict(extra_equations))
     for var, eq in simplified.items():
         if hasattr(eq, "subs"):
-            simplified[var] = substitute_repeatedly(eq, extra_equations)
+            simplified[var] = eq.subs(flat_extras)
 
     return simplified
 
