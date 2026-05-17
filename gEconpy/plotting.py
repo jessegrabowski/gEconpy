@@ -1598,7 +1598,7 @@ def plot_kalman_filter(
     fig: Figure | None = None,
     figsize: tuple[int, int] = (14, 6),
     dpi: int = 144,
-    observed=False,
+    observed: bool = False,
 ):
     """
     Plot Kalman filter, prediction or smoothed series for variables in idata.
@@ -1624,8 +1624,10 @@ def plot_kalman_filter(
         Figure size in inches.
     dpi : int, optional
         Figure DPI.
-    cmap : str, optional
-        Colormap name.
+    observed : bool, optional
+        If True, plot the observed states together with the data series they
+        are fit against. If False, plot the model's latent states. Default
+        False.
 
     Returns
     -------
