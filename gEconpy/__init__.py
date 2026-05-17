@@ -28,7 +28,9 @@ _pytensor.config.traceback__limit = 0
 # traceback flag matters most for grad/compile speed and IS settable live, so set it unconditionally.
 
 # Side-effect imports: register JAX and Numba dispatch rules for internal
-# pytensor Ops. These modules expose no public API.
+# pytensor Ops, and the Join/dot/block graph rewrites. These modules expose no
+# public API.
+import gEconpy.pytensorf.block_rewrites
 import gEconpy.pytensorf.real
 import gEconpy.pytensorf.real_eig  # noqa: F401
 
