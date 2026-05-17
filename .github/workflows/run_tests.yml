@@ -102,6 +102,17 @@ jobs:
         echo $MATRIX_ID
         echo "id=$MATRIX_ID" >> $GITHUB_OUTPUT
 
+    # Persist pytensor's compiled-function cache across runs. pytensor content-hashes
+    # each module and invalidates on its side, so a stale entry just misses and
+    # recompiles. The run-id suffix + restore-keys prefix make the cache roll forward.
+    - name: Cache pytensor compiledir
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.pytensor
+        key: pytensor-${{ steps.matrix-id.outputs.id }}-${{ github.run_id }}
+        restore-keys: |
+          pytensor-${{ steps.matrix-id.outputs.id }}-
+
     - name: Run tests
       run: |
         python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --cov-report term $TEST_SUBSET -m "$TEST_MARKER" --durations=50 --benchmark-disable
