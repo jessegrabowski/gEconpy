@@ -63,6 +63,36 @@ class TimeAwareSymbolTests(unittest.TestCase):
 
         self.assertEqual(dX_dx_t, sum(sp.Symbol("beta") ** t for t in range(11)))
 
+    def test_diff_through_time_gap_in_time_indices(self):
+        # Regression: when dx's base symbol appears at non-consecutive time indices, the derivative is zero at some
+        # intermediate iterations but nonzero again later. The summation must walk through all relevant shifts, not exit
+        # on the first zero. For eq = x[t] + a*x[t-2] differentiated wrt x[t]:
+        #   k=0: contributes 1 (from x[t])
+        #   k=1: contributes 0 (eq has x[t+1], x[t-1])
+        #   k=2: contributes a*beta**2 (eq has x[t+2], x[t]; the t-2 term has shifted to t)
+        a, beta = sp.symbols("a beta")
+        x_tm2 = TimeAwareSymbol("x", -2)
+        eq = self.x_t + a * x_tm2
+
+        result = diff_through_time(eq, self.x_t, beta)
+        expected = 1 + a * beta**2
+        self.assertEqual(sp.simplify(result - expected), 0)
+
+    def test_diff_through_time_no_appearance(self):
+        # If dx's base symbol doesn't appear in eq, the result is zero — no iterations needed.
+        y_t = TimeAwareSymbol("y", 0)
+        eq = y_t + sp.Symbol("c")
+        result = diff_through_time(eq, self.x_t, sp.Symbol("beta"))
+        self.assertEqual(result, 0)
+
+    def test_diff_through_time_only_forward_appearances(self):
+        # If dx's base symbol appears only at time indices >= dx.time_index, only iter 0 can contribute (forward
+        # stepping pushes everything further from dx). Confirm we don't iterate spuriously.
+        x_tp3 = TimeAwareSymbol("x", 3)
+        eq = self.x_t + sp.Symbol("a") * x_tp3
+        result = diff_through_time(eq, self.x_t, sp.Symbol("beta"))
+        self.assertEqual(result, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
