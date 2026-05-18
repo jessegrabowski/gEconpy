@@ -50,16 +50,30 @@ jobs:
             test-subset: "tests/ --ignore=tests/model"
             test-marker: ""
 
-          - subset-name: "Windows Test Model"
+          # Windows is a smoke test, not a correctness sweep: model/solver correctness is
+          # OS-independent and covered exhaustively by the Ubuntu jobs above. The Windows jobs
+          # below exercise only the OS-sensitive machinery — pytensor's compile toolchain,
+          # .gcn file loading, multiprocessing — across the core solve/linearize/simulate
+          # pipeline. Pure-algebra suites (parser grammar, block FOCs, plotting, classes) and
+          # the steady-state / statespace / build files run on Ubuntu only. The
+          # test_*_backends_agree and steady-state deselects stay because Windows BLAS
+          # produces slightly different numbers, not because the tests are uninteresting.
+          - subset-name: "Windows Model Integration"
             os: windows-latest
             python-version: "3.13"
-            test-subset: "tests/model --ignore=tests/model/test_steady_state.py --ignore=tests/model/test_statespace.py --ignore=tests/model/test_build.py --deselect tests/model/test_model.py::test_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_partially_analytical_steady_state --deselect tests/model/test_model.py::test_all_backends_agree_on_functions --deselect tests/model/test_model.py::test_scipy_wrapped_functions_agree --deselect tests/model/test_model.py::test_all_backends_agree_on_parameters --deselect tests/models/test_model.py::test_simulate"
+            test-subset: "tests/model/test_model.py --deselect tests/model/test_model.py::test_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_partially_analytical_steady_state --deselect tests/model/test_model.py::test_all_backends_agree_on_functions --deselect tests/model/test_model.py::test_scipy_wrapped_functions_agree --deselect tests/model/test_model.py::test_all_backends_agree_on_parameters"
             test-marker: "not include_nk"
 
-          - subset-name: "Windows Other Tests"
+          - subset-name: "Windows Model Solve & Diagnostics"
             os: windows-latest
             python-version: "3.13"
-            test-subset: "tests/ --ignore=tests/model"
+            test-subset: "tests/model/test_compile.py tests/model/test_perturbation.py tests/model/test_diagnostics.py tests/model/perfect_foresight"
+            test-marker: "not include_nk"
+
+          - subset-name: "Windows Core Library"
+            os: windows-latest
+            python-version: "3.13"
+            test-subset: "tests/pytensorf tests/solvers tests/parser/test_loader.py tests/test_dynare_convert.py"
             test-marker: "not include_nk"
 
     name: ${{ matrix.subset-name }} (${{ matrix.os }} Python ${{ matrix.python-version }})
