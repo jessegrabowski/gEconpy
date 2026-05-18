@@ -253,6 +253,10 @@ lines-between-types = 1
     "ARG003", # Allow unused arguments in test-double classmethods implementing an interface
 ]
 
+'tests/model/test_statespace.py' = [
+    'ARG005'
+]
+
 'docs/source/examples/*/*.ipynb' = [
     'F821', # Notebooks uses direct assignment to globals, so ruff thinks variables are not declared
     'PLR2004', # Allow magic numbers in notebooks
