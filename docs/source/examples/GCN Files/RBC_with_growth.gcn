@@ -1,0 +1,225 @@
+# RBC with stochastic trend, real frictions, and a full menu of structural shocks.
+#
+# Productivity has a permanent random-walk-with-drift component Z[t] and a
+# stationary AR(1) component A[t].  Y[t] = A[t] * K_d[t]^alpha * (Z[t] * L[t])^(1-alpha)
+# in levels, with Z[t] = g_z * Z[t-1] * exp(epsilon_z[t]) and K_d[t] = z[t] * K[t-1]
+# the flow of capital services chosen by the household via the utilisation rate z[t].
+#
+# The file is written directly in growth-adjusted (stationary) form.  Every variable
+# that inherits the unit-root trend is divided by Z[t]; the symbols Y[], C[], I[],
+# K[], W[] in this file therefore mean Y_level/Z, C_level/Z, etc.  Only the gross
+# growth rate G[t] = Z[t]/Z[t-1] appears in the equations -- the level Z[t] never
+# does.
+#
+# Log utility is used so the additive log(Z[t]) piece of consumption utility is
+# exogenous to the household and drops out of the FOCs.  The resulting stationary
+# Bellman uses the original beta[] with no further trend correction.
+#
+# Real frictions:
+#   - External habit formation in consumption (phi_H)
+#   - Quadratic investment adjustment cost (gamma_I)
+#   - Variable capital utilisation z[] with a convex utilisation-cost function
+#
+# R_f[] is the net risk-free rate -- the return on a zero-net-supply one-period
+# bond, pinned by the household's stochastic discount factor.  It is the model
+# object that maps onto an observed government bond yield (the capital rental
+# rate r[] is a different, depreciation-inclusive object).
+#
+# Six structural shocks (one AR(1) state per shock):
+#   epsilon_A      stationary TFP wedge                A[]
+#   epsilon_z      permanent productivity / trend      G[]
+#   epsilon_beta   discount-factor / preference        beta[]
+#   epsilon_Theta  labour-disutility taste shifter     Theta[]
+#   epsilon_I      investment adjustment cost          shock_I[]
+#   epsilon_psi    capital-utilisation cost            shock_psi[]
+
+
+tryreduce
+{
+    U[], TC[], q[], K_d[];
+};
+
+
+block STEADY_STATE
+{
+    definitions
+    {
+        K_to_L[ss] = (alpha / r[ss]) ^ (1 / (1 - alpha)) * g_z;
+        Y_to_L[ss] = (alpha / r[ss]) ^ (alpha / (1 - alpha));
+        I_to_L[ss] = (g_z - 1 + delta) / g_z * K_to_L[ss];
+        C_to_L[ss] = Y_to_L[ss] - I_to_L[ss];
+    };
+
+    identities
+    {
+        A[ss]         = 1;
+        G[ss]         = g_z;
+        mc[ss]        = 1;
+        beta[ss]      = beta;
+        Theta[ss]     = Theta;
+        shock_I[ss]   = 1;
+        shock_psi[ss] = 1;
+        z[ss]         = 1;
+
+        r[ss]   = g_z / beta - (1 - delta);
+        R_f[ss] = g_z / beta - 1;
+        W[ss]   = (1 - alpha) * Y_to_L[ss];
+
+        L[ss] = ((1 - alpha) * Y_to_L[ss] * (1 - phi_H * beta / g_z)
+                 / (Theta * C_to_L[ss] * (1 - phi_H / g_z))) ^ (1 / (1 + sigma_L));
+
+        K[ss]   = K_to_L[ss] * L[ss];
+        K_d[ss] = K[ss] / g_z;
+        Y[ss]   = Y_to_L[ss] * L[ss];
+        I[ss]   = I_to_L[ss] * L[ss];
+        C[ss]   = C_to_L[ss] * L[ss];
+
+        lambda[ss] = (1 - phi_H * beta / g_z) / (C[ss] * (1 - phi_H / g_z));
+        q[ss]      = lambda[ss];
+
+        U[ss]  = (1 / (1 - beta)) * (log(C[ss] * (1 - phi_H / g_z))
+                                     - Theta * L[ss] ^ (1 + sigma_L) / (1 + sigma_L));
+        TC[ss] = -(r[ss] * K_d[ss] + W[ss] * L[ss]);
+    };
+};
+
+
+block HOUSEHOLD
+{
+    definitions
+    {
+        # Habit-adjusted consumption is the level expression C_level - phi_H * C_lag_level
+        # divided by Z[t].  Under log utility the residual log(Z[t]) piece is exogenous
+        # to the household, drops out of the FOCs, and never appears below.
+        u[] = log(C[] - phi_H * C[-1] / G[])
+              - Theta[] * L[] ^ (1 + sigma_L) / (1 + sigma_L);
+
+        # Convex cost of running capital harder than its steady-state utilisation z = 1.
+        # The linear coefficient psi_z_1 is pinned to r[ss] in the calibration block so
+        # that the household's z FOC has z[ss] = 1 as its solution.
+        Psi_z[] = shock_psi[] * (psi_z_1 * (z[] - 1) + psi_z / 2 * (z[] - 1) ^ 2);
+
+        # Investment adjustment cost.  At trend, level investment grows at g_z, so the
+        # stationary expression subtracts g_z (not 1) inside the quadratic.
+        adj_cost[] = 1 - gamma_I / 2 * (shock_I[] * I[] / I[-1] * G[] - g_z) ^ 2;
+    };
+
+    controls
+    {
+        C[], L[], I[], K[], z[];
+    };
+
+    objective
+    {
+        U[] = u[] + beta[] * E[][U[1]];
+    };
+
+    constraints
+    {
+        C[] + I[] + Psi_z[] * K[-1] / G[] = r[] * z[] * K[-1] / G[] + W[] * L[]   : lambda[];
+        K[] = (1 - delta) * K[-1] / G[] + I[] * adj_cost[]                        : q[];
+    };
+
+    identities
+    {
+        log(beta[])      = rho_beta  * log(beta[-1])      + (1 - rho_beta)  * log(beta)  + epsilon_beta[];
+        log(Theta[])     = rho_Theta * log(Theta[-1])     + (1 - rho_Theta) * log(Theta) + epsilon_Theta[];
+        log(shock_I[])   = rho_I     * log(shock_I[-1])   + epsilon_I[];
+        log(shock_psi[]) = rho_psi   * log(shock_psi[-1]) + epsilon_psi[];
+
+        # Risk-free rate: the net return on a one-period bond in zero net
+        # supply, pinned by the household's stochastic discount factor.  In a
+        # representative-agent equilibrium the bond is held in zero quantity,
+        # so it contributes only this pricing condition.  R_f[] is the net rate
+        # (the gross return is 1 + R_f[]), so R_f[ss] = g_z / beta - 1.
+        1 + R_f[] = lambda[] / (beta[] * E[][lambda[1] / G[1]]);
+    };
+
+    shocks
+    {
+        epsilon_beta[]; epsilon_Theta[]; epsilon_I[]; epsilon_psi[];
+    };
+
+    calibration
+    {
+        beta    ~ maxent(Beta(),  lower=0.95, upper=0.999, mass=0.99) = 0.99;
+        delta   ~ maxent(Beta(),  lower=0.01, upper=0.05,  mass=0.99) = 0.025;
+        sigma_L ~ maxent(Gamma(), lower=1.0,  upper=10.0,  mass=0.99) = 2.0;
+
+        phi_H   ~ maxent(Beta(),  lower=0.5,  upper=0.95,  mass=0.99) = 0.6;
+        gamma_I ~ maxent(Gamma(), lower=5.0,  upper=10.0,  mass=0.99) = 6.0;
+        psi_z   ~ maxent(Beta(),  lower=0.05, upper=0.50,  mass=0.99) = 0.20;
+
+        # Pin psi_z_1 so that the household's utilisation FOC has z[ss] = 1.
+        psi_z_1 = g_z / beta - (1 - delta);
+
+        # Theta is a pure steady-state scaling parameter: it sets the level of
+        # L[ss] and has no dynamic content.  It is a calibration parameter --
+        # fix it to hit whatever labour-supply target the dataset implies.
+        Theta = 1.0;
+
+        rho_beta  ~ maxent(Beta(), lower=0.5, upper=0.95, mass=0.99) = 0.9;
+        rho_Theta ~ maxent(Beta(), lower=0.5, upper=0.95, mass=0.99) = 0.9;
+        rho_I     ~ maxent(Beta(), lower=0.5, upper=0.95, mass=0.99) = 0.9;
+        rho_psi   ~ maxent(Beta(), lower=0.5, upper=0.95, mass=0.99) = 0.9;
+    };
+};
+
+
+block FIRM
+{
+    controls
+    {
+        K_d[], L[];
+    };
+
+    objective
+    {
+        TC[] = -(r[] * K_d[] + W[] * L[]);
+    };
+
+    constraints
+    {
+        Y[] = A[] * K_d[] ^ alpha * L[] ^ (1 - alpha) : mc[];
+    };
+
+    identities
+    {
+        # Perfect competition
+        mc[] = 1;
+
+        # Capital services demanded equal utilisation times predetermined capital,
+        # in growth-adjusted form.
+        K_d[] = z[] * K[-1] / G[];
+    };
+
+    calibration
+    {
+        alpha ~ maxent(Beta(), lower=0.2, upper=0.35, mass=0.99) = 0.3;
+    };
+};
+
+
+block EXOGENOUS
+{
+    identities
+    {
+        # Stationary productivity wedge
+        log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+
+        # Permanent productivity grows at gross rate g_z with iid innovations.
+        # log(Z[t]) = log(g_z) + log(Z[t-1]) + epsilon_z[t]  =>  G[t] = g_z * exp(eps_z[t])
+        log(G[]) = log(g_z) + epsilon_z[];
+    };
+
+    shocks
+    {
+        epsilon_A[]; epsilon_z[];
+    };
+
+    calibration
+    {
+        rho_A ~ maxent(Beta(), lower=0.8, upper=0.99, mass=0.99) = 0.95;
+        g_z   ~ Normal(mu=1.005, sigma=0.002)                    = 1.005;
+    };
+};

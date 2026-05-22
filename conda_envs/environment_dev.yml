@@ -8,7 +8,7 @@ dependencies:
   # Core dependencies
   - python=3.12
   - pymc>=6.0.0
-  - pytensor>=3.0.0
+  - pytensor>=3.0.2
   - matplotlib
   - numba
   - numpy
@@ -26,7 +26,6 @@ dependencies:
   - networkx
   - sympytensor>=2.0.0
   - pymc-extras>=0.11.0
-  - jax>=0.9
 
   # For building docs
   - ipython
@@ -55,6 +54,7 @@ dependencies:
 
   - pip:
       - numdifftools
+      - jax>=0.9
       - flowjax
       - corner
       - asv
