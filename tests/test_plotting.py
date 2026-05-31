@@ -131,6 +131,34 @@ def acf_data(one_block_model):
 
 
 @pytest.fixture(scope="session")
+def posterior_acf():
+    """Synthetic posterior autocorrelation tensor (chain, draw, lag, variable, variable_aux)."""
+    rng = np.random.default_rng(0)
+    variables, n_lags = ["Y", "C", "K"], 6
+    values = np.zeros((4, 50, n_lags + 1, 3, 3))
+    for i in range(3):
+        rho = 0.8 + 0.05 * rng.standard_normal((4, 50, 1))
+        values[:, :, :, i, i] = rho ** np.arange(n_lags + 1)
+    return xr.DataArray(
+        values,
+        dims=["chain", "draw", "lag", "variable", "variable_aux"],
+        coords={"lag": np.arange(n_lags + 1), "variable": variables, "variable_aux": variables},
+    )
+
+
+@pytest.fixture(scope="session")
+def reference_acf():
+    """Synthetic point-estimate ACF (lag, variable) to overlay as a reference series."""
+    variables, n_lags = ["Y", "C", "K"], 6
+    values = np.stack([0.75 ** np.arange(n_lags + 1) for _ in variables], axis=1)
+    return xr.DataArray(
+        values,
+        dims=["lag", "variable"],
+        coords={"lag": np.arange(n_lags + 1), "variable": variables},
+    )
+
+
+@pytest.fixture(scope="session")
 def sensitivity_data(one_block_model):
     # eigenvalue_sensitivity forwards its own `verbose` into model.steady_state, so
     # `verbose` must not also appear in steady_state_kwargs.
@@ -500,8 +528,27 @@ def test_plot_acf_defaults_plots_all_variables(acf_data, one_block_model):
 
 
 def test_plot_acf_bad_var_raises(acf_data):
-    with pytest.raises(ValueError, match="Can not plot variable Invalid"):
+    with pytest.raises(ValueError, match="Cannot plot"):
         plot_acf(acf_data, vars_to_plot=["K", "C", "Invalid"])
+
+
+def test_plot_acf_forest_axis_count(posterior_acf):
+    # A tensor carrying chain/draw renders one panel per variable as a forest.
+    fig = plot_acf(posterior_acf)
+    assert len(fig.axes) == posterior_acf.sizes["variable"]
+
+
+def test_plot_acf_reference_adds_data_legend(posterior_acf, reference_acf):
+    fig = plot_acf(posterior_acf, reference=reference_acf)
+    legend_texts = [text.get_text() for text in fig.axes[0].get_legend().get_texts()]
+    assert "data" in legend_texts
+
+
+def test_plot_acf_multiple_models_legend_and_axes(posterior_acf):
+    fig = plot_acf({"levels": posterior_acf, "growth": posterior_acf}, vars_to_plot=["Y", "C"])
+    legend_texts = [text.get_text() for text in fig.axes[0].get_legend().get_texts()]
+    assert legend_texts == ["levels", "growth"]
+    assert len(fig.axes) == 2
 
 
 # ----------------------------------------------------------------------------
