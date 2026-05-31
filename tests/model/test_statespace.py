@@ -1,14 +1,18 @@
+import warnings
+
 import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor
 import pytest
+import xarray as xr
 
 from pytensor.graph.traversal import ancestors
 from pytensor.tensor.variable import TensorConstant
 
 from gEconpy import statespace_from_gcn
 from gEconpy.model.statespace import data_from_prior, prepare_mixed_frequency_data
+from gEconpy.model.statistics import autocorrelation_matrix
 from tests._resources.cache_compiled_models import (
     load_and_cache_model,
     load_and_cache_statespace,
@@ -1204,3 +1208,94 @@ def test_constant_params_baked_into_observation_equations():
     d = ss_mod.ssm["obs_intercept"]
     free_leaves = {a.name for a in ancestors([d]) if a.owner is None and a.name and not isinstance(a, TensorConstant)}
     assert "alpha" not in free_leaves
+
+
+@pytest.fixture(scope="module")
+def autocorrelation_setup():
+    """Build a mixed-frequency RBC state space and a small fake posterior over its parameters."""
+    ss_mod = statespace_from_gcn(TEST_GCNS / "rbc_linearized.gcn", verbose=False)
+    ss_mod.configure(
+        observed_states=["Y", "K"],
+        measurement_error=["Y", "K"],
+        temporal_aggregation={"Y": "sum"},
+        solver="gensys",
+        verbose=False,
+    )
+    with pm.Model():
+        ss_mod.to_pymc()
+        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+        pm.Gamma("error_sigma_Y", alpha=2, beta=100)
+        pm.Gamma("error_sigma_K", alpha=2, beta=100)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            ss_mod.build_statespace_graph(np.full((40, 2), np.nan), add_norm_check=False)
+
+    calib = load_and_cache_model("rbc_linearized.gcn").parameters()
+    rng = np.random.default_rng(0)
+    posterior = xr.Dataset(
+        {
+            name: (
+                ("chain", "draw"),
+                (float(calib[name]) if name in calib else 0.01) + 1e-4 * rng.standard_normal((2, 8)),
+            )
+            for name in ss_mod.param_names
+        },
+        coords={"chain": np.arange(2), "draw": np.arange(8)},
+    )
+    return ss_mod, posterior
+
+
+def test_sample_autocorrelation_matrices_shape_and_normalization(autocorrelation_setup):
+    ss_mod, posterior = autocorrelation_setup
+
+    latent = ss_mod.sample_autocorrelation_matrices(posterior, n_lags=6)
+    assert latent.dims == ("chain", "draw", "lag", "state", "state_aux")
+    assert latent.sizes["lag"] == 7
+    assert float(np.abs(latent).max()) <= 1.0 + 1e-6
+
+    # The lag-0 autocorrelation is exactly 1 on the diagonal.
+    diag0 = latent.isel(lag=0).mean(["chain", "draw"]).values
+    np.testing.assert_allclose(np.diag(diag0), 1.0, atol=1e-6)
+
+    observed = ss_mod.sample_autocorrelation_matrices(posterior, n_lags=6, observed=True, lag_step=4)
+    assert observed.dims == ("chain", "draw", "lag", "observed_state", "observed_state_aux")
+    obs_diag0 = observed.isel(lag=0).mean(["chain", "draw"]).values
+    np.testing.assert_allclose(np.diag(obs_diag0), 1.0, atol=1e-6)
+
+
+def test_sample_autocorrelation_lag_step_subsamples_lags(autocorrelation_setup):
+    ss_mod, posterior = autocorrelation_setup
+
+    # ACF at lag_step=2, lag k equals ACF at lag_step=1, lag 2k (both are T^(2k) @ Sigma).
+    step_1 = ss_mod.sample_autocorrelation_matrices(posterior, n_lags=8).mean(["chain", "draw"])
+    step_2 = ss_mod.sample_autocorrelation_matrices(posterior, n_lags=4, lag_step=2).mean(["chain", "draw"])
+    np.testing.assert_allclose(step_2.values, step_1.isel(lag=slice(None, None, 2)).values, atol=1e-5)
+
+
+def test_sample_autocorrelation_matches_analytical_acf(autocorrelation_setup):
+    """The sampled latent ACF reproduces the analytical ``autocorrelation_matrix`` at a single calibrated draw."""
+    ss_mod, _ = autocorrelation_setup
+    model = load_and_cache_model("rbc_linearized.gcn")
+    calib = model.parameters()
+
+    # A degenerate posterior (one draw at the calibrated values) makes the comparison exact.
+    degenerate = xr.Dataset(
+        {
+            name: (("chain", "draw"), np.full((1, 1), float(calib[name]) if name in calib else 0.01))
+            for name in ss_mod.param_names
+        },
+        coords={"chain": [0], "draw": [0]},
+    )
+
+    analytical = autocorrelation_matrix(
+        model, shock_cov_matrix=np.eye(1) * 0.01, correlation=True, return_xr=True, verbose=False
+    )
+    n_lags = analytical.sizes["lag"]
+    sampled = ss_mod.sample_autocorrelation_matrices(degenerate, n_lags=n_lags).isel(chain=0, draw=0)
+
+    for variable in analytical.coords["variable"].values:
+        np.testing.assert_allclose(
+            sampled.sel(state=variable, state_aux=variable).isel(lag=slice(0, n_lags)).values,
+            analytical.sel(variable=variable, variable_aux=variable).values,
+            atol=1e-4,
+        )

@@ -17,7 +17,11 @@ from pymc.pytensorf import rewrite_pregrad
 from pymc_extras.statespace.core.properties import Coord, Parameter, Shock, State, SymbolicVariable
 from pymc_extras.statespace.core.statespace import PyMCStateSpace
 from pymc_extras.statespace.utils.constants import (
+    ALL_STATE_AUX_DIM,
+    ALL_STATE_DIM,
     JITTER_DEFAULT,
+    OBS_STATE_AUX_DIM,
+    OBS_STATE_DIM,
     SHOCK_AUX_DIM,
     SHOCK_DIM,
 )
@@ -1203,6 +1207,91 @@ class DSGEStateSpace(PyMCStateSpace):
                 "policy_resid_within_tol",
                 pt.switch(pt.lt(policy_resid, solver_tol), 0.0, -np.inf),
             )
+
+    def sample_autocorrelation_matrices(
+        self,
+        idata,
+        n_lags: int = 10,
+        observed: bool = False,
+        lag_step: int = 1,
+        compile_kwargs: dict | None = None,
+    ) -> xr.DataArray:
+        r"""
+        Posterior distribution of the model-implied autocorrelation matrices.
+
+        For each posterior draw the stationary state covariance :math:`\Sigma` is found from the discrete Lyapunov
+        equation :math:`\Sigma = T \Sigma T^\top + R Q R^\top`, and the autocorrelation at lag :math:`k` is
+        :math:`T^{k \cdot \texttt{lag\_step}} \Sigma`, normalized by the state standard deviations. The whole
+        calculation is built as a single PyTensor graph and evaluated across every draw at once with
+        :func:`pymc.compute_deterministics`, so there is no Python loop over samples.
+
+        The model must already have been built with :meth:`build_statespace_graph`, which the presence of ``idata``
+        implies.
+
+        Parameters
+        ----------
+        idata : arviz.InferenceData
+            Inference data whose ``posterior`` group holds draws of the model parameters.
+        n_lags : int
+            Number of non-zero lags to compute; the returned ``lag`` dimension has ``n_lags + 1`` entries. Default 10.
+        observed : bool
+            Return the autocorrelation of the *observed* series -- the design matrix applied to the state, with
+            measurement error included in the lag-0 variance -- instead of the latent states. Default False.
+        lag_step : int
+            Spacing between lags, in model periods. Use 1 for the model's native frequency. For an observable that is
+            a temporal aggregate (for example an annual series from a quarterly model), set this to the aggregation
+            period so successive lags are one observation apart. Default 1.
+        compile_kwargs : dict, optional
+            Passed through to :func:`pymc.compute_deterministics`.
+
+        Returns
+        -------
+        DataArray
+            Autocorrelation matrices with dimensions ``(chain, draw, lag, state, state_aux)``, where the state
+            dimensions are the observed states when ``observed`` is True and the latent states otherwise.
+        """
+        posterior = idata.posterior if hasattr(idata, "posterior") else idata
+        state_dim = OBS_STATE_DIM if observed else ALL_STATE_DIM
+        aux_dim = OBS_STATE_AUX_DIM if observed else ALL_STATE_AUX_DIM
+        name = "observation_autocorrelation" if observed else "autocorrelation"
+        coords = {**self.coords, "lag": np.arange(n_lags + 1)}
+
+        with pm.Model(coords=coords) as acf_model:
+            self._build_dummy_graph()
+            self._insert_random_variables()
+            _, _, _, _, T, Z, R, H, Q = self.unpack_statespace()
+
+            Sigma = pt.linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
+
+            # Advance ``lag_step`` model periods per lag, then accumulate T^(k * lag_step) for k = 0 .. n_lags.
+            T_step = T
+            for _ in range(lag_step - 1):
+                T_step = T_step @ T
+            eye = pt.eye(T.shape[0])
+            powers = pytensor.scan(
+                lambda prev, mat: prev @ mat,
+                outputs_info=eye,
+                non_sequences=[T_step],
+                n_steps=n_lags,
+                return_updates=False,
+            )
+            T_powers = pt.concatenate([eye[None], powers], axis=0)
+
+            if observed:
+                autocov = (Z @ (T_powers @ Sigma)) @ Z.T
+                autocov_0 = Z @ Sigma @ Z.T + H  # observed lag-0 variance includes measurement error
+            else:
+                autocov = T_powers @ Sigma
+                autocov_0 = Sigma
+            autocov = pt.set_subtensor(autocov[0], autocov_0)
+
+            std = pt.sqrt(pt.diag(autocov_0))
+            autocorr = autocov / pt.outer(std, std)[None]
+            pm.Deterministic(name, autocorr, dims=("lag", state_dim, aux_dim))
+
+        return pm.compute_deterministics(
+            posterior, var_names=[name], model=acf_model, compile_kwargs=compile_kwargs, progressbar=False
+        )[name]
 
     def to_pymc(self, exclude_priors: list[str] | None = None):
         if exclude_priors is None:
