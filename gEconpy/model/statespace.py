@@ -191,7 +191,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
     def _setup_policy_matrices(
         self, A: pt.TensorVariable, B: pt.TensorVariable, C: pt.TensorVariable, D: pt.TensorVariable
-    ) -> tuple[pt.TensorVariable, pt.TensorVariable]:
+    ) -> tuple[pt.TensorVariable, pt.TensorVariable, pt.TensorVariable]:
         if self._solver == "gensys":
             T, R, _success = gensys_pt(A, B, C, D, **self._solver_kwargs)
         elif self._solver == "cycle_reduction":
@@ -202,6 +202,11 @@ class DSGEStateSpace(PyMCStateSpace):
             T, R, n_steps = scan_cycle_reduction(A, B, C, D, mode=self._mode, **self._solver_kwargs)
             self._n_steps = n_steps
 
+        # Evaluate the policy-function residual in the solver's variable order. A, B, and C
+        # have columns in ``var_order``, and T shares that basis until it is remapped below;
+        # computing the residual after the remap would mix the two orderings and inflate it.
+        resid = pt.square(A + B @ T + C @ T @ T).sum()
+
         # T comes back in the *permuted* variable order on both axes; R on its rows.
         # Map back to the user's variable order so the Kalman filter sees user variables.
         if not np.array_equal(self.var_order, np.arange(len(self.var_order))):
@@ -209,7 +214,7 @@ class DSGEStateSpace(PyMCStateSpace):
             T = T[inv][:, inv]
             R = R[inv]
 
-        return T, R
+        return T, R, resid
 
     @property
     def lead_var_idx(self) -> np.ndarray:
@@ -759,8 +764,7 @@ class DSGEStateSpace(PyMCStateSpace):
         permuted_lead_var_idx = self.inv_var_order[self.lead_var_idx]
         self._bk_output = check_bk_condition_pt(A, B, C, D, lead_var_idx=permuted_lead_var_idx)
 
-        T, R = self._setup_policy_matrices(A, B, C, D)
-        resid = pt.square(A + B @ T + C @ T @ T).sum()
+        T, R, resid = self._setup_policy_matrices(A, B, C, D)
 
         T = rewrite_pregrad(T)
         R = rewrite_pregrad(R)
