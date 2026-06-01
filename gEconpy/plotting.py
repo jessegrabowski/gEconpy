@@ -1,5 +1,6 @@
 import warnings
 
+from collections.abc import Mapping
 from itertools import product
 from typing import Any, Literal, cast
 
@@ -1320,61 +1321,257 @@ def annotate_heatmap(
     return texts
 
 
+def _acf_hdi_bounds(series: xr.DataArray, prob: float) -> tuple[np.ndarray, np.ndarray]:
+    """Return per-lag (lower, upper) bounds of the ``prob`` highest-density interval of ``series``."""
+    hdi = azs.hdi(series, prob=prob)
+    ci_dim = next(dim for dim in hdi.dims if dim != "lag")
+    return hdi.isel({ci_dim: 0}).values, hdi.isel({ci_dim: 1}).values
+
+
+def _plot_acf_intervals(
+    axis: plt.Axes,
+    series: xr.DataArray,
+    lags: np.ndarray,
+    sample_dims: list[str],
+    ci_probs: tuple[float, float],
+    color: str = "tab:blue",
+    offset: float = 0.0,
+    mean_kwargs: dict | None = None,
+    inner_hdi_kwargs: dict | None = None,
+    outer_hdi_kwargs: dict | None = None,
+) -> None:
+    """Draw a forest-style autocorrelation on ``axis``: a posterior-mean point plus two nested HDI sticks per lag."""
+    inner_prob, outer_prob = sorted(ci_probs)
+    mean = series.mean(sample_dims).values
+    outer_lo, outer_hi = _acf_hdi_bounds(series, outer_prob)
+    inner_lo, inner_hi = _acf_hdi_bounds(series, inner_prob)
+
+    x = lags + offset
+    axis.vlines(x, outer_lo, outer_hi, **{"color": color, "lw": 1.0, **(outer_hdi_kwargs or {})})
+    axis.vlines(x, inner_lo, inner_hi, **{"color": color, "lw": 3.0, **(inner_hdi_kwargs or {})})
+    axis.scatter(x, mean, **{"color": color, "s": 38, "zorder": 3, **(mean_kwargs or {})})
+
+
+def _collect_acf_diagonals(models: dict, sample_dims: tuple[str, ...]):
+    """Diagonalize each model's autocorrelation tensor; return (diagonals, present-sample-dims, variable dim)."""
+    diagonals, present_by_model, var_dim = {}, {}, None
+    for label, tensor in models.items():
+        present = [dim for dim in sample_dims if dim in tensor.dims]
+        var_dims = [dim for dim in tensor.dims if dim != "lag" and dim not in present]
+        if len(var_dims) != 2:
+            raise ValueError(
+                "Expected an autocorrelation tensor with a 'lag' dimension and two variable dimensions, but found "
+                f"non-lag/sample dimensions {var_dims}."
+            )
+        diagonals[label] = xr_diagonal(tensor, dims=var_dims)
+        present_by_model[label] = present
+        var_dim = var_dims[0]
+    return diagonals, present_by_model, var_dim
+
+
+_REFERENCE_DEFAULTS = {"facecolors": "none", "edgecolors": "k", "s": 60, "linewidths": 1.6, "zorder": 4}
+
+
+def _draw_acf_panel(
+    axis,
+    variable,
+    diagonals,
+    present_by_model,
+    var_dim,
+    lags,
+    ci_probs,
+    offsets,
+    colors,
+    reference,
+    ref_var_dim,
+    mean_kwargs,
+    inner_hdi_kwargs,
+    outer_hdi_kwargs,
+    stem_kwargs,
+    reference_kwargs,
+):
+    """Draw one autocorrelation subplot: each model's forest (or stem) plus an optional hollow reference overlay."""
+    axis.axhline(0, color="k", lw=0.5)
+    for (label, model_diagonal), offset, color in zip(diagonals.items(), offsets, colors, strict=False):
+        if variable not in model_diagonal.coords[var_dim].values:
+            continue
+        series = model_diagonal.sel({var_dim: variable})
+        if present_by_model[label]:
+            _plot_acf_intervals(
+                axis,
+                series,
+                lags,
+                present_by_model[label],
+                ci_probs,
+                color=color,
+                offset=offset,
+                mean_kwargs=mean_kwargs,
+                inner_hdi_kwargs=inner_hdi_kwargs,
+                outer_hdi_kwargs=outer_hdi_kwargs,
+            )
+        else:
+            axis.scatter(lags + offset, series.values, **{"color": color, **(stem_kwargs or {})})
+            axis.vlines(lags + offset, 0, series.values, color=color)
+
+    if ref_var_dim is not None and variable in reference.coords[ref_var_dim].values:
+        ref_series = reference.sel({ref_var_dim: variable})
+        axis.scatter(
+            reference.coords["lag"].values, ref_series.values, **{**_REFERENCE_DEFAULTS, **(reference_kwargs or {})}
+        )
+
+    [spine.set_visible(False) for spine in axis.spines.values()]
+    axis.grid(ls="--", lw=0.5)
+    axis.set(title=str(variable))
+
+
+def _add_acf_legend(
+    fig: plt.Figure, model_labels: list, colors: list[str], has_reference: bool, reference_kwargs: dict | None = None
+) -> None:
+    """Add a legend distinguishing overlaid models and/or the reference series, if either is present."""
+    handles, labels = [], []
+    if len(model_labels) > 1:
+        handles += [Line2D([0], [0], color=color, lw=3) for color in colors]
+        labels += [str(label) for label in model_labels]
+    if has_reference:
+        ref = {**_REFERENCE_DEFAULTS, **(reference_kwargs or {})}
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                ls="none",
+                marker="o",
+                mfc=ref["facecolors"],
+                mec=ref["edgecolors"],
+                mew=ref["linewidths"],
+                ms=ref["s"] ** 0.5,
+            )
+        )
+        labels.append("data")
+    if handles and fig.axes:
+        fig.axes[0].legend(handles, labels, fontsize=8)
+
+
 def plot_acf(
-    acorr: np.ndarray | xr.DataArray,
+    acorr: xr.DataArray | Mapping[str, xr.DataArray],
     vars_to_plot: list[str] | None = None,
+    sample_dims: tuple[str, ...] = ("chain", "draw"),
+    ci_probs: tuple[float, float] = (0.5, 0.94),
+    reference: xr.DataArray | None = None,
+    dodge: float = 0.2,
     figsize: tuple[int, int] | None = (14, 4),
     dpi: int | None = 100,
     n_cols: int | None = 4,
+    mean_kwargs: dict | None = None,
+    inner_hdi_kwargs: dict | None = None,
+    outer_hdi_kwargs: dict | None = None,
+    stem_kwargs: dict | None = None,
+    reference_kwargs: dict | None = None,
 ) -> plt.Figure:
-    """
+    r"""
     Plot the autocorrelation function for a set of variables.
+
+    ``acorr`` is an autocorrelation tensor with a ``lag`` dimension and two square variable dimensions (the
+    cross-correlation axes, e.g. ``variable``/``variable_aux`` or ``state``/``state_aux``); only the diagonal —
+    each variable's own autocorrelation — is drawn. If the tensor also carries posterior sample dimensions
+    (``chain``, ``draw``), the result is an uncertainty-aware **forest**: a point at the posterior mean with two
+    nested credible-interval sticks at each lag. Otherwise it is a single-estimate **stem** plot.
+
+    Pass a mapping of ``{label: tensor}`` to overlay several models on the same axes; their forests are dodged
+    along the lag axis, coloured per model, and a legend of the labels is added.
 
     Parameters
     ----------
-    acorr_matrix: DataArray
-        Tensor of correlations.
-    vars_to_plot: list of str, optional
-        List of variables to plot. If not provided, all variables in `acorr_matrix` will be plotted.
-    figsize: tuple, optional
-        Figure size in inches.
-    dpi: int, optional
-        Figure resolution in dots per inch.
-    n_cols: int, optional
-        Number of columns in the subplot grid.
+    acorr : DataArray or mapping of str to DataArray
+        The autocorrelation tensor(s). A single tensor is plotted directly; a mapping overlays one dodged,
+        coloured forest per entry. Each tensor must have a ``lag`` dimension and exactly two non-lag, non-sample
+        variable dimensions, and may additionally carry the ``sample_dims``.
+    vars_to_plot : list of str, optional
+        Variables to plot. Plot every variable in ``acorr`` (the first entry, if a mapping) when not provided.
+    sample_dims : tuple of str, optional
+        Dimensions treated as posterior samples; their presence switches stems to forest intervals. Default
+        ``("chain", "draw")``.
+    ci_probs : tuple of float, optional
+        The two credible-interval probabilities drawn at each lag as (inner, outer); the inner interval gets the
+        thicker line. Ignored for tensors with no sample dimensions. Default ``(0.5, 0.94)``.
+    reference : DataArray, optional
+        A second autocorrelation to overlay as hollow markers — typically the empirical ACF of the observed data,
+        for a model-vs-data check. Indexed by ``lag`` and a single variable dimension; only variables that also
+        appear in ``acorr`` are overlaid. Default None.
+    dodge : float, optional
+        Horizontal offset between successive models' forests when ``acorr`` is a mapping. Default 0.2.
+    figsize : tuple, optional
+        Figure size in inches. Default ``(14, 4)``.
+    dpi : int, optional
+        Figure resolution in dots per inch. Default 100.
+    n_cols : int, optional
+        Number of columns in the subplot grid. Default 4.
+    mean_kwargs : dict, optional
+        Keyword arguments forwarded to ``Axes.scatter`` for the posterior-mean point of each forest, merged over
+        the defaults ``{"s": 38, "zorder": 3}`` (per-model ``color`` is set automatically). Default None.
+    inner_hdi_kwargs : dict, optional
+        Keyword arguments forwarded to ``Axes.vlines`` for the inner (thicker) HDI stick, merged over the default
+        ``{"lw": 3.0}``. Default None.
+    outer_hdi_kwargs : dict, optional
+        Keyword arguments forwarded to ``Axes.vlines`` for the outer (thinner) HDI stick, merged over the default
+        ``{"lw": 1.0}``. Default None.
+    stem_kwargs : dict, optional
+        Keyword arguments forwarded to ``Axes.scatter`` for the stem marker drawn when a tensor has no sample
+        dimensions. Default None.
+    reference_kwargs : dict, optional
+        Keyword arguments forwarded to ``Axes.scatter`` for the hollow reference markers, merged over the defaults
+        ``{"facecolors": "none", "edgecolors": "k", "s": 60, "linewidths": 1.6, "zorder": 4}``. The legend proxy
+        for the reference series is kept in sync with these settings. Default None.
 
     Returns
     -------
     matplotlib.figure.Figure
         Figure object containing the plots.
     """
-    all_variables = acorr.coords["variable"].values
+    models = {None: acorr} if isinstance(acorr, xr.DataArray) else dict(acorr)
+    diagonals, present_by_model, var_dim = _collect_acf_diagonals(models, sample_dims)
+
+    diagonal = diagonals[next(iter(diagonals))]
+    all_variables = diagonal.coords[var_dim].values
     if vars_to_plot is None:
         vars_to_plot = all_variables
-
     else:
-        for var in vars_to_plot:
-            if var not in all_variables:
-                raise ValueError(f"Can not plot variable {var}, it was not found in the provided covariance matrix")
+        missing = [var for var in vars_to_plot if var not in all_variables]
+        if missing:
+            raise ValueError(f"Cannot plot {missing}; not found in the provided autocorrelation tensor")
 
     n_plots = len(vars_to_plot)
     n_cols = min(n_cols, n_plots)
-
     fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
     gc, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_plots, figure=fig)
+    lags = diagonal.coords["lag"].values
 
-    acorr_matrix = xr_diagonal(acorr, dims=["variable", "variable_aux"]).sel(variable=vars_to_plot)
-    x_values = acorr_matrix.coords["lag"]
+    n_models = len(models)
+    offsets = (np.arange(n_models) - (n_models - 1) / 2) * (dodge if n_models > 1 else 0.0)
+    colors = [f"C{i}" for i in range(n_models)]
+    ref_var_dim = next((dim for dim in reference.dims if dim != "lag"), None) if reference is not None else None
 
     for variable, plot_loc in zip(vars_to_plot, plot_locs, strict=False):
         axis = fig.add_subplot(gc[plot_loc])
-        axis.scatter(x_values, acorr_matrix.sel(variable=variable).values)
-        axis.vlines(x_values, 0, acorr_matrix.sel(variable=variable).values)
+        _draw_acf_panel(
+            axis,
+            variable,
+            diagonals,
+            present_by_model,
+            var_dim,
+            lags,
+            ci_probs,
+            offsets,
+            colors,
+            reference,
+            ref_var_dim,
+            mean_kwargs,
+            inner_hdi_kwargs,
+            outer_hdi_kwargs,
+            stem_kwargs,
+            reference_kwargs,
+        )
 
-        [spine.set_visible(False) for spine in axis.spines.values()]
-        axis.grid(ls="--", lw=0.5)
-        axis.set(title=variable)
-
+    _add_acf_legend(fig, list(models), colors, reference is not None, reference_kwargs)
     return fig
 
 
