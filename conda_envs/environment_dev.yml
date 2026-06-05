@@ -6,15 +6,15 @@ channels:
 
 dependencies:
   # Core dependencies
-  - python=3.12
-  - pymc>=6.0.0
-  - pytensor>=3.0.2
+  - python=3.13
+  - pymc>=6.0.1
+  - pytensor>=3.0.4
   - matplotlib
   - numba
   - numpy
   - pandas
   - pyparsing
-  - preliz>=0.23.0
+  - preliz>=0.25.0
   - scipy
   - setuptools
   - statsmodels
@@ -24,8 +24,8 @@ dependencies:
   - notebook<7
   - nutpie>=0.16.10
   - networkx
-  - sympytensor>=2.0.0
-  - pymc-extras>=0.11.0
+  - sympytensor>=2.0.1
+  - pymc-extras>=0.12.0
 
   # For building docs
   - ipython
@@ -33,7 +33,7 @@ dependencies:
   - myst-nb
   - numpydoc
   - pre-commit
-  - sphinx>=5
+  - sphinx>=9.1.0
   - sphinx-copybutton
   - sphinx-design
   - sphinx-notfound-page
@@ -42,7 +42,7 @@ dependencies:
   - sphinxcontrib-bibtex
   - pydata-sphinx-theme
   - watermark
-  - better-optimize>=0.2.1
+  - better-optimize>=0.4.2
 
   # developer tools
   - pre-commit
@@ -54,7 +54,7 @@ dependencies:
 
   - pip:
       - numdifftools
-      - jax>=0.9
+      - jax>=0.10.1
       - flowjax
       - corner
       - asv

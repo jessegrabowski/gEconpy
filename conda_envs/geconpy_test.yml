@@ -14,20 +14,20 @@ dependencies:
   - matplotlib
   - arviz>=1.1.0
   - statsmodels
-  - pymc>=6.0.0
-  - pytensor>=3.0.0
-  - preliz>=0.23.0
+  - pymc>=6.0.1
+  - pytensor>=3.0.4
+  - preliz>=0.25.0
   - ipython
-  - sympytensor>=2.0.0
-  - pymc-extras>=0.11.0
-  - better-optimize>=0.2.1
+  - sympytensor>=2.0.1
+  - pymc-extras>=0.12.0
+  - better-optimize>=0.4.2
   - nutpie>=0.16.10
   - networkx
 
   # Testing dependencies
   - pre-commit
-  - pytest-cov>=2.5
-  - pytest>=3.0
+  - pytest-cov>=7.1.0
+  - pytest>=9.0.3
   - pytest-env
   - pytest-benchmark
 
