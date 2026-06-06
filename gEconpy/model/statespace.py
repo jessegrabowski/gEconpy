@@ -25,6 +25,7 @@ from pymc_extras.statespace.utils.constants import (
     SHOCK_AUX_DIM,
     SHOCK_DIM,
 )
+from pytensor.assumptions import assume
 from pytensor.graph.replace import graph_replace
 from sympytensor import as_tensor
 
@@ -244,7 +245,7 @@ class DSGEStateSpace(PyMCStateSpace):
         """
         if self.full_covariance:
             state_cov = self.make_and_register_variable("state_cov", shape=(self.k_posdef, self.k_posdef))
-            Q = pt.assume(state_cov, positive_definite=True)
+            Q = assume(state_cov, positive_definite=True)
             self.ssm["state_cov"] = Q
             return Q
 
@@ -811,7 +812,12 @@ class DSGEStateSpace(PyMCStateSpace):
         self.ssm["initial_state"] = pt.zeros(self.k_states)
 
         method = "direct" if self.use_direct_lyapunov else "bilinear"
-        self.ssm["initial_state_cov"] = pt.linalg.solve_discrete_lyapunov(T_aug, R_aug @ Q @ R_aug.T, method=method)
+        P0 = pt.linalg.solve_discrete_lyapunov(T_aug, R_aug @ Q @ R_aug.T, method=method)
+        # The solve already propagates symmetry; deterministic cumulator/obs-lag copies make the
+        # stationary covariance singular, so only assert PD when no such augmentation is present.
+        if self._n_cumulator_states == 0 and self._n_obs_lag_states == 0:
+            P0 = assume(P0, positive_definite=True)
+        self.ssm["initial_state_cov"] = P0
 
     def configure(
         self,
@@ -1262,6 +1268,9 @@ class DSGEStateSpace(PyMCStateSpace):
             _, _, _, _, T, Z, R, H, Q = self.unpack_statespace()
 
             Sigma = pt.linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
+            # PD is unsafe when cumulator/obs-lag augmentation makes the stationary covariance singular.
+            if self._n_cumulator_states == 0 and self._n_obs_lag_states == 0:
+                Sigma = assume(Sigma, positive_definite=True)
 
             # Advance ``lag_step`` model periods per lag, then accumulate T^(k * lag_step) for k = 0 .. n_lags.
             T_step = T
