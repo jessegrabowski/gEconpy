@@ -222,7 +222,7 @@ def ss_mod() -> DSGEStateSpace:
     model.configure(
         observed_states=["Y", "C", "L"],
         measurement_error=["Y", "C", "L"],
-        full_shock_covaraince=False,
+        full_shock_covariance=False,
         solver="gensys",
         mode="FAST_RUN",
         verbose=False,
