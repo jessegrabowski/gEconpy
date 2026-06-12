@@ -20,7 +20,7 @@ def _steihaug_cg(JtJ: sp.spmatrix, g: np.ndarray, delta: float, max_cg_iter: int
 
     p = np.zeros(n)
     r = g.copy()
-    d = -r.copy()
+    d = -r  # unary negation already allocates; no copy needed
     r_dot_r = np.dot(r, r)
 
     if np.sqrt(r_dot_r) < 1e-15:
@@ -42,14 +42,17 @@ def _steihaug_cg(JtJ: sp.spmatrix, g: np.ndarray, delta: float, max_cg_iter: int
             return _boundary_step(p, d, delta)
 
         p = p_next
-        r = r + alpha * Hd
+        # r and d are owned (not aliased), so update them in place to avoid a
+        # fresh allocation of each every CG iteration.
+        r += alpha * Hd
         r_dot_r_new = np.dot(r, r)
 
         if np.sqrt(r_dot_r_new) < 1e-10 * np.linalg.norm(g):
             return p
 
         beta = r_dot_r_new / r_dot_r
-        d = -r + beta * d
+        d *= beta  # d = -r + beta * d, in place
+        d -= r
         r_dot_r = r_dot_r_new
 
     return p
