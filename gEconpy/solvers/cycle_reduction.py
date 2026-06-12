@@ -78,11 +78,12 @@ def nb_cycle_reduction(
     X = None
     res = None
 
-    A0_initial = A0.copy()
-    A1_hat = A1.copy()
-
-    A1_initial = A1.copy()
-    A2_initial = A2.copy()
+    # The loop rebinds A0/A1/A2 to fresh arrays rather than mutating them in
+    # place, so these initial snapshots can alias the inputs -- no copy needed.
+    A0_initial = A0
+    A1_hat = A1
+    A1_initial = A1
+    A2_initial = A2
 
     n, _ = A0.shape
     idx_0 = np.arange(n)
@@ -149,7 +150,7 @@ def nb_solve_shock_matrix(B: np.ndarray, C: np.ndarray, D: np.ndarray, G_1: np.n
         system variables at time t+1.
 
     """
-    return -np.linalg.solve(C @ G_1 + B, D.astype(C.dtype))
+    return -np.linalg.solve(C @ G_1 + B, D)
 
 
 def _linear_policy_jvp(inputs, outputs, output_grads):
@@ -166,31 +167,57 @@ def _linear_policy_jvp(inputs, outputs, output_grads):
 def _cycle_reduction_core(
     A0: np.ndarray, A1: np.ndarray, A2: np.ndarray, max_iter: int, tol: float
 ) -> tuple[np.ndarray, bool]:
-    """Numba-compiled core of `nb_cycle_reduction`."""
-    A0_initial = A0.copy()
+    n = A0.shape[0]
+    dtype = A0.dtype
+
+    # A0_initial (read-only, used in the final solve) may alias the input; the
+    # working A0/A1/A2 are owned copies so the loop can mutate them in place.
+    A0_initial = A0
     A1_hat = A1.copy()
+    A0 = A0.copy()
+    A1 = A1.copy()
+    A2 = A2.copy()
+
+    # Reused scratch: C-order matmul outputs and F-order LU / RHS buffers.
+    m00 = np.empty((n, n), dtype=dtype)
+    m02 = np.empty((n, n), dtype=dtype)
+    m20 = np.empty((n, n), dtype=dtype)
+    m22 = np.empty((n, n), dtype=dtype)
+
+    # Create fortran ordered buffers (numba rejects order='F' argument so need this
+    # cute transpose trick
+    lu_buf = np.empty((n, n), dtype=dtype).T
+    rhs0 = np.empty((n, n), dtype=dtype).T
+    rhs2 = np.empty((n, n), dtype=dtype).T
 
     converged = False
     for _ in range(int(max_iter)):
-        # Factor A1 once, solve twice. `_getrs` wants 1-based LAPACK IPIV (the
-        # reverse convention of `_lu_factor`, see the note in gensys.py).
-        lu, piv_0 = _lu_factor(A1, False)
-        piv = (piv_0 + np.int32(1)).astype(np.int32)
-        # A1 \ A0 and A1 \ A2 as separate (n, n) solves; each is an in-place
-        # triangular back-sub on its own buffer.
-        A1_inv_A0, _info0 = _getrs(lu, np.ascontiguousarray(A0), piv, 0, False)
-        A1_inv_A2, _info2 = _getrs(lu, np.ascontiguousarray(A2), piv, 0, False)
+        # Factor A1 in the reused F-buffer (A1 itself is preserved for the update
+        # below). `_getrs` wants 1-based IPIV (reverse of `_lu_factor`).
+        lu_buf[:] = A1
+        lu, piv = _lu_factor(lu_buf, True)
 
-        # Four sub-block products: expand of `[A0; A2] @ A1⁻¹ @ [A0 A2]`.
-        A0_A1inv_A0 = A0 @ A1_inv_A0
-        A0_A1inv_A2 = A0 @ A1_inv_A2
-        A2_A1inv_A0 = A2 @ A1_inv_A0
-        A2_A1inv_A2 = A2 @ A1_inv_A2
+        # `_getrs` wants 1-based IPIV (reverse of `_lu_factor`)
+        piv += np.int32(1)
 
-        A1 = A1 - A0_A1inv_A2 - A2_A1inv_A0
-        A1_hat = A1_hat - A2_A1inv_A0
-        A0 = -A0_A1inv_A0
-        A2 = -A2_A1inv_A2
+        # A1 \ A0 and A1 \ A2
+        rhs0[:] = A0
+        A1_inv_A0, _info0 = _getrs(lu, rhs0, piv, 0, True)
+        rhs2[:] = A2
+        A1_inv_A2, _info2 = _getrs(lu, rhs2, piv, 0, True)
+
+        # Four sub-block products of `[A0; A2] @ A1⁻¹ @ [A0 A2]`, into reused buffers.
+        np.dot(A0, A1_inv_A0, m00)
+        np.dot(A0, A1_inv_A2, m02)
+        np.dot(A2, A1_inv_A0, m20)
+        np.dot(A2, A1_inv_A2, m22)
+
+        # In-place updates (A0/A1/A2/A1_hat are owned).
+        A1 -= m02
+        A1 -= m20
+        A1_hat -= m20
+        np.negative(m00, A0)
+        np.negative(m22, A2)
 
         A0_L1_norm = np.linalg.norm(A0, ord=1)
         if A0_L1_norm < tol:
@@ -204,7 +231,9 @@ def _cycle_reduction_core(
     # ``_solve_gen`` returns NaN-filled output on LAPACK INFO error instead of
     # raising — lets the sampler reject the draw rather than abort the run.
     if converged:
-        X = _solve_gen(A1_hat, A0_initial, False, False, False, False)
+        # A1_hat and A0_initial are dead after this final solve, so flag them
+        # overwrite-able (LAPACK reuses the buffer when it is Fortran-contiguous).
+        X = _solve_gen(A1_hat, A0_initial, False, True, True, False)
         T = -X
     else:
         T = np.zeros_like(A0_initial)
@@ -214,6 +243,7 @@ def _cycle_reduction_core(
 
 class CycleReductionWrapper(Op):
     __props__ = ("max_iter", "tol")
+    gufunc_signature = "(n,n),(n,n),(n,n)->(n,n)"
 
     def __init__(self, max_iter=1000, tol=1e-9):
         self.max_iter = int(max_iter)
@@ -225,6 +255,10 @@ class CycleReductionWrapper(Op):
         outputs = [pt.dmatrix("T")]
 
         return Apply(self, inputs, outputs)
+
+    def infer_shape(self, fgraph, node, input_shapes):
+        n = input_shapes[0][0]
+        return [(n, n)]
 
     def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
         A, B, C = inputs
@@ -255,15 +289,28 @@ def numba_funcify_CycleReductionWrapper(op, node, **kwargs):  # noqa: ARG001
     max_iter = op.max_iter
     tol = op.tol
 
-    @numba_basic.numba_njit
-    def cycle_reduction(A, B, C):
-        A_f = np.ascontiguousarray(A).astype(np.float64)
-        B_f = np.ascontiguousarray(B).astype(np.float64)
-        C_f = np.ascontiguousarray(C).astype(np.float64)
-        T, _converged = _cycle_reduction_core(A_f, B_f, C_f, max_iter, tol)
-        return T
+    needs_upcast = node.inputs[0].type.dtype != "float64"
 
-    cache_version = 1
+    if needs_upcast:
+
+        @numba_basic.numba_njit
+        def cycle_reduction(A, B, C):
+            A_f = np.ascontiguousarray(A).astype(np.float64)
+            B_f = np.ascontiguousarray(B).astype(np.float64)
+            C_f = np.ascontiguousarray(C).astype(np.float64)
+            T, _converged = _cycle_reduction_core(A_f, B_f, C_f, max_iter, tol)
+            return T
+    else:
+
+        @numba_basic.numba_njit
+        def cycle_reduction(A, B, C):
+            A_f = np.ascontiguousarray(A)
+            B_f = np.ascontiguousarray(B)
+            C_f = np.ascontiguousarray(C)
+            T, _converged = _cycle_reduction_core(A_f, B_f, C_f, max_iter, tol)
+            return T
+
+    cache_version = 2
     return cycle_reduction, cache_version
 
 
