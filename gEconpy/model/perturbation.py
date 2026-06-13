@@ -54,7 +54,7 @@ def linearize_model(
     use identity substitutions, yielding bare derivatives.
 
     A ``pt.switch`` guard on the steady-state value prevents ``log(negative)`` for variables whose steady states are
-    not know to be non-positive. This is a numerical safety net: ``rewrite_pregrad`` does not simplify ``exp(log(x))``
+    not known to be non-positive. This is a numerical safety net: ``rewrite_pregrad`` does not simplify ``exp(log(x))``
     when ``x < 0``. This is avoided if a variable is known to be positive or negative via the Assumptions block of the
     GCN file.
 
@@ -125,7 +125,7 @@ def linearize_model(
     backward_replace = {}
     dummies_lags, dummies_now, dummies_leads = [], [], []
 
-    for i, (lag, curr, lead, ss) in enumerate(zip(lags_pt, now_pt, leads_pt, ss_pt, strict=False)):
+    for i, (lag, curr, lead, ss) in enumerate(zip(lags_pt, now_pt, leads_pt, ss_pt, strict=True)):
         name = variables[i].base_name
         lag_tilde = pt.dscalar(f"{name}__tm1__tilde")
         curr_tilde = pt.dscalar(f"{name}__t__tilde")
@@ -165,22 +165,25 @@ def linearize_model(
     equations_transformed = rewrite_pregrad(equations_transformed)
 
     n_eq = len(equations_transformed)
-    n_var = len(dummies_leads)
 
     # Classify equations by which time-shifts they reference (S=static, L=lag-only,
     # E=lead-only, B=both) and variables by their incidence (s, p, m, f). Build
-    # ``eq_order`` / ``var_order`` from these if the caller didn't supply them.
-    eq_has_lag = np.array([any(v.set_t(-1) in eq.atoms(TimeAwareSymbol) for v in variables) for eq in equations])
-    eq_has_lead = np.array([any(v.set_t(1) in eq.atoms(TimeAwareSymbol) for v in variables) for eq in equations])
-    var_has_lag = np.zeros(len(variables), dtype=bool)
-    var_has_lead = np.zeros(len(variables), dtype=bool)
-    for eq in equations:
+    # ``eq_order`` / ``var_order`` from these if the caller didn't supply them. A single
+    # pass over the equations derives all four incidence arrays; atoms is walked once per
+    # equation and the lag/lead symbols are built once.
+    lag_syms = [v.set_t(-1) for v in variables]
+    lead_syms = [v.set_t(1) for v in variables]
+    eq_has_lag = np.zeros(n_eq, dtype=bool)
+    eq_has_lead = np.zeros(n_eq, dtype=bool)
+    var_has_lag = np.zeros(n_vars, dtype=bool)
+    var_has_lead = np.zeros(n_vars, dtype=bool)
+    for i, eq in enumerate(equations):
         atoms = eq.atoms(TimeAwareSymbol)
-        for j, v in enumerate(variables):
-            if v.set_t(-1) in atoms:
-                var_has_lag[j] = True
-            if v.set_t(1) in atoms:
-                var_has_lead[j] = True
+        for j in range(n_vars):
+            if lag_syms[j] in atoms:
+                eq_has_lag[i] = var_has_lag[j] = True
+            if lead_syms[j] in atoms:
+                eq_has_lead[i] = var_has_lead[j] = True
     n_S = int((~eq_has_lag & ~eq_has_lead).sum())
     n_L = int((eq_has_lag & ~eq_has_lead).sum())
     n_E = int((~eq_has_lag & eq_has_lead).sum())
@@ -220,18 +223,18 @@ def linearize_model(
     dummies_now_perm = [dummies_now[j] for j in var_order_local]
     dummies_leads_perm = [dummies_leads[j] for j in var_order_local]
 
-    # A is nonzero only in (L | B) rows × (p | m) cols: 4 cells out of 16.
-    # C is nonzero only in (E | B) rows × (m | f) cols.
-    # B has no useful block-zero structure; D's columns are shocks (no var perm).
-    use_split = n_eq > 0 and n_var > 0 and (n_L + n_B_eq) > 0 and (n_E + n_B_eq) > 0
+    # B and D have no useful block-zero structure: B is permuted rows × cols, D's columns
+    # are shocks (no var perm). They are identical regardless of the A/C split, so build
+    # them once. The split only changes how A and C are constructed:
+    #   A is nonzero only in (L | B) rows × (p | m) cols: 4 cells out of 16.
+    #   C is nonzero only in (E | B) rows × (m | f) cols.
+    permuted_eqs = [equations_transformed[i] for i in eq_order_local]
+    B = sparse_jacobian(permuted_eqs, dummies_now_perm, return_sparse=False)
+    D = sparse_jacobian(permuted_eqs, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_eq, 0))
+
+    use_split = n_eq > 0 and n_vars > 0 and (n_L + n_B_eq) > 0 and (n_E + n_B_eq) > 0
 
     if use_split:
-        permuted_eqs = [equations_transformed[i] for i in eq_order_local]
-
-        # B and D: just permute (rows by eq_order, cols by var_order for B; D unchanged)
-        B = sparse_jacobian(permuted_eqs, dummies_now_perm, return_sparse=False)
-        D = sparse_jacobian(permuted_eqs, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_eq, 0))
-
         # A: compute only the (L+B) × (p+m) submatrix
         a_active_eqs = permuted_eqs[n_S : n_S + n_L] + permuted_eqs[n_S + n_L + n_E :]
         a_active_vars = dummies_lags_perm[n_s : n_s + n_p + n_m]
@@ -256,11 +259,11 @@ def linearize_model(
 
         A_rows = []
         if n_S > 0:
-            A_rows.append([pt.zeros((n_S, n_var))])
+            A_rows.append([pt.zeros((n_S, n_vars))])
         if n_L > 0:
             A_rows.append(_row(n_s, A_L, n_f, n_L))
         if n_E > 0:
-            A_rows.append([pt.zeros((n_E, n_var))])
+            A_rows.append([pt.zeros((n_E, n_vars))])
         if n_B_eq > 0:
             A_rows.append(_row(n_s, A_B, n_f, n_B_eq))
         A = block(A_rows)
@@ -278,26 +281,22 @@ def linearize_model(
 
         C_rows = []
         if n_S + n_L > 0:
-            C_rows.append([pt.zeros((n_S + n_L, n_var))])
+            C_rows.append([pt.zeros((n_S + n_L, n_vars))])
         if n_E > 0:
             C_rows.append([pt.zeros((n_E, n_s + n_p)), C_E])
         if n_B_eq > 0:
             C_rows.append([pt.zeros((n_B_eq, n_s + n_p)), C_B])
         C = block(C_rows)
     else:
-        # Degenerate: no useful 4-class split — fall back to plain dense Jacobians,
-        # still applying any user-supplied permutations.
-        permuted_eqs = [equations_transformed[i] for i in eq_order_local]
+        # Degenerate: no useful 4-class split — fall back to plain dense Jacobians for A and C.
         A = sparse_jacobian(permuted_eqs, dummies_lags_perm, return_sparse=False)
-        B = sparse_jacobian(permuted_eqs, dummies_now_perm, return_sparse=False)
         C = sparse_jacobian(permuted_eqs, dummies_leads_perm, return_sparse=False)
-        D = sparse_jacobian(permuted_eqs, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_eq, 0))
 
     A, B, C, D = rewrite_pregrad([graph_replace(m, backward_replace, strict=False) for m in [A, B, C, D]])
 
     # Evaluate at steady state: time-indexed variables -> ss values, shocks -> 0
     ss_replace = {}
-    for lag, curr, lead, ss in zip(lags_pt, now_pt, leads_pt, ss_pt, strict=False):
+    for lag, curr, lead, ss in zip(lags_pt, now_pt, leads_pt, ss_pt, strict=True):
         ss_replace[lag] = ss
         ss_replace[curr] = ss
         ss_replace[lead] = ss
@@ -311,9 +310,7 @@ def linearize_model(
     # the *permuted* variable order — the statespace boundary applies ``inv_var_order``
     # to map T/R back to user variable order, and ``Model.linearize_model`` applies
     # ``inv_eq_order`` / ``inv_var_order`` before returning matrices to the user.
-    eq_order_out = eq_order_local
-    var_order_out = var_order_local
-    return [A, B, C, D], list(ss_pt), eq_order_out, var_order_out
+    return [A, B, C, D], list(ss_pt), eq_order_local, var_order_local
 
 
 def make_not_loglin_flags(
