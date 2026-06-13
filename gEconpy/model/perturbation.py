@@ -7,6 +7,7 @@ import pandas as pd
 import pytensor.tensor as pt
 import sympy as sp
 
+from pytensor.gradient import disconnected_grad
 from pytensor.graph.replace import graph_replace
 from pytensor.tensor import TensorVariable
 from scipy import linalg
@@ -729,6 +730,12 @@ def check_bk_condition_pt(
     lead_var_idx = np.asarray(lead_var_idx)
     n_forward = len(lead_var_idx)
     eigvals_real, eigvals_imag = compute_bk_eigenvalues_pt(A, B, C, D, lead_var_idx)
+
+    # Detach the eigenvalues: the BK check is a step function (zero gradient), so this keeps
+    # the only first-order-differentiable RealEig VJP out of the Hessian graph.
+    eigvals_real = disconnected_grad(eigvals_real)
+    eigvals_imag = disconnected_grad(eigvals_imag)
+
     modulus = pt.sqrt(eigvals_real**2 + eigvals_imag**2)
     n_unstable = (modulus > 1).sum()
     bk_satisfied = pt.eq(n_forward, n_unstable)
