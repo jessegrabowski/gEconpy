@@ -12,9 +12,9 @@ class CycleReduction:
     def setup(self, model):
         from gEconpy.data import get_example_gcn
         from gEconpy.model.build import model_from_gcn
-        from gEconpy.solvers.cycle_reduction import nb_cycle_reduction
+        from gEconpy.solvers.cycle_reduction import cycle_reduction_numpy
 
-        self.nb_cycle_reduction = nb_cycle_reduction
+        self.cycle_reduction_numpy = cycle_reduction_numpy
 
         # Build model and extract linearization matrices
         m = model_from_gcn(get_example_gcn(model), verbose=False)
@@ -28,4 +28,4 @@ class CycleReduction:
         self.A2 = np.ascontiguousarray(A)
 
     def time_solve(self, model):
-        self.nb_cycle_reduction(self.A0, self.A1, self.A2, max_iter=MAX_ITER, tol=SOLVER_TOL)
+        self.cycle_reduction_numpy(self.A0, self.A1, self.A2, max_iter=MAX_ITER, tol=SOLVER_TOL)

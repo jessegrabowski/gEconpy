@@ -1,4 +1,3 @@
-import numba as nb
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
@@ -11,6 +10,7 @@ from pytensor.link.numba.dispatch.basic import register_funcify_default_op_cache
 from pytensor.link.numba.dispatch.linalg.decomposition.lu_factor import _lu_factor
 from pytensor.link.numba.dispatch.linalg.solvers.general import _solve_gen
 from pytensor.link.numba.dispatch.linalg.solvers.lu_solve import _getrs
+from pytensor.tensor.linalg.dtype_utils import linalg_output_dtype
 
 from gEconpy.model.perturbation import _log
 from gEconpy.solvers.shared import (
@@ -20,12 +20,7 @@ from gEconpy.solvers.shared import (
 )
 
 
-# TODO: These njit decorators cause the CI to fail on Windows only -- no idea why. Disabling it for now.
-# @nb.njit(
-#     (nb.float64[:, ::1], nb.float64[:, ::1], nb.float64[:, ::1], nb.int64, nb.float64),
-#     cache=True,
-# )
-def nb_cycle_reduction(
+def cycle_reduction_numpy(
     A0: np.ndarray,
     A1: np.ndarray,
     A2: np.ndarray,
@@ -99,13 +94,11 @@ def nb_cycle_reduction(
 
         A0_L1_norm = np.linalg.norm(A0, ord=1)
         if A0_L1_norm < tol:
-            # Algorithm is successful when the L1 norm of A2 is sufficiently small
             A2_L1_norm = np.linalg.norm(A2, ord=1)
             if A2_L1_norm < tol:
                 break
 
         elif np.isnan(A0_L1_norm) or i == (max_iter - 1):
-            # If we fail, figure out how far we got
             if A0_L1_norm < tol:
                 result = "Iteration on matrix A0 and A1 converged towards a solution, but A2 did not."
                 log_norm = np.log(np.linalg.norm(A2, 1))
@@ -121,38 +114,6 @@ def nb_cycle_reduction(
     return X, res, result, log_norm
 
 
-# @nb.njit(
-#     (nb.float64[:, ::1], nb.float64[:, ::1], nb.float64[:, ::1], nb.float64[:, ::1]),
-#     cache=True,
-# )
-def nb_solve_shock_matrix(B: np.ndarray, C: np.ndarray, D: np.ndarray, G_1: np.ndarray):
-    """
-    Solve for the shock impact matrix R in a linear DSGE system, given the policy function matrix T.
-
-    Parameters
-    ----------
-    B: ArrayLike
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-        are observed when decision making: those with t subscripts.
-    C: Arraylike
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-        enter in expectation when decision making: those with t+1 subscripts.
-    D: ArrayLike
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
-    G_1: ArrayLike
-        Transition matrix T in state space jargon. Gives the effect of variable values at time t on the
-        values of the variables at time t+1.
-
-    Returns
-    -------
-    impact: ArrayLike
-        Selection matrix R in state space jargon. Gives the effect of exogenous shocks at time t on the values of
-        system variables at time t+1.
-
-    """
-    return -np.linalg.solve(C @ G_1 + B, D)
-
-
 def _linear_policy_jvp(inputs, outputs, output_grads):
     # CycleReductionWrapper exposes a single output (T); scan_cycle_reduction's
     # OpFromGraph exposes two (T, n_steps). Either way only T carries gradient.
@@ -163,80 +124,61 @@ def _linear_policy_jvp(inputs, outputs, output_grads):
     return o1_policy_function_adjoints(A, B, C, T, T_bar)
 
 
-@nb.njit(cache=True)
+@numba_basic.numba_njit(final_function=True)
 def _cycle_reduction_core(
     A0: np.ndarray, A1: np.ndarray, A2: np.ndarray, max_iter: int, tol: float
 ) -> tuple[np.ndarray, bool]:
     n = A0.shape[0]
     dtype = A0.dtype
 
-    # A0_initial (read-only, used in the final solve) may alias the input; the
-    # working A0/A1/A2 are owned copies so the loop can mutate them in place.
+    # Inputs are read-only (pytensor never grants overwrite here), so the loop rebinds
+    # to fresh arrays and these aliases stay valid.
     A0_initial = A0
-    A1_hat = A1.copy()
-    A0 = A0.copy()
-    A1 = A1.copy()
-    A2 = A2.copy()
+    A1_hat = A1
 
-    # Reused scratch: C-order matmul outputs and F-order LU / RHS buffers.
+    # Owned scratch, overwritten freely. lu_buf/rhs* need Fortran order; numba rejects
+    # order="F", hence the `.T` of a fresh C array.
     m00 = np.empty((n, n), dtype=dtype)
     m02 = np.empty((n, n), dtype=dtype)
     m20 = np.empty((n, n), dtype=dtype)
     m22 = np.empty((n, n), dtype=dtype)
-
-    # Create fortran ordered buffers (numba rejects order='F' argument so need this
-    # cute transpose trick
     lu_buf = np.empty((n, n), dtype=dtype).T
     rhs0 = np.empty((n, n), dtype=dtype).T
     rhs2 = np.empty((n, n), dtype=dtype).T
 
     converged = False
     for _ in range(int(max_iter)):
-        # Factor A1 in the reused F-buffer (A1 itself is preserved for the update
-        # below). `_getrs` wants 1-based IPIV (reverse of `_lu_factor`).
+        # Factor A1 once, reuse for both solves.
         lu_buf[:] = A1
         lu, piv = _lu_factor(lu_buf, True)
+        piv += np.int32(1)  # _getrs wants 1-based pivots
 
-        # `_getrs` wants 1-based IPIV (reverse of `_lu_factor`)
-        piv += np.int32(1)
-
-        # A1 \ A0 and A1 \ A2
         rhs0[:] = A0
         A1_inv_A0, _info0 = _getrs(lu, rhs0, piv, 0, True)
         rhs2[:] = A2
         A1_inv_A2, _info2 = _getrs(lu, rhs2, piv, 0, True)
 
-        # Four sub-block products of `[A0; A2] @ A1⁻¹ @ [A0 A2]`, into reused buffers.
         np.dot(A0, A1_inv_A0, m00)
         np.dot(A0, A1_inv_A2, m02)
         np.dot(A2, A1_inv_A0, m20)
         np.dot(A2, A1_inv_A2, m22)
 
-        # In-place updates (A0/A1/A2/A1_hat are owned).
-        A1 -= m02
-        A1 -= m20
-        A1_hat -= m20
-        np.negative(m00, A0)
-        np.negative(m22, A2)
+        A1 = A1 - m02 - m20
+        A1_hat = A1_hat - m20
+        A0 = -m00
+        A2 = -m22
 
-        A0_L1_norm = np.linalg.norm(A0, ord=1)
-        if A0_L1_norm < tol:
-            A2_L1_norm = np.linalg.norm(A2, ord=1)
-            if A2_L1_norm < tol:
+        A0_norm = np.linalg.norm(A0, ord=1)
+        if A0_norm < tol:
+            if np.linalg.norm(A2, ord=1) < tol:
                 converged = True
                 break
-        elif np.isnan(A0_L1_norm):
+        elif np.isnan(A0_norm):
             break
 
-    # ``_solve_gen`` returns NaN-filled output on LAPACK INFO error instead of
-    # raising — lets the sampler reject the draw rather than abort the run.
-    if converged:
-        # A1_hat and A0_initial are dead after this final solve, so flag them
-        # overwrite-able (LAPACK reuses the buffer when it is Fortran-contiguous).
-        X = _solve_gen(A1_hat, A0_initial, False, True, True, False)
-        T = -X
-    else:
-        T = np.zeros_like(A0_initial)
+    # _solve_gen NaN-fills on failure instead of raising (caller rejects the draw).
+    # A1_hat is owned (overwrite ok); A0_initial aliases an input (must not overwrite).
+    T = -_solve_gen(A1_hat, A0_initial, False, True, False, False) if converged else np.zeros_like(A0_initial)
 
     return T, converged
 
@@ -252,7 +194,8 @@ class CycleReductionWrapper(Op):
 
     def make_node(self, A, B, C) -> Apply:
         inputs = list(map(pt.as_tensor, [A, B, C]))
-        outputs = [pt.dmatrix("T")]
+        o_dtype = linalg_output_dtype(*(inp.type.dtype for inp in inputs))
+        outputs = [pt.tensor("T", dtype=o_dtype, shape=inputs[0].type.shape)]
 
         return Apply(self, inputs, outputs)
 
@@ -262,9 +205,9 @@ class CycleReductionWrapper(Op):
 
     def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
         A, B, C = inputs
-        T, _res, _result, _log_norm = nb_cycle_reduction(A, B, C, max_iter=self.max_iter, tol=self.tol)
+        T, _res, _result, _log_norm = cycle_reduction_numpy(A, B, C, max_iter=self.max_iter, tol=self.tol)
 
-        outputs[0][0] = np.asarray(T)
+        outputs[0][0] = np.asarray(T, dtype=node.outputs[0].type.dtype)
 
     def pullback(self, inputs, outputs, cotangents):
         return _linear_policy_jvp(inputs, outputs, cotangents)
@@ -278,39 +221,25 @@ def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
 
 @register_funcify_default_op_cache_key(CycleReductionWrapper)
 def numba_funcify_CycleReductionWrapper(op, node, **kwargs):  # noqa: ARG001
-    """Numba dispatch for CycleReductionWrapper — avoids object-mode fallback.
-
-    `perform` calls `nb_cycle_reduction`, which is pure-Python for historical
-    reasons (the old `@nb.njit` decorator was commented out due to a Windows CI
-    issue) and returns a mix of ndarray / None / str / float. The dispatch
-    instead routes to `_cycle_reduction_core`, an njit'd variant returning only
-    ``(T, success)`` — the only outputs `CycleReductionWrapper` exposes.
-    """
+    """Route to the njit kernel, casting inputs to the working dtype when they differ."""
     max_iter = op.max_iter
     tol = op.tol
 
-    needs_upcast = node.inputs[0].type.dtype != "float64"
+    out_dtype = node.outputs[0].type.numpy_dtype
+    must_cast_A, must_cast_B, must_cast_C = (inp.type.numpy_dtype != out_dtype for inp in node.inputs)
 
-    if needs_upcast:
+    @numba_basic.numba_njit
+    def cycle_reduction(A, B, C):
+        if must_cast_A:
+            A = A.astype(out_dtype)
+        if must_cast_B:
+            B = B.astype(out_dtype)
+        if must_cast_C:
+            C = C.astype(out_dtype)
+        T, _converged = _cycle_reduction_core(A, B, C, max_iter, tol)
+        return T
 
-        @numba_basic.numba_njit
-        def cycle_reduction(A, B, C):
-            A_f = np.ascontiguousarray(A).astype(np.float64)
-            B_f = np.ascontiguousarray(B).astype(np.float64)
-            C_f = np.ascontiguousarray(C).astype(np.float64)
-            T, _converged = _cycle_reduction_core(A_f, B_f, C_f, max_iter, tol)
-            return T
-    else:
-
-        @numba_basic.numba_njit
-        def cycle_reduction(A, B, C):
-            A_f = np.ascontiguousarray(A)
-            B_f = np.ascontiguousarray(B)
-            C_f = np.ascontiguousarray(C)
-            T, _converged = _cycle_reduction_core(A_f, B_f, C_f, max_iter, tol)
-            return T
-
-    cache_version = 2
+    cache_version = 3
     return cycle_reduction, cache_version
 
 
@@ -448,11 +377,8 @@ def solve_policy_function_with_cycle_reduction(
     .. [1] Bini, D.A., Latouche, G., and Meini, B. "Solving matrix polynomial equations
        arising in queueing problems." *Linear Algebra and its Applications* 340 (2002): 222-244.
     """
-    # Sympy gives back integers in the case of x/dx = 1, which can screw up the dtypes when passing to numba if
-    # a Jacobian matrix is all constants (i.e. dF/d_shocks) -- cast everything to float64 here to avoid
-    # a numba warning.
     T, R = None, None
-    T, res, result, log_norm = nb_cycle_reduction(A, B, C, max_iter, tol)
+    T, res, result, log_norm = cycle_reduction_numpy(A, B, C, max_iter, tol)
     T = np.ascontiguousarray(T)
 
     if verbose:
@@ -467,6 +393,6 @@ def solve_policy_function_with_cycle_reduction(
             )
 
     if T is not None:
-        R = nb_solve_shock_matrix(B, C, D, T)
+        R = -np.linalg.solve(C @ T + B, D)
 
     return T, R, result, log_norm
