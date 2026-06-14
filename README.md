@@ -378,7 +378,7 @@ As prompted, you will need to call the `.configure` method. This is where you ca
 ss_mod.configure(
     observed_states=["Y"],
     measurement_error=None,
-    full_shock_covaraince=False,
+    full_shock_covariance=False,
     solver="scan_cycle_reduction",
     mode="JAX",
     use_adjoint_gradients=True,

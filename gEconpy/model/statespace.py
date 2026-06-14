@@ -824,7 +824,7 @@ class DSGEStateSpace(PyMCStateSpace):
         observed_states: list[str],
         measurement_error: list[str] | None = None,
         constant_params: list[str] | Literal["auto"] | None = None,
-        full_shock_covaraince: bool = False,
+        full_shock_covariance: bool = False,
         temporal_aggregation: dict[str, str] | None = None,
         aggregation_period: int = 4,
         ss_obs_intercept: list[str] | None = None,
@@ -849,7 +849,7 @@ class DSGEStateSpace(PyMCStateSpace):
             Observed states that have measurement error.
         constant_params : list of str or "auto", optional
             Parameters held constant (not estimated). ``"auto"`` freezes all parameters without priors.
-        full_shock_covaraince : bool
+        full_shock_covariance : bool
             If True, estimate a full shock covariance matrix instead of diagonal.
         temporal_aggregation : dict of str to str, optional
             Observed states that require temporal aggregation or explicit low-frequency timing.
@@ -1048,7 +1048,7 @@ class DSGEStateSpace(PyMCStateSpace):
                 if depth_required > 0:
                     self._obs_lag_depths[vname] = max(self._obs_lag_depths.get(vname, 0), depth_required)
 
-        self.full_covariance = full_shock_covaraince
+        self.full_covariance = full_shock_covariance
         self.use_direct_lyapunov = use_direct_lyapunov
         self._configured = True
         self._solver = solver
