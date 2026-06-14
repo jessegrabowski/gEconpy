@@ -14,7 +14,7 @@ from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.compile import build_symbolic_jacobian
+from gEconpy.model.compile import build_symbolic_jacobians
 from gEconpy.model.timing import make_all_variable_time_combinations
 from gEconpy.pytensorf.compile import rewrite_pregrad
 from gEconpy.pytensorf.real_eig import real_eig
@@ -157,12 +157,20 @@ def linearize_model(
     now_perm = [now[j] for j in var_order_local]
     leads_perm = [leads[j] for j in var_order_local]
 
-    # Bare derivatives at the steady state (vars -> ss, shocks -> 0). The shared ``cache``
-    # makes common subexpressions and steady-state input nodes shared across A/B/C/D.
-    A = build_symbolic_jacobian(equations_perm, lags_perm, cache, to_ss=True, shocks=shocks)
-    B = build_symbolic_jacobian(equations_perm, now_perm, cache, to_ss=True, shocks=shocks)
-    C = build_symbolic_jacobian(equations_perm, leads_perm, cache, to_ss=True, shocks=shocks)
-    D = build_symbolic_jacobian(equations_perm, list(shocks), cache, to_ss=True, shocks=shocks)
+    # Bare derivatives at the steady state (vars -> ss, shocks -> 0), built with a single shared
+    # CSE pass across A/B/C/D: they are derivatives of the same equations and share heavily, so
+    # extracting common subexpressions once shrinks the graph pt.grad later replicates.
+    A, B, C, D = build_symbolic_jacobians(
+        [
+            (equations_perm, lags_perm),
+            (equations_perm, now_perm),
+            (equations_perm, leads_perm),
+            (equations_perm, list(shocks)),
+        ],
+        cache,
+        to_ss=True,
+        shocks=shocks,
+    )
 
     # Log-linear chain rule: scale column j (in var_order) by the steady-state factor of its
     # variable -- 1 for level variables (not in the loglin set, or declared negative), the

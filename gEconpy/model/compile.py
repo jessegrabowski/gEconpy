@@ -164,26 +164,26 @@ def sympy_to_pytensor(
     return input_nodes, output_nodes, cache
 
 
-def build_symbolic_jacobian(
-    equations: list[sp.Expr],
-    wrt: list[sp.Symbol],
+def build_symbolic_jacobians(
+    specs: list[tuple[list[sp.Expr], list[sp.Symbol]]],
     cache: dict,
     to_ss: bool = False,
     shocks: list[TimeAwareSymbol] | None = None,
-) -> TensorVariable:
-    """Build a dense Jacobian as a pytensor matrix via symbolic differentiation.
+) -> list[TensorVariable]:
+    """Build several dense Jacobians via symbolic differentiation, sharing one ``sp.cse`` pass.
 
-    Differentiates each equation with respect to each variable in ``wrt`` using sympy, then materializes the
-    resulting matrix through :func:`sympytensor.as_tensor`. The dense-matrix printer bakes numeric and zero
-    entries into a constant base array and emits a single scatter over the symbolic entries, producing a small
-    fully-fused graph. ``cache`` is shared across calls so common subexpressions and input nodes are reused.
+    Each spec is an ``(equations, wrt)`` pair. Every Jacobian entry is differentiated symbolically; a single
+    common-subexpression-elimination pass runs over the union of *all* entries so subexpressions shared across
+    the Jacobians (e.g. the A/B/C/D of a linearized model, which are derivatives of the same equations) are
+    extracted once. The extracted intermediates are planted in ``cache`` and the reduced matrices are
+    materialized through :func:`sympytensor.as_tensor`, whose dense-matrix printer bakes numeric/zero entries
+    into a constant base array and emits a single scatter over the symbolic entries. Pre-sharing keeps the graph
+    small before ``pt.grad`` replicates it, which is where the gradient-compile speedup comes from.
 
     Parameters
     ----------
-    equations : list of sympy expression
-        Equations to differentiate (the Jacobian rows).
-    wrt : list of sympy Symbol
-        Symbols to differentiate with respect to (the Jacobian columns).
+    specs : list of (list of sympy expression, list of sympy Symbol)
+        ``(equations, wrt)`` pairs; one dense Jacobian is built per pair.
     cache : dict
         Sympytensor cache mapping cache keys to pytensor nodes, shared across conversions.
     to_ss : bool, optional
@@ -194,14 +194,69 @@ def build_symbolic_jacobian(
 
     Returns
     -------
+    jacobians : list of TensorVariable
+        One pytensor matrix per spec, of shape ``(len(equations), len(wrt))``.
+    """
+    shapes = [(len(eqs), len(wrt)) for eqs, wrt in specs]
+    grids = [
+        [[eq_to_ss(eq.diff(v), shocks=shocks) if to_ss else eq.diff(v) for v in wrt] for eq in eqs]
+        if eqs and wrt
+        else []
+        for eqs, wrt in specs
+    ]
+    flat = [e for grid in grids for row in grid for e in row]
+
+    # Share one CSE pass across every Jacobian's entries, mirroring sympy_to_pytensor's seam: extract
+    # intermediates, plant them in the cache under sympytensor's key shape, then convert the reduced entries.
+    n_symbolic = sum(1 for e in flat if isinstance(e, sp.Basic) and not e.is_number)
+    if n_symbolic > 1:
+        subs, reduced = sp.cse(flat, symbols=sp.numbered_symbols("__cse_tmp_"), optimizations="basic")
+        for dummy_sym, rhs in subs:
+            cache[_sympytensor_cache_key(dummy_sym)] = as_tensor(rhs, cache)
+        flat = reduced
+
+    jacobians, offset = [], 0
+    for n_eq, n_wrt in shapes:
+        if n_eq == 0 or n_wrt == 0:
+            jacobians.append(pt.zeros((n_eq, n_wrt)))
+            continue
+        rows = [flat[offset + i * n_wrt : offset + (i + 1) * n_wrt] for i in range(n_eq)]
+        offset += n_eq * n_wrt
+        jacobians.append(as_tensor(sp.ImmutableMatrix(rows), cache))
+    return jacobians
+
+
+def build_symbolic_jacobian(
+    equations: list[sp.Expr],
+    wrt: list[sp.Symbol],
+    cache: dict,
+    to_ss: bool = False,
+    shocks: list[TimeAwareSymbol] | None = None,
+) -> TensorVariable:
+    """Build a single dense Jacobian via symbolic differentiation.
+
+    Thin wrapper over :func:`build_symbolic_jacobians`; CSE runs over this Jacobian's own entries. See that
+    function for details.
+
+    Parameters
+    ----------
+    equations : list of sympy expression
+        Equations to differentiate (the Jacobian rows).
+    wrt : list of sympy Symbol
+        Symbols to differentiate with respect to (the Jacobian columns).
+    cache : dict
+        Sympytensor cache mapping cache keys to pytensor nodes, shared across conversions.
+    to_ss : bool, optional
+        If True, substitute steady-state values into each entry. Default False.
+    shocks : list of TimeAwareSymbol, optional
+        Shocks to zero out when ``to_ss`` is True.
+
+    Returns
+    -------
     jacobian : TensorVariable
         Pytensor matrix of shape ``(len(equations), len(wrt))``.
     """
-    n_eq, n_wrt = len(equations), len(wrt)
-    if n_eq == 0 or n_wrt == 0:
-        return pt.zeros((n_eq, n_wrt))
-    rows = [[eq_to_ss(eq.diff(v), shocks=shocks) if to_ss else eq.diff(v) for v in wrt] for eq in equations]
-    return as_tensor(sp.ImmutableMatrix(rows), cache)
+    return build_symbolic_jacobians([(equations, wrt)], cache, to_ss=to_ss, shocks=shocks)[0]
 
 
 def compile_to_pytensor_function(
