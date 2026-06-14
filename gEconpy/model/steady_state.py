@@ -6,6 +6,7 @@ import pytensor.tensor as pt
 import sympy as sp
 
 from pytensor.gradient import hessian_vector_product
+from pytensor.gradient import jacobian as pt_jacobian
 from pytensor.graph.replace import graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor import TensorVariable
@@ -20,7 +21,6 @@ from gEconpy.model.compile import (
     sympy_to_pytensor,
 )
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.pytensorf.sparse_jacobian import sparse_jacobian
 from gEconpy.utilities import eq_to_ss, flatten_substitution_dict, safe_to_ss
 
 _log = logging.getLogger(__name__)
@@ -218,8 +218,7 @@ def build_root_graphs(
     """
     Build the pytensor graphs needed by ``scipy.optimize.root``.
 
-    The equations are stacked into a residual vector internally. The Jacobian is computed via :func:`sparse_jacobian`,
-    which exploits the sparsity pattern of the steady-state system.
+    The equations are stacked into a residual vector internally, and the Jacobian is built by pytensor autodiff.
 
     Parameters
     ----------
@@ -240,7 +239,10 @@ def build_root_graphs(
     resid = pt.stack(equations) if equations else pt.zeros(0)
     jac = None
     if use_jac:
-        jac = sparse_jacobian(equations, ss_input_nodes)
+        if equations and ss_input_nodes:
+            jac = pt.stack(pt_jacobian(resid, ss_input_nodes), axis=1)
+        else:
+            jac = pt.zeros((len(equations), len(ss_input_nodes)))
 
     return resid, jac
 
@@ -297,7 +299,7 @@ def build_minimize_graphs(
 
     hess = None
     if use_hess:
-        hess = sparse_jacobian(grad_components, ss_input_nodes)
+        hess = pt.stack(pt_jacobian(grad, ss_input_nodes), axis=1)
 
     hessp_out = None
     hessp_p = None

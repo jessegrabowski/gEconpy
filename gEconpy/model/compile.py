@@ -12,7 +12,9 @@ from pytensor.tensor import TensorVariable
 from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.pytensorf.compile import compile_pytensor_function
+from gEconpy.utilities import eq_to_ss
 
 
 def output_to_tensor(x, cache):
@@ -160,6 +162,46 @@ def sympy_to_pytensor(
         output_nodes = [output_to_tensor(x, cache) for x in outputs]
 
     return input_nodes, output_nodes, cache
+
+
+def build_symbolic_jacobian(
+    equations: list[sp.Expr],
+    wrt: list[sp.Symbol],
+    cache: dict,
+    to_ss: bool = False,
+    shocks: list[TimeAwareSymbol] | None = None,
+) -> TensorVariable:
+    """Build a dense Jacobian as a pytensor matrix via symbolic differentiation.
+
+    Differentiates each equation with respect to each variable in ``wrt`` using sympy, then materializes the
+    resulting matrix through :func:`sympytensor.as_tensor`. The dense-matrix printer bakes numeric and zero
+    entries into a constant base array and emits a single scatter over the symbolic entries, producing a small
+    fully-fused graph. ``cache`` is shared across calls so common subexpressions and input nodes are reused.
+
+    Parameters
+    ----------
+    equations : list of sympy expression
+        Equations to differentiate (the Jacobian rows).
+    wrt : list of sympy Symbol
+        Symbols to differentiate with respect to (the Jacobian columns).
+    cache : dict
+        Sympytensor cache mapping cache keys to pytensor nodes, shared across conversions.
+    to_ss : bool, optional
+        If True, substitute steady-state values into each entry: time-indexed variables map to their
+        steady-state symbols and shocks map to zero. Default False.
+    shocks : list of TimeAwareSymbol, optional
+        Shocks to zero out when ``to_ss`` is True.
+
+    Returns
+    -------
+    jacobian : TensorVariable
+        Pytensor matrix of shape ``(len(equations), len(wrt))``.
+    """
+    n_eq, n_wrt = len(equations), len(wrt)
+    if n_eq == 0 or n_wrt == 0:
+        return pt.zeros((n_eq, n_wrt))
+    rows = [[eq_to_ss(eq.diff(v), shocks=shocks) if to_ss else eq.diff(v) for v in wrt] for eq in equations]
+    return as_tensor(sp.ImmutableMatrix(rows), cache)
 
 
 def compile_to_pytensor_function(
