@@ -10,9 +10,8 @@ from pytensor.graph.replace import graph_replace
 from sympytensor import as_tensor
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.compile import make_cache_key
+from gEconpy.model.compile import build_symbolic_jacobian, make_cache_key
 from gEconpy.model.timing import classify_variables_by_timing
-from gEconpy.pytensorf.sparse_jacobian import sparse_jacobian
 from gEconpy.utilities import safe_to_ss
 
 if TYPE_CHECKING:
@@ -154,8 +153,13 @@ def _compile_single_period_function(
 
     jac_vars_tm1, jac_vars_t, jac_vars_tp1 = _build_jacobian_var_lists(var_names, tm1_by_name, tp1_by_name, vars_t_pt)
 
-    jac_vars = jac_vars_tm1 + jac_vars_t + jac_vars_tp1
-    jacobian = sparse_jacobian(equations_pt, jac_vars, return_sparse=False)
+    # Differentiate symbolically w.r.t. the timing symbols, in the same [tm1 | t | tp1]
+    # column order as the jac_vars lists. The shared ``cache`` makes the matrix's column
+    # nodes identical to those lists (for variables that appear at that time index), so the
+    # downstream ``vec_replacements`` substitution still lines up; absent time indices
+    # yield structurally-zero columns.
+    jac_wrt = [v.set_t(-1) for v in vars_t] + list(vars_t) + [v.set_t(1) for v in vars_t]
+    jacobian = build_symbolic_jacobian(equations, jac_wrt, cache, to_ss=False)
     residuals = pt.stack(equations_pt)
 
     y_tm1_vec = pt.dvector("y_tm1", shape=(n_vars,))

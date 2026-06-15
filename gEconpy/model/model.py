@@ -6,10 +6,12 @@ from copy import deepcopy
 from typing import Literal, NamedTuple
 
 import numpy as np
+import pytensor
 import sympy as sp
 
 from better_optimize import minimize, root
 from preliz.distributions.distributions import Distribution
+from pymc.distributions.transforms import Interval, log, logodds
 from pytensor import tensor as pt
 from pytensor.graph.replace import clone_replace
 from pytensor.graph.traversal import explicit_graph_inputs
@@ -63,6 +65,91 @@ def infer_variable_bounds(variable):
     rhs = -1e-8 if is_negative else None
 
     return lhs, rhs
+
+
+def infer_variable_transform(variable, user_bound=None):
+    """Pick a bijection from the real line onto a variable's feasible region for unconstrained solving.
+
+    Resolves the feasible region in waterfall order: an explicit ``user_bound`` first, then the variable's
+    GCN-declared sympy assumptions, then nothing. Returns a PyMC transform whose ``backward`` maps an
+    unconstrained real input onto the region (``log`` for positive, ``logodds`` for the unit interval,
+    ``Interval`` for general bounds), or None when the variable is unconstrained.
+
+    Parameters
+    ----------
+    variable : TimeAwareSymbol
+        The steady-state variable; its ``assumptions0`` supply the fallback region.
+    user_bound : tuple of (float or None, float or None), optional
+        Explicit ``(lower, upper)`` bound; either side may be None for one-sided. Takes precedence over
+        assumptions. Default None.
+
+    Returns
+    -------
+    transform : pymc transform or None
+        The bijection, or None for an unconstrained variable (identity).
+    """
+    if user_bound is not None and user_bound != (None, None):
+        lo, hi = user_bound
+        return Interval(lo, hi)
+
+    assumptions = variable.assumptions0
+    if assumptions.get("unit_interval"):
+        return logodds
+    if assumptions.get("positive"):
+        return log
+    if assumptions.get("negative"):
+        return Interval(None, 0.0)
+    return None
+
+
+def transform_steady_state_system(equations, ss_nodes, transforms):
+    """Reparametrize a steady-state system onto unconstrained variables.
+
+    For each steady-state node ``x`` with transform ``t``, substitutes ``x -> t.backward(y)`` (identity for
+    an unconstrained variable), so the returned equations are functions of fresh unconstrained inputs ``y``.
+
+    Parameters
+    ----------
+    equations : list of TensorVariable
+        Scalar equation graphs, each zero at the steady state.
+    ss_nodes : list of TensorVariable
+        Scalar input node for each steady-state variable.
+    transforms : list of pymc transform or None
+        One transform per variable, as returned by :func:`infer_variable_transform`.
+
+    Returns
+    -------
+    transformed_equations : list of TensorVariable
+        The equations rewritten in terms of the unconstrained inputs.
+    y_nodes : list of TensorVariable
+        The unconstrained input nodes, one per variable.
+    to_unconstrained : callable
+        Map a constrained point ``x`` to its unconstrained image ``y``.
+    to_constrained : callable
+        Map an unconstrained point ``y`` back to the constrained ``x``.
+    """
+    y_nodes, x_in_nodes, backward_exprs, forward_exprs, replace = [], [], [], [], {}
+    for ss, transform in zip(ss_nodes, transforms, strict=True):
+        y, x_in = ss.type(), ss.type()
+        y.name = x_in.name = ss.name
+        y_nodes.append(y)
+        x_in_nodes.append(x_in)
+        x_of_y = y if transform is None else transform.backward(y)
+        backward_exprs.append(x_of_y)
+        forward_exprs.append(x_in if transform is None else transform.forward(x_in))
+        replace[ss] = x_of_y
+
+    transformed_equations = clone_replace(list(equations), replace=replace)
+    f_to_x = pytensor.function(y_nodes, backward_exprs, on_unused_input="ignore")
+    f_to_y = pytensor.function(x_in_nodes, forward_exprs, on_unused_input="ignore")
+
+    def to_constrained(y):
+        return np.asarray(f_to_x(*np.asarray(y, dtype=float)), dtype=float)
+
+    def to_unconstrained(x):
+        return np.asarray(f_to_y(*np.asarray(x, dtype=float)), dtype=float)
+
+    return transformed_equations, y_nodes, to_unconstrained, to_constrained
 
 
 def _initialize_x0(optimizer_kwargs, variables, jitter_x0):
@@ -839,6 +926,7 @@ class Model:
         optimizer_kwargs: dict | None = None,
         verbose=True,
         bounds: dict[str, tuple[float, float]] | None = None,
+        prefer_transform: bool = False,
         fixed_values: dict[str, float] | None = None,
         jitter_x0: bool = False,
         **updates: float,
@@ -900,9 +988,15 @@ class Model:
             If true, print a message about convergence (or not) to the console .
 
         bounds: dict, optional
-            Dictionary of bounds for the steady-state variables. The keys are the variable names and the values are
-            tuples of the form (lower_bound, upper_bound). These are passed to the scipy.optimize.minimize function,
-            see that docstring for more information.
+            Per-variable ``(lower, upper)`` bounds keyed by variable name; either side may be None. By default the
+            bounds are enforced by reparametrizing the variable onto the real line and solving unconstrained;
+            with ``prefer_transform=False`` and a bounds-capable method they are passed to ``scipy.optimize``
+            as box constraints instead. Bounds default to the variable's GCN assumptions when not given here.
+
+        prefer_transform: bool, optional
+            If True, enforce bounds by reparametrization (unconstrained solve) even when a bounds-capable method
+            (``L-BFGS-B``, ``trust-constr``, ``powell``) is requested. If False, those methods use box constraints
+            and other methods still reparametrize. Default False.
 
         fixed_values: dict, optional
             Dictionary of fixed values for the steady-state variables. The keys are the variable names and the values
@@ -981,6 +1075,7 @@ class Model:
                 use_hessp=use_hessp,
                 progressbar=progressbar,
                 bounds=bounds,
+                prefer_transform=prefer_transform,
                 optimizer_kwargs=optimizer_kwargs,
                 jitter_x0=jitter_x0,
                 **updates,
@@ -1155,6 +1250,7 @@ class Model:
         optimizer_kwargs: dict | None = None,
         jitter_x0: bool = False,
         bounds: dict[str, tuple[float, float]] | None = None,
+        prefer_transform: bool = False,
         **param_updates,
     ):
         if optimizer_kwargs is None:
@@ -1163,21 +1259,34 @@ class Model:
 
         x0 = _initialize_x0(optimizer_kwargs, vars_to_solve, jitter_x0)
         tol = optimizer_kwargs.pop("tol", 1e-30)
+        param_dict = self.parameters(**param_updates)
 
         user_bounds = {} if bounds is None else bounds
         bound_dict = {x.name: infer_variable_bounds(x) for x in vars_to_solve}
         bound_dict.update(user_bounds)
 
-        bounds_list = [bound_dict[x.name] for x in vars_to_solve]
-        has_bounds = any(x != (None, None) for x in bounds_list)
+        # Box-constrained solvers crawl an ill-conditioned interior-point central path on DSGE steady states,
+        # so they run only when the caller names one and leaves ``prefer_transform`` off. Otherwise
+        # reparametrize each bounded variable onto the real line (x = transform.backward(y)) and solve the
+        # resulting unconstrained problem -- which also lets a bounds-capable method (e.g. L-BFGS-B) run on
+        # the transformed space when ``prefer_transform`` is set.
+        requested_method = optimizer_kwargs.pop("method", None)
+        use_box_bounds = (not prefer_transform) and requested_method in ("trust-constr", "L-BFGS-B", "powell")
 
-        method = optimizer_kwargs.pop("method", "trust-ncg" if not has_bounds else "trust-constr")
-        if method not in ["trust-constr", "L-BFGS-B", "powell"]:
-            has_bounds = False
+        if use_box_bounds:
+            method = requested_method
+            solve_equations, solve_nodes = equations, ss_nodes
+            x0_solve, bounds_arg, to_constrained = x0, [bound_dict[x.name] for x in vars_to_solve], None
+        else:
+            method = requested_method or "trust-ncg"
+            transforms = [infer_variable_transform(v, bound_dict.get(v.name, (None, None))) for v in vars_to_solve]
+            solve_equations, solve_nodes, to_unconstrained, to_constrained = transform_steady_state_system(
+                equations, ss_nodes, transforms
+            )
+            x0_solve, bounds_arg = to_unconstrained(x0), None
 
         maxiter = optimizer_kwargs.pop("maxiter", 5000)
-        if "options" not in optimizer_kwargs:
-            optimizer_kwargs["options"] = {}
+        optimizer_kwargs.setdefault("options", {})
         optimizer_kwargs["options"].update({"maxiter": maxiter})
         if method == "L-BFGS-B":
             optimizer_kwargs["options"].update({"maxfun": maxiter})
@@ -1187,24 +1296,22 @@ class Model:
             use_hess = False
 
         error_graph, grad_graph, hess_graph, hessp_graph, hessp_p = build_minimize_graphs(
-            equations,
-            ss_nodes,
+            solve_equations,
+            solve_nodes,
             error_func=self._error_func,
             use_jac=use_jac,
             use_hess=use_hess,
             use_hessp=use_hessp,
         )
 
-        param_dict = self.parameters(**param_updates)
-
-        f_error = pack_and_compile(error_graph, ss_nodes, param_dict=param_dict, mode=self._mode)
+        f_error = pack_and_compile(error_graph, solve_nodes, param_dict=param_dict, mode=self._mode)
         f_grad = (
-            pack_and_compile(grad_graph, ss_nodes, param_dict=param_dict, mode=self._mode)
+            pack_and_compile(grad_graph, solve_nodes, param_dict=param_dict, mode=self._mode)
             if grad_graph is not None
             else None
         )
         f_hess = (
-            pack_and_compile(hess_graph, ss_nodes, param_dict=param_dict, mode=self._mode)
+            pack_and_compile(hess_graph, solve_nodes, param_dict=param_dict, mode=self._mode)
             if hess_graph is not None
             else None
         )
@@ -1213,33 +1320,43 @@ class Model:
         f_hessp = None
         if hessp_graph is not None:
             f_hessp_inner = compile_for_scipy(hessp_graph, mode=self._mode)
-            var_names = [v.name for v in vars_to_solve]
+            var_names = [v.name for v in solve_nodes]
 
             def f_hessp(x: np.ndarray, p: np.ndarray) -> np.ndarray:
                 kw = dict(zip(var_names, x, strict=True))
                 kw[hessp_p.name] = p
                 return np.asarray(f_hessp_inner(**kw, **param_dict))
 
-        resid = pt.stack(equations) if equations else pt.zeros(0)
-        f_resid_kw = compile_for_scipy(resid, mode=self._mode)
-        f_grad_kw = compile_for_scipy(grad_graph, mode=self._mode) if grad_graph is not None else None
-
-        compiled_funcs = {"resid": f_resid_kw}
-        if f_grad_kw is not None:
-            compiled_funcs["grad"] = f_grad_kw
-
         res = minimize(
             f=f_error,
-            x0=x0,
+            x0=x0_solve,
             jac=f_grad,
             hess=f_hess,
             hessp=f_hessp,
             method=method,
-            bounds=bounds_list if has_bounds else None,
+            bounds=bounds_arg,
             tol=tol,
             progressbar=progressbar,
             **optimizer_kwargs,
         )
+        if to_constrained is not None:
+            res.x = to_constrained(res.x)
+
+        # ``compiled_funcs`` evaluate the original (constrained) system; postprocess calls them at the
+        # mapped-back solution, so they must stay in x-space even when the solve ran in y-space.
+        resid = pt.stack(equations) if equations else pt.zeros(0)
+        f_resid_kw = compile_for_scipy(resid, mode=self._mode)
+        if use_box_bounds:
+            grad_graph_x = grad_graph
+        else:
+            _, grad_graph_x, *_ = build_minimize_graphs(
+                equations, ss_nodes, error_func=self._error_func, use_jac=use_jac, use_hess=False, use_hessp=False
+            )
+        f_grad_kw = compile_for_scipy(grad_graph_x, mode=self._mode) if grad_graph_x is not None else None
+
+        compiled_funcs = {"resid": f_resid_kw}
+        if f_grad_kw is not None:
+            compiled_funcs["grad"] = f_grad_kw
 
         return res, compiled_funcs
 

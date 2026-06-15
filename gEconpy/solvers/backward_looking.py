@@ -75,7 +75,7 @@ def solve_backward_shock_matrix(B: np.ndarray, D: np.ndarray) -> np.ndarray:
     R : np.ndarray
         The shock matrix that maps current state variables to future state variables.
     """
-    return -np.linalg.solve(B, D.astype(B.dtype))
+    return -np.linalg.solve(B, D)
 
 
 def solve_backward_shock_matrix_pt(B: TensorVariable, D: TensorVariable) -> TensorVariable:

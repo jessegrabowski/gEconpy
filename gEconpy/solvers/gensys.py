@@ -1,4 +1,3 @@
-import numba as nb
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
@@ -8,12 +7,10 @@ from pytensor.graph.op import Op
 from pytensor.link.numba.dispatch import basic as numba_basic
 from pytensor.link.numba.dispatch.basic import register_funcify_default_op_cache_key
 
-# `_lu_solve`'s overload stub and inner impl have mismatched arities (the impl
-# unpacks the (lu, piv) tuple), so numba rejects direct calls. Use the
-# lower-level `_getrs` instead — its stub and impl both take (LU, B, IPIV, trans,
-# overwrite_b) and it returns (X, info).
+# `_lu_solve` can't be njit-dispatched (stub/impl arity mismatch); use `_getrs` directly.
 from pytensor.link.numba.dispatch.linalg.decomposition.lu_factor import _lu_factor
 from pytensor.link.numba.dispatch.linalg.decomposition.qz import _qz_complex_sort_eig
+from pytensor.link.numba.dispatch.linalg.decomposition.svd import _svd_gesdd_full, _svd_gesdd_no_uv
 from pytensor.link.numba.dispatch.linalg.solvers.lu_solve import _getrs
 from pytensor.link.numba.dispatch.linalg.solvers.triangular import _solve_triangular
 
@@ -26,7 +23,7 @@ EPSILON = np.spacing(1)
 floatX = pytensor.config.floatX
 
 
-@nb.njit(cache=True)
+@numba_basic.numba_njit(final_function=True)
 def _determine_n_unstable_core(
     alpha: np.ndarray,
     beta: np.ndarray,
@@ -98,7 +95,7 @@ def determine_n_unstable(
     return float(div_out), int(n_unstable), bool(zxz)
 
 
-@nb.njit(cache=True)
+@numba_basic.numba_njit(final_function=True)
 def split_matrix_on_eigen_stability(A: np.ndarray, n_unstable: int) -> tuple[np.ndarray, np.ndarray]:
     """Split a matrix row-wise into stable / unstable blocks.
 
@@ -121,13 +118,9 @@ def split_matrix_on_eigen_stability(A: np.ndarray, n_unstable: int) -> tuple[np.
     return A[: n - n_unstable], A[n - n_unstable :]
 
 
-@nb.njit(cache=True)
+@numba_basic.numba_njit(final_function=True)
 def _thin_svd_and_rank(eta: np.ndarray, realsmall: float):
-    """Thin SVD + boolean mask of retained components.
-
-    Numba-compatible replacement for the `big_ev` extraction in `build_u_v_d`.
-    """
-    u, s, vh = np.linalg.svd(eta, full_matrices=False)
+    u, s, vh = _svd_gesdd_full(eta, full_matrices=False)
     keep = s > realsmall
     return u, s, vh, keep
 
@@ -179,12 +172,14 @@ def build_u_v_d(
     return u_eta, v_eta, d_eta, big_ev
 
 
-@nb.njit(cache=True)
+@numba_basic.numba_njit(final_function=True)
 def _matrix_rank(A: np.ndarray, tol: float) -> int:
     """Numba-friendly rank-via-SVD. Assumes ``A`` has at least one element."""
     if A.shape[0] == 0 or A.shape[1] == 0:
         return 0
-    s = np.linalg.svd(A, full_matrices=False)[1]
+    # `_svd_gesdd_no_uv` returns NaN singular values on a LAPACK failure instead
+    # of raising; NaN > tol is False, so a failed decomposition reads as rank 0.
+    s = _svd_gesdd_no_uv(A)
     n_nonzero = 0
     for i in range(s.size):
         if s[i] > tol:
@@ -192,7 +187,7 @@ def _matrix_rank(A: np.ndarray, tol: float) -> int:
     return n_nonzero
 
 
-@nb.njit(cache=True)
+@numba_basic.numba_njit(final_function=True)
 def _gensys_core(
     g0: np.ndarray,
     g1: np.ndarray,
@@ -227,21 +222,17 @@ def _gensys_core(
     n_shocks = psi.shape[1]
     realsmall = tol if tol > 0 else np.spacing(1)
 
-    # QZ works on complex; cast once at the boundary.
+    # QZ works on complex; cast once at the boundary. These casts are fresh
+    # buffers used only by the QZ, so we let gges overwrite them in place.
     g0_c = g0.astype(np.complex128)
     g1_c = g1.astype(np.complex128)
 
     # Sorted QZ: stable eigenvalues (|alpha/beta| > 1 in scipy convention =
-    # |beta/alpha| < 1 in Sims convention) occupy the top-left. LAPACK returns
-    # these in arbitrary layout; force C-contiguity here so downstream `@`
-    # operations don't raise NumbaPerformanceWarning under pytest's warnings=error.
-    A_raw, B_raw, alpha, beta, Q_raw, Z_raw = _qz_complex_sort_eig(g0_c, g1_c, "ouc", False, False)
-    A = np.ascontiguousarray(A_raw)
-    B = np.ascontiguousarray(B_raw)
-    Z = np.ascontiguousarray(Z_raw)
+    # |beta/alpha| < 1 in Sims convention) occupy the top-left.
+    A, B, alpha, beta, Q_raw, Z = _qz_complex_sort_eig(g0_c, g1_c, "ouc", True, True)
     # Sims convention: g0 = Q^H A Z^H.
-    Q = np.ascontiguousarray(Q_raw.conj().T)
-    Z_H = np.ascontiguousarray(Z.conj().T)
+    Q = Q_raw.conj().T
+    Z_H = Z.conj().T
 
     # Count n_unstable and detect coincident-zero diagonal pairs (zxz).
     n_unstable = 0
@@ -304,10 +295,8 @@ def _gensys_core(
         d_eta_1 = s1_raw[big_ev_1]
         v_eta_1 = vh1_raw.conj().T[:, big_ev_1]
 
-    # `.conj().T` produces strided views; materialise before feeding into `@`
-    # so we don't trip NumbaPerformanceWarning under pytest's warnings=error.
-    v_eta_H = np.ascontiguousarray(v_eta.conj().T)
-    u_eta_1_H = np.ascontiguousarray(u_eta_1.conj().T)
+    v_eta_H = v_eta.conj().T
+    u_eta_1_H = u_eta_1.conj().T
 
     if v_eta_1.shape[0] == 0 or v_eta_1.shape[1] == 0:
         unique = True
@@ -324,11 +313,11 @@ def _gensys_core(
     # two diagonal solves collapsed to element-wise scaling.
     d_eta_c = d_eta.astype(np.complex128)
     d_eta_1_c = d_eta_1.astype(np.complex128)
-    scaled_vh = np.ascontiguousarray(v_eta_H / d_eta_c.reshape(-1, 1)) if d_eta.size else v_eta_H
-    scaled_u1h = np.ascontiguousarray(d_eta_1_c.reshape(-1, 1) * u_eta_1_H) if d_eta_1.size else u_eta_1_H
+    scaled_vh = (v_eta_H / d_eta_c.reshape(-1, 1)) if d_eta.size else v_eta_H
+    scaled_u1h = (d_eta_1_c.reshape(-1, 1) * u_eta_1_H) if d_eta_1.size else u_eta_1_H
 
     inner_term = u_eta @ scaled_vh @ v_eta_1 @ scaled_u1h
-    inner_term_H = np.ascontiguousarray(inner_term.conj().T)
+    inner_term_H = inner_term.conj().T
 
     T_mat = np.column_stack((np.eye(n_stable, dtype=np.complex128), -inner_term_H))
     top_block = T_mat @ A
@@ -340,15 +329,9 @@ def _gensys_core(
     )
     G_0 = np.vstack((top_block, bottom_block))
 
-    # Single LU factorisation reused for every solve against G_0.
-    #
-    # Note on indexing: `_lu_factor` returns scipy-style (0-based) IPIV but the
-    # lower-level `_getrs` wrapper feeds IPIV straight into LAPACK's `getrs`,
-    # which expects 1-based indexing. Convert once here. (Pytensor's `_lu_solve`
-    # also has a stub/impl arity mismatch that prevents njit dispatch, which is
-    # why we're using `_getrs` directly — see the import comment at the top.)
-    lu, piv_0 = _lu_factor(G_0, False)
-    piv = (piv_0 + np.int32(1)).astype(np.int32)
+    # One LU of G_0, reused for every solve. _getrs wants 1-based pivots.
+    lu, piv = _lu_factor(G_0.T, True)
+    piv += np.int32(1)
 
     G_1_rhs = np.vstack(
         (
@@ -356,7 +339,7 @@ def _gensys_core(
             np.zeros((n_unstable, n), dtype=np.complex128),
         )
     )
-    G_1_c, _info = _getrs(lu, G_1_rhs, piv, 0, False)
+    G_1_c, _info = _getrs(lu, G_1_rhs, piv, 1, True)
     G_1 = (Z @ G_1_c @ Z_H).real
 
     A_idx = A[n_stable:n, n_stable:n]
@@ -364,34 +347,37 @@ def _gensys_core(
     Q2c = Q2  # already complex
     c_c = c.astype(np.complex128)
     psi_c = psi.astype(np.complex128)
+    Tmat_Q = T_mat @ Q
 
     # A_idx and B_idx are upper-triangular blocks of the sorted QZ output.
     if n_unstable == 0:
         C_tail = np.zeros((0, c.shape[1]), dtype=np.complex128)
     else:
-        C_tail = _solve_triangular(A_idx - B_idx, Q2c @ c_c, 0, False, False, False)
-    C_complex = np.vstack((T_mat @ Q @ c_c, C_tail))
+        C_tail = _solve_triangular(A_idx - B_idx, Q2c @ c_c, 0, False, False, True)
+    C_complex = np.vstack((Tmat_Q @ c_c, C_tail))
 
     impact_rhs = np.vstack(
         (
-            T_mat @ Q @ psi_c,
+            Tmat_Q @ psi_c,
             np.zeros((n_unstable, n_shocks), dtype=np.complex128),
         )
     )
-    impact_complex, _info = _getrs(lu, impact_rhs, piv, 0, False)
+    impact_complex, _info = _getrs(lu, impact_rhs, piv, 1, True)
 
     if n_unstable == 0:
         f_mat = np.zeros((0, 0), dtype=np.complex128)
         f_wt = np.zeros((0, n_shocks), dtype=np.complex128)
     else:
+        # `A_idx` is a view into `A`; keep overwrite_b=False so the solve doesn't
+        # clobber A's buffer. `Q2c @ psi_c` is a fresh temporary, so it can be.
         f_mat = _solve_triangular(B_idx, A_idx, 0, False, False, False)
-        f_wt = -_solve_triangular(B_idx, Q2c @ psi_c, 0, False, False, False)
+        f_wt = -_solve_triangular(B_idx, Q2c @ psi_c, 0, False, False, True)
 
     # y_wt = G_0^{-1}[:, n_stable:n]  <=>  solve G_0 @ y_wt = I[:, n_stable:n].
     eye_cols = np.zeros((n, n_unstable), dtype=np.complex128)
     for j in range(n_unstable):
         eye_cols[n_stable + j, j] = 1.0 + 0.0j
-    y_wt_complex, _info = _getrs(lu, eye_cols, piv, 0, False)
+    y_wt_complex, _info = _getrs(lu, eye_cols, piv, 1, True)
     y_wt = Z @ y_wt_complex
 
     loose_rhs = np.vstack(
@@ -400,7 +386,7 @@ def _gensys_core(
             np.zeros((n_unstable, n_eta), dtype=np.complex128),
         )
     )
-    loose_complex, _info = _getrs(lu, loose_rhs, piv, 0, False)
+    loose_complex, _info = _getrs(lu, loose_rhs, piv, 1, True)
 
     C_out = (Z @ C_complex).real
     impact = (Z @ impact_complex).real
@@ -579,7 +565,7 @@ def interpret_gensys_output(eu):
     return message.strip()
 
 
-@nb.njit(cache=True)
+@numba_basic.numba_njit(final_function=True)
 def _gensys_setup(
     A: np.ndarray,
     B: np.ndarray,
@@ -647,6 +633,7 @@ def solve_policy_function_with_gensys(
 
 class GensysWrapper(Op):
     __props__ = ("tol",)
+    gufunc_signature = "(n,n),(n,n),(n,n),(n,k)->(n,n),()"
 
     def __init__(self, tol=1e-8):
         self.tol = tol
@@ -662,6 +649,10 @@ class GensysWrapper(Op):
         ]
 
         return Apply(self, inputs, outputs)
+
+    def infer_shape(self, fgraph, node, input_shapes):
+        n = input_shapes[0][0]
+        return [(n, n), ()]
 
     def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
         A, B, C, D = inputs
@@ -694,35 +685,29 @@ def gensys_pt(A, B, C, D, tol=1e-8):
 
 @register_funcify_default_op_cache_key(GensysWrapper)
 def numba_funcify_GensysWrapper(op, node, **kwargs):  # noqa: ARG001
-    """Numba dispatch for GensysWrapper — avoids object-mode fallback.
-
-    The perform method calls `solve_policy_function_with_gensys`, whose entire
-    compute chain is already njit'd (`_gensys_setup` + `_gensys_core`). Without
-    this dispatch, pytensor's NUMBA linker would wrap `perform` in object mode
-    with a NumbaWarning, which fails under pytest's `filterwarnings = ["error"]`.
-    """
+    """Route to the njit compute chain, avoiding an object-mode fallback on perform."""
     tol = op.tol
+    # The kernel runs in float64; only upcast inputs that aren't already.
+    if node.inputs[0].type.dtype != "float64":
+
+        @numba_basic.numba_njit
+        def _prep(X):
+            return np.ascontiguousarray(X).astype(np.float64)
+    else:
+
+        @numba_basic.numba_njit
+        def _prep(X):
+            return np.ascontiguousarray(X)
 
     @numba_basic.numba_njit
     def gensys_wrapper(A, B, C, D):
-        # `n_vars` is read from the runtime input shape. Reading it from the
-        # outer scope via `node.inputs[0].type.shape[0]` returns `None` whenever
-        # the pytensor input has dynamic shape (e.g., `pt.dmatrix(...)` with no
-        # declared shape), and `G_1[:None, :None]` is a no-op — which caused
-        # gensys to silently return the full (n + n_leads, n + n_leads) block
-        # instead of the (n, n) policy function.
         n_vars = A.shape[0]
-        A_f = np.ascontiguousarray(A).astype(np.float64)
-        B_f = np.ascontiguousarray(B).astype(np.float64)
-        C_f = np.ascontiguousarray(C).astype(np.float64)
-        D_f = np.ascontiguousarray(D).astype(np.float64)
-
-        g0, g1, c, psi, pi = _gensys_setup(A_f, B_f, C_f, D_f, tol)
+        g0, g1, c, psi, pi = _gensys_setup(_prep(A), _prep(B), _prep(C), _prep(D), tol)
         G_1, _C_out, _impact, _f_mat, _f_wt, _y_wt, _gev, eu, _loose = _gensys_core(g0, g1, c, psi, pi, tol)
 
         T = np.ascontiguousarray(G_1[:n_vars, :n_vars])
         success = (eu[0] == 1) and (eu[1] == 1)
         return T, success
 
-    cache_version = 1
+    cache_version = 2
     return gensys_wrapper, cache_version

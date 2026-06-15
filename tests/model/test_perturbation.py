@@ -8,7 +8,7 @@ from numpy.testing import assert_allclose
 from pytensor.gradient import verify_grad
 from pytensor.graph.traversal import explicit_graph_inputs
 
-from gEconpy.model.perturbation import linearize_model
+from gEconpy.model.perturbation import check_bk_condition_pt, linearize_model
 from gEconpy.model.timing import make_all_variable_time_combinations
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.cycle_reduction import (
@@ -274,3 +274,42 @@ class TestGensysPytensor:
             pt=[A, B, C, D.astype("float64")],
             rng=np.random.default_rng(),
         )
+
+
+class TestBKConditionGradients:
+    @pytest.mark.include_nk
+    def test_bk_potential_hessp_builds(self):
+        """Detaching the BK eigenvalues must keep the step-function potential twice-differentiable."""
+        mod = load_and_cache_model("full_nk.gcn")
+        A, B, C, D = [
+            np.ascontiguousarray(x, dtype="float64")
+            for x in mod.linearize_model(
+                verbose=False,
+                steady_state_kwargs={"verbose": False, "progressbar": False},
+            )
+        ]
+        lead_var_idx = np.flatnonzero(np.abs(C).sum(axis=0) > 1e-8)
+
+        A_pt, B_pt, C_pt, D_pt = (
+            pt.tensor(name=name, shape=x.shape) for name, x in zip("ABCD", [A, B, C, D], strict=True)
+        )
+
+        bk_satisfied, _, _ = check_bk_condition_pt(A_pt, B_pt, C_pt, D_pt, lead_var_idx)
+        potential = pt.switch(pt.eq(bk_satisfied, 0.0), -np.inf, 0.0)
+
+        # A genuinely-differentiable term keeps the inputs connected to the cost through
+        # something other than the disconnected BK path, mirroring the real likelihood.
+        cost = potential + (A_pt**2).sum() + (B_pt**2).sum() + (C_pt**2).sum()
+
+        g = pt.grad(cost, [A_pt, B_pt, C_pt])
+        ps = [pt.tensor(name=f"p_{n}", shape=x.shape) for n, x in zip("ABC", [A, B, C], strict=True)]
+        g_dot_p = sum((gi * pi).sum() for gi, pi in zip(g, ps, strict=True))
+        hp = pt.grad(g_dot_p, [A_pt, B_pt, C_pt])
+
+        f = pytensor.function([A_pt, B_pt, C_pt, D_pt, *ps], hp, on_unused_input="ignore")
+        hp_vals = f(A, B, C, D, np.ones_like(A), np.ones_like(B), np.ones_like(C))
+
+        # The BK potential is a step function, so the only contribution to the Hessian is
+        # from the smooth quadratic term: 2 * p for each connected input.
+        for hp_val, p_val in zip(hp_vals, [np.ones_like(A), np.ones_like(B), np.ones_like(C)], strict=True):
+            assert_allclose(hp_val, 2.0 * p_val, atol=1e-8)

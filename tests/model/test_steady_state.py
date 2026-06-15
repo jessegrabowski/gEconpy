@@ -7,11 +7,12 @@ import pytest
 import sympy as sp
 
 from numpy.testing import assert_allclose
+from pymc.distributions.transforms import Interval, log, logodds
 from scipy import optimize
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.model import Model
+from gEconpy.model.model import Model, infer_variable_transform
 from gEconpy.model.steady_state import (
     print_steady_state,
     propagate_steady_state_through_identities,
@@ -315,6 +316,36 @@ def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
         assert_allclose(ss_root[k], ss_minimize[k], err_msg=k)
 
 
+@pytest.mark.parametrize(
+    "assumptions, user_bound, expected",
+    [
+        ({"positive": True}, (0.0, 1.0), Interval),
+        ({"unit_interval": True, "positive": True}, None, logodds),
+        ({"positive": True}, None, log),
+        ({"negative": True}, None, Interval),
+        ({}, None, type(None)),
+    ],
+    ids=["explicit_bound_wins", "unit_interval", "positive", "negative", "unconstrained"],
+)
+def test_infer_variable_transform_waterfall(assumptions, user_bound, expected):
+    variable = sp.Symbol("x", **assumptions)
+    transform = infer_variable_transform(variable, user_bound=user_bound)
+    if expected in (log, logodds):
+        assert transform is expected
+    else:
+        assert isinstance(transform, expected)
+
+
+def test_prefer_transform_solves_unconstrained():
+    model_1 = load_and_cache_model("one_block_1.gcn")
+    ss_root = model_1.steady_state(how="root", verbose=False, progressbar=False)
+
+    ss_transform = model_1.steady_state(how="minimize", prefer_transform=True, verbose=False, progressbar=False)
+    assert ss_transform.success
+    for k in ss_root:
+        assert_allclose(ss_root[k], ss_transform[k], err_msg=k)
+
+
 def test_steady_state_matches_analytic_w_calibrated_params():
     model_2 = load_and_cache_model(
         "one_block_2_no_extra.gcn",
@@ -377,7 +408,9 @@ def test_steady_state_matches_analytic_w_calibrated_params():
     ss_vars = [x.to_ss() for x in model_2.variables]
     for k in ss_vars:
         answer = float(answer_dict[k.name].subs(all_params))
-        assert_allclose(answer, numerical_ss_dict[k.name], err_msg=k.name)
+        # ``trust-constr`` converges to its own gtol/xtol, so a numerical steady state cannot
+        # be expected to match the analytic one to the default 1e-7; 1e-6 is ample confirmation.
+        assert_allclose(answer, numerical_ss_dict[k.name], rtol=1e-6, err_msg=k.name)
 
 
 def test_numerical_solvers_succeed_and_agree_RBC():
