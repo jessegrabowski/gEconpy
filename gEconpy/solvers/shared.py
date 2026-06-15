@@ -72,4 +72,4 @@ def o1_policy_function_adjoints(
 
 
 def pt_compute_selection_matrix(B, C, D, T):
-    return -pt.linalg.solve(C @ T + B, D.astype(T.dtype), assume_a="gen", check_finite=False)
+    return -pt.linalg.solve(C @ T + B, D, assume_a="gen", check_finite=False)

@@ -263,7 +263,7 @@ class ErrorCode(Enum):
         ),
         fixes=(
             "Check spelling of assumption name",
-            "Valid assumptions: positive, negative, nonpositive, nonnegative, real, integer, finite",
+            "Valid assumptions: positive, negative, nonpositive, nonnegative, real, integer, finite, unit_interval",
         ),
     )
 

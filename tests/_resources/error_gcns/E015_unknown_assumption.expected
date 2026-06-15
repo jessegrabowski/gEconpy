@@ -10,4 +10,4 @@ error[E015]: Unknown assumption 'postive'. Found 'postive'
      |
    = note: Did you mean 'positive'?
    = note: Check spelling of assumption name
-   = note: Valid assumptions: positive, negative, nonpositive, nonnegative, real, integer, finite
+   = note: Valid assumptions: positive, negative, nonpositive, nonnegative, real, integer, finite, unit_interval

@@ -7,18 +7,17 @@ import pandas as pd
 import pytensor.tensor as pt
 import sympy as sp
 
-from pytensor.graph.replace import graph_replace
+from pytensor.gradient import disconnected_grad
 from pytensor.tensor import TensorVariable
 from scipy import linalg
 from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.model.compile import build_symbolic_jacobians
 from gEconpy.model.timing import make_all_variable_time_combinations
-from gEconpy.pytensorf.block import block
 from gEconpy.pytensorf.compile import rewrite_pregrad
 from gEconpy.pytensorf.real_eig import real_eig
-from gEconpy.pytensorf.sparse_jacobian import sparse_jacobian
 from gEconpy.solvers.gensys import _gensys_setup
 from gEconpy.utilities import get_name
 
@@ -46,16 +45,14 @@ def linearize_model(
     .. math::
         A \hat{y}_{t-1} + B \hat{y}_t + C \hat{y}_{t+1} + D \varepsilon_t = 0
 
-    Log-linearization is implemented as a change-of-variables: for each variable to be log-linearized, the
-    substitution :math:`y \to \exp(\tilde{y})` is applied before differentiation, then
-    :math:`\tilde{y} \to \log(y)` is substituted back. The chain rule produces the classical T-matrix multiplication
-    :math:`\partial F / \partial (\log y) = (\partial F / \partial y) \cdot y_{ss}`. Variables not in the loglin set
-    use identity substitutions, yielding bare derivatives.
+    Log-linearization applies the chain rule directly: :math:`\partial F / \partial (\log y) =
+    (\partial F / \partial y) \cdot y_{ss}`. Each Jacobian is built by symbolic differentiation of the model
+    equations, evaluated at the steady state, with the column for every log-linearized variable scaled by its
+    steady-state value. Variables not in the loglin set keep their bare derivatives (scale factor one).
 
-    A ``pt.switch`` guard on the steady-state value prevents ``log(negative)`` for variables whose steady states are
-    not know to be non-positive. This is a numerical safety net: ``rewrite_pregrad`` does not simplify ``exp(log(x))``
-    when ``x < 0``. This is avoided if a variable is known to be positive or negative via the Assumptions block of the
-    GCN file.
+    For a log-linearized variable whose steady-state sign is not statically known from the GCN Assumptions block,
+    the column scale is guarded as :math:`\mathrm{switch}(y_{ss} > 0,\; y_{ss},\; 1)`, so a non-positive steady
+    state falls back to a level (un-logged) derivative rather than implying :math:`\log` of a non-positive value.
 
     Parameters
     ----------
@@ -105,14 +102,6 @@ def linearize_model(
 
     n_vars = len(variables)
     lags, now, leads = make_all_variable_time_combinations(variables)
-    ss_vars = [v.to_ss() for v in variables]
-
-    equations_pt = [as_tensor(eq, cache) for eq in equations]
-    lags_pt = [as_tensor(v, cache) for v in lags]
-    now_pt = [as_tensor(v, cache) for v in now]
-    leads_pt = [as_tensor(v, cache) for v in leads]
-    shocks_pt = [as_tensor(s, cache) for s in shocks]
-    ss_pt = [as_tensor(v, cache) for v in ss_vars]
 
     if loglin_variables is None:
         loglin_set = set(range(n_vars))
@@ -120,74 +109,23 @@ def linearize_model(
         loglin_names = {v.base_name for v in loglin_variables}
         loglin_set = {i for i, v in enumerate(variables) if v.base_name in loglin_names}
 
-    forward_replace = {}
-    backward_replace = {}
-    dummies_lags, dummies_now, dummies_leads = [], [], []
-
-    for i, (lag, curr, lead, ss) in enumerate(zip(lags_pt, now_pt, leads_pt, ss_pt, strict=False)):
-        name = variables[i].base_name
-        lag_tilde = pt.dscalar(f"{name}__tm1__tilde")
-        curr_tilde = pt.dscalar(f"{name}__t__tilde")
-        lead_tilde = pt.dscalar(f"{name}__tp1__tilde")
-
-        dummies_lags.append(lag_tilde)
-        dummies_now.append(curr_tilde)
-        dummies_leads.append(lead_tilde)
-
-        if i in loglin_set:
-            assumptions = variables[i].assumptions0
-            known_positive = assumptions.get("positive", False)
-            known_negative = assumptions.get("negative", False)
-            if known_positive:
-                for var, tilde in [(lag, lag_tilde), (curr, curr_tilde), (lead, lead_tilde)]:
-                    forward_replace[var] = pt.exp(tilde)
-                    backward_replace[tilde] = pt.log(var)
-            elif known_negative:
-                # ss > 0 is always false; switch would resolve to identity
-                for var, tilde in [(lag, lag_tilde), (curr, curr_tilde), (lead, lead_tilde)]:
-                    forward_replace[var] = tilde
-                    backward_replace[tilde] = var
-            else:
-                positive_ss = ss > 0
-                for var, tilde in [(lag, lag_tilde), (curr, curr_tilde), (lead, lead_tilde)]:
-                    forward_replace[var] = pt.switch(positive_ss, pt.exp(tilde), tilde)
-                    backward_replace[tilde] = pt.switch(positive_ss, pt.log(var), var)
-        else:
-            for var, tilde in [(lag, lag_tilde), (curr, curr_tilde), (lead, lead_tilde)]:
-                forward_replace[var] = tilde
-                backward_replace[tilde] = var
-
-    # Forward: y -> exp(y_tilde), differentiate w.r.t. y_tilde, then backward: y_tilde -> log(y)
-    equations_transformed = graph_replace(equations_pt, forward_replace, strict=False)
-    if not isinstance(equations_transformed, list):
-        equations_transformed = [equations_transformed]
-    equations_transformed = rewrite_pregrad(equations_transformed)
-
-    n_eq = len(equations_transformed)
-    n_var = len(dummies_leads)
-
-    # Classify equations by which time-shifts they reference (S=static, L=lag-only,
-    # E=lead-only, B=both) and variables by their incidence (s, p, m, f). Build
-    # ``eq_order`` / ``var_order`` from these if the caller didn't supply them.
-    eq_has_lag = np.array([any(v.set_t(-1) in eq.atoms(TimeAwareSymbol) for v in variables) for eq in equations])
-    eq_has_lead = np.array([any(v.set_t(1) in eq.atoms(TimeAwareSymbol) for v in variables) for eq in equations])
-    var_has_lag = np.zeros(len(variables), dtype=bool)
-    var_has_lead = np.zeros(len(variables), dtype=bool)
-    for eq in equations:
+    # Classify equations by which time-shifts they reference (S=static, L=lag-only, E=lead-only,
+    # B=both) and variables by their incidence (s, p, m, f). A single pass over the equations
+    # derives all four incidence arrays. These drive the [S|L|E|B] / [s|p|m|f] permutations that
+    # make A's and C's structural-zero blocks contiguous for downstream solvers.
+    lag_syms = [v.set_t(-1) for v in variables]
+    lead_syms = [v.set_t(1) for v in variables]
+    eq_has_lag = np.zeros(len(equations), dtype=bool)
+    eq_has_lead = np.zeros(len(equations), dtype=bool)
+    var_has_lag = np.zeros(n_vars, dtype=bool)
+    var_has_lead = np.zeros(n_vars, dtype=bool)
+    for i, eq in enumerate(equations):
         atoms = eq.atoms(TimeAwareSymbol)
-        for j, v in enumerate(variables):
-            if v.set_t(-1) in atoms:
-                var_has_lag[j] = True
-            if v.set_t(1) in atoms:
-                var_has_lead[j] = True
-    n_S = int((~eq_has_lag & ~eq_has_lead).sum())
-    n_L = int((eq_has_lag & ~eq_has_lead).sum())
-    n_E = int((~eq_has_lag & eq_has_lead).sum())
-    n_B_eq = int((eq_has_lag & eq_has_lead).sum())
-    n_s = int((~var_has_lag & ~var_has_lead).sum())
-    n_p = int((var_has_lag & ~var_has_lead).sum())
-    n_m = int((var_has_lag & var_has_lead).sum())
-    n_f = int((~var_has_lag & var_has_lead).sum())
+        for j in range(n_vars):
+            if lag_syms[j] in atoms:
+                eq_has_lag[i] = var_has_lag[j] = True
+            if lead_syms[j] in atoms:
+                eq_has_lead[i] = var_has_lead[j] = True
 
     if eq_order is None:
         eq_order_local = np.concatenate(
@@ -212,107 +150,52 @@ def linearize_model(
     else:
         var_order_local = np.asarray(var_order, dtype=int)
 
-    # Permute the variable dummies to columns-permuted order so sparse_jacobian's
-    # output columns line up with [s | p | m | f]. The Jacobian variable list is
-    # what determines the result's column ordering.
-    dummies_lags_perm = [dummies_lags[j] for j in var_order_local]
-    dummies_now_perm = [dummies_now[j] for j in var_order_local]
-    dummies_leads_perm = [dummies_leads[j] for j in var_order_local]
+    # Order equations (rows) and variables (cols) up front so the matrices come out in
+    # [eq_order, var_order] by construction -- no pytensor-side reshuffling.
+    equations_perm = [equations[i] for i in eq_order_local]
+    lags_perm = [lags[j] for j in var_order_local]
+    now_perm = [now[j] for j in var_order_local]
+    leads_perm = [leads[j] for j in var_order_local]
 
-    # A is nonzero only in (L | B) rows × (p | m) cols: 4 cells out of 16.
-    # C is nonzero only in (E | B) rows × (m | f) cols.
-    # B has no useful block-zero structure; D's columns are shocks (no var perm).
-    use_split = n_eq > 0 and n_var > 0 and (n_L + n_B_eq) > 0 and (n_E + n_B_eq) > 0
+    # Bare derivatives at the steady state (vars -> ss, shocks -> 0), built with a single shared
+    # CSE pass across A/B/C/D: they are derivatives of the same equations and share heavily, so
+    # extracting common subexpressions once shrinks the graph pt.grad later replicates.
+    A, B, C, D = build_symbolic_jacobians(
+        [
+            (equations_perm, lags_perm),
+            (equations_perm, now_perm),
+            (equations_perm, leads_perm),
+            (equations_perm, list(shocks)),
+        ],
+        cache,
+        to_ss=True,
+        shocks=shocks,
+    )
 
-    if use_split:
-        permuted_eqs = [equations_transformed[i] for i in eq_order_local]
-
-        # B and D: just permute (rows by eq_order, cols by var_order for B; D unchanged)
-        B = sparse_jacobian(permuted_eqs, dummies_now_perm, return_sparse=False)
-        D = sparse_jacobian(permuted_eqs, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_eq, 0))
-
-        # A: compute only the (L+B) × (p+m) submatrix
-        a_active_eqs = permuted_eqs[n_S : n_S + n_L] + permuted_eqs[n_S + n_L + n_E :]
-        a_active_vars = dummies_lags_perm[n_s : n_s + n_p + n_m]
-        if a_active_eqs and a_active_vars:
-            A_active = sparse_jacobian(a_active_eqs, a_active_vars, return_sparse=False)
-            A_L = A_active[:n_L]
-            A_B = A_active[n_L:]
+    # Log-linear chain rule: scale column j (in var_order) by the steady-state factor of its
+    # variable -- 1 for level variables (not in the loglin set, or declared negative), the
+    # steady-state value for declared-positive variables, and a sign-guarded switch otherwise.
+    column_scale = []
+    for j in var_order_local:
+        ss_node = as_tensor(variables[j].to_ss(), cache)
+        assumptions = variables[j].assumptions0
+        if j not in loglin_set or assumptions.get("negative", False):
+            column_scale.append(pt.ones(()))
+        elif assumptions.get("positive", False):
+            column_scale.append(ss_node)
         else:
-            A_L = pt.zeros((n_L, n_p + n_m))
-            A_B = pt.zeros((n_B_eq, n_p + n_m))
+            column_scale.append(pt.switch(ss_node > 0, ss_node, pt.ones(())))
+    scale = pt.stack(column_scale)
 
-        # Build the 4×4 grid for A. The (L,p|m) and (B,p|m) cells contain A_L / A_B;
-        # all other cells are structurally zero. Keep the [s | p | m | f] column order.
-        def _row(zeros_left, mid, zeros_right, n_row):
-            parts = []
-            if zeros_left > 0:
-                parts.append(pt.zeros((n_row, zeros_left)))
-            parts.append(mid)
-            if zeros_right > 0:
-                parts.append(pt.zeros((n_row, zeros_right)))
-            return parts
-
-        A_rows = []
-        if n_S > 0:
-            A_rows.append([pt.zeros((n_S, n_var))])
-        if n_L > 0:
-            A_rows.append(_row(n_s, A_L, n_f, n_L))
-        if n_E > 0:
-            A_rows.append([pt.zeros((n_E, n_var))])
-        if n_B_eq > 0:
-            A_rows.append(_row(n_s, A_B, n_f, n_B_eq))
-        A = block(A_rows)
-
-        # C: compute only the (E+B) × (m+f) submatrix
-        c_active_eqs = permuted_eqs[n_S + n_L :]
-        c_active_vars = dummies_leads_perm[n_s + n_p :]
-        if c_active_eqs and c_active_vars:
-            C_active = sparse_jacobian(c_active_eqs, c_active_vars, return_sparse=False)
-            C_E = C_active[:n_E]
-            C_B = C_active[n_E:]
-        else:
-            C_E = pt.zeros((n_E, n_m + n_f))
-            C_B = pt.zeros((n_B_eq, n_m + n_f))
-
-        C_rows = []
-        if n_S + n_L > 0:
-            C_rows.append([pt.zeros((n_S + n_L, n_var))])
-        if n_E > 0:
-            C_rows.append([pt.zeros((n_E, n_s + n_p)), C_E])
-        if n_B_eq > 0:
-            C_rows.append([pt.zeros((n_B_eq, n_s + n_p)), C_B])
-        C = block(C_rows)
-    else:
-        # Degenerate: no useful 4-class split — fall back to plain dense Jacobians,
-        # still applying any user-supplied permutations.
-        permuted_eqs = [equations_transformed[i] for i in eq_order_local]
-        A = sparse_jacobian(permuted_eqs, dummies_lags_perm, return_sparse=False)
-        B = sparse_jacobian(permuted_eqs, dummies_now_perm, return_sparse=False)
-        C = sparse_jacobian(permuted_eqs, dummies_leads_perm, return_sparse=False)
-        D = sparse_jacobian(permuted_eqs, shocks_pt, return_sparse=False) if shocks_pt else pt.zeros((n_eq, 0))
-
-    A, B, C, D = rewrite_pregrad([graph_replace(m, backward_replace, strict=False) for m in [A, B, C, D]])
-
-    # Evaluate at steady state: time-indexed variables -> ss values, shocks -> 0
-    ss_replace = {}
-    for lag, curr, lead, ss in zip(lags_pt, now_pt, leads_pt, ss_pt, strict=False):
-        ss_replace[lag] = ss
-        ss_replace[curr] = ss
-        ss_replace[lead] = ss
-    for shock in shocks_pt:
-        ss_replace[shock] = pt.zeros(())
-
-    A, B, C, D = [graph_replace(m, ss_replace, strict=False) for m in [A, B, C, D]]
+    A, B, C, D = rewrite_pregrad([A * scale, B * scale, C * scale, D])
 
     # Row order reflects the [S|L|E|B] equation permutation; column order reflects the
     # [s|p|m|f] variable permutation. Downstream solvers consume A/B/C/D and emit T/R in
     # the *permuted* variable order — the statespace boundary applies ``inv_var_order``
     # to map T/R back to user variable order, and ``Model.linearize_model`` applies
     # ``inv_eq_order`` / ``inv_var_order`` before returning matrices to the user.
-    eq_order_out = eq_order_local
-    var_order_out = var_order_local
-    return [A, B, C, D], list(ss_pt), eq_order_out, var_order_out
+    ss_pt = [as_tensor(v.to_ss(), cache) for v in variables]
+    return [A, B, C, D], ss_pt, eq_order_local, var_order_local
 
 
 def make_not_loglin_flags(
@@ -729,6 +612,12 @@ def check_bk_condition_pt(
     lead_var_idx = np.asarray(lead_var_idx)
     n_forward = len(lead_var_idx)
     eigvals_real, eigvals_imag = compute_bk_eigenvalues_pt(A, B, C, D, lead_var_idx)
+
+    # Detach the eigenvalues: the BK check is a step function (zero gradient), so this keeps
+    # the only first-order-differentiable RealEig VJP out of the Hessian graph.
+    eigvals_real = disconnected_grad(eigvals_real)
+    eigvals_imag = disconnected_grad(eigvals_imag)
+
     modulus = pt.sqrt(eigvals_real**2 + eigvals_imag**2)
     n_unstable = (modulus > 1).sum()
     bk_satisfied = pt.eq(n_forward, n_unstable)

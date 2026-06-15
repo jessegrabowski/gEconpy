@@ -43,6 +43,7 @@ GCN_ASSUMPTIONS = [
     "real",
     "integer",
     "finite",
+    "unit_interval",
 ]
 
 SYMPY_ASSUMPTIONS = [

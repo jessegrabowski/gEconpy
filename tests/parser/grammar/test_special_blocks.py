@@ -111,6 +111,12 @@ class TestAssumptionsBlock:
         assert result["K"]["positive"] is True
         assert result["shock"]["real"] is True
 
+    def test_unit_interval_implies_positive(self):
+        text = "assumptions { unit_interval { alpha; }; };"
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert result["alpha"]["unit_interval"] is True
+        assert result["alpha"]["positive"] is True
+
     def test_parameter_in_assumptions(self):
         text = "assumptions { positive { alpha, beta; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]

@@ -93,6 +93,11 @@ def _build_assumptions(tokens) -> dict[str, dict[str, bool]]:
         for item in subblock.variables:
             var_name = item.name if hasattr(item, "name") else str(item)
             assumption_kwargs[var_name][assumption_name] = True
+            # ``unit_interval`` is not a native sympy predicate; it is stored inertly in ``assumptions0`` for
+            # the steady-state solver to read (routes the variable to a logit transform). It still implies
+            # positivity, so set sympy's ``positive`` too — that one carries real algebraic implications.
+            if assumption_name == "unit_interval":
+                assumption_kwargs[var_name]["positive"] = True
 
     return dict(assumption_kwargs)
 
