@@ -105,18 +105,13 @@ def sympy_to_pytensor(
     inputs: list[sp.Symbol],
     outputs: list[sp.Symbol | sp.Expr] | sp.MutableDenseMatrix,
     cache: dict | None = None,
-    cse: bool = True,
+    cse: bool = False,
 ) -> tuple[list[TensorVariable], list[TensorVariable], dict]:
     """
     Convert sympy expressions to pytensor graph nodes.
 
     This is the sympytensor bridge: it takes sympy symbols and expressions and returns the corresponding pytensor
     input and output nodes, along with the updated cache that maintains the mapping between sympy and pytensor symbols.
-
-    When ``cse=True`` (default), runs ``sp.cse`` on the output expressions first and binds the extracted intermediates
-    as named pytensor nodes before converting the reduced outputs. This produces a graph with explicit subgraph
-    sharing, which keeps ``pt.grad`` from materializing the same backward subgraph hundreds of times. For DSGE-scale
-    workloads the speedup on gradient compile is two orders of magnitude.
 
     Parameters
     ----------
@@ -128,8 +123,9 @@ def sympy_to_pytensor(
         Dictionary mapping sympytensor cache keys to pytensor variables. Used to maintain a consistent namespace
         across multiple conversions. Default is an empty dictionary.
     cse : bool, optional
-        If True, run sympy's common subexpression elimination on ``outputs`` before converting to pytensor. Set False
-        to bypass when outputs are guaranteed atomic (e.g., a single Symbol passthrough). Default True.
+        Eliminate common subexpressions (``sp.cse``) before conversion. Shrinks the forward graph but inflates
+        gradient compilation, because the shared subexpressions become high-fanout nodes that densify the reverse-mode
+        backward graph; enable only for forward-only compiles. Default False.
 
     Returns
     -------
