@@ -1,0 +1,75 @@
+###########################################################################
+# New Keynesian model (Galì, 2008)
+###########################################################################
+
+
+block LINEAR_MODEL
+{
+	identities
+	{
+		# NKP
+		pi[] = beta * E[][ pi[1] ] + kappa * y[] ;
+
+		# NKIS
+		y[] = E[][ y[1] ] - 1 / sigma * (i[] - rn - E[][ pi[1] ]) ;
+
+		# CB
+		i[] = rho + phi_pi * pi[] + phi_y * y[] + v[] ;
+	};
+
+	calibration
+	{
+		# natural rate of interest could be exogenenous law of motion
+		rn = .01 ;
+
+		# discount factor
+		beta = .99 ;
+		rho = -log(beta) ;
+
+		# capital share - N_t^(1-alpha) even in absence of K_t
+		alpha = .33 ;
+
+		# CB preference
+		phi_pi = 1.1 ;
+		phi_y = .4 ;
+
+		# Dixit-Stiglitz aggregator CES
+		epsilon = 1 ;
+
+		# Calvo pricing 
+		theta = .75 ;
+
+		# labour mrs
+		phi = 1.5 ;
+
+		# consumption mrs
+		sigma = 1.5 ;
+
+
+		# aggregated parameters
+
+		Theta = (1 - alpha) / (1 - alpha + alpha * epsilon) ;
+		param1 = (1 - theta) * (1 - beta * theta) / theta ;
+
+
+		kappa = param1 * (sigma + (phi + alpha) / (1 - alpha)) ;
+
+	};
+};
+
+block SHOCKS
+{
+    identities
+    {	
+    	# monetary policy shock
+    	v[] = rho_v * v[-1] + epsilon_v[] ;
+    };
+    shocks
+    {
+        epsilon_v[];
+    };
+    calibration
+    {
+    rho_v = .9 ; # AR(1) monetary policy
+    };
+};
