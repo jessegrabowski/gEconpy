@@ -64,7 +64,6 @@ dev = [
     "pytest-benchmark>=5.2.3",
     "versioneer",
     "numdifftools",
-    "asv"
 ]
 
 docs = [

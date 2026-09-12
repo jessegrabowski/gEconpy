@@ -57,5 +57,4 @@ dependencies:
       - jax>=0.10.1
       - flowjax
       - corner
-      - asv
       - -e ../.
