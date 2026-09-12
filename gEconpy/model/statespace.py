@@ -204,7 +204,7 @@ class DSGEStateSpace(PyMCStateSpace):
         elif self._solver == "backward_direct":
             T, R = solve_policy_function_with_backward_direct_pt(A, B, C, D)
         else:
-            T, R, n_steps = scan_cycle_reduction(A, B, C, D, mode=self._mode, **self._solver_kwargs)
+            T, R, n_steps = scan_cycle_reduction(A, B, C, D, **self._solver_kwargs)
             self._n_steps = n_steps
 
         # Evaluate the policy-function residual in the solver's variable order. A, B, and C
