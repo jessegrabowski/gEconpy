@@ -199,7 +199,7 @@ class CycleReductionWrapper(Op):
 
         return Apply(self, inputs, outputs)
 
-    def infer_shape(self, fgraph, node, input_shapes):
+    def infer_shape(self, node, input_shapes):
         n = input_shapes[0][0]
         return [(n, n)]
 
