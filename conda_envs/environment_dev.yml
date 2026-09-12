@@ -7,14 +7,14 @@ channels:
 dependencies:
   # Core dependencies
   - python=3.13
-  - pymc>=6.0.1
-  - pytensor>=3.0.4
+  - pymc>=6.3.0
+  - pytensor>=3.3.0
   - matplotlib
   - numba
   - numpy
   - pandas
   - pyparsing
-  - preliz>=0.25.0
+  - preliz>=0.27.0
   - scipy
   - setuptools
   - statsmodels
@@ -24,8 +24,8 @@ dependencies:
   - notebook<7
   - nutpie>=0.16.10
   - networkx
-  - sympytensor>=2.0.1
-  - pymc-extras>=0.12.0
+  - sympytensor>=2.1.0
+  - pymc-extras>=0.15.0
 
   # For building docs
   - ipython

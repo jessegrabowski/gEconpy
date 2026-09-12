@@ -14,12 +14,12 @@ dependencies:
   - matplotlib
   - arviz>=1.1.0
   - statsmodels
-  - pymc>=6.0.1
-  - pytensor>=3.0.4
-  - preliz>=0.25.0
+  - pymc>=6.3.0
+  - pytensor>=3.3.0
+  - preliz>=0.27.0
   - ipython
-  - sympytensor>=2.0.1
-  - pymc-extras>=0.12.0
+  - sympytensor>=2.1.0
+  - pymc-extras>=0.15.0
   - better-optimize>=0.4.2
   - nutpie>=0.16.10
   - networkx
