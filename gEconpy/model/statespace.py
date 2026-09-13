@@ -1066,7 +1066,6 @@ class DSGEStateSpace(PyMCStateSpace):
         self._configured = True
         self._solver = solver
         self._solver_kwargs = solver_kwargs
-        self.mode = mode
 
         # Cumulator-aggregated observed states that are also observation equations
         # route their lag storage through the obs-eq lag block, not the cumulator
@@ -1092,7 +1091,11 @@ class DSGEStateSpace(PyMCStateSpace):
             k_endog,
             k_states_aug,
             self.k_posdef,
+            filter_type=self.filter_type,
             measurement_error=len(measurement_error) > 0,
+            mode=mode,
+            cov_jitter=self.cov_jitter,
+            missing_fill_value=self.missing_fill_value,
             verbose=verbose,
         )
 

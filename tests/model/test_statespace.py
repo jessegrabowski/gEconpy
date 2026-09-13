@@ -154,6 +154,20 @@ def test_constant_params_auto_excludes_priorless_params():
     assert params_with_priors <= set(ss_mod.param_names)
 
 
+def test_statespace_from_gcn_forwards_filter_settings_and_mode():
+    ss_mod = statespace_from_gcn(
+        TEST_GCNS / "rbc_linearized.gcn", verbose=False, cov_jitter=1e-6, missing_fill_value=-1.0
+    )
+    assert ss_mod.cov_jitter == 1e-6
+    assert ss_mod.missing_fill_value == -1.0
+    assert ss_mod.mode is None
+
+    ss_mod.configure(observed_states=["Y"], solver="gensys", mode="NUMBA", verbose=False)
+    assert ss_mod.mode == "NUMBA"
+    assert ss_mod.cov_jitter == 1e-6
+    assert ss_mod.missing_fill_value == -1.0
+
+
 def test_temporal_aggregation_sum_accumulates_over_window(rbc_statespace):
     rbc_statespace.configure(
         observed_states=["Y"],
