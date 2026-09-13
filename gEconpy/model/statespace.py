@@ -1270,9 +1270,6 @@ class DSGEStateSpace(PyMCStateSpace):
         calculation is built as a single PyTensor graph and evaluated across every draw at once with
         :func:`pymc.compute_deterministics`, so there is no Python loop over samples.
 
-        The model must already have been built with :meth:`build_statespace_graph`, which the presence of ``idata``
-        implies.
-
         Parameters
         ----------
         idata : arviz.InferenceData
@@ -1301,7 +1298,7 @@ class DSGEStateSpace(PyMCStateSpace):
         name = "observation_autocorrelation" if observed else "autocorrelation"
         coords = {**self.coords, "lag": np.arange(n_lags + 1)}
 
-        param_dims = {name: list(dims) for name, dims in self.param_dims.items() if dims is not None}
+        param_dims = {param: list(dims) for param, dims in self.param_dims.items() if dims is not None}
 
         with pm.Model(coords=coords) as acf_model:
             dummy_graph.build_dummy_graph(self, coords=self.coords, dims=param_dims)
