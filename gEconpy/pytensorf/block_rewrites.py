@@ -116,8 +116,6 @@ def _join_matmul_axis(var):
     return None
 
 
-@register_canonicalize
-@register_stabilize
 @node_rewriter([DimShuffle])
 def local_transpose_of_join(_fgraph, node):
     r"""Push a matrix transpose inside a :class:`Join`.
@@ -149,8 +147,6 @@ def local_transpose_of_join(_fgraph, node):
     return [new_out]
 
 
-@register_canonicalize
-@register_stabilize
 @node_rewriter([Join])
 def local_nested_join_to_block_diagonal(_fgraph, node):
     r"""Rewrite a square block grid with zero off-diagonals to :func:`block_diag`.
@@ -213,8 +209,6 @@ def _split_distributes_through_join(node, join_inputs, join_axis, split_axis, sp
     return new_outputs
 
 
-@register_canonicalize
-@register_stabilize
 @node_rewriter([Split])
 def local_split_of_join(_fgraph, node):
     r"""Push :class:`Split` through :class:`Join`.
@@ -240,3 +234,11 @@ def local_split_of_join(_fgraph, node):
     if split_axis == join_axis:
         return _split_undoes_join(node, join_inputs, join_axis, splits_size_var)
     return _split_distributes_through_join(node, join_inputs, join_axis, split_axis, splits_size_var)
+
+
+# Registered with ``overwrite_existing`` so that re-importing the module (``importlib.reload``, or a
+# harness that evicts gEconpy from ``sys.modules``) replaces the entries instead of raising on the
+# duplicate name.
+for _rewrite in (local_transpose_of_join, local_nested_join_to_block_diagonal, local_split_of_join):
+    register_canonicalize(_rewrite, overwrite_existing=True)
+    register_stabilize(_rewrite, overwrite_existing=True)

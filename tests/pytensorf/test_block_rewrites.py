@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
@@ -137,3 +140,19 @@ class TestSplitOfJoin:
         got0, got1 = f(Av, Bv)
         assert_allclose(got0, joined_v[:, :2])
         assert_allclose(got1, joined_v[:, 2:])
+
+
+def test_reimport_replaces_registered_rewrites():
+    """Evicting gEconpy from ``sys.modules`` and importing again must not raise on the duplicate rewrite names."""
+    script = (
+        "import sys\n"
+        "from pytensor import compile\n"
+        "import gEconpy.pytensorf.block_rewrites\n"
+        "db = compile.optdb['canonicalize']\n"
+        "first = db['local_split_of_join']\n"
+        "for name in [k for k in sys.modules if k.startswith('gEconpy')]:\n"
+        "    del sys.modules[name]\n"
+        "import gEconpy.pytensorf.block_rewrites\n"
+        "assert db['local_split_of_join'] is not first\n"
+    )
+    subprocess.run([sys.executable, "-c", script], check=True)
