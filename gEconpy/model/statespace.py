@@ -14,12 +14,14 @@ import xarray as xr
 from preliz.distributions.distributions import Distribution
 from pymc.model.transform.optimization import freeze_dims_and_data
 from pymc.pytensorf import rewrite_pregrad
+from pymc_extras.statespace.core import dummy_graph
 from pymc_extras.statespace.core.properties import Coord, Parameter, Shock, State, SymbolicVariable
 from pymc_extras.statespace.core.statespace import PyMCStateSpace
 from pymc_extras.statespace.utils.constants import (
     ALL_STATE_AUX_DIM,
     ALL_STATE_DIM,
     JITTER_DEFAULT,
+    MISSING_FILL,
     OBS_STATE_AUX_DIM,
     OBS_STATE_DIM,
     SHOCK_AUX_DIM,
@@ -67,6 +69,9 @@ class DSGEStateSpace(PyMCStateSpace):
         log_linearized_variables: list[str] | None = None,
         sympytensor_cache: dict | None = None,
         filter_type: str = "standard",
+        mode: str | None = None,
+        cov_jitter: float = JITTER_DEFAULT,
+        missing_fill_value: float = MISSING_FILL,
         verbose: bool = True,
     ):
         """
@@ -104,6 +109,16 @@ class DSGEStateSpace(PyMCStateSpace):
             Base names of variables that were log-linearized when building ``linearized_system``. Used by
             ``configure(ss_obs_intercept=...)`` to decide whether an observation intercept entry is
             ``log(v_ss(p))`` (log-linearized) or ``v_ss(p)`` (level-linearized).
+        filter_type : str, optional
+            Kalman filter implementation used for the likelihood. Default "standard".
+        mode : str, optional
+            PyTensor compilation mode for post-estimation sampling functions.
+        cov_jitter : float, optional
+            Jitter added to the diagonal of covariance matrices inside the Kalman filter. Default is
+            ``JITTER_DEFAULT`` from pymc-extras.
+        missing_fill_value : float, optional
+            Sentinel that replaces missing observations before the filter runs. Default is ``MISSING_FILL`` from
+            pymc-extras.
         verbose: bool
             If True, show diagnostic messages.
         """
@@ -137,7 +152,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self.error_states = []
         self._solver = "gensys"
         self._solver_kwargs: dict | None = None
-        self._mode = None
+        self._graph_checks: dict = {}
         self._linearized_system_subbed: list | None = None
         self._policy_graph: list | None = None
 
@@ -187,6 +202,9 @@ class DSGEStateSpace(PyMCStateSpace):
             filter_type=filter_type,
             verbose=False,
             measurement_error=False,
+            mode=mode,
+            cov_jitter=cov_jitter,
+            missing_fill_value=missing_fill_value,
         )
 
         for variable in self.input_parameters:
@@ -737,16 +755,11 @@ class DSGEStateSpace(PyMCStateSpace):
                 _log.info("Statespace model construction complete, but call the .configure method to finalize.")
             return
 
-        # Register the existing placeholders with the statespace model
-        constant_replacements = {}
-        for parameter in self.input_parameters:
-            if parameter.name in self.constant_parameters:
-                constant_replacements[parameter] = pt.constant(
-                    np.array(self.param_dict[parameter.name]).astype(floatX),
-                    name=parameter.name,
-                )
-            else:
-                self._name_to_variable[parameter.name] = parameter
+        constant_replacements = {
+            parameter: pt.constant(np.array(self.param_dict[parameter.name]).astype(floatX), name=parameter.name)
+            for parameter in self.input_parameters
+            if parameter.name in self.constant_parameters
+        }
 
         self._linearized_system_subbed = [A, B, C, D] = graph_replace(
             self.linearized_system, constant_replacements, strict=False
@@ -1053,7 +1066,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self._configured = True
         self._solver = solver
         self._solver_kwargs = solver_kwargs
-        self._mode = mode
+        self.mode = mode
 
         # Cumulator-aggregated observed states that are also observation equations
         # route their lag storage through the obs-eq lag block, not the cumulator
@@ -1139,22 +1152,45 @@ class DSGEStateSpace(PyMCStateSpace):
     def build_statespace_graph(
         self,
         data: np.ndarray | pd.DataFrame | pt.TensorVariable,
-        register_data: bool = True,
-        missing_fill_value: float | None = None,
-        cov_jitter: float | None = JITTER_DEFAULT,
-        save_kalman_filter_outputs_in_idata: bool = False,
         add_norm_check: bool = True,
         add_bk_check: bool = False,
         add_solver_success_check: bool = False,
         solver_tol: float = 1e-8,
     ) -> None:
-        super().build_statespace_graph(
-            data=data,
-            register_data=register_data,
-            missing_fill_value=missing_fill_value,
-            cov_jitter=cov_jitter,
-            save_kalman_filter_outputs_in_idata=save_kalman_filter_outputs_in_idata,
-        )
+        """
+        Build the Kalman filter likelihood for ``data`` into the active PyMC model, plus DSGE diagnostics.
+
+        Rebuilding into a model that already holds this graph only repoints it at ``data``. The diagnostic flags
+        are read on the first build and ignored afterwards.
+
+        Parameters
+        ----------
+        data : numpy array, pandas DataFrame, or pytensor tensor
+            Observed data to fit against. Missing values are filled with ``missing_fill_value`` and marginalized
+            by the filter.
+        add_norm_check : bool, optional
+            Register the deterministic and stochastic recursion residual norms as Deterministics. Default True.
+        add_bk_check : bool, optional
+            Register the Blanchard-Kahn indicator and a Potential that rejects draws violating it. Default False.
+        add_solver_success_check : bool, optional
+            Register the policy-function residual and a Potential that rejects draws where it exceeds
+            ``solver_tol``. Default False.
+        solver_tol : float, optional
+            Residual tolerance used by ``add_solver_success_check``. Default 1e-8.
+        """
+        self._graph_checks = {
+            "add_norm_check": add_norm_check,
+            "add_bk_check": add_bk_check,
+            "add_solver_success_check": add_solver_success_check,
+            "solver_tol": solver_tol,
+        }
+        super().build_statespace_graph(data=data)
+
+    def _register_additional_statespace_variables(self) -> None:
+        add_norm_check = self._graph_checks["add_norm_check"]
+        add_bk_check = self._graph_checks["add_bk_check"]
+        add_solver_success_check = self._graph_checks["add_solver_success_check"]
+        solver_tol = self._graph_checks["solver_tol"]
 
         pymc_model = pm.modelcontext(None)
 
@@ -1262,9 +1298,10 @@ class DSGEStateSpace(PyMCStateSpace):
         name = "observation_autocorrelation" if observed else "autocorrelation"
         coords = {**self.coords, "lag": np.arange(n_lags + 1)}
 
+        param_dims = {name: list(dims) for name, dims in self.param_dims.items() if dims is not None}
+
         with pm.Model(coords=coords) as acf_model:
-            self._build_dummy_graph()
-            self._insert_random_variables()
+            dummy_graph.build_dummy_graph(self, coords=self.coords, dims=param_dims)
             _, _, _, _, T, Z, R, H, Q = self.unpack_statespace()
 
             Sigma = pt.linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
@@ -1334,8 +1371,7 @@ def data_from_prior(
     """
     Generate artificial data from prior predictive samples.
 
-    Also modifies the pymc model and the statespace model in-place to act as if build_statespace_graph has been
-    called with the new data.
+    The statespace graph is built into a copy of ``pymc_model``, so the caller's model is left untouched.
 
     Parameters
     ----------
@@ -1368,17 +1404,8 @@ def data_from_prior(
         Draws from the prior predictive distribution, plus conditional prior predictive samples.
     """
     rng = np.random.default_rng(random_seed)
-    default_statespace_kwargs = {
-        "add_bk_check": False,
-        "add_solver_success_check": True,
-        "add_norm_check": True,
-        "add_steady_state_penalty": True,
-    }
-
     if build_statespace_kwargs is None:
         build_statespace_kwargs = {}
-
-    default_statespace_kwargs.copy().update(build_statespace_kwargs)
 
     if index is None:
         index = pd.date_range(start="1980-01-01", end="2024-11-01", freq="QS-OCT")
@@ -1389,14 +1416,11 @@ def data_from_prior(
     new_model = pymc_model.copy()
 
     with new_model:
-        if "data" not in new_model:
-            statepace_mod.build_statespace_graph(dummy_data, **build_statespace_kwargs)
-        else:
-            pm.set_data({"data": dummy_data.fillna(-9999)})
+        statepace_mod.build_statespace_graph(dummy_data, **build_statespace_kwargs)
 
     with warnings.catch_warnings(action="ignore"), freeze_dims_and_data(new_model):
         prior_idata = pm.sample_prior_predictive(
-            n_samples, compile_kwargs={"mode": statepace_mod._mode}, random_seed=rng
+            n_samples, compile_kwargs={"mode": statepace_mod.mode}, random_seed=rng
         )
 
     with warnings.catch_warnings(action="ignore"):
@@ -1420,11 +1444,6 @@ def data_from_prior(
         for col in data:
             missing_idxs = rng.choice(data.index, size=n_missing, replace=False)
             data.loc[missing_idxs, col] = np.nan
-
-    # Reset the statespace model so the user can call build_statespace_graph with the new data
-    statepace_mod._fit_data = None
-    statepace_mod._fit_dims = None
-    statepace_mod._fit_coords = None
 
     return true_params, data, prior_idata
 

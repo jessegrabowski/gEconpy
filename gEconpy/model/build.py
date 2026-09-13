@@ -6,6 +6,7 @@ from warnings import warn
 
 import sympy as sp
 
+from pymc_extras.statespace.utils.constants import JITTER_DEFAULT, MISSING_FILL
 from pytensor.graph.replace import graph_replace
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -575,6 +576,9 @@ def statespace_from_gcn(
     not_loglin_variables: list[str] | None = None,
     show_errors: bool = True,
     filter_type: str = "standard",
+    mode: str | None = None,
+    cov_jitter: float = JITTER_DEFAULT,
+    missing_fill_value: float = MISSING_FILL,
 ) -> DSGEStateSpace:
     """
     Build a symbolic DSGE state-space model from a GCN file.
@@ -607,6 +611,14 @@ def statespace_from_gcn(
         Pretty-print parse errors to stderr.
     filter_type : str, default ``'standard'``
         Kalman-filter variant to use in the underlying ``PyMCStateSpace``.
+    mode : str, optional
+        PyTensor compilation mode for post-estimation sampling functions.
+    cov_jitter : float, optional
+        Jitter added to the diagonal of covariance matrices inside the Kalman filter. Default is ``JITTER_DEFAULT``
+        from pymc-extras.
+    missing_fill_value : float, optional
+        Sentinel that replaces missing observations before the filter runs. Default is ``MISSING_FILL`` from
+        pymc-extras.
 
     Returns
     -------
@@ -709,6 +721,9 @@ def statespace_from_gcn(
         log_linearized_variables=[v.base_name for v in loglin_vars],
         sympytensor_cache=cache,
         filter_type=filter_type,
+        mode=mode,
+        cov_jitter=cov_jitter,
+        missing_fill_value=missing_fill_value,
         verbose=verbose,
     )
 

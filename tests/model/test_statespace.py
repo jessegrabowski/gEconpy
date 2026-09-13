@@ -535,7 +535,7 @@ def test_observation_equations_aggregation_produces_finite_logp():
         ss_mod.to_pymc()
         pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
         pm.Gamma("error_sigma_dlog_Y_annual", alpha=2, beta=100)
-        ss_mod.build_statespace_graph(data, add_norm_check=False, missing_fill_value=-9999.0)
+        ss_mod.build_statespace_graph(data, add_norm_check=False)
         logp = m.compile_logp()(m.initial_point())
     assert np.isfinite(logp)
 
