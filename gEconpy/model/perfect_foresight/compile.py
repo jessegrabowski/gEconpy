@@ -257,7 +257,24 @@ def _compile_single_period_residual_function(
 
 @dataclass
 class PerfectForesightProblem:
-    """Compiled perfect foresight problem."""
+    """
+    Compiled perfect foresight problem.
+
+    Attributes
+    ----------
+    f_resid_and_jac : callable
+        Function returning the residuals and the three jacobians of one period's equations.
+    f_resid_only : callable or None
+        Function returning only the residuals of one period's equations, or None if it was not compiled.
+    var_names : list of str
+        Model variable names, giving the column order of the stacked system.
+    shock_names : list of str
+        Model shock names.
+    param_names : list of str
+        Model parameter names, in the order the compiled functions expect them.
+    T : int
+        Number of periods in the simulation horizon.
+    """
 
     f_resid_and_jac: Callable
     f_resid_only: Callable | None
@@ -268,14 +285,17 @@ class PerfectForesightProblem:
 
     @property
     def n_vars(self) -> int:
+        """Number of model variables."""
         return len(self.var_names)
 
     @property
     def n_shocks(self) -> int:
+        """Number of model shocks."""
         return len(self.shock_names)
 
     @property
     def n_eq(self) -> int:
+        """Number of model equations, which equals the number of variables."""
         return len(self.var_names)
 
 
@@ -284,7 +304,23 @@ def compile_perfect_foresight_problem(
     T: int,
     **compile_kwargs,
 ) -> PerfectForesightProblem:
-    """Compile the single-period dynamic function for perfect foresight simulation."""
+    """
+    Compile the single-period dynamic function for perfect foresight simulation.
+
+    Parameters
+    ----------
+    model : Model
+        Model to compile. Every steady-state variable must have an analytic solution.
+    T : int
+        Number of periods in the simulation horizon.
+    **compile_kwargs
+        Additional keyword arguments forwarded to the pytensor function compilation.
+
+    Returns
+    -------
+    problem : PerfectForesightProblem
+        The compiled residual and jacobian functions, together with the variable, shock, and parameter names.
+    """
     f_resid_and_jac, var_names, shock_names, param_names = _compile_single_period_function(model, **compile_kwargs)
     f_resid_only = _compile_single_period_residual_function(model, **compile_kwargs)
     return PerfectForesightProblem(

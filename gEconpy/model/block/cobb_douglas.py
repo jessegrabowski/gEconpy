@@ -157,7 +157,7 @@ class CobbDouglasBlock(Block):
         cls,
         constraints: dict[int, sp.Eq] | None,
         objective: dict[int, sp.Eq] | None,
-        identities: dict[int, sp.Eq] | None,  # noqa: ARG003 — part of the dispatch contract; other subclasses use it
+        identities: dict[int, sp.Eq] | None,  # noqa: ARG003 -- part of the dispatch contract; other subclasses use it
     ) -> bool:
         """Conservative match for a Cobb-Douglas production block.
 
@@ -187,6 +187,17 @@ class CobbDouglasBlock(Block):
         return _match_cobb_douglas_constraint(constraints) is not None
 
     def __init__(self, *args, **kwargs):
+        """
+        Initialize a Cobb-Douglas block.
+
+        All arguments are passed through to :class:`~gEconpy.model.block.basic.Block`, which documents them.
+
+        Raises
+        ------
+        RuntimeError
+            If the block's constraints do not match the Cobb-Douglas form. Reaching this state means the dispatcher
+            chose the wrong class.
+        """
         super().__init__(*args, **kwargs)
         self._cd_match = _match_cobb_douglas_constraint(self.constraints)
         if self._cd_match is None:

@@ -166,6 +166,28 @@ def summarize_perturbation_solution(
     perturbation_solution: Sequence[np.ndarray | None, np.ndarray | None],
     model: Model,
 ):
+    """
+    Collect the linearized system and its perturbation solution into a labeled dataset.
+
+    Parameters
+    ----------
+    linear_system : sequence of ndarray
+        The four jacobian matrices A, B, C and D of the linearized model.
+    perturbation_solution : sequence of ndarray
+        The transition matrix T and the selection matrix R.
+    model : Model
+        Model the solution belongs to, used to label the variable and shock coordinates.
+
+    Returns
+    -------
+    summary : xarray.Dataset
+        Dataset holding A, B, C, D, T and R on shared equation, variable, and shock coordinates.
+
+    Raises
+    ------
+    gEconpy.exceptions.PerturbationSolutionNotFoundException
+        If either T or R is None.
+    """
     A, B, C, D = linear_system
     T, R = perturbation_solution
     if T is None or R is None:
@@ -210,9 +232,9 @@ def check_bk_condition(
 
     Parameters
     ----------
-    model: Model
+    model : Model
         DSGE model.
-    A, B, C, D : np.ndarray, optional
+    A, B, C, D : ndarray, optional
         Jacobian matrices. If not all provided, ``model.linearize_model`` is called.
     tol : float
         Tolerance for zero.
@@ -375,7 +397,7 @@ def solvability_check(
     """Check whether each row of ``samples`` yields a solvable DSGE model.
 
     Each row is pushed through the full solution pipeline:
-    steady state → linearization → perturbation solve → Blanchard-Kahn check →
+    steady state -> linearization -> perturbation solve -> Blanchard-Kahn check ->
     residual norms. The first step that fails determines the ``failure_step`` label.
 
     Parameters
@@ -551,10 +573,10 @@ def prior_solvability_check(
     method : str, default ``"lhs"``
         Sampling strategy:
 
-        - ``"random"`` — Monte Carlo via ``.rvs()``.
-        - ``"lhs"``, ``"sobol"``, ``"halton"``, ``"poisson_disk"`` — uniform
+        - ``"random"`` -- Monte Carlo via ``.rvs()``.
+        - ``"lhs"``, ``"sobol"``, ``"halton"``, ``"poisson_disk"`` -- uniform
           QMC over HDI bounds (recommended).
-        - ``"sobol_ppf"``, ``"halton_ppf"`` — QMC via inverse-CDF.
+        - ``"sobol_ppf"``, ``"halton_ppf"`` -- QMC via inverse-CDF.
     hdi_prob : float, default 0.99
         HDI probability for bound computation. Ignored for ``"random"`` and
         ``"*_ppf"`` methods.

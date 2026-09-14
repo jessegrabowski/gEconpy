@@ -116,7 +116,7 @@ def _match_ces_constraint(constraints: dict[int, sp.Eq] | None) -> dict | None:
 
     where :math:`s = (\psi - 1)/\psi` for an elasticity of substitution :math:`\psi`. The shares :math:`\text{share}_i`
     are typically parameter expressions (e.g. :math:`\alpha^{1/\psi}` and :math:`(1-\alpha)^{1/\psi}` in the standard
-    two-input form), but the matcher accepts any sympy expression for the share — the closed-form FOC identity does
+    two-input form), but the matcher accepts any sympy expression for the share -- the closed-form FOC identity does
     not depend on the share's internal structure.
 
     Match is conservative: requires exactly one constraint, the residual to decompose cleanly into
@@ -217,7 +217,7 @@ class CESBlock(Block):
         cls,
         constraints: dict[int, sp.Eq] | None,
         objective: dict[int, sp.Eq] | None,
-        identities: dict[int, sp.Eq] | None,  # noqa: ARG003 — part of the dispatch contract; other subclasses use it
+        identities: dict[int, sp.Eq] | None,  # noqa: ARG003 -- part of the dispatch contract; other subclasses use it
     ) -> bool:
         """Conservative match for a CES production block.
 
@@ -247,6 +247,17 @@ class CESBlock(Block):
         return _match_ces_constraint(constraints) is not None
 
     def __init__(self, *args, **kwargs):
+        """
+        Initialize a CES block.
+
+        All arguments are passed through to :class:`~gEconpy.model.block.basic.Block`, which documents them.
+
+        Raises
+        ------
+        RuntimeError
+            If the block's constraints do not match the CES form. Reaching this state means the dispatcher chose the
+            wrong class.
+        """
         super().__init__(*args, **kwargs)
         self._ces_match = _match_ces_constraint(self.constraints)
         if self._ces_match is None:

@@ -175,18 +175,22 @@ class Block:
 
     @property
     def deterministic_params(self) -> list[sp.Symbol]:
+        """Parameters defined by a deterministic relationship to other parameters."""
         return list(self.deterministic_dict.to_sympy().keys())
 
     @property
     def deterministic_relationships(self) -> list[sp.Expr]:
+        """Expressions defining each deterministic parameter, in the order of ``deterministic_params``."""
         return list(self.deterministic_dict.values())
 
     @property
     def params_to_calibrate(self) -> list[sp.Symbol]:
+        """Parameters whose values are pinned by a steady-state calibration target."""
         return list(self.calib_dict.to_sympy().keys())
 
     @property
     def calibrating_equations(self) -> list[sp.Expr]:
+        """Calibration equations, in the order of ``params_to_calibrate``."""
         return list(self.calib_dict.values())
 
     def _validate_initialization(self) -> bool:
@@ -200,7 +204,7 @@ class Block:
 
         Parameters
         ----------
-        self: Block
+        self : Block
             The block to be checked
 
         Returns
