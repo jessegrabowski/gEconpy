@@ -132,7 +132,7 @@ def test_constant_params_excluded_from_prior_samples():
         for var_name in ss_mod.observed_states:
             pm.Gamma(f"error_sigma_{var_name}", alpha=2, beta=100)
 
-    true_params, data, _ = data_from_prior(ss_mod, pm_mod, n_samples=5, random_seed=17031)
+    true_params, data, _ = data_from_prior(statespace_mod=ss_mod, pymc_model=pm_mod, n_samples=5, random_seed=17031)
 
     assert isinstance(true_params, xr.Dataset)
     assert data.shape[1] == 3

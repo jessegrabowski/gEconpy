@@ -1359,7 +1359,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
 
 def data_from_prior(
-    statepace_mod: DSGEStateSpace,
+    statespace_mod: DSGEStateSpace,
     pymc_model: pm.Model,
     index: pd.DatetimeIndex | None = None,
     n_samples: int = 500,
@@ -1375,18 +1375,18 @@ def data_from_prior(
 
     Parameters
     ----------
-    statepace_mod: DSGEStateSpace
+    statespace_mod : DSGEStateSpace
         Statespace model to generate data from. Must have been configured with the .configure method.
-    pymc_model: pm.Model
+    pymc_model : pm.Model
         PyMC model with priors on expected DSGE parameters. It should **not** have a Kalman Filter added via
         build_statespace_graph.
-    index: pd.DatetimeIndex
+    index : pd.DatetimeIndex, optional
         Index to use for the generated data. If None, a quarterly index from 1980-01-01 to 2024-11-01 is used.
-    n_samples: int
+    n_samples : int, optional
         Number of prior predictive samples to draw.
-    pct_missing: float
+    pct_missing : float, optional
         Percentage of missing data to introduce into the generated data. Must be between 0 and 1.
-    random_seed: np.random.Generator or int, optional
+    random_seed : np.random.Generator or int, optional
         Random number generator to use for sampling. If None, the default numpy random number generator is used.
     mvn_method : str, optional
         Method to use for sampling from the multivariate normal distribution of the state transitions. Passed to
@@ -1396,11 +1396,11 @@ def data_from_prior(
 
     Returns
     -------
-    true_parameters: xr.Dataset
+    true_parameters : xr.Dataset
         True parameters used to generate the data.
-    data: pd.DataFrame
+    data : pd.DataFrame
         Generated data.
-    prior_idata: xr.DataTree
+    prior_idata : xr.DataTree
         Draws from the prior predictive distribution, plus conditional prior predictive samples.
     """
     rng = np.random.default_rng(random_seed)
@@ -1409,22 +1409,22 @@ def data_from_prior(
 
     if index is None:
         index = pd.date_range(start="1980-01-01", end="2024-11-01", freq="QS-OCT")
-    dummy_data = pd.DataFrame(np.nan, index=index, columns=statepace_mod.observed_states)
+    dummy_data = pd.DataFrame(np.nan, index=index, columns=statespace_mod.observed_states)
     dummy_data.index.freq = dummy_data.index.inferred_freq
 
     # Copy the model so the original model is unchanged
     new_model = pymc_model.copy()
 
     with new_model:
-        statepace_mod.build_statespace_graph(dummy_data, **build_statespace_kwargs)
+        statespace_mod.build_statespace_graph(dummy_data, **build_statespace_kwargs)
 
     with warnings.catch_warnings(action="ignore"), freeze_dims_and_data(new_model):
         prior_idata = pm.sample_prior_predictive(
-            n_samples, compile_kwargs={"mode": statepace_mod.mode}, random_seed=rng
+            n_samples, compile_kwargs={"mode": statespace_mod.mode}, random_seed=rng
         )
 
     with warnings.catch_warnings(action="ignore"):
-        prior_trajectories = statepace_mod.sample_unconditional_prior(
+        prior_trajectories = statespace_mod.sample_unconditional_prior(
             prior_idata, random_seed=rng, mvn_method=mvn_method
         )
 
