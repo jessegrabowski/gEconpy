@@ -13,7 +13,6 @@ import gEconpy  # noqa: E402
 project = "gEconpy"
 copyright = "2022-2025, Jesse Grabowski"
 language = "en"
-html_baseurl = "github.com/jessegrabowski/gEconpy"
 
 version = gEconpy.__version__
 on_readthedocs = os.environ.get("READTHEDOCS", None)
@@ -70,8 +69,6 @@ html_title = project
 html_short_title = project
 html_last_updated_fmt = ""
 
-rtd_version = os.environ.get("READTHEDOCS_VERSION", "")
-sitemap_url_scheme = f"{{lang}}{rtd_version}/{{link}}"
 html_theme_options = {
     "secondary_sidebar_items": ["page-toc", "edit-this-page", "sourcelink"],
     "navbar_start": ["navbar-logo"],

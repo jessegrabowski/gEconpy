@@ -5,18 +5,16 @@ repos:
     -   id: check-merge-conflict
     -   id: check-toml
     -   id: check-yaml
-    -   id: debug-statements
     -   id: end-of-file-fixer
     -   id: no-commit-to-branch
         args: [--branch, main]
     -   id: trailing-whitespace
-    -   id: check-ast
     -   id: check-case-conflict
     -   id: check-added-large-files
         exclude: ^docs/source/examples/estimation/(rbc_with_growth|mixed_frequency_estimation)\.ipynb$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.15.0
+  rev: v0.16.7
   hooks:
     - id: ruff-format
       types_or: [ python, pyi, jupyter ]
@@ -27,27 +25,27 @@ repos:
 - repo: https://github.com/MarcoGorelli/madforhooks
   rev: 0.4.1
   hooks:
-    - id: no-print-statements
-      types: [python]
-      exclude: |
-        (?x)(scripts/regenerate_expected_gcn_errors.py |
-             tests/parser/test_expected_errors.py
-        )
-
-- repo: https://github.com/MarcoGorelli/absolufy-imports
-  rev: v0.3.1
-  hooks:
-    - id: absolufy-imports
-      types: [python]
-
-- repo: https://github.com/MarcoGorelli/madforhooks
-  rev: 0.4.1
-  hooks:
     - id: check-execution-order
       args: [--strict]
 
 - repo: local
   hooks:
+    - id: pixi-lock-check
+      name: pixi.lock is in sync with pyproject.toml
+      entry: pixi lock --check
+      language: system
+      files: ^(pyproject\.toml|pixi\.lock)$
+      pass_filenames: false
+
+    - id: pixi-export-env
+      name: conda_envs/environment_dev.yml is exported from the pixi default environment
+      # Called directly rather than through a pixi task so the hook reads the manifest only; `pixi run`
+      # would re-solve the lock file and install the environment first.
+      entry: pixi workspace export conda-environment -e default -n geconpy-dev conda_envs/environment_dev.yml
+      language: system
+      files: ^(pyproject\.toml|pixi\.lock|conda_envs/environment_dev\.yml)$
+      pass_filenames: false
+
     - id: notebook_name
       entry: '\(notebook_name\)='
       language: pygrep
@@ -59,7 +57,7 @@ repos:
       name: Check no references that should be sphinx cross-references are urls
       description: >-
         'A quick check to prevent urls pointing other sphinx built docs like pymc, arviz, numpy, scipy...'
-      files: ^examples/.+\.ipynb$
+      files: ^docs/source/examples/.+\.ipynb$
       exclude: >
           (?x)(index.md|
                404.md|
@@ -71,7 +69,7 @@ repos:
                numpy.org/doc|
                pymc-examples.readthedocs.io|
                docs.python.org|
-               xarray.pydata.org
+               xarray.pydata.org|
                python.arviz.org|
                pytensor.readthedocs.io|
                docs.xarray.dev|
