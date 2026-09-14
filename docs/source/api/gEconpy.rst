@@ -20,6 +20,7 @@ gEconpy
     model.simulate.simulate
     model.statespace.data_from_prior
     model.statespace.prepare_mixed_frequency_data
+    model.statistics.covariance.autocorrelation_matrix
     model.statistics.covariance.autocovariance_matrix
     model.statistics.covariance.build_Q_matrix
     model.statistics.covariance.stationary_covariance_matrix

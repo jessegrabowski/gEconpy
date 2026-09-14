@@ -7,6 +7,7 @@ gEconpy.model.statistics
 
 .. autosummary::
 
+    covariance.autocorrelation_matrix
     covariance.autocovariance_matrix
     covariance.build_Q_matrix
     covariance.stationary_covariance_matrix

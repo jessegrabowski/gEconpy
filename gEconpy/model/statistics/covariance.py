@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import functools as ft
-
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -234,5 +232,31 @@ def autocovariance_matrix(
     return result
 
 
-autocorrelation_matrix = ft.partial(autocovariance_matrix, correlation=True)
-autocorrelation_matrix.__doc__ = autocovariance_matrix.__doc__
+def autocorrelation_matrix(
+    model: Model,
+    T: np.ndarray | None = None,
+    R: np.ndarray | None = None,
+    shock_std_dict: dict[str, float] | None = None,
+    shock_cov_matrix: np.ndarray | None = None,
+    shock_std: np.ndarray | list | float | None = None,
+    n_lags: int = 10,
+    return_xr=True,
+    **solve_model_kwargs,
+):
+    """
+    Compute the model's autocorrelation matrix.
+
+    Same as :func:`autocovariance_matrix` with ``correlation=True``. See that function for the parameters.
+    """
+    return autocovariance_matrix(
+        model,
+        T=T,
+        R=R,
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
+        n_lags=n_lags,
+        correlation=True,
+        return_xr=return_xr,
+        **solve_model_kwargs,
+    )

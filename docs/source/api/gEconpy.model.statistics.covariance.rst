@@ -7,10 +7,11 @@ gEconpy.model.statistics.covariance
 
 .. autosummary::
 
+    autocorrelation_matrix
     autocovariance_matrix
     build_Q_matrix
     stationary_covariance_matrix
 
 .. automodule:: gEconpy.model.statistics.covariance
-    :members: autocovariance_matrix, build_Q_matrix, stationary_covariance_matrix
+    :members: autocorrelation_matrix, autocovariance_matrix, build_Q_matrix, stationary_covariance_matrix
     :undoc-members:
