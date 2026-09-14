@@ -6,5 +6,6 @@ User Guide
 
    dsge_intro
    gcn_files/index
+   solving
    example_model
    estimation
