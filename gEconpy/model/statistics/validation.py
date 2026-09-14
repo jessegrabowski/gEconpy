@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 
+_FLOAT_ZERO_TOL = 1e-8
+
+
 def _maybe_solve_steady_state(
     model: Model,
     steady_state: dict | None,
@@ -32,8 +35,7 @@ def _maybe_solve_steady_state(
 
     param_dict = model.parameters(**parameter_updates)
     ss_resid = model.evaluate_residual(steady_state, param_dict)
-    FLOAT_ZERO = 1e-8
-    unsatisfied_flags = np.abs(ss_resid) > FLOAT_ZERO
+    unsatisfied_flags = np.abs(ss_resid) > _FLOAT_ZERO_TOL
     unsatisfied_eqs = [f"Equation {i}" for i, flag in enumerate(unsatisfied_flags) if flag]
 
     if np.any(unsatisfied_flags):
@@ -203,8 +205,7 @@ def check_steady_state(
     residuals = model.evaluate_residual(ss_dict, parameters)
     _log.warning("Steady state NOT successful. The following equations have non-zero residuals:")
 
-    FLOAT_ZERO = 1e-8
     for resid, eq in zip(residuals, model.equations, strict=False):
-        if np.abs(resid) > FLOAT_ZERO:
+        if np.abs(resid) > _FLOAT_ZERO_TOL:
             _log.warning(eq)
             _log.warning(f"Residual: {resid:0.4f}")
