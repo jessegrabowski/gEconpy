@@ -9,6 +9,8 @@ dependencies:
   - python=3.13
   - pymc>=6.3.0
   - pytensor>=3.3.0
+  - sympytensor>=2.1.0
+  - pymc-extras>=0.15.0
   - matplotlib
   - numba
   - numpy
@@ -50,8 +52,6 @@ dependencies:
   - pandas-datareader
 
   - pip:
-      - sympytensor>=2.1.0
-      - pymc-extras>=0.15.0
       - numdifftools
       - jax>=0.10.1
       - flowjax

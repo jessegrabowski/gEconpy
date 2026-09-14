@@ -8,6 +8,8 @@ dependencies:
   - pip
   - pymc>=6.3.0
   - pytensor>=3.3.0
+  - pymc-extras>=0.15.0
+  - sympytensor>=2.1.0
   - matplotlib
   - numba
   - numpy
@@ -38,6 +40,3 @@ dependencies:
   - sphinxcontrib-bibtex
   - pydata-sphinx-theme
   - watermark
-  - pip:
-      - pymc-extras>=0.15.0
-      - sympytensor>=2.1.0
