@@ -18,9 +18,7 @@ dependencies:
   - statsmodels
   - preliz>=0.27.0
   - sympy>=1.14.0
-  - pymc-extras>=0.15.0
   - better-optimize>=0.4.2
-  - sympytensor>=2.1.0
   - jax
   - nutpie>=0.16.10
   - networkx
@@ -40,3 +38,6 @@ dependencies:
   - sphinxcontrib-bibtex
   - pydata-sphinx-theme
   - watermark
+  - pip:
+      - pymc-extras>=0.15.0
+      - sympytensor>=2.1.0

@@ -18,8 +18,6 @@ dependencies:
   - pytensor>=3.3.0
   - preliz>=0.27.0
   - ipython
-  - sympytensor>=2.1.0
-  - pymc-extras>=0.15.0
   - better-optimize>=0.4.2
   - nutpie>=0.16.10
   - networkx
@@ -33,5 +31,7 @@ dependencies:
 
   - pip
   - pip:
+      - sympytensor>=2.1.0
+      - pymc-extras>=0.15.0
       - numdifftools
       - jax

@@ -24,8 +24,6 @@ dependencies:
   - notebook<7
   - nutpie>=0.16.10
   - networkx
-  - sympytensor>=2.1.0
-  - pymc-extras>=0.15.0
 
   # For building docs
   - ipython
@@ -53,6 +51,8 @@ dependencies:
   - pandas-datareader
 
   - pip:
+      - sympytensor>=2.1.0
+      - pymc-extras>=0.15.0
       - numdifftools
       - jax>=0.10.1
       - flowjax

@@ -17,13 +17,13 @@ dependencies:
   - statsmodels
   - preliz>=0.27.0
   - sympy>=1.14.0
-  - pymc-extras>=0.15.0
   - better-optimize>=0.4.2
   - ipython
   - nutpie>=0.16.10
   - networkx
-  - sympytensor>=2.1.0
 
   - pip:
+      - pymc-extras>=0.15.0
+      - sympytensor>=2.1.0
       - jax>=0.10.1
       - flowjax
