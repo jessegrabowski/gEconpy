@@ -26,6 +26,7 @@ from gEconpy.model.statistics import check_bk_condition, eigenvalue_sensitivity
 
 
 def set_matplotlib_style():
+    """Update the global matplotlib rcParams with the gEconpy plotting defaults."""
     config = {
         "figure.figsize": (14, 4),
         "figure.dpi": 144,
@@ -84,6 +85,17 @@ def prepare_gridspec_figure(n_cols: int, n_plots: int, figure: plt.Figure | None
 
 
 def set_axis_cmap(axis, cmap):
+    """
+    Set the color cycle of an axis from a named colormap.
+
+    Parameters
+    ----------
+    axis : matplotlib axes
+        Axis whose property cycle is set.
+    cmap : str or None
+        Name of a matplotlib colormap, sampled at 20 evenly spaced points. If None, the axis reverts to the default
+        color cycle.
+    """
     cycler = None
     if cmap is not None:
         color = getattr(plt.cm, cmap)(np.linspace(0, 1, 20))
@@ -107,7 +119,7 @@ def _plot_single_variable(data: xr.DataArray, ax, ci=None, cmap=None, fill_color
         The color map to use for the data.
     fill_color : str, optional
         The color to use to fill the confidence interval.
-    line_kwargs: optional
+    line_kwargs : optional
         Additional keyword arguments to pass to the line plot.
 
     Returns
@@ -166,14 +178,14 @@ def plot_timeseries(
     n_cols : int, optional
         The number of columns of plots to show. If not provided, the minimum of (4, number of columns in df) will be
         used.
-    fig_kwargs: dict, optional
+    fig_kwargs : dict, optional
         Additional keyword arguments to pass to the figure creation.
-    line_kwargs: optional
+    **line_kwargs
         Additional keyword arguments to pass to the line plot.
 
     Returns
     -------
-    figure: plt.Figure
+    figure : Figure
         The Matplotlib Figure object containing the plots.
     """
     if fig_kwargs is None:
@@ -410,8 +422,6 @@ def plot_irf(
         A DataArray with the impulse response functions. The index should contain the variables to plot, and the columns
         should contain the shocks, with a multi-index for the period and shock type. When plotting multiple scenarios,
         provide a list of DataArrays or a dictionary with the scenario names as keys.
-    group: str, optional
-        The group from the InferenceData to plot. Must be one of "prior" or "posterior". Default is 'posterior'.
     vars_to_plot : list of str, optional
         A list of variables to plot. If not provided, all variables in the DataFrame will be plotted.
     shocks_to_plot : list of str, optional
@@ -722,22 +732,24 @@ def plot_eigenvalues(
     D : np.ndarray, optional
         Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to exogenous
         shocks. If provided, all of A, B, C and D must be provided.
-    linearize_model_kwargs: dict, optional
-        Arguments passed to model.linearize_model. Ignored if A, B, C, D are provided.
-    fig: Matplotlib Figure, optional
+    linearize_model_kwargs : dict, optional
+        Arguments passed to :func:`~gEconpy.model.perturbation.linearize_model`. Ignored if A, B, C and D are
+        provided.
+    fig : Figure, optional
         The figure object to plot on. If not provided, a new figure will be created.
     figsize : tuple[float, float], optional
         The size of the figure to create.
     dpi : int, optional
         The resolution of the figure to create.
-    plot_circle: bool, optional
-        Whether to plot the unit circle. Default is True.
-    parameter_updates
-        A dictionary of parameter at which to linearize the model.
+    plot_circle : bool, optional
+        Whether to plot the unit circle. Default True.
+    **parameter_updates
+        Parameter values at which to linearize the model, passed as keyword arguments. Ignored if A, B, C and D are
+        provided.
 
     Returns
     -------
-    Matplotlib Figure
+    fig : Figure
         The figure object containing the plot.
     """
     if figsize is None:
@@ -911,7 +923,7 @@ def _draw_eigenvalue_panel(
         )
 
     # Compute actual eigenvalue displacement for given perturbation
-    # δλ = (∂λ/∂p) * (p * perturbation)
+    # d_lambda = (d lambda / d p) * (p * perturbation)
     delta_p = param_value * perturbation
     arrow_re = d_re * delta_p
     arrow_im = d_im * delta_p
@@ -1054,7 +1066,7 @@ def plot_eigenvalue_sensitivity(
 
     Returns
     -------
-    fig: Figure
+    fig : Figure
         Matplotlib figure containing the sensitivity plots.
 
     Examples
@@ -1170,8 +1182,8 @@ def plot_covariance_matrix(
         The color map to use for the heatmap.
     heatmap_kwargs : dict, optional
         Keyword arguments forwarded to plt.imshow
-    annotation_kwargs: dict, optional
-        Keyword arguments forwarded to gEconpy.plotting.annotate_heatmap
+    annotation_kwargs : dict, optional
+        Keyword arguments forwarded to ``annotate_heatmap``.
 
     Returns
     -------
@@ -1214,17 +1226,23 @@ def plot_heatmap(
 
     Parameters
     ----------
-    data: Dataframe
-        A pandas dataframe to plat
-    ax: matplotlib.axes.ax, Optional
-        A `matplotlib.axes.Axes` instance to which the heatmap is plotted.  If
-        not provided, use current axes or create a new one.
-    cbar_kw: Dict, Optional
-        A dictionary with arguments to `matplotlib.Figure.colorbar`.
-    cbarlabel: str, Optional
-        The label for the colorbar.  Optional.
+    data : DataFrame
+        Data to plot. Row and column labels are used as tick labels.
+    ax : matplotlib axes, optional
+        Axis to plot the heatmap on. If not provided, the current axis is used, or a new one is created.
+    cbar_kw : dict, optional
+        Keyword arguments forwarded to ``matplotlib.figure.Figure.colorbar``. Default ``{"shrink": 0.5}``.
+    cbarlabel : str, optional
+        The label for the colorbar. Default is an empty string.
     **kwargs
-        All other arguments are forwarded to `imshow`.
+        All other arguments are forwarded to ``imshow``.
+
+    Returns
+    -------
+    im : matplotlib image
+        The image created by ``imshow``.
+    cbar : matplotlib colorbar
+        The colorbar attached to the image.
     """
     if not ax:
         ax = plt.gca()
@@ -1276,24 +1294,25 @@ def annotate_heatmap(
 
     Parameters
     ----------
-    im
-        The AxesImage to be labeled.
-    data
-        Data used to annotate.  If None, the image's data is used.  Optional.
-    valfmt
-        The format of the annotations inside the heatmap.  This should either
-        use the string format method, e.g. "$ {x:.2f}", or be a
-        `matplotlib.ticker.Formatter`.  Optional.
-    textcolors
-        A pair of colors.  The first is used for values below a threshold,
-        the second for those above.  Optional.
-    threshold
-        Value in data units according to which the colors from textcolors are
-        applied.  If None (the default) uses the middle of the colormap as
-        separation.  Optional.
-    **kwargs
-        All other arguments are forwarded to each call to `text` used to create
-        the text labels.
+    im : matplotlib image
+        The image to be labeled.
+    data : ndarray, optional
+        Data used to annotate. The image's own data is used by default.
+    valfmt : str or matplotlib formatter, optional
+        The format of the annotations inside the heatmap. A string is interpreted with the string format method, for
+        example "$ {x:.2f}". Default "{x:.2f}".
+    textcolors : tuple of str, optional
+        A pair of colors. The first is used for values below the threshold, the second for those above. Default
+        ("black", "white").
+    threshold : float, optional
+        Value in data units separating the two text colors. The middle of the colormap is used by default.
+    **textkw
+        All other arguments are forwarded to each call to ``text`` used to create the text labels.
+
+    Returns
+    -------
+    texts : list of matplotlib text
+        The text objects added to the heatmap, in row-major order.
     """
     if not isinstance(data, list | np.ndarray):
         data = im.get_array()
@@ -1472,8 +1491,8 @@ def plot_acf(
     Plot the autocorrelation function for a set of variables.
 
     ``acorr`` is an autocorrelation tensor with a ``lag`` dimension and two square variable dimensions (the
-    cross-correlation axes, e.g. ``variable``/``variable_aux`` or ``state``/``state_aux``); only the diagonal —
-    each variable's own autocorrelation — is drawn. If the tensor also carries posterior sample dimensions
+    cross-correlation axes, e.g. ``variable``/``variable_aux`` or ``state``/``state_aux``). Only the diagonal --
+    each variable's own autocorrelation -- is drawn. If the tensor also carries posterior sample dimensions
     (``chain``, ``draw``), the result is an uncertainty-aware **forest**: a point at the posterior mean with two
     nested credible-interval sticks at each lag. Otherwise it is a single-estimate **stem** plot.
 
@@ -1495,7 +1514,7 @@ def plot_acf(
         The two credible-interval probabilities drawn at each lag as (inner, outer); the inner interval gets the
         thicker line. Ignored for tensors with no sample dimensions. Default ``(0.5, 0.94)``.
     reference : DataArray, optional
-        A second autocorrelation to overlay as hollow markers — typically the empirical ACF of the observed data,
+        A second autocorrelation to overlay as hollow markers -- typically the empirical ACF of the observed data,
         for a model-vs-data check. Indexed by ``lag`` and a single variable dimension; only variables that also
         appear in ``acorr`` are overlaid. Default None.
     dodge : float, optional
@@ -1701,26 +1720,32 @@ def plot_corner(
     ----------
     idata : arviz.InferenceData
         An arviz idata object with a posterior group.
-    group: str, one of "prior" or "posterior"
-        The group from the InferenceData to plot.
+    group : str, optional
+        The group from the InferenceData to plot, either "prior" or "posterior". Default "posterior".
     var_names : list of str, optional
-        A list of strings specifying the variables to plot. If not provided, all variables in `idata` will be plotted.
-    figure_kwargs: dict, optional
+        A list of strings specifying the variables to plot. If not provided, all variables in ``idata`` will be
+        plotted.
+    colorby : str, optional
+        Name of a variable in the chosen group used to color the off-diagonal scatter points. Points are drawn in a
+        single color by default.
+    figure_kwargs : dict, optional
         Additional keyword arguments to pass to the figure creation.
     hist_bins : int, optional
-        The number of bins to use for the histograms on the diagonal panels. Default is 200.
+        The number of bins to use for the histograms on the diagonal panels. Default 100.
     rug_bins : int, optional
-        The number of bins to use for the histograms on the off-diagonal panels. Default is 50.
+        The number of bins to use for the histograms on the off-diagonal panels. Default 20.
     rug_levels : int, optional
-        The number of contour levels to use for the histograms on the off-diagonal panels. Default is 6.
+        The number of contour levels to use for the histograms on the off-diagonal panels. Default 6.
     fontsize : int, optional
-        The font size for the axis labels and ticks.
+        The font size for the axis labels and ticks. Default 6.
     show_marginal_modes : bool, optional
-        Whether or not to show the modes of the marginal distributions. Default is True.
+        Whether to show the modes of the marginal distributions. Default True.
+    scatter_kwargs : dict, optional
+        Keyword arguments forwarded to the off-diagonal scatter plots. Ignored unless ``colorby`` is given.
 
     Returns
     -------
-    matplotlib.figure.Figure
+    fig : Figure
         Figure object containing the plots.
     """
     (
@@ -1810,8 +1835,8 @@ def plot_kalman_filter(
     kalman_output : str, optional
         String indicating whether to plot filtered, predicted, or smoothed series.
         Must be one of 'filtered', 'predicted', or 'smoothed'.
-    group: str, optional
-        idata group to plot. One of "prior" or "posterior". Default is 'posterior'.
+    group : str, optional
+        The idata group to plot, either "prior" or "posterior". Default "posterior".
     n_cols : int, optional
         Number of columns in the plot.
     vars_to_plot : list of str, optional
@@ -1882,6 +1907,29 @@ def plot_priors(
     n_cols: int = 6,
     mark_initial_value: bool = True,
 ):
+    """
+    Plot the prior distributions of a model's parameters and shock hyper-parameters.
+
+    Parameters
+    ----------
+    model : Model or DSGEStateSpace
+        Model whose priors are plotted.
+    var_names : list of str, optional
+        Names of the parameters to plot. All parameters with priors are plotted by default.
+    figsize : tuple of int, optional
+        The size of the figure to create, in inches. Sized from the number of parameters by default.
+    dpi : int, optional
+        The resolution of the figure. Default 144.
+    n_cols : int, optional
+        The number of columns of plots to show. Default 6.
+    mark_initial_value : bool, optional
+        If True, draw a vertical line at each parameter's current value. Default True.
+
+    Returns
+    -------
+    fig : Figure
+        Figure object containing the plots.
+    """
     pz_priors = model.param_priors
     hyper_priors = {}
 
@@ -1939,6 +1987,32 @@ def plot_posterior_with_prior(
     fig_kwargs=None,
     plot_posterior_kwargs=None,
 ) -> plt.Figure:
+    """
+    Plot marginal posterior distributions with their priors overlaid.
+
+    Parameters
+    ----------
+    idata : arviz.InferenceData
+        Inference data with a posterior group.
+    var_names : list of str
+        Names of the variables to plot.
+    prior_dict : dict mapping str to Distribution
+        Prior for each variable, keyed by variable name. Variables absent from the dictionary are drawn without a
+        prior.
+    true_values : dict mapping str to DataArray, optional
+        Reference values to mark with a vertical line. No lines are drawn by default.
+    n_cols : int, optional
+        The number of columns of plots to show. Default 5.
+    fig_kwargs : dict, optional
+        Keyword arguments used to create the figure. Sized from the number of variables by default.
+    plot_posterior_kwargs : dict, optional
+        Additional keyword arguments forwarded to ``arviz_plots.plot_dist``.
+
+    Returns
+    -------
+    fig : Figure
+        Figure object containing the plots.
+    """
     var_names = list(var_names)
 
     if fig_kwargs is None:
@@ -1984,6 +2058,27 @@ def plot_estimated_matrix(
     subplot_kwargs=None,
     symmetrical: bool = True,
 ):
+    """
+    Plot posterior means and credible intervals for the entries of an estimated shock matrix.
+
+    Parameters
+    ----------
+    idata : arviz.InferenceData
+        Inference data with a posterior group holding ``matrix_name``.
+    dsge_mod : DSGEStateSpace
+        Model the matrix was estimated for, used for the shock names and the matrix size.
+    matrix_name : str, optional
+        Name of the posterior variable to plot. Default "state_chol_corr".
+    subplot_kwargs : dict, optional
+        Keyword arguments forwarded to ``matplotlib.pyplot.subplots``.
+    symmetrical : bool, optional
+        If True, hide the upper triangle and the diagonal. Default True.
+
+    Returns
+    -------
+    fig : Figure
+        Figure object containing the plots.
+    """
     n_shocks = dsge_mod.k_posdef
     subplot_kwargs = subplot_kwargs or {}
 
