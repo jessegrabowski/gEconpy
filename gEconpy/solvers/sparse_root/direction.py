@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -20,7 +21,7 @@ class DirectionStrategy(Protocol):
 
 @dataclass
 class NewtonDirection:
-    linear_solver: callable = field(default=None)
+    linear_solver: Callable | None = field(default=None)
 
     def __post_init__(self):
         if self.linear_solver is None:
@@ -67,7 +68,7 @@ class ChordDirection:
         Number of direction computations between Jacobian refreshes.
     """
 
-    linear_solver: callable = field(default=None)
+    linear_solver: Callable | None = field(default=None)
     recompute_every: int = 5
     _cached_jac: sp.spmatrix = field(init=False, repr=False, default=None)
     _call_count: int = field(init=False, repr=False, default=0)
