@@ -129,7 +129,7 @@ jobs:
 
     - name: Run tests
       run: |
-        python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --cov-report term $TEST_SUBSET -m "$TEST_MARKER" --durations=50 --benchmark-disable
+        python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --cov-report term $TEST_SUBSET -m "$TEST_MARKER" --durations=50
       env:
         MATRIX_ID: ${{ steps.matrix-id.outputs.id }}
 
