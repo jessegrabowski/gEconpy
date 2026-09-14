@@ -41,7 +41,7 @@ repos:
       name: Check no references that should be sphinx cross-references are urls
       description: >-
         'A quick check to prevent urls pointing other sphinx built docs like pymc, arviz, numpy, scipy...'
-      files: ^examples/.+\.ipynb$
+      files: ^docs/source/examples/.+\.ipynb$
       exclude: >
           (?x)(index.md|
                404.md|
@@ -53,7 +53,7 @@ repos:
                numpy.org/doc|
                pymc-examples.readthedocs.io|
                docs.python.org|
-               xarray.pydata.org
+               xarray.pydata.org|
                python.arviz.org|
                pytensor.readthedocs.io|
                docs.xarray.dev|
