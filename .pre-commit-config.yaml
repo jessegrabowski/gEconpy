@@ -11,7 +11,7 @@ repos:
     -   id: trailing-whitespace
     -   id: check-case-conflict
     -   id: check-added-large-files
-        exclude: ^(pixi\.lock|docs/source/examples/estimation/(rbc_with_growth|mixed_frequency_estimation)\.ipynb)$
+        exclude: ^docs/source/examples/estimation/(rbc_with_growth|mixed_frequency_estimation)\.ipynb$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
   rev: v0.16.7
@@ -30,6 +30,22 @@ repos:
 
 - repo: local
   hooks:
+    - id: pixi-lock-check
+      name: pixi.lock is in sync with pyproject.toml
+      entry: pixi lock --check
+      language: system
+      files: ^(pyproject\.toml|pixi\.lock)$
+      pass_filenames: false
+
+    - id: pixi-export-env
+      name: conda_envs/environment_dev.yml is exported from the pixi default environment
+      # Called directly rather than through a pixi task so the hook reads the manifest only; `pixi run`
+      # would re-solve the lock file and install the environment first.
+      entry: pixi workspace export conda-environment -e default -n geconpy-dev conda_envs/environment_dev.yml
+      language: system
+      files: ^(pyproject\.toml|pixi\.lock|conda_envs/environment_dev\.yml)$
+      pass_filenames: false
+
     - id: notebook_name
       entry: '\(notebook_name\)='
       language: pygrep
