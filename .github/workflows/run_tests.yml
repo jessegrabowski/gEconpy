@@ -135,14 +135,32 @@ jobs:
         path: coverage/coverage-${{ steps.matrix-id.outputs.id }}.xml
 
 
+  docs:
+    name: "Docs"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0  # hatch-vcs derives the version from tags
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        with:
+          pixi-version: v0.79.0
+          environments: docs
+          cache: true
+
+      # docs-build carries -W, so a broken reference or an orphaned page fails here rather than
+      # shipping a page with a hole in it. The same command runs locally.
+      - name: Build the docs
+        run: pixi run -e docs docs-build
+
   all-checks:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     name: "All tests"
-    needs: [test]
+    needs: [test, docs]
     steps:
       - name: Check build matrix status
-        if: ${{ needs.test.result != 'success' }}
+        if: ${{ needs.test.result != 'success' || needs.docs.result != 'success' }}
         run: exit 1
 
   upload-coverage:
