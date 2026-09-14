@@ -601,7 +601,7 @@ class Block:
         return continuation_value.subs({current_value.set_t(1): 1})
 
     def simplify_system_equations(self) -> None:
-        """Simplify the first-order conditions in :attr:`system_equations`.
+        """Simplify the first-order conditions in ``system_equations``.
 
         Two passes run in sequence:
 
@@ -609,8 +609,9 @@ class Block:
            ``lambda__*``) that appear in a trivial linear identity ``x = ±y``, substitute them away. User-named
            multipliers are kept, matching gEcon's behavior.
 
-        2. **Power canonicalization.** Apply :func:`sympy.powsimp` to collapse ``Pow(x, e)/x → Pow(x, e-1)`` patterns
-           left over by chain-rule differentiation (typical for CRRA-style utility output).
+        2. **Power canonicalization.** Apply :func:`~sympy.simplify.powsimp.powsimp` to collapse
+           ``Pow(x, e)/x -> Pow(x, e-1)`` patterns left over by chain-rule differentiation (typical for CRRA-style
+           utility output).
         """
         system = self.system_equations
         simplified_system = system.copy()
@@ -745,8 +746,8 @@ class Block:
         """Compute the first-order condition for a single control variable.
 
         The default implementation differentiates the Lagrangian through time via :func:`diff_through_time`.
-        Specialized :class:`Block` subclasses (e.g. :class:`gEconpy.model.block.cobb_douglas.CobbDouglasBlock`)
-        override this to emit closed-form FOCs without invoking :func:`sympy.diff` on the constraint, sidestepping the
+        Specialized subclasses such as :class:`~gEconpy.model.block.cobb_douglas.CobbDouglasBlock` override this to
+        emit closed-form FOCs without invoking :func:`~sympy.core.function.diff` on the constraint, sidestepping the
         chain-rule expansion that dominates compile time on common functional forms.
         """
         return diff_through_time(lagrange, control, discount_factor)

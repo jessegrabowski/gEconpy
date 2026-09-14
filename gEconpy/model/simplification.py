@@ -65,7 +65,7 @@ def simplify_tryreduce(
         The simplified list of equations.
     reduced_variables: list of sp.Symbol
         The variables that remain in the system.
-    eliminated_vars: list of :class:`sympy.Symbol`
+    eliminated_vars: list of :class:`~sympy.core.symbol.Symbol`
         The variables that were removed.
     """
     n_equations = len(equations)
@@ -137,7 +137,7 @@ def simplify_constants(
         The simplified list of equations.
     reduced_variables: list of sp.Symbol
         The variables that remain in the system.
-    eliminated_vars: list of :class:`sp.Symbol`
+    eliminated_vars: list of :class:`~sympy.core.symbol.Symbol`
         The variables that were removed.
 
     """

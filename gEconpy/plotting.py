@@ -584,8 +584,9 @@ def plot_solvability(
     Parameters
     ----------
     data : pd.DataFrame
-        Output of :func:`~gEconpy.model.statistics.solvability_check` or
-        :func:`~gEconpy.model.statistics.prior_solvability_check`. Must contain a ``failure_step`` column.
+        Output of :func:`~gEconpy.model.statistics.perturbation_diagnostics.solvability_check` or
+        :func:`~gEconpy.model.statistics.perturbation_diagnostics.prior_solvability_check`. Must contain a
+        ``failure_step`` column.
     params_to_plot : list of str, optional
         Subset of parameter columns to include. If ``None``, all non-constant numeric columns are plotted.
     figsize : tuple of float, optional
@@ -652,7 +653,7 @@ def plot_solvability_summary(data: pd.DataFrame, figsize: tuple[float, float] = 
     Parameters
     ----------
     data : pd.DataFrame
-        Output of :func:`~gEconpy.model.statistics.solvability_check`.
+        Output of :func:`~gEconpy.model.statistics.perturbation_diagnostics.solvability_check`.
     figsize : tuple of float, default (8, 1.5)
         Figure size.
     dpi : int, default 100
@@ -707,7 +708,7 @@ def plot_eigenvalues(
 
     Parameters
     ----------
-    model : gEconModel
+    model : Model
         DSGE model object
     A : np.ndarray, optional
         Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to variables

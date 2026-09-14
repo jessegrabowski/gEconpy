@@ -76,7 +76,7 @@ def _match_cobb_douglas_constraint(constraints: dict[int, sp.Eq] | None) -> dict
     Parameters
     ----------
     constraints : dict mapping int to sympy.Eq, optional
-        Block constraints keyed by equation index, as held on a :class:`Block`.
+        Block constraints keyed by equation index, as held on a :class:`~gEconpy.model.block.basic.Block`.
 
     Returns
     -------
@@ -125,7 +125,7 @@ def _match_cobb_douglas_constraint(constraints: dict[int, sp.Eq] | None) -> dict
 
 @register_block
 class CobbDouglasBlock(Block):
-    r"""A :class:`Block` whose constraint is a Cobb-Douglas production function of arbitrary input count.
+    r"""A :class:`~gEconpy.model.block.basic.Block` with a Cobb-Douglas production constraint of any input count.
 
     The constraint takes the general monomial form
 
@@ -147,8 +147,9 @@ class CobbDouglasBlock(Block):
             = \frac{\partial \text{obj}}{\partial x_i} + \mu \cdot a_i \cdot \frac{Y}{x_i}
 
     where :math:`\mu` is the Lagrange multiplier on the production constraint. The constraint itself is never
-    differentiated by :func:`sympy.diff`, avoiding the chain-rule expansion :math:`a_i A x_i^{a_i - 1} \prod_{j \neq
-    i} x_j^{a_j}` that would otherwise propagate through downstream pytensor compilation.
+    differentiated by :func:`~sympy.core.function.diff`, avoiding the chain-rule expansion
+    :math:`a_i A x_i^{a_i - 1} \prod_{j \neq i} x_j^{a_j}` that would otherwise propagate through downstream pytensor
+    compilation.
     """
 
     @classmethod
@@ -161,9 +162,9 @@ class CobbDouglasBlock(Block):
         """Conservative match for a Cobb-Douglas production block.
 
         The block must have an objective (it is an optimization, not an identity-only block) and exactly one
-        constraint whose residual matches the Cobb-Douglas form via :func:`_match_cobb_douglas_constraint`. The
+        constraint whose residual matches the Cobb-Douglas form via ``_match_cobb_douglas_constraint``. The
         objective itself is not constrained: the closed-form constraint derivative is exact regardless of what the
-        firm is maximizing, so :meth:`_compute_foc` simply differentiates the objective symbolically (cheap for
+        firm is maximizing, so ``_compute_foc`` simply differentiates the objective symbolically (cheap for
         typical linear cost functions) and adds the closed-form constraint term.
 
         Parameters
@@ -179,7 +180,7 @@ class CobbDouglasBlock(Block):
         -------
         match : bool
             True if the block is a canonical Cobb-Douglas optimization. False otherwise; caller falls back to the
-            general :class:`Block`.
+            general :class:`~gEconpy.model.block.basic.Block`.
         """
         if objective is None:
             return False

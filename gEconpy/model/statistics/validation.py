@@ -203,7 +203,8 @@ def check_steady_state(
     steady_state : SteadyStateResults, optional
         Steady state to check. Solved from ``model`` when not given.
     steady_state_kwargs : dict, optional
-        Keyword arguments forwarded to :meth:`Model.steady_state` when ``steady_state`` is solved here.
+        Keyword arguments forwarded to :meth:`~gEconpy.model.model.Model.steady_state` when ``steady_state`` is
+        solved here.
     **parameter_updates
         Parameter values overriding the model defaults.
     """

@@ -87,7 +87,7 @@ def determine_n_unstable(
     -----
     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m.
     This is a thin Python shim over the numba-compiled
-    :func:`_determine_n_unstable_core`, which can't accept `None` for `div`.
+    ``_determine_n_unstable_core``, which cannot accept ``None`` for ``div``.
     """
     compute_div = div is None
     div_eff = 1.01 if compute_div else float(div)
@@ -136,7 +136,7 @@ def build_u_v_d(
         Input matrix to decompose.
     realsmall : float, optional
         Threshold below which singular values are treated as zero. Default
-        :data:`EPSILON`.
+        ``EPSILON``.
     invalid_system : bool, optional
         If True, return zero-sized outputs so downstream code can short-circuit
         an ill-posed system. Default False.

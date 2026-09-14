@@ -12,15 +12,15 @@ DEFAULT_ASSUMPTIONS: dict[str, bool] = {"real": True, "finite": True}
 
 
 def merge_assumptions(user_assumptions: dict[str, bool] | None) -> dict[str, bool]:
-    """Merge :data:`DEFAULT_ASSUMPTIONS` with user-declared assumptions; user values win on conflict."""
+    """Merge ``DEFAULT_ASSUMPTIONS`` with user-declared assumptions. User values win on conflict."""
     return {**DEFAULT_ASSUMPTIONS, **(user_assumptions or {})}
 
 
 class TimeAwareSymbol(sp.Symbol):
     """
-    Subclass of :class:`sympy.Symbol` with a time index.
+    Subclass of :class:`~sympy.core.symbol.Symbol` with a time index.
 
-    A TimeAwareSymbol is identical to a :class:`symPy.Symbol` in all respects, except that it has a
+    A TimeAwareSymbol is identical to a :class:`~sympy.core.symbol.Symbol` in all respects, except that it has a
     time index property that is used when determining equality and hashability. Two symbols with the same name,
     assumptions, and time index evaluate to equal.
 

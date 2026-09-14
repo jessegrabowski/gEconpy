@@ -562,7 +562,7 @@ class Model:
     @property
     def params(self) -> list[sp.Symbol]:
         """
-        List of parameters in the model, stored as :class:`sympy.Symbol` objects.
+        List of parameters in the model, stored as :class:`~sympy.core.symbol.Symbol` objects.
 
         Parameters are fixed values in the model, associated with the structural equations of the model. These are
         sometimes called "deep parameters" because of their (supposed) microeconomic foundations.
@@ -572,7 +572,7 @@ class Model:
     @property
     def hyper_params(self) -> list[sp.Symbol]:
         """
-        List of hyperparameters in the model, stored as :class:`sympy.Symbol` objects.
+        List of hyperparameters in the model, stored as :class:`~sympy.core.symbol.Symbol` objects.
 
         Hyperparameters are parameters associated with the distribution of shocks in the model, for example the
         standard deviation of a normally distributed shock.
@@ -582,7 +582,7 @@ class Model:
     @property
     def deterministic_params(self) -> list[sp.Symbol]:
         """
-        List of deterministic parameters in the model, stored as :class:`sympy.Symbol` objects.
+        List of deterministic parameters in the model, stored as :class:`~sympy.core.symbol.Symbol` objects.
 
         Deterministic parameters are parameters defined as functions of other parameters in the model. They are
         not directly calibrated, but are instead derived deterministically from other parameters.
@@ -610,7 +610,7 @@ class Model:
     @property
     def calibrated_params(self) -> list[sp.Symbol]:
         """
-        List of calibrated parameters in the model, stored as :class:`sympy.Symbol` objects.
+        List of calibrated parameters in the model, stored as :class:`~sympy.core.symbol.Symbol` objects.
 
         Calibrated parameters are pseudo-parameters whose values are an implicit function of the model parameters.
         Each calibrated parameter must be associated with a function of steady-state variables. This function is added
@@ -1766,8 +1766,8 @@ class Model:
         loglin_negative_ss: bool, default is False
             Whether to force log-linearization of variable with negative steady-state. This is impossible in principle
             (how can :math:`exp(x_ss)` be negative?), but can still be done; see the docstring for
-            :func:`perturbation.linearize_model` for details. Use with caution, as results will not correct. Ignored if
-            log_linearize is False.
+            :func:`~gEconpy.model.perturbation.linearize_model` for details. Use with caution, as results will not
+            correct. Ignored if log_linearize is False.
         tol: float, default 1e-8
             Desired level of floating point accuracy in the solution
         max_iter: int, default: 1000

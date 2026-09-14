@@ -10,7 +10,7 @@ _REGISTRY: list[type[Block]] = []
 
 
 def register_block(cls: type[Block]) -> type[Block]:
-    """Register a :class:`Block` subclass for dispatch.
+    """Register a :class:`~gEconpy.model.block.basic.Block` subclass for dispatch.
 
     Intended for use as a decorator on subclass definitions. Subclasses are appended in registration order, so callers
     who care about precedence should ensure the simpler form is imported (and thus registered) first.
@@ -48,14 +48,14 @@ def dispatch_block(
     symbol_locations: dict | None = None,
     ss_solution_dict=None,
 ) -> Block:
-    """Construct a :class:`Block` or one of its specialized subclasses.
+    """Construct a :class:`~gEconpy.model.block.basic.Block` or one of its specialized subclasses.
 
     Walks the registry in order. The first subclass whose ``detect`` returns True is constructed with the same kwargs.
-    If none match, returns a general :class:`Block`. Detection is conservative: false positives (silent miss of
-    user-added terms) are bugs; false negatives (no dispatch, slow path) are acceptable.
+    If none match, returns a general :class:`~gEconpy.model.block.basic.Block`. Detection is conservative: false
+    positives (silent miss of user-added terms) are bugs. False negatives (no dispatch, slow path) are acceptable.
 
-    Parameters mirror :class:`Block.__init__` exactly so the dispatcher is a drop-in replacement for ``Block(...)`` at
-    the parser construction site.
+    Parameters mirror :class:`~gEconpy.model.block.basic.Block` exactly so the dispatcher is a drop-in replacement
+    for ``Block(...)`` at the parser construction site.
     """
     kwargs = {
         "name": name,
