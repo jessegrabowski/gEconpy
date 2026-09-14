@@ -7,7 +7,6 @@ Modified from the pymc project, which modified the seaborn project, which modifi
 import base64
 import json
 import os
-import shutil
 import subprocess
 
 from pathlib import Path
@@ -16,16 +15,11 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import sphinx
 
 from matplotlib import image
+from sphinx.util import logging as sphinx_logging
 
-logger = sphinx.util.logging.getLogger(__name__)
-
-DOC_SRC = Path(__file__).resolve().parent.parent
-
-DEFAULT_IMG_LOC = None
-external_nbs = {}
+logger = sphinx_logging.getLogger(__name__)
 
 HEAD = """
 Example Gallery
@@ -77,6 +71,16 @@ def is_tracked_by_git(filepath):
         return result.returncode == 0
 
 
+def write_placeholder(outfile, title, width=275, height=275):
+    """Write a plain thumbnail carrying the notebook name, for notebooks with no image output."""
+    dpi = 100
+    fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
+    ax = fig.add_axes((0, 0, 1, 1), frameon=False, xticks=[], yticks=[])
+    ax.text(0.5, 0.5, title.replace("_", " "), ha="center", va="center", wrap=True, fontsize=14)
+    fig.savefig(outfile, dpi=dpi)
+    plt.close(fig)
+
+
 def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
     """Overwrite `infile` with a new file of the given size."""
     im = image.imread(infile)
@@ -97,7 +101,7 @@ def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
     dpi = 100
     fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
 
-    ax = fig.add_axes([0, 0, 1, 1], aspect="auto", frameon=False, xticks=[], yticks=[])
+    ax = fig.add_axes((0, 0, 1, 1), aspect="auto", frameon=False, xticks=[], yticks=[])
     ax.imshow(thumb, aspect="auto", resample=True, interpolation="bilinear")
     fig.savefig(infile, dpi=dpi)
     plt.close(fig)
@@ -107,17 +111,13 @@ def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
 class NotebookGenerator:
     """Tools for generating an example page from a file."""
 
-    def __init__(self, filename, root_dir, folder):
-        self.folder = folder
-
+    def __init__(self, filename, thumbnail_dir):
         self.basename = Path(filename).name
         self.stripped_name = Path(filename).stem
-        self.image_dir = Path(root_dir) / "source" / "_thumbnails" / folder
-        self.png_path = self.image_dir / f"{self.stripped_name}.png"
+        self.png_path = Path(thumbnail_dir) / f"{self.stripped_name}.png"
 
         with filename.open(encoding="utf-8") as fid:
             self.json_source = json.load(fid)
-        self.default_image_loc = DEFAULT_IMG_LOC
 
     def extract_preview_pic(self):
         """By default, just uses the last image in the notebook."""
@@ -143,11 +143,11 @@ class NotebookGenerator:
             with self.png_path.open("wb") as buff:
                 buff.write(preview)
         else:
-            logger.warning(
-                f"Didn't find any pictures in {self.basename}",
+            logger.info(
+                f"Didn't find any pictures in {self.basename}, using a placeholder thumbnail",
                 type="thumbnail_extractor",
             )
-            shutil.copy(self.default_image_loc, self.png_path)
+            write_placeholder(self.png_path, self.stripped_name)
         create_thumbnail(self.png_path)
 
 
@@ -156,30 +156,24 @@ def main(app):
 
     working_dir = Path.cwd()
     os.chdir(app.builder.srcdir)
+    try:
+        write_gallery()
+    finally:
+        os.chdir(working_dir)
 
-    file = [HEAD]
+
+def write_gallery():
+    """Write examples/gallery.rst and the thumbnails, relative to the Sphinx source directory."""
+    toc_entries = []
+    sections = []
 
     for folder, title in folder_title_map.items():
-        file.append(SECTION_TEMPLATE.format(section_title=title, section_id=folder, underlines="-" * len(title)))
+        sections.append(SECTION_TEMPLATE.format(section_title=title, section_id=folder, underlines="-" * len(title)))
 
         thumbnail_dir = Path("_thumbnails") / folder
-        if not thumbnail_dir.exists():
-            Path.mkdir(thumbnail_dir, parents=True)
+        thumbnail_dir.mkdir(parents=True, exist_ok=True)
 
-        if folder in external_nbs:
-            file += [
-                ITEM_TEMPLATE.format(
-                    doc_name=descr["doc_name"],
-                    image=descr["image"],
-                    doc_reference=descr["doc_reference"],
-                    link_type=descr["link_type"],
-                )
-                for descr in external_nbs[folder]
-            ]
-
-        nb_paths = sorted(Path("examples", folder).glob("*.ipynb"))
-
-        for nb_path in nb_paths:
+        for nb_path in sorted(Path("examples", folder).glob("*.ipynb")):
             if not is_tracked_by_git(nb_path):
                 logger.info(
                     f"Skipping {nb_path.name}, not tracked by git",
@@ -187,22 +181,22 @@ def main(app):
                 )
                 continue
 
-            nbg = NotebookGenerator(filename=nb_path, root_dir=Path(".."), folder=folder)
+            nbg = NotebookGenerator(filename=nb_path, thumbnail_dir=thumbnail_dir)
             nbg.gen_previews()
 
-            file.append(
+            doc_name = f"{folder}/{nbg.stripped_name}"
+            toc_entries.append(f"   {doc_name}")
+            sections.append(
                 ITEM_TEMPLATE.format(
-                    doc_name=Path(folder) / nbg.stripped_name,
-                    image="/" + str(nbg.png_path),
-                    doc_reference=Path(folder) / nbg.stripped_name,
+                    doc_name=doc_name,
+                    image=f"/{nbg.png_path}",
+                    doc_reference=doc_name,
                     link_type="doc",
                 )
             )
 
     with Path("examples", "gallery.rst").open("w", encoding="utf-8") as f:
-        f.write("\n".join(file))
-
-    os.chdir(working_dir)
+        f.write(HEAD + "\n".join(toc_entries) + "\n" + "\n".join(sections))
 
 
 def setup(app):
