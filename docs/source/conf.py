@@ -114,7 +114,6 @@ master_doc = "index"
 autosummary_generate = True
 autodoc_typehints = "none"
 autoclass_content = "class"
-remove_from_toctrees = ["**/classmethods/*"]
 
 numpydoc_show_class_members = False
 numpydoc_xref_param_type = True
