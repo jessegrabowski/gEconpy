@@ -378,21 +378,49 @@ class ErrorCode(Enum):
 
     @property
     def info(self) -> ErrorInfo:
-        """Get the ErrorInfo for this code."""
+        """
+        Look up the catalog entry for this code.
+
+        Returns
+        -------
+        info : ErrorInfo
+            The title, explanation, common causes, and fixes for this code.
+        """
         return self.value
 
     @property
     def title(self) -> str:
-        """Get the title for this error code."""
+        """
+        Look up the one-line title of this code.
+
+        Returns
+        -------
+        title : str
+            The title.
+        """
         return self.value.title
 
     @property
     def explanation(self) -> str:
-        """Get the explanation for this error code."""
+        """
+        Look up the prose explanation of this code.
+
+        Returns
+        -------
+        explanation : str
+            The explanation.
+        """
         return self.value.explanation
 
     def format_help(self) -> str:
-        """Format detailed help text for this error code."""
+        """
+        Render the full catalog entry for this code as help text.
+
+        Returns
+        -------
+        help_text : str
+            The title, explanation, common causes, and fixes, ready to print.
+        """
         info = self.value
         lines = [
             f"{self.name}: {info.title}",

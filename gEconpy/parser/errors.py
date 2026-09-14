@@ -52,10 +52,23 @@ class GCNParseFailure(pp.ParseFatalException):
     @classmethod
     def decode(cls, exc: pp.ParseBaseException) -> tuple[str, ErrorCode, str, list[str]]:
         """
-        Decode error data from an exception message.
+        Decode the error data packed into an exception message by this class.
 
-        Returns (message, code, found, suggestions).
-        If not encoded, returns (original_msg, E000, "", []).
+        Parameters
+        ----------
+        exc : ``ParseBaseException``
+            The pyparsing exception to decode.
+
+        Returns
+        -------
+        message : str
+            The error message.
+        code : ErrorCode
+            The error code, or ``E000`` if the message carries no encoded data.
+        found : str
+            The text that triggered the error.
+        suggestions : list of str
+            Names the user may have meant.
         """
         msg = str(exc.msg) if hasattr(exc, "msg") else str(exc)
 
@@ -77,7 +90,14 @@ class GCNParseFailure(pp.ParseFatalException):
         return message, code, found, suggestions
 
     def copy(self) -> "GCNParseFailure":
-        """Create a copy of this exception (used by pyparsing caching)."""
+        """
+        Copy this exception, as pyparsing's packrat cache requires.
+
+        Returns
+        -------
+        exception : GCNParseFailure
+            A copy carrying the same code, found text, and suggestions.
+        """
         return GCNParseFailure(
             self.pstr,
             self.loc,
@@ -132,7 +152,14 @@ class ParseLocation:
     filename: str = ""
 
     def to_lsp_range(self) -> dict:
-        """Convert to LSP Range format (0-indexed)."""
+        """
+        Convert this location to a Language Server Protocol range.
+
+        Returns
+        -------
+        lsp_range : dict
+            A dictionary with ``start`` and ``end`` keys, each holding zero-indexed ``line`` and ``character``.
+        """
         end_line = self.end_line if self.end_line is not None else self.line
         end_col = self.end_column if self.end_column is not None else self.column + 1
         return {
@@ -277,10 +304,12 @@ class GCNParseError(Exception):
 
     def to_lsp_diagnostic(self) -> dict:
         """
-        Convert to LSP Diagnostic format for editor integration.
+        Convert this error to a Language Server Protocol diagnostic, for editor integration.
 
-        Returns a dictionary conforming to the Language Server Protocol
-        Diagnostic specification.
+        Returns
+        -------
+        diagnostic : dict
+            A dictionary conforming to the Language Server Protocol diagnostic specification.
         """
         severity_map = {
             Severity.ERROR: 1,
@@ -565,11 +594,25 @@ class GCNErrorCollection(Exception):
 
     @property
     def has_errors(self) -> bool:
-        """Return True if there are any errors."""
+        """
+        Report whether the collection holds any errors.
+
+        Returns
+        -------
+        has_errors : bool
+            True if the collection is not empty.
+        """
         return len(self.errors) > 0
 
     def to_lsp_diagnostics(self) -> list[dict]:
-        """Convert all errors to LSP Diagnostic format."""
+        """
+        Convert every collected error to a Language Server Protocol diagnostic.
+
+        Returns
+        -------
+        diagnostics : list of dict
+            One diagnostic per error.
+        """
         return [err.to_lsp_diagnostic() for err in self.errors]
 
 
@@ -606,7 +649,14 @@ class ErrorCollector:
         self.source = source
 
     def add(self, error: GCNParseError) -> None:
-        """Add an error to the collection."""
+        """
+        Append an error or warning to the collection.
+
+        Parameters
+        ----------
+        error : GCNParseError
+            The error to record.
+        """
         self.errors.append(error)
 
     def raise_if_errors(self) -> None:
@@ -622,12 +672,26 @@ class ErrorCollector:
 
     @property
     def has_errors(self) -> bool:
-        """Return True if there are any error-level issues."""
+        """
+        Report whether the collection holds any error-level issues.
+
+        Returns
+        -------
+        has_errors : bool
+            True if at least one collected issue has error severity. Warnings alone give False.
+        """
         return any(getattr(e, "severity", Severity.ERROR) == Severity.ERROR for e in self.errors)
 
     @property
     def warnings(self) -> list[GCNParseError]:
-        """Return all warning-level issues."""
+        """
+        Select the warning-level issues in the collection.
+
+        Returns
+        -------
+        warnings : list of GCNParseError
+            The collected issues with warning severity.
+        """
         return [e for e in self.errors if getattr(e, "severity", Severity.ERROR) == Severity.WARNING]
 
     def __len__(self) -> int:

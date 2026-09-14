@@ -117,7 +117,24 @@ class Tag(Enum):
 
     @classmethod
     def from_string(cls, name: str) -> Tag:
-        """Convert a string to a Tag, raising ValueError if unknown."""
+        """
+        Look up a tag by name, ignoring case.
+
+        Parameters
+        ----------
+        name : str
+            Tag name, written without the leading ``@``.
+
+        Returns
+        -------
+        tag : Tag
+            The matching tag.
+
+        Raises
+        ------
+        ValueError
+            If no tag has that name.
+        """
         name_lower = name.lower()
         for tag in cls:
             if tag.value == name_lower:
@@ -189,13 +206,32 @@ class Variable(Node):
         return Variable(name=self.name, time_index=self.time_index, location=location)
 
     def at(self, time_index: TimeIndex | int | str) -> Variable:
-        """Return a new Variable at a different time index."""
+        """
+        Return a copy of this variable at a different time index.
+
+        Parameters
+        ----------
+        time_index : TimeIndex or int or str
+            The new time index. An integer or string is converted to a TimeIndex.
+
+        Returns
+        -------
+        variable : Variable
+            The variable at the new time index.
+        """
         if isinstance(time_index, int | str):
             time_index = TimeIndex(time_index)
         return Variable(name=self.name, time_index=time_index, location=self.location)
 
     def to_ss(self) -> Variable:
-        """Return steady-state version of this variable."""
+        """
+        Return a copy of this variable at the steady state.
+
+        Returns
+        -------
+        variable : Variable
+            The steady-state variable.
+        """
         return self.at(STEADY_STATE)
 
     def __str__(self) -> str:
@@ -298,7 +334,19 @@ class GCNEquation(Node):
         )
 
     def with_tags(self, tags: frozenset[Tag]) -> GCNEquation:
-        """Return a new equation with the specified tags."""
+        """
+        Return a copy of this equation carrying a different set of tags.
+
+        Parameters
+        ----------
+        tags : frozenset of Tag
+            Tags for the new equation. These replace the current tags rather than adding to them.
+
+        Returns
+        -------
+        equation : GCNEquation
+            The tagged equation.
+        """
         return GCNEquation(
             lhs=self.lhs,
             rhs=self.rhs,
@@ -453,7 +501,14 @@ class GCNModel:
         return [block.name for block in self.blocks]
 
     def all_equations(self) -> list[GCNEquation]:
-        """Collect all equations from all blocks."""
+        """
+        Collect the definitions, objectives, constraints, and identities of every block.
+
+        Returns
+        -------
+        equations : list of GCNEquation
+            The collected equations, in block order.
+        """
         equations = []
         for block in self.blocks:
             equations.extend(block.definitions)
@@ -463,7 +518,14 @@ class GCNModel:
         return equations
 
     def all_variables(self) -> set[Variable]:
-        """Collect all unique variables from all blocks."""
+        """
+        Collect the variables appearing in the equations of every block.
+
+        Returns
+        -------
+        variables : set of Variable
+            The collected variables. Two time indices of one name count as two variables.
+        """
         variables: set[Variable] = set()
         for eq in self.all_equations():
             variables.update(_collect_variables(eq.lhs))
@@ -471,7 +533,14 @@ class GCNModel:
         return variables
 
     def all_parameters(self) -> set[Parameter]:
-        """Collect all unique parameters from all blocks."""
+        """
+        Collect the parameters appearing in the equations of every block.
+
+        Returns
+        -------
+        parameters : set of Parameter
+            The collected parameters.
+        """
         parameters: set[Parameter] = set()
         for eq in self.all_equations():
             parameters.update(_collect_parameters(eq.lhs))
@@ -512,10 +581,34 @@ def collect_nodes_of_type(node: Node, node_type: type) -> set:
 
 
 def collect_variable_names(node: Node) -> set[str]:
-    """Recursively collect all variable names from an expression."""
+    """
+    Collect the names of every variable in an expression, ignoring time indices.
+
+    Parameters
+    ----------
+    node : Node
+        Root of the expression to search.
+
+    Returns
+    -------
+    names : set of str
+        The variable names found.
+    """
     return {v.name for v in collect_nodes_of_type(node, Variable)}
 
 
 def collect_parameter_names(node: Node) -> set[str]:
-    """Recursively collect all parameter names from an expression."""
+    """
+    Collect the names of every parameter in an expression.
+
+    Parameters
+    ----------
+    node : Node
+        Root of the expression to search.
+
+    Returns
+    -------
+    names : set of str
+        The parameter names found.
+    """
     return {p.name for p in collect_nodes_of_type(node, Parameter)}

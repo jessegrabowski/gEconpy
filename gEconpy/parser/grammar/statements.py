@@ -455,12 +455,36 @@ DISTRIBUTION.set_parse_action(_build_distribution)
 
 
 def parse_equation(text: str) -> GCNEquation:
-    """Parse a single equation from text."""
+    """
+    Parse a single equation, including any Lagrange multiplier, calibrating parameter, and tags.
+
+    Parameters
+    ----------
+    text : str
+        Text of the equation, with or without a trailing semicolon.
+
+    Returns
+    -------
+    equation : GCNEquation
+        The parsed equation.
+    """
     return EQUATION.parse_string(text.strip(), parse_all=True)[0]
 
 
 def parse_distribution(text: str) -> GCNDistribution:
-    """Parse a single distribution from text."""
+    """
+    Parse a single distribution declaration, of the form ``name ~ Dist(arg=value)``.
+
+    Parameters
+    ----------
+    text : str
+        Text of the declaration, with or without a trailing semicolon.
+
+    Returns
+    -------
+    distribution : GCNDistribution
+        The parsed distribution.
+    """
     return DISTRIBUTION.parse_string(text.strip(), parse_all=True)[0]
 
 

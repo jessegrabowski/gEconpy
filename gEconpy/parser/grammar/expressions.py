@@ -285,9 +285,24 @@ def _get_error_code(exc: pp.ParseBaseException, expected: str) -> ErrorCode:
 
 def parse_expression(text: str, context: str = ""):
     """
-    Parse a mathematical expression string into an AST node.
+    Parse a mathematical expression string into an abstract syntax tree node.
 
-    Raises GCNGrammarError if the expression cannot be parsed.
+    Parameters
+    ----------
+    text : str
+        The expression to parse.
+    context : str, optional
+        Name to report in error messages, identifying where the expression came from. Defaults to an empty string.
+
+    Returns
+    -------
+    node : Node
+        Root of the parsed expression.
+
+    Raises
+    ------
+    GCNGrammarError
+        If the expression cannot be parsed.
     """
     try:
         result = EXPR.parse_string(text, parse_all=True)
