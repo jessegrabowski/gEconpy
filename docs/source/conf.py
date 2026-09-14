@@ -205,6 +205,17 @@ numpydoc_xref_aliases = {
     "sparse.csc_matrix": "scipy.sparse.csc_matrix",
 }
 
+# A role naming a symbol that moved or was deleted otherwise renders as plain text with a green build.
+nitpicky = True
+
+# Targets no docstring can make resolve: projects whose inventory does not carry the object, and two
+# pytensor gradient helpers the pytensor inventory omits.
+nitpick_ignore_regex = [
+    ("py:.*", r"arviz\..*"),
+    ("py:.*", r"preliz\..*"),
+    ("py:.*", r"sympytensor\..*"),
+    ("py:func", r"pytensor\.gradient\.grad_(undefined|not_implemented)"),
+]
 
 # -- MyST config  -------------------------------------------------
 myst_enable_extensions = [
