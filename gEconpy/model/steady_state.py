@@ -32,10 +32,6 @@ def make_steady_state_shock_dict(shocks: list[TimeAwareSymbol]) -> SymbolDiction
     return SymbolDictionary.fromkeys(shocks, 0.0).to_ss()
 
 
-def make_steady_state_variables(variables: list[TimeAwareSymbol]) -> list[sp.Symbol]:
-    return [x.to_ss() for x in variables]
-
-
 def system_to_steady_state(system: list[sp.Expr], shocks: list[TimeAwareSymbol]) -> list[sp.Expr]:
     shock_dict = make_steady_state_shock_dict(shocks)
     return [eq_to_ss(eq).subs(shock_dict).simplify() for eq in system]
