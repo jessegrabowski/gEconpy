@@ -15,10 +15,14 @@ gEconpy is still in an unfinished alpha state, but I encourage anyone interested
 
 Quick Setup
 ===========
-gEconpy is available on PyPi, and can be installed with pip:
+gEconpy is available on conda-forge and on PyPI:
 
 .. code-block:: bash
 
+    pixi add geconpy
+    # or
+    conda install -c conda-forge geconpy
+    # or
     pip install gEconpy
 
 
