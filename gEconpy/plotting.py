@@ -2026,5 +2026,7 @@ __all__ = [
     "plot_simulation",
     "plot_solvability",
     "plot_solvability_summary",
+    "plot_timeseries",
     "prepare_gridspec_figure",
+    "set_matplotlib_style",
 ]
