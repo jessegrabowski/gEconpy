@@ -686,7 +686,7 @@ def statespace_from_gcn(
 
     loglin_vars = [v for v in variables if v.base_name not in not_loglin_variables] if log_linearize else []
 
-    # Internal path — equation reordering is a no-op for downstream solvers (T/R are
+    # Internal path -- equation reordering is a no-op for downstream solvers (T/R are
     # variable-indexed). The order is computed once and cached on the Model in
     # ``Model.dr_order``; here we don't have a Model handle yet (this build creates the
     # DSGEStateSpace), so we let ``_linearize_model`` compute it on its own.

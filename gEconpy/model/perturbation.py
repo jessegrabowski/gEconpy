@@ -191,7 +191,7 @@ def linearize_model(
 
     # Row order reflects the [S|L|E|B] equation permutation; column order reflects the
     # [s|p|m|f] variable permutation. Downstream solvers consume A/B/C/D and emit T/R in
-    # the *permuted* variable order — the statespace boundary applies ``inv_var_order``
+    # the *permuted* variable order -- the statespace boundary applies ``inv_var_order``
     # to map T/R back to user variable order, and ``Model.linearize_model`` applies
     # ``inv_eq_order`` / ``inv_var_order`` before returning matrices to the user.
     ss_pt = [as_tensor(v.to_ss(), cache) for v in variables]
@@ -497,8 +497,8 @@ def compute_bk_eigenvalues_pt(
     Gamma_1_sel = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
 
     # Gamma_0 may be singular (rank-deficient). Regularize with eps*I so that
-    # infinite eigenvalues become O(1/eps) — still correctly counted as unstable —
-    # while finite eigenvalues near |λ|=1 are perturbed by only O(eps).
+    # infinite eigenvalues become O(1/eps) -- still correctly counted as unstable --
+    # while finite eigenvalues near |lambda|=1 are perturbed by only O(eps).
     n_sel = len(eqs_and_leads_idx)
     G0_reg = -Gamma_0_sel + pt.eye(n_sel) * _FLOAT_ZERO_TOL
     M = pt.linalg.solve(G0_reg, Gamma_1_sel)

@@ -56,6 +56,21 @@ _log = logging.getLogger(__name__)
 
 
 def infer_variable_bounds(variable):
+    """
+    Read a variable's sign assumptions and return a bound that keeps it strictly signed.
+
+    Parameters
+    ----------
+    variable : TimeAwareSymbol
+        Variable whose ``assumptions0`` are inspected.
+
+    Returns
+    -------
+    lhs : float or None
+        Lower bound, 1e-8 for a positive variable and None otherwise.
+    rhs : float or None
+        Upper bound, -1e-8 for a negative variable and None otherwise.
+    """
     assumptions = variable.assumptions0
     is_positive = assumptions.get("positive", False)
     is_negative = assumptions.get("negative", False)
@@ -66,7 +81,8 @@ def infer_variable_bounds(variable):
 
 
 def infer_variable_transform(variable, user_bound=None):
-    """Pick a bijection from the real line onto a variable's feasible region for unconstrained solving.
+    """
+    Pick a bijection from the real line onto a variable's feasible region for unconstrained solving.
 
     Resolves the feasible region in waterfall order: an explicit ``user_bound`` first, then the variable's
     GCN-declared sympy assumptions, then nothing. Returns a PyMC transform whose ``backward`` maps an
@@ -76,9 +92,9 @@ def infer_variable_transform(variable, user_bound=None):
     Parameters
     ----------
     variable : TimeAwareSymbol
-        The steady-state variable; its ``assumptions0`` supply the fallback region.
-    user_bound : tuple of (float or None, float or None), optional
-        Explicit ``(lower, upper)`` bound; either side may be None for one-sided. Takes precedence over
+        The steady-state variable. Its ``assumptions0`` supply the fallback region.
+    user_bound : tuple of float, optional
+        Explicit ``(lower, upper)`` bound. Either side may be None for a one-sided bound. Takes precedence over
         assumptions. Default None.
 
     Returns
@@ -101,7 +117,8 @@ def infer_variable_transform(variable, user_bound=None):
 
 
 def transform_steady_state_system(equations, ss_nodes, transforms):
-    """Reparametrize a steady-state system onto unconstrained variables.
+    """
+    Reparametrize a steady-state system onto unconstrained variables.
 
     For each steady-state node ``x`` with transform ``t``, substitutes ``x -> t.backward(y)`` (identity for
     an unconstrained variable), so the returned equations are functions of fresh unconstrained inputs ``y``.
@@ -113,7 +130,7 @@ def transform_steady_state_system(equations, ss_nodes, transforms):
     ss_nodes : list of TensorVariable
         Scalar input node for each steady-state variable.
     transforms : list of pymc transform or None
-        One transform per variable, as returned by :func:`infer_variable_transform`.
+        One transform per variable, as returned by :func:`~gEconpy.model.model.infer_variable_transform`.
 
     Returns
     -------
@@ -168,23 +185,50 @@ def _initialize_x0(optimizer_kwargs, variables, jitter_x0):
 
 
 class DROrder(NamedTuple):
-    """Decision-rule (DR) ordering of variables and equations for block-triangular exposure.
+    """
+    Decision-rule ordering of variables and equations, exposing the block-triangular structure of A, B, C and D.
 
-    Variables are partitioned into ``[static | pred_only | mixed | forward_only]`` by their
-    time-shift profile across all equations; equations into ``[static | lag_only |
-    lead_only | both]`` by which time-shifts they reference. Reordering A/B/C/D by
-    ``var_order`` (columns) and ``eq_order`` (rows) puts their structural-zero blocks
-    contiguously so ``block(...)`` + ``local_block_dot_to_block_of_dots`` can drop them.
+    Variables are partitioned into static, predetermined-only, mixed, and forward-only groups by their time-shift
+    profile across all equations. Equations are partitioned into static, lag-only, lead-only, and both groups by the
+    time shifts they reference. Reordering A, B, C and D by ``var_order`` on the columns and ``eq_order`` on the rows
+    places their structural-zero blocks contiguously.
 
-    Apply ``inv_var_order`` to T's rows AND columns and to R's rows when handing back to
-    the Kalman path or the user, so user-visible state vector layout is preserved.
-    Equation reordering does not propagate to T/R, only to A/B/C/D rows themselves.
+    Apply ``inv_var_order`` to the rows and columns of T and to the rows of R before handing results back to the
+    Kalman path or the user, so the user-visible state vector layout is preserved. Equation reordering applies only
+    to the rows of A, B, C and D, never to T or R.
+
+    Attributes
+    ----------
+    var_order : ndarray
+        Variable column permutation into static, predetermined-only, mixed, and forward-only order.
+    inv_var_order : ndarray
+        Inverse of ``var_order``, undoing it on the rows and columns of T and the rows of R.
+    eq_order : ndarray
+        Equation row permutation into static, lag-only, lead-only, and both order.
+    inv_eq_order : ndarray
+        Inverse of ``eq_order``, undoing it on the rows of A, B, C and D.
+    n_static_var : int
+        Number of static variables.
+    n_pred_only_var : int
+        Number of predetermined-only variables.
+    n_mixed_var : int
+        Number of variables appearing at both a lag and a lead.
+    n_forward_only_var : int
+        Number of forward-only variables.
+    n_static_eq : int
+        Number of equations referencing no time shifts.
+    n_lag_only_eq : int
+        Number of equations referencing lags but no leads.
+    n_lead_only_eq : int
+        Number of equations referencing leads but no lags.
+    n_both_eq : int
+        Number of equations referencing both lags and leads.
     """
 
-    var_order: np.ndarray  # variable column permutation [s | p | m | f]
-    inv_var_order: np.ndarray  # inverse: undoes var_order on T rows/cols, R rows
-    eq_order: np.ndarray  # equation row permutation [S | L | E | B]
-    inv_eq_order: np.ndarray  # inverse: undoes eq_order on A/B/C/D rows
+    var_order: np.ndarray
+    inv_var_order: np.ndarray
+    eq_order: np.ndarray
+    inv_eq_order: np.ndarray
     n_static_var: int
     n_pred_only_var: int
     n_mixed_var: int
@@ -299,7 +343,7 @@ class Model:
         calib_dict : SymbolDictionary
             Calibration equations.
         priors : tuple
-            ``(param_priors, shock_priors)`` — prior distribution dictionaries.
+            ``(param_priors, shock_priors)`` -- prior distribution dictionaries.
         is_linear : bool
             Whether the model is linear.
         mode : str or None
@@ -661,8 +705,8 @@ class Model:
         the number of unstable eigenvalues to equal ``len(forward_variables)``.
 
         Computed via the first-order linearization (which solves the steady state if
-        needed) on first access; cached. If linearization is unavailable — e.g., no
-        SS exists with the current parameters — falls back to the syntactic count
+        needed) on first access and cached. If linearization is unavailable -- e.g., no
+        SS exists with the current parameters -- falls back to the syntactic count
         from ``symbolic_forward_variables``.
         """
         if not hasattr(self, "_forward_variables"):
@@ -688,6 +732,7 @@ class Model:
 
     @property
     def n_symbolic_forward(self) -> int:
+        """Number of variables appearing at t+1 anywhere in the model equations."""
         return len(self.symbolic_forward_variables)
 
     @property
@@ -744,7 +789,7 @@ class Model:
 
         Parameters
         ----------
-        updates: float
+        updates : float
             Parameters to update. These are passed as keyword arguments, with the parameter name as the keyword and the
             new value as the value.
 
@@ -775,7 +820,7 @@ class Model:
 
         Parameters
         ----------
-        name: str
+        name : str
             Name of the variable or parameter to retrieve
 
         Returns
@@ -947,30 +992,31 @@ class Model:
 
         Parameters
         ----------
-        how: str, one of ['analytic', 'root', 'minimize'], default: 'analytic'
-            Method to use to solve for the steady state. If ``'analytic'``, the model is solved analytically using
+        how : str, optional
+            Method to use to solve for the steady state, one of "analytic", "root", or "minimize". Default
+            "analytic". If ``'analytic'``, the model is solved analytically using
             user-provided steady-state equations. This is only possible if the steady-state equations are fully
             defined. If ``'root'``, the steady state is solved using a root-finding algorithm. If ``'minimize'``, the
             steady state is solved by minimizing a squared error loss function.
 
-        use_jac: bool, default: True
+        use_jac : bool, optional
             Flag indicating whether to use the Jacobian of the error function when solving for the steady state. Ignored
-            if ``how`` is 'analytic'.
+            if ``how`` is 'analytic'. Defaults to True.
 
-        use_hess: bool, default: False
+        use_hess : bool, optional
             Flag indicating whether to use the Hessian of the error function when solving for the steady state. Ignored
-            if ``how`` is not 'minimize'
+            if ``how`` is not 'minimize'. Defaults to False.
 
-        use_hessp: bool, default: True
+        use_hessp : bool, optional
             Flag indicating whether to use the Hessian-vector product of the error function when solving for the
             steady state. This should be preferred over ``use_hess`` if your chosen method supports it. For larger
             problems it is substantially more performant.
-            Ignored if ``how`` not "minimize".
+            Ignored if ``how`` not "minimize". Defaults to True.
 
-        progressbar: bool, default: True
-            Flag indicating whether to display a progress bar when solving for the steady state.
+        progressbar : bool, optional
+            Flag indicating whether to display a progress bar when solving for the steady state. Defaults to True.
 
-        optimizer_kwargs: dict, optional
+        optimizer_kwargs : dict, optional
             Keyword arguments passed to either scipy.optimize.root or scipy.optimize.minimize, depending on the value of
             ``how``. Common argments include:
 
@@ -982,35 +1028,35 @@ class Model:
                 to match the argument expected by different optimizers (for example, the ``'hybr'`` method uses
                 ``maxfev``).
 
-        verbose: bool, default True
-            If true, print a message about convergence (or not) to the console .
+        verbose : bool, optional
+            If true, print a message about convergence (or not) to the console. Defaults to True.
 
-        bounds: dict, optional
+        bounds : dict, optional
             Per-variable ``(lower, upper)`` bounds keyed by variable name; either side may be None. By default the
             bounds are enforced by reparametrizing the variable onto the real line and solving unconstrained;
             with ``prefer_transform=False`` and a bounds-capable method they are passed to ``scipy.optimize``
             as box constraints instead. Bounds default to the variable's GCN assumptions when not given here.
 
-        prefer_transform: bool, optional
+        prefer_transform : bool, optional
             If True, enforce bounds by reparametrization (unconstrained solve) even when a bounds-capable method
             (``L-BFGS-B``, ``trust-constr``, ``powell``) is requested. If False, those methods use box constraints
             and other methods still reparametrize. Default False.
 
-        fixed_values: dict, optional
+        fixed_values : dict, optional
             Dictionary of fixed values for the steady-state variables. The keys are the variable names and the values
             are the fixed values. These are not check for validity, and passing an inaccurate value may result in the
             system becoming unsolvable.
 
-        jitter_x0: bool
+        jitter_x0 : bool
             Whether to apply some small N(0, 1e-4) jitter to the initial point
 
-        **updates: float, optional
+        **updates : float, optional
             Parameter values at which to solve the steady state. Passed to self.parameters. If not provided, the default
             parameter values (those originally defined during model construction) are used.
 
         Returns
         -------
-        steady_state: SteadyStateResults
+        steady_state : SteadyStateResults
             Dictionary of steady-state values
 
         """
@@ -1182,7 +1228,21 @@ class Model:
         return np.asarray(f_resid(**ss_dict, **param_dict))
 
     def evaluate_residual(self, ss_dict: dict[str, float], param_dict: SymbolDictionary) -> np.ndarray:
-        """Evaluate the steady-state residual at given variable and parameter values."""
+        """
+        Evaluate the steady-state residual at given variable and parameter values.
+
+        Parameters
+        ----------
+        ss_dict : dict mapping str to float
+            Steady-state value of each model variable.
+        param_dict : SymbolDictionary
+            Value of each model parameter.
+
+        Returns
+        -------
+        residuals : ndarray
+            Residual of each model equation, which is zero at a valid steady state.
+        """
         full_resid = pt.stack(self.equation_tensors())
         f_resid = compile_for_scipy(full_resid, mode=self._mode)
         return np.asarray(f_resid(**ss_dict, **param_dict))
@@ -1381,19 +1441,19 @@ class Model:
 
         Parameters
         ----------
-        order : int, default 1
-            Order of the Taylor expansion. Only ``order=1`` is currently supported.
-        log_linearize : bool, default True
-            If True, all variables are log-linearized. If False, all variables are left in levels.
+        order : int, optional
+            Order of the Taylor expansion. Only ``order=1`` is currently supported. Defaults to 1.
+        log_linearize : bool, optional
+            If True, all variables are log-linearized. If False, all variables are left in levels. Defaults to True.
         not_loglin_variables : list of str, optional
             Variable names to exclude from log-linearization. Ignored if ``log_linearize`` is False.
         steady_state : dict, optional
             Steady-state values used to determine which variables have non-positive steady states (and therefore
             cannot be log-linearized). If not provided, the steady state is solved internally.
-        loglin_negative_ss : bool, default False
-            If True, variables with negative steady-state values are still log-linearized.
-        verbose : bool, default True
-            Log warnings about excluded variables.
+        loglin_negative_ss : bool, optional
+            If True, variables with negative steady-state values are still log-linearized. Defaults to False.
+        verbose : bool, optional
+            Log warnings about excluded variables. Defaults to True.
 
         Returns
         -------
@@ -1500,24 +1560,25 @@ class Model:
 
         Parameters
         ----------
-        order: int, default: 1
-            Order of the Taylor expansion to use. Currently only first order linearization is supported.
-        log_linearize: bool, default: True
-            If True, all variables are log-linearized. If False, all variables are left in levels.
-        not_loglin_variables: list of strings, optional
+        order : int, optional
+            Order of the Taylor expansion to use. Currently only first order linearization is supported. Defaults to 1.
+        log_linearize : bool, optional
+            If True, all variables are log-linearized. If False, all variables are left in levels. Defaults to True.
+        not_loglin_variables : list of str, optional
             List of variables to not log-linearize. If provided, these variables will be left in levels, while all
             others will be log-linearized. Ignored if log_linearize is False.
-        steady_state: dict, optional
+        steady_state : dict, optional
             Dictionary of steady-state values. If provided, these values will be used to linearize the model. If not
             provided, the steady state will be solved for using the ``steady_state`` method.
-        loglin_negative_ss: bool, default: False
+        loglin_negative_ss : bool, optional
             If True, variables with negative steady-state values will be log-linearized. While technically possible,
             this is not recommended, as it can lead to incorrect results. Ignored if log_linearize is False.
-        steady_state_kwargs: dict, optional
+            Defaults to False.
+        steady_state_kwargs : dict, optional
             Keyword arguments passed to the ``steady_state`` method. Ignored if a steady-state solution is provided
-        verbose: bool, default: True
-            Flag indicating whether to print the linearization results to the terminal.
-        parameter_updates: dict
+        verbose : bool, optional
+            Flag indicating whether to print the linearization results to the terminal. Defaults to True.
+        parameter_updates : dict
             New parameter values at which to linearize the model. Unspecified values will be taken from the initial
             values set in the GCN file.
 
@@ -1528,16 +1589,16 @@ class Model:
 
         Returns
         -------
-        A: np.ndarray
+        A : np.ndarray
             Jacobian matrix of the model with respect to :math:`x_{t+1}` evaluated at the steady state, right-multiplied
             by the diagonal matrix :math:`T`.
-        B: np.ndarray
+        B : np.ndarray
             Jacobian matrix of the model with respect to :math:`x_t` evaluated at the steady state, right-multiplied
             by the diagonal matrix :math:`T`.
-        C: np.ndarray
+        C : np.ndarray
             Jacobian matrix of the model with respect to :math:`x_{t-1}` evaluated at the steady state, right-multiplied
             by the diagonal matrix :math:`T`.
-        D: np.ndarray
+        D : np.ndarray
             Jacobian matrix of the model with respect to :math:`\varepsilon_t` evaluated at the steady state.
 
         Examples
@@ -1663,7 +1724,7 @@ class Model:
 
         # Internal computation reorders equations into ``self.eq_order`` (rows) and
         # variables into ``self.var_order`` (columns of A/B/C; D's cols are shocks).
-        # Undo both so the user sees A/B/C/D in original equation × variable order.
+        # Undo both so the user sees A/B/C/D in original equation x variable order.
         inv_eq = self.inv_eq_order
         inv_var = self.inv_var_order
         eq_is_id = np.array_equal(eq_order, np.arange(len(eq_order)))
@@ -1746,48 +1807,50 @@ class Model:
 
         Parameters
         ----------
-        solver: str, default: 'cycle_reduction'
+        solver : str, optional
             Name of the algorithm to solve the linear solution. Currently "cycle_reduction", "gensys", and
             "backward_direct" are supported. Following Dynare, cycle_reduction is the default, but note that gEcon uses
-            gensys.
-        log_linearize: bool, default: True
-            Whether to log-linearize the model. If False, the model will be solved in levels.
-        not_loglin_variables: list of strings, optional
+            gensys. Defaults to 'cycle_reduction'.
+        log_linearize : bool, optional
+            Whether to log-linearize the model. If False, the model will be solved in levels. Defaults to True.
+        not_loglin_variables : list of str, optional
             Variables to not log linearize when solving the model. Variables with steady state values close to zero
             (or negative) will be automatically selected to not log linearize. Ignored if log_linearize is False.
-        order: int, default: 1
+        order : int, optional
             Order of taylor expansion to use to solve the model. Currently only 1st order approximation is supported.
-        steady_state: dict, optional
+            Defaults to 1.
+        steady_state : dict, optional
             Dictionary of steady-state solutions. If not provided, the steady state will be solved for using the
             ``steady_state`` method.
-        steady_state_kwargs: dict, optional
+        steady_state_kwargs : dict, optional
             Keyword arguments passed to the `steady_state` method. Ignored if a steady-state solution is provided
             via the steady_state argument, Default is None.
-        loglin_negative_ss: bool, default is False
+        loglin_negative_ss : bool, optional
             Whether to force log-linearization of variable with negative steady-state. This is impossible in principle
             (how can :math:`exp(x_ss)` be negative?), but can still be done; see the docstring for
             :func:`~gEconpy.model.perturbation.linearize_model` for details. Use with caution, as results will not
-            correct. Ignored if log_linearize is False.
-        tol: float, default 1e-8
-            Desired level of floating point accuracy in the solution
-        max_iter: int, default: 1000
-            Maximum number of cycle_reduction iterations. Not used if solver is 'gensys'.
-        verbose: bool, default: True
-            Flag indicating whether to print solver results to the terminal
-        on_failure: str, one of ['error', 'ignore'], default: 'error'
-            Instructions on what to do if the algorithm to find a linearized policy matrix. "Error" will raise an error,
-            while "ignore" will return None. "ignore" is useful when repeatedly solving the model, e.g. when sampling.
-        parameter_updates: dict
+            correct. Ignored if log_linearize is False. Default False.
+        tol : float, optional
+            Desired level of floating point accuracy in the solution. Defaults to 1e-8.
+        max_iter : int, optional
+            Maximum number of cycle_reduction iterations. Not used if solver is 'gensys'. Defaults to 1000.
+        verbose : bool, optional
+            Flag indicating whether to print solver results to the terminal. Defaults to True.
+        on_failure : str, optional
+            What to do if the algorithm fails to find a linearized policy matrix, one of "error" or "ignore".
+            "error" raises an error, while "ignore" returns None. "ignore" is useful when repeatedly solving the
+            model, for example when sampling. Default "error".
+        parameter_updates : dict
             New parameter values at which to solve the model. Unspecified values will be taken from the initial values
             set in the GCN file.
 
         Returns
         -------
-        T: np.ndarray, optional
+        T : np.ndarray, optional
             Transition matrix, approximated to the requested order. Represents the policy function, governing agent's
             optimal state-conditional actions. If the solver fails, None is returned instead.
 
-        R: np.ndarray, optional
+        R : np.ndarray, optional
             Selection matrix, approximated to the requested order. Represents the state- and agent-conditional
             transmission of stochastic shocks through the economy. If the solver fails, None is returned instead.
 

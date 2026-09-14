@@ -25,6 +25,23 @@ def _check_system_is_square(msg: str, n_equations: int, n_variables: int) -> boo
 
 
 def reduce_variable_list(equations, variables):
+    """
+    Split a variable list into those still appearing in a system of equations and those that do not.
+
+    Parameters
+    ----------
+    equations : list of sp.Expr
+        Equations to scan for variables.
+    variables : list of TimeAwareSymbol
+        Variables to classify, at time index t.
+
+    Returns
+    -------
+    reduced_variables : list of TimeAwareSymbol
+        Variables that appear in ``equations``, sorted by name.
+    eliminated_vars : list of TimeAwareSymbol
+        Variables that do not appear in ``equations``, sorted by name.
+    """
     reduced_variables = {
         atom.set_t(0) for eq in equations for atom in eq.atoms() if is_variable(atom) and atom.set_t(0) in variables
     }
@@ -61,11 +78,11 @@ def simplify_tryreduce(
 
     Returns
     -------
-    reduced_equations: list of sp.Expr
+    reduced_equations : list of sp.Expr
         The simplified list of equations.
-    reduced_variables: list of sp.Symbol
+    reduced_variables : list of sp.Symbol
         The variables that remain in the system.
-    eliminated_vars: list of :class:`~sympy.core.symbol.Symbol`
+    eliminated_vars : list of :class:`~sympy.core.symbol.Symbol`
         The variables that were removed.
     """
     n_equations = len(equations)
@@ -133,11 +150,11 @@ def simplify_constants(
 
     Returns
     -------
-    reduced_equations: list of sp.Expr
+    reduced_equations : list of sp.Expr
         The simplified list of equations.
-    reduced_variables: list of sp.Symbol
+    reduced_variables : list of sp.Symbol
         The variables that remain in the system.
-    eliminated_vars: list of :class:`~sympy.core.symbol.Symbol`
+    eliminated_vars : list of :class:`~sympy.core.symbol.Symbol`
         The variables that were removed.
 
     """

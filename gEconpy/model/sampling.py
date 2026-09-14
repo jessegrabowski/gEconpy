@@ -88,12 +88,12 @@ def sample_uniform(
     method : str, default ``"lhs"``
         Sampling method. One of:
 
-        - ``"random"`` — independent uniform draws.
-        - ``"lhs"`` — Latin Hypercube Sampling.
-        - ``"sobol"`` — Sobol sequence (scrambled). Requires ``n_samples`` to
+        - ``"random"`` -- independent uniform draws.
+        - ``"lhs"`` -- Latin Hypercube Sampling.
+        - ``"sobol"`` -- Sobol sequence (scrambled). Requires ``n_samples`` to
           be a power of 2.
-        - ``"halton"`` — Halton sequence.
-        - ``"poisson_disk"`` — Poisson disk sampling (best spatial uniformity
+        - ``"halton"`` -- Halton sequence.
+        - ``"poisson_disk"`` -- Poisson disk sampling (best spatial uniformity
           but slower).
 
     Returns
@@ -152,7 +152,7 @@ def sample_uniform_from_priors(
     method: str = "lhs",
     hdi_prob: float = 0.99,
 ) -> pd.DataFrame:
-    """QMC samples over prior HDI bounds — space-filling *and* prior-informed.
+    """QMC samples over prior HDI bounds -- space-filling *and* prior-informed.
 
     Computes ``bounds_from_priors(priors, hdi_prob)``, then delegates to
     ``sample_uniform``.
