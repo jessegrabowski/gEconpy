@@ -123,7 +123,6 @@ def test_constant_params_excluded_from_prior_samples():
         measurement_error=["Y", "C", "L"],
         constant_params=["beta", "delta"],
         solver="scan_cycle_reduction",
-        mode="JAX",
         verbose=False,
     )
 
