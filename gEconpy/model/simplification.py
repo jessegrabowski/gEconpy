@@ -1,4 +1,4 @@
-from warnings import warn
+import warnings
 
 import numpy as np
 import sympy as sp
@@ -14,7 +14,7 @@ from gEconpy.utilities import (
 
 def _check_system_is_square(msg: str, n_equations: int, n_variables: int) -> bool:
     if n_equations != n_variables:
-        warn(
+        warnings.warn(
             f"{msg} was requested but not possible because the system is not well defined. "
             f"Found {n_equations} equation{'s' if n_equations > 1 else ''} but {n_variables} variable"
             f"{'s' if n_variables > 1 else ''}",

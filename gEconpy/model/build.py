@@ -1,8 +1,8 @@
 import logging
 import sys
+import warnings
 
 from pathlib import Path
-from warnings import warn
 
 import sympy as sp
 
@@ -157,7 +157,7 @@ def check_for_extra_params(
         if on_unused_parameters == "raise":
             raise ExtraParameterError(extras)
         if on_unused_parameters == "warn":
-            warn(ExtraParameterWarning(extras), stacklevel=2)
+            warnings.warn(ExtraParameterWarning(extras), stacklevel=2)
 
 
 def _collect_distribution_atoms(
@@ -863,6 +863,6 @@ def build_report(
             f"{n_var} {_pluralize('variable', n_var)}. It will not be possible to solve this model. Please check "
             f"the specification using available diagnostic tools, and check the GCN file for typos."
         )
-        warn(message, stacklevel=2)
+        warnings.warn(message, stacklevel=2)
 
     _log.info(report)
