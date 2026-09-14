@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from gEconpy.exceptions import SteadyStateNotFoundError
+from gEconpy.model import statistics
 from gEconpy.model.statistics import check_steady_state, prior_solvability_check, solvability_check
 from tests._resources.cache_compiled_models import load_and_cache_model
 
@@ -109,3 +110,7 @@ def test_check_steady_state_raises_on_wrong_steady_state(model_without_priors):
 
     with pytest.raises(SteadyStateNotFoundError):
         check_steady_state(model_without_priors, steady_state=steady_state)
+
+
+def test_statistics_exports_no_private_names():
+    assert not [name for name in statistics.__all__ if name.startswith("_")]

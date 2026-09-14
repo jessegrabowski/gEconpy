@@ -33,9 +33,7 @@ from gEconpy.model.perturbation import (
 from gEconpy.model.perturbation import (
     linearize_model as _linearize_model,
 )
-from gEconpy.model.statistics import (
-    _maybe_solve_steady_state,
-)
+from gEconpy.model.statistics.validation import _maybe_solve_steady_state
 from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
     _ss_residual_to_pytensor,

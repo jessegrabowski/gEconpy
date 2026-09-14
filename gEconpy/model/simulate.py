@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import xarray as xr
 
-from gEconpy.model.statistics import _maybe_solve_model, _validate_shock_options, build_Q_matrix
+from gEconpy.model.statistics import build_Q_matrix
+from gEconpy.model.statistics.validation import _maybe_solve_model, _validate_shock_options
 
 if TYPE_CHECKING:
     from gEconpy.model.model import Model
