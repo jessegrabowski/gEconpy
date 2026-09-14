@@ -3,7 +3,7 @@ Installation
 
 Recommended: pixi
 *****************
-``gEconpy`` is published on conda-forge, and the recommended way to install it is with `pixi <https://pixi.sh>`_.
+``gEconpy`` is published on conda-forge, and `pixi <https://pixi.sh>`_ installs it from there.
 From inside a pixi workspace, or a new one:
 
 .. code-block:: bash
@@ -13,8 +13,9 @@ From inside a pixi workspace, or a new one:
     pixi add geconpy
     pixi shell
 
-pixi resolves ``gEconpy`` and `pytensor <https://pytensor.readthedocs.io/en/latest/>`_ from conda-forge, which ships
-pytensor with a C compiler and a BLAS library already configured, and records the result in a lock file.
+pixi resolves ``gEconpy`` and `pytensor <https://pytensor.readthedocs.io/en/latest/>`_ from conda-forge and records
+the result in a lock file. The conda-forge build of pytensor comes with a C compiler and a BLAS library already
+configured.
 
 
 conda
@@ -41,11 +42,11 @@ Installing straight from PyPI into a plain virtual environment also works, but p
 system path to compile models.
 
 
-Development Installation
+Development installation
 ************************
-The repository is itself a pixi workspace. From a clone, ``pixi install`` creates an environment with the runtime,
-test, and documentation dependencies resolved from the committed lock file, with ``gEconpy`` installed in editable
-mode. ``pixi shell`` activates it:
+The repository is itself a pixi workspace. From a clone, ``pixi install`` creates an environment from the committed
+lock file, holding the runtime, test, and documentation dependencies plus ``gEconpy`` in editable mode. ``pixi shell``
+activates it:
 
 .. code-block:: bash
 
@@ -62,9 +63,8 @@ The workspace defines tasks for the common jobs, which run without activating a 
     pixi run lint                # every pre-commit hook on every file
     pixi run docs-build          # the documentation, into docs/build/html
 
-If you would rather use conda directly, ``conda_envs/environment_dev.yml`` is the same environment exported from the
-pixi workspace. Its pip section installs ``gEconpy`` in editable mode from ``.``, so run the command from the
-repository root:
+For conda directly, ``conda_envs/environment_dev.yml`` is the same environment exported from the pixi workspace. Its
+pip section installs ``gEconpy`` in editable mode from ``.``, so run the command from the repository root:
 
 .. code-block:: bash
 

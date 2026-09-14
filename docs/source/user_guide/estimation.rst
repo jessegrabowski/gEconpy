@@ -4,7 +4,7 @@ Estimating a DSGE Model
 gEconpy estimates a model by handing its linearized solution to a Kalman filter inside a PyMC model. The
 parameters carry the priors declared in the GCN file, PyMC supplies the sampler, and pymc-extras supplies the state
 space machinery. The estimation notebooks in the :doc:`example gallery </examples/gallery>` do this end to end on the
-RBC model and on real data. This page names the four steps and what each one decides.
+RBC model and on real data.
 
 Build the state space model
 ---------------------------
@@ -31,7 +31,7 @@ be called before the graph is built. The choices that matter most:
     Parameters held at their GCN starting values and left out of the estimation.
 
 ``solver``
-    How the linear policy function is found at every likelihood evaluation: ``gensys``, ``cycle_reduction``, or
+    Which algorithm finds the linear policy function at every likelihood evaluation: ``gensys``, ``cycle_reduction``, or
     ``scan_cycle_reduction``. Only ``scan_cycle_reduction`` compiles under the JAX backend.
 
 ``mode``
@@ -54,7 +54,7 @@ name in the table is present.
 
 Before touching data, :func:`~gEconpy.model.statespace.data_from_prior` draws parameter values from those priors,
 simulates a data set from each, and returns the values that generated it. Fitting the model to a simulated set and
-recovering its parameters is the check that the model is identified and the priors are reasonable.
+recovering its parameters checks that the model is identified and the priors are reasonable.
 
 Build the graph and sample
 --------------------------

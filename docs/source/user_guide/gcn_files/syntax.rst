@@ -35,7 +35,7 @@ The household block of the RBC model uses every component an optimization block 
    :start-at: block HOUSEHOLD
    :end-before: block FIRM
 
-It represents the problem
+The block states the problem
 
 .. math::
 
@@ -46,7 +46,7 @@ It represents the problem
         & K_t = (1 - \delta) K_{t-1} + I_t
     \end{align}
 
-The seven components a block can hold are described in turn.
+A block can hold seven components.
 
 ``definitions``
     Helper equations that are substituted into the other equations of the same block and then discarded. They
@@ -121,7 +121,7 @@ by negating the objective, which is what gEcon requires:
    :start-at: block FIRM
    :end-before: block TECHNOLOGY_SHOCKS
 
-The ``@minimize`` tag is the clearer alternative. gEconpy negates the objective internally before forming the
+The ``@minimize`` tag is clearer. gEconpy negates the objective internally before forming the
 Lagrangian, so the first-order conditions are those of the minimization program, and the variable keeps a positive
 steady state that can be log-linearized:
 
@@ -164,12 +164,12 @@ and parsing fails. The RBC household calibration attaches a prior to each of its
 
 Priors are `preliz <https://preliz.readthedocs.io/en/latest/>`_ distributions, written with preliz's names and
 parameter names, for example ``Normal(mu=1.5, sigma=0.1)`` or ``Gamma(alpha=2, beta=1)``. Every distribution in
-preliz's gallery is accepted. Four wrappers modify a distribution: ``maxent(dist, lower=, upper=, mass=)`` picks the
+preliz's gallery is accepted. Four wrappers modify a distribution. ``maxent(dist, lower=, upper=, mass=)`` picks the
 distribution's parameters so that ``mass`` of its probability lies between the bounds, which is how the RBC model
-writes its priors; ``Truncated(dist, lower=, upper=)`` and ``Censored(dist, lower=, upper=)`` bound a
-distribution's support; and ``Hurdle(dist, psi=)`` mixes it with a point mass at zero.
+writes its priors. ``Truncated(dist, lower=, upper=)`` and ``Censored(dist, lower=, upper=)`` bound a
+distribution's support. ``Hurdle(dist, psi=)`` mixes it with a point mass at zero.
 
-**A calibrating equation.** Instead of a value, give a steady-state relationship the parameter must satisfy, followed
+**A calibrating equation.** Give a steady-state relationship the parameter must satisfy, followed
 by ``->`` and the parameter name. gEconpy solves for the parameter together with the steady state:
 
 .. code-block:: text
@@ -231,7 +231,7 @@ model smaller before it is solved. The RBC model removes the two objective value
 
 ``assumptions`` declares sympy assumptions for named variables and parameters, grouped by assumption. The assumptions
 gEconpy accepts are ``positive``, ``negative``, ``nonpositive``, ``nonnegative``, ``real``, ``integer``, ``finite``,
-``rational`` and ``irrational``. A ``positive`` declaration is what lets gEconpy simplify a power of the variable or
+``rational`` and ``irrational``. A ``positive`` declaration lets gEconpy simplify a power of the variable or
 log-linearize it without a sign check:
 
 .. literalinclude:: ../../../../tests/_resources/test_gcns/open_rbc.gcn
@@ -264,9 +264,9 @@ and differentiates it with respect to each control:
         & \frac{\partial \mathcal{L}}{\partial K_t} = 0 \Rightarrow -q_t + \beta \mathbb{E} \left [ \lambda_{t+1} r_{t+1} + q_{t+1} (1 - \delta) \right ] = 0
     \end{align}
 
-Internally, the substitutions from ``definitions`` are made first, then the Lagrangian is built as the objective's
-right-hand side minus each multiplier times its constraint written as ``lhs - rhs``. An objective tagged
-``@minimize`` is negated first. The derivative with respect to a control is taken through time using
+Internally, gEconpy makes the substitutions from ``definitions`` first, then builds the Lagrangian as the objective's
+right-hand side minus each multiplier times its constraint written as ``lhs - rhs``. It negates an objective tagged
+``@minimize`` before that step. The derivative with respect to a control is taken through time using
 :class:`~gEconpy.classes.time_aware_symbol.TimeAwareSymbol`: for a control :math:`x_t` the total derivative is
 :math:`\partial \mathcal{L}_t / \partial x_t + \beta \, \partial \mathcal{L}_{t+1} / \partial x_t + \beta^2 \,
 \partial \mathcal{L}_{t+2} / \partial x_t + \ldots`, and the sum stops at the first term that is identically zero.

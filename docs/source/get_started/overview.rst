@@ -3,7 +3,7 @@ Package Overview
 
 gEconpy takes a DSGE model written in a GCN file and turns it into a :class:`~gEconpy.model.model.Model` object that
 can find its own steady state, be solved by perturbation or under perfect foresight, be simulated, and be estimated
-with PyMC. This page names the pieces. The user guide and the example gallery show them in use.
+with PyMC. The user guide and the example gallery show these pieces in use.
 
 A GCN file
 ----------
@@ -31,7 +31,7 @@ policy function by cycle reduction or gensys. :func:`~gEconpy.model.simulate.imp
 :func:`~gEconpy.model.simulate.simulate` use that solution, and the functions in
 :doc:`gEconpy.model.statistics </api/gEconpy.model.statistics>` compute stationary covariances, autocorrelations, and solvability diagnostics.
 :func:`~gEconpy.model.perfect_foresight.solve.solve_perfect_foresight` solves the nonlinear model for a known shock
-path, with no linearization.
+path without linearizing it.
 
 Estimation
 ----------
