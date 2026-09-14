@@ -4,7 +4,7 @@ from sympy.core.cache import cacheit
 
 # Domain defaults injected into every parsed Symbol unless the user's ``assumptions`` block overrides them.
 # ``real``: every DSGE quantity (variable, parameter, shock, multiplier) is real-valued. ``finite``: every DSGE
-# quantity is finite — no extended-real ±infinity. Together these give sympy enough type information to apply many
+# quantity is finite -- no extended-real +/-infinity. Together these give sympy enough type information to apply
 # simplifications it would otherwise refuse on bare Symbols. ``positive``, ``nonzero``, ``integer`` are intentionally
 # NOT defaulted: those are domain-specific (e.g. Lagrange multipliers can be negative, shocks are zero in steady
 # state) and stay opt-in via the ``assumptions`` block.
@@ -12,7 +12,19 @@ DEFAULT_ASSUMPTIONS: dict[str, bool] = {"real": True, "finite": True}
 
 
 def merge_assumptions(user_assumptions: dict[str, bool] | None) -> dict[str, bool]:
-    """Merge ``DEFAULT_ASSUMPTIONS`` with user-declared assumptions. User values win on conflict."""
+    """
+    Merge ``DEFAULT_ASSUMPTIONS`` with user-declared assumptions.
+
+    Parameters
+    ----------
+    user_assumptions : dict mapping str to bool, optional
+        Assumptions declared by the user. Defaults to no assumptions.
+
+    Returns
+    -------
+    assumptions : dict mapping str to bool
+        The merged assumptions. User values win on conflict.
+    """
     return {**DEFAULT_ASSUMPTIONS, **(user_assumptions or {})}
 
 
@@ -23,6 +35,15 @@ class TimeAwareSymbol(sp.Symbol):
     A TimeAwareSymbol is identical to a :class:`~sympy.core.symbol.Symbol` in all respects, except that it has a
     time index property that is used when determining equality and hashability. Two symbols with the same name,
     assumptions, and time index evaluate to equal.
+
+    Parameters
+    ----------
+    name : str
+        Base name of the symbol, without any time index.
+    time_index : int or str
+        Time index of the symbol. Use ``"ss"`` for the steady state.
+    **assumptions
+        Sympy assumptions to attach to the symbol.
 
     Examples
     --------
@@ -104,11 +125,25 @@ class TimeAwareSymbol(sp.Symbol):
         )
 
     def step_forward(self):
-        """Increment the time index by one."""
+        """
+        Increment the time index by one.
+
+        Returns
+        -------
+        symbol : TimeAwareSymbol
+            A new symbol with the same base name and assumptions, one period later.
+        """
         return TimeAwareSymbol(self.base_name, self.time_index + 1, **self.assumptions0)
 
     def step_backward(self):
-        """Decrement the time index by one."""
+        """
+        Decrement the time index by one.
+
+        Returns
+        -------
+        symbol : TimeAwareSymbol
+            A new symbol with the same base name and assumptions, one period earlier.
+        """
         return TimeAwareSymbol(self.base_name, self.time_index - 1, **self.assumptions0)
 
     def to_ss(self):
@@ -116,11 +151,23 @@ class TimeAwareSymbol(sp.Symbol):
         Set the time index to steady state.
 
         Once in the steady state, :meth:`step_forward` and :meth:`step_backward` will not change the time index.
+
+        Returns
+        -------
+        symbol : TimeAwareSymbol
+            A new symbol with the same base name and assumptions, at the steady state.
         """
         return TimeAwareSymbol(self.base_name, "ss", **self.assumptions0)
 
     def exit_ss(self):
-        """Set the time index to zero if in the steady state, otherwise do nothing."""
+        """
+        Set the time index to zero if in the steady state, otherwise do nothing.
+
+        Returns
+        -------
+        symbol : TimeAwareSymbol
+            A new symbol at time index zero, or this symbol if it is not at the steady state.
+        """
         return TimeAwareSymbol(self.base_name, 0, **self.assumptions0) if self.time_index == "ss" else self
 
     def set_t(self, t):
@@ -129,8 +176,18 @@ class TimeAwareSymbol(sp.Symbol):
 
         Parameters
         ----------
-        t: int | str
-            The time index to set. If str, must be "ss" .
+        t : int or str
+            The time index to set. A string must be ``"ss"``.
+
+        Returns
+        -------
+        symbol : TimeAwareSymbol
+            A new symbol with the same base name and assumptions, at the requested time index.
+
+        Raises
+        ------
+        ValueError
+            If ``t`` is a string other than ``"ss"``.
         """
         if isinstance(t, str) and t != "ss":
             raise ValueError("Time index must be an integer or 'ss'.")

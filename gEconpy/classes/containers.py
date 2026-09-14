@@ -11,6 +11,25 @@ SAFE_STRING_TO_INDEX_DICT = {"ss": "ss", "tp1": 1, "tm1": -1, "t": 0}
 
 
 def safe_string_to_sympy(s, assumptions=None):
+    """
+    Convert a string to a symbol, using a trailing time suffix to decide which kind of symbol to make.
+
+    A name ending in ``_t``, ``_tp1``, ``_tm1`` or ``_ss`` becomes a
+    :class:`~gEconpy.classes.time_aware_symbol.TimeAwareSymbol` with the matching time index. Any other name
+    becomes a plain :class:`~sympy.core.symbol.Symbol`.
+
+    Parameters
+    ----------
+    s : str or sp.Symbol
+        Name to convert. A symbol is returned unchanged.
+    assumptions : dict mapping str to dict, optional
+        Sympy assumptions to attach, keyed by symbol name. Defaults to no assumptions.
+
+    Returns
+    -------
+    symbol : sp.Symbol
+        The converted symbol.
+    """
     if isinstance(s, sp.Symbol):
         return s
 
@@ -28,12 +47,44 @@ def safe_string_to_sympy(s, assumptions=None):
 
 
 def symbol_to_string(symbol: str | sp.Symbol):
+    """
+    Convert a symbol to its name, returning a string unchanged.
+
+    Parameters
+    ----------
+    symbol : str or sp.Symbol
+        Symbol to convert.
+
+    Returns
+    -------
+    name : str
+        The symbol name. Time aware symbols return their safe name, with ``+`` and ``-`` replaced by ``p`` and ``m``.
+    """
     if isinstance(symbol, str):
         return symbol
     return symbol.safe_name if isinstance(symbol, TimeAwareSymbol) else symbol.name
 
 
 def string_keys_to_sympy(d, assumptions=None, is_variable=None):
+    """
+    Convert the string keys of a dictionary to symbols, leaving the values alone.
+
+    Parameters
+    ----------
+    d : dict
+        Dictionary with string or symbol keys.
+    assumptions : dict mapping str to dict, optional
+        Sympy assumptions to attach, keyed by symbol name. Defaults to no assumptions.
+    is_variable : dict mapping str to bool, optional
+        Marks which names are model variables, and so eligible to become time aware symbols. Names absent from
+        this mapping are treated as variables.
+
+    Returns
+    -------
+    result : dict
+        Dictionary with symbol keys.
+    """
+
     def has_time_suffix(s):
         suffixes = ["_t", "_tp1", "_tm1", "_ss"]
         return any(s.endswith(suffix) for suffix in suffixes)
@@ -58,6 +109,19 @@ def string_keys_to_sympy(d, assumptions=None, is_variable=None):
 
 
 def sympy_keys_to_strings(d):
+    """
+    Convert the symbol keys of a dictionary to strings, leaving the values alone.
+
+    Parameters
+    ----------
+    d : dict
+        Dictionary with symbol keys.
+
+    Returns
+    -------
+    result : dict mapping str to object
+        Dictionary with string keys.
+    """
     result = {}
     for key in d:
         result[symbol_to_string(key)] = d[key]
@@ -66,6 +130,19 @@ def sympy_keys_to_strings(d):
 
 
 def sympy_number_values_to_floats(d: dict[sp.Symbol, Any]):
+    """
+    Replace sympy numeric values with Python floats or complex numbers, in place.
+
+    Parameters
+    ----------
+    d : dict
+        Dictionary whose values may be sympy numbers.
+
+    Returns
+    -------
+    d : dict
+        The same dictionary, with numeric values converted.
+    """
     for var, value in d.items():
         if isinstance(value, sp.core.Number):
             d[var] = float(value)
@@ -75,6 +152,19 @@ def sympy_number_values_to_floats(d: dict[sp.Symbol, Any]):
 
 
 def float_values_to_sympy_float(d: dict[sp.Symbol, Any]):
+    """
+    Replace Python numeric values with sympy numbers, in place.
+
+    Parameters
+    ----------
+    d : dict
+        Dictionary whose values may be Python numbers.
+
+    Returns
+    -------
+    d : dict
+        The same dictionary, with numeric values converted.
+    """
     for var, value in d.items():
         if isinstance(value, float | int):
             d[var] = sp.Float(value)
@@ -85,6 +175,19 @@ def float_values_to_sympy_float(d: dict[sp.Symbol, Any]):
 
 
 def sort_dictionary(d):
+    """
+    Return a new dictionary with the same items, ordered by sorted key.
+
+    Parameters
+    ----------
+    d : dict
+        Dictionary to sort. Keys must be mutually comparable.
+
+    Returns
+    -------
+    result : dict
+        The sorted dictionary.
+    """
     result = {}
     sorted_keys = sorted(d.keys())
     for key in sorted_keys:
@@ -107,6 +210,26 @@ def _unpickle_symbol_dictionary(cls, items, is_sympy, assumptions, is_variable, 
 
 
 class SymbolDictionary(dict):
+    """
+    Dictionary whose keys are either all strings or all sympy symbols, and which converts between the two.
+
+    The dictionary remembers the assumptions of every sympy key it stores, so converting to string keys with
+    :meth:`to_string` and back with :meth:`to_sympy` returns symbols carrying the same assumptions. String keys and
+    sympy keys cannot be mixed.
+
+    Parameters
+    ----------
+    *args
+        Positional arguments forwarded to :class:`dict`.
+    **kwargs
+        Keyword arguments forwarded to :class:`dict`.
+
+    Raises
+    ------
+    KeyError
+        If the keys are not all strings or all sympy symbols.
+    """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -226,10 +349,17 @@ class SymbolDictionary(dict):
 
     def update(self, other=None, **kwargs):
         """
-        Update the dictionary with key-value pairs from other or kwargs.
+        Update the dictionary with the key-value pairs of another mapping.
 
-        Unlike dict.update, this also merges _assumptions and _is_variable
-        metadata from other SymbolDictionary instances.
+        Unlike :meth:`dict.update`, this also merges the stored assumptions and variable flags when the other
+        mapping is a SymbolDictionary.
+
+        Parameters
+        ----------
+        other : dict, optional
+            Mapping to take key-value pairs from. Defaults to an empty mapping.
+        **kwargs
+            Additional key-value pairs to add.
         """
         if other is None:
             other = {}
@@ -361,6 +491,23 @@ class SymbolDictionary(dict):
 
 
 class SteadyStateResults(SymbolDictionary):
+    """
+    Steady-state values of the model variables, keyed by variable.
+
+    Parameters
+    ----------
+    *args
+        Positional arguments forwarded to :class:`~gEconpy.classes.containers.SymbolDictionary`.
+    **kwargs
+        Keyword arguments forwarded to :class:`~gEconpy.classes.containers.SymbolDictionary`.
+
+    Attributes
+    ----------
+    success : bool
+        Whether the steady state solver reported success. Set to False when the results are created, and updated
+        by the solver.
+    """
+
     def __init__(self, *args, **kwargs):
         self.success = False
         super().__init__(*args, **kwargs)

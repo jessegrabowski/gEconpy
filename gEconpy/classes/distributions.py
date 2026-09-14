@@ -9,6 +9,19 @@ class CompositeDistribution:
     A distribution with hyper-parameters that are themselves distributions.
 
     Used for shock distributions where variance parameters have priors.
+
+    Parameters
+    ----------
+    name : str
+        Name of the variable the distribution belongs to.
+    dist_name : str
+        Name of the distribution family, as written in the GCN file.
+    fixed_params : dict mapping str to float
+        Parameters of the distribution that are given a fixed numeric value.
+    hyper_param_dict : dict mapping str to Distribution
+        Prior distribution for each parameter that is itself estimated, keyed by parameter name.
+    param_name_to_hyper_name : dict mapping str to str
+        Maps each parameter name in ``hyper_param_dict`` to the name its prior is registered under.
     """
 
     def __init__(
