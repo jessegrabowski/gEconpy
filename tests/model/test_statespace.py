@@ -135,6 +135,7 @@ def test_constant_params_excluded_from_prior_samples():
 
     true_params, data, _ = data_from_prior(ss_mod, pm_mod, n_samples=5, random_seed=17031)
 
+    assert isinstance(true_params, xr.Dataset)
     assert data.shape[1] == 3
     assert "beta" not in true_params.data_vars
     assert "delta" not in true_params.data_vars
