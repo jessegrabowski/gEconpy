@@ -6,7 +6,7 @@ dependencies:
   # Base dependencies
   - numpy
   - numba
-  - scipy
+  - scipy<1.18.1  # conda-forge's 1.18.1 build breaks pytensor's numba cython_special lookups
   - sympy>=1.14.0
   - pyparsing
   - pandas

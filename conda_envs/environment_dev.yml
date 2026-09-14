@@ -15,7 +15,7 @@ dependencies:
   - pandas
   - pyparsing
   - preliz>=0.27.0
-  - scipy
+  - scipy<1.18.1  # conda-forge's 1.18.1 build breaks pytensor's numba cython_special lookups
   - setuptools
   - statsmodels
   - sympy>=1.14.0
