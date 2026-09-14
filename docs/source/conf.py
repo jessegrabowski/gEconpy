@@ -42,6 +42,7 @@ extensions = [
     "sphinx_codeautolink",
     "generate_gallery",
     "sphinx.ext.autodoc",
+    "sphinx.ext.doctest",
     "numpydoc",
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.autosummary",
