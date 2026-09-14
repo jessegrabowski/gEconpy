@@ -22,7 +22,7 @@ gEconpy is available on PyPi, and can be installed with pip:
     pip install gEconpy
 
 
-For more detailed installation instructions, see the :doc:`installation guide <install>`.
+For more detailed installation instructions, see the :doc:`installation guide <get_started/install>`.
 
 
 Citation
