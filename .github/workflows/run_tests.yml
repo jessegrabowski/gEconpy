@@ -148,6 +148,21 @@ jobs:
           environments: docs
           cache: true
 
+      # A green build does not imply current pages: the API pages are generated from the import graph,
+      # so a module added or a helper made public goes unmentioned until docs-api is re-run.
+      - name: Check the API pages match the source
+        run: |
+          pixi run -e docs docs-api
+          if ! git diff --exit-code docs/source/api/; then
+            echo "::error::docs/source/api is out of date. Run 'pixi run -e docs docs-api' and commit the result."
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain docs/source/api/)" ]; then
+            git status --porcelain docs/source/api/
+            echo "::error::docs-api produced new pages. Run it locally and commit them."
+            exit 1
+          fi
+
       # docs-build carries -W, so a broken reference or an orphaned page fails here rather than
       # shipping a page with a hole in it. The same command runs locally.
       - name: Build the docs
