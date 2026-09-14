@@ -17,6 +17,21 @@ _log = logging.getLogger(__name__)
 
 
 def flatten_list(items, result_list=None):
+    """
+    Flatten an arbitrarily nested list into a single flat list.
+
+    Parameters
+    ----------
+    items : list or object
+        Nested list to flatten. A non-list input is treated as a single element.
+    result_list : list, optional
+        List to append results to. A new list is created by default.
+
+    Returns
+    -------
+    result_list : list
+        Flat list of the non-list leaves of ``items``.
+    """
     if result_list is None:
         result_list = []
 
@@ -33,6 +48,19 @@ def flatten_list(items, result_list=None):
 
 
 def set_equality_equals_zero(eq):
+    """
+    Rewrite a sympy equality as an expression equal to zero.
+
+    Parameters
+    ----------
+    eq : sp.Expr
+        Expression to rewrite. Non-equalities are returned unchanged.
+
+    Returns
+    -------
+    eq : sp.Expr
+        ``eq.rhs - eq.lhs`` if ``eq`` is an equality, otherwise ``eq``.
+    """
     if not isinstance(eq, sp.Eq):
         return eq
 
@@ -40,6 +68,21 @@ def set_equality_equals_zero(eq):
 
 
 def eq_to_ss(eq: sp.Expr, shocks: list[TimeAwareSymbol] | None = None):
+    """
+    Replace every time-aware symbol in an equation by its steady-state counterpart.
+
+    Parameters
+    ----------
+    eq : sp.Expr
+        Equation to convert.
+    shocks : list of TimeAwareSymbol, optional
+        Shocks whose steady-state values are set to zero. No shocks are zeroed by default.
+
+    Returns
+    -------
+    eq : sp.Expr
+        Equation written entirely in steady-state symbols.
+    """
     shock_subs = {} if shocks is None else {x.to_ss(): 0.0 for x in shocks}
 
     var_list = [x for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
@@ -49,13 +92,38 @@ def eq_to_ss(eq: sp.Expr, shocks: list[TimeAwareSymbol] | None = None):
 
 
 def safe_to_ss(x: sp.Symbol):
-    """Convert ``x`` to steady-state if it is TimeAware, or return it unchanged otherwise."""
+    """
+    Convert ``x`` to steady-state if it is TimeAware, or return it unchanged otherwise.
+
+    Parameters
+    ----------
+    x : sp.Symbol
+        Symbol to convert.
+
+    Returns
+    -------
+    x : sp.Symbol
+        Steady-state symbol if ``x`` is a TimeAwareSymbol, otherwise ``x`` itself.
+    """
     if isinstance(x, TimeAwareSymbol):
         return x.to_ss()
     return x
 
 
 def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]):
+    """
+    Expand a substitution dictionary to cover time indices t-1, t, t+1, and the steady state.
+
+    Parameters
+    ----------
+    sub_dict : dict mapping TimeAwareSymbol to TimeAwareSymbol
+        Substitutions defined at a single time index.
+
+    Returns
+    -------
+    result : dict mapping TimeAwareSymbol to TimeAwareSymbol
+        Substitutions repeated at every time index. Non-time-aware values are reused unchanged.
+    """
     result = {}
     for lhs, rhs in sub_dict.items():
         for t in [-1, 0, 1, "ss"]:
@@ -65,6 +133,19 @@ def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]):
 
 
 def step_equation_forward(eq):
+    """
+    Advance the time index of every time-aware symbol in an equation by one period.
+
+    Parameters
+    ----------
+    eq : sp.Expr
+        Equation to step forward.
+
+    Returns
+    -------
+    eq : sp.Expr
+        Equation with all time indices incremented.
+    """
     to_step = [variable for variable in set(eq.atoms()) if hasattr(variable, "step_forward")]
 
     for variable in sorted(to_step, key=lambda x: x.time_index, reverse=True):
@@ -74,6 +155,19 @@ def step_equation_forward(eq):
 
 
 def step_equation_backward(eq):
+    """
+    Move the time index of every time-aware symbol in an equation back by one period.
+
+    Parameters
+    ----------
+    eq : sp.Expr
+        Equation to step backward.
+
+    Returns
+    -------
+    eq : sp.Expr
+        Equation with all time indices decremented.
+    """
     to_step = [variable for variable in set(eq.atoms()) if hasattr(variable, "step_backward")]
 
     for variable in sorted(to_step, key=lambda x: x.time_index, reverse=False):
@@ -119,6 +213,21 @@ def diff_through_time(eq, dx, discount_factor=1):
 
 
 def substitute_all_equations(eqs, *sub_dicts):
+    """
+    Apply one or more substitution dictionaries to a collection of equations.
+
+    Parameters
+    ----------
+    eqs : list of sp.Expr or dict
+        Equations to substitute into. Dictionary values that are plain numbers are left unchanged.
+    *sub_dicts : dict
+        Substitution dictionaries, merged left to right before use. Keys may be strings or sympy symbols.
+
+    Returns
+    -------
+    eqs : list of sp.Expr or dict
+        Equations after substitution, in the same container type as the input.
+    """
     if len(sub_dicts) > 1:
         merged_dict = merge_dictionaries(*sub_dicts)
         sub_dict = string_keys_to_sympy(merged_dict)
@@ -134,6 +243,7 @@ def substitute_all_equations(eqs, *sub_dicts):
 
 
 def is_variable(x):
+    """Return True if ``x`` is a TimeAwareSymbol."""
     return isinstance(x, TimeAwareSymbol)
 
 
@@ -141,7 +251,15 @@ def is_number(x: str) -> bool:
     """
     Check if string x is a numeric string (int or float).
 
-    Non-string inputs return False, even if they are numeric types.
+    Parameters
+    ----------
+    x : str
+        Value to check. Non-string inputs return False, even if they are numeric types.
+
+    Returns
+    -------
+    is_number : bool
+        True if ``x`` is a string that parses as a float.
     """
     if not isinstance(x, str):
         return False
@@ -158,6 +276,21 @@ def is_number(x: str) -> bool:
 
 
 def unpack_keys_and_values(d):
+    """
+    Split a dictionary into parallel lists of keys and values.
+
+    Parameters
+    ----------
+    d : dict
+        Dictionary to unpack.
+
+    Returns
+    -------
+    keys : list
+        Dictionary keys, in insertion order.
+    values : list
+        Dictionary values, in the same order as ``keys``.
+    """
     keys = list(d.keys())
     values = list(d.values())
 
@@ -165,6 +298,19 @@ def unpack_keys_and_values(d):
 
 
 def merge_dictionaries(*dicts):
+    """
+    Merge dictionaries into a single dictionary.
+
+    Parameters
+    ----------
+    *dicts : dict
+        Dictionaries to merge. Later dictionaries overwrite keys set by earlier ones.
+
+    Returns
+    -------
+    result : dict
+        Merged dictionary.
+    """
     if not isinstance(dicts, list | tuple):
         return dicts
 
@@ -175,6 +321,19 @@ def merge_dictionaries(*dicts):
 
 
 def make_all_var_time_combos(var_list):
+    """
+    List every variable at time indices t-1, t, t+1, and the steady state.
+
+    Parameters
+    ----------
+    var_list : list of TimeAwareSymbol
+        Variables to expand.
+
+    Returns
+    -------
+    result : list of TimeAwareSymbol
+        Each input variable repeated once per time index.
+    """
     result = []
     for x in var_list:
         result.extend([x.set_t(-1), x.set_t(0), x.set_t(1), x.set_t("ss")])
@@ -190,6 +349,33 @@ def postprocess_optimizer_res(
     tol: float = 1e-6,
     verbose: bool = True,
 ) -> SteadyStateResults:
+    """
+    Check an optimizer result against residual and gradient tolerances and report the outcome.
+
+    The optimizer sometimes reports failure at a point that satisfies the tolerances, so success is granted if either
+    the optimizer or the numeric check accepts the solution.
+
+    Parameters
+    ----------
+    res : OptimizeResult
+        Result returned by the optimizer.
+    res_dict : SteadyStateResults
+        Steady-state values found by the optimizer, used to evaluate the residuals and the jacobian.
+    f_resid : callable
+        Function returning the system residuals given the steady-state values as keyword arguments.
+    f_jac : callable
+        Function returning the system jacobian given the steady-state values as keyword arguments.
+    tol : float, optional
+        Threshold the sum of squared residuals, maximum absolute error, gradient L2 norm, and maximum absolute
+        gradient must each fall below. Default 1e-6.
+    verbose : bool, optional
+        If True, log a summary of the solution diagnostics. Default True.
+
+    Returns
+    -------
+    res_dict : SteadyStateResults
+        The input results, with ``success`` updated.
+    """
     success = res.success
 
     f_x = np.r_[[x.ravel() for x in f_resid(**res_dict)]]
@@ -243,12 +429,12 @@ def get_name(x: str | sp.Symbol, base_name=False) -> str:
     ----------
     x : str, or sp.Symbol
         The object whose name is to be returned. If str, x is directly returned.
-    base_name: bool
+    base_name : bool
         If True, return TimeAwareSymbol base name (the name without any time suffix)
 
     Returns
     -------
-    name: str
+    name : str
         The name of the object.
     """
     if isinstance(x, str):
@@ -270,7 +456,7 @@ def flatten_substitution_dict(
 
     Walks the dependency DAG of ``sub_dict`` in topological order, substituting each
     RHS through its already-resolved predecessors exactly once. After the pass, any
-    ``expr.subs(flat_dict)`` call converges in a single sweep — much faster than
+    ``expr.subs(flat_dict)`` call converges in a single sweep, which is much faster than
     iterating substitutions to a fixed point when the dict has many cross-references
     (e.g. a STEADY_STATE block whose hints chain through each other).
 
