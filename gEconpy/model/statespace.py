@@ -1432,7 +1432,7 @@ def data_from_prior(
 
     idx = rng.choice(prior_idata.prior.coords["draw"].values)
 
-    true_params = prior_idata.prior.isel(chain=0, draw=idx)
+    true_params = prior_idata.prior.isel(chain=0, draw=idx).to_dataset()
     true_params["param_idx"] = idx
 
     data = prior_trajectories.isel(chain=0, draw=idx).prior_observed
