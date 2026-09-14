@@ -57,7 +57,6 @@ exclude_patterns = [
     "_build",
     "**/.ipynb_checkpoints",
     "examples/GCN Files",
-    "*/autosummary/*.rst",
     "Thumbs.db",
     ".DS_Store",
 ]
@@ -115,6 +114,7 @@ master_doc = "index"
 # Don't auto-generate summary for class members.
 autosummary_generate = True
 autodoc_typehints = "none"
+add_module_names = False
 autoclass_content = "class"
 
 numpydoc_show_class_members = False

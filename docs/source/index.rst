@@ -50,6 +50,6 @@ If you use gEconpy in your research, please cite the package using the following
    get_started/index
    user_guide/index
    examples/gallery
-   api
+   api/index
    dev/index
    release/index

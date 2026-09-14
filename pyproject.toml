@@ -257,6 +257,7 @@ lines-between-types = 1
 ]
 
 'scripts/regenerate_expected_gcn_errors.py' = ["T201"]
+'docs/generate_api.py' = ["T201"]
 'tests/parser/test_expected_errors.py' = ["T201"]
 
 'docs/source/examples/*/*.ipynb' = [
@@ -311,3 +312,4 @@ py313 = { features = ["dev", "py313"] }
 test = "python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:coverage.xml --no-cov-on-fail --cov-report term --durations=50"
 lint = "pre-commit run --all-files"
 docs-build = { cmd = "python -m sphinx -W --keep-going -b html source build/html", cwd = "docs" }
+docs-api = "python docs/generate_api.py"
