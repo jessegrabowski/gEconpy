@@ -203,6 +203,7 @@ class CycleReductionWrapper(Op):
         return [(n, n)]
 
     def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
+        """Solve for the policy matrix by cycle reduction."""
         A, B, C = inputs
         T, _res, _result, _log_norm = cycle_reduction_numpy(A, B, C, max_iter=self.max_iter, tol=self.tol)
 

@@ -29,6 +29,7 @@ class RealEig(Op):
         return Apply(self, [M], outputs)
 
     def perform(self, _node, inputs, outputs):
+        """Compute the real and imaginary parts of the eigenvalues of M, sorted by modulus."""
         (M,) = inputs
         eigvals = np.linalg.eig(M)[0]
         idx = np.argsort(np.abs(eigvals))

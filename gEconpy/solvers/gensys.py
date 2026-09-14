@@ -655,6 +655,7 @@ class GensysWrapper(Op):
         return [(n, n), ()]
 
     def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
+        """Solve for the policy matrix with gensys and flag whether the solution is unique and stable."""
         A, B, C, D = inputs
         G_1, eu = solve_policy_function_with_gensys(A, B, C, D, tol=self.tol, return_all_matrices=False)
 

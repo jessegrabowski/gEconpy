@@ -175,6 +175,7 @@ class SymbolDictionary(dict):
         return d_copy
 
     def copy(self) -> "SymbolDictionary":
+        """Return a shallow copy that keeps the sympy flag and the assumptions."""
         new_d = SymbolDictionary(super().copy())
         new_d.is_sympy = self.is_sympy
         new_d._assumptions = self._assumptions
