@@ -165,12 +165,15 @@ select = [
   "RUF",              # Ruff-specific
   "D",                # pydocstyle
   "C90",              # mccabe complexity
+  "T10",              # flake8-debugger
+  "T20",              # flake8-print
 ]
 ignore = [
     "RUF001", # Allow Greek letters in strings
     "RUF002", # Allow Greek letters in docstrings
     "RUF012", # Mutable class attributes without ClassVar
     "PLR0913", # Allow functions with many arguments
+    "PLR0917", # Allow functions with many positional arguments
     "PLR2004", # Allow magic numbers
     "TRY003", # Allow custom exception messages
 
@@ -190,6 +193,9 @@ allowed-confusables = ["×"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -252,8 +258,12 @@ lines-between-types = 1
     'ARG005'
 ]
 
+'scripts/regenerate_expected_gcn_errors.py' = ["T201"]
+'tests/parser/test_expected_errors.py' = ["T201"]
+
 'docs/source/examples/*/*.ipynb' = [
     'F821', # Notebooks uses direct assignment to globals, so ruff thinks variables are not declared
     'PLR2004', # Allow magic numbers in notebooks
-    'PTH113' # TODO: fix pathlib usage in notebooks
+    'PTH113', # TODO: fix pathlib usage in notebooks
+    'T201', # Notebooks print
 ]

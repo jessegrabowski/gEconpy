@@ -6,7 +6,7 @@ def matrix_to_dataframe(
     model,
     dim1: str | None = None,
     dim2: str | None = None,
-    round: None | int = None,
+    round: int | None = None,
 ) -> pd.DataFrame:
     """
     Convert a matrix to a DataFrame with variable names as columns and rows.
