@@ -54,7 +54,8 @@ autosectionlabel_prefix_document = True
 # directories to ignore when looking for source files.
 exclude_patterns = [
     "_build",
-    "**.ipynb_checkpoints",
+    "**/.ipynb_checkpoints",
+    "examples/GCN Files",
     "*/autosummary/*.rst",
     "Thumbs.db",
     ".DS_Store",
