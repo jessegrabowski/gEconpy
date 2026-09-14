@@ -27,9 +27,9 @@ class SparseDogleg:
     eta : float
         Minimum actual/predicted reduction ratio to accept a step.
     shrink_factor : float
-        Factor to shrink ``Δ`` on a rejected step.
+        Factor to shrink ``Delta`` on a rejected step.
     grow_factor : float
-        Factor to grow ``Δ`` on a very good step (``ρ > 0.75``).
+        Factor to grow ``Delta`` on a very good step (``rho > 0.75``).
     max_reject : int
         Maximum consecutive rejected steps before reporting failure.
     linear_solver : callable or None
@@ -51,6 +51,22 @@ class SparseDogleg:
             self.linear_solver = spsolve
 
     def init(self, fun: RootFunction, x0: np.ndarray, args: tuple) -> SolverState:
+        """Evaluate ``fun`` at ``x0`` and build the initial solver state.
+
+        Parameters
+        ----------
+        fun : callable
+            Fused residual and Jacobian function, called as ``fun(x, *args)``.
+        x0 : ndarray
+            Initial guess for the root.
+        args : tuple
+            Extra positional arguments passed to ``fun``.
+
+        Returns
+        -------
+        state : ~gEconpy.solvers.sparse_root.base.SolverState
+            State holding the initial point, residuals, Jacobian, merit value and evaluation counts.
+        """
         self._delta = self.delta0
         x = np.asarray(x0, dtype=np.float64).copy()
         res, jac = fun(x, *args)
@@ -99,7 +115,7 @@ class SparseDogleg:
             return (delta / p_c_norm) * p_c
 
         # Dogleg: interpolate between Cauchy and Newton
-        # Find τ such that ||p_c + τ (p_n - p_c)|| = delta
+        # Find tau such that ||p_c + tau (p_n - p_c)|| = delta
         diff = p_n - p_c
         dd = np.dot(diff, diff)
         cd = np.dot(p_c, diff)
@@ -109,6 +125,24 @@ class SparseDogleg:
         return p_c + tau * diff
 
     def step(self, fun: RootFunction, state: SolverState, args: tuple) -> tuple[SolverState, StepInfo]:
+        """Take one dogleg iteration from ``state``.
+
+        Parameters
+        ----------
+        fun : callable
+            Fused residual and Jacobian function, called as ``fun(x, *args)``.
+        state : ~gEconpy.solvers.sparse_root.base.SolverState
+            Current solver state.
+        args : tuple
+            Extra positional arguments passed to ``fun``.
+
+        Returns
+        -------
+        new_state : ~gEconpy.solvers.sparse_root.base.SolverState
+            State after the accepted step, or the unchanged input state when no step is accepted.
+        info : ~gEconpy.solvers.sparse_root.base.StepInfo
+            Whether a step was accepted, the step taken, and a failure message when it was not.
+        """
         J = state.jac
         r = state.res
         g = J.T @ r

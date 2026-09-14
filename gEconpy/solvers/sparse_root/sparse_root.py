@@ -64,7 +64,45 @@ def sparse_root(
     maxiter: int = DEFAULT_MAXITER,
     progressbar: bool = True,
 ) -> OptimizeResult:
-    """Find root of nonlinear system with sparse Jacobian."""
+    """Find a root of a nonlinear system whose Jacobian is sparse.
+
+    Parameters
+    ----------
+    fun : callable
+        Fused residual and Jacobian function, called as ``fun(x, *args)`` and returning a tuple of a dense
+        residual ndarray and a sparse Jacobian.
+    x0 : ndarray
+        Initial guess for the root.
+    solver : RootSolver, optional
+        Iteration strategy, implementing ``init`` and ``step``. Defaults to
+        :func:`~gEconpy.solvers.sparse_root.line_search.NewtonArmijo`.
+    args : tuple, optional
+        Extra positional arguments passed to ``fun``. Defaults to an empty tuple.
+    tol : float, optional
+        Tolerance used for both the residual and the step test when neither is given explicitly. Defaults to
+        1e-10.
+    f_tol : float, optional
+        Convergence tolerance on the maximum absolute residual. Defaults to ``tol``.
+    x_tol : float, optional
+        Convergence tolerance on the relative step size. Defaults to ``tol``.
+    maxiter : int, optional
+        Maximum number of solver iterations. Defaults to 1000.
+    progressbar : bool, optional
+        Whether to display a progress bar while iterating. Defaults to True.
+
+    Returns
+    -------
+    result : OptimizeResult
+        Result with fields ``x``, ``success``, ``message``, ``fun`` (final residuals), ``jac`` (final sparse
+        Jacobian), ``nit``, and ``nfev``.
+
+    Raises
+    ------
+    ValueError
+        If ``fun`` does not return a two-element tuple.
+    TypeError
+        If ``fun`` does not return a dense residual ndarray and a sparse Jacobian.
+    """
     if solver is None:
         solver = NewtonArmijo()
     if f_tol is None:

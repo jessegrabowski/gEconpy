@@ -9,7 +9,7 @@ from gEconpy.solvers.sparse_root.base import IterationStats, RootFunction, Solve
 def _steihaug_cg(JtJ: sp.spmatrix, g: np.ndarray, delta: float, max_cg_iter: int = 0) -> np.ndarray:
     """Steihaug-CG: truncated conjugate gradient on the trust region subproblem.
 
-    Approximately minimizes ``0.5 p^T H p + g^T p`` subject to ``||p|| ≤ delta``
+    Approximately minimizes ``0.5 p^T H p + g^T p`` subject to ``||p|| <= delta``
     where ``H = J^T J``.
 
     Returns the step ``p``.
@@ -30,7 +30,7 @@ def _steihaug_cg(JtJ: sp.spmatrix, g: np.ndarray, delta: float, max_cg_iter: int
         Hd = JtJ @ d
         dHd = np.dot(d, Hd)
 
-        # Negative curvature — go to trust region boundary along d
+        # Negative curvature -- go to trust region boundary along d
         if dHd <= 0:
             return _boundary_step(p, d, delta)
 
@@ -59,12 +59,12 @@ def _steihaug_cg(JtJ: sp.spmatrix, g: np.ndarray, delta: float, max_cg_iter: int
 
 
 def _boundary_step(p: np.ndarray, d: np.ndarray, delta: float) -> np.ndarray:
-    """Find τ ≥ 0 such that ||p + τ d|| = delta."""
+    """Find tau >= 0 such that ||p + tau d|| = delta."""
     pp = np.dot(p, p)
     pd = np.dot(p, d)
     dd = np.dot(d, d)
-    # Solve ||p + τ d||^2 = delta^2
-    # dd τ^2 + 2 pd τ + (pp - delta^2) = 0
+    # Solve ||p + tau d||^2 = delta^2
+    # dd tau^2 + 2 pd tau + (pp - delta^2) = 0
     discriminant = pd * pd - dd * (pp - delta * delta)
     tau = (-pd + np.sqrt(max(discriminant, 0.0))) / dd
     return p + tau * d
@@ -74,9 +74,9 @@ def _boundary_step(p: np.ndarray, d: np.ndarray, delta: float) -> np.ndarray:
 class GaussNewtonTrustRegion:
     """Gauss-Newton solver with trust region globalization via Steihaug-CG.
 
-    Solves ``min_p ||J p + r||^2`` subject to ``||p|| ≤ Δ`` using the
+    Solves ``min_p ||J p + r||^2`` subject to ``||p|| <= Delta`` using the
     Steihaug-CG method on the normal equations. Adjusts the trust region
-    radius ``Δ`` based on the actual-to-predicted reduction ratio.
+    radius ``Delta`` based on the actual-to-predicted reduction ratio.
 
     Parameters
     ----------
@@ -87,9 +87,9 @@ class GaussNewtonTrustRegion:
     eta : float
         Minimum actual/predicted reduction ratio to accept a step.
     shrink_factor : float
-        Factor to shrink ``Δ`` on a rejected step.
+        Factor to shrink ``Delta`` on a rejected step.
     grow_factor : float
-        Factor to grow ``Δ`` on a very good step (``ρ > 0.75``).
+        Factor to grow ``Delta`` on a very good step (``rho > 0.75``).
     max_reject : int
         Maximum consecutive rejected steps before reporting failure.
     """
@@ -104,12 +104,46 @@ class GaussNewtonTrustRegion:
     _delta: float = field(init=False, repr=False, default=0.0)
 
     def init(self, fun: RootFunction, x0: np.ndarray, args: tuple) -> SolverState:
+        """Evaluate ``fun`` at ``x0`` and build the initial solver state.
+
+        Parameters
+        ----------
+        fun : callable
+            Fused residual and Jacobian function, called as ``fun(x, *args)``.
+        x0 : ndarray
+            Initial guess for the root.
+        args : tuple
+            Extra positional arguments passed to ``fun``.
+
+        Returns
+        -------
+        state : ~gEconpy.solvers.sparse_root.base.SolverState
+            State holding the initial point, residuals, Jacobian, merit value and evaluation counts.
+        """
         self._delta = self.delta0
         x = np.asarray(x0, dtype=np.float64).copy()
         res, jac = fun(x, *args)
         return SolverState(x=x, res=res, jac=jac, phi=merit(res), stats=IterationStats(nfev=1, njev=1))
 
     def step(self, fun: RootFunction, state: SolverState, args: tuple) -> tuple[SolverState, StepInfo]:
+        """Take one trust region iteration from ``state``.
+
+        Parameters
+        ----------
+        fun : callable
+            Fused residual and Jacobian function, called as ``fun(x, *args)``.
+        state : ~gEconpy.solvers.sparse_root.base.SolverState
+            Current solver state.
+        args : tuple
+            Extra positional arguments passed to ``fun``.
+
+        Returns
+        -------
+        new_state : ~gEconpy.solvers.sparse_root.base.SolverState
+            State after the accepted step, or the unchanged input state when no step is accepted.
+        info : ~gEconpy.solvers.sparse_root.base.StepInfo
+            Whether a step was accepted, the step taken, and a failure message when it was not.
+        """
         J = state.jac
         r = state.res
         JtJ = J.T @ J
@@ -131,7 +165,7 @@ class GaussNewtonTrustRegion:
             pred = -(float(g @ p) + 0.5 * float(Jp @ Jp))
 
             if pred <= 0:
-                # Model predicts no improvement — shrink trust region
+                # Model predicts no improvement -- shrink trust region
                 self._delta *= self.shrink_factor
                 consecutive_rejects += 1
                 if consecutive_rejects >= self.max_reject:
@@ -157,7 +191,7 @@ class GaussNewtonTrustRegion:
                     stats=state.stats.update(nit=1, nfev=nfev, njev=nfev, nsolve=1, nreject=consecutive_rejects),
                 )
                 return new_state, StepInfo(accepted=True, step=p)
-            # Reject — shrink
+            # Reject -- shrink
             self._delta *= self.shrink_factor
             consecutive_rejects += 1
             if consecutive_rejects >= self.max_reject:

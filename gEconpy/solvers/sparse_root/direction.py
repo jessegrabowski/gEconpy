@@ -21,6 +21,17 @@ class DirectionStrategy(Protocol):
 
 @dataclass
 class NewtonDirection:
+    """Direction strategy that solves the Newton system with the current Jacobian.
+
+    Solves ``J dx = -r`` at every call. If the solve fails or returns non-finite values, the strategy falls
+    back to the steepest descent direction ``-J^T r``.
+
+    Parameters
+    ----------
+    linear_solver : callable or None
+        Sparse linear solver. Defaults to ``scipy.sparse.linalg.spsolve``.
+    """
+
     linear_solver: Callable | None = field(default=None)
 
     def __post_init__(self):
@@ -33,6 +44,22 @@ class NewtonDirection:
         res: np.ndarray,
         jac: sp.spmatrix,
     ) -> DirectionProposal:
+        """Compute a search direction at the current iterate.
+
+        Parameters
+        ----------
+        x : ndarray
+            Current iterate. Unused, accepted for interface compatibility.
+        res : ndarray
+            Residuals at ``x``.
+        jac : ``sparse matrix``
+            Jacobian at ``x``.
+
+        Returns
+        -------
+        proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
+            Direction, its slope against the current residuals, and a label describing how it was computed.
+        """
         try:
             dx = self.linear_solver(jac, -res)
             if not np.all(np.isfinite(dx)):
@@ -58,7 +85,7 @@ class ChordDirection:
 
     Instead of solving with the current Jacobian every step, the Chord method
     solves with a cached Jacobian, refreshing it every ``recompute_every`` calls.
-    The residual is always current — only the linear solve reuses old data.
+    The residual is always current, so only the linear solve reuses old data.
 
     Parameters
     ----------
@@ -88,6 +115,22 @@ class ChordDirection:
         res: np.ndarray,
         jac: sp.spmatrix,
     ) -> DirectionProposal:
+        """Compute a search direction at the current iterate.
+
+        Parameters
+        ----------
+        x : ndarray
+            Current iterate. Unused, accepted for interface compatibility.
+        res : ndarray
+            Residuals at ``x``.
+        jac : ``sparse matrix``
+            Jacobian at ``x``.
+
+        Returns
+        -------
+        proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
+            Direction, its slope against the current residuals, and a label describing how it was computed.
+        """
         # Refresh cache when needed
         if self._cached_jac is None or self._call_count % self.recompute_every == 0:
             self._cached_jac = jac
@@ -126,9 +169,8 @@ class KrylovDirection:
     """Direction via iterative Krylov solve with Eisenstat-Walker forcing.
 
     Solves the Newton system ``J dx = -r`` approximately using GMRES or BiCGSTAB.
-    The tolerance for the iterative solve is ``η_k ||r_k||``, where ``η_k``
-    is adapted via the Eisenstat-Walker formula to tighten as the solver
-    approaches the solution.
+    The tolerance for the iterative solve is ``eta_k * ||r_k||``, where ``eta_k`` is adapted with the
+    Eisenstat-Walker formula to tighten as the solver approaches the solution.
 
     Parameters
     ----------
@@ -164,12 +206,28 @@ class KrylovDirection:
         res: np.ndarray,
         jac: sp.spmatrix,
     ) -> DirectionProposal:
+        """Compute a search direction at the current iterate.
+
+        Parameters
+        ----------
+        x : ndarray
+            Current iterate. Unused, accepted for interface compatibility.
+        res : ndarray
+            Residuals at ``x``.
+        jac : ``sparse matrix``
+            Jacobian at ``x``.
+
+        Returns
+        -------
+        proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
+            Direction, its slope against the current residuals, and a label describing how it was computed.
+        """
         res_norm = np.linalg.norm(res)
 
         # Eisenstat-Walker forcing term adaptation
         if self.eisenstat_walker and self._prev_res_norm > 0:
             eta_new = abs(res_norm - self._prev_pred_norm) / self._prev_res_norm
-            # Safeguard: don't let η decrease too fast
+            # Safeguard: don't let eta decrease too fast
             eta_safe = self._eta**2
             self._eta = float(np.clip(max(eta_new, eta_safe), self.eta_min, self.eta_max))
 
