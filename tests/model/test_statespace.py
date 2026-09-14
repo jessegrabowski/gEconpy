@@ -123,7 +123,6 @@ def test_constant_params_excluded_from_prior_samples():
         measurement_error=["Y", "C", "L"],
         constant_params=["beta", "delta"],
         solver="scan_cycle_reduction",
-        mode="JAX",
         verbose=False,
     )
 
@@ -135,6 +134,7 @@ def test_constant_params_excluded_from_prior_samples():
 
     true_params, data, _ = data_from_prior(ss_mod, pm_mod, n_samples=5, random_seed=17031)
 
+    assert isinstance(true_params, xr.Dataset)
     assert data.shape[1] == 3
     assert "beta" not in true_params.data_vars
     assert "delta" not in true_params.data_vars
@@ -152,6 +152,20 @@ def test_constant_params_auto_excludes_priorless_params():
     assert set(ss_mod.constant_parameters) == expected_constant
     assert not (expected_constant & set(ss_mod.param_names))
     assert params_with_priors <= set(ss_mod.param_names)
+
+
+def test_statespace_from_gcn_forwards_filter_settings_and_mode():
+    ss_mod = statespace_from_gcn(
+        TEST_GCNS / "rbc_linearized.gcn", verbose=False, cov_jitter=1e-6, missing_fill_value=-1.0
+    )
+    assert ss_mod.cov_jitter == 1e-6
+    assert ss_mod.missing_fill_value == -1.0
+    assert ss_mod.mode is None
+
+    ss_mod.configure(observed_states=["Y"], solver="gensys", mode="NUMBA", verbose=False)
+    assert ss_mod.mode == "NUMBA"
+    assert ss_mod.cov_jitter == 1e-6
+    assert ss_mod.missing_fill_value == -1.0
 
 
 def test_temporal_aggregation_sum_accumulates_over_window(rbc_statespace):
@@ -535,7 +549,7 @@ def test_observation_equations_aggregation_produces_finite_logp():
         ss_mod.to_pymc()
         pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
         pm.Gamma("error_sigma_dlog_Y_annual", alpha=2, beta=100)
-        ss_mod.build_statespace_graph(data, add_norm_check=False, missing_fill_value=-9999.0)
+        ss_mod.build_statespace_graph(data, add_norm_check=False)
         logp = m.compile_logp()(m.initial_point())
     assert np.isfinite(logp)
 

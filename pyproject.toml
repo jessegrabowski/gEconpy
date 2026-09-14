@@ -40,15 +40,15 @@ dependencies = [
     "numba",
     "numpy",
     "pandas",
-    "pytensor>=3.0.4",
-    "pymc>=6.0.1",
-    "pymc_extras>=0.12.0",
-    "preliz>=0.25.0",
+    "pytensor>=3.3.0",
+    "pymc>=6.3.0",
+    "pymc_extras>=0.15.0",
+    "preliz>=0.27.0",
     "pyparsing",
     "scipy",
     "setuptools",
     "sympy>=1.14.0",
-    "sympytensor>=2.0.1",
+    "sympytensor>=2.1.0",
     "better-optimize>=0.4.2",
     "ipython",
     "xarray",
@@ -61,10 +61,8 @@ dev = [
     "pytest",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
-    "pytest-benchmark>=5.2.3",
     "versioneer",
     "numdifftools",
-    "asv"
 ]
 
 docs = [
@@ -118,6 +116,10 @@ filterwarnings = [
 
     # ArviZ warning related to 1.0 release
     'ignore:\nArviZ is undergoing a major refactor.*:FutureWarning',
+
+    # sympy 1.14 calls mpmath's bitcount, which mpmath 1.4 deprecated; the warning aborts sympy's
+    # assumption lookups under warnings-as-errors and surfaces as KeyError: 'finite'
+    'ignore:bitcount function is deprecated:DeprecationWarning',
 
     # Upstream deprication warning from sympytensor
     'ignore:The `broadcastable` keyword is deprecated; use `shape`:DeprecationWarning',
@@ -200,11 +202,6 @@ lines-between-types = 1
 [tool.ruff.lint.per-file-ignores]
 'gEconpy/__init__.py' = [
     "E402", # Must set PYTENSOR_FLAGS before importing pytensor
-]
-
-'benchmarks/*.py' = [
-    "PLC0415", # Allow imports inside the setup method of asv benchmarks
-    "ARG002", # Allow unused arguments in asv benchmark setup methods
 ]
 
 'gEconpy/solvers/gensys.py' = [

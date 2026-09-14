@@ -7,15 +7,17 @@ channels:
 dependencies:
   # Core dependencies
   - python=3.13
-  - pymc>=6.0.1
-  - pytensor>=3.0.4
+  - pymc>=6.3.0
+  - pytensor>=3.3.0
+  - sympytensor>=2.1.0
+  - pymc-extras>=0.15.0
   - matplotlib
   - numba
   - numpy
   - pandas
   - pyparsing
-  - preliz>=0.25.0
-  - scipy
+  - preliz>=0.27.0
+  - scipy<1.18.1  # conda-forge's 1.18.1 build breaks pytensor's numba cython_special lookups
   - setuptools
   - statsmodels
   - sympy>=1.14.0
@@ -24,8 +26,6 @@ dependencies:
   - notebook<7
   - nutpie>=0.16.10
   - networkx
-  - sympytensor>=2.0.1
-  - pymc-extras>=0.12.0
 
   # For building docs
   - ipython
@@ -49,7 +49,6 @@ dependencies:
   - pytest
   - pytest-env
   - pytest-cov
-  - pytest-benchmark
   - pandas-datareader
 
   - pip:
@@ -57,5 +56,4 @@ dependencies:
       - jax>=0.10.1
       - flowjax
       - corner
-      - asv
       - -e ../.

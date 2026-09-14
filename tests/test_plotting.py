@@ -263,8 +263,12 @@ def prior_idata(pm_mod, ss_mod) -> tuple[xr.DataTree, pd.DataFrame]:
         fake_data.index = pd.RangeIndex(0, 100)
 
         with pm_mod:
-            pm.set_data({"data": fake_data})
-            ss_mod._fit_data = fake_data
+            ss_mod.build_statespace_graph(fake_data)
+
+        observed_states = list(prior.constant_data.observed_state.values)
+        prior["constant_data"] = prior.constant_data.to_dataset().assign(
+            data=(("time", "observed_state"), fake_data[observed_states].values)
+        )
 
         conditional_prior = ss_mod.sample_conditional_prior(prior, progressbar=False)
         prior["conditional_prior"] = conditional_prior

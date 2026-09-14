@@ -2,7 +2,6 @@ import numpy as np
 import pytensor
 import pytensor.tensor as pt
 
-from pytensor.compile import get_mode
 from pytensor.compile.builders import OpFromGraph
 from pytensor.graph import Apply, Op
 from pytensor.link.numba.dispatch import basic as numba_basic
@@ -199,7 +198,7 @@ class CycleReductionWrapper(Op):
 
         return Apply(self, inputs, outputs)
 
-    def infer_shape(self, fgraph, node, input_shapes):
+    def infer_shape(self, node, input_shapes):
         n = input_shapes[0][0]
         return [(n, n)]
 
@@ -243,7 +242,7 @@ def numba_funcify_CycleReductionWrapper(op, node, **kwargs):  # noqa: ARG001
     return cycle_reduction, cache_version
 
 
-def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7, mode=None) -> pt.Variable:
+def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7) -> pt.Variable:
     def noop(A0, A1, A2, A1_hat, norm, step_num):
         return A0, A1, A2, A1_hat, norm, step_num
 
@@ -284,7 +283,6 @@ def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7, mode
         outputs_info=[A, B, C, B, norm, step_num],
         non_sequences=[idx_0, idx_1, tol],
         n_steps=max_iter,
-        mode=get_mode(mode),
         return_updates=False,
     )
     A1_hat = A1_hat[-1]
@@ -301,7 +299,6 @@ def scan_cycle_reduction(
     D: pt.TensorLike,
     max_iter: int = 50,
     tol: float = 1e-7,
-    mode: str | None = None,
     use_adjoint_gradients: bool = True,
 ):
     A = pt.as_tensor_variable(A, name="A")
@@ -309,7 +306,7 @@ def scan_cycle_reduction(
     C = pt.as_tensor_variable(C, name="C")
     D = pt.as_tensor_variable(D, name="D")
 
-    output = _scan_cycle_reduction(A, B, C, max_iter, tol, mode=mode)
+    output = _scan_cycle_reduction(A, B, C, max_iter, tol)
 
     ScanCycleReducation = OpFromGraph(
         inputs=[A, B, C],

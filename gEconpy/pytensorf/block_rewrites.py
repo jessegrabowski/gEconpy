@@ -107,12 +107,8 @@ def _join_matmul_axis(var):
     owner = var.owner
     if owner is None or not isinstance(owner.op, Join):
         return None
-    axis = _const_int(owner.inputs[0])
-    if axis is None:
-        return None
+    axis = owner.op.axis
     ndim = var.type.ndim
-    if axis < 0:
-        axis += ndim
     if axis == ndim - 1:
         return -1
     if axis == ndim - 2:
@@ -120,8 +116,6 @@ def _join_matmul_axis(var):
     return None
 
 
-@register_canonicalize
-@register_stabilize
 @node_rewriter([DimShuffle])
 def local_transpose_of_join(_fgraph, node):
     r"""Push a matrix transpose inside a :class:`Join`.
@@ -138,13 +132,8 @@ def local_transpose_of_join(_fgraph, node):
     if src.owner is None or not isinstance(src.owner.op, Join):
         return None
 
-    join_axis = _const_int(src.owner.inputs[0])
-    if join_axis is None:
-        return None
-
+    join_axis = src.owner.op.axis
     src_ndim = src.type.ndim
-    if join_axis < 0:
-        join_axis += src_ndim
 
     if join_axis == src_ndim - 1:
         new_axis = src_ndim - 2
@@ -153,13 +142,11 @@ def local_transpose_of_join(_fgraph, node):
     else:
         new_axis = join_axis  # batch axis -- mT does not touch it
 
-    new_out = pt_join(new_axis, *[inp.mT for inp in src.owner.inputs[1:]])
+    new_out = pt_join(new_axis, *[inp.mT for inp in src.owner.inputs])
     copy_stack_trace(node.outputs[0], new_out)
     return [new_out]
 
 
-@register_canonicalize
-@register_stabilize
 @node_rewriter([Join])
 def local_nested_join_to_block_diagonal(_fgraph, node):
     r"""Rewrite a square block grid with zero off-diagonals to :func:`block_diag`.
@@ -172,7 +159,7 @@ def local_nested_join_to_block_diagonal(_fgraph, node):
     if _join_matmul_axis(node.outputs[0]) != -2:
         return None
 
-    rows = list(node.inputs[1:])
+    rows = list(node.inputs)
     n = len(rows)
     if n < 2:
         return None
@@ -181,7 +168,7 @@ def local_nested_join_to_block_diagonal(_fgraph, node):
     for row in rows:
         if _join_matmul_axis(row) != -1:
             return None
-        cols = list(row.owner.inputs[1:])
+        cols = list(row.owner.inputs)
         if len(cols) != n:  # not square
             return None
         grid.append(cols)
@@ -222,8 +209,6 @@ def _split_distributes_through_join(node, join_inputs, join_axis, split_axis, sp
     return new_outputs
 
 
-@register_canonicalize
-@register_stabilize
 @node_rewriter([Split])
 def local_split_of_join(_fgraph, node):
     r"""Push :class:`Split` through :class:`Join`.
@@ -238,20 +223,22 @@ def local_split_of_join(_fgraph, node):
 
     These collapse ``Split(Join(...))`` cascades back to their underlying blocks.
     """
-    x, axis_var, splits_size_var = node.inputs
+    x, splits_size_var = node.inputs
     if x.owner is None or not isinstance(x.owner.op, Join):
         return None
 
-    split_axis = _const_int(axis_var)
-    join_axis = _const_int(x.owner.inputs[0])
-    if split_axis is None or join_axis is None:
-        return None
-
-    ndim = x.type.ndim
-    split_axis %= ndim
-    join_axis %= ndim
-    join_inputs = list(x.owner.inputs[1:])
+    split_axis = node.op.axis
+    join_axis = x.owner.op.axis
+    join_inputs = list(x.owner.inputs)
 
     if split_axis == join_axis:
         return _split_undoes_join(node, join_inputs, join_axis, splits_size_var)
     return _split_distributes_through_join(node, join_inputs, join_axis, split_axis, splits_size_var)
+
+
+# Registered with ``overwrite_existing`` so that re-importing the module (``importlib.reload``, or a
+# harness that evicts gEconpy from ``sys.modules``) replaces the entries instead of raising on the
+# duplicate name.
+for _rewrite in (local_transpose_of_join, local_nested_join_to_block_diagonal, local_split_of_join):
+    register_canonicalize(_rewrite, overwrite_existing=True)
+    register_stabilize(_rewrite, overwrite_existing=True)
