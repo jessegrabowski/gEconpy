@@ -18,6 +18,8 @@ OPERATORS = list("+-/*^()=")
 
 
 class DynareCodePrinter(OctaveCodePrinter):
+    """Print sympy expressions as Dynare model code."""
+
     def __init__(self, settings=None):
         settings = {} if settings is None else settings
         super().__init__(settings)
@@ -120,6 +122,23 @@ class DynareCodePrinter(OctaveCodePrinter):
 
 
 def write_lines_from_list(items_to_write, linewidth=100, line_start=""):
+    """
+    Join items into comma-separated declaration lines, wrapping when a line grows too long.
+
+    Parameters
+    ----------
+    items_to_write : list of str
+        Names to write.
+    linewidth : int, optional
+        Maximum number of characters per line. Defaults to 100.
+    line_start : str, optional
+        Keyword to place at the start of every line, for example ``var``. Defaults to an empty string.
+
+    Returns
+    -------
+    lines : str
+        The declaration lines, each terminated with a semicolon.
+    """
     lines = []
     line = line_start
 
@@ -138,16 +157,33 @@ def write_lines_from_list(items_to_write, linewidth=100, line_start=""):
 
 
 def write_variable_declarations(mod: "Model", linewidth=100):
+    """Write the Dynare ``var`` block declaring every model variable."""
     var_names = [var.base_name for var in mod.variables]
     return write_lines_from_list(var_names, linewidth=linewidth, line_start="var")
 
 
 def write_shock_declarations(mod: "Model", linewidth=100):
+    """Write the Dynare ``varexo`` block declaring every model shock."""
     shock_names = [shock.base_name for shock in mod.shocks]
     return write_lines_from_list(shock_names, linewidth=linewidth, line_start="varexo")
 
 
 def write_values_from_dict(d, round: int = 3):
+    """
+    Write one ``name = value;`` assignment per dictionary entry.
+
+    Parameters
+    ----------
+    d : dict mapping str to float
+        Names and values to assign.
+    round : int, optional
+        Number of decimal places to print. Defaults to 3.
+
+    Returns
+    -------
+    assignments : str
+        One assignment per line.
+    """
     out = ""
     for name, value in d.items():
         out += f"{name} = {value:0.{round}f};\n"
@@ -155,11 +191,13 @@ def write_values_from_dict(d, round: int = 3):
 
 
 def write_param_names(mod: "Model", linewidth=100):
+    """Write the Dynare ``parameters`` block declaring every model parameter name."""
     param_names = [param.name for param in mod.params]
     return write_lines_from_list(param_names, linewidth=linewidth, line_start="parameters")
 
 
 def write_parameter_declarations(mod: "Model", linewidth=100):
+    """Write the Dynare ``parameters`` block followed by an assignment for each parameter value."""
     param_string = write_param_names(mod, linewidth=linewidth)
     param_string += "\n\n"
     param_string += write_values_from_dict(mod.parameters().to_string())
@@ -168,6 +206,7 @@ def write_parameter_declarations(mod: "Model", linewidth=100):
 
 
 def find_ss_variables(mod: "Model"):
+    """Return the steady-state variables used by the model equations, sorted by base name."""
     variables = reduce(lambda s, eq: s.union(set(eq.free_symbols)), mod.equations, set())
 
     return sorted(
@@ -177,6 +216,7 @@ def find_ss_variables(mod: "Model"):
 
 
 def write_model_equations(mod: "Model"):
+    """Write the Dynare ``model`` block, with a local definition for each steady-state value the equations use."""
     printer = DynareCodePrinter()
 
     required_ss_values = find_ss_variables(mod)
@@ -200,6 +240,22 @@ def write_model_equations(mod: "Model"):
 
 
 def write_steady_state(mod: "Model", use_cse=True):
+    """
+    Write a ``steady_state_model`` block if an analytic steady state exists, otherwise an ``initval`` block.
+
+    Parameters
+    ----------
+    mod : Model
+        A DSGE model object.
+    use_cse : bool, optional
+        If True, rewrite the analytic steady state in terms of common sub-expressions found by ``sp.cse``.
+        Defaults to True.
+
+    Returns
+    -------
+    block : str
+        The steady state block, followed by Dynare's ``steady`` and ``resid`` commands.
+    """
     printer = DynareCodePrinter()
 
     # Check for a full analytic steady state. If available, we can write a
@@ -230,6 +286,7 @@ def write_steady_state(mod: "Model", use_cse=True):
 
 
 def write_shock_std(mod: "Model"):
+    """Write the Dynare ``shocks`` block, giving every shock a standard deviation of 0.01."""
     out = "shocks;\n"
     shock_names = [shock.base_name for shock in mod.shocks]
 
@@ -252,19 +309,19 @@ def make_mod_file(
     ----------
     model : Model
         A DSGE model object
-    linewidth: int, default 100
-        Maximum number of characters per line before a break is insterted
-    use_cse: bool, default True
-        If True, use ``sp.cse`` to identify common sub expressions in the analytic steady state and rewrite equations
-        in terms of these sub expressions. This can make the steady state block more readable and provide modest
-        performance increase for large models.
-    out_path: str, optional
-        If None, the generated mod file is printed to the terminal. Otherwise, it is written to ``out_path``.
+    linewidth : int, optional
+        Maximum number of characters per line before a break is inserted. Defaults to 100.
+    use_cse : bool, optional
+        If True, use ``sp.cse`` to identify common sub-expressions in the analytic steady state and rewrite
+        equations in terms of these sub-expressions. This can make the steady state block more readable and
+        provides a modest performance increase for large models. Defaults to True.
+    out_path : str or Path, optional
+        Path to write the generated mod file to. If None, the mod file is returned instead.
 
     Returns
     -------
-    str
-        A string representation of a Dynare model file.
+    mod_file : str or None
+        A string representation of a Dynare model file, or None when ``out_path`` is given.
 
     References
     ----------
