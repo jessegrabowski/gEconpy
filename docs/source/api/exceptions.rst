@@ -10,11 +10,6 @@ Exceptions
 .. autosummary::
     :toctree: generated/
 
-    GCNSyntaxError
-    DistributionParsingError
-    MissingParameterValueException
-    InvalidComponentNameException
-    BlockNotInitializedException
     DynamicCalibratingEquationException
     OptimizationProblemNotDefinedException
     MultipleObjectiveFunctionsException
@@ -22,17 +17,11 @@ Exceptions
     ModelUnknownParameterError
     PerturbationSolutionNotFoundException
     SteadyStateNotFoundError
-    MultipleSteadyStateBlocksException
     GensysFailedException
     VariableNotFoundException
     InvalidDistributionException
-    RepeatedParameterException
-    DistributionParameterNotFoundException
     MultipleParameterDefinitionException
-    UnusedParameterError
     InvalidParameterException
-    InvalidMeanException
-    DistributionOverDefinedException
     OrphanParameterError
     ExtraParameterError
     ExtraParameterWarning

@@ -11,7 +11,8 @@ Plotting
 
     plot_simulation
     plot_irf
-    plot_prior_solvability
+    plot_solvability
+    plot_solvability_summary
     plot_eigenvalues
     plot_covariance_matrix
     plot_heatmap

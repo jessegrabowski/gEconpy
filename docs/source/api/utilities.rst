@@ -25,5 +25,3 @@ Utilities
     make_all_var_time_combos
     postprocess_optimizer_res
     get_name
-    substitute_repeatedly
-    simplify_matrix
