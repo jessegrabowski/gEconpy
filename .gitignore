@@ -208,3 +208,13 @@ tags
 
 # pixi environments
 .pixi/
+
+# Written by the gallery Sphinx extension on every docs build
+/docs/source/examples/gallery.rst
+/docs/source/_thumbnails/
+
+# Download caches written by the estimation example notebooks
+/docs/source/examples/estimation/*.csv
+
+# pixi environments
+.pixi/
