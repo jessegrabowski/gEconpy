@@ -45,23 +45,23 @@ def set_matplotlib_style():
 
 def prepare_gridspec_figure(n_cols: int, n_plots: int, figure: plt.Figure | None = None) -> tuple[GridSpec, list]:
     """
-     Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
+    Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
     Parameters
     ----------
-     n_cols : int
-         The number of columns in the grid.
-     n_plots : int
-         The number of subplots in the grid.
+    n_cols : int
+        The number of columns in the grid.
+    n_plots : int
+        The number of subplots in the grid.
     figure : Figure, optional
         The figure object to use
 
     Returns
     -------
-     GridSpec
-         A matplotlib GridSpec object representing the layout of the grid.
+    GridSpec
+        A matplotlib GridSpec object representing the layout of the grid.
     list of tuple(slice, slice)
-         A list of tuples of slices representing the indices of the grid cells to be used for each subplot.
+        A list of tuples of slices representing the indices of the grid cells to be used for each subplot.
     """
     remainder = n_plots % n_cols
     has_remainder = remainder > 0
