@@ -8,13 +8,10 @@ from pytensor.tensor.blockwise import Blockwise
 
 
 class RealEig(Op):
-    """Eigenvalue decomposition returning real and imaginary parts as separate real tensors.
+    """Op computing eigenvalues of a real matrix as two real tensors, one per component.
 
-    Wraps ``numpy.linalg.eig``, splits the result into two real-valued outputs, and
-    sorts by ascending modulus.  The VJP uses the standard eigenvalue perturbation
-    formula (arXiv:1701.00392 eq 4.77):
-    ``M_bar = Re(V^{-T} diag(g_alpha - i * g_beta) V^T)``.
-    Only first-order derivatives are supported (see jax-ml/jax#2748).
+    Wraps ``numpy.linalg.eig``, splits the eigenvalues into real and imaginary parts, and sorts them by
+    ascending modulus. Only first-order derivatives are supported.
     """
 
     __props__ = ()
@@ -46,7 +43,7 @@ class RealEig(Op):
         if isinstance(g_imag.type, DisconnectedType):
             g_imag = pt.zeros_like(outputs[1])
 
-        # Recompute eigenvectors — same strategy as JAX's eigvals VJP.
+        # Recompute eigenvectors -- same strategy as JAX's eigvals VJP.
         _eigvals, V = pt.linalg.eig(M)
 
         # Sort to match our modulus-ascending ordering in perform.
@@ -56,7 +53,7 @@ class RealEig(Op):
         # Complex gradient vector: g = g_bar_real - i * g_bar_imag
         g = g_real.astype("complex128") - 1j * g_imag.astype("complex128")
 
-        # VJP: M̄ = Re(V⁻ᵀ diag(g) Vᵀ)
+        # VJP: M_bar = Re(V^{-T} diag(g) V^T)
         V_inv = pt.linalg.solve(V, pt.eye(M.shape[0], dtype="complex128"))
         M_bar = V_inv.T @ pt.diag(g) @ V.T
 
@@ -66,14 +63,14 @@ class RealEig(Op):
 def real_eig(M):
     r"""Compute eigenvalues of a real matrix, returning real and imaginary parts separately.
 
-    Unlike ``pt.linalg.eig``, the outputs are real-valued tensors, so reverse-mode
-    differentiation through both components works out of the box.  Eigenvalues are
-    sorted by ascending modulus.
+    Unlike ``pytensor.tensor.linalg.eig``, the outputs are real-valued tensors, so reverse-mode
+    differentiation through both components works. Eigenvalues are sorted by ascending modulus.
 
     Parameters
     ----------
-    M : array_like or TensorVariable
-        A real-valued square matrix of shape ``(n, n)``.
+    M : TensorVariable
+        A real-valued square matrix of shape ``(n, n)``. Anything accepted by ``pt.as_tensor_variable``
+        works.
 
     Returns
     -------
