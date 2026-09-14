@@ -55,19 +55,21 @@ dependencies = [
     "networkx"
   ]
 
+# pixi turns these extras into features of the same name.
 [project.optional-dependencies]
 dev = [
     "pre-commit",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
+    "pytest-env",
     "numdifftools",
+    "jax",
 ]
 
 docs = [
   "ipython",
   "myst-nb",
   "numpydoc",
-  "pre-commit",
   "sphinx>=9.1.0",
   "sphinx-copybutton",
   "sphinx-design",
@@ -263,3 +265,49 @@ lines-between-types = 1
     'PTH113', # TODO: fix pathlib usage in notebooks
     'T201', # Notebooks print
 ]
+
+# pixi reads [project].dependencies, requires-python and the extras above on its own. The tables
+# here only add what the project metadata cannot say: which packages come from conda-forge instead
+# of PyPI (a conda entry overrides the PyPI requirement of the same name), and platform toolchains.
+# The pixi-export-env pre-commit hook renders the `default` environment to
+# conda_envs/environment_dev.yml.
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64", "win-64"]
+
+# The compiled stack resolves from conda-forge.
+[tool.pixi.dependencies]
+numpy = "*"
+numba = "*"
+pytensor = ">=3.3.0"
+pymc = ">=6.3.0"
+# conda-forge's scipy 1.18.1 is built with Cython 3.3, whose fused-function names no longer match the
+# __pyx_capi__ keys pytensor's numba backend looks up (pymc-devs/pytensor#2413).
+scipy = "<1.18.1"
+
+# gxx 16.2.0 on conda-forge win-64 cannot link (ld cannot find dllcrt2.o);
+# see conda-forge/ctng-compilers-feedstock#229 and m2w64-sysroot-feedstock#23.
+[tool.pixi.target.win-64.dependencies]
+gxx_win-64 = "16.1.*"
+
+[tool.pixi.pypi-dependencies]
+geconpy = { path = ".", editable = true }
+
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+
+[tool.pixi.feature.py313.dependencies]
+python = "3.13.*"
+
+[tool.pixi.environments]
+default = { features = ["dev", "docs", "py312"], solve-group = "py312" }
+docs = { features = ["docs", "py312"], solve-group = "py312" }
+py313 = { features = ["dev", "py313"] }
+
+[tool.pixi.tasks]
+# Extra arguments pass through, e.g. `pixi run test tests/model -m "not include_nk"`. The XML report goes
+# to the repository root: a coverage/ directory there is an importable namespace package that shadows the
+# real coverage module numba imports.
+test = "python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:coverage.xml --no-cov-on-fail --cov-report term --durations=50"
+lint = "pre-commit run --all-files"
+docs-build = { cmd = "python -m sphinx -b html source build/html", cwd = "docs" }

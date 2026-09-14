@@ -4,13 +4,22 @@ Installation
 
 Recommended Installation Method
 *******************************
-You can use the ``environment.yaml`` file provided in the repository to create a new conda environment with all the
-dependencies installed:
+The repository is a `pixi <https://pixi.sh>`_ workspace. From a clone, ``pixi install`` creates the development
+environment with every runtime, test, and documentation dependency, and ``pixi shell`` activates it:
 
 .. code-block:: bash
 
-    conda env create -f environment.yaml
-    conda activate gEconpy
+    pixi install
+    pixi shell
+
+If you would rather use conda directly, ``conda_envs/environment_dev.yml`` is the same environment exported from the
+pixi workspace. Its pip section installs gEconpy in editable mode from ``.``, so run the command from the repository
+root:
+
+.. code-block:: bash
+
+    conda env create -f conda_envs/environment_dev.yml
+    conda activate geconpy-dev
 
 
 Other Methods
