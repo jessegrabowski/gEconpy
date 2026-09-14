@@ -310,4 +310,4 @@ py313 = { features = ["dev", "py313"] }
 # real coverage module numba imports.
 test = "python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:coverage.xml --no-cov-on-fail --cov-report term --durations=50"
 lint = "pre-commit run --all-files"
-docs-build = { cmd = "python -m sphinx -b html source build/html", cwd = "docs" }
+docs-build = { cmd = "python -m sphinx -W --keep-going -b html source build/html", cwd = "docs" }

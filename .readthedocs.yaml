@@ -16,4 +16,4 @@ build:
     - git fetch --tags --unshallow || true
     - mamba install -y -c conda-forge -c nodefaults pixi
     - pixi install -e docs
-    - pixi run -e docs sphinx-build -T -b html docs/source "$READTHEDOCS_OUTPUT/html"
+    - pixi run -e docs sphinx-build -W --keep-going -T -b html docs/source "$READTHEDOCS_OUTPUT/html"
