@@ -20,6 +20,10 @@ gEconpy is still in an unfinished alpha state, but I encourage anyone interested
 ## Contributing
 Contributions from anyone are welcome, regardless of previous experience. Please check the Issues tab for open issues, or to create a new issue.
 
+## Installation
+
+gEconpy is on conda-forge and PyPI. `pixi add geconpy` in a pixi workspace, `conda install -c conda-forge geconpy`, or `pip install gEconpy`. The [installation guide](https://geconpy.readthedocs.io/en/latest/get_started/install.html) covers the development setup, which is a pixi workspace.
+
 ## Syntax Highlighting
 
 gEconpy includes a TextMate grammar bundle for syntax highlighting of GCN files in VS Code, PyCharm, Sublime Text, and other editors. The bundle is located in the `gcn.tmbundle` directory. See the documentation for installation instructions.
@@ -61,7 +65,7 @@ block HOUSEHOLD
 	    beta ~ maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99;
 
 		sigma_C ~ Truncated(Normal(mu=1.5, sigma=0.1), lower=1.0) = 1.5;
-		sigma_L ~ Truncated(Nornal(mu=2.0, sigma=0.1), lower=1.0) = 2.0;
+		sigma_L ~ Truncated(Normal(mu=2.0, sigma=0.1), lower=1.0) = 2.0;
 	};
 };
 ```
@@ -73,7 +77,7 @@ Model variables are written with a name followed by square brackets, as in `U[]`
 Parameters are written exactly as variables, except they have no square brackets `[]`.
 
 ## Anatomy of a Block
-Blocks are divided into five components: `definitions`, `controls`, `objective`, `constraints`, `identities`, `shocks`, and, `calibration`. In this block, we see five of the seven. The blocks have the following functions:
+Blocks are divided into seven components: `definitions`, `controls`, `objective`, `constraints`, `identities`, `shocks`, and, `calibration`. In this block, we see five of the seven. The blocks have the following functions:
 
 1. `definitions` contains equations that are **not** stored in the model. Instead, they are immediately substituted into all equations **within the same block**. In this example, a definition is used for the instantaneous utility function. It will be immediately substituted into the Bellman equation written in the `objective` block.
 2. `controls` are the variables under the agent's control. The objective function represented by the block will be solved by forming a Lagrange function and taking derivatives with respect to the controls.
@@ -85,13 +89,13 @@ Blocks are divided into five components: `definitions`, `controls`, `objective`,
 
 ## Parameter Values and Priors
 
-All parameters must be given values. In the household block above, all parameters are given a value directly. `beta` and `delta` are set fixed, while `sigma_C` and `sigma_L` are given priors and starting values. The `~` operator denotes a Prior, while `=` denotes a fixed value. All parameters must have a fixed value -- this is used as the "default" value when building and solving the model. Priors, on the other hand, are optional.
+All parameters must be given values. In the household block above, `delta` is fixed, while `beta`, `sigma_C` and `sigma_L` are given priors and starting values. The `~` operator denotes a Prior, while `=` denotes a fixed value. All parameters must have a fixed value -- this is used as the "default" value when building and solving the model. Priors, on the other hand, are optional.
 
 To represent priors, gEconpy uses the [preliz](https://preliz.readthedocs.io/en/latest/) package. All priors should follow preliz names and parameterization. For a full list, see their [example gallery](https://preliz.readthedocs.io/en/latest/gallery_content.html). Notice that:
 
 * Distributions are capitalized, as in `Normal`, `Beta`, `Gamma`. For those with multiple words, use camel-case (e.g. `InverseGamma`)
 * Parameters are given as keyword arguments, as in `Normal(mu=0, sigma=1)`.
-* You are allowed to use preliz transformations on distributions, including [`Truncated`](https://preliz.readthedocs.io/en/latest/distributions/gallery/truncated.html), [`Censored`](https://preliz.readthedocs.io/en/latest/distributions/gallery/censored.html), [`Hurdle`](https://preliz.readthedocs.io/en/latest/distributions/gallery/hurdle.html), and [`Mixture`](https://preliz.readthedocs.io/en/latest/distributions/gallery/mixture.html). For example, `Truncated(Normal(mu=0, sigma=1), lower=0)` is a truncated normal distribution with a lower bound of 0.
+* You are allowed to use preliz transformations on distributions, including [`Truncated`](https://preliz.readthedocs.io/en/latest/distributions/gallery/truncated.html), [`Censored`](https://preliz.readthedocs.io/en/latest/distributions/gallery/censored.html), and [`Hurdle`](https://preliz.readthedocs.io/en/latest/distributions/gallery/hurdle.html). For example, `Truncated(Normal(mu=0, sigma=1), lower=0)` is a truncated normal distribution with a lower bound of 0.
 * You can also directly call `maxent` to parameterize a distribution by an HDI range and probability mass within that range. For example, `beta ~ maxent(Beta(), lower=0.95, upper=0.99, mass=0.99)` finds the beta distribution with 99% of its mass between 0.95 and 0.99, and which is otherwise maximally uninformative.
 
 As an alternative to setting a parameter value directly, the user can declare a parameter to be calibrated. To do this, give a steady-state relationship that the parameter should be calibrated to ensure is true. The following GCN code block for the firm's optimization problem shows how this is done:
@@ -144,7 +148,7 @@ Internally, first order conditions are solved by first making all substitutions 
 
 When the objective carries the `@minimize` tag, the objective RHS is negated before forming the Lagrangian, converting the minimization into an equivalent maximization.
 
-Next, the derivative of this Lagrangian is taken with respect to all control variables and all lagrange multipliers. Derivatives are are computed "though time" using `TimeAwareSymbols`, an extension of a normal Sympy symbol. For a control variable x, the total derivative over time is built up as `dL[]/dx[] + beta * dL[+1]/dx + beta * beta * dL[+2]/dx[] ...`.
+Next, the derivative of this Lagrangian is taken with respect to all control variables and all lagrange multipliers. Derivatives are computed through time using `TimeAwareSymbols`, an extension of a normal Sympy symbol. For a control variable x, the total derivative over time is built up as `dL[]/dx[] + beta * dL[+1]/dx + beta * beta * dL[+2]/dx[] ...`.
 
 The result of this unrolling and taking derivatives process are the first order conditions (FoC). All model FoCs, along with objectives, constraints, and identities, are saved into the system of equations that represents the model.
 
@@ -185,7 +189,7 @@ block EQULIBRIUM
 
 ## Steady State
 
-After finding FoCs, the system will be ready to find a steady state and solve for a first-order linear approximation. To help the process, the user can write a `STEADY_STATE` block. This is a special reserved keyword block that can be placed anywhere in the GCN file. It should contain only `defintions` and `identities` as components. Here is an example of a steady state block for the RBC model:
+After finding FoCs, the system will be ready to find a steady state and solve for a first-order linear approximation. To help the process, the user can write a `STEADY_STATE` block. This is a special reserved keyword block that can be placed anywhere in the GCN file. It should contain only `definitions` and `identities` as components. Here is an example of a steady state block for the RBC model:
 
 ```
 block STEADY_STATE
@@ -232,16 +236,15 @@ Finally, you **do not** have to provide the complete steady state system! You ca
 Once a GCN file is written, using gEcon to do analysis is easy, as this code block shows:
 
 ```python
-import gEconpy
+import gEconpy as ge
 
-file_path = 'GCN Files/RBC.gcn'
-model = gEconpy.model_from_gcn(file_path, verbose=True)
+file_path = ge.data.get_example_gcn("RBC")
+model = ge.model_from_gcn(file_path, verbose=True)
 ```
 
 When the model is loaded, you will get a message about the number of equations and variables, as well as some other basic model descriptions. You can then solve for the stead state:
 ```python
 model.steady_state();
-# Steady state found! Sum of squared residuals is 2.9196536232567403e-19
 ```
 
 And get the linearized state space representation
@@ -336,7 +339,7 @@ end;
 stoch_simul(order=1, irf=100, qz_zero_threshold=1e-20);
 ```
 
-Since this model included a `STEADY_STATE` block with a complete solution, a `steady_state_model` was generated. If no steady state equations are provided, or if the provided solution is incomplete, an `initvals` block will be generated instead, and jittered steady-state values found by gEconpy will be used as inital values.
+Since this model included a `STEADY_STATE` block with a complete solution, a `steady_state_model` was generated. If no steady state equations are provided, or if the provided solution is incomplete, an `initval` block will be generated instead, and jittered steady-state values found by gEconpy will be used as inital values.
 
 ### Warings about Dynare Code
 * If your model includes calibrated equations, the generated Dynare code **will not** work out of the box. You need to analyically compute the steady state values and add a deterministic relationship (that beings with `#`) to the model block.
@@ -344,11 +347,12 @@ Since this model included a `STEADY_STATE` block with a complete solution, a `st
 
 ## Estimation
 
-Bayesian estimation of a model can be done using PyMC. Currently, only models with a fully analytic steady state are supported. To sample a model, create a `PyMCStateSpace` using `ge.statespace_from_gcn`. For a complete example, see the estimation example notebooks in the [example gallery](https://geconpy.readthedocs.io/en/latest/examples/gallery.html).
+Bayesian estimation of a model can be done using PyMC. Currently, only models with a fully analytic steady state are supported. To sample a model, create a `DSGEStateSpace` (a subclass of pymc-extras' `PyMCStateSpace`) using `ge.statespace_from_gcn`. For a complete example, see the estimation example notebooks in the [example gallery](https://geconpy.readthedocs.io/en/latest/examples/gallery.html).
 
 ```python
 import gEconpy as ge
-file_path = 'GCN Files/RBC.gcn'
+
+file_path = ge.data.get_example_gcn("RBC")
 ss_mod = ge.statespace_from_gcn(file_path)
 ```
 
@@ -425,7 +429,7 @@ with pm.Model(coords=ss_mod.coords) as pm_mod:
         data,
         add_norm_check=True,
         add_solver_success_check=True,
-        add_steady_state_penalty=True,
+        add_bk_check=True,
     )
 ```
 
