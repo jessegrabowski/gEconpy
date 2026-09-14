@@ -211,7 +211,7 @@ def autocovariance_matrix(
         model,
         T=T,
         R=R,
-        shock_dict=shock_std_dict,
+        shock_std_dict=shock_std_dict,
         shock_cov_matrix=shock_cov_matrix,
         shock_std=shock_std,
         return_df=False,
