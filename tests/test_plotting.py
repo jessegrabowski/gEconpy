@@ -17,6 +17,8 @@ from matplotlib.colorbar import Colorbar
 from matplotlib.image import AxesImage
 from matplotlib.ticker import StrMethodFormatter
 
+import gEconpy.plotting
+
 from gEconpy.model.simulate import impulse_response_function, simulate
 from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.statistics import (
@@ -611,8 +613,8 @@ def test_plot_eigenvalue_sensitivity_computes_data_at_given_parameters(one_block
         beta=0.9,
     )
     titles = [ax.get_title() for ax in fig.axes]
-    assert titles[0].startswith("beta: 0.9 ")
-    assert titles[1].startswith("rho: 0.95 ")
+    assert titles[0].startswith("beta: 0.9 -> ")
+    assert titles[1].startswith("rho: 0.95 -> ")
 
 
 def test_plot_eigenvalue_sensitivity_bad_param_raises(one_block_model, sensitivity_data):
@@ -782,6 +784,14 @@ def test_plot_kalman_filter_draws_on_given_figure(prior_idata):
     assert len(fig.axes) == 1
 
 
+def test_plot_kalman_filter_accepts_mixed_case_output(prior_idata):
+    idata, fake_data = prior_idata
+    fig = plot_kalman_filter(
+        idata["conditional_prior"], fake_data, kalman_output="Filtered", group="prior", vars_to_plot=["Y"]
+    )
+    assert len(fig.axes) == 1
+
+
 def test_plot_kalman_filter_bad_output_raises(prior_idata):
     idata, fake_data = prior_idata
     with pytest.raises(ValueError, match='kalman_output must be one of "filtered", "predicted", "smoothed"'):
@@ -804,6 +814,16 @@ def test_plot_kalman_filter_observed(prior_idata, vars_to_plot):
     assert all(axis.get_title() in vars_to_plot for axis in fig.axes)
 
 
+def test_all_exports_every_public_function():
+    public = {
+        name
+        for name, obj in vars(gEconpy.plotting).items()
+        if callable(obj) and not name.startswith("_") and getattr(obj, "__module__", None) == "gEconpy.plotting"
+    }
+    assert set(gEconpy.plotting.__all__) == public
+    assert gEconpy.plotting.__all__ == sorted(gEconpy.plotting.__all__)
+
+
 def test_plot_priors_plots_all_priors(ss_mod):
     fig = plot_priors(ss_mod)
     titles = [ax.get_title() for ax in fig.axes]
@@ -820,6 +840,11 @@ def test_plot_priors_accepts_model(rbc_model):
 def test_plot_priors_var_names_subset(ss_mod, var_names):
     fig = plot_priors(ss_mod, var_names=var_names, n_cols=6)
     assert [ax.get_title().split("\n")[0] for ax in fig.axes] == var_names
+
+
+def test_plot_priors_unknown_var_name_raises(ss_mod):
+    with pytest.raises(ValueError, match=r"Prior 'bogus' not found\. Available: "):
+        plot_priors(ss_mod, var_names=["alpha", "bogus"])
 
 
 def test_plot_priors_marks_initial_values(ss_mod):
