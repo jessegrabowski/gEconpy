@@ -80,15 +80,17 @@ class Operator(Enum):
     NEG = auto()
 
     def __str__(self) -> str:
-        symbols = {
-            Operator.ADD: "+",
-            Operator.SUB: "-",
-            Operator.MUL: "*",
-            Operator.DIV: "/",
-            Operator.POW: "^",
-            Operator.NEG: "-",
-        }
-        return symbols[self]
+        return _OPERATOR_SYMBOLS[self]
+
+
+_OPERATOR_SYMBOLS = {
+    Operator.ADD: "+",
+    Operator.SUB: "-",
+    Operator.MUL: "*",
+    Operator.DIV: "/",
+    Operator.POW: "^",
+    Operator.NEG: "-",
+}
 
 
 class BlockComponent(Enum):
@@ -130,12 +132,11 @@ class Tag(Enum):
         tag : Tag
             The matching tag.
         """
-        name_lower = name.lower()
-        for tag in cls:
-            if tag.value == name_lower:
-                return tag
-        valid_tags = ", ".join(t.value for t in cls)
-        raise ValueError(f"Unknown tag '@{name}'. Valid tags are: {valid_tags}")
+        try:
+            return cls(name.lower())
+        except ValueError:
+            valid_tags = ", ".join(tag.value for tag in cls)
+            raise ValueError(f"Unknown tag '@{name}'. Valid tags are: {valid_tags}") from None
 
     def __str__(self) -> str:
         return f"@{self.value}"
@@ -450,6 +451,17 @@ class GCNBlock:
     def has_optimization_problem(self) -> bool:
         return len(self.controls) > 0 and len(self.objective) > 0
 
+    def all_equations(self) -> list[GCNEquation]:
+        """
+        Collect the definitions, objective, constraints, and identities of this block, in that order.
+
+        Returns
+        -------
+        equations : list of GCNEquation
+            The collected equations. Calibration entries are not included.
+        """
+        return [*self.definitions, *self.objective, *self.constraints, *self.identities]
+
 
 @dataclass
 class GCNModel:
@@ -494,13 +506,7 @@ class GCNModel:
         equations : list of GCNEquation
             The collected equations, in block order.
         """
-        equations = []
-        for block in self.blocks:
-            equations.extend(block.definitions)
-            equations.extend(block.objective)
-            equations.extend(block.constraints)
-            equations.extend(block.identities)
-        return equations
+        return [eq for block in self.blocks for eq in block.all_equations()]
 
     def all_variables(self) -> set[Variable]:
         """
@@ -511,11 +517,7 @@ class GCNModel:
         variables : set of Variable
             The collected variables. Two time indices of one name count as two variables.
         """
-        variables: set[Variable] = set()
-        for eq in self.all_equations():
-            variables.update(collect_nodes_of_type(eq.lhs, Variable))
-            variables.update(collect_nodes_of_type(eq.rhs, Variable))
-        return variables
+        return self._collect_from_equations(Variable)
 
     def all_parameters(self) -> set[Parameter]:
         """
@@ -526,11 +528,10 @@ class GCNModel:
         parameters : set of Parameter
             The collected parameters.
         """
-        parameters: set[Parameter] = set()
-        for eq in self.all_equations():
-            parameters.update(collect_nodes_of_type(eq.lhs, Parameter))
-            parameters.update(collect_nodes_of_type(eq.rhs, Parameter))
-        return parameters
+        return self._collect_from_equations(Parameter)
+
+    def _collect_from_equations[NodeT: Node](self, node_type: type[NodeT]) -> set[NodeT]:
+        return {node for eq in self.all_equations() for node in collect_nodes_of_type(eq, node_type)}
 
 
 def collect_nodes_of_type[NodeT: Node](node: Node, node_type: type[NodeT]) -> set[NodeT]:

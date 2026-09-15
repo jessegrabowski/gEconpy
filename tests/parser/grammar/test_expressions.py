@@ -13,6 +13,7 @@ from gEconpy.parser.ast import (
     T,
     UnaryOp,
     Variable,
+    collect_nodes_of_type,
 )
 from gEconpy.parser.errors import GCNGrammarError
 from gEconpy.parser.grammar.expressions import parse_expression
@@ -235,15 +236,7 @@ class TestRealWorldExpressions:
         expr = "beta * eta_w * E[][pi[1] * (w_star[1] / w_star[]) ^ (1 / psi_w) * LHS_w[1]]"
         result = parse_expression(expr)
         assert isinstance(result, BinaryOp)
-
-        def find_expectation(node):
-            if isinstance(node, Expectation):
-                return node
-            if isinstance(node, BinaryOp):
-                return find_expectation(node.left) or find_expectation(node.right)
-            return None
-
-        assert find_expectation(result) is not None
+        assert len(collect_nodes_of_type(result, Expectation)) == 1
 
     def test_deeply_nested_exponents(self):
         expr = "(pi[1] * w_star[1] / w_star[]) ^ ((1 + psi_w) * (1 + sigma_L) / psi_w)"

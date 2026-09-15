@@ -1,5 +1,7 @@
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 import pyparsing as pp
 
@@ -87,15 +89,13 @@ class GCNParseFailure(pp.ParseFatalException):
         suggestions : list of str
             Names the user may have meant.
         """
-        msg = str(exc.msg) if hasattr(exc, "msg") else str(exc)
+        msg = str(exc.msg)
 
         if cls.SEPARATOR not in msg:
-            found = exc.found if hasattr(exc, "found") and exc.found else ""
-            return msg, ErrorCode.E000, found, []
+            return msg, ErrorCode.E000, exc.found or "", []
 
         parts = msg.split(cls.SEPARATOR)
-        expected_parts = 4
-        if len(parts) != expected_parts:
+        if len(parts) != 4:
             return msg, ErrorCode.E000, "", []
 
         message, code_name, found, suggestions_str = parts
@@ -166,7 +166,14 @@ class ParseLocation:
     source_line: str = ""
     filename: str = ""
 
-    def to_lsp_range(self) -> dict:
+    @property
+    def pointer_length(self) -> int:
+        """Number of characters the error span covers on its first line, at least 1."""
+        if self.end_column is not None and self.end_line == self.line:
+            return max(1, self.end_column - self.column)
+        return 1
+
+    def to_lsp_range(self) -> dict[str, Any]:
         """
         Convert this location to a Language Server Protocol range.
 
@@ -199,12 +206,8 @@ class ParseLocation:
         if not self.source_line:
             return ""
 
-        pointer_length = 1
-        if self.end_column is not None and self.end_line == self.line:
-            pointer_length = max(1, self.end_column - self.column)
-
         padding = " " * max(0, self.column - 1)
-        return f"{self.source_line}\n{padding}{pointer_char * pointer_length}"
+        return f"{self.source_line}\n{padding}{pointer_char * self.pointer_length}"
 
     def format_location(self) -> str:
         """
@@ -299,7 +302,7 @@ class GCNParseError(Exception):
 
         return "\n".join(parts)
 
-    def to_lsp_diagnostic(self) -> dict:
+    def to_lsp_diagnostic(self) -> dict[str, Any]:
         """
         Convert this error to a Language Server Protocol diagnostic, for editor integration.
 
@@ -316,7 +319,7 @@ class GCNParseError(Exception):
                 "end": {"line": 0, "character": 0},
             }
 
-        diagnostic: dict = {
+        diagnostic: dict[str, Any] = {
             "range": range_dict,
             "message": self.message,
             "severity": _LSP_SEVERITY.get(self.severity, 1),
@@ -364,8 +367,8 @@ class GCNParseError(Exception):
         """
         return self._copy_with(context=context)
 
-    def _copy_with(self, **changes) -> "GCNParseError":
-        fields = {
+    def _copy_with(self, **changes: Any) -> "GCNParseError":
+        fields: dict[str, Any] = {
             "message": self.message,
             "location": self.location,
             "suggestions": self.suggestions,
@@ -437,23 +440,6 @@ class GCNGrammarError(GCNParseError):
             annotation=annotation,
             notes=notes,
         )
-
-
-def _describe_expectation(expected: list[str], found: str) -> str:
-    if len(expected) == 1:
-        expected_text = f"Expected '{expected[0]}'"
-    elif expected:
-        expected_text = "Expected one of " + ", ".join(f"'{e}'" for e in expected)
-    else:
-        expected_text = ""
-
-    if expected_text and found:
-        return f"{expected_text}, found '{found}'"
-    if expected_text:
-        return expected_text
-    if found:
-        return f"Found '{found}'"
-    return ""
 
 
 class GCNSemanticError(GCNParseError):
@@ -545,7 +531,7 @@ class GCNErrorCollection(Exception):
     def __len__(self) -> int:
         return len(self.errors)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[GCNParseError]:
         return iter(self.errors)
 
     def __getitem__(self, index: int) -> GCNParseError:
@@ -556,7 +542,7 @@ class GCNErrorCollection(Exception):
         """True if the collection is not empty."""
         return len(self.errors) > 0
 
-    def to_lsp_diagnostics(self) -> list[dict]:
+    def to_lsp_diagnostics(self) -> list[dict[str, Any]]:
         """
         Convert every collected error to a Language Server Protocol diagnostic.
 
@@ -620,5 +606,22 @@ class ErrorCollector:
     def __bool__(self) -> bool:
         return len(self.errors) > 0
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[GCNParseError]:
         return iter(self.errors)
+
+
+def _describe_expectation(expected: list[str], found: str) -> str:
+    if len(expected) == 1:
+        expected_text = f"Expected '{expected[0]}'"
+    elif expected:
+        expected_text = "Expected one of " + ", ".join(f"'{e}'" for e in expected)
+    else:
+        expected_text = ""
+
+    if expected_text and found:
+        return f"{expected_text}, found '{found}'"
+    if expected_text:
+        return expected_text
+    if found:
+        return f"Found '{found}'"
+    return ""

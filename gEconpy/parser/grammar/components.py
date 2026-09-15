@@ -10,7 +10,7 @@ from gEconpy.parser.grammar.statements import (
     MISSING_TILDE,
     VARIABLE_LIST,
     VARIABLE_REF,
-    _collect_kwargs,
+    collect_kwargs,
 )
 from gEconpy.parser.grammar.tokens import (
     COMMA,
@@ -56,9 +56,9 @@ def _build_shock_distribution(tokens: pp.ParseResults) -> GCNDistribution:
     return GCNDistribution(
         parameter_name=tokens.shock_var.name,
         dist_name=tokens.dist_name,
-        dist_kwargs=_collect_kwargs(tokens.dist_args),
+        dist_kwargs=collect_kwargs(tokens.dist_args),
         wrapper_name=wrapper_name,
-        wrapper_kwargs=_collect_kwargs(tokens.wrapper_args) if wrapper_name else {},
+        wrapper_kwargs=collect_kwargs(tokens.wrapper_args) if wrapper_name else {},
         initial_value=initial_value,
     )
 

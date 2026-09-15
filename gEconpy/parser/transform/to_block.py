@@ -4,7 +4,8 @@ from typing import cast
 
 import sympy as sp
 
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, merge_assumptions
 from gEconpy.model.block import Block, dispatch_block
 from gEconpy.parser.ast import (
     GCNBlock,
@@ -17,7 +18,7 @@ from gEconpy.parser.ast import (
 )
 from gEconpy.parser.errors import ParseLocation
 from gEconpy.parser.transform.expand_time_indices import expand_block_time_indices
-from gEconpy.parser.transform.to_sympy import ASTToSympyConverter, ast_to_sympy, merge_assumptions
+from gEconpy.parser.transform.to_sympy import ASTToSympyConverter, ast_to_sympy
 
 EQUATION_COMPONENTS = ("definitions", "objective", "constraints", "identities", "calibration")
 
@@ -27,7 +28,7 @@ def ast_model_to_block_dict(
     assumptions: dict[str, dict[str, bool]] | None = None,
     simplify_blocks: bool = False,
     source: str | None = None,
-    ss_solution_dict=None,
+    ss_solution_dict: SymbolDictionary | None = None,
 ) -> dict[str, Block]:
     """
     Convert every block of a model AST to a solved :class:`~gEconpy.model.block.basic.Block`.
@@ -74,7 +75,7 @@ def ast_block_to_block(
     ast_block: GCNBlock,
     assumptions: dict[str, dict[str, bool]] | None = None,
     source: str | None = None,
-    ss_solution_dict=None,
+    ss_solution_dict: SymbolDictionary | None = None,
 ) -> Block:
     """
     Convert a block AST to a :class:`~gEconpy.model.block.basic.Block`.

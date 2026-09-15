@@ -1,6 +1,7 @@
 import operator
 
 from collections.abc import Callable
+from typing import Any
 
 import pyparsing as pp
 
@@ -14,7 +15,7 @@ from gEconpy.parser.ast import (
 from gEconpy.parser.constants import EQUATION_TAGS, PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNParseFailure, ParseLocation
-from gEconpy.parser.grammar.expressions import EXPR, _location_at, _parse_time_index
+from gEconpy.parser.grammar.expressions import EXPR, location_at, parse_time_index
 from gEconpy.parser.grammar.tokens import (
     ARROW,
     COLON,
@@ -70,8 +71,8 @@ def _parse_variable_ref(s: str, loc: int, toks: pp.ParseResults) -> Variable:
     variable_text = f"{toks.name}[{toks.time}]"
     return Variable(
         name=toks.name,
-        time_index=_parse_time_index(toks.time),
-        location=_location_at(s, loc, length=len(variable_text)),
+        time_index=parse_time_index(toks.time),
+        location=location_at(s, loc, length=len(variable_text)),
     )
 
 
@@ -207,14 +208,8 @@ def _build_equation(s: str, loc: int, tokens: pp.ParseResults) -> GCNEquation:
     lagrange_name = tokens.lagrange[0] if tokens.lagrange else None
     calibrating_param = tokens.calibrating[0] if tokens.calibrating else None
 
-    lhs_location = _find_location_in_node(tokens.lhs)
-    if lhs_location is not None:
-        line, col, source_line = lhs_location.line, lhs_location.column, lhs_location.source_line
-    else:
-        line = pp.lineno(loc, s)
-        col = pp.col(loc, s)
-        lines = s.splitlines()
-        source_line = lines[line - 1] if 0 < line <= len(lines) else ""
+    lhs_location = _find_location_in_node(tokens.lhs) or location_at(s, loc, length=0)
+    line, col, source_line = lhs_location.line, lhs_location.column, lhs_location.source_line
 
     # A calibrating equation is underlined up to its arrow, a regular one through its semicolon.
     terminator = "->" if calibrating_param else ";"
@@ -249,7 +244,7 @@ _ARITHMETIC: dict[str, Callable[[float, float], float]] = {
 }
 
 
-def _evaluate_number_expr(value):
+def _evaluate_number_expr(value: pp.ParseResults | list[Any] | float | str | None) -> float | str | None:
     if isinstance(value, pp.ParseResults):
         value = value.as_list()
     if isinstance(value, int | float):
@@ -268,7 +263,7 @@ def _evaluate_number_expr(value):
     return result
 
 
-def _collect_kwargs(args: pp.ParseResults | str) -> dict[str, float | str | None]:
+def collect_kwargs(args: pp.ParseResults | str) -> dict[str, float | str | None]:
     if not args:
         return {}
     return {arg.arg_name: _evaluate_number_expr(arg.arg_value) for arg in args}
@@ -364,9 +359,9 @@ def _build_distribution(tokens: pp.ParseResults) -> GCNDistribution:
     return GCNDistribution(
         parameter_name=tokens.param_name,
         dist_name=tokens.dist_name,
-        dist_kwargs=_collect_kwargs(tokens.dist_args),
+        dist_kwargs=collect_kwargs(tokens.dist_args),
         wrapper_name=wrapper_name,
-        wrapper_kwargs=_collect_kwargs(tokens.wrapper_args) if wrapper_name else {},
+        wrapper_kwargs=collect_kwargs(tokens.wrapper_args) if wrapper_name else {},
         initial_value=initial_value,
     )
 
