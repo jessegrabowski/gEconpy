@@ -39,8 +39,8 @@ def sparse_root(
     fun : callable
         Fused residual and Jacobian function, called as ``fun(x, *args)`` and returning a tuple of a dense residual
         ndarray and a sparse Jacobian.
-    x0 : ndarray
-        Initial guess for the root.
+    x0 : array_like
+        Initial guess for the root. Cast to a float64 array before ``fun`` is first called.
     solver : RootSolver, optional
         Iteration strategy, implementing ``init`` and ``step``. Defaults to
         :func:`~gEconpy.solvers.sparse_root.line_search.NewtonArmijo`.
@@ -108,6 +108,7 @@ def sparse_root(
     if x_tol is None:
         x_tol = tol
 
+    x0 = np.asarray(x0, dtype=np.float64)
     validate_fused_fun(fun, x0, args)
 
     max_line_search_evals = getattr(getattr(solver, "globalization", None), "max_iter", DEFAULT_ARMIJO_MAX_ITER)

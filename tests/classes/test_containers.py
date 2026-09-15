@@ -224,6 +224,14 @@ class TestSymbolDictionary:
         d1.update({"C": 3})
         assert d1 == {"A": 1, "B": 2, "C": 3}
 
+    def test_update_kwargs_respect_mode(self):
+        d1 = SymbolDictionary({"A": 1})
+        d1.update(B=2)
+        assert d1 == {"A": 1, "B": 2}
+
+        with pytest.raises(KeyError, match="Cannot add string key"):
+            SymbolDictionary({C: 1}).update(x=2)
+
     def test_pipe_with_plain_dict(self):
         merged = SymbolDictionary({C: 1}) | {A: 2}
 

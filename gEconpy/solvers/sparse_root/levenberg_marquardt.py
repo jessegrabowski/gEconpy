@@ -95,8 +95,10 @@ class LevenbergMarquardt:
         scaling = np.maximum(1.0, np.asarray(normal_matrix.diagonal()).ravel())
         diag_indices = np.arange(normal_matrix.shape[0])
         nfev = 0
+        nsolve = 0
 
         for n_rejected in range(self.max_reject):
+            nsolve += 1
             damped_matrix = normal_matrix.copy()
             damped_matrix[diag_indices, diag_indices] += self._lam * scaling
             p = try_linear_solve(self.linear_solver, damped_matrix, -grad)
@@ -115,7 +117,7 @@ class LevenbergMarquardt:
                     rho = (state.phi - phi_trial) / predicted
                     if rho > self.eta:
                         self._lam = max(self._lam * self.lam_down, self.min_lam)
-                        stats = state.stats.update(nit=1, nfev=nfev, njev=nfev, nsolve=1, nreject=n_rejected)
+                        stats = state.stats.update(nit=1, nfev=nfev, njev=nfev, nsolve=nsolve, nreject=n_rejected)
                         new_state = SolverState(x=x_trial, res=res_trial, jac=jac_trial, phi=phi_trial, stats=stats)
                         return new_state, StepInfo(accepted=True, step=p)
 
@@ -123,6 +125,7 @@ class LevenbergMarquardt:
             if self._lam >= self.max_lam:
                 break
 
+        state.stats.update(nfev=nfev, njev=nfev, nsolve=nsolve, nreject=nsolve)
         return state, StepInfo(
             accepted=False,
             step=np.zeros_like(state.x),

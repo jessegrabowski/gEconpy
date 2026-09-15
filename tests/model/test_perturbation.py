@@ -179,7 +179,7 @@ class TestMakeNotLoglinFlags:
         flags = make_not_loglin_flags(
             [self.K, self.C, self.B], [self.alpha], self.steady_state, log_linearize=False, verbose=False
         )
-        np.testing.assert_array_equal(flags, [1, 1, 1])
+        np.testing.assert_array_equal(flags, [1, 1, 1, 1])
 
     def test_unknown_variable_raises(self):
         with pytest.raises(ValueError, match="unknown to the model: Z"):
@@ -325,16 +325,20 @@ class TestNumbaBackend:
             (cycle_reduction_pt, "float64"),
             (cycle_reduction_pt, "float32"),
             (scan_cycle_reduction, "float64"),
+            (scan_cycle_reduction, "float32"),
         ],
-        ids=["gensys-f64", "gensys-f32", "cycle_reduction-f64", "cycle_reduction-f32", "scan_cycle_reduction-f64"],
+        ids=[
+            "gensys-f64",
+            "gensys-f32",
+            "cycle_reduction-f64",
+            "cycle_reduction-f32",
+            "scan_cycle_reduction-f64",
+            "scan_cycle_reduction-f32",
+        ],
     )
     @pytest.mark.parametrize("static_shape", [True, False], ids=["static_shape", "unknown_shape"])
     def test_matches_python_backend(self, op, dtype, static_shape):
-        """The njit kernels agree with the Python Ops, whatever the input dtype and whether the shape is static.
-
-        ``scan_cycle_reduction`` seeds its convergence norm with a float64 constant, so its ``ifelse`` refuses float32
-        inputs at graph-build time and that combination is not swept here.
-        """
+        """The njit kernels agree with the Python Ops, whatever the input dtype and whether the shape is static."""
         mod = load_and_cache_model("one_block_1_ss.gcn")
         A, B, C, D = [
             np.ascontiguousarray(x, dtype="float64")
@@ -375,7 +379,7 @@ class TestCheckBKCondition:
     def test_return_value_selects_output(self, gcn_file, satisfied):
         A, B, C, D = self._system(gcn_file)
 
-        assert check_bk_condition(A, B, C, D, return_value="bool", verbose=False) == satisfied
+        assert check_bk_condition(A, B, C, D, return_value="bool", verbose=False) is satisfied
         assert check_bk_condition(A, B, C, D, return_value=None, verbose=False) is None
 
     def test_on_failure_raise_names_the_failure(self):

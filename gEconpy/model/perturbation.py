@@ -246,7 +246,7 @@ def make_not_loglin_flags(
     if not_loglin_variables is None:
         not_loglin_variables = []
     if not log_linearize:
-        return np.ones(len(variables))
+        return np.ones(len(variables) + len(calibrated_params))
 
     vars_and_calibrated = variables + calibrated_params
     var_names = [get_name(x, base_name=True) for x in vars_and_calibrated]
@@ -559,8 +559,8 @@ def check_bk_condition(
 
     eigvals_real, eigvals_imag, n_forward = compute_bk_eigenvalues(A, B, C, D, tol)
     modulus = np.sqrt(eigvals_real**2 + eigvals_imag**2)
-    n_unstable = (modulus > 1).sum()
-    satisfied = n_forward == n_unstable
+    n_unstable = int((modulus > 1).sum())
+    satisfied = bool(n_forward == n_unstable)
 
     message = (
         f"Model solution has {n_unstable} eigenvalues greater than one in modulus and {n_forward} "

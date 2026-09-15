@@ -85,12 +85,13 @@ class LineSearchSolver:
         except RuntimeError as error:
             return state, StepInfo(accepted=False, step=np.zeros_like(state.x), message=str(error))
 
+        njev = 1 if getattr(self.globalization, "merit_fun", None) is not None else accepted.n_evals
         new_state = SolverState(
             x=accepted.x_new,
             res=accepted.res_new,
             jac=accepted.jac_new,
             phi=accepted.phi_new,
-            stats=state.stats.update(nit=1, nfev=accepted.n_evals, njev=accepted.n_evals, nsolve=1),
+            stats=state.stats.update(nit=1, nfev=accepted.n_evals, njev=njev, nsolve=1),
         )
         return new_state, StepInfo(accepted=True, step=accepted.alpha * proposal.direction)
 

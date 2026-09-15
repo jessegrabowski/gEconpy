@@ -292,7 +292,8 @@ class SymbolDictionary(dict):
         other : dict, optional
             Mapping to take key-value pairs from. Defaults to an empty mapping.
         **kwargs
-            Additional key-value pairs to add.
+            Additional key-value pairs to add. Each goes through ``__setitem__``, so a keyword (string) key is
+            rejected when the dictionary is in sympy mode.
         """
         if other is None:
             other = {}
@@ -304,8 +305,8 @@ class SymbolDictionary(dict):
             if len(self) == len(other) or not self.is_sympy:
                 self.is_sympy = other.is_sympy
 
-        if kwargs:
-            super().update(kwargs)
+        for key, value in kwargs.items():
+            self[key] = value
 
     def to_sympy(self, inplace: bool = False, new_assumptions=None, new_is_variable=None):
         """
