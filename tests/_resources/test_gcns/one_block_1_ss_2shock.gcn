@@ -26,47 +26,47 @@ block STEADY_STATE
 
 block HOUSEHOLD
 {
-	definitions
-	{
-		u[] = B[] * (C[] ^ theta * (1 - L[]) ^ (1 - theta)) ^ (1 - tau) / (1 - tau);
-	};
+    definitions
+    {
+        u[] = B[] * (C[] ^ theta * (1 - L[]) ^ (1 - theta)) ^ (1 - tau) / (1 - tau);
+    };
 
-	controls
-	{
-		C[], L[], I[], K[], Y[];
-	};
+    controls
+    {
+        C[], L[], I[], K[], Y[];
+    };
 
-	objective
-	{
-		U[] = u[] + beta * E[][U[1]];
-	};
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
 
-	constraints
-	{
-		Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha);
-		C[] + I[] = Y[] : lambda[];
-		K[] = I[] + (1 - delta) * K[-1] : q[];
-	};
+    constraints
+    {
+        Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha);
+        C[] + I[] = Y[] : lambda[];
+        K[] = I[] + (1 - delta) * K[-1] : q[];
+    };
 
-	identities
-	{
-		log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
-		log(B[]) = rho_B * log(B[-1]) + epsilon_B[];
-	};
+    identities
+    {
+        log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
+        log(B[]) = rho_B * log(B[-1]) + epsilon_B[];
+    };
 
-	shocks
-	{
-		epsilon_A[], epsilon_B[];
-	};
+    shocks
+    {
+        epsilon_A[], epsilon_B[];
+    };
 
-	calibration
-	{
-		alpha = 0.35;
-		theta = 0.357;
-		beta = 0.99;
-		delta = 0.02;
-		tau = 2;
-		rho_A = 0.95;
-		rho_B = 0.95;
-	};
+    calibration
+    {
+        alpha = 0.35;
+        theta = 0.357;
+        beta = 0.99;
+        delta = 0.02;
+        tau = 2;
+        rho_A = 0.95;
+        rho_B = 0.95;
+    };
 };
