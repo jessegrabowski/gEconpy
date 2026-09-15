@@ -60,6 +60,7 @@ def _build_shock_distribution(tokens: pp.ParseResults) -> GCNDistribution:
         wrapper_name=wrapper_name,
         wrapper_kwargs=collect_kwargs(tokens.wrapper_args) if wrapper_name else {},
         initial_value=initial_value,
+        location=tokens.shock_var.location,
     )
 
 

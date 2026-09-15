@@ -169,6 +169,12 @@ class TestDistribution:
         result = DISTRIBUTION.parse_string("eps ~ Normal(mu=0, sigma=sigma_eps);")[0]
         assert result.dist_kwargs["sigma"] == "sigma_eps"
 
+    def test_location_spans_declaration_through_semicolon(self):
+        text = "  alpha ~ Beta(a=1, b=1) = 0.35;"
+        location = DISTRIBUTION.parse_string(text)[0].location
+        assert (location.line, location.column, location.end_column) == (1, 3, len(text) + 1)
+        assert location.source_line == text
+
 
 class TestEquationErrors:
     @pytest.mark.parametrize(
@@ -181,7 +187,7 @@ class TestEquationErrors:
             ("Y[] C[];", "Expected '='"),
             ("Y[] = C[]);", "Unmatched '\\)'"),
             ("Y[] = C[]];", "Unmatched '\\]'"),
-            ("Y[] = C[]};", "Unmatched '}'"),
+            ("Y[] = C[] }", "Missing semicolon"),
         ],
         ids=[
             "missing_semicolon",
@@ -191,7 +197,7 @@ class TestEquationErrors:
             "juxtaposed",
             "unmatched_paren",
             "unmatched_bracket",
-            "unmatched_brace",
+            "brace_before_semicolon",
         ],
     )
     def test_invalid_equation_raises(self, text, match):

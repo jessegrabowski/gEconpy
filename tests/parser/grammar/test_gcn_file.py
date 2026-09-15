@@ -360,8 +360,33 @@ class TestGCNFileErrors:
                 "missing semicolon",
                 "End the statement with ';'",
             ),
+            (
+                "block TEST { identities { Y[] = C[] }; };",
+                ErrorCode.E001,
+                "}",
+                37,
+                "missing semicolon",
+                "End the statement with ';'",
+            ),
+            (
+                "identities { Y[] = C[]; };",
+                ErrorCode.E016,
+                "identities",
+                1,
+                "component outside block",
+                "Wrap the component in a block: block NAME { ... };",
+            ),
         ],
-        ids=["unclosed_paren", "empty_rhs", "unknown_component", "bad_time_index", "missing_tilde", "double_equals"],
+        ids=[
+            "unclosed_paren",
+            "empty_rhs",
+            "unknown_component",
+            "bad_time_index",
+            "missing_tilde",
+            "double_equals",
+            "brace_before_semicolon",
+            "orphan_component",
+        ],
     )
     def test_error_carries_code_span_annotation_and_fix_note(self, text, code, found, column, annotation, first_note):
         with pytest.raises(GCNGrammarError) as exc_info:
@@ -376,6 +401,16 @@ class TestGCNFileErrors:
         assert (location.line, location.column, location.end_column) == (1, column, column + len(found))
         assert location.filename == "model.gcn"
         assert location.source_line == text
+
+    def test_end_of_input_marks_one_column_with_no_found_token(self):
+        text = "block TEST { identities { Y[] = C[]; };"
+        with pytest.raises(GCNGrammarError) as exc_info:
+            parse_gcn(text)
+
+        error = exc_info.value
+        assert error.code == ErrorCode.E002
+        assert error.found == ""
+        assert (error.location.column, error.location.end_column) == (len(text) + 1, len(text) + 2)
 
 
 class TestGCNFileEdgeCases:

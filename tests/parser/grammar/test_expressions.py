@@ -188,8 +188,16 @@ class TestGrammarErrors:
             ("(a + b", ErrorCode.E007, "Unbalanced parentheses. Found 'end of text'", "end of text", 7),
             ("log(a", ErrorCode.E007, "Unbalanced parentheses. Found 'end of text'", "end of text", 6),
             ("Y[", ErrorCode.E010, "Invalid variable syntax. Found 'end of text'", "end of text", 3),
+            ("a + b)", ErrorCode.E007, "Unbalanced parentheses. Found ')'", ")", 6),
         ],
-        ids=["trailing_operator", "juxtaposed_atoms", "unclosed_paren", "unclosed_call", "unclosed_bracket"],
+        ids=[
+            "trailing_operator",
+            "juxtaposed_atoms",
+            "unclosed_paren",
+            "unclosed_call",
+            "unclosed_bracket",
+            "stray_paren",
+        ],
     )
     def test_structural_failure_maps_to_catalog_code(self, text, code, message, found, column):
         with pytest.raises(GCNGrammarError) as exc_info:
@@ -211,6 +219,11 @@ class TestNodeLocations:
         assert (result.left.location.column, result.left.location.end_column) == (1, 4)
         assert (result.right.location.column, result.right.location.end_column) == (7, 12)
         assert result.left.location.source_line == "C[] + alpha"
+
+    @pytest.mark.parametrize("text", ["K[-1]", "K[ss]", "K[10]"])
+    def test_variable_span_covers_exactly_its_text(self, text):
+        location = parse_expression(text).location
+        assert (location.column, location.end_column) == (1, 1 + len(text))
 
     def test_location_tracks_line_of_multiline_source(self):
         result = parse_expression("a +\n  K[]")
@@ -394,10 +407,20 @@ class TestRealWorldExpressions:
         assert result.op == Operator.POW
         assert isinstance(result.right, UnaryOp)
 
-    def test_negative_base_to_power(self):
-        expr = "-x ^ 2"
+    @pytest.mark.parametrize("expr", ["-x ^ 2", "-x ** 2", "--x ^ 2 ^ 3"], ids=["caret", "double_star", "nested"])
+    def test_negative_base_to_power_negates_the_power(self, expr):
         result = parse_expression(expr)
-        assert isinstance(result, BinaryOp)
-        assert result.op == Operator.POW
-        assert isinstance(result.left, UnaryOp)
-        assert result.left.op == Operator.NEG
+        assert isinstance(result, UnaryOp)
+
+        power = result.operand
+        while isinstance(power, UnaryOp):
+            power = power.operand
+        assert isinstance(power, BinaryOp)
+        assert power.op == Operator.POW
+        assert power.left == Parameter(name="x")
+
+    def test_parenthesized_negative_base_keeps_the_sign_inside(self):
+        result = parse_expression("(-x) ^ 2")
+        assert result == BinaryOp(
+            left=UnaryOp(op=Operator.NEG, operand=Parameter(name="x")), op=Operator.POW, right=Number(value=2.0)
+        )
