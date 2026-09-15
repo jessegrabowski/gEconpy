@@ -489,10 +489,11 @@ def _substitute_and_filter(
     cache : dict
         The extended cache.
     """
+    ss_variable_set = set(ss_variables)
     known = {
         safe_to_ss(symbol): expression
         for symbol, expression in ss_solution_dict.to_sympy().items()
-        if safe_to_ss(symbol) in ss_variables
+        if safe_to_ss(symbol) in ss_variable_set
     }
     if not known:
         return equations, cache

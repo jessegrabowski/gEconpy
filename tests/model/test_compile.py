@@ -22,7 +22,6 @@ def test_dictionary_return_wrapper():
     result = wrapped()
 
     assert isinstance(result, SymbolDictionary)
-    assert "a" in result and "b" in result
     assert result["a"] == 1.0
     assert result["b"] == 2.0
 

@@ -471,10 +471,9 @@ def check_for_orphan_params(equations: list[sp.Expr], param_dict: SymbolDictiona
     orphans = [
         atom
         for eq in equations
-        for atom in eq.atoms()
+        for atom in eq.atoms(sp.Symbol)
         if (
-            isinstance(atom, sp.Symbol)
-            and not isinstance(atom, TimeAwareSymbol)
+            not isinstance(atom, TimeAwareSymbol)
             and atom not in parameters
             and not any(param_eq.has(atom) for param_eq in param_equations)
         )
@@ -507,7 +506,7 @@ def check_for_extra_params(
     parameters = list(param_dict.to_sympy().keys())
     param_equations = [value for value in param_dict.values() if isinstance(value, sp.Expr)]
 
-    used_atoms = {atom for eq in equations + param_equations for atom in eq.atoms()}
+    used_atoms = {atom for eq in equations + param_equations for atom in eq.atoms(sp.Symbol)}
     if distribution_atoms:
         used_atoms |= distribution_atoms
 
@@ -617,16 +616,20 @@ def _derive_model_primitives(
     parsed = load_gcn_file(gcn_path, simplify_blocks=simplify_blocks)
 
     equations, variables, reduced_vars, singletons = _apply_simplifications(
-        parsed.tryreduce,
-        parsed.equations,
-        parsed.variables,
-        _block_dict_to_sub_dict(parsed.block_dict),
+        try_reduce_vars=parsed.tryreduce,
+        equations=parsed.equations,
+        variables=parsed.variables,
+        tryreduce_sub_dict=_block_dict_to_sub_dict(parsed.block_dict),
         use_tryreduce=simplify_tryreduce,
         use_constants=simplify_constants,
     )
 
     shock_names = {shock.base_name for shock in parsed.shocks}
-    param_priors, shock_priors = _split_distributions(parsed.distributions, parsed.shock_distributions, shock_names)
+    param_priors, shock_priors = _split_distributions(
+        distributions=parsed.distributions,
+        shock_distributions=parsed.shock_distributions,
+        shock_names=shock_names,
+    )
     param_dict, hyper_param_dict = split_out_hyper_params(parsed.param_dict, shock_priors)
 
     ss_solution_dict = simplify_provided_ss_equations(parsed.ss_solution_dict, variables)
@@ -639,11 +642,11 @@ def _derive_model_primitives(
     )
 
     validate_results(
-        equations,
-        user_provided_relationships,
-        param_dict,
-        parsed.calib_dict,
-        deterministic_dict,
+        equations=equations,
+        steady_state_relationships=user_provided_relationships,
+        param_dict=param_dict,
+        calib_dict=parsed.calib_dict,
+        deterministic_dict=deterministic_dict,
         on_unused_parameters=on_unused_parameters,
         distributions=parsed.distributions,
         distribution_param_names=parsed.distribution_param_names,
@@ -666,18 +669,18 @@ def _derive_model_primitives(
 
     if verbose:
         build_report(
-            equations,
-            param_dict,
-            parsed.calib_dict,
-            variables,
-            shocks,
-            param_priors,
-            shock_priors,
-            reduced_vars,
-            reduced_params,
-            singletons,
-            user_provided_ss_vars,
-            inferred_ss_vars,
+            equations=equations,
+            param_dict=param_dict,
+            calib_dict=parsed.calib_dict,
+            variables=variables,
+            shocks=shocks,
+            param_priors=param_priors,
+            shock_priors=shock_priors,
+            reduced_vars=reduced_vars,
+            reduced_params=reduced_params,
+            singletons=singletons,
+            user_provided_ss_vars=user_provided_ss_vars,
+            inferred_ss_vars=inferred_ss_vars,
         )
 
     return _ModelPrimitives(

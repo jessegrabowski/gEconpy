@@ -1,10 +1,9 @@
-from pathlib import Path
-
 import pytest
 
 from gEconpy import model_from_gcn
 from gEconpy.exceptions import ExtraParameterError, OrphanParameterError
 from gEconpy.model.model import Model
+from tests.conftest import TEST_GCNS
 
 
 @pytest.mark.parametrize(
@@ -196,9 +195,8 @@ nk_shocks = ["epsilon_R", "epsilon_pi", "epsilon_Y", "epsilon_preference"]
     ],
 )
 def test_variables_parsed(gcn_path, expected_variables, expected_params, expected_shocks):
-    file_path = Path("tests") / "_resources" / "test_gcns" / gcn_path
     model = model_from_gcn(
-        file_path,
+        TEST_GCNS / gcn_path,
         verbose=False,
         mode="FAST_COMPILE",
         simplify_constants=False,
@@ -224,11 +222,7 @@ def test_variables_parsed(gcn_path, expected_variables, expected_params, expecte
     ids=["one_block_simple", "open_rbc", "full_nk"],
 )
 def test_load_gcn(gcn_file):
-    mod = model_from_gcn(
-        Path("tests") / "_resources" / "test_gcns" / gcn_file,
-        simplify_blocks=True,
-        verbose=False,
-    )
+    mod = model_from_gcn(TEST_GCNS / gcn_file, simplify_blocks=True, verbose=False)
     assert isinstance(mod, Model)
     assert len(mod.shocks) > 0
     assert len(mod.variables) > 0
@@ -242,17 +236,17 @@ def test_load_gcn(gcn_file):
 
 def test_loading_fails_if_orphan_parameters():
     with pytest.raises(OrphanParameterError):
-        model_from_gcn(Path("tests") / "_resources" / "test_gcns" / "open_rbc_orphan_params.gcn")
+        model_from_gcn(TEST_GCNS / "open_rbc_orphan_params.gcn")
 
 
 def test_loading_fails_if_extra_parameters():
     with pytest.raises(ExtraParameterError):
-        model_from_gcn(Path("tests") / "_resources" / "test_gcns" / "open_rbc_extra_params.gcn")
+        model_from_gcn(TEST_GCNS / "open_rbc_extra_params.gcn")
 
 
 def test_build_report(caplog):
     model_from_gcn(
-        "tests/_resources/test_gcns/rbc_2_block.gcn",
+        TEST_GCNS / "rbc_2_block.gcn",
         verbose=True,
         simplify_tryreduce=True,
         simplify_constants=True,

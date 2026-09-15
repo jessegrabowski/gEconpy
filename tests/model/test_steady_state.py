@@ -85,7 +85,8 @@ class TestPropagateSteadyStateThroughIdentities:
             variables=[x, y, z],
         )
 
-        assert x.to_ss() not in result and y.to_ss() not in result
+        assert x.to_ss() not in result
+        assert y.to_ss() not in result
 
     def test_rejects_complex_ces_production_function(self):
         """CES production function inversion is too complex to attempt."""
@@ -139,6 +140,10 @@ class TestPropagateSteadyStateThroughIdentities:
         assert float(result[A.to_ss()]) == 1.0
 
 
+def _collapse_whitespace(text: str) -> str:
+    return re.sub(" +", " ", re.sub("[\t\n]", " ", text))
+
+
 def assert_root_and_minimize_agree(model: Model, **steady_state_kwargs):
     ss_root = model.steady_state(how="root", verbose=False, progressbar=False, **steady_state_kwargs)
     ss_minimize = model.steady_state(how="minimize", verbose=False, progressbar=False, **steady_state_kwargs)
@@ -178,16 +183,9 @@ def test_print_steady_state_report_solver_successful(caplog):
                          U_ss             101.458
                          lambda_ss          0.120"""
 
-    expected_output = re.sub("[\t\n]", " ", expected_output)
-    expected_output = re.sub(" +", " ", expected_output)
-
     print_steady_state(res)
-    emitted_message = caplog.messages[-1]
 
-    emitted_message = re.sub("[\t\n]", " ", emitted_message)
-    emitted_message = re.sub(" +", " ", emitted_message)
-
-    assert emitted_message == expected_output
+    assert _collapse_whitespace(caplog.messages[-1]) == _collapse_whitespace(expected_output)
 
 
 def test_print_steady_state_report_solver_fails(caplog):
@@ -202,14 +200,8 @@ def test_print_steady_state_report_solver_fails(caplog):
                          K_ss              74.553
                          U_ss             101.458
                          lambda_ss          0.120"""
-    expected_output = re.sub("[\t\n]", " ", expected_output)
-    expected_output = re.sub(" +", " ", expected_output)
 
-    emitted_message = caplog.messages[-1]
-    emitted_message = re.sub("[\t\n]", " ", emitted_message)
-    emitted_message = re.sub(" +", " ", emitted_message)
-
-    assert emitted_message == expected_output
+    assert _collapse_whitespace(caplog.messages[-1]) == _collapse_whitespace(expected_output)
 
 
 def test_incomplete_ss_relationship_raises_with_root():

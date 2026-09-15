@@ -377,6 +377,7 @@ class Model:
         self._f_ss: Callable | None = None
         self._equation_tensors: list[TensorVariable] | None = None
         self._full_equation_tensors: list[TensorVariable] | None = None
+        self._f_full_residual: Callable | None = None
 
         self._backward_variables: list[TimeAwareSymbol] | None = None
         self._symbolic_forward_variables: list[TimeAwareSymbol] | None = None
@@ -511,7 +512,7 @@ class Model:
                 self._forward_variables = list(self.symbolic_forward_variables)
             else:
                 column_sums = np.abs(C).sum(axis=0)
-                self._forward_variables = [v for v, s in zip(self._variables, column_sums, strict=False) if s > 1e-8]
+                self._forward_variables = [v for v, s in zip(self._variables, column_sums, strict=True) if s > 1e-8]
         return self._forward_variables
 
     @property
@@ -801,7 +802,7 @@ class Model:
 
         symbol = self._all_names_to_symbols.get(name)
         if symbol is None:
-            close_matches = difflib.get_close_matches(name, [get_name(x) for x in self._all_names_to_symbols], n=1)
+            close_matches = difflib.get_close_matches(name, list(self._all_names_to_symbols), n=1)
             hint = f" Did you mean {close_matches[0]}?" if close_matches else ""
             raise IndexError(f"Did not find {name} among model objects.{hint}")
         if ss_requested:
@@ -1617,7 +1618,7 @@ class Model:
             solver = "backward_direct"
 
         if solver == "gensys":
-            T, R = self._solve_with_gensys(A, B, C, D, self.n_variables, tol, verbose, on_failure)
+            T, R = self._solve_with_gensys(A, B, C, D, tol, verbose, on_failure)
         elif solver == "cycle_reduction":
             T, R = self._solve_with_cycle_reduction(A, B, C, D, max_iter, tol, verbose, on_failure)
         elif solver == "backward_direct":
@@ -1708,7 +1709,9 @@ class Model:
         return self._full_equation_tensors
 
     def _compile_full_residual(self) -> Callable:
-        return compile_for_scipy(pt.stack(self.equation_tensors()), mode=self._mode)
+        if self._f_full_residual is None:
+            self._f_full_residual = compile_for_scipy(pt.stack(self.equation_tensors()), mode=self._mode)
+        return self._f_full_residual
 
     def _evaluate_steady_state(self, **updates: float) -> np.ndarray:
         """Evaluate the full residual system at the analytic steady-state values and the given parameters."""
@@ -1925,7 +1928,7 @@ class Model:
             to_constrained = None
         else:
             method = requested_method or "trust-ncg"
-            transforms = [infer_variable_transform(v, bound_dict.get(v.name, (None, None))) for v in vars_to_solve]
+            transforms = [infer_variable_transform(v, bound_dict[v.name]) for v in vars_to_solve]
             solve_equations, solve_nodes, to_unconstrained, to_constrained = transform_steady_state_system(
                 equations, ss_nodes, transforms
             )
@@ -2048,7 +2051,6 @@ class Model:
         B: np.ndarray,
         C: np.ndarray,
         D: np.ndarray,
-        n_variables: int,
         tol: float,
         verbose: bool,
         on_failure: str,
@@ -2066,8 +2068,8 @@ class Model:
         if not success:
             return None, None
 
-        T = G_1[:n_variables, :n_variables]
-        R = impact[:n_variables, :]
+        T = G_1[: self.n_variables, : self.n_variables]
+        R = impact[: self.n_variables, :]
         return T, R
 
     def _solve_with_cycle_reduction(

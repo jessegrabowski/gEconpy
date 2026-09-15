@@ -419,7 +419,8 @@ def pack_and_compile(
         Compiled function of ``x_flat``.
     """
     graph_inputs = set(explicit_graph_inputs(outputs))
-    active_nodes = [node for node in ss_nodes if node in graph_inputs]
+    active_indices = [i for i, node in enumerate(ss_nodes) if node in graph_inputs]
+    active_nodes = [ss_nodes[i] for i in active_indices]
 
     if not active_nodes:
         return _compile_without_ss_inputs(outputs, param_dict, mode)
@@ -432,11 +433,16 @@ def pack_and_compile(
     param_inputs = [inp for inp in explicit_graph_inputs(outputs) if inp not in active_set]
     inner = compile_pytensor_function([x_flat, *param_inputs], new_outputs, mode=mode, on_unused_input="ignore")
 
-    need_slice = len(active_nodes) != len(ss_nodes)
-    active_indices = np.array([i for i, node in enumerate(ss_nodes) if node in graph_inputs]) if need_slice else None
+    if len(active_nodes) == len(ss_nodes):
 
-    def select_active(x_flat: np.ndarray) -> np.ndarray:
-        return x_flat[active_indices] if need_slice else x_flat
+        def select_active(x_flat: np.ndarray) -> np.ndarray:
+            return x_flat
+
+    else:
+        active_index_array = np.array(active_indices)
+
+        def select_active(x_flat: np.ndarray) -> np.ndarray:
+            return x_flat[active_index_array]
 
     if param_dict is None:
 

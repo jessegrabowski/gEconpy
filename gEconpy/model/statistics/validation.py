@@ -1,6 +1,6 @@
 import logging
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -210,12 +210,12 @@ def _validate_shock_options(
         shock_names = [x.base_name for x in shocks]
         unknown = [x for x in shock_std_dict if x not in shock_names]
         missing = [x for x in shock_names if x not in shock_std_dict]
-        if len(unknown) > 0:
+        if unknown:
             raise ValueError(
                 f"Unexpected shocks in shock_std_dict. The following names were not found among the model shocks: "
                 f"{', '.join(unknown)}"
             )
-        if len(missing) > 0:
+        if missing:
             raise ValueError(
                 f"If shock_std_dict is specified, it must give values for all shocks. The following shocks were not "
                 f"found among the provided keys: {', '.join(missing)}"
@@ -223,7 +223,6 @@ def _validate_shock_options(
 
     if shock_std is not None:
         if isinstance(shock_std, np.ndarray | list):
-            shock_std = cast(np.ndarray | list, shock_std)
             if len(shock_std) != n_shocks:
                 raise ValueError(
                     f"Length of shock_std ({len(shock_std)}) does not match the number of shocks ({n_shocks})"
