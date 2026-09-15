@@ -152,23 +152,25 @@ _SS_VARIABLE_WITHOUT_ANALYTIC_VALUE = """
 @pytest.mark.parametrize(
     "gcn_string, exception, match",
     [
-        pytest.param(
+        (
             _MISSING_CONTROLS,
             OptimizationProblemNotDefinedException,
             "has an objective component but no controls component",
-            marks=pytest.mark.xfail(strict=True, reason="The message names the present component as the missing one"),
         ),
-        pytest.param(
+        (
             _MISSING_OBJECTIVE,
             OptimizationProblemNotDefinedException,
             "has a controls component but no objective component",
-            marks=pytest.mark.xfail(strict=True, reason="The message names the present component as the missing one"),
         ),
         (_MULTIPLE_OBJECTIVES, MultipleObjectiveFunctionsException, "declares 2 objectives"),
         (_CONTROL_NOT_FOUND, ControlVariableNotFoundException, "Control variable 'Z_t' in block HOUSEHOLD"),
         (_DYNAMIC_CALIBRATION, DynamicCalibratingEquationException, "uses non-steady-state variables"),
         (_VARIABLE_IN_DETERMINISTIC_PARAMETER, ValueError, "cannot be functions of variables"),
-        (_NO_CONTINUATION_VALUE, ValueError, "did not find the continuation value"),
+        (
+            _NO_CONTINUATION_VALUE,
+            ValueError,
+            "continuation value of the current state value in the following objective",
+        ),
         (_SS_VARIABLE_WITHOUT_STEADY_STATE_BLOCK, ValueError, "no STEADY_STATE block with analytic solutions"),
         (_SS_VARIABLE_WITHOUT_ANALYTIC_VALUE, ValueError, "without analytic solutions: Y_ss"),
     ],
@@ -315,10 +317,19 @@ class TestBlockCases:
         assert len(block.shocks) == 1
 
     def test_lagrange_parsing(self, block):
-        n_named_multipliers = sum(x is not None for x in block.multipliers.values())
-        assert n_named_multipliers == 2
+        assert set(block.constraints) <= set(block.multipliers)
         assert block.multipliers[3] == parsed_var("lambda", 0)
         assert block.multipliers[4] == parsed_var("q", 0)
+        assert parsed_var("lambda__H_1", 0) in block.eliminated_variables
+        assert block.multipliers[2] is None
+
+    def test_generated_multiplier_is_keyed_by_its_constraint(self, block):
+        lagrange = block._build_lagrangian()
+
+        generated = block.multipliers[2]
+        assert generated == parsed_var("lambda__H_1", 0)
+        assert generated in lagrange.free_symbols
+        assert block.multipliers[1] is None
 
     def test_extract_discount_factor_on_Bellman_eq(self, block):
         df = block._get_discount_factor()

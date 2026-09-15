@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 import numpy as np
 
 
@@ -5,7 +7,7 @@ def validate_perfect_foresight_inputs(
     initial_conditions: dict[str, float],
     terminal_conditions: dict[str, float],
     shocks: dict[str, np.ndarray] | None,
-    param_paths: dict[str, float | np.ndarray] | None,
+    param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
     var_names: list[str],
     shock_names: list[str],
     param_names: list[str],
@@ -22,9 +24,9 @@ def validate_perfect_foresight_inputs(
         Variable values at ``t = T``, keyed by base name.
     shocks : dict mapping str to ndarray, optional
         Shock paths over the horizon, keyed by shock name.
-    param_paths : dict mapping str to float or ndarray, optional
-        Parameter overrides, keyed by parameter name. A scalar holds for every period. An array gives one value
-        per period.
+    param_paths : dict mapping str to float, sequence of float, or ndarray, optional
+        Parameter overrides, keyed by parameter name. A scalar holds for every period. A list or array gives one
+        value per period.
     var_names : list of str
         Variable names the model knows.
     shock_names : list of str
@@ -61,5 +63,5 @@ def validate_perfect_foresight_inputs(
             raise ValueError(f"Unknown parameters in param_paths: {invalid_params}. Valid: {param_names}")
 
         for name, value in param_paths.items():
-            if isinstance(value, np.ndarray) and len(value) != simulation_length:
+            if np.ndim(value) > 0 and len(value) != simulation_length:
                 raise ValueError(f"param_paths['{name}'] has length {len(value)}, expected {simulation_length}")

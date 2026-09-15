@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
 
 import numpy as np
@@ -26,7 +26,7 @@ def solve_perfect_foresight(
     initial_conditions: dict[str, float] | None = None,
     terminal_conditions: dict[str, float] | None = None,
     shocks: dict[str, np.ndarray] | None = None,
-    param_paths: dict[str, float | np.ndarray] | None = None,
+    param_paths: dict[str, float | Sequence[float] | np.ndarray] | None = None,
     compile_kwargs: dict | None = None,
     solver: RootSolver | None = None,
     steady_state_kwargs: dict | None = None,
@@ -59,9 +59,9 @@ def solve_perfect_foresight(
         steady-state values.
     shocks : dict mapping str to ndarray, optional
         Shock paths over the horizon, keyed by shock name, each of length ``T``. Shocks not listed are zero.
-    param_paths : dict mapping str to float or ndarray, optional
-        Parameter overrides, keyed by parameter name. A scalar holds for every period and an array of length ``T``
-        varies over time. Parameters not listed keep their model values. When boundary conditions are not fully
+    param_paths : dict mapping str to float, sequence of float, or ndarray, optional
+        Parameter overrides, keyed by parameter name. A scalar holds for every period and a list or array of length
+        ``T`` varies over time. Parameters not listed keep their model values. When boundary conditions are not fully
         specified, the initial and terminal steady states are computed at the parameter values of ``t = 0`` and
         ``t = T - 1``.
     compile_kwargs : dict, optional
@@ -288,21 +288,22 @@ def _infer_var_names_from_ss(*ss_dicts: dict[str, float]) -> list[str]:
 
 
 def _extract_boundary_param_kwargs(
-    param_paths: dict[str, float | np.ndarray] | None,
+    param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
 ) -> tuple[dict[str, float], dict[str, float]]:
-    """Read the parameter values at ``t = 0`` and ``t = T - 1``, for computing the boundary steady states."""
+    """
+    Read the parameter values at ``t = 0`` and ``t = T - 1``, for computing the boundary steady states.
+
+    A scalar gives the same value at both ends. A list or array of length ``T`` gives its first and last entries.
+    """
     if not param_paths:
         return {}, {}
 
     initial_kwargs = {}
     terminal_kwargs = {}
     for name, value in param_paths.items():
-        if isinstance(value, np.ndarray):
-            initial_kwargs[name] = float(value[0])
-            terminal_kwargs[name] = float(value[-1])
-        else:
-            initial_kwargs[name] = float(value)
-            terminal_kwargs[name] = float(value)
+        path = np.asarray(value, dtype=float)
+        initial_kwargs[name] = float(path.flat[0])
+        terminal_kwargs[name] = float(path.flat[-1])
 
     return initial_kwargs, terminal_kwargs
 
@@ -351,7 +352,7 @@ def _build_shock_matrix(
 
 
 def _build_param_matrix(
-    param_paths: dict[str, float | np.ndarray] | None,
+    param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
     param_names: list[str],
     param_defaults: dict[str, float],
     T: int,
