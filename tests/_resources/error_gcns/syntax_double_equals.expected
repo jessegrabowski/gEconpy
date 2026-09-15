@@ -1,4 +1,4 @@
-error[E001]: Missing semicolon. Found ''Y''
+error[E001]: Missing semicolon. Found 'Y'
   --> syntax_double_equals.gcn:6:9
      |
    4 |     identities

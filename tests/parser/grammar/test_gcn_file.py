@@ -309,6 +309,13 @@ class TestGCNFileErrors:
         with pytest.raises(GCNGrammarError, match=match):
             parse_gcn(text)
 
+    def test_structural_error_found_token_is_quoted_once(self):
+        with pytest.raises(GCNGrammarError) as exc_info:
+            parse_gcn("block TEST { identities { Y[] = C[] X[] = K[]; }; };")
+
+        assert exc_info.value.found == "Y"
+        assert "Found 'Y'" in str(exc_info.value)
+
 
 class TestGCNFileEdgeCases:
     def test_empty_special_blocks(self):

@@ -135,6 +135,17 @@ class TestAstModelToPrimitives:
 
         assert [v.base_name for v in primitives.tryreduce] == ["U"]
 
+    @pytest.mark.parametrize("ss_name", ["STEADY_STATE", "STEADYSTATE", "SS", "STEADY"])
+    def test_every_steady_state_block_name_is_consumed_not_solved(self, ss_name):
+        source = f"""
+        block {ss_name} {{ identities {{ C[ss] = 1; }}; }};
+        block TEST {{ identities {{ C[] = 1; }}; }};
+        """
+        primitives = ast_model_to_primitives(quick_parse(source))
+
+        assert set(primitives.block_dict) == {"TEST"}
+        assert [str(k) for k in primitives.ss_solution_dict] == ["C_ss"]
+
 
 class TestLoadGcnString:
     def test_simple_model(self):

@@ -130,7 +130,7 @@ def _convert_parse_exception(exc: pp.ParseBaseException, text: str, filename: st
 
     return GCNGrammarError(
         message=message,
-        found=found,
+        found=found_clean,
         location=location,
         code=code,
         annotation=annotation,

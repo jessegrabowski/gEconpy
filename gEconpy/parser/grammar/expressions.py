@@ -197,25 +197,23 @@ def _convert_parse_exception(exc: pp.ParseBaseException, text: str, context: str
         if 0 < line <= len(lines):
             source_line = lines[line - 1]
 
-    found = exc.found or ""
-    message = str(exc.msg)
+    message, code, found, _ = GCNParseFailure.decode(exc)
+    found = found.strip("'\"")
+
+    if code == ErrorCode.E000:
+        code = _structural_error_code(message)
+        message = _structural_message(message, found)
 
     return GCNGrammarError(
-        message=_classify_expression_error(message, found),
+        message=message,
         found=found,
         location=ParseLocation(line=line, column=col, source_line=source_line),
         context=context,
-        code=_get_error_code(message),
+        code=code,
     )
 
 
-def _classify_expression_error(message: str, found: str) -> str:
-    if "Empty function call" in message:
-        return message.split(". E008", maxsplit=1)[0]
-
-    if "Invalid time index" in message:
-        return message.split(". E010", maxsplit=1)[0]
-
+def _structural_message(message: str, found: str) -> str:
     if "end of text" in message.lower():
         if found in _OP_MAP:
             return f"Unexpected operator '{found}' at end of expression"
@@ -228,13 +226,7 @@ def _classify_expression_error(message: str, found: str) -> str:
     return f"Invalid expression syntax: {message}"
 
 
-def _get_error_code(message: str) -> ErrorCode:
-    if "E008" in message or "Empty function call" in message:
-        return ErrorCode.E008
-
-    if "E010" in message or "Invalid time index" in message:
-        return ErrorCode.E010
-
+def _structural_error_code(message: str) -> ErrorCode:
     if "(" in message or ")" in message:
         return ErrorCode.E007
 
