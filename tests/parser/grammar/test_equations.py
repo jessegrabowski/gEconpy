@@ -267,3 +267,25 @@ class TestEquationTags:
     def test_tag_case_insensitive(self):
         eq = parse_equation("@EXCLUDE Y[] = C[];")
         assert eq.is_excluded
+
+    def test_multiple_tags_accumulate(self):
+        eq = parse_equation("@exclude @minimize TC[] = w[] * L[];")
+        assert eq.tags == frozenset({Tag.EXCLUDE, Tag.MINIMIZE})
+        assert eq.lhs == Variable(name="TC")
+
+
+class TestEquationLocation:
+    @pytest.mark.parametrize(
+        "text, span",
+        [
+            ("Y[] = C[] + I[];", (1, 1, 1, 17)),
+            ("Y[ss] / K[ss] = 0.36 -> alpha;", (1, 1, 1, 22)),
+            ("@exclude\nY[] = C[];", (2, 1, 2, 11)),
+            ("Y[] = C[] : lambda[];", (1, 1, 1, 22)),
+        ],
+        ids=["through_semicolon", "up_to_arrow", "after_tag_line", "through_multiplier"],
+    )
+    def test_span_starts_at_lhs_and_ends_at_terminator(self, text, span):
+        location = parse_equation(text).location
+        assert (location.line, location.column, location.end_line, location.end_column) == span
+        assert location.source_line == text.splitlines()[location.line - 1]

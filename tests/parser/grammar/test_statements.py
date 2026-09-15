@@ -180,8 +180,19 @@ class TestEquationErrors:
             ("Y[];", "Missing '='"),
             ("Y[] C[];", "Expected '='"),
             ("Y[] = C[]);", "Unmatched '\\)'"),
+            ("Y[] = C[]];", "Unmatched '\\]'"),
+            ("Y[] = C[]};", "Unmatched '}'"),
         ],
-        ids=["missing_semicolon", "missing_rhs", "missing_lhs", "missing_equals", "juxtaposed", "unmatched_close"],
+        ids=[
+            "missing_semicolon",
+            "missing_rhs",
+            "missing_lhs",
+            "missing_equals",
+            "juxtaposed",
+            "unmatched_paren",
+            "unmatched_bracket",
+            "unmatched_brace",
+        ],
     )
     def test_invalid_equation_raises(self, text, match):
         with pytest.raises(pp.ParseBaseException, match=match):

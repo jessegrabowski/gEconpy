@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from gEconpy.parser.error_catalog import ErrorCode
@@ -60,11 +62,19 @@ class TestFormatError:
         assert "= help: Did you mean one of: definitions, identities?" in output
 
     def test_context_lines_are_clipped_to_source(self, formatter):
-        source = "block A { };\nblock B { };\nblock A { };\nblock C { };\nblock D { };"
-        err = GCNSemanticError("Duplicate block name", symbol_name="A", location=ParseLocation(3, 7))
-        output = formatter.format_error(err, source)
-        assert "block B" in output
-        assert "block C" in output
+        source = "block A { };\nblock A { };"
+        err = GCNSemanticError("Duplicate block name", symbol_name="A", location=ParseLocation(2, 7))
+        assert formatter.format_error(err, source) == "\n".join(
+            [
+                "error: Duplicate block name: 'A'",
+                "  --> <input>:2:7",
+                "     |",
+                "   1 | block A { };",
+                "   2 | block A { };",
+                "     |       ^",
+                "     |",
+            ]
+        )
 
     def test_custom_context_lines(self):
         formatter = ErrorFormatter(use_color=False, context_lines=1)
@@ -144,6 +154,32 @@ class TestColorSupport:
     def test_color_disabled_emits_no_ansi(self, formatter):
         err = GCNGrammarError("Unbalanced braces", code=ErrorCode.E002)
         assert "\x1b[" not in formatter.format_error(err, "block TEST {")
+
+    @pytest.mark.parametrize(
+        "isatty, env, expect_color",
+        [
+            (True, {"TERM": "xterm-256color"}, True),
+            (False, {"TERM": "xterm-256color"}, False),
+            (True, {"TERM": "xterm-256color", "NO_COLOR": "1"}, False),
+            (True, {"TERM": "dumb"}, False),
+        ],
+        ids=["tty", "not_a_tty", "no_color_env", "dumb_terminal"],
+    )
+    def test_color_requested_only_emitted_on_capable_terminal(self, monkeypatch, isatty, env, expect_color):
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: isatty)
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+
+        formatter = ErrorFormatter(use_color=True)
+        output = formatter.format_error(GCNGrammarError("Unbalanced braces", code=ErrorCode.E002))
+
+        assert formatter.use_color is expect_color
+        assert output == (
+            f"{Colors.BOLD_RED}error[E002]{Colors.RESET}: Unbalanced braces"
+            if expect_color
+            else "error[E002]: Unbalanced braces"
+        )
 
     def test_colors_class_has_expected_codes(self):
         assert Colors.RED.startswith("\x1b[")

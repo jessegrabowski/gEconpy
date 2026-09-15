@@ -35,6 +35,7 @@ class TestSimpleDistributions:
             ("rho_A ~ Beta(alpha=3, beta=1) = 0.42;", "rho_A", "Beta", 0.42),
             ("sigma_L ~ Gamma(alpha=2, beta=1) = 2.0;", "sigma_L", "Gamma", 2.0),
             ("rho_1 ~ Beta(alpha=1, beta=1) = 0.5;", "rho_1", "Beta", 0.5),
+            ("mu ~ Normal(mu=-1, sigma=1) = -0.5;", "mu", "Normal", -0.5),
         ],
     )
     def test_named_distributions(self, text, parameter_name, dist_name, initial_value):
@@ -42,6 +43,10 @@ class TestSimpleDistributions:
         assert d.parameter_name == parameter_name
         assert d.dist_name == dist_name
         assert d.initial_value == initial_value
+
+    def test_negative_argument_is_a_signed_number(self):
+        d = parse_distribution("mu ~ Normal(mu=-1, sigma=1);")
+        assert d.dist_kwargs == {"mu": -1.0, "sigma": 1.0}
 
     def test_extra_whitespace(self):
         d = parse_distribution("  alpha   ~   Beta( alpha = 2 ,  beta = 5 )  =  0.35  ;")
