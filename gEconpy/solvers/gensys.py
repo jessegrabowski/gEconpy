@@ -21,6 +21,11 @@ from gEconpy.solvers.shared import (
 EPSILON = np.spacing(1)
 floatX = pytensor.config.floatX
 
+_EXISTENCE_CODE = 1
+_NON_EXISTENCE_CODE = 0
+_INDETERMINATE_CODE = -1
+_COINCIDENT_ZEROS_CODE = -2
+
 
 def gensys(
     g0: np.ndarray,
@@ -110,7 +115,7 @@ def gensys(
     """
     del div
 
-    tol_eff = tol if tol is not None and tol > 0 else np.spacing(1)
+    tol_eff = tol if tol is not None and tol > 0 else EPSILON
     g0_f = np.ascontiguousarray(g0, dtype=np.float64)
     g1_f = np.ascontiguousarray(g1, dtype=np.float64)
     c_f = np.ascontiguousarray(c, dtype=np.float64)
@@ -121,7 +126,7 @@ def gensys(
 
     eu = [int(x) for x in eu_arr]
 
-    if eu[0] == -2 and eu[1] == -2:
+    if eu[0] == _COINCIDENT_ZEROS_CODE and eu[1] == _COINCIDENT_ZEROS_CODE:
         return None, None, None, None, None, None, None, eu, None
 
     if not return_all_matrices:
@@ -313,23 +318,18 @@ def interpret_gensys_output(eu: list[int] | tuple[int, ...]) -> str:
     message : str
         Description of the existence and uniqueness of the solution.
     """
-    NON_EXISTENCE_CODE = 0
-    COINCIDENT_ZEROS_CODE = -2
-    INDETERMINATE_CODE = -1
-    EXISTENCE_CODE = 1
-
     message = f"Gensys return codes: {' '.join(map(str, eu))}, with the following meaning:\n"
-    if eu[0] == COINCIDENT_ZEROS_CODE and eu[1] == COINCIDENT_ZEROS_CODE:
+    if eu[0] == _COINCIDENT_ZEROS_CODE and eu[1] == _COINCIDENT_ZEROS_CODE:
         message += "Coincident zeros: indeterminacy or nonexistence. The system has redundant or missing equations."
-    elif eu[0] == INDETERMINATE_CODE:
+    elif eu[0] == _INDETERMINATE_CODE:
         message += f"System is indeterminate. There are {eu[2]} loose endogenous variables."
-    elif eu[1] == INDETERMINATE_CODE:
+    elif eu[1] == _INDETERMINATE_CODE:
         message += "Solution exists, but it is not unique (sunspots)."
-    elif eu[0] == NON_EXISTENCE_CODE and eu[1] == NON_EXISTENCE_CODE:
+    elif eu[0] == _NON_EXISTENCE_CODE and eu[1] == _NON_EXISTENCE_CODE:
         message += "Solution does not exist."
-    elif eu[0] == EXISTENCE_CODE and eu[1] == NON_EXISTENCE_CODE:
+    elif eu[0] == _EXISTENCE_CODE and eu[1] == _NON_EXISTENCE_CODE:
         message += "Solution exists, but is not unique."
-    elif eu[0] == EXISTENCE_CODE and eu[1] == EXISTENCE_CODE:
+    elif eu[0] == _EXISTENCE_CODE and eu[1] == _EXISTENCE_CODE:
         message += "Gensys found a unique solution."
     else:
         message += "Unknown return code."

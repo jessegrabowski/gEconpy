@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from typing import Any, cast
+from typing import Any
 
 import sympy as sp
 
@@ -199,7 +199,6 @@ class SymbolDictionary(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.is_sympy: bool = False
         self._assumptions: dict[str, dict[str, bool]] = {}
         self._is_variable: dict[str, bool] = {}
 
@@ -211,7 +210,7 @@ class SymbolDictionary(dict):
         if 0 < n_string_keys < len(keys):
             raise KeyError("Cannot mix sympy and string keys")
 
-        self.is_sympy = len(keys) > 0 and n_string_keys == 0
+        self.is_sympy: bool = len(keys) > 0 and n_string_keys == 0
         self._record_keys(keys)
 
     def __reduce__(self):
@@ -231,10 +230,10 @@ class SymbolDictionary(dict):
         if not isinstance(other, SymbolDictionary):
             other = SymbolDictionary(other)
 
-        merged = cast(SymbolDictionary, self.copy())
+        merged = self.copy()
 
         if len(merged) == 0:
-            other_copy = cast(SymbolDictionary, other.copy())
+            other_copy = other.copy()
             other_copy._assumptions.update(self._assumptions)
             other_copy._is_variable.update(self._is_variable)
             return other_copy
@@ -248,8 +247,8 @@ class SymbolDictionary(dict):
             raise ValueError("Cannot merge string-mode SymbolDictionary with sympy-mode SymbolDictionary")
 
         merged.update(other)
-        merged._assumptions.update(getattr(other, "_assumptions", {}))
-        merged._is_variable.update(getattr(other, "_is_variable", {}))
+        merged._assumptions.update(other._assumptions)
+        merged._is_variable.update(other._is_variable)
 
         return merged
 
@@ -322,7 +321,7 @@ class SymbolDictionary(dict):
         is_variable = {**self._is_variable, **(new_is_variable or {})}
 
         d = SymbolDictionary(string_keys_to_sympy(self, assumptions, is_variable))
-        return self._replace_or_return(d, inplace)
+        return self._replace_or_return(d, inplace=inplace)
 
     def to_string(self, inplace: bool = False):
         """
@@ -338,10 +337,8 @@ class SymbolDictionary(dict):
         result : SymbolDictionary or None
             The converted dictionary, or ``None`` when ``inplace`` is ``True``.
         """
-        d = SymbolDictionary(sympy_keys_to_strings(self))
-        d._assumptions = self._assumptions.copy()
-        d._is_variable = self._is_variable.copy()
-        return self._replace_or_return(d, inplace)
+        d = self._with_metadata(SymbolDictionary(sympy_keys_to_strings(self)))
+        return self._replace_or_return(d, inplace=inplace)
 
     def step_forward(self, inplace: bool = False):
         """
@@ -357,7 +354,7 @@ class SymbolDictionary(dict):
         result : SymbolDictionary or None
             The stepped dictionary, or ``None`` when ``inplace`` is ``True``.
         """
-        return self._replace_or_return(self._map_time_aware_keys("step_forward"), inplace)
+        return self._replace_or_return(self._map_time_aware_keys("step_forward"), inplace=inplace)
 
     def step_backward(self, inplace: bool = False):
         """
@@ -373,7 +370,7 @@ class SymbolDictionary(dict):
         result : SymbolDictionary or None
             The stepped dictionary, or ``None`` when ``inplace`` is ``True``.
         """
-        return self._replace_or_return(self._map_time_aware_keys("step_backward"), inplace)
+        return self._replace_or_return(self._map_time_aware_keys("step_backward"), inplace=inplace)
 
     def to_ss(self, inplace: bool = False):
         """
@@ -389,7 +386,7 @@ class SymbolDictionary(dict):
         result : SymbolDictionary or None
             The steady state dictionary, or ``None`` when ``inplace`` is ``True``.
         """
-        return self._replace_or_return(self._map_time_aware_keys("to_ss"), inplace)
+        return self._replace_or_return(self._map_time_aware_keys("to_ss"), inplace=inplace)
 
     def sort_keys(self, inplace: bool = False):
         """
@@ -405,14 +402,12 @@ class SymbolDictionary(dict):
         result : SymbolDictionary or None
             The sorted dictionary, or ``None`` when ``inplace`` is ``True``.
         """
-        d = SymbolDictionary(sort_dictionary(self.to_string()))
-        d._assumptions = self._assumptions.copy()
-        d._is_variable = self._is_variable.copy()
+        d = self._with_metadata(SymbolDictionary(sort_dictionary(self.to_string())))
 
         if self.is_sympy:
             d = d.to_sympy()
 
-        return self._replace_or_return(d, inplace)
+        return self._replace_or_return(d, inplace=inplace)
 
     def values_to_float(self, inplace: bool = False):
         """
@@ -428,10 +423,8 @@ class SymbolDictionary(dict):
         result : SymbolDictionary or None
             The converted dictionary, or ``None`` when ``inplace`` is ``True``.
         """
-        d = sympy_number_values_to_floats(self.copy())
-        d._assumptions = self._assumptions.copy()
-        d._is_variable = self._is_variable.copy()
-        return self._replace_or_return(d, inplace)
+        d = self._with_metadata(sympy_number_values_to_floats(self.copy()))
+        return self._replace_or_return(d, inplace=inplace)
 
     def float_to_values(self, inplace: bool = False):
         """
@@ -447,10 +440,8 @@ class SymbolDictionary(dict):
         result : SymbolDictionary or None
             The converted dictionary, or ``None`` when ``inplace`` is ``True``.
         """
-        d = float_values_to_sympy_float(self.copy())
-        d._assumptions = self._assumptions.copy()
-        d._is_variable = self._is_variable.copy()
-        return self._replace_or_return(d, inplace)
+        d = self._with_metadata(float_values_to_sympy_float(self.copy()))
+        return self._replace_or_return(d, inplace=inplace)
 
     def _record_keys(self, keys: Iterable) -> None:
         if not self.is_sympy:
@@ -462,6 +453,11 @@ class SymbolDictionary(dict):
             else:
                 self._assumptions[key.name] = key.assumptions0
                 self._is_variable[key.name] = False
+
+    def _with_metadata(self, d: "SymbolDictionary") -> "SymbolDictionary":
+        d._assumptions = self._assumptions.copy()
+        d._is_variable = self._is_variable.copy()
+        return d
 
     def _replace_or_return(self, d: "SymbolDictionary", inplace: bool):
         if not inplace:
@@ -475,10 +471,10 @@ class SymbolDictionary(dict):
     def _map_time_aware_keys(self, method_name: str) -> "SymbolDictionary":
         symbolic = self if self.is_sympy else self.to_sympy()
 
-        d = SymbolDictionary()
-        for key, value in symbolic.items():
-            d[getattr(key, method_name)() if isinstance(key, TimeAwareSymbol) else key] = value
+        def shift(key):
+            return getattr(key, method_name)() if isinstance(key, TimeAwareSymbol) else key
 
+        d = SymbolDictionary({shift(key): value for key, value in symbolic.items()})
         return d if self.is_sympy else d.to_string()
 
 

@@ -6,7 +6,15 @@ import scipy.sparse as sp
 
 from scipy.sparse.linalg import spsolve
 
-from gEconpy.solvers.sparse_root.base import RootFunction, SolverState, StepInfo, initial_state, merit
+from gEconpy.solvers.sparse_root.base import (
+    TRUST_REGION_BOUNDARY_FRACTION,
+    TRUST_REGION_GROW_RHO,
+    RootFunction,
+    SolverState,
+    StepInfo,
+    initial_state,
+    merit,
+)
 from gEconpy.solvers.sparse_root.direction import try_linear_solve
 
 ZERO_CURVATURE_TOL = 1e-30
@@ -107,7 +115,7 @@ class SparseDogleg:
 
                 rho = (state.phi - phi_trial) / predicted
                 if rho > self.eta:
-                    if rho > 0.75 and np.linalg.norm(p) > 0.9 * self._delta:
+                    if rho > TRUST_REGION_GROW_RHO and np.linalg.norm(p) > TRUST_REGION_BOUNDARY_FRACTION * self._delta:
                         self._delta = min(self.grow_factor * self._delta, self.delta_max)
                     stats = state.stats.update(nit=1, nfev=nfev, njev=nfev, nsolve=1, nreject=n_rejected)
                     new_state = SolverState(x=x_trial, res=res_trial, jac=jac_trial, phi=phi_trial, stats=stats)

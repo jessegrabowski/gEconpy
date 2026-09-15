@@ -11,7 +11,7 @@ from gEconpy.pytensorf.real_eig import RealEig, real_eig
 
 @pytest.fixture
 def rng():
-    return np.random.default_rng()
+    return np.random.default_rng(1234)
 
 
 @pytest.fixture

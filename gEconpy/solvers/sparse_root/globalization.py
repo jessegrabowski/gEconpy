@@ -221,7 +221,14 @@ def _backtrack(
         if phi_trial <= phi_reference + c1 * alpha * slope:
             if jac_trial is None:
                 res_trial, jac_trial = fun(x_trial, *args)
-            return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_total_evals)
+            return LineSearchResult(
+                x_new=x_trial,
+                res_new=res_trial,
+                jac_new=jac_trial,
+                phi_new=phi_trial,
+                alpha=alpha,
+                n_evals=n_total_evals,
+            )
 
         alpha *= beta
 

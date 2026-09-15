@@ -4,6 +4,7 @@ import pytensor.tensor as pt
 from pytensor.gradient import DisconnectedType
 from pytensor.graph.basic import Apply
 from pytensor.graph.op import Op
+from pytensor.tensor import TensorLike, TensorVariable
 from pytensor.tensor.blockwise import Blockwise
 
 
@@ -58,7 +59,7 @@ class RealEig(Op):
         return [M_bar.real]
 
 
-def real_eig(M):
+def real_eig(M: TensorLike) -> tuple[TensorVariable, TensorVariable]:
     """Compute eigenvalues of a real matrix, returning real and imaginary parts separately.
 
     The outputs are real-valued tensors, so reverse-mode differentiation through both components works, which

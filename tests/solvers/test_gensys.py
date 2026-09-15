@@ -30,7 +30,7 @@ BETA = np.array(
 
 
 def test_determine_n_unstable():
-    div, n_unstable, zxz = determine_n_unstable(ALPHA, BETA, 1.01, realsmall=1e-6)
+    div, n_unstable, zxz = determine_n_unstable(ALPHA, BETA, div=1.01, realsmall=1e-6)
 
     assert div == 1.01
     assert n_unstable == 5

@@ -3,7 +3,18 @@ from dataclasses import dataclass, field
 import numpy as np
 import scipy.sparse as sp
 
-from gEconpy.solvers.sparse_root.base import RootFunction, SolverState, StepInfo, initial_state, merit
+from gEconpy.solvers.sparse_root.base import (
+    TRUST_REGION_BOUNDARY_FRACTION,
+    TRUST_REGION_GROW_RHO,
+    RootFunction,
+    SolverState,
+    StepInfo,
+    initial_state,
+    merit,
+)
+
+_CG_ZERO_GRADIENT_TOL = 1e-15
+_CG_RELATIVE_RESIDUAL_TOL = 1e-10
 
 
 @dataclass
@@ -96,7 +107,7 @@ class GaussNewtonTrustRegion:
 
                 rho = (state.phi - phi_trial) / predicted
                 if rho > self.eta:
-                    if rho > 0.75 and np.linalg.norm(p) > 0.9 * self._delta:
+                    if rho > TRUST_REGION_GROW_RHO and np.linalg.norm(p) > TRUST_REGION_BOUNDARY_FRACTION * self._delta:
                         self._delta = min(self.grow_factor * self._delta, self.delta_max)
                     stats = state.stats.update(nit=1, nfev=nfev, njev=nfev, nsolve=1, nreject=n_rejected)
                     new_state = SolverState(x=x_trial, res=res_trial, jac=jac_trial, phi=phi_trial, stats=stats)
@@ -139,7 +150,7 @@ def _steihaug_cg(hessian: sp.spmatrix, grad: np.ndarray, delta: float, max_cg_it
     direction = -residual
     residual_sq = np.dot(residual, residual)
 
-    if np.sqrt(residual_sq) < 1e-15:
+    if np.sqrt(residual_sq) < _CG_ZERO_GRADIENT_TOL:
         return p
 
     for _ in range(max_cg_iter):
@@ -160,7 +171,7 @@ def _steihaug_cg(hessian: sp.spmatrix, grad: np.ndarray, delta: float, max_cg_it
         residual += alpha * hessian_direction
         residual_sq_next = np.dot(residual, residual)
 
-        if np.sqrt(residual_sq_next) < 1e-10 * np.linalg.norm(grad):
+        if np.sqrt(residual_sq_next) < _CG_RELATIVE_RESIDUAL_TOL * np.linalg.norm(grad):
             return p
 
         direction *= residual_sq_next / residual_sq

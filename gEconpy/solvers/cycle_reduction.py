@@ -157,7 +157,7 @@ def solve_policy_function_with_cycle_reduction(
     if T is None:
         if verbose:
             _log.info(
-                f"Solution not found. Solver returned: {result}\n,"
+                f"Solution not found. Solver returned: {result}\n"
                 f"Log norm of the solution at the final iteration: {log_norm:0.9f}"
             )
         return None, None, result, log_norm

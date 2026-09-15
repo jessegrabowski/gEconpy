@@ -96,54 +96,17 @@ def linearize_model(
     if cache is None:
         cache = {}
 
-    n_vars = len(variables)
     lags, now, leads = make_all_variable_time_combinations(variables)
 
     if loglin_variables is None:
-        loglin_set = set(range(n_vars))
+        loglin_set = set(range(len(variables)))
     else:
         loglin_names = {v.base_name for v in loglin_variables}
         loglin_set = {i for i, v in enumerate(variables) if v.base_name in loglin_names}
 
-    # Classify equations by which time shifts they reference (static, lag-only, lead-only, both) and variables by
-    # their incidence (static, predetermined, mixed, forward). The resulting permutations make the structural-zero
-    # blocks of A and C contiguous for downstream solvers.
-    lag_syms = [v.set_t(-1) for v in variables]
-    lead_syms = [v.set_t(1) for v in variables]
-    eq_has_lag = np.zeros(len(equations), dtype=bool)
-    eq_has_lead = np.zeros(len(equations), dtype=bool)
-    var_has_lag = np.zeros(n_vars, dtype=bool)
-    var_has_lead = np.zeros(n_vars, dtype=bool)
-    for i, eq in enumerate(equations):
-        atoms = eq.atoms(TimeAwareSymbol)
-        for j in range(n_vars):
-            if lag_syms[j] in atoms:
-                eq_has_lag[i] = var_has_lag[j] = True
-            if lead_syms[j] in atoms:
-                eq_has_lead[i] = var_has_lead[j] = True
-
-    if eq_order is None:
-        eq_order_local = np.concatenate(
-            [
-                np.where(~eq_has_lag & ~eq_has_lead)[0],
-                np.where(eq_has_lag & ~eq_has_lead)[0],
-                np.where(~eq_has_lag & eq_has_lead)[0],
-                np.where(eq_has_lag & eq_has_lead)[0],
-            ]
-        )
-    else:
-        eq_order_local = np.asarray(eq_order, dtype=int)
-    if var_order is None:
-        var_order_local = np.concatenate(
-            [
-                np.where(~var_has_lag & ~var_has_lead)[0],
-                np.where(var_has_lag & ~var_has_lead)[0],
-                np.where(var_has_lag & var_has_lead)[0],
-                np.where(~var_has_lag & var_has_lead)[0],
-            ]
-        )
-    else:
-        var_order_local = np.asarray(var_order, dtype=int)
+    default_eq_order, default_var_order = _structural_orderings(variables, equations)
+    eq_order_local = default_eq_order if eq_order is None else np.asarray(eq_order, dtype=int)
+    var_order_local = default_var_order if var_order is None else np.asarray(var_order, dtype=int)
 
     # Permuting the equations and variables before differentiation yields matrices in [eq_order, var_order] by
     # construction, with no pytensor-side reshuffling.
@@ -166,11 +129,71 @@ def linearize_model(
         shocks=shocks,
     )
 
-    # Log-linear chain rule: scale column j (in var_order) by the steady-state factor of its variable. The factor is
-    # 1 for level variables (outside the loglin set, or declared negative), the steady-state value for
-    # declared-positive variables, and a sign-guarded switch otherwise.
+    scale = _log_linear_column_scale(variables, var_order_local, loglin_set, cache)
+    A, B, C, D = rewrite_pregrad([A * scale, B * scale, C * scale, D])
+
+    # Downstream solvers consume A, B, C, and D and emit T and R in the permuted variable order. The statespace
+    # boundary and ``Model.linearize_model`` apply the inverse permutations before returning matrices to the user.
+    ss_pt = [as_tensor(v.to_ss(), cache) for v in variables]
+    return [A, B, C, D], ss_pt, eq_order_local, var_order_local
+
+
+def _structural_orderings(variables: list[TimeAwareSymbol], equations: list[sp.Expr]) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Order equations and variables so the structural-zero blocks of A and C are contiguous.
+
+    Equations go into ``[static | lag-only | lead-only | both]`` order and variables into
+    ``[static | predetermined-only | mixed | forward-only]`` order.
+    """
+    n_vars = len(variables)
+    lag_syms = [v.set_t(-1) for v in variables]
+    lead_syms = [v.set_t(1) for v in variables]
+
+    eq_has_lag = np.zeros(len(equations), dtype=bool)
+    eq_has_lead = np.zeros(len(equations), dtype=bool)
+    var_has_lag = np.zeros(n_vars, dtype=bool)
+    var_has_lead = np.zeros(n_vars, dtype=bool)
+    for i, eq in enumerate(equations):
+        atoms = eq.atoms(TimeAwareSymbol)
+        for j in range(n_vars):
+            if lag_syms[j] in atoms:
+                eq_has_lag[i] = var_has_lag[j] = True
+            if lead_syms[j] in atoms:
+                eq_has_lead[i] = var_has_lead[j] = True
+
+    eq_order = np.concatenate(
+        [
+            np.where(~eq_has_lag & ~eq_has_lead)[0],
+            np.where(eq_has_lag & ~eq_has_lead)[0],
+            np.where(~eq_has_lag & eq_has_lead)[0],
+            np.where(eq_has_lag & eq_has_lead)[0],
+        ]
+    )
+    var_order = np.concatenate(
+        [
+            np.where(~var_has_lag & ~var_has_lead)[0],
+            np.where(var_has_lag & ~var_has_lead)[0],
+            np.where(var_has_lag & var_has_lead)[0],
+            np.where(~var_has_lag & var_has_lead)[0],
+        ]
+    )
+    return eq_order, var_order
+
+
+def _log_linear_column_scale(
+    variables: list[TimeAwareSymbol],
+    var_order: np.ndarray,
+    loglin_set: set[int],
+    cache: dict,
+) -> TensorVariable:
+    """
+    Build the per-column chain-rule factor, in ``var_order``, that turns level derivatives into log-linear ones.
+
+    The factor is 1 for level variables (outside ``loglin_set``, or declared negative), the steady-state value for
+    declared-positive variables, and a sign-guarded switch otherwise.
+    """
     column_scale = []
-    for j in var_order_local:
+    for j in var_order:
         ss_node = as_tensor(variables[j].to_ss(), cache)
         assumptions = variables[j].assumptions0
         if j not in loglin_set or assumptions.get("negative", False):
@@ -179,14 +202,7 @@ def linearize_model(
             column_scale.append(ss_node)
         else:
             column_scale.append(pt.switch(ss_node > 0, ss_node, pt.ones(())))
-    scale = pt.stack(column_scale)
-
-    A, B, C, D = rewrite_pregrad([A * scale, B * scale, C * scale, D])
-
-    # Downstream solvers consume A, B, C, and D and emit T and R in the permuted variable order. The statespace
-    # boundary and ``Model.linearize_model`` apply the inverse permutations before returning matrices to the user.
-    ss_pt = [as_tensor(v.to_ss(), cache) for v in variables]
-    return [A, B, C, D], ss_pt, eq_order_local, var_order_local
+    return pt.stack(column_scale)
 
 
 def make_not_loglin_flags(
