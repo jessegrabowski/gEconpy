@@ -146,7 +146,7 @@ def _iterate_to_root(
 ) -> OptimizeResult:
     state = solver.init(fun, x0, args)
     if np.max(np.abs(state.res)) < f_tol:
-        return _make_result(state, True, "Converged")
+        return _make_result(state, success=True, message="Converged")
 
     check_convergence = getattr(solver, "check_convergence", default_check_convergence)
     failure_message = getattr(solver, "failure_message", default_failure_message)
@@ -154,11 +154,11 @@ def _iterate_to_root(
     for _ in range(maxiter):
         state, info = solver.step(fun, state, args)
         if not info.accepted:
-            return _make_result(state, False, info.message)
+            return _make_result(state, success=False, message=info.message)
         if check_convergence(state, f_tol=f_tol, x_tol=x_tol, last_step=info.step):
-            return _make_result(state, True, "Converged")
+            return _make_result(state, success=True, message="Converged")
 
-    return _make_result(state, False, failure_message(state, maxiter))
+    return _make_result(state, success=False, message=failure_message(state, maxiter))
 
 
 def _make_result(state: SolverState, success: bool, message: str) -> OptimizeResult:

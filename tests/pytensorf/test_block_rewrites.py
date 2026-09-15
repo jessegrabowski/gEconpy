@@ -13,8 +13,6 @@ from pytensor.graph.rewriting.basic import out2in
 from pytensor.tensor.extra_ops import concat_with_broadcast
 from pytensor.tensor.linalg import block_diag
 
-import gEconpy
-
 from gEconpy.pytensorf.block import block
 from gEconpy.pytensorf.block_rewrites import (
     local_nested_join_to_block_diagonal,

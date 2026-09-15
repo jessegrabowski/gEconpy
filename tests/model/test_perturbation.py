@@ -117,7 +117,7 @@ class TestLinearizeModel:
             **{x.to_ss(): 0.0 for x in mod.shocks},
         }
 
-        for name, actual_mat, sym_mat in zip("ABCD", actual, expected_mats, strict=False):
+        for name, actual_mat, sym_mat in zip("ABCD", actual, expected_mats, strict=True):
             expected = np.array(sym_mat.subs(subs)).astype(float)
             assert_allclose(actual_mat, expected, atol=1e-10, err_msg=f"loglin {name} mismatch for {gcn_file}")
 
@@ -151,7 +151,7 @@ class TestLinearizeModel:
             **{x.to_ss(): 0.0 for x in mod.shocks},
         }
 
-        for name, actual_mat, sym_mat in zip("ABCD", actual, expected_mats, strict=False):
+        for name, actual_mat, sym_mat in zip("ABCD", actual, expected_mats, strict=True):
             expected = np.array(sym_mat.subs(subs)).astype(float)
             assert_allclose(actual_mat, expected, atol=1e-10, err_msg=f"no-loglin {name} mismatch for {gcn_file}")
 
@@ -186,11 +186,13 @@ class TestSolvePolicyFunction:
         jumper_idxs = [i for i, v in enumerate(mod.variables) if v.base_name not in state_variables]
         n = len(mod.variables)
 
-        G_1, _, impact, *_ = solve_policy_function_with_gensys(A, B, C, D, 1e-8)
+        G_1, _, impact, *_ = solve_policy_function_with_gensys(A, B, C, D, tol=1e-8)
         T_gensys = G_1[:n, :n]
         R_gensys = impact[:n, :]
 
-        T_cr, R_cr, *_ = solve_policy_function_with_cycle_reduction(A, B, C, D, 100_000, 1e-16, False)
+        T_cr, R_cr, *_ = solve_policy_function_with_cycle_reduction(
+            A, B, C, D, max_iter=100_000, tol=1e-16, verbose=False
+        )
 
         for T in [T_gensys, T_cr]:
             assert not np.allclose(T[:, state_idxs], 0.0), "State columns should be non-zero"
@@ -203,7 +205,9 @@ class TestSolvePolicyFunction:
         mod = model_from_gcn("tests/_resources/test_gcns/pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
         A, B, C, D = mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
 
-        T, R, result, _log_norm = solve_policy_function_with_cycle_reduction(A, B, C, D, 100, 1e-8, False)
+        T, R, result, _log_norm = solve_policy_function_with_cycle_reduction(
+            A, B, C, D, max_iter=100, tol=1e-8, verbose=False
+        )
 
         assert T is None
         assert R is None
@@ -226,7 +230,7 @@ class TestCycleReductionGradients:
         ]
 
         A_pt, B_pt, C_pt, D_pt = (
-            pt.tensor(name=name, shape=x.shape) for name, x in zip("ABCD", [A, B, C, D], strict=False)
+            pt.tensor(name=name, shape=x.shape) for name, x in zip("ABCD", [A, B, C, D], strict=True)
         )
 
         T, R, *_ = op(A_pt, B_pt, C_pt, D_pt)
@@ -258,7 +262,7 @@ class TestGensysPytensor:
         T_cr, R_cr = cycle_reduction_pt(A_pt, B_pt, C_pt, D_pt)
         cr_grads = pt.grad(T_cr.sum(), [A_pt, B_pt, C_pt])
 
-        T_gs, R_gs, _ = gensys_pt(A_pt, B_pt, C_pt, D_pt, 1e-8)
+        T_gs, R_gs, _ = gensys_pt(A_pt, B_pt, C_pt, D_pt, tol=1e-8)
         gs_grads = pt.grad(T_gs.sum(), [A_pt, B_pt, C_pt])
 
         f = pytensor.function(

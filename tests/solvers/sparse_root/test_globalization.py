@@ -17,7 +17,7 @@ def identity_merit(x):
 class TestArmijoBacktracking:
     def test_backtracks_when_needed(self):
         line_search = ArmijoBacktracking(c1=0.9, beta=0.5, max_iter=10)
-        proposal = DirectionProposal(np.array([-10.0]), slope=-10.0, kind="newton")
+        proposal = DirectionProposal(direction=np.array([-10.0]), slope=-10.0, kind="newton")
         result = line_search.search(identity_fun, np.array([1.0]), phi_current=0.5, proposal=proposal, args=())
         assert result.alpha < 1.0
 
@@ -27,7 +27,7 @@ class TestArmijoBacktracking:
         def never_decreasing(_x):
             return np.array([100.0]), sp.eye(1, format="csc")
 
-        proposal = DirectionProposal(np.array([1.0]), slope=-1.0, kind="newton")
+        proposal = DirectionProposal(direction=np.array([1.0]), slope=-1.0, kind="newton")
         with pytest.raises(RuntimeError, match="Line search failed after 3 reductions"):
             line_search.search(never_decreasing, np.array([0.0]), phi_current=0.5, proposal=proposal, args=())
 
@@ -40,7 +40,7 @@ class TestArmijoBacktracking:
             return identity_fun(x)
 
         line_search = ArmijoBacktracking(c1=0.9, beta=0.5, max_iter=20, merit_fun=identity_merit)
-        proposal = DirectionProposal(np.array([-10.0]), slope=-10.0, kind="newton")
+        proposal = DirectionProposal(direction=np.array([-10.0]), slope=-10.0, kind="newton")
         result = line_search.search(counting_fun, np.array([1.0]), phi_current=0.5, proposal=proposal, args=())
 
         assert result.alpha < 1.0
@@ -48,7 +48,7 @@ class TestArmijoBacktracking:
 
     def test_merit_fun_same_acceptance_as_without(self):
         x = np.array([5.0])
-        proposal = DirectionProposal(np.array([-10.0]), slope=-50.0, kind="newton")
+        proposal = DirectionProposal(direction=np.array([-10.0]), slope=-50.0, kind="newton")
 
         plain = ArmijoBacktracking(c1=0.5, beta=0.5, max_iter=20)
         with_merit = ArmijoBacktracking(c1=0.5, beta=0.5, max_iter=20, merit_fun=identity_merit)
@@ -61,7 +61,7 @@ class TestArmijoBacktracking:
 
     def test_merit_fun_n_evals_counts_final_fun_call(self):
         line_search = ArmijoBacktracking(c1=1e-4, merit_fun=identity_merit)
-        proposal = DirectionProposal(np.array([-1.0]), slope=-1.0, kind="newton")
+        proposal = DirectionProposal(direction=np.array([-1.0]), slope=-1.0, kind="newton")
         result = line_search.search(identity_fun, np.array([1.0]), phi_current=0.5, proposal=proposal, args=())
         assert result.n_evals == 2
 
@@ -107,7 +107,7 @@ class TestNonmonotoneBacktracking:
             return identity_fun(x)
 
         nonmonotone = NonmonotoneBacktracking(c1=0.9, beta=0.5, max_iter=20, memory=1, merit_fun=identity_merit)
-        proposal = DirectionProposal(np.array([-10.0]), slope=-10.0, kind="newton")
+        proposal = DirectionProposal(direction=np.array([-10.0]), slope=-10.0, kind="newton")
         result = nonmonotone.search(counting_fun, np.array([1.0]), phi_current=0.5, proposal=proposal, args=())
 
         assert result.alpha < 1.0
@@ -115,7 +115,7 @@ class TestNonmonotoneBacktracking:
 
     def test_merit_fun_same_acceptance_as_without(self):
         x = np.array([5.0])
-        proposal = DirectionProposal(np.array([-10.0]), slope=-50.0, kind="newton")
+        proposal = DirectionProposal(direction=np.array([-10.0]), slope=-50.0, kind="newton")
 
         plain = NonmonotoneBacktracking(c1=0.5, beta=0.5, max_iter=20, memory=1)
         with_merit = NonmonotoneBacktracking(c1=0.5, beta=0.5, max_iter=20, memory=1, merit_fun=identity_merit)

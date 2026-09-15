@@ -621,7 +621,9 @@ def _solve_perturbation(
     effective_solver = "backward_direct" if backward_looking else solver
 
     if effective_solver == "cycle_reduction":
-        T, R, _result, _log_norm = solve_policy_function_with_cycle_reduction(A, B, C, D, max_iter, tol, False)
+        T, R, _result, _log_norm = solve_policy_function_with_cycle_reduction(
+            A, B, C, D, max_iter=max_iter, tol=tol, verbose=False
+        )
         return T, R
 
     if effective_solver == "gensys":

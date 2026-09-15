@@ -93,13 +93,7 @@ class TimeAwareSymbol(sp.Symbol):
         return (*super()._hashable_content(), self.time_index)
 
     def __getnewargs_ex__(self):
-        return (
-            (
-                self.base_name,
-                self.time_index,
-            ),
-            self.assumptions0,
-        )
+        return (self.base_name, self.time_index), self.assumptions0
 
     def step_forward(self):
         """
