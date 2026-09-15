@@ -16,6 +16,7 @@ from gEconpy.parser.ast import (
     Tag,
     Variable,
 )
+from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.errors import ParseLocation
 from gEconpy.parser.transform.expand_time_indices import expand_block_time_indices
 from gEconpy.parser.transform.to_sympy import ASTToSympyConverter, ast_to_sympy
@@ -158,7 +159,7 @@ def _variable_to_symbol(var: Variable, assumptions: dict[str, dict[str, bool]]) 
 
 
 def _is_steady_state_block(block: GCNBlock) -> bool:
-    return block.name.upper().replace("_", "") in ("STEADYSTATE", "SS")
+    return block.name.upper().replace("_", "") in STEADY_STATE_BLOCK_KEYS
 
 
 def _convert_equation(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) -> _ConvertedEquation:

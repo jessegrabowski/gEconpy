@@ -11,7 +11,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, merge_assumptions
 from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.model.block import Block
 from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node
-from gEconpy.parser.constants import STEADY_STATE_NAMES
+from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
 from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_metadata
@@ -20,7 +20,6 @@ from gEconpy.utilities import flatten_substitution_dict
 
 ParamDictName = Literal["param_dict", "deterministic_dict", "calib_dict"]
 
-_STEADY_STATE_BLOCK_KEYS = frozenset(name.replace("_", "") for name in STEADY_STATE_NAMES)
 _EQUATION_COMPONENTS = ("definitions", "objective", "constraints", "identities")
 
 
@@ -325,7 +324,7 @@ def _block_dict_to_variables_and_shocks(
 
 
 def _extract_ss_solution_dict(model: GCNModel, assumptions: dict[str, dict[str, bool]]) -> SymbolDictionary:
-    ss_blocks = [b for b in model.blocks if b.name.upper().replace("_", "") in _STEADY_STATE_BLOCK_KEYS]
+    ss_blocks = [b for b in model.blocks if b.name.upper().replace("_", "") in STEADY_STATE_BLOCK_KEYS]
     if not ss_blocks:
         return SymbolDictionary()
 

@@ -15,7 +15,8 @@ from gEconpy.parser.ast import (
     Variable,
     collect_nodes_of_type,
 )
-from gEconpy.parser.errors import GCNGrammarError
+from gEconpy.parser.error_catalog import ErrorCode
+from gEconpy.parser.errors import GCNGrammarError, GCNParseFailure
 from gEconpy.parser.grammar.expressions import parse_expression
 
 
@@ -165,6 +166,20 @@ class TestFunctionCalls:
     def test_function_with_no_args_raises(self):
         with pytest.raises(GCNGrammarError):
             parse_expression("func()")
+
+    @pytest.mark.parametrize(
+        "text,code,found",
+        [("log()", ErrorCode.E008, "log()"), ("Y[abc]", ErrorCode.E010, "[abc]")],
+        ids=["empty_call", "bad_time_index"],
+    )
+    def test_encoded_failure_is_decoded(self, text, code, found):
+        with pytest.raises(GCNGrammarError) as exc_info:
+            parse_expression(text)
+
+        error = exc_info.value
+        assert error.code == code
+        assert error.found == found
+        assert GCNParseFailure.SEPARATOR not in error.message
 
 
 class TestExpectation:

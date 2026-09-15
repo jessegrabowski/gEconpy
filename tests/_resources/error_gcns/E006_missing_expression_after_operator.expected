@@ -1,4 +1,4 @@
-error[E001]: Missing semicolon. Found ''P''
+error[E001]: Missing semicolon. Found 'P'
   --> E006_missing_expression_after_operator.gcn:6:9
      |
    4 |     identities

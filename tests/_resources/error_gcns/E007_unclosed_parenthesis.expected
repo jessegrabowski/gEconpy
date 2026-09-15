@@ -1,4 +1,4 @@
-error[E007]: Unbalanced parentheses. Found '';''
+error[E007]: Unbalanced parentheses. Found ';'
   --> E007_unclosed_parenthesis.gcn:6:28
      |
    4 |     identities

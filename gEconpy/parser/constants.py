@@ -7,6 +7,7 @@ LOCAL_DICT = {letter: sp.Symbol(letter) for letter in (*_clash1, *_clash2)}
 SPECIAL_BLOCK_NAMES = ["OPTIONS", "TRYREDUCE", "ASSUMPTIONS"]
 EQUATION_TAGS = ["exclude", "minimize", "maximize"]
 STEADY_STATE_NAMES = ["STEADY_STATE", "SS", "STEADYSTATE", "STEADY"]
+STEADY_STATE_BLOCK_KEYS = frozenset(name.replace("_", "") for name in STEADY_STATE_NAMES)
 BLOCK_COMPONENTS = [
     "DEFINITIONS",
     "CONTROLS",

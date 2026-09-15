@@ -1,4 +1,4 @@
-error[E001]: Missing semicolon. Found ''C''
+error[E001]: Missing semicolon. Found 'C'
   --> syntax_empty_lagrange.gcn:6:9
      |
    4 |     constraints
