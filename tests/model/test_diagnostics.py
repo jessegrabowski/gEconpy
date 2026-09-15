@@ -103,6 +103,15 @@ def test_check_steady_state_logs_success_for_valid_steady_state(model_without_pr
     assert "successfully found" in caplog.text
 
 
+def test_check_steady_state_solves_at_updated_parameters(model_without_priors, caplog):
+    with caplog.at_level("WARNING"):
+        check_steady_state(
+            model_without_priors, steady_state_kwargs={"verbose": False, "progressbar": False}, beta=0.97, delta=0.05
+        )
+
+    assert caplog.messages == ["Steady state successfully found!"]
+
+
 def test_check_steady_state_raises_on_wrong_steady_state(model_without_priors):
     steady_state = model_without_priors.steady_state(verbose=False, progressbar=False)
     first_variable = next(iter(steady_state))
