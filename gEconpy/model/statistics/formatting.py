@@ -1,32 +1,59 @@
+from typing import TYPE_CHECKING
+
+import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from gEconpy.model.model import Model
 
 
 def matrix_to_dataframe(
-    matrix,
-    model,
+    matrix: np.ndarray,
+    model: "Model",
     dim1: str | None = None,
     dim2: str | None = None,
     round: int | None = None,
 ) -> pd.DataFrame:
     """
-    Convert a matrix to a DataFrame with variable names as columns and rows.
+    Label the rows and columns of a model matrix with variable, shock, or equation names.
 
     Parameters
     ----------
-    matrix : np.ndarray
-        DSGE matrix to convert to a DataFrame. Each dimension should have shape n_variables or n_shocks.
+    matrix : ndarray
+        Two-dimensional matrix whose axes have length ``n_variables`` or ``n_shocks``.
     model : Model
-        DSGE model object.
+        Model whose variables, shocks, and equations label the axes.
     dim1 : str, optional
-        Name of the first dimension. One of ``'variable'``, ``'equation'``, or ``'shock'``.
+        Label set for the rows, one of ``'variable'``, ``'equation'``, or ``'shock'``. Inferred from the row count
+        when None, with ``'variable'`` preferred over ``'shock'``. Defaults to None.
     dim2 : str, optional
-        Name of the second dimension.
+        Label set for the columns, one of ``'variable'``, ``'equation'``, or ``'shock'``. Inferred from the column
+        count when None, with ``'variable'`` preferred over ``'shock'``. Defaults to None.
     round : int, optional
-        Decimal places.
+        Number of decimal places to round to. No rounding when None. Defaults to None.
 
     Returns
     -------
-    pd.DataFrame
+    labeled : DataFrame
+        ``matrix`` with named index and columns.
+
+    Examples
+    --------
+    Label the policy matrices of a solved model. Both axes of ``T`` are variables, so the defaults apply. The rows of a
+    Jacobian such as ``B`` are equations, which the row count cannot tell apart from variables, so name the row
+    dimension explicitly:
+
+    .. code-block:: python
+
+        from gEconpy import matrix_to_dataframe, model_from_gcn
+        from gEconpy.data import get_example_gcn
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        A, B, C, D = model.linearize_model(verbose=False)
+        T, R = model.solve_model(verbose=False)
+
+        T_df = matrix_to_dataframe(T, model, round=3)
+        B_df = matrix_to_dataframe(B, model, dim1="equation", round=3)
     """
     var_names = [x.base_name for x in model.variables]
     shock_names = [x.base_name for x in model.shocks]
@@ -38,12 +65,13 @@ def matrix_to_dataframe(
     n_shocks = len(shock_names)
 
     if matrix.ndim != 2:
-        raise ValueError("Matrix must be 2-dimensional")
+        raise ValueError(f"matrix must be 2-dimensional, but has {matrix.ndim} dimensions.")
 
     for i, ordinal in enumerate(["First", "Second"]):
         if matrix.shape[i] not in [n_variables, n_shocks]:
             raise ValueError(
-                f"{ordinal} dimension of the matrix must match the number of variables or shocks in the model"
+                f"{ordinal} dimension of the matrix has length {matrix.shape[i]}, which matches neither the number "
+                f"of variables ({n_variables}) nor the number of shocks ({n_shocks}) in the model."
             )
 
     if dim1 is None:

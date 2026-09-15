@@ -5,100 +5,6 @@ from pytensor.tensor.variable import TensorVariable
 from scipy import linalg
 
 
-def solve_backward_policy(A: np.ndarray, B: np.ndarray) -> np.ndarray:
-    """
-    Solves for the policy function in a backward-looking model.
-
-    Parameters
-    ----------
-    A : ndarray
-        Jacobian matrix with respect to variables at t-1.
-    B : ndarray
-        Jacobian matrix with respect to variables at t.
-
-    Returns
-    -------
-    T : ndarray
-        The policy function matrix that maps current state variables to control variables.
-    """
-    return linalg.solve(-B, A)
-
-
-def solve_backward_policy_pt(A: TensorVariable, B: TensorVariable) -> TensorVariable:
-    """
-    Solves for the policy function in a backward-looking model using PyTensor.
-
-    Parameters
-    ----------
-    A : TensorVariable
-        Jacobian matrix with respect to variables at t-1.
-    B : TensorVariable
-        Jacobian matrix with respect to variables at t.
-
-    Returns
-    -------
-    T : TensorVariable
-        The policy function matrix that maps current state variables to control variables.
-    """
-    return pt.linalg.solve(-B, A)
-
-
-def solve_backward_shock_matrix(B: np.ndarray, D: np.ndarray) -> np.ndarray:
-    """
-    Solves for the shock matrix in a backward-looking model.
-
-    The equation for the shock matrix R in the general case is:
-
-    .. math::
-
-        R = -(C T + B)^{-1} D
-
-    Where :math:`C` is the Jacobian matrix with respect to variables at t+1, :math:`T` is the policy function matrix,
-    :math:`B` is the Jacobian matrix with respect to variables at t, and :math:`D` is the Jacobian matrix with respect
-    to exogenous shocks.
-
-    Since the :math:`C` matrix is zero in backward-looking models, this equation simplifies to:
-
-    .. math::
-
-        R = -B^{-1} D
-
-    Parameters
-    ----------
-    B : ndarray
-        Jacobian matrix with respect to variables at t.
-    D : ndarray
-        Jacobian matrix with respect exogenous shock variables.
-
-    Returns
-    -------
-    R : ndarray
-        The shock matrix that maps exogenous shocks to variable values.
-    """
-    return -np.linalg.solve(B, D)
-
-
-def solve_backward_shock_matrix_pt(B: TensorVariable, D: TensorVariable) -> TensorVariable:
-    """
-    Solves for the shock matrix in a backward-looking model using PyTensor.
-
-    For details, see :func:`~gEconpy.solvers.backward_looking.solve_backward_shock_matrix`.
-
-    Parameters
-    ----------
-    B : TensorVariable
-        Jacobian matrix with respect to variables at t.
-    D : TensorVariable
-        Jacobian matrix with respect exogenous shock variables.
-
-    Returns
-    -------
-    R : TensorVariable
-        The shock matrix that maps exogenous shocks to variable values.
-    """
-    return -pt.linalg.solve(B, D)
-
-
 def solve_policy_function_with_backward_direct(
     A: np.ndarray,
     B: np.ndarray,
@@ -106,26 +12,26 @@ def solve_policy_function_with_backward_direct(
     D: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Solves for the policy function in a backward-looking model using a direct method.
+    Solve for the policy function of a backward-looking model by direct linear solves.
 
     Parameters
     ----------
     A : ndarray
-        Jacobian matrix with respect to variables at t-1.
+        Jacobian of the system with respect to variables at t-1.
     B : ndarray
-        Jacobian matrix with respect to variables at t.
+        Jacobian of the system with respect to variables at t.
     C : ndarray
-        Jacobian matrix with respect to variables at t+1. Assumed to be zero in backward-looking models. Included
-        for API consistency with forward-looking models.
+        Jacobian of the system with respect to variables at t+1. Zero in a backward-looking model, and accepted only
+        so the signature matches the forward-looking solvers.
     D : ndarray
-        Jacobian matrix with respect to variables exogenous shocks.
+        Jacobian of the system with respect to exogenous shocks.
 
     Returns
     -------
     T : ndarray
-        The policy function matrix that maps current state variables to control variables.
+        Transition matrix, giving the effect of variable values at t-1 on their values at t.
     R : ndarray
-        The transition matrix that maps current state variables to future state variables.
+        Selection matrix, giving the effect of exogenous shocks on variable values.
     """
     T = solve_backward_policy(A, B)
     R = solve_backward_shock_matrix(B, D)
@@ -140,30 +46,119 @@ def solve_policy_function_with_backward_direct_pt(
     D: TensorVariable,
 ) -> tuple[TensorVariable, TensorVariable]:
     """
-    Solves for the policy function in a backward-looking model using a direct method with PyTensor.
-
-    For details, see :func:`~gEconpy.solvers.backward_looking.solve_policy_function_with_backward_direct`.
+    Build a symbolic graph that solves for the policy function of a backward-looking model.
 
     Parameters
     ----------
     A : TensorVariable
-        Jacobian matrix with respect to variables at t-1.
+        Jacobian of the system with respect to variables at t-1.
     B : TensorVariable
-        Jacobian matrix with respect to variables at t.
+        Jacobian of the system with respect to variables at t.
     C : TensorVariable
-        Jacobian matrix with respect to variables at t+1. Assumed to be zero in backward-looking models. Included
-        for API consistency with forward-looking models.
+        Jacobian of the system with respect to variables at t+1. Zero in a backward-looking model, and accepted only
+        so the signature matches the forward-looking solvers.
     D : TensorVariable
-        Jacobian matrix with respect to exogenous shocks.
+        Jacobian of the system with respect to exogenous shocks.
 
     Returns
     -------
     T : TensorVariable
-        The policy function matrix that maps current state variables to control variables.
+        Transition matrix, giving the effect of variable values at t-1 on their values at t.
     R : TensorVariable
-        The transition matrix that maps current state variables to future state variables.
+        Selection matrix, giving the effect of exogenous shocks on variable values.
     """
     T = solve_backward_policy_pt(A, B)
     R = solve_backward_shock_matrix_pt(B, D)
 
     return T, R
+
+
+def solve_backward_policy(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """
+    Solve for the transition matrix :math:`T = -B^{-1} A` of a backward-looking model.
+
+    Parameters
+    ----------
+    A : ndarray
+        Jacobian of the system with respect to variables at t-1.
+    B : ndarray
+        Jacobian of the system with respect to variables at t.
+
+    Returns
+    -------
+    T : ndarray
+        Transition matrix, giving the effect of variable values at t-1 on their values at t.
+    """
+    return linalg.solve(-B, A)
+
+
+def solve_backward_policy_pt(A: TensorVariable, B: TensorVariable) -> TensorVariable:
+    """
+    Build a symbolic graph for the transition matrix :math:`T = -B^{-1} A` of a backward-looking model.
+
+    Parameters
+    ----------
+    A : TensorVariable
+        Jacobian of the system with respect to variables at t-1.
+    B : TensorVariable
+        Jacobian of the system with respect to variables at t.
+
+    Returns
+    -------
+    T : TensorVariable
+        Transition matrix, giving the effect of variable values at t-1 on their values at t.
+    """
+    return pt.linalg.solve(-B, A)
+
+
+def solve_backward_shock_matrix(B: np.ndarray, D: np.ndarray) -> np.ndarray:
+    """
+    Solve for the selection matrix of a backward-looking model.
+
+    In the general case the selection matrix is
+
+    .. math::
+
+        R = -(C T + B)^{-1} D
+
+    where :math:`C` is the Jacobian with respect to variables at t+1 and :math:`T` the transition matrix. In a
+    backward-looking model :math:`C` is zero, so this reduces to
+
+    .. math::
+
+        R = -B^{-1} D
+
+    Parameters
+    ----------
+    B : ndarray
+        Jacobian of the system with respect to variables at t.
+    D : ndarray
+        Jacobian of the system with respect to exogenous shocks.
+
+    Returns
+    -------
+    R : ndarray
+        Selection matrix, giving the effect of exogenous shocks on variable values.
+    """
+    return -np.linalg.solve(B, D)
+
+
+def solve_backward_shock_matrix_pt(B: TensorVariable, D: TensorVariable) -> TensorVariable:
+    """
+    Build a symbolic graph for the selection matrix :math:`R = -B^{-1} D` of a backward-looking model.
+
+    See :func:`~gEconpy.solvers.backward_looking.solve_backward_shock_matrix` for the derivation.
+
+    Parameters
+    ----------
+    B : TensorVariable
+        Jacobian of the system with respect to variables at t.
+    D : TensorVariable
+        Jacobian of the system with respect to exogenous shocks.
+
+    Returns
+    -------
+    R : TensorVariable
+        Selection matrix, giving the effect of exogenous shocks on variable values.
+    """
+    return -pt.linalg.solve(B, D)

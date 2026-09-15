@@ -51,8 +51,8 @@ def linearize_model(
     steady-state value. Variables not in the loglin set keep their bare derivatives (scale factor one).
 
     For a log-linearized variable whose steady-state sign is not statically known from the GCN Assumptions block,
-    the column scale is guarded as :math:`\mathrm{switch}(y_{ss} > 0,\; y_{ss},\; 1)`, so a non-positive steady
-    state falls back to a level (un-logged) derivative rather than implying :math:`\log` of a non-positive value.
+    the column scale is guarded as :math:`\mathrm{switch}(y_{ss} > 0,\; y_{ss},\; 1)`. A non-positive steady state
+    then gets a level (un-logged) derivative, and :math:`\log` of a non-positive value never enters.
 
     Parameters
     ----------
@@ -63,36 +63,32 @@ def linearize_model(
     shocks : list of TimeAwareSymbol
         Exogenous shocks.
     cache : dict, optional
-        Sympytensor cache mapping ``(name, assumptions)`` tuples to pytensor nodes. If provided, sympy-to-pytensor
-        conversion reuses existing nodes. If None, a new cache is created.
+        Sympytensor cache mapping ``(name, assumptions)`` tuples to pytensor nodes, so sympy-to-pytensor conversion
+        reuses existing nodes. A fresh cache is created when None. Defaults to None.
     loglin_variables : list of TimeAwareSymbol, optional
-        Variables to log-linearize. If None, all variables are log-linearized.
-    order : int, default 1
-        Order of approximation. Only ``order=1`` is currently supported.
+        Variables to log-linearize. Every variable is log-linearized when None. Defaults to None.
+    order : int, optional
+        Order of approximation. Only ``order=1`` is supported. Defaults to 1.
     eq_order : ndarray of int, optional
-        Permutation of equation indices placing equations in
-        ``[static | lag-only | lead-only | both]`` order so A's and C's structural-zero
-        row blocks become contiguous. Computed from the equations if not supplied.
+        Permutation of equation indices placing equations in ``[static | lag-only | lead-only | both]`` order, so the
+        structural-zero row blocks of A and C are contiguous. Computed from the equations when None. Defaults to None.
     var_order : ndarray of int, optional
-        Permutation of variable indices placing variables in
-        ``[static | predetermined-only | mixed | forward-only]`` order so A's and C's
-        structural-zero column blocks become contiguous. Computed from the equations if
-        not supplied.
+        Permutation of variable indices placing variables in ``[static | predetermined-only | mixed | forward-only]``
+        order, so the structural-zero column blocks of A and C are contiguous. Computed from the equations when None.
+        Defaults to None.
 
     Returns
     -------
     jacobians : list of TensorVariable
-        Four pytensor matrix graph nodes ``[A, B, C, D]``. Rows are in ``eq_order`` and
-        the variable axis (cols of A/B/C) is in ``var_order``; D's columns are shocks
-        (no permutation).
+        Four pytensor matrix graph nodes ``[A, B, C, D]``. Rows follow ``eq_order`` and the variable axis (columns of
+        A, B, and C) follows ``var_order``. The columns of D are shocks and carry no permutation.
     ss_input_nodes : list of TensorVariable
-        Steady-state variable input nodes needed to evaluate the Jacobians. Parameter
-        nodes are also embedded in the graph but must be discovered by the caller via
-        ``explicit_graph_inputs``.
+        Steady-state variable input nodes needed to evaluate the Jacobians. Parameter nodes are embedded in the graph
+        and must be discovered by the caller with ``explicit_graph_inputs``.
     eq_order_out : ndarray of int
-        The equation permutation actually applied (same as ``eq_order`` if supplied).
+        The equation permutation applied, equal to ``eq_order`` when supplied.
     var_order_out : ndarray of int
-        The variable permutation actually applied (same as ``var_order`` if supplied).
+        The variable permutation applied, equal to ``var_order`` when supplied.
     """
     if order != 1:
         raise NotImplementedError("Only order = 1 linearization is currently implemented.")
@@ -109,10 +105,9 @@ def linearize_model(
         loglin_names = {v.base_name for v in loglin_variables}
         loglin_set = {i for i, v in enumerate(variables) if v.base_name in loglin_names}
 
-    # Classify equations by which time-shifts they reference (S=static, L=lag-only, E=lead-only,
-    # B=both) and variables by their incidence (s, p, m, f). A single pass over the equations
-    # derives all four incidence arrays. These drive the [S|L|E|B] / [s|p|m|f] permutations that
-    # make A's and C's structural-zero blocks contiguous for downstream solvers.
+    # Classify equations by which time shifts they reference (static, lag-only, lead-only, both) and variables by
+    # their incidence (static, predetermined, mixed, forward). The resulting permutations make the structural-zero
+    # blocks of A and C contiguous for downstream solvers.
     lag_syms = [v.set_t(-1) for v in variables]
     lead_syms = [v.set_t(1) for v in variables]
     eq_has_lag = np.zeros(len(equations), dtype=bool)
@@ -150,16 +145,15 @@ def linearize_model(
     else:
         var_order_local = np.asarray(var_order, dtype=int)
 
-    # Order equations (rows) and variables (cols) up front so the matrices come out in
-    # [eq_order, var_order] by construction -- no pytensor-side reshuffling.
+    # Permuting the equations and variables before differentiation yields matrices in [eq_order, var_order] by
+    # construction, with no pytensor-side reshuffling.
     equations_perm = [equations[i] for i in eq_order_local]
     lags_perm = [lags[j] for j in var_order_local]
     now_perm = [now[j] for j in var_order_local]
     leads_perm = [leads[j] for j in var_order_local]
 
-    # Bare derivatives at the steady state (vars -> ss, shocks -> 0), built with a single shared
-    # CSE pass across A/B/C/D: they are derivatives of the same equations and share heavily, so
-    # extracting common subexpressions once shrinks the graph pt.grad later replicates.
+    # A, B, C, and D are derivatives of the same equations and share heavily, so one CSE pass across all four shrinks
+    # the graph that pt.grad later replicates.
     A, B, C, D = build_symbolic_jacobians(
         [
             (equations_perm, lags_perm),
@@ -172,9 +166,9 @@ def linearize_model(
         shocks=shocks,
     )
 
-    # Log-linear chain rule: scale column j (in var_order) by the steady-state factor of its
-    # variable -- 1 for level variables (not in the loglin set, or declared negative), the
-    # steady-state value for declared-positive variables, and a sign-guarded switch otherwise.
+    # Log-linear chain rule: scale column j (in var_order) by the steady-state factor of its variable. The factor is
+    # 1 for level variables (outside the loglin set, or declared negative), the steady-state value for
+    # declared-positive variables, and a sign-guarded switch otherwise.
     column_scale = []
     for j in var_order_local:
         ss_node = as_tensor(variables[j].to_ss(), cache)
@@ -189,11 +183,8 @@ def linearize_model(
 
     A, B, C, D = rewrite_pregrad([A * scale, B * scale, C * scale, D])
 
-    # Row order reflects the [S|L|E|B] equation permutation; column order reflects the
-    # [s|p|m|f] variable permutation. Downstream solvers consume A/B/C/D and emit T/R in
-    # the *permuted* variable order -- the statespace boundary applies ``inv_var_order``
-    # to map T/R back to user variable order, and ``Model.linearize_model`` applies
-    # ``inv_eq_order`` / ``inv_var_order`` before returning matrices to the user.
+    # Downstream solvers consume A, B, C, and D and emit T and R in the permuted variable order. The statespace
+    # boundary and ``Model.linearize_model`` apply the inverse permutations before returning matrices to the user.
     ss_pt = [as_tensor(v.to_ss(), cache) for v in variables]
     return [A, B, C, D], ss_pt, eq_order_local, var_order_local
 
@@ -210,9 +201,8 @@ def make_not_loglin_flags(
     """
     Determine which variables should not be log-linearized.
 
-    Returns a flag array where ``1`` means "do not log-linearize" and ``0`` means "log-linearize." Variables are
-    excluded from log-linearization if they are explicitly listed in ``not_loglin_variables``, have steady-state
-    values near zero, or (unless ``loglin_negative_ss`` is True) have negative steady-state values.
+    A variable is excluded from log-linearization when it is listed in ``not_loglin_variables``, when its steady-state
+    value is near zero, or when its steady-state value is negative and ``loglin_negative_ss`` is False.
 
     Parameters
     ----------
@@ -222,20 +212,20 @@ def make_not_loglin_flags(
         Calibrated parameters that also appear in the steady-state vector.
     steady_state : SymbolDictionary
         Steady-state values, keyed by variable name.
-    log_linearize : bool, default True
-        If False, returns all-ones (no variable is log-linearized).
+    log_linearize : bool, optional
+        When False, no variable is log-linearized and the flags are all ones. Defaults to True.
     not_loglin_variables : list of str, optional
-        Variable names the user explicitly excludes from log-linearization.
-    loglin_negative_ss : bool, default False
-        If True, variables with negative steady-state values are still log-linearized.
-    verbose : bool, default True
-        Log warnings about excluded variables.
+        Variable names the user excludes from log-linearization. Defaults to None.
+    loglin_negative_ss : bool, optional
+        Log-linearize variables with negative steady-state values. Defaults to False.
+    verbose : bool, optional
+        Log a warning naming each excluded variable. Defaults to True.
 
     Returns
     -------
-    flags : np.ndarray
-        Array of length ``len(variables) + len(calibrated_params)``. Entry is ``1`` if the variable should not be
-        log-linearized, ``0`` otherwise.
+    flags : ndarray
+        Array of length ``len(variables) + len(calibrated_params)``. An entry is 1 when the variable should not be
+        log-linearized and 0 otherwise.
     """
     if not_loglin_variables is None:
         not_loglin_variables = []
@@ -299,19 +289,19 @@ def residual_norms(
 
     Parameters
     ----------
-    B, C, D : np.ndarray
-        Jacobian matrices from the linearized system.
-    Q, P : np.ndarray
-        Shock-response and transition sub-matrices of state variables.
-    A_prime, R_prime, S_prime : np.ndarray
-        Sub-matrices from ``statespace_to_gEcon_representation``.
+    B, C, D : ndarray
+        Jacobian matrices of the linearized system.
+    Q, P : ndarray
+        Shock-response and transition sub-matrices of the state variables.
+    A_prime, R_prime, S_prime : ndarray
+        Sub-matrices from :func:`statespace_to_gEcon_representation`.
 
     Returns
     -------
     norm_deterministic : float
-        Frobenius norm of the deterministic residual
+        Frobenius norm of the deterministic residual.
     norm_stochastic : float
-        Frobenius norm of the stochastic residual
+        Frobenius norm of the stochastic residual.
     """
     norm_deterministic = linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P)
     norm_stochastic = linalg.norm(B @ S_prime + C @ R_prime @ Q + D)
@@ -325,57 +315,57 @@ def statespace_to_gEcon_representation(
     tol: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Decompose the full state-space solution into gEcon's state/jumper partition.
+    Decompose the state space solution into the state and jumper partition used by gEcon.
 
-    Splits the policy matrices ``T`` and ``R`` into state-variable and jumper-variable blocks according to which
-    columns of ``T`` have at least one entry exceeding ``tol`` in absolute value.
+    A variable is a state when its column of ``T`` has at least one entry of at least ``tol`` in absolute value.
+    Entries of ``T`` and ``R`` below ``tol`` in absolute value are set to zero before partitioning.
 
     Parameters
     ----------
-    A : np.ndarray
-        Lead Jacobian matrix from the linearized system.
-    T : np.ndarray
-        Transition matrix (policy function for state evolution).
-    R : np.ndarray
-        Shock-response matrix.
+    A : ndarray
+        Jacobian of the system with respect to variables at t-1.
+    T : ndarray
+        Transition matrix.
+    R : ndarray
+        Selection matrix.
     tol : float
-        Threshold for identifying state variables.
+        Threshold for identifying state variables and for zeroing small entries.
 
     Returns
     -------
-    P : np.ndarray
+    P : ndarray
         State-to-state transition sub-matrix.
-    Q : np.ndarray
+    Q : ndarray
         State shock-response sub-matrix.
-    R : np.ndarray
+    R : ndarray
         Jumper-to-state mapping sub-matrix.
-    S : np.ndarray
+    S : ndarray
         Jumper shock-response sub-matrix.
-    A_prime : np.ndarray
-        Lead Jacobian restricted to state-variable columns.
-    R_prime : np.ndarray
+    A_prime : ndarray
+        ``A`` restricted to state-variable columns.
+    R_prime : ndarray
         Transition matrix restricted to state-variable columns.
-    S_prime : np.ndarray
-        Shock-response matrix (all variables).
+    S_prime : ndarray
+        Selection matrix for all variables.
     """
     n_vars = T.shape[1]
 
-    state_var_idx = np.where(np.abs(T[np.argmax(np.abs(T), axis=0), np.arange(n_vars)]) >= tol)[0]
-    state_var_mask = np.isin(np.arange(n_vars), state_var_idx)
+    column_max = np.abs(T).max(axis=0)
+    state_var_mask = column_max >= tol
 
-    PP = T.copy()
-    PP[np.abs(PP) < tol] = 0
-    QQ = R[:n_vars, :].copy()
-    QQ[np.abs(QQ) < tol] = 0
+    T_thresholded = T.copy()
+    T_thresholded[np.abs(T_thresholded) < tol] = 0
+    R_thresholded = R[:n_vars, :].copy()
+    R_thresholded[np.abs(R_thresholded) < tol] = 0
 
-    P = PP[state_var_mask, :][:, state_var_mask]
-    Q = QQ[state_var_mask, :]
-    R_out = PP[~state_var_mask, :][:, state_var_idx]
-    S = QQ[~state_var_mask, :]
+    P = T_thresholded[state_var_mask, :][:, state_var_mask]
+    Q = R_thresholded[state_var_mask, :]
+    R_out = T_thresholded[~state_var_mask, :][:, state_var_mask]
+    S = R_thresholded[~state_var_mask, :]
 
     A_prime = A[:, state_var_mask]
-    R_prime = PP[:, state_var_mask]
-    S_prime = QQ
+    R_prime = T_thresholded[:, state_var_mask]
+    S_prime = R_thresholded
 
     return P, Q, R_out, S, A_prime, R_prime, S_prime
 
@@ -394,14 +384,14 @@ def check_perturbation_solution(
 
     Parameters
     ----------
-    A, B, C, D : np.ndarray
-        Jacobian matrices from the linearized system.
-    T : np.ndarray
+    A, B, C, D : ndarray
+        Jacobian matrices of the linearized system.
+    T : ndarray
         Transition matrix.
-    R : np.ndarray
-        Shock-response matrix.
-    tol : float, default 1e-8
-        Tolerance for state-variable identification.
+    R : ndarray
+        Selection matrix.
+    tol : float, optional
+        Threshold for identifying state variables. Defaults to 1e-8.
     """
     P, Q, _, _S, A_prime, R_prime, S_prime = statespace_to_gEcon_representation(A, T, R, tol)
     norm_det, norm_stoch = residual_norms(B, C, D, Q, P, A_prime, R_prime, S_prime)
@@ -412,26 +402,27 @@ def check_perturbation_solution(
 def compute_bk_eigenvalues(
     A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray, tol: float = 1e-8
 ) -> tuple[np.ndarray, np.ndarray, int]:
-    """Compute generalized eigenvalues of the linearized DSGE system for BK condition analysis.
+    """
+    Compute the generalized eigenvalues of the linearized DSGE system for the Blanchard-Kahn check.
 
-    Builds the Sims (2002) augmented system and computes eigenvalues via ordered QZ decomposition.
-    Eigenvalues are sorted by ascending modulus.
+    Builds the Sims (2002) augmented system and computes its eigenvalues by ordered QZ decomposition. Eigenvalues are
+    sorted by ascending modulus.
 
     Parameters
     ----------
-    A, B, C, D : np.ndarray
+    A, B, C, D : ndarray
         Jacobian matrices of the linearized DSGE system.
-    tol : float, default 1e-8
-        Tolerance for identifying forward-looking variables.
+    tol : float, optional
+        Threshold for identifying forward-looking variables. Defaults to 1e-8.
 
     Returns
     -------
-    eigvals_real : np.ndarray
-        Real parts of eigenvalues, sorted by modulus.
-    eigvals_imag : np.ndarray
-        Imaginary parts of eigenvalues, sorted by modulus.
+    eigvals_real : ndarray
+        Real parts of the eigenvalues, sorted by modulus.
+    eigvals_imag : ndarray
+        Imaginary parts of the eigenvalues, sorted by modulus.
     n_forward : int
-        Number of forward-looking variables (columns of C with nonzero entries).
+        Number of forward-looking variables, the columns of ``C`` with a nonzero entry.
     """
     Gamma_0, Gamma_1, _, _, _ = _gensys_setup(A, B, C, D, tol)
     AA, BB, *_ = linalg.ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
@@ -452,25 +443,26 @@ def compute_bk_eigenvalues_pt(
     _D: TensorVariable,
     lead_var_idx: np.ndarray,
 ) -> tuple[TensorVariable, TensorVariable]:
-    """Compute symbolic eigenvalues of the linearized DSGE system for BK condition analysis.
+    """
+    Compute the eigenvalues of the linearized DSGE system symbolically for the Blanchard-Kahn check.
 
-    Builds the Sims (2002) augmented system symbolically and computes eigenvalues via
-    ``real_eig``. The result is differentiable with respect to the input matrices.
+    Builds the Sims (2002) augmented system and computes its eigenvalues with
+    :func:`~gEconpy.pytensorf.real_eig.real_eig`, so the result is differentiable with respect to the input matrices.
 
     Parameters
     ----------
     A, B, C, _D : TensorVariable
-        Jacobian matrices of the linearized DSGE system.
-    lead_var_idx : np.ndarray of int
-        Column indices of forward-looking variables (columns of C with nonzero entries).
-        Must be known at graph-build time.
+        Jacobian matrices of the linearized DSGE system. ``_D`` is unused.
+    lead_var_idx : ndarray of int
+        Column indices of the forward-looking variables, the columns of ``C`` with a nonzero entry. Must be known at
+        graph-build time.
 
     Returns
     -------
     eigvals_real : TensorVariable
-        Real parts of eigenvalues, sorted by modulus.
+        Real parts of the eigenvalues, sorted by modulus.
     eigvals_imag : TensorVariable
-        Imaginary parts of eigenvalues, sorted by modulus.
+        Imaginary parts of the eigenvalues, sorted by modulus.
     """
     lead_var_idx = np.asarray(lead_var_idx)
     n_vars = A.type.shape[0]
@@ -480,7 +472,6 @@ def compute_bk_eigenvalues_pt(
     I_n = pt.eye(n_vars)
     Z_n = pt.zeros((n_vars, n_vars))
 
-    # Build augmented matrices (Sims 2002 form)
     Gamma_0 = pt.vertical_stack(
         pt.horizontal_stack(B, C),
         pt.horizontal_stack(-I_n, Z_n),
@@ -490,15 +481,13 @@ def compute_bk_eigenvalues_pt(
         pt.horizontal_stack(Z_n, I_n),
     )
 
-    # Row/column selection matching _gensys_setup:
-    # all equation rows (0..n-1) + auxiliary rows for lead variables (n + lead_var_idx)
+    # Same row and column selection as _gensys_setup: every equation row plus one auxiliary row per lead variable.
     eqs_and_leads_idx = np.concatenate([np.arange(n_vars), lead_var_idx + n_vars])
     Gamma_0_sel = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
     Gamma_1_sel = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
 
-    # Gamma_0 may be singular (rank-deficient). Regularize with eps*I so that
-    # infinite eigenvalues become O(1/eps) -- still correctly counted as unstable --
-    # while finite eigenvalues near |lambda|=1 are perturbed by only O(eps).
+    # Gamma_0 may be singular. Regularizing with eps*I turns infinite eigenvalues into O(1/eps) ones, which are still
+    # counted as unstable, while finite eigenvalues near the unit circle move by only O(eps).
     n_sel = len(eqs_and_leads_idx)
     G0_reg = -Gamma_0_sel + pt.eye(n_sel) * _FLOAT_ZERO_TOL
     M = pt.linalg.solve(G0_reg, Gamma_1_sel)
@@ -516,33 +505,31 @@ def check_bk_condition(
     return_value: Literal["dataframe", "bool", None] = "dataframe",
 ) -> bool | pd.DataFrame | None:
     r"""
-    Check the Blanchard-Kahn condition for the linearized system.
+    Check the Blanchard-Kahn condition of the linearized system.
 
     Computes the generalized eigenvalues of the system in the Sims (2002) [1]_ form. Per Blanchard and Kahn
-    (1980) [2]_, the number of unstable eigenvalues (modulus > 1) must equal the number of forward-looking variables
-    for a unique stable solution to exist.
+    (1980) [2]_, a unique stable solution exists when the number of unstable eigenvalues (modulus greater than one)
+    equals the number of forward-looking variables.
 
     Parameters
     ----------
-    A, B, C, D : np.ndarray
-        Jacobian matrices of the linearized DSGE system, evaluated at steady state.
-    tol : float, default 1e-8
-        Tolerance below which numerical values are considered zero.
-    verbose : bool, default True
-        Whether to log the result.
-    on_failure : ``'raise'`` or ``'ignore'``, default ``'ignore'``
-        Action to take if the condition is not satisfied.
-    return_value : ``'dataframe'``, ``'bool'``, or None, default ``'dataframe'``
-        What to return: a DataFrame of eigenvalues, a boolean, or nothing.
+    A, B, C, D : ndarray
+        Jacobian matrices of the linearized DSGE system, evaluated at the steady state.
+    tol : float, optional
+        Threshold below which numerical values count as zero. Defaults to 1e-8.
+    verbose : bool, optional
+        Log the result. Defaults to True.
+    on_failure : str, optional
+        One of ``'raise'`` or ``'ignore'``. Action to take when the condition is not satisfied. Defaults to
+        ``'ignore'``.
+    return_value : str or None, optional
+        One of ``'dataframe'``, ``'bool'``, or None. Selects what to return. Defaults to ``'dataframe'``.
 
     Returns
     -------
-    result : pd.DataFrame, bool, or None
-        Depends on ``return_value``:
-
-        - ``'dataframe'``: DataFrame with columns ``Modulus``, ``Real``, ``Imaginary``.
-        - ``'bool'``: True if the Blanchard-Kahn condition is satisfied.
-        - ``None``: Nothing returned.
+    result : DataFrame, bool, or None
+        With ``'dataframe'``, a DataFrame with columns ``Modulus``, ``Real``, and ``Imaginary``. With ``'bool'``, True
+        when the Blanchard-Kahn condition is satisfied. With None, nothing.
 
     References
     ----------
@@ -552,7 +539,7 @@ def check_bk_condition(
        rational expectations." *Econometrica* 48.5 (1980): 1305-1311.
     """
     if return_value not in ["dataframe", "bool", None]:
-        raise ValueError(f'Unknown return type "{return_value}"')
+        raise ValueError(f'Unknown return_value "{return_value}". Pass "dataframe", "bool", or None.')
 
     eigvals_real, eigvals_imag, n_forward = compute_bk_eigenvalues(A, B, C, D, tol)
     modulus = np.sqrt(eigvals_real**2 + eigvals_imag**2)
@@ -591,30 +578,30 @@ def check_bk_condition_pt(
     lead_var_idx: np.ndarray,
 ) -> tuple[TensorVariable, TensorVariable, TensorVariable]:
     r"""
-    Symbolic Blanchard-Kahn condition check using differentiable eigenvalues.
+    Check the Blanchard-Kahn condition symbolically.
 
     Parameters
     ----------
     A, B, C, D : TensorVariable
         Jacobian matrices of the linearized DSGE system.
-    lead_var_idx : np.ndarray of int
-        Column indices of forward-looking variables. Must be known at graph-build time.
+    lead_var_idx : ndarray of int
+        Column indices of the forward-looking variables. Must be known at graph-build time.
 
     Returns
     -------
-    bk_satisfied : TensorVariable (bool scalar)
-        True if the Blanchard-Kahn condition IS satisfied.
-    n_forward : TensorVariable (int scalar)
-        Number of forward-looking variables.
-    n_unstable : TensorVariable (int scalar)
-        Number of eigenvalues with modulus greater than one.
+    bk_satisfied : TensorVariable
+        Boolean scalar, True when the Blanchard-Kahn condition is satisfied.
+    n_forward : TensorVariable
+        Integer scalar, the number of forward-looking variables.
+    n_unstable : TensorVariable
+        Integer scalar, the number of eigenvalues with modulus greater than one.
     """
     lead_var_idx = np.asarray(lead_var_idx)
     n_forward = len(lead_var_idx)
     eigvals_real, eigvals_imag = compute_bk_eigenvalues_pt(A, B, C, D, lead_var_idx)
 
-    # Detach the eigenvalues: the BK check is a step function (zero gradient), so this keeps
-    # the only first-order-differentiable RealEig VJP out of the Hessian graph.
+    # The BK check is a step function with zero gradient, so detaching the eigenvalues keeps the RealEig VJP, which
+    # is only first-order differentiable, out of the Hessian graph.
     eigvals_real = disconnected_grad(eigvals_real)
     eigvals_imag = disconnected_grad(eigvals_imag)
 

@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
@@ -9,14 +11,19 @@ from pytensor.link.numba.dispatch.basic import register_funcify_default_op_cache
 from pytensor.link.numba.dispatch.linalg.decomposition.lu_factor import _lu_factor
 from pytensor.link.numba.dispatch.linalg.solvers.general import _solve_gen
 from pytensor.link.numba.dispatch.linalg.solvers.lu_solve import _getrs
+from pytensor.tensor import TensorVariable
 from pytensor.tensor.linalg.dtype_utils import linalg_output_dtype
 
-from gEconpy.model.perturbation import _log
 from gEconpy.solvers.shared import (
     o1_policy_function_adjoints,
     pt_compute_selection_matrix,
     stabilize,
 )
+
+_log = logging.getLogger(__name__)
+
+_CONVERGED_MESSAGE = "Optimization successful"
+_NOT_CONVERGED_MESSAGE = "Iteration on all matrices failed to converge"
 
 
 def cycle_reduction_numpy(
@@ -27,53 +34,45 @@ def cycle_reduction_numpy(
     tol: float = 1e-7,
 ) -> tuple[np.ndarray | None, np.ndarray | None, str, float]:
     """
-    Solve quadratic matrix equation of the form :math:`A_0 x^2 + A_1 x + A_2 = 0` via cycle reduction algorithm of [1]_.
+    Solve the matrix quadratic equation :math:`A_0 + A_1 X + A_2 X^2 = 0` by the cycle reduction algorithm of [1]_.
 
-    Useful in the DSGE context to solve for the of the policy function, g, with respect to state vector y.
-
-    Adapted from the Dynare file cycle_reduction.m, found at
-    https://github.com/DynareTeam/dynare/blob/master/matlab/cycle_reduction.m
+    In the DSGE context the solution is the first-order policy function :math:`T`. Adapted from
+    https://github.com/DynareTeam/dynare/blob/master/matlab/cycle_reduction.m.
 
     Parameters
     ----------
     A0 : ndarray
-        Coefficient matrix associated with the constant term of the matrix quadratic equation. In DSGE models, this is
-        dF_d_t-1, the derivative of the system with respect to variables that enter as lags
+        Constant coefficient of the matrix quadratic. In a DSGE model this is the Jacobian with respect to lagged
+        variables.
     A1 : ndarray
-        Coefficient matrix associated with the linear term of the matrix quadratic equation. In DSGE models, this is
-        dF_d_t, the derivative of the system with respect to variables that enter at the current time
+        Linear coefficient of the matrix quadratic. In a DSGE model this is the Jacobian with respect to current
+        variables.
     A2 : ndarray
-        Coefficient matrix associated with the quadratic term of the matrix quadratic equation. In DSGE models, this is
-        dF_d_t+1, the derivative of the system with respect to variables that enter in expectation
+        Quadratic coefficient of the matrix quadratic. In a DSGE model this is the Jacobian with respect to variables
+        that enter in expectation.
     max_iter : int, optional
-        Maximum number of iterations to perform before giving up. Defaults to 1000.
+        Maximum number of iterations before giving up. Defaults to 1000.
     tol : float, optional
-        Floating point tolerance used to detect algorithmic convergence. Defaults to 1e-7.
+        Floating point tolerance used to detect convergence. Defaults to 1e-7.
 
     Returns
     -------
-    X : ndarray
-        Solution to the matrix quadratic equation, or None if the algorithm fails to converge.
-    res : ndarray
-        Residual of the matrix quadratic equation, or None if the algorithm fails to converge.
+    X : ndarray or None
+        Solution of the matrix quadratic equation, or None when the iteration did not converge.
+    res : ndarray or None
+        Residual :math:`A_0 + A_1 X + A_2 X^2` at the solution, or None when the iteration did not converge.
     result : str
-        String indicating the result of the optimization. If the algorithm converges, this will be "Optimization
-        successful". If the algorithm fails to converge, this will be "Iteration on all matrices failed to converged"
+        ``"Optimization successful"`` on convergence, otherwise a message naming the failure.
     log_norm : float
-        Logarithm of the L1 norm of the matrix A1. This is useful for diagnosing the success of the algorithm.
+        Logarithm of the L1 norm of ``A1`` at the final iteration when the iteration did not converge, otherwise 0.
 
     References
     ----------
     .. [1] Bini, D.A., Latouche, G., and Meini, B. "Solving matrix polynomial equations
        arising in queueing problems." *Linear Algebra and its Applications* 340 (2002): 222-244.
     """
-    result = "Optimization successful"
-    log_norm = 0
-    X = None
-    res = None
-
-    # The loop rebinds A0/A1/A2 to fresh arrays rather than mutating them in
-    # place, so these initial snapshots can alias the inputs -- no copy needed.
+    # The loop rebinds A0, A1, and A2 to fresh arrays without mutating them in place, so these snapshots can alias
+    # the inputs.
     A0_initial = A0
     A1_hat = A1
     A1_initial = A1
@@ -98,132 +97,90 @@ def cycle_reduction_numpy(
                 break
 
         elif np.isnan(A0_L1_norm) or i == (max_iter - 1):
-            if A0_L1_norm < tol:
-                result = "Iteration on matrix A0 and A1 converged towards a solution, but A2 did not."
-                log_norm = np.log(np.linalg.norm(A2, 1))
-            else:
-                result = "Iteration on all matrices failed to converged"
-                log_norm = np.log(np.linalg.norm(A1, 1))
-
-            return X, res, result, log_norm
+            log_norm = np.log(np.linalg.norm(A1, 1))
+            return None, None, _NOT_CONVERGED_MESSAGE, log_norm
 
     X = -np.linalg.solve(A1_hat, A0_initial)
     res = A0_initial + A1_initial @ X + A2_initial @ X @ X
 
-    return X, res, result, log_norm
+    return X, res, _CONVERGED_MESSAGE, 0
 
 
-def _linear_policy_jvp(inputs, outputs, output_grads):
-    # CycleReductionWrapper exposes a single output (T); scan_cycle_reduction's
-    # OpFromGraph exposes two (T, n_steps). Either way only T carries gradient.
-    A, B, C = inputs
-    T = outputs[0]
-    T_bar = output_grads[0]
+def solve_policy_function_with_cycle_reduction(
+    A: np.ndarray,
+    B: np.ndarray,
+    C: np.ndarray,
+    D: np.ndarray,
+    max_iter: int = 100,
+    tol: float = 1e-8,
+    verbose: bool = True,
+) -> tuple[np.ndarray | None, np.ndarray | None, str, float]:
+    """
+    Solve for the policy function of a linearized DSGE system by cycle reduction.
 
-    return o1_policy_function_adjoints(A, B, C, T, T_bar)
+    Returns the transition matrix T and the selection matrix R, which together define the linear state space
+    representation of the model.
 
+    Parameters
+    ----------
+    A : ndarray
+        Jacobian of the system with respect to variables at t-1, evaluated at the steady state.
+    B : ndarray
+        Jacobian of the system with respect to variables at t, evaluated at the steady state.
+    C : ndarray
+        Jacobian of the system with respect to variables at t+1, evaluated at the steady state.
+    D : ndarray
+        Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
+    max_iter : int, optional
+        Maximum number of iterations before giving up. Defaults to 100.
+    tol : float, optional
+        Floating point tolerance used to detect convergence. Defaults to 1e-8.
+    verbose : bool, optional
+        Log the sum of squared residuals at the solution, or the failure message when the iteration did not converge.
+        Defaults to True.
 
-@numba_basic.numba_njit(final_function=True)
-def _cycle_reduction_core(
-    A0: np.ndarray, A1: np.ndarray, A2: np.ndarray, max_iter: int, tol: float
-) -> tuple[np.ndarray, bool]:
-    n = A0.shape[0]
-    dtype = A0.dtype
+    Returns
+    -------
+    T : ndarray or None
+        Transition matrix, giving the effect of variable values at t on their values at t+1. None when the iteration
+        did not converge.
+    R : ndarray or None
+        Selection matrix, giving the effect of exogenous shocks at t on variable values at t+1. None when the
+        iteration did not converge.
+    result : str
+        Message describing the outcome of the cycle reduction iteration.
+    log_norm : float
+        Log L1 norm of ``A1`` at the final iteration when the iteration did not converge, otherwise 0.
+    """
+    T, res, result, log_norm = cycle_reduction_numpy(A, B, C, max_iter, tol)
 
-    # Inputs are read-only (pytensor never grants overwrite here), so the loop rebinds
-    # to fresh arrays and these aliases stay valid.
-    A0_initial = A0
-    A1_hat = A1
+    if T is None:
+        if verbose:
+            _log.info(
+                f"Solution not found. Solver returned: {result}\n,"
+                f"Log norm of the solution at the final iteration: {log_norm:0.9f}"
+            )
+        return None, None, result, log_norm
 
-    # Owned scratch, overwritten freely. lu_buf/rhs* need Fortran order; numba rejects
-    # order="F", hence the `.T` of a fresh C array.
-    m00 = np.empty((n, n), dtype=dtype)
-    m02 = np.empty((n, n), dtype=dtype)
-    m20 = np.empty((n, n), dtype=dtype)
-    m22 = np.empty((n, n), dtype=dtype)
-    lu_buf = np.empty((n, n), dtype=dtype).T
-    rhs0 = np.empty((n, n), dtype=dtype).T
-    rhs2 = np.empty((n, n), dtype=dtype).T
+    if verbose:
+        _log.info(f"Solution found, sum of squared residuals: {(res**2).sum():0.9f}")
 
-    converged = False
-    for _ in range(int(max_iter)):
-        # Factor A1 once, reuse for both solves.
-        lu_buf[:] = A1
-        lu, piv = _lu_factor(lu_buf, True)
-        piv += np.int32(1)  # _getrs wants 1-based pivots
+    T = np.ascontiguousarray(T)
+    R = -np.linalg.solve(C @ T + B, D)
 
-        rhs0[:] = A0
-        A1_inv_A0, _info0 = _getrs(lu, rhs0, piv, 0, True)
-        rhs2[:] = A2
-        A1_inv_A2, _info2 = _getrs(lu, rhs2, piv, 0, True)
-
-        np.dot(A0, A1_inv_A0, m00)
-        np.dot(A0, A1_inv_A2, m02)
-        np.dot(A2, A1_inv_A0, m20)
-        np.dot(A2, A1_inv_A2, m22)
-
-        A1 = A1 - m02 - m20
-        A1_hat = A1_hat - m20
-        A0 = -m00
-        A2 = -m22
-
-        A0_norm = np.linalg.norm(A0, ord=1)
-        if A0_norm < tol:
-            if np.linalg.norm(A2, ord=1) < tol:
-                converged = True
-                break
-        elif np.isnan(A0_norm):
-            break
-
-    # _solve_gen NaN-fills on failure instead of raising (caller rejects the draw).
-    # A1_hat is owned (overwrite ok); A0_initial aliases an input (must not overwrite).
-    T = -_solve_gen(A1_hat, A0_initial, False, True, False, False) if converged else np.zeros_like(A0_initial)
-
-    return T, converged
+    return T, R, result, log_norm
 
 
-class CycleReductionWrapper(Op):
-    __props__ = ("max_iter", "tol")
-    gufunc_signature = "(n,n),(n,n),(n,n)->(n,n)"
-
-    def __init__(self, max_iter=1000, tol=1e-9):
-        """Create the Op.
-
-        Parameters
-        ----------
-        max_iter : int
-            Maximum number of cycle reduction iterations. Defaults to 1000.
-        tol : float
-            Floating point tolerance used to detect convergence. Defaults to 1e-9.
-        """
-        self.max_iter = int(max_iter)
-        self.tol = tol
-        super().__init__()
-
-    def make_node(self, A, B, C) -> Apply:
-        inputs = list(map(pt.as_tensor, [A, B, C]))
-        o_dtype = linalg_output_dtype(*(inp.type.dtype for inp in inputs))
-        outputs = [pt.tensor("T", dtype=o_dtype, shape=inputs[0].type.shape)]
-
-        return Apply(self, inputs, outputs)
-
-    def infer_shape(self, node, input_shapes):
-        n = input_shapes[0][0]
-        return [(n, n)]
-
-    def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
-        """Solve for the policy matrix by cycle reduction."""
-        A, B, C = inputs
-        T, _res, _result, _log_norm = cycle_reduction_numpy(A, B, C, max_iter=self.max_iter, tol=self.tol)
-
-        outputs[0][0] = np.asarray(T, dtype=node.outputs[0].type.dtype)
-
-    def pullback(self, inputs, outputs, cotangents):
-        return _linear_policy_jvp(inputs, outputs, cotangents)
-
-
-def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
-    """Build a symbolic graph that solves a linearized DSGE system by cycle reduction.
+def cycle_reduction_pt(
+    A: TensorVariable,
+    B: TensorVariable,
+    C: TensorVariable,
+    D: TensorVariable,
+    max_iter: int = 1000,
+    tol: float = 1e-9,
+) -> tuple[TensorVariable, TensorVariable]:
+    """
+    Build a symbolic graph that solves a linearized DSGE system by cycle reduction.
 
     The cycle reduction iteration runs inside an Op, so the graph itself holds a single node.
 
@@ -254,9 +211,114 @@ def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
     return T, R
 
 
+def scan_cycle_reduction(
+    A: pt.TensorLike,
+    B: pt.TensorLike,
+    C: pt.TensorLike,
+    D: pt.TensorLike,
+    max_iter: int = 50,
+    tol: float = 1e-7,
+    use_adjoint_gradients: bool = True,
+) -> tuple[TensorVariable, TensorVariable, TensorVariable]:
+    """
+    Build a symbolic graph that solves a linearized DSGE system with an unrolled cycle reduction scan.
+
+    The iteration is a pytensor scan built from ordinary tensor Ops, so it compiles on every backend and can be
+    differentiated directly. :func:`~gEconpy.solvers.cycle_reduction.cycle_reduction_pt` wraps the iteration in an Op
+    with a numba dispatch only.
+
+    Parameters
+    ----------
+    A : TensorVariable
+        Jacobian of the system with respect to variables at t-1, evaluated at the steady state.
+    B : TensorVariable
+        Jacobian of the system with respect to variables at t, evaluated at the steady state.
+    C : TensorVariable
+        Jacobian of the system with respect to variables at t+1, evaluated at the steady state.
+    D : TensorVariable
+        Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
+    max_iter : int, optional
+        Number of scan steps. Steps taken after convergence are no-ops. Defaults to 50.
+    tol : float, optional
+        Floating point tolerance used to detect convergence. Defaults to 1e-7.
+    use_adjoint_gradients : bool, optional
+        When True, differentiate with the closed-form adjoints of the matrix quadratic equation. When False,
+        backpropagate through the scan. Defaults to True.
+
+    Returns
+    -------
+    T : TensorVariable
+        Transition matrix, giving the effect of variable values at t on their values at t+1.
+    R : TensorVariable
+        Selection matrix, giving the effect of exogenous shocks at t on variable values at t+1.
+    n_steps : TensorVariable
+        Number of cycle reduction steps taken before convergence.
+    """
+    A = pt.as_tensor_variable(A, name="A")
+    B = pt.as_tensor_variable(B, name="B")
+    C = pt.as_tensor_variable(C, name="C")
+    D = pt.as_tensor_variable(D, name="D")
+
+    output = _scan_cycle_reduction(A, B, C, max_iter, tol)
+
+    scan_cycle_reduction_op = OpFromGraph(
+        inputs=[A, B, C],
+        outputs=output,
+        pullback=_policy_function_pullback if use_adjoint_gradients else None,
+        name="ScanCycleReduction",
+        inline=True,
+    )
+
+    T, n_steps = scan_cycle_reduction_op(A, B, C)
+    R = pt_compute_selection_matrix(B, C, D, T)
+
+    return T, R, n_steps
+
+
+class CycleReductionWrapper(Op):
+    """
+    PyTensor Op that solves the matrix quadratic :math:`A + B T + C T^2 = 0` by cycle reduction.
+
+    Parameters
+    ----------
+    max_iter : int, optional
+        Maximum number of cycle reduction iterations. Defaults to 1000.
+    tol : float, optional
+        Floating point tolerance used to detect convergence. Defaults to 1e-9.
+    """
+
+    __props__ = ("max_iter", "tol")
+    gufunc_signature = "(n,n),(n,n),(n,n)->(n,n)"
+
+    def __init__(self, max_iter: int = 1000, tol: float = 1e-9):
+        self.max_iter = int(max_iter)
+        self.tol = tol
+        super().__init__()
+
+    def make_node(self, A, B, C) -> Apply:
+        inputs = list(map(pt.as_tensor, [A, B, C]))
+        o_dtype = linalg_output_dtype(*(inp.type.dtype for inp in inputs))
+        outputs = [pt.tensor("T", dtype=o_dtype, shape=inputs[0].type.shape)]
+
+        return Apply(self, inputs, outputs)
+
+    def infer_shape(self, node, input_shapes):
+        n = input_shapes[0][0]
+        return [(n, n)]
+
+    def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
+        A, B, C = inputs
+        T, _res, _result, _log_norm = cycle_reduction_numpy(A, B, C, max_iter=self.max_iter, tol=self.tol)
+
+        outputs[0][0] = np.asarray(T, dtype=node.outputs[0].type.dtype)
+
+    def pullback(self, inputs, outputs, cotangents):
+        return _policy_function_pullback(inputs, outputs, cotangents)
+
+
 @register_funcify_default_op_cache_key(CycleReductionWrapper)
 def numba_funcify_CycleReductionWrapper(op, node, **kwargs):  # noqa: ARG001
-    """Route to the njit kernel, casting inputs to the working dtype when they differ."""
+    """Route :class:`CycleReductionWrapper` to the njit kernel, casting inputs to the working dtype when they differ."""
     max_iter = op.max_iter
     tol = op.tol
 
@@ -278,7 +340,77 @@ def numba_funcify_CycleReductionWrapper(op, node, **kwargs):  # noqa: ARG001
     return cycle_reduction, cache_version
 
 
-def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7) -> pt.Variable:
+def _policy_function_pullback(inputs, outputs, output_grads):
+    # CycleReductionWrapper exposes a single output (T) and the scan OpFromGraph exposes two (T, n_steps). Only T
+    # carries gradient in either case.
+    A, B, C = inputs
+    T = outputs[0]
+    T_bar = output_grads[0]
+
+    return o1_policy_function_adjoints(A, B, C, T, T_bar)
+
+
+@numba_basic.numba_njit(final_function=True)
+def _cycle_reduction_core(
+    A0: np.ndarray, A1: np.ndarray, A2: np.ndarray, max_iter: int, tol: float
+) -> tuple[np.ndarray, bool]:
+    n = A0.shape[0]
+    dtype = A0.dtype
+
+    # Inputs are read-only (pytensor never grants overwrite here), so the loop rebinds to fresh arrays and these
+    # aliases stay valid.
+    A0_initial = A0
+    A1_hat = A1
+
+    # Owned scratch, overwritten freely. lu_buf and rhs* need Fortran order, and numba rejects order="F", hence the
+    # `.T` of a fresh C array.
+    m00 = np.empty((n, n), dtype=dtype)
+    m02 = np.empty((n, n), dtype=dtype)
+    m20 = np.empty((n, n), dtype=dtype)
+    m22 = np.empty((n, n), dtype=dtype)
+    lu_buf = np.empty((n, n), dtype=dtype).T
+    rhs0 = np.empty((n, n), dtype=dtype).T
+    rhs2 = np.empty((n, n), dtype=dtype).T
+
+    converged = False
+    for _ in range(int(max_iter)):
+        # One LU of A1 serves both solves. `_lu_factor` returns 0-based pivots but `_getrs` hands them straight to
+        # LAPACK, which expects 1-based, so shift them here.
+        lu_buf[:] = A1
+        lu, piv = _lu_factor(lu_buf, True)
+        piv += np.int32(1)
+
+        rhs0[:] = A0
+        A1_inv_A0, _info0 = _getrs(lu, rhs0, piv, 0, True)
+        rhs2[:] = A2
+        A1_inv_A2, _info2 = _getrs(lu, rhs2, piv, 0, True)
+
+        np.dot(A0, A1_inv_A0, m00)
+        np.dot(A0, A1_inv_A2, m02)
+        np.dot(A2, A1_inv_A0, m20)
+        np.dot(A2, A1_inv_A2, m22)
+
+        A1 = A1 - m02 - m20
+        A1_hat = A1_hat - m20
+        A0 = -m00
+        A2 = -m22
+
+        A0_norm = np.linalg.norm(A0, ord=1)
+        if A0_norm < tol:
+            if np.linalg.norm(A2, ord=1) < tol:
+                converged = True
+                break
+        elif np.isnan(A0_norm):
+            break
+
+    # `_solve_gen` does not raise on failure. It NaN-fills, and the caller rejects the draw. A1_hat is owned and may
+    # be overwritten. A0_initial aliases an input and must not be.
+    T = -_solve_gen(A1_hat, A0_initial, False, True, False, False) if converged else np.zeros_like(A0_initial)
+
+    return T, converged
+
+
+def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7) -> list[TensorVariable]:
     def noop(A0, A1, A2, A1_hat, norm, step_num):
         return A0, A1, A2, A1_hat, norm, step_num
 
@@ -326,139 +458,3 @@ def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7) -> p
     T = -pt.linalg.solve(stabilize(A1_hat), A, assume_a="gen", check_finite=False)
 
     return [T, n_steps[-1]]
-
-
-def scan_cycle_reduction(
-    A: pt.TensorLike,
-    B: pt.TensorLike,
-    C: pt.TensorLike,
-    D: pt.TensorLike,
-    max_iter: int = 50,
-    tol: float = 1e-7,
-    use_adjoint_gradients: bool = True,
-):
-    """Build a symbolic graph that solves a linearized DSGE system with an unrolled cycle reduction scan.
-
-    Unlike :func:`~gEconpy.solvers.cycle_reduction.cycle_reduction_pt`, the iteration is a pytensor scan, so
-    the graph can be differentiated directly.
-
-    Parameters
-    ----------
-    A : TensorVariable
-        Jacobian of the system with respect to variables at t-1, evaluated at the steady state.
-    B : TensorVariable
-        Jacobian of the system with respect to variables at t, evaluated at the steady state.
-    C : TensorVariable
-        Jacobian of the system with respect to variables at t+1, evaluated at the steady state.
-    D : TensorVariable
-        Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
-    max_iter : int, optional
-        Number of scan steps. Steps taken after convergence are no-ops. Defaults to 50.
-    tol : float, optional
-        Floating point tolerance used to detect convergence. Defaults to 1e-7.
-    use_adjoint_gradients : bool, optional
-        If True, differentiate with the closed-form adjoints of the matrix quadratic equation instead of
-        backpropagating through the scan. Defaults to True.
-
-    Returns
-    -------
-    T : TensorVariable
-        Transition matrix, giving the effect of variable values at t on their values at t+1.
-    R : TensorVariable
-        Selection matrix, giving the effect of exogenous shocks at t on variable values at t+1.
-    n_steps : TensorVariable
-        Number of cycle reduction steps taken before convergence.
-    """
-    A = pt.as_tensor_variable(A, name="A")
-    B = pt.as_tensor_variable(B, name="B")
-    C = pt.as_tensor_variable(C, name="C")
-    D = pt.as_tensor_variable(D, name="D")
-
-    output = _scan_cycle_reduction(A, B, C, max_iter, tol)
-
-    ScanCycleReducation = OpFromGraph(
-        inputs=[A, B, C],
-        outputs=output,
-        pullback=_linear_policy_jvp if use_adjoint_gradients else None,
-        name="ScanCycleReduction",
-        inline=True,
-    )
-
-    T, n_steps = ScanCycleReducation(A, B, C)
-    R = pt_compute_selection_matrix(B, C, D, T)
-
-    return T, R, n_steps
-
-
-def solve_policy_function_with_cycle_reduction(
-    A: np.ndarray,
-    B: np.ndarray,
-    C: np.ndarray,
-    D: np.ndarray,
-    max_iter: int = 100,
-    tol: float = 1e-8,
-    verbose: bool = True,
-) -> tuple[np.ndarray, np.ndarray, str, float]:
-    """
-    Solve quadratic matrix equation of the form :math:`A_0 x^2 + A_1 x + A_2 = 0` via cycle reduction algorithm of [1]_.
-
-    Returns policy function matrix T and shock impact matrix R, which together define a linear DSGE system.
-
-    Parameters
-    ----------
-    A : ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
-        values that are known when decision-making: those with t-1 subscripts.
-    B : ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-        are observed when decision-making: those with t subscripts.
-    C : ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
-        enter in expectation when decision-making: those with t+1 subscripts.
-    D : ndarray
-        Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
-    max_iter : int, optional
-        Maximum number of iterations to perform before giving up. Defaults to 100.
-    tol : float, optional
-        Floating point tolerance used to detect algorithmic convergence. Defaults to 1e-8.
-    verbose : bool, optional
-        If True, log the sum of squared residuals obtained when the system is evaluated at the solution.
-        Defaults to True.
-
-    Returns
-    -------
-    T : ndarray
-        Transition matrix T in state space jargon. Gives the effect of variable values at time t on the
-        values of the variables at time t+1.
-    R : ndarray
-        Selection matrix R in state space jargon. Gives the effect of exogenous shocks at t on the values of
-        variables at time t+1.
-    result : str
-        String describing the result of the cycle reduction algorithm.
-    log_norm : float
-        Log L1 matrix norm of the first matrix (A2 -> A1 -> A0) that did not converge.
-
-    References
-    ----------
-    .. [1] Bini, D.A., Latouche, G., and Meini, B. "Solving matrix polynomial equations
-       arising in queueing problems." *Linear Algebra and its Applications* 340 (2002): 222-244.
-    """
-    T, R = None, None
-    T, res, result, log_norm = cycle_reduction_numpy(A, B, C, max_iter, tol)
-    T = np.ascontiguousarray(T)
-
-    if verbose:
-        if result == "Optimization successful":
-            _log.info(
-                f"Solution found, sum of squared residuals: {(res**2).sum():0.9f}",
-            )
-        else:
-            _log.info(
-                f"Solution not found. Solver returned: {result}\n,"
-                f"Log norm of the solution at the final iteration: {log_norm:0.9f}"
-            )
-
-    if T is not None:
-        R = -np.linalg.solve(C @ T + B, D)
-
-    return T, R, result, log_norm
