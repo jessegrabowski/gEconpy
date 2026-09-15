@@ -57,7 +57,7 @@ A block can hold seven components.
        :language: text
        :start-at: definitions
        :end-at: };
-       :dedent: 1
+       :dedent:
 
 ``controls``
     The variables the agent chooses. gEconpy forms a Lagrangian and differentiates it with respect to each control.
@@ -67,7 +67,7 @@ A block can hold seven components.
        :language: text
        :start-at: controls
        :end-at: };
-       :dedent: 1
+       :dedent:
 
 ``objective``
     A single equation giving the function the agent maximizes over an infinite horizon. The infinite sum in the
@@ -77,7 +77,7 @@ A block can hold seven components.
        :language: text
        :start-at: objective
        :end-at: };
-       :dedent: 1
+       :dedent:
 
 ``constraints``
     The equations the optimization must respect. Every constraint gets a Lagrange multiplier. Writing ``: name[]``
@@ -89,7 +89,7 @@ A block can hold seven components.
        :language: text
        :start-at: constraints
        :end-at: };
-       :dedent: 1
+       :dedent:
 
 ``identities``
     Equations that are part of the model but not of any optimization problem. Unlike definitions they are kept in
@@ -104,7 +104,7 @@ A block can hold seven components.
        :language: text
        :start-at: shocks
        :end-at: };
-       :dedent: 1
+       :dedent:
 
 ``calibration``
     Values, priors and calibrating equations for the block's parameters. See `Parameters`_ below.
@@ -123,13 +123,12 @@ by negating the objective, which is what gEcon requires:
 
 The ``@minimize`` tag is clearer. gEconpy negates the objective internally before forming the
 Lagrangian, so the first-order conditions are those of the minimization program, and the variable keeps a positive
-steady state that can be log-linearized:
+steady state that can be log-linearized. The firm block of a two-block test model writes the same problem with the
+tag:
 
 .. literalinclude:: ../../../../tests/_resources/test_gcns/rbc_2_block_minimize.gcn
    :language: text
-   :start-at: objective
-   :end-at: };
-   :dedent: 1
+   :start-at: block FIRM
 
 An explicit ``@maximize`` tag is accepted and is the default when no tag is present.
 
@@ -160,7 +159,7 @@ and parsing fails. The RBC household calibration attaches a prior to each of its
    :language: text
    :start-at: calibration
    :end-at: };
-   :dedent: 1
+   :dedent:
 
 Priors are `preliz <https://preliz.readthedocs.io/en/latest/>`_ distributions, written with preliz's names and
 parameter names, for example ``Normal(mu=1.5, sigma=0.1)`` or ``Gamma(alpha=2, beta=1)``. Every distribution in
@@ -195,7 +194,7 @@ it from the system. Its multiplier is still created and remains a model variable
    :language: text
    :start-at: @exclude
    :end-at: q[];
-   :dedent: 2
+   :dedent:
 
 
 The steady state block
