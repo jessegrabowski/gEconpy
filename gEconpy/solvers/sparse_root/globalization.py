@@ -18,6 +18,24 @@ from gEconpy.solvers.sparse_root.direction import DirectionProposal
 
 @dataclass(frozen=True, slots=True)
 class LineSearchResult:
+    """Point accepted by a line search, with everything the solver needs to continue from it.
+
+    Attributes
+    ----------
+    x_new : ndarray
+        Accepted iterate.
+    res_new : ndarray
+        Residuals at ``x_new``.
+    jac_new : sparse matrix
+        Jacobian at ``x_new``.
+    phi_new : float
+        Merit value at ``x_new``.
+    alpha : float
+        Step length along the proposed direction.
+    n_evals : int
+        Number of function evaluations the search used.
+    """
+
     x_new: np.ndarray
     res_new: np.ndarray
     jac_new: sp.spmatrix
@@ -27,6 +45,8 @@ class LineSearchResult:
 
 
 class GlobalizationStrategy(Protocol):
+    """Strategy that picks a step length along a proposed direction."""
+
     def search(
         self,
         fun: RootFunction,
@@ -39,24 +59,26 @@ class GlobalizationStrategy(Protocol):
 
 @dataclass
 class ArmijoBacktracking:
-    """Backtracking line search with the Armijo sufficient decrease condition.
+    r"""Backtracking line search with the Armijo sufficient decrease condition.
+
+    Accepts the first step length :math:`\alpha` in the sequence :math:`1, \beta, \beta^2, \dots` satisfying
+
+    .. math::
+
+        \phi(x + \alpha d) \le \phi(x) + c_1 \alpha \, \nabla\phi(x)^T d
 
     Parameters
     ----------
-    c1 : float
-        Sufficient decrease parameter.
-    beta : float
-        Step-size reduction factor.
-    max_iter : int
-        Maximum number of backtracking reductions.
-    merit_fun : callable or None
-        Cheap function ``merit_fun(x, *args) -> residuals`` used to evaluate the merit function during
-        backtracking. When provided, trial points are evaluated with this function instead of the full
-        ``fun`` (which also computes the Jacobian). The full ``fun`` is called once at the accepted point
-        to obtain the Jacobian for the next iteration. This can dramatically reduce cost when the Jacobian
-        is expensive relative to the residuals (e.g. large stacked perfect-foresight systems).
-
-        When ``None`` (default), the full ``fun`` is used for all evaluations.
+    c1 : float, optional
+        Sufficient decrease parameter :math:`c_1`. Defaults to 1e-4.
+    beta : float, optional
+        Step-size reduction factor :math:`\beta`. Defaults to 0.5.
+    max_iter : int, optional
+        Maximum number of trial step lengths. Defaults to 50.
+    merit_fun : callable, optional
+        Residual-only function ``merit_fun(x, *args)`` used to evaluate trial points. When given, ``fun`` is called
+        once at the accepted point to obtain the Jacobian, which saves work when the Jacobian costs far more than the
+        residuals. Defaults to ``None``, meaning ``fun`` evaluates every trial point.
     """
 
     c1: float = DEFAULT_ARMIJO_C1
@@ -92,67 +114,36 @@ class ArmijoBacktracking:
         result : LineSearchResult
             Accepted point, its residuals and Jacobian, the merit value, the step length, and the number of
             function evaluations used.
-
-        Raises
-        ------
-        RuntimeError
-            If no step length satisfies the acceptance test within ``max_iter`` reductions.
         """
-        alpha = 1.0
-        dx, slope = proposal.direction, proposal.slope
-
-        if self.merit_fun is None:
-            for n_evals in range(1, self.max_iter + 1):
-                x_trial = x + alpha * dx
-                res_trial, jac_trial = fun(x_trial, *args)
-                phi_trial = merit(res_trial)
-
-                if phi_trial <= phi_current + self.c1 * alpha * slope:
-                    return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals)
-
-                alpha *= self.beta
-        else:
-            for n_evals in range(1, self.max_iter + 1):
-                x_trial = x + alpha * dx
-                res_trial = self.merit_fun(x_trial, *args)
-                phi_trial = merit(res_trial)
-
-                if phi_trial <= phi_current + self.c1 * alpha * slope:
-                    # Accepted: evaluate the full function once to get the Jacobian
-                    res_trial, jac_trial = fun(x_trial, *args)
-                    return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals + 1)
-
-                alpha *= self.beta
-
-        raise RuntimeError(f"Line search failed after {self.max_iter} reductions")
+        return _backtrack(fun, self.merit_fun, x, phi_current, proposal, args, self.c1, self.beta, self.max_iter)
 
 
 @dataclass
 class NonmonotoneBacktracking:
-    """Grippo-Lampariello-Lucidi nonmonotone backtracking line search.
+    r"""Grippo-Lampariello-Lucidi nonmonotone backtracking line search.
 
-    Instead of requiring ``phi(x + alpha d) <= phi(x) + c1 alpha slope`` (monotone Armijo),
-    this strategy compares against the maximum merit over the last ``memory``
-    iterates::
+    Compares each trial point against the largest merit value among the last ``memory`` iterates:
 
-        phi(x + alpha d) <= max(phi_{k}, ..., phi_{k-M+1}) + c1 alpha slope
+    .. math::
 
-    This allows occasional increases in the merit function, helping the solver
-    escape narrow valleys where monotone line search takes tiny steps.
+        \phi(x + \alpha d) \le \max_{0 \le j < M} \phi_{k-j} + c_1 \alpha \, \nabla\phi(x)^T d
+
+    Occasional increases in the merit function are therefore allowed, which helps the solver leave narrow valleys
+    where a monotone line search takes tiny steps.
 
     Parameters
     ----------
-    c1 : float
-        Sufficient decrease parameter.
-    beta : float
-        Step-size reduction factor.
-    max_iter : int
-        Maximum number of backtracking reductions.
-    memory : int
-        Number of past merit values to keep. ``memory=1`` recovers standard Armijo.
-    merit_fun : callable or None
-        Cheap function ``merit_fun(x, *args) -> residuals`` used to evaluate the merit function during
-        backtracking. See :class:`~gEconpy.solvers.sparse_root.globalization.ArmijoBacktracking` for details.
+    c1 : float, optional
+        Sufficient decrease parameter :math:`c_1`. Defaults to 1e-4.
+    beta : float, optional
+        Step-size reduction factor :math:`\beta`. Defaults to 0.5.
+    max_iter : int, optional
+        Maximum number of trial step lengths. Defaults to 50.
+    memory : int, optional
+        Number of past merit values :math:`M` to keep. ``memory=1`` recovers standard Armijo. Defaults to 10.
+    merit_fun : callable, optional
+        Residual-only function ``merit_fun(x, *args)`` used to evaluate trial points. See
+        :class:`~gEconpy.solvers.sparse_root.globalization.ArmijoBacktracking`. Defaults to ``None``.
     """
 
     c1: float = DEFAULT_ARMIJO_C1
@@ -160,7 +151,7 @@ class NonmonotoneBacktracking:
     max_iter: int = DEFAULT_ARMIJO_MAX_ITER
     memory: int = 10
     merit_fun: MeritFunction | None = None
-    _phi_history: deque = field(init=False, repr=False, default=None)
+    _phi_history: deque[float] = field(init=False, repr=False)
 
     def __post_init__(self):
         self._phi_history = deque(maxlen=self.memory)
@@ -193,38 +184,47 @@ class NonmonotoneBacktracking:
         result : LineSearchResult
             Accepted point, its residuals and Jacobian, the merit value, the step length, and the number of
             function evaluations used.
-
-        Raises
-        ------
-        RuntimeError
-            If no step length satisfies the acceptance test within ``max_iter`` reductions.
         """
         self._phi_history.append(phi_current)
-        phi_ref = max(self._phi_history)
+        phi_reference = max(self._phi_history)
 
-        alpha = 1.0
-        dx, slope = proposal.direction, proposal.slope
+        return _backtrack(fun, self.merit_fun, x, phi_reference, proposal, args, self.c1, self.beta, self.max_iter)
 
-        if self.merit_fun is None:
-            for n_evals in range(1, self.max_iter + 1):
-                x_trial = x + alpha * dx
-                res_trial, jac_trial = fun(x_trial, *args)
-                phi_trial = merit(res_trial)
 
-                if phi_trial <= phi_ref + self.c1 * alpha * slope:
-                    return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals)
+def _backtrack(
+    fun: RootFunction,
+    merit_fun: MeritFunction | None,
+    x: np.ndarray,
+    phi_reference: float,
+    proposal: DirectionProposal,
+    args: tuple[Any, ...],
+    c1: float,
+    beta: float,
+    max_iter: int,
+) -> LineSearchResult:
+    """Shrink the step length by ``beta`` until the decrease test against ``phi_reference`` passes."""
+    alpha = 1.0
+    dx, slope = proposal.direction, proposal.slope
 
-                alpha *= self.beta
+    for n_evals in range(1, max_iter + 1):
+        x_trial = x + alpha * dx
+
+        if merit_fun is None:
+            res_trial, jac_trial = fun(x_trial, *args)
+            n_total_evals = n_evals
         else:
-            for n_evals in range(1, self.max_iter + 1):
-                x_trial = x + alpha * dx
-                res_trial = self.merit_fun(x_trial, *args)
-                phi_trial = merit(res_trial)
+            res_trial = merit_fun(x_trial, *args)
+            jac_trial = None
+            n_total_evals = n_evals + 1
 
-                if phi_trial <= phi_ref + self.c1 * alpha * slope:
-                    res_trial, jac_trial = fun(x_trial, *args)
-                    return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_evals + 1)
+        phi_trial = merit(res_trial)
+        if phi_trial <= phi_reference + c1 * alpha * slope:
+            if jac_trial is None:
+                res_trial, jac_trial = fun(x_trial, *args)
+            return LineSearchResult(x_trial, res_trial, jac_trial, phi_trial, alpha, n_total_evals)
 
-                alpha *= self.beta
+        alpha *= beta
 
-        raise RuntimeError(f"Nonmonotone line search failed after {self.max_iter} reductions")
+    raise RuntimeError(
+        f"Line search failed after {max_iter} reductions. Increase max_iter, loosen c1, or start closer to the root."
+    )

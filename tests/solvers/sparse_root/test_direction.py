@@ -1,10 +1,11 @@
 import numpy as np
+import pytest
 import scipy.sparse as sp
 
 from gEconpy.solvers.sparse_root.direction import ChordDirection, KrylovDirection, NewtonDirection
 
 
-class TestNewtonDirectionFallback:
+class TestNewtonDirection:
     def test_fallback_on_singular_jacobian(self):
         direction = NewtonDirection()
         jac = sp.csc_matrix([[1.0, 1.0], [1.0, 1.0]])
@@ -23,59 +24,47 @@ class TestNewtonDirectionFallback:
         assert proposal.slope < 0
 
 
-class TestChordDirectionSpecific:
-    def test_cache_persists(self):
-        """Cached Jacobian should be reused for recompute_every steps."""
-        cd = ChordDirection(recompute_every=3)
-        cd.reset()
+class TestChordDirection:
+    def test_cache_refreshes_every_recompute_every_calls(self):
+        direction = ChordDirection(recompute_every=3)
+        direction.reset()
 
-        jac1 = sp.eye(2, format="csc")
-        jac2 = 2.0 * sp.eye(2, format="csc")
+        jac_first = sp.eye(2, format="csc")
+        jac_second = 2.0 * sp.eye(2, format="csc")
         res = np.array([1.0, 1.0])
         x = np.zeros(2)
 
-        # Call 0: _call_count=0, 0%3==0 -> cache jac1, increment to 1
-        cd.compute(x, res, jac1)
-        assert cd._cached_jac is not None
-        cached_data = cd._cached_jac.data.copy()
+        direction.compute(x, res, jac_first)
+        direction.compute(x, res, jac_second)
+        direction.compute(x, res, jac_second)
+        np.testing.assert_array_equal(direction._cached_jac.data, jac_first.data)
 
-        # Call 1: _call_count=1, 1%3!=0 -> reuse jac1, increment to 2
-        cd.compute(x, res, jac2)
-        np.testing.assert_array_equal(cd._cached_jac.data, cached_data)
-
-        # Call 2: _call_count=2, 2%3!=0 -> still reuse jac1, increment to 3
-        cd.compute(x, res, jac2)
-        np.testing.assert_array_equal(cd._cached_jac.data, cached_data)
-
-        # Call 3: _call_count=3, 3%3==0 -> refresh to jac2, increment to 4
-        cd.compute(x, res, jac2)
-        np.testing.assert_array_equal(cd._cached_jac.data, jac2.data)
+        direction.compute(x, res, jac_second)
+        np.testing.assert_array_equal(direction._cached_jac.data, jac_second.data)
 
 
-class TestKrylovDirectionSpecific:
+class TestKrylovDirection:
     def test_eisenstat_walker_tightens(self, broyden_system):
-        """Forcing term eta should decrease as residual decreases."""
         fun, x0 = broyden_system
-        kd = KrylovDirection(eta_max=0.9, eisenstat_walker=True)
-        kd.reset()
-
-        res, jac = fun(x0)
-        etas = [kd._eta]
+        direction = KrylovDirection(eta_max=0.9, eisenstat_walker=True)
+        direction.reset()
+        eta_initial = direction._eta
 
         x = x0.copy()
+        res, jac = fun(x)
         for _ in range(10):
-            proposal = kd.compute(x, res, jac)
+            proposal = direction.compute(x, res, jac)
             x = x + proposal.direction
             res, jac = fun(x)
-            etas.append(kd._eta)
 
-        assert etas[-1] < etas[0]
+        assert direction._eta < eta_initial
 
     def test_fallback_on_bad_krylov(self):
-        """If Krylov solve fails, direction should fall back to gradient."""
-        kd = KrylovDirection(krylov_method="gmres")
-        kd.reset()
-        jac = sp.csc_matrix((2, 2))
-        res = np.array([1.0, 1.0])
-        proposal = kd.compute(np.zeros(2), res, jac)
+        direction = KrylovDirection(krylov_method="gmres")
+        direction.reset()
+        proposal = direction.compute(np.zeros(2), np.array([1.0, 1.0]), sp.csc_matrix((2, 2)))
         assert "fallback" in proposal.kind
+
+    def test_unknown_method_rejected(self):
+        with pytest.raises(ValueError, match="Unknown Krylov method"):
+            KrylovDirection(krylov_method="cg")

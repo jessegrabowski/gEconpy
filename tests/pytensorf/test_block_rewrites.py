@@ -25,8 +25,8 @@ from gEconpy.pytensorf.block_rewrites import (
 N = 4
 floatX = pytensor.config.floatX
 
-# Apply only the block rewrites (not the full canonicalize/stabilize databases),
-# so the rewritten graph is exactly what these rewrites emit and can be matched op-for-op.
+# Only the block rewrites run here, so the rewritten graph is exactly what they emit and can be matched op-for-op.
+# The full canonicalize and stabilize databases stay out.
 _BLOCK_REWRITES = out2in(
     local_transpose_of_join,
     local_nested_join_to_block_diagonal,

@@ -1,261 +1,194 @@
-import unittest
+import pickle
 
+import pytest
 import sympy as sp
 
 
-# Since sympy 1.14.0, the `mpmath` library is used for complex numbers.
+# Since sympy 1.14.0, complex values are mpmath mpc numbers.
 from mpmath.ctx_mp_python import _mpc
 
-from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 
+C = TimeAwareSymbol("C", 0, positive=True)
+A = TimeAwareSymbol("A", 1, negative=True)
+r = TimeAwareSymbol("r", -1, imaginary=True)
+alpha = sp.Symbol("alpha", real=True)
 
-class TestSymbolDictErrors(unittest.TestCase):
+
+@pytest.fixture
+def symbol_dict():
+    return SymbolDictionary({C: 1, A: -1, r: 2j, alpha: 0.3})
+
+
+class TestSymbolDictErrors:
     def test_raises_on_invalid_keys(self):
-        with self.assertRaises(KeyError):
-            # Only string or sp.Symbol keys allowed
+        with pytest.raises(KeyError):
             SymbolDictionary({1: 3})
 
-    def test_raises_on_mixed_keys(self):
-        with self.assertRaises(KeyError):
-            # Cannot mix strings and symbols
-            SymbolDictionary({"A": 3, sp.Symbol("B"): 2})
+    @pytest.mark.parametrize("keys", [{"A": 3, sp.Symbol("B"): 2}, {sp.Symbol("B"): 2, "A": 3}])
+    def test_raises_on_mixed_keys(self, keys):
+        with pytest.raises(KeyError, match="Cannot mix"):
+            SymbolDictionary(keys)
 
-        with self.assertRaises(KeyError):
-            SymbolDictionary({sp.Symbol("B"): 2, "A": 3})
-
-    def test_setitem_raises_on_wrong_key_type(self):
-        d = SymbolDictionary({sp.Symbol("A"): 3})
-        with self.assertRaises(KeyError):
-            d["B"] = 4
-
-        d = SymbolDictionary({"A": 3})
-        with self.assertRaises(KeyError):
-            d[sp.Symbol("B")] = 4
+    @pytest.mark.parametrize(
+        ("initial", "new_key"), [({sp.Symbol("A"): 3}, "B"), ({"A": 3}, sp.Symbol("B"))], ids=["sympy", "string"]
+    )
+    def test_setitem_raises_on_wrong_key_type(self, initial, new_key):
+        d = SymbolDictionary(initial)
+        with pytest.raises(KeyError):
+            d[new_key] = 4
 
     def test_pipe_merge_errors_with_non_dict_other(self):
         d = SymbolDictionary({"A": 4})
-        with self.assertRaises(TypeError) as e:
-            s = {1, 2, 3}
-            d | s
-        error_msg = str(e.exception)
-        self.assertEqual(error_msg, "__or__ not defined on non-dictionary objects")
+        with pytest.raises(TypeError, match="__or__ not defined on non-dictionary objects"):
+            d | {1, 2, 3}
+
+    def test_pipe_merge_errors_on_mixed_modes(self, symbol_dict):
+        with pytest.raises(ValueError, match="Cannot merge"):
+            SymbolDictionary({"A": 3, "B": 4}) | symbol_dict
 
 
-class TestSymbolDictionary(unittest.TestCase):
-    def setUp(self) -> None:
-        self.C = C = TimeAwareSymbol("C", 0, positive=True)
-        self.A = A = TimeAwareSymbol("A", 1, negative=True)
-        self.r = r = TimeAwareSymbol("r", -1, imaginary=True)
-        self.alpha = alpha = sp.Symbol("alpha", real=True)
+class TestSymbolDictionary:
+    def test_is_variable(self, symbol_dict):
+        assert symbol_dict._is_variable == {"C": True, "A": True, "r": True, "alpha": False}
 
-        self.d = SymbolDictionary({C: 1, A: -1, r: 2j, alpha: 0.3})
+    def test_convert_to_string(self, symbol_dict):
+        d = symbol_dict.to_string()
+        assert list(d.keys()) == ["C_t", "A_tp1", "r_tm1", "alpha"]
+        assert not d.is_sympy
 
-    def test_is_variable(self):
-        assert list(self.d._is_variable.keys()) == ["C", "A", "r", "alpha"]
-        assert self.d._is_variable["C"]
-        assert self.d._is_variable["A"]
-        assert self.d._is_variable["r"]
-        assert not self.d._is_variable["alpha"]
-
-    def test_convert_to_string(self):
-        d = self.d.to_string()
-        self.assertEqual(list(d.keys()), ["C_t", "A_tp1", "r_tm1", "alpha"])
-        self.assertTrue(not d.is_sympy)
-
-        self.d.to_string(inplace=True)
-        self.assertEqual(list(self.d.keys()), ["C_t", "A_tp1", "r_tm1", "alpha"])
-
-        self.assertTrue(not self.d.is_sympy)
+        symbol_dict.to_string(inplace=True)
+        assert list(symbol_dict.keys()) == ["C_t", "A_tp1", "r_tm1", "alpha"]
+        assert not symbol_dict.is_sympy
 
     def test_convert_to_sympy(self):
         d = SymbolDictionary({"a": 2, "b": 3}).to_sympy()
-        self.assertEqual(list(d.keys()), [sp.Symbol("a"), sp.Symbol("b")])
-        self.assertTrue(d.is_sympy)
+        assert list(d.keys()) == [sp.Symbol("a"), sp.Symbol("b")]
+        assert d.is_sympy
 
-    def test_ambiguous_new_key(self):
-        # Test that when we add something in string mode, it gets "duck typed"
-        d = self.d.to_string()
+    def test_string_key_with_time_suffix_becomes_time_aware(self, symbol_dict):
+        d = symbol_dict.to_string()
         d["F_ss"] = 3
 
         d.to_sympy(inplace=True)
-        F_ss = TimeAwareSymbol("F", "ss")
-        assert F_ss in d
+        assert TimeAwareSymbol("F", "ss") in d
 
-        # But when we add in symbol mode, the original type (Symbol vs TimeAwareSymbol) is preserved
-        d = self.d.copy()
-        F_ss2 = sp.Symbol("F_ss")
-        d[F_ss2] = 3
+    def test_plain_symbol_with_time_suffix_survives_round_trip(self, symbol_dict):
+        F_ss = sp.Symbol("F_ss")
+        d = symbol_dict.copy()
+        d[F_ss] = 3
+
         d.to_string(inplace=True)
         assert "F_ss" in d
         d.to_sympy(inplace=True)
-        assert F_ss2 in d
+        assert F_ss in d
 
-    def test_copy(self):
-        d_copy = self.d.copy()
-        d_ref = self.d
+    def test_copy_is_new_object(self, symbol_dict):
+        assert symbol_dict.copy() is not symbol_dict
 
-        self.assertTrue(self.d is d_ref)
-        self.assertTrue(self.d is not d_copy)
+    @pytest.mark.parametrize("method", ["to_string", "to_sympy", "values_to_float"])
+    def test_assumptions_preserved(self, symbol_dict, method):
+        assumptions = symbol_dict._assumptions.copy()
+        assert getattr(symbol_dict, method)()._assumptions == assumptions
 
-    def test_assumptions_preserved(self):
-        assumptions = self.d._assumptions.copy()
-        d = self.d.to_string()
-
-        self.assertEqual(d._assumptions, assumptions)
-
-        d = self.d.to_sympy()
-        self.assertEqual(d._assumptions, assumptions)
-
-        d = self.d.values_to_float()
-        self.assertEqual(d._assumptions, assumptions)
-
-    def test_join_with_pipe(self):
+    def test_join_with_pipe(self, symbol_dict):
         F = TimeAwareSymbol("F", "ss")
-        d1 = self.d.copy()
-        d2 = SymbolDictionary({F: 3})
+        other = SymbolDictionary({F: 3})
 
-        new_d = self.d | d2
-        new_d.sort_keys(inplace=True)
+        merged = symbol_dict | other
+        merged.sort_keys(inplace=True)
 
-        self.assertEqual(list(new_d.keys()), [self.A, self.C, F, self.alpha, self.r])
-        self.assertEqual(
-            self.d._assumptions,
-            d1._assumptions | d2._assumptions,
-            d1._is_variable | d2._is_variable,
-        )
+        assert list(merged.keys()) == [A, C, F, alpha, r]
+        assert merged._assumptions == symbol_dict._assumptions | other._assumptions
+        assert merged._is_variable == symbol_dict._is_variable | other._is_variable
 
-    def test_step_forward(self):
-        d_tp1 = self.d.step_forward().to_string()
+    @pytest.mark.parametrize(
+        ("method", "expected_keys"),
+        [
+            ("step_forward", ["C_tp1", "A_tp2", "r_t", "alpha"]),
+            ("step_backward", ["C_tm1", "A_t", "r_tm2", "alpha"]),
+            ("to_ss", ["C_ss", "A_ss", "r_ss", "alpha"]),
+        ],
+    )
+    def test_time_shifts(self, symbol_dict, method, expected_keys):
+        shifted = getattr(symbol_dict, method)()
+        assert list(shifted.to_string().keys()) == expected_keys
 
-        keys = list(d_tp1.keys())
-        self.assertEqual(keys, ["C_tp1", "A_tp2", "r_t", "alpha"])
+        getattr(symbol_dict, method)(inplace=True)
+        assert list(symbol_dict.to_string().keys()) == expected_keys
 
-    def test_step_forward_inplace(self):
-        d2 = self.d.copy()
-        d2.step_forward(inplace=True)
-        keys = list(d2.to_string().keys())
-        self.assertEqual(keys, ["C_tp1", "A_tp2", "r_t", "alpha"])
+    def test_sort_dictionary(self, symbol_dict):
+        d_sorted = symbol_dict.sort_keys()
+        assert list(d_sorted.keys()) == [A, C, alpha, r]
 
-    def test_step_backward(self):
-        d_tm1 = self.d.step_backward().to_string()
+        symbol_dict.sort_keys(inplace=True)
+        assert list(symbol_dict.keys()) == [A, C, alpha, r]
 
-        keys = list(d_tm1.keys())
-        self.assertEqual(keys, ["C_tm1", "A_t", "r_tm2", "alpha"])
+    def test_sequential_pipe_from_empty_rejects_mixed_modes(self, symbol_dict):
+        string_dict = SymbolDictionary({"A": 3, "B": 4})
+        merged = SymbolDictionary() | string_dict
+        with pytest.raises(ValueError, match="Cannot merge"):
+            merged | symbol_dict
 
-    def test_step_backward_inplace(self):
-        d2 = self.d.copy()
-        d2.step_backward(inplace=True)
-        keys = list(d2.to_string().keys())
-        self.assertEqual(keys, ["C_tm1", "A_t", "r_tm2", "alpha"])
+    def test_convert_values(self, symbol_dict):
+        d_sympy = symbol_dict.float_to_values()
+        assert all(isinstance(value, sp.core.Number | _mpc) for value in d_sympy.values())
 
-    def test_to_steady_state(self):
-        d = self.d.to_ss().to_string()
-        self.assertEqual(list(d.keys()), ["C_ss", "A_ss", "r_ss", "alpha"])
+        d_float = d_sympy.values_to_float()
+        assert all(isinstance(value, int | float | _mpc) for value in d_float.values())
 
-    def test_to_steady_state_inplace(self):
-        d2 = self.d.copy()
-        d2.to_ss(inplace=True)
-        keys = list(d2.to_string().keys())
-        self.assertEqual(keys, ["C_ss", "A_ss", "r_ss", "alpha"])
+    def test_convert_values_inplace(self, symbol_dict):
+        symbol_dict.float_to_values(inplace=True)
+        assert all(isinstance(value, sp.core.Number | _mpc) for value in symbol_dict.values())
 
-    def test_sort_dictionary(self):
-        d = self.d.copy()
+        symbol_dict.values_to_float(inplace=True)
+        assert all(isinstance(value, int | float | _mpc) for value in symbol_dict.values())
 
-        d_sorted = d.sort_keys()
-        self.assertEqual(list(d_sorted.keys()), [self.A, self.C, self.alpha, self.r])
-
-        d.sort_keys(inplace=True)
-        self.assertEqual(list(d.keys()), [self.A, self.C, self.alpha, self.r])
-
-    def test_sequential_updates_from_empty(self):
-        d0 = SymbolDictionary()
-        d1 = SymbolDictionary({"A": 3, "B": 4})
-        d2 = self.d.copy()
-
-        self.assertRaises(ValueError, lambda: d1 | d2)
-
-        def loop_update(ds: list):
-            d0 = ds.pop(0)
-            for d in ds:
-                d0 = d0 | d
-            return d0
-
-        self.assertRaises(ValueError, loop_update, [d0, d1, d2])
-
-    def test_convert_values(self):
-        d = self.d.copy()
-        d_sp = d.float_to_values()
-        values = list(d_sp.values())
-        self.assertTrue(all(isinstance(x, sp.core.Number | _mpc) for x in values))
-
-        d_np = d_sp.values_to_float()
-        values = list(d_np.values())
-        self.assertTrue(all(isinstance(x, int | float | _mpc) for x in values))
-
-    def test_convert_values_inplace(self):
-        d = self.d.copy()
-        d.float_to_values(inplace=True)
-        values = list(d.values())
-        self.assertTrue(all(isinstance(x, sp.core.Number | _mpc) for x in values))
-
-        d.values_to_float(inplace=True)
-        values = list(d.values())
-        self.assertTrue(all(isinstance(x, int | float | _mpc) for x in values))
-
-    def test_not_inplace_update_is_not_persistent(self):
-        d = self.d
-        d.to_string()
-
-        self.assertTrue(all(isinstance(x, sp.Symbol) for x in d))
-        self.assertTrue(d.is_sympy)
+    def test_not_inplace_conversion_leaves_original_alone(self, symbol_dict):
+        symbol_dict.to_string()
+        assert all(isinstance(key, sp.Symbol) for key in symbol_dict)
+        assert symbol_dict.is_sympy
 
     def test_update_preserves_assumptions(self):
         X = TimeAwareSymbol("X", 0, positive=True)
         Y = TimeAwareSymbol("Y", "ss", real=True)
 
-        d1 = SymbolDictionary({self.C: 1, self.A: 2})
-        d2 = SymbolDictionary({X: 3, Y: 4})
+        d1 = SymbolDictionary({C: 1, A: 2})
+        d1.update(SymbolDictionary({X: 3, Y: 4}))
 
-        d1.update(d2)
+        assert len(d1) == 4
+        assert d1[X] == 3
+        assert d1[Y] == 4
+        assert d1._assumptions["X"]["positive"]
+        assert d1._assumptions["Y"]["real"]
+        assert d1._is_variable["X"]
+        assert d1._is_variable["Y"]
 
-        # Check values were merged
-        self.assertEqual(len(d1), 4)
-        self.assertEqual(d1[X], 3)
-        self.assertEqual(d1[Y], 4)
-
-        # Check assumptions were merged
-        self.assertIn("X", d1._assumptions)
-        self.assertIn("Y", d1._assumptions)
-        self.assertTrue(d1._assumptions["X"]["positive"])
-        self.assertTrue(d1._assumptions["Y"]["real"])
-
-        # Check is_variable was merged
-        self.assertTrue(d1._is_variable["X"])
-        self.assertTrue(d1._is_variable["Y"])
-
-    def test_update_with_string_mode_preserves_assumptions(self):
-        # Test in string mode
-        d1 = self.d.to_string()
-        X = TimeAwareSymbol("X", 0, positive=True)
-        d2 = SymbolDictionary({X: 3}).to_string()
+    def test_update_with_string_mode_preserves_assumptions(self, symbol_dict):
+        d1 = symbol_dict.to_string()
+        d2 = SymbolDictionary({TimeAwareSymbol("X", 0, positive=True): 3}).to_string()
 
         original_assumptions = d1._assumptions.copy()
         d1.update(d2)
 
-        # Check assumptions from both dicts are present
-        self.assertIn("X", d1._assumptions)
-        for key in original_assumptions:
-            self.assertIn(key, d1._assumptions)
+        assert set(d1._assumptions) == set(original_assumptions) | {"X"}
 
-    def test_update_with_plain_dict_does_not_crash(self):
-        # update() should handle plain dicts gracefully (no assumptions to merge)
+    def test_update_with_plain_dict(self):
         d1 = SymbolDictionary({"A": 1, "B": 2})
         d1.update({"C": 3})
+        assert d1 == {"A": 1, "B": 2, "C": 3}
 
-        self.assertEqual(len(d1), 3)
-        self.assertEqual(d1["C"], 3)
+    def test_pickle_round_trip(self, symbol_dict):
+        restored = pickle.loads(pickle.dumps(symbol_dict))
+        assert restored == symbol_dict
+        assert restored.is_sympy
+        assert restored._assumptions == symbol_dict._assumptions
+        assert restored._is_variable == symbol_dict._is_variable
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_pickle_round_trip_keeps_subclass_attributes(self):
+        results = SteadyStateResults({C: 1.0})
+        results.success = True
+        restored = pickle.loads(pickle.dumps(results))
+        assert isinstance(restored, SteadyStateResults)
+        assert restored.success

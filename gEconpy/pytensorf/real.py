@@ -1,15 +1,13 @@
-"""JAX and numba dispatches for the pytensor scalar Real Op.
+# Pytensor's built-in numba dispatch for ScalarOp inspects op.nfunc_spec to find a numpy-named implementation. Real
+# does not set nfunc_spec, so without these registrations it falls back to object mode and raises a UserWarning.
+import numpy as np
 
-Pytensor's built-in numba dispatch for `ScalarOp` inspects `op.nfunc_spec` to
-find a numpy-named implementation. `Real` doesn't set `nfunc_spec`, so without
-this registration it falls back to object mode and raises a `UserWarning`.
-"""
+from pytensor.scalar import Real
 
 try:
     import jax.numpy as jnp
 
     from pytensor.link.jax.dispatch import jax_funcify
-    from pytensor.scalar import Real
 
     @jax_funcify.register(Real)
     def jax_funcify_Real(op, node, **kwargs):  # noqa: ARG001
@@ -23,12 +21,9 @@ except ImportError:
 
 
 try:
-    import numpy as np
-
     from pytensor.link.numba.dispatch import basic as numba_basic
     from pytensor.link.numba.dispatch.basic import register_funcify_and_cache_key
     from pytensor.link.numba.dispatch.scalar import scalar_op_cache_key
-    from pytensor.scalar import Real
 
     @register_funcify_and_cache_key(Real)
     def numba_funcify_Real(op, node, **kwargs):  # noqa: ARG001

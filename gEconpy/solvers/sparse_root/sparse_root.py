@@ -20,38 +20,6 @@ from gEconpy.solvers.sparse_root.base import (
 from gEconpy.solvers.sparse_root.line_search import NewtonArmijo
 
 
-def _make_result(state: SolverState, success: bool, message: str) -> OptimizeResult:
-    return OptimizeResult(
-        x=state.x,
-        success=success,
-        message=message,
-        fun=state.res,
-        jac=state.jac,
-        nit=state.stats.nit,
-        nfev=state.stats.nfev,
-    )
-
-
-def _root_find_core(fun, x0, solver, args, f_tol, x_tol, maxiter) -> OptimizeResult:
-    state = solver.init(fun, x0, args)
-    if np.max(np.abs(state.res)) < f_tol:
-        return _make_result(state, True, "Converged")
-
-    check_fn = getattr(solver, "check_convergence", default_check_convergence)
-    fail_fn = getattr(solver, "failure_message", default_failure_message)
-    last_step = None
-
-    for _ in range(maxiter):
-        state, info = solver.step(fun, state, args)
-        if not info.accepted:
-            return _make_result(state, False, info.message)
-        last_step = info.step
-        if check_fn(state, f_tol=f_tol, x_tol=x_tol, last_step=last_step):
-            return _make_result(state, True, "Converged")
-
-    return _make_result(state, False, fail_fn(state, maxiter))
-
-
 def sparse_root(
     fun: RootFunction,
     x0: np.ndarray,
@@ -69,8 +37,8 @@ def sparse_root(
     Parameters
     ----------
     fun : callable
-        Fused residual and Jacobian function, called as ``fun(x, *args)`` and returning a tuple of a dense
-        residual ndarray and a sparse Jacobian.
+        Fused residual and Jacobian function, called as ``fun(x, *args)`` and returning a tuple of a dense residual
+        ndarray and a sparse Jacobian.
     x0 : ndarray
         Initial guess for the root.
     solver : RootSolver, optional
@@ -79,8 +47,7 @@ def sparse_root(
     args : tuple, optional
         Extra positional arguments passed to ``fun``. Defaults to an empty tuple.
     tol : float, optional
-        Tolerance used for both the residual and the step test when neither is given explicitly. Defaults to
-        1e-10.
+        Tolerance used for both the residual and the step test when neither is given explicitly. Defaults to 1e-10.
     f_tol : float, optional
         Convergence tolerance on the maximum absolute residual. Defaults to ``tol``.
     x_tol : float, optional
@@ -96,12 +63,43 @@ def sparse_root(
         Result with fields ``x``, ``success``, ``message``, ``fun`` (final residuals), ``jac`` (final sparse
         Jacobian), ``nit``, and ``nfev``.
 
-    Raises
-    ------
-    ValueError
-        If ``fun`` does not return a two-element tuple.
-    TypeError
-        If ``fun`` does not return a dense residual ndarray and a sparse Jacobian.
+    Examples
+    --------
+    Solve a two-variable system whose Jacobian is diagonal, so the sparse form is a ``diags`` matrix:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from gEconpy.solvers.sparse_root import sparse_root
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        result = sparse_root(fun, np.array([2.0, 3.0]), progressbar=False)
+        print(result.x)
+
+    Swap in a trust region solver when the Jacobian may be singular along the way:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from gEconpy.solvers.sparse_root import LevenbergMarquardt, sparse_root
+
+
+        def fun(x):
+            res = np.array([x[0] + x[1] - 3.0, x[0] * x[1] - 2.0])
+            jac = sp.csc_matrix([[1.0, 1.0], [x[1], x[0]]])
+            return res, jac
+
+
+        result = sparse_root(fun, np.array([1.0, 1.0]), solver=LevenbergMarquardt(), progressbar=False)
+        print(result.x)
     """
     if solver is None:
         solver = NewtonArmijo()
@@ -112,9 +110,9 @@ def sparse_root(
 
     validate_fused_fun(fun, x0, args)
 
-    max_ls = getattr(getattr(solver, "globalization", None), "max_iter", DEFAULT_ARMIJO_MAX_ITER)
+    max_line_search_evals = getattr(getattr(solver, "globalization", None), "max_iter", DEFAULT_ARMIJO_MAX_ITER)
     objective = ObjectiveWrapper(
-        maxeval=maxiter * (max_ls + 1),
+        maxeval=maxiter * (max_line_search_evals + 1),
         f=fun,
         jac=None,
         args=args,
@@ -124,8 +122,8 @@ def sparse_root(
         root=True,
     )
 
-    f_optim = partial(
-        _root_find_core,
+    run = partial(
+        _iterate_to_root,
         fun=objective,
         x0=x0,
         solver=solver,
@@ -134,4 +132,42 @@ def sparse_root(
         x_tol=x_tol,
         maxiter=maxiter,
     )
-    return optimizer_early_stopping_wrapper(f_optim)
+    return optimizer_early_stopping_wrapper(run)
+
+
+def _iterate_to_root(
+    fun: RootFunction,
+    x0: np.ndarray,
+    solver: RootSolver,
+    args: tuple[Any, ...],
+    f_tol: float,
+    x_tol: float,
+    maxiter: int,
+) -> OptimizeResult:
+    state = solver.init(fun, x0, args)
+    if np.max(np.abs(state.res)) < f_tol:
+        return _make_result(state, True, "Converged")
+
+    check_convergence = getattr(solver, "check_convergence", default_check_convergence)
+    failure_message = getattr(solver, "failure_message", default_failure_message)
+
+    for _ in range(maxiter):
+        state, info = solver.step(fun, state, args)
+        if not info.accepted:
+            return _make_result(state, False, info.message)
+        if check_convergence(state, f_tol=f_tol, x_tol=x_tol, last_step=info.step):
+            return _make_result(state, True, "Converged")
+
+    return _make_result(state, False, failure_message(state, maxiter))
+
+
+def _make_result(state: SolverState, success: bool, message: str) -> OptimizeResult:
+    return OptimizeResult(
+        x=state.x,
+        success=success,
+        message=message,
+        fun=state.res,
+        jac=state.jac,
+        nit=state.stats.nit,
+        nfev=state.stats.nfev,
+    )

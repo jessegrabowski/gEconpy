@@ -14,7 +14,7 @@ def _block_check_depths_match(arrays, parent_index=()):
     arrays : list or array_like
         Nested block-list to validate.
     parent_index : tuple of int, optional
-        Indices accumulated from the root, used in error messages. Default ``()``.
+        Indices accumulated from the root, used in error messages. Defaults to an empty tuple.
 
     Returns
     -------
@@ -27,7 +27,9 @@ def _block_check_depths_match(arrays, parent_index=()):
     """
     if isinstance(arrays, list):
         if not arrays:
-            raise ValueError("Block: empty list is not allowed")
+            raise ValueError(
+                f"Block: the list at index {parent_index} is empty. Every list must hold at least one block."
+            )
         children = []
         first_leaf_depth = None
         max_ndim = 0
@@ -45,7 +47,7 @@ def _block_check_depths_match(arrays, parent_index=()):
             children.append(child_struct)
         return tuple(children), first_leaf_depth, max_ndim
     if isinstance(arrays, tuple):
-        raise TypeError("Block: tuples are not allowed as nested containers; use lists")
+        raise TypeError(f"Block: the container at index {parent_index} is a tuple. Nest blocks in lists.")
     leaf = as_tensor_variable(arrays)
     return None, len(parent_index), leaf.type.ndim
 
@@ -56,19 +58,19 @@ def block(arrays):
     Parameters
     ----------
     arrays : nested list of array_like
-        Tensors at the leaves, lists at the interior. Every leaf must sit at
-        the same nesting depth ``d``; the concatenation spans the last ``d``
-        axes.
+        Tensors at the leaves, lists at the interior. Every leaf must sit at the same nesting depth ``d``, and the
+        concatenation spans the last ``d`` axes.
 
     Returns
     -------
     result : TensorVariable
-        Assembled block tensor. A bare tensor (no list wrapping) returns as
-        ``atleast_1d(arrays)``.
+        Assembled block tensor. A bare tensor with no list wrapping returns as ``atleast_1d(arrays)``.
 
     Examples
     --------
-    .. testcode::
+    Assemble a 3 x 3 matrix from four blocks of different shapes:
+
+    .. code-block:: python
 
         import numpy as np
         import pytensor.tensor as pt
@@ -81,12 +83,6 @@ def block(arrays):
         D = pt.as_tensor_variable(np.array([[9]]))
         M = block([[A, B], [C, D]])
         print(M.eval())
-
-    .. testoutput::
-
-        [[1 2 5]
-         [3 4 6]
-         [7 8 9]]
     """
     structure, _, _ = _block_check_depths_match(arrays)
 

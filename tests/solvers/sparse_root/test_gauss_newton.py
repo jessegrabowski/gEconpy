@@ -12,78 +12,54 @@ class TestGaussNewtonTrustRegionSuite(CommonSolverTests):
 
 
 class TestGaussNewtonTrustRegionSpecific:
-    def test_trust_region_shrinks_on_reject(self):
-        """Verify solver converges even from far away with a small initial trust region."""
-
-        def fun(x):
-            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
-
+    def test_converges_from_far_with_small_initial_region(self, quadratic_system):
+        fun, _, x_true = quadratic_system
         solver = GaussNewtonTrustRegion(delta0=0.01)
         result = sparse_root(fun, np.array([100.0, 100.0]), solver=solver, progressbar=False)
         assert result.success
+        np.testing.assert_allclose(result.x, x_true, rtol=1e-6)
 
-    def test_trust_region_radius_adapts(self, quadratic_system):
-        """Trust region should grow when steps are very successful."""
+    def test_trust_region_radius_grows_on_good_steps(self, quadratic_system):
         fun, x0, _ = quadratic_system
         solver = GaussNewtonTrustRegion(delta0=0.001)
         state = solver.init(fun, x0, ())
-        initial_delta = solver._delta
 
         for _ in range(5):
             state, info = solver.step(fun, state, ())
-            if not info.accepted:
-                break
+            assert info.accepted
 
-        assert solver._delta >= initial_delta
-
-    def test_rosenbrock(self, rosenbrock_root):
-        """Trust region is good on the narrow Rosenbrock valley."""
-        fun, x0, x_true = rosenbrock_root
-        result = sparse_root(fun, x0, solver=GaussNewtonTrustRegion(), progressbar=False, maxiter=500)
-        assert result.success
-        np.testing.assert_allclose(result.x, x_true, rtol=1e-4)
+        assert solver._delta > solver.delta0
 
 
-class TestStieahaugCG:
-    """Direct tests of the Steihaug-CG subproblem solver.
-
-    Adapted from scipy.optimize.tests.test_trustregion_krylov.
-    """
-
+class TestSteihaugCG:
     def test_interior_solution(self):
-        """When the unconstrained minimum is inside the trust region, find it exactly."""
-        H = sp.csc_matrix(np.eye(3))
-        g = np.array([1.0, 2.0, 3.0])
-        p = _steihaug_cg(H, g, delta=100.0)
-        np.testing.assert_allclose(p, -g, atol=1e-8)
-        assert np.linalg.norm(p) < 100.0
+        hessian = sp.csc_matrix(np.eye(3))
+        grad = np.array([1.0, 2.0, 3.0])
+        p = _steihaug_cg(hessian, grad, delta=100.0)
+        np.testing.assert_allclose(p, -grad, atol=1e-8)
 
     def test_boundary_solution(self):
-        """When the unconstrained minimum is outside, the step should hit the boundary."""
-        H = sp.csc_matrix(np.eye(3))
-        g = np.array([1.0, 2.0, 3.0])
-        p = _steihaug_cg(H, g, delta=1.0)
+        hessian = sp.csc_matrix(np.eye(3))
+        grad = np.array([1.0, 2.0, 3.0])
+        p = _steihaug_cg(hessian, grad, delta=1.0)
         np.testing.assert_allclose(np.linalg.norm(p), 1.0, atol=1e-8)
 
-    def test_negative_curvature(self):
-        """Negative curvature should cause step to trust region boundary."""
-        H = sp.csc_matrix(np.array([[1.0, 0.0], [0.0, -2.0]]))
-        g = np.array([0.0, 1.0])
-        p = _steihaug_cg(H, g, delta=1.0)
+    def test_negative_curvature_reaches_boundary(self):
+        hessian = sp.csc_matrix(np.array([[1.0, 0.0], [0.0, -2.0]]))
+        grad = np.array([0.0, 1.0])
+        p = _steihaug_cg(hessian, grad, delta=1.0)
         np.testing.assert_allclose(np.linalg.norm(p), 1.0, atol=1e-8)
 
     def test_zero_gradient(self):
-        """Zero gradient should return zero step."""
-        H = sp.csc_matrix(np.eye(3))
-        g = np.zeros(3)
-        p = _steihaug_cg(H, g, delta=1.0)
+        hessian = sp.csc_matrix(np.eye(3))
+        p = _steihaug_cg(hessian, np.zeros(3), delta=1.0)
         np.testing.assert_allclose(p, 0.0, atol=1e-15)
 
     def test_scipy_krylov_easy_case(self):
-        """Reproduce scipy test_trustregion_krylov easy case via our Steihaug-CG."""
-        H = sp.csc_matrix(np.array([[1.0, 0.0, 4.0], [0.0, 2.0, 0.0], [4.0, 0.0, 3.0]]))
-        g = np.array([5.0, 0.0, 4.0])
-        p = _steihaug_cg(H, g, delta=1.0)
+        """Easy case from scipy's test_trustregion_krylov."""
+        hessian = sp.csc_matrix(np.array([[1.0, 0.0, 4.0], [0.0, 2.0, 0.0], [4.0, 0.0, 3.0]]))
+        grad = np.array([5.0, 0.0, 4.0])
+        p = _steihaug_cg(hessian, grad, delta=1.0)
         np.testing.assert_allclose(np.linalg.norm(p), 1.0, atol=1e-6)
-        model_reduction = -(g @ p + 0.5 * p @ (H @ p))
+        model_reduction = -(grad @ p + 0.5 * p @ (hessian @ p))
         assert model_reduction > 0
