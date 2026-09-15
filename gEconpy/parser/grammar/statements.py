@@ -160,15 +160,27 @@ def _unmatched_close_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
     )
 
 
-# Without this check a stray closing bracket after the RHS surfaces as a generic "Expected ';'" error.
-_UNMATCHED_CLOSE = pp.Regex(r"[)\]}]").copy().set_parse_action(_unmatched_close_fail)
+def _brace_before_semicolon_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
+    raise GCNParseFailure(
+        s,
+        loc,
+        "Missing semicolon",
+        code=ErrorCode.E001,
+        found="}",
+    )
+
+
+# Without these checks a stray closing bracket after the RHS surfaces as a generic "Expected ';'" error. A '}'
+# right after the RHS is the component's own closing brace, so the equation is missing its semicolon.
+_UNMATCHED_CLOSE = pp.Regex(r"[)\]]").copy().set_parse_action(_unmatched_close_fail)
+_BRACE_BEFORE_SEMICOLON = pp.Literal("}").copy().set_parse_action(_brace_before_semicolon_fail)
 
 _VALID_EQUATION = (
     pp.ZeroOrMore(TAG)("tags")
     + EXPR("lhs")
     + pp.Suppress(pp.Literal("="))
     + EXPR("rhs")
-    + pp.Optional(_UNMATCHED_CLOSE)
+    + pp.Optional(_UNMATCHED_CLOSE | _BRACE_BEFORE_SEMICOLON)
     + pp.Optional(LAGRANGE_MULT)("lagrange")
     + pp.Optional(CALIBRATING_PARAM)("calibrating")
     + SEMI
@@ -352,7 +364,7 @@ MISSING_TILDE = (
 ).set_parse_action(_missing_tilde_fail)
 
 
-def _build_distribution(tokens: pp.ParseResults) -> GCNDistribution:
+def _build_distribution(s: str, loc: int, tokens: pp.ParseResults) -> GCNDistribution:
     wrapper_name = tokens.wrapper_name or None
     initial_value = _evaluate_number_expr(tokens.initial) if tokens.initial else None
 
@@ -363,6 +375,21 @@ def _build_distribution(tokens: pp.ParseResults) -> GCNDistribution:
         wrapper_name=wrapper_name,
         wrapper_kwargs=collect_kwargs(tokens.wrapper_args) if wrapper_name else {},
         initial_value=initial_value,
+        location=_statement_location(s, loc),
+    )
+
+
+def _statement_location(s: str, loc: int) -> ParseLocation:
+    start = location_at(s, loc, length=0)
+    fallback = (start.line, start.column + len(start.source_line.strip()))
+    end_line, end_col = _equation_end(s, loc, ";", fallback)
+
+    return ParseLocation(
+        line=start.line,
+        column=start.column,
+        end_line=end_line,
+        end_column=end_col,
+        source_line=start.source_line,
     )
 
 

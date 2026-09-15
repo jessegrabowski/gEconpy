@@ -20,8 +20,8 @@ PRECEDENCE = {
     Operator.SUB: 1,
     Operator.MUL: 2,
     Operator.DIV: 2,
-    Operator.POW: 3,
-    Operator.NEG: 4,
+    Operator.NEG: 3,
+    Operator.POW: 4,
 }
 
 
@@ -34,7 +34,7 @@ def print_expression(node: Node, parent_precedence: int = 0) -> str:
     node : Node
         The expression node to print.
     parent_precedence : int, optional
-        Precedence of the enclosing operator. A binary operation binding more loosely than its parent is wrapped in
+        Precedence of the enclosing operator. An operation binding more loosely than its parent is wrapped in
         parentheses. Defaults to 0, so a top-level expression is never wrapped.
 
     Returns
@@ -44,7 +44,8 @@ def print_expression(node: Node, parent_precedence: int = 0) -> str:
     """
     match node:
         case UnaryOp(op=op, operand=operand):
-            return f"{op}{print_expression(operand, PRECEDENCE[op])}"
+            text = f"{op}{print_expression(operand, PRECEDENCE[op])}"
+            return f"({text})" if PRECEDENCE[op] < parent_precedence else text
 
         case BinaryOp(left=left, op=op, right=right):
             return _print_binary_op(left, op, right, parent_precedence)
@@ -62,7 +63,7 @@ def print_expression(node: Node, parent_precedence: int = 0) -> str:
 
 def print_equation(eq: GCNEquation) -> str:
     """
-    Render an equation as GCN source text, including its Lagrange multiplier and calibrating parameter.
+    Render an equation as GCN source text, including its tags, Lagrange multiplier, and calibrating parameter.
 
     Parameters
     ----------
@@ -74,7 +75,8 @@ def print_equation(eq: GCNEquation) -> str:
     text : str
         The equation in GCN syntax, without the trailing semicolon.
     """
-    text = f"{print_expression(eq.lhs)} = {print_expression(eq.rhs)}"
+    tags = "".join(f"{tag} " for tag in sorted(eq.tags, key=lambda tag: tag.value))
+    text = f"{tags}{print_expression(eq.lhs)} = {print_expression(eq.rhs)}"
 
     if eq.lagrange_multiplier:
         text += f" : {eq.lagrange_multiplier}[]"
@@ -99,7 +101,7 @@ def print_distribution(dist: GCNDistribution) -> str:
     text : str
         The declaration in GCN syntax, without the trailing semicolon.
     """
-    return str(dist)
+    return f"{dist.parameter_name} ~ {_distribution_call(dist)}"
 
 
 def print_block(block: GCNBlock, indent: str = "    ") -> str:
@@ -125,7 +127,7 @@ def print_block(block: GCNBlock, indent: str = "    ") -> str:
     lines.extend(_component_lines("objective", (print_equation(eq) for eq in block.objective), indent))
     lines.extend(_component_lines("constraints", (print_equation(eq) for eq in block.constraints), indent))
     lines.extend(_component_lines("identities", (print_equation(eq) for eq in block.identities), indent))
-    lines.extend(_component_lines("shocks", _variable_list(block.shocks), indent))
+    lines.extend(_component_lines("shocks", _shock_lines(block), indent))
     lines.extend(_component_lines("calibration", (_print_calibration_item(item) for item in block.calibration), indent))
 
     lines.append("};")
@@ -158,7 +160,8 @@ def print_model(model: GCNModel, indent: str = "    ") -> str:
         sections.append("\n".join(lines))
 
     if model.tryreduce:
-        sections.append("\n".join(["tryreduce", "{", f"{indent}{', '.join(model.tryreduce)};", "};"]))
+        names = ", ".join(f"{name}[]" for name in model.tryreduce)
+        sections.append("\n".join(["tryreduce", "{", f"{indent}{names};", "};"]))
 
     assumption_groups = _group_assumptions(model.assumptions)
     if assumption_groups:
@@ -209,6 +212,28 @@ def _variable_list(variables: list[Variable]) -> list[str]:
     if not variables:
         return []
     return [", ".join(print_expression(v) for v in variables)]
+
+
+def _shock_lines(block: GCNBlock) -> list[str]:
+    distributions = {dist.parameter_name: dist for dist in block.shock_distributions}
+    plain = [shock for shock in block.shocks if shock.name not in distributions]
+
+    lines = _variable_list(plain)
+    lines.extend(f"{name}[] ~ {_distribution_call(dist)}" for name, dist in distributions.items())
+    return lines
+
+
+def _distribution_call(dist: GCNDistribution) -> str:
+    kwargs = ", ".join(f"{key}={value}" for key, value in dist.dist_kwargs.items())
+    text = f"{dist.dist_name}({kwargs})"
+
+    if dist.wrapper_name:
+        wrapper_args = [text, *(f"{key}={value}" for key, value in dist.wrapper_kwargs.items())]
+        text = f"{dist.wrapper_name}({', '.join(wrapper_args)})"
+
+    if dist.initial_value is not None:
+        text += f" = {dist.initial_value}"
+    return text
 
 
 def _print_calibration_item(item: GCNEquation | GCNDistribution) -> str:

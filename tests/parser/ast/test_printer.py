@@ -14,6 +14,7 @@ from gEconpy.parser.ast import (
     Operator,
     Parameter,
     T,
+    Tag,
     TimeIndex,
     UnaryOp,
     Variable,
@@ -92,6 +93,10 @@ class TestPrintEquation:
         eq = GCNEquation(lhs=Parameter(name="beta"), rhs=Number(value=0.99), calibrating_parameter="beta")
         assert print_equation(eq) == "beta = 0.99 -> beta"
 
+    def test_tags_are_printed_before_the_equation(self):
+        eq = GCNEquation(lhs=Variable(name="K"), rhs=Variable(name="I"), tags=frozenset({Tag.EXCLUDE}))
+        assert print_equation(eq) == "@exclude K[] = I[]"
+
 
 class TestPrintDistribution:
     def test_simple_distribution(self):
@@ -160,6 +165,28 @@ class TestPrintBlock:
             ]
         )
 
+    def test_block_with_shock_distributions(self):
+        block = GCNBlock(
+            name="TEST",
+            shocks=[Variable(name="epsilon"), Variable(name="eta")],
+            shock_distributions=[
+                GCNDistribution(parameter_name="eta", dist_name="Normal", dist_kwargs={"mu": 0.0, "sigma": "sigma_eta"})
+            ],
+        )
+        assert print_block(block) == "\n".join(
+            [
+                "block TEST",
+                "{",
+                "    shocks",
+                "    {",
+                "        epsilon[];",
+                "        eta[] ~ Normal(mu=0.0, sigma=sigma_eta);",
+                "    };",
+                "",
+                "};",
+            ]
+        )
+
     def test_block_with_calibration(self):
         block = GCNBlock(
             name="TEST",
@@ -197,7 +224,7 @@ class TestPrintModel:
         )
 
     def test_model_with_tryreduce(self):
-        model = GCNModel(tryreduce=["U[]", "TC[]"])
+        model = GCNModel(tryreduce=["U", "TC"])
         assert print_model(model) == "\n".join(["tryreduce", "{", "    U[], TC[];", "};"])
 
     def test_model_with_assumptions_groups_by_assumption(self):
@@ -222,7 +249,7 @@ class TestPrintModel:
             objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))],
             constraints=[GCNEquation(lhs=Variable(name="C"), rhs=Variable(name="Y"), lagrange_multiplier="lambda")],
         )
-        model = GCNModel(blocks=[block], options={"output logfile": True}, tryreduce=["U[]"])
+        model = GCNModel(blocks=[block], options={"output logfile": True}, tryreduce=["U"])
 
         assert print_model(model) == "\n\n".join(
             [
@@ -235,6 +262,7 @@ class TestPrintModel:
     def test_printed_model_reparses_to_same_ast(self):
         source = """
         options { output logfile = TRUE; solver = gensys; };
+        tryreduce { U[], u[]; };
         assumptions { positive { C[], K[], alpha; }; };
 
         block HOUSEHOLD
@@ -242,9 +270,9 @@ class TestPrintModel:
             definitions { u[] = log(C[]); };
             controls { C[], K[]; };
             objective { U[] = u[] + beta * E[][U[1]]; };
-            constraints { C[] + K[] = Y[] : lambda[]; };
+            constraints { C[] + K[] = Y[] : lambda[]; @exclude K[] = I[]; };
             identities { Y[] = A[] * K[-1] ^ alpha; };
-            shocks { epsilon[]; };
+            shocks { epsilon[]; eta[] ~ Normal(mu=0, sigma=sigma_eta); };
             calibration
             {
                 alpha ~ maxent(Beta(alpha=2, beta=5), lower=0.2, upper=0.5) = 0.35;
@@ -254,7 +282,12 @@ class TestPrintModel:
         };
         """
         model = quick_parse(source)
-        assert quick_parse(print_model(model)) == model
+        reparsed = quick_parse(print_model(model))
+
+        assert reparsed == model
+        assert reparsed.tryreduce == ["U", "u"]
+        assert reparsed.blocks[0].constraints[1].tags == {Tag.EXCLUDE}
+        assert reparsed.blocks[0].shock_distributions == model.blocks[0].shock_distributions
 
 
 class TestRoundTrip:
@@ -282,6 +315,7 @@ class TestRoundTrip:
             "a ^ b ^ c",
             "a ^ (b * c)",
             "-a ^ b",
+            "(-a) ^ b",
             "a ^ -b",
             "a * -b",
             "-(a + b)",

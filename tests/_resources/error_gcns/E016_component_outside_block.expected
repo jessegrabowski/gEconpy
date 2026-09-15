@@ -1,4 +1,4 @@
-error[E016]: Component 'IDENTITIES' found outside of block. Found 'IDENTITIES'
+error[E016]: Component 'identities' found outside of block. Found 'identities'
   --> E016_component_outside_block.gcn:2:1
      |
    1 | # Component identities used outside of a block

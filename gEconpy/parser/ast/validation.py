@@ -249,6 +249,8 @@ def _calibrated_parameter_names(block: GCNBlock) -> list[str]:
     for item in block.calibration:
         if isinstance(item, GCNDistribution):
             names.append(item.parameter_name)
+        elif isinstance(item, GCNEquation) and item.calibrating_parameter:
+            names.append(item.calibrating_parameter)
         elif isinstance(item, GCNEquation) and isinstance(item.lhs, Parameter):
             names.append(item.lhs.name)
     return names

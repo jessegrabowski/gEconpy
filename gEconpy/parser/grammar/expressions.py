@@ -108,8 +108,8 @@ EXPR = pp.Forward()
 
 def _parse_variable(s: str, loc: int, toks: pp.ParseResults) -> Variable:
     name, time_index = toks[0], toks[1]
-    time_text = "" if time_index == T else str(time_index)
-    location = location_at(s, loc, length=len(name) + 2 + len(time_text))
+    variable_text = "[]" if time_index == T else str(time_index)
+    location = location_at(s, loc, length=len(name) + len(variable_text))
     return Variable(name=name, time_index=time_index, location=location)
 
 
@@ -151,7 +151,9 @@ FUNC_CALL = EMPTY_FUNC_CALL | (IDENTIFIER("func_name") + LPAREN - FUNC_ARGS - RP
 
 PAREN_EXPR = LPAREN - EXPR - RPAREN
 
-ATOM = EXPECTATION | FUNC_CALL | VARIABLE | INVALID_TIME_INDEX_VAR | NUMBER | PARAMETER | PAREN_EXPR
+ATOM = (EXPECTATION | FUNC_CALL | VARIABLE | INVALID_TIME_INDEX_VAR | NUMBER | PARAMETER | PAREN_EXPR).set_name(
+    "operand"
+)
 
 _OP_MAP = {
     "+": Operator.ADD,
@@ -163,12 +165,14 @@ _OP_MAP = {
 }
 
 
-def _make_unary_op(tokens: pp.ParseResults) -> UnaryOp:
-    _sign, operand = tokens[0]
-    return UnaryOp(op=Operator.NEG, operand=operand)
+def _make_unary_op(tokens: pp.ParseResults) -> Node:
+    signs, operand = tokens[0][:-1], tokens[0][-1]
+    for _sign in signs:
+        operand = UnaryOp(op=Operator.NEG, operand=operand)
+    return operand
 
 
-def _make_binary_op(tokens: pp.ParseResults) -> BinaryOp:
+def _make_left_binary_op(tokens: pp.ParseResults) -> Node:
     operands = tokens[0]
     result = operands[0]
     for op_str, right in zip(operands[1::2], operands[2::2], strict=True):
@@ -176,14 +180,27 @@ def _make_binary_op(tokens: pp.ParseResults) -> BinaryOp:
     return result
 
 
-EXPR <<= pp.infix_notation(
-    ATOM,
-    [
-        (pp.Literal("-"), 1, pp.OpAssoc.RIGHT, _make_unary_op),
-        (pp.one_of("^ **"), 2, pp.OpAssoc.RIGHT, _make_binary_op),
-        (pp.one_of("* /"), 2, pp.OpAssoc.LEFT, _make_binary_op),
-        (pp.one_of("+ -"), 2, pp.OpAssoc.LEFT, _make_binary_op),
-    ],
+def _make_power_op(tokens: pp.ParseResults) -> Node:
+    base, op_str, exponent = tokens[0]
+    return BinaryOp(left=base, op=_OP_MAP[op_str], right=exponent)
+
+
+# Exponentiation binds tighter than unary minus, so ``-x ^ 2`` is ``-(x ^ 2)``. The exponent is a signed
+# operand so that ``x ^ -2`` is ``x ^ (-2)``, and it is a signed operand rather than a power so that ``a ^ b ^ c``
+# associates to the right.
+_POW_OP = pp.one_of("^ **")
+_MUL_OP = pp.one_of("* /")
+_ADD_OP = pp.one_of("+ -")
+_NEG_OP = pp.Literal("-")
+
+SIGNED = pp.Forward()
+POWER = (pp.Group(ATOM + _POW_OP + SIGNED).set_parse_action(_make_power_op) | ATOM).set_name("operand")
+SIGNED <<= (pp.Group(pp.OneOrMore(_NEG_OP) + POWER).set_parse_action(_make_unary_op) | POWER).set_name("operand")
+TERM = (pp.Group(SIGNED + pp.OneOrMore(_MUL_OP + SIGNED)).set_parse_action(_make_left_binary_op) | SIGNED).set_name(
+    "operand"
+)
+EXPR <<= (pp.Group(TERM + pp.OneOrMore(_ADD_OP + TERM)).set_parse_action(_make_left_binary_op) | TERM).set_name(
+    "expression"
 )
 
 EXPR.ignore(COMMENT)
@@ -201,7 +218,7 @@ def _convert_parse_exception(exc: pp.ParseBaseException, text: str, context: str
     found = found.strip("'\"")
 
     if code == ErrorCode.E000:
-        code = _structural_error_code(message)
+        code = _structural_error_code(message, found)
         message = _structural_message(message, found)
 
     return GCNGrammarError(
@@ -214,23 +231,27 @@ def _convert_parse_exception(exc: pp.ParseBaseException, text: str, context: str
 
 
 def _structural_message(message: str, found: str) -> str:
+    # A bracket in the message is one the parser expected. A bracket in ``found`` is a stray one, as in ``a + b)``,
+    # where pyparsing only reports that it expected the end of the text.
+    evidence = message + found
+    for brackets, explanation in (("()", "Unbalanced parentheses"), ("[]", "Invalid variable syntax")):
+        if any(bracket in evidence for bracket in brackets):
+            return explanation
+
     if "end of text" in message.lower():
         if found in _OP_MAP:
             return f"Unexpected operator '{found}' at end of expression"
         return "Incomplete expression"
 
-    for brackets, explanation in (("()", "Unbalanced parentheses"), ("[]", "Invalid variable syntax")):
-        if any(bracket in message for bracket in brackets):
-            return explanation
-
     return f"Invalid expression syntax: {message}"
 
 
-def _structural_error_code(message: str) -> ErrorCode:
-    if "(" in message or ")" in message:
+def _structural_error_code(message: str, found: str) -> ErrorCode:
+    evidence = message + found
+    if "(" in evidence or ")" in evidence:
         return ErrorCode.E007
 
-    if "[" in message or "]" in message:
+    if "[" in evidence or "]" in evidence:
         return ErrorCode.E010
 
     return ErrorCode.E006

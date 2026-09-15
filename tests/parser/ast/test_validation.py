@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 
 from gEconpy.parser.ast import (
+    STEADY_STATE,
     T_MINUS_1,
     BinaryOp,
     GCNBlock,
@@ -198,6 +199,26 @@ class TestCheckUndefinedParameters:
     def test_external_parameters_not_flagged(self):
         block = GCNBlock(name="TEST", identities=[GCNEquation(lhs=Variable(name="Y"), rhs=Parameter(name="beta"))])
         errors = check_undefined_parameters(GCNModel(blocks=[block]), external_parameters={"beta"})
+        assert not list(errors)
+
+    def test_calibrating_equation_counts_as_defined(self):
+        block = GCNBlock(
+            name="TEST",
+            identities=[
+                GCNEquation(
+                    lhs=Variable(name="Y"),
+                    rhs=BinaryOp(left=Parameter(name="alpha"), op=Operator.MUL, right=Variable(name="K")),
+                )
+            ],
+            calibration=[
+                GCNEquation(
+                    lhs=Variable(name="Y", time_index=STEADY_STATE),
+                    rhs=Number(value=0.36),
+                    calibrating_parameter="alpha",
+                )
+            ],
+        )
+        errors = check_undefined_parameters(GCNModel(blocks=[block]))
         assert not list(errors)
 
     def test_distribution_calibration_counts_as_defined(self):

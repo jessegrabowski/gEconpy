@@ -70,7 +70,7 @@ _COMPONENT_KEYWORD = pp.MatchFirst([pp.CaselessKeyword(kw) for kw in BLOCK_COMPO
 
 
 def _component_outside_block_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
-    component = toks[0]
+    component = s[loc : loc + len(toks[0])]
     raise GCNParseFailure(
         s,
         loc,
@@ -98,8 +98,12 @@ def _build_model(tokens: pp.ParseResults, filename: str = "") -> GCNModel:
     return model
 
 
+_END_OF_TEXT = "end of text"
+
+
 def _convert_parse_exception(exc: pp.ParseBaseException, text: str, filename: str = "") -> GCNGrammarError:
     message, code, found, suggestions = GCNParseFailure.decode(exc)
+    at_end_of_text = _END_OF_TEXT in found.lower()
 
     if code == ErrorCode.E000:
         pyparsing_message = str(exc.msg)
@@ -113,12 +117,19 @@ def _convert_parse_exception(exc: pp.ParseBaseException, text: str, filename: st
     if suggestions:
         notes.insert(0, f"Did you mean '{suggestions[0]}'?")
 
-    found_clean = found.strip("'\"")
+    # pyparsing reports the placeholder "end of text" as the found token when it runs out of input. There is no
+    # token to name, so the caret marks the single position where input stopped.
+    found_clean = "" if at_end_of_text else found.strip("'\"")
     line, col = exc.lineno, exc.col
     lines = text.split("\n")
     source_line = lines[line - 1] if 0 < line <= len(lines) else ""
 
-    end_column = col + len(found_clean) if found_clean and col > 0 else None
+    if at_end_of_text:
+        end_column = col + 1
+    elif found_clean and col > 0:
+        end_column = col + len(found_clean)
+    else:
+        end_column = None
     location = ParseLocation(
         line=line,
         column=col,
@@ -162,7 +173,7 @@ def _structural_error_code(message: str, found: str) -> ErrorCode:
     matching, so the only evidence is its message and the token it stopped on.
     """
     found_clean = found.strip("'\"")
-    at_end_of_text = "end of text" in found_clean.lower()
+    at_end_of_text = _END_OF_TEXT in found_clean.lower()
 
     if found_clean in {")", "("} or "Expected ')'" in message or "Expected '('" in message:
         return ErrorCode.E007
