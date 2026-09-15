@@ -6,7 +6,6 @@ import sympy as sp
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.utilities import (
     expand_subs_for_all_times,
-    is_variable,
     make_all_var_time_combos,
     substitute_all_equations,
 )
@@ -58,7 +57,7 @@ def simplify_tryreduce(
     if tryreduce_sub_dict is None:
         tryreduce_sub_dict = {}
 
-    occurrence_matrix = np.zeros((n_variables, n_variables))
+    occurrence_matrix = np.zeros((n_equations, n_variables))
     combo_to_col = {}
     for j, var in enumerate(variables):
         for sym in make_all_var_time_combos([var]):
@@ -123,7 +122,7 @@ def simplify_constants(
         if len(eq.atoms()) > _MAX_ATOMS_IN_CONSTANT_EQUATION:
             continue
 
-        equation_variables = [atom for atom in eq.atoms() if is_variable(atom)]
+        equation_variables = list(eq.atoms(TimeAwareSymbol))
         if len(equation_variables) != 1:
             continue
 
@@ -156,12 +155,11 @@ def reduce_variable_list(
     eliminated_vars : list of TimeAwareSymbol
         Variables that do not appear in ``equations``, sorted by name.
     """
-    present = {
-        atom.set_t(0) for eq in equations for atom in eq.atoms() if is_variable(atom) and atom.set_t(0) in variables
-    }
+    variable_set = set(variables)
+    present = {atom.set_t(0) for eq in equations for atom in eq.atoms(TimeAwareSymbol) if atom.set_t(0) in variable_set}
 
     reduced_variables = sorted(present, key=lambda x: x.name)
-    eliminated_vars = sorted(set(variables) - present, key=lambda x: x.name)
+    eliminated_vars = sorted(variable_set - present, key=lambda x: x.name)
 
     return reduced_variables, eliminated_vars
 

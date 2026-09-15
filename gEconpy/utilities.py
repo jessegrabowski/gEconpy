@@ -85,9 +85,7 @@ def eq_to_ss(eq: sp.Expr, shocks: list[TimeAwareSymbol] | None = None) -> sp.Exp
         Equation written entirely in steady-state symbols.
     """
     shock_subs = {} if shocks is None else {x.to_ss(): 0.0 for x in shocks}
-
-    var_list = [x for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
-    to_ss_subs = dict(zip(var_list, [x.to_ss() for x in var_list], strict=False))
+    to_ss_subs = {x: x.to_ss() for x in eq.atoms(TimeAwareSymbol)}
 
     return eq.subs(to_ss_subs).subs(shock_subs)
 
@@ -237,18 +235,11 @@ def substitute_all_equations(
     eqs : list of sympy expression or dict
         Equations after substitution, in the same container type as the input.
     """
-    if len(sub_dicts) > 1:
-        merged_dict = merge_dictionaries(*sub_dicts)
-        sub_dict = string_keys_to_sympy(merged_dict)
-    else:
-        sub_dict = string_keys_to_sympy(sub_dicts[0])
+    sub_dict = string_keys_to_sympy(merge_dictionaries(*sub_dicts))
 
     if isinstance(eqs, list):
         return [eq.subs(sub_dict) for eq in eqs]
-    result = {}
-    for key in eqs:
-        result[key] = eqs[key] if isinstance(eqs[key], int | float) else eqs[key].subs(sub_dict)
-    return result
+    return {key: value if isinstance(value, int | float) else value.subs(sub_dict) for key, value in eqs.items()}
 
 
 def is_variable(x: object) -> bool:
@@ -383,7 +374,7 @@ def postprocess_optimizer_res(
     """
     success = res.success
 
-    f_x = np.r_[[x.ravel() for x in f_resid(**res_dict)]]
+    f_x = np.asarray(f_resid(**res_dict)).ravel()
     df_dx = f_grad(**res_dict)
 
     sse = (f_x**2).sum()
