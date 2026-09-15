@@ -1,11 +1,9 @@
-"""Tests for complete GCN file grammar."""
-
 import pytest
 
 from gEconpy.data.examples import get_example_gcn
 from gEconpy.parser.ast import GCNModel
 from gEconpy.parser.errors import GCNGrammarError
-from gEconpy.parser.grammar.gcn_file import parse_gcn
+from gEconpy.parser.grammar.gcn_file import parse_gcn, parse_gcn_file
 from tests.conftest import TEST_GCNS
 
 
@@ -115,8 +113,6 @@ class TestGCNFileWithComponents:
 
 
 class TestSimpleRBCModel:
-    """Test parsing a simplified RBC model structure."""
-
     def test_simple_rbc(self):
         text = """
         tryreduce {
@@ -188,29 +184,17 @@ class TestSimpleRBCModel:
         """
         result = parse_gcn(text)
 
-        # Check structure
-        assert len(result.blocks) == 4
+        assert result.block_names() == ["STEADY_STATE", "HOUSEHOLD", "FIRM", "SHOCKS"]
         assert result.tryreduce == ["U", "TC"]
 
-        # Check block names
-        block_names = [b.name for b in result.blocks]
-        assert "STEADY_STATE" in block_names
-        assert "HOUSEHOLD" in block_names
-        assert "FIRM" in block_names
-        assert "SHOCKS" in block_names
-
-        # Check HOUSEHOLD block
         household = result.get_block("HOUSEHOLD")
-        assert household is not None
         assert len(household.definitions) == 1
         assert len(household.controls) == 4
         assert len(household.objective) == 1
         assert len(household.constraints) == 2
         assert len(household.calibration) == 2
 
-        # Check FIRM block
         firm = result.get_block("FIRM")
-        assert firm is not None
         assert len(firm.controls) == 2
         assert firm.constraints[0].lagrange_multiplier == "mc"
 
@@ -310,25 +294,24 @@ class TestGCNModelMethods:
 
 
 class TestGCNFileErrors:
-    def test_no_blocks_raises(self):
-        text = "options { verbose = TRUE; };"
-        with pytest.raises(GCNGrammarError):
-            parse_gcn(text)
-
-    def test_unclosed_block_raises(self):
-        text = "block TEST { identities { Y[] = C[]; }"
-        with pytest.raises(GCNGrammarError):
-            parse_gcn(text)
-
-    def test_invalid_syntax_raises(self):
-        text = "block TEST { invalid_component { }; };"
-        with pytest.raises(GCNGrammarError):
+    @pytest.mark.parametrize(
+        "text,match",
+        [
+            ("options { verbose = TRUE; };", "Syntax error"),
+            ("block TEST { identities { Y[] = C[]; }", "Missing semicolon"),
+            ("block TEST { invalid_component { }; };", "Unknown component"),
+            ("block TEST { }", "semicolon"),
+            ("identities { Y[] = C[]; };", "outside of block"),
+        ],
+        ids=["no_blocks", "unclosed_block", "unknown_component", "missing_semicolon", "orphan_component"],
+    )
+    def test_invalid_file_raises(self, text, match):
+        with pytest.raises(GCNGrammarError, match=match):
             parse_gcn(text)
 
 
 class TestGCNFileEdgeCases:
     def test_empty_special_blocks(self):
-        # Empty special blocks are allowed
         text = """
         options { };
         tryreduce { };
@@ -340,61 +323,27 @@ class TestGCNFileEdgeCases:
         assert result.tryreduce == []
         assert result.assumptions == {}
 
-    def test_block_without_semicolon_raises(self):
-        # Semicolons are mandatory - omitting one should raise an error
-        text = "block TEST { }"
-        with pytest.raises(GCNGrammarError, match="semicolon"):
-            parse_gcn(text)
-
-    def test_multiple_special_blocks_same_type(self):
-        # Only the last one should be kept (or it could be an error)
+    def test_last_special_block_of_a_type_wins(self):
         text = """
         options { verbose = TRUE; };
         options { verbose = FALSE; };
         block TEST { };
         """
         result = parse_gcn(text)
-        # The second options block should override the first
         assert result.options["verbose"] is False
 
 
 class TestParseGCNFiles:
-    """Test parsing actual GCN files from test resources."""
-
-    @pytest.fixture
-    def gcn_dir(self):
-        return TEST_GCNS
-
-    def test_parse_one_block_1(self, gcn_dir):
-        gcn_path = gcn_dir / "one_block_1.gcn"
-        if not gcn_path.exists():
-            pytest.skip(f"Test file not found: {gcn_path}")
-
-        text = gcn_path.read_text(encoding="utf-8")
-        model = parse_gcn(text)
-
-        assert len(model.blocks) == 1
-        assert model.blocks[0].name == "HOUSEHOLD"
-
-    def test_parse_rbc(self):
-        gcn_path = get_example_gcn("RBC")
-        if not gcn_path.exists():
-            pytest.skip(f"Test file not found: {gcn_path}")
-
-        text = gcn_path.read_text(encoding="utf-8")
-        model = parse_gcn(text)
-
-        assert len(model.blocks) >= 2
-        block_names = model.block_names()
-        assert "HOUSEHOLD" in block_names or "STEADY_STATE" in block_names
-
-    def test_parse_basic_rbc(self, gcn_dir):
-        gcn_path = gcn_dir / "basic_rbc.gcn"
-        if not gcn_path.exists():
-            pytest.skip(f"Test file not found: {gcn_path}")
-
-        text = gcn_path.read_text(encoding="utf-8")
-        model = parse_gcn(text)
-
-        assert isinstance(model, GCNModel)
-        assert len(model.blocks) > 0
+    @pytest.mark.parametrize(
+        "gcn_path,expected_blocks",
+        [
+            (TEST_GCNS / "one_block_1.gcn", ["HOUSEHOLD"]),
+            (TEST_GCNS / "basic_rbc.gcn", ["HOUSEHOLD", "FIRM", "TECHNOLOGY_SHOCKS"]),
+            (get_example_gcn("RBC"), ["STEADY_STATE", "HOUSEHOLD", "FIRM", "TECHNOLOGY_SHOCKS"]),
+        ],
+        ids=["one_block_1", "basic_rbc", "RBC"],
+    )
+    def test_parse_file_from_disk(self, gcn_path, expected_blocks):
+        model = parse_gcn_file(str(gcn_path))
+        assert model.block_names() == expected_blocks
+        assert model.filename == str(gcn_path)

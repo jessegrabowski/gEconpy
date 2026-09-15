@@ -12,24 +12,10 @@ from gEconpy.parser.constants import (
 DEFAULT_SIMILARITY_THRESHOLD = 0.6
 
 KNOWN_DISTRIBUTIONS = frozenset(PRELIZ_DISTS)
-
 KNOWN_WRAPPERS = frozenset(PRELIZ_DIST_WRAPPERS)
-
 KNOWN_COMPONENTS = frozenset(c.lower() for c in BLOCK_COMPONENTS)
-
 KNOWN_SPECIAL_BLOCKS = frozenset(c.lower() for c in SPECIAL_BLOCK_NAMES)
-
 KNOWN_ASSUMPTIONS = frozenset(GCN_ASSUMPTIONS)
-
-
-def _similarity_ratio(a: str, b: str) -> float:
-    """
-    Compute similarity ratio between two strings.
-
-    Uses SequenceMatcher for a balance of speed and quality.
-    Returns a value between 0.0 (no similarity) and 1.0 (identical).
-    """
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
 def find_similar_names(
@@ -39,49 +25,42 @@ def find_similar_names(
     min_similarity: float = DEFAULT_SIMILARITY_THRESHOLD,
 ) -> list[str]:
     """
-    Find similar names from a set of candidates using edit distance.
+    Rank the candidates that resemble a misspelled name, for "did you mean" suggestions.
 
     Parameters
     ----------
     name : str
-        The name to find similar matches for.
+        The name to find matches for.
     candidates : iterable of str
-        The set of valid names to search.
-    max_results : int
-        Maximum number of suggestions to return.
-    min_similarity : float
-        Minimum similarity ratio (0.0 to 1.0) to include in results.
+        The valid names to search.
+    max_results : int, optional
+        Maximum number of suggestions to return. Defaults to 3.
+    min_similarity : float, optional
+        Minimum :class:`difflib.SequenceMatcher` ratio, between 0 and 1, for a candidate to count as similar.
+        Defaults to 0.6.
 
     Returns
     -------
     suggestions : list of str
-        Similar names, sorted by similarity (most similar first).
-        Returns empty list if exact match exists or no similar names found.
+        Similar candidates, most similar first, with ties broken alphabetically. Empty when a candidate matches
+        ``name`` exactly, ignoring case, or when no candidate is similar enough.
     """
     name_lower = name.lower()
     candidates_list = list(candidates)
 
-    # Check for exact match (case-insensitive)
-    for candidate in candidates_list:
-        if candidate.lower() == name_lower:
-            return []
+    if any(candidate.lower() == name_lower for candidate in candidates_list):
+        return []
 
-    # Compute similarities
-    scored = []
-    for candidate in candidates_list:
-        ratio = _similarity_ratio(name, candidate)
-        if ratio >= min_similarity:
-            scored.append((ratio, candidate))
+    scored = [(_similarity_ratio(name, candidate), candidate) for candidate in candidates_list]
+    similar = [(ratio, candidate) for ratio, candidate in scored if ratio >= min_similarity]
+    similar.sort(key=lambda pair: (-pair[0], pair[1]))
 
-    # Sort by similarity (descending) then alphabetically
-    scored.sort(key=lambda x: (-x[0], x[1]))
-
-    return [candidate for _, candidate in scored[:max_results]]
+    return [candidate for _, candidate in similar[:max_results]]
 
 
 def suggest_distribution(name: str) -> list[str]:
     """
-    Suggest corrections for an unknown distribution name.
+    Suggest PreliZ distribution names resembling an unknown one.
 
     Parameters
     ----------
@@ -91,14 +70,14 @@ def suggest_distribution(name: str) -> list[str]:
     Returns
     -------
     suggestions : list of str
-        Suggested distribution names from the known set.
+        Known distribution names, most similar first.
     """
     return find_similar_names(name, KNOWN_DISTRIBUTIONS)
 
 
 def suggest_wrapper(name: str) -> list[str]:
     """
-    Suggest corrections for an unknown wrapper name.
+    Suggest distribution wrapper names resembling an unknown one.
 
     Parameters
     ----------
@@ -108,14 +87,14 @@ def suggest_wrapper(name: str) -> list[str]:
     Returns
     -------
     suggestions : list of str
-        Suggested wrapper names.
+        Known wrapper names, most similar first.
     """
     return find_similar_names(name, KNOWN_WRAPPERS)
 
 
 def suggest_block_component(name: str) -> list[str]:
     """
-    Suggest corrections for a misspelled block component name.
+    Suggest block component names resembling a misspelled one.
 
     Parameters
     ----------
@@ -125,14 +104,14 @@ def suggest_block_component(name: str) -> list[str]:
     Returns
     -------
     suggestions : list of str
-        Suggested component names.
+        Known component names, most similar first.
     """
     return find_similar_names(name, KNOWN_COMPONENTS)
 
 
 def suggest_special_block(name: str) -> list[str]:
     """
-    Suggest corrections for a misspelled special block name.
+    Suggest special block names resembling a misspelled one.
 
     Parameters
     ----------
@@ -142,23 +121,27 @@ def suggest_special_block(name: str) -> list[str]:
     Returns
     -------
     suggestions : list of str
-        Suggested special block names.
+        Known special block names, most similar first.
     """
     return find_similar_names(name, KNOWN_SPECIAL_BLOCKS)
 
 
 def suggest_assumption(name: str) -> list[str]:
     """
-    Suggest corrections for a misspelled assumption type.
+    Suggest assumption names resembling a misspelled one.
 
     Parameters
     ----------
     name : str
-        The misspelled assumption type.
+        The misspelled assumption name.
 
     Returns
     -------
     suggestions : list of str
-        Suggested assumption types.
+        Known assumption names, most similar first.
     """
     return find_similar_names(name, KNOWN_ASSUMPTIONS)
+
+
+def _similarity_ratio(a: str, b: str) -> float:
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()

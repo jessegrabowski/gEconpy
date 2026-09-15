@@ -1,7 +1,6 @@
 import pyparsing as pp
 
 from gEconpy.parser.ast import GCNDistribution, GCNEquation, Variable
-from gEconpy.parser.constants import BLOCK_COMPONENTS
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNParseFailure
 from gEconpy.parser.grammar.statements import (
@@ -11,6 +10,7 @@ from gEconpy.parser.grammar.statements import (
     MISSING_TILDE,
     VARIABLE_LIST,
     VARIABLE_REF,
+    _collect_kwargs,
 )
 from gEconpy.parser.grammar.tokens import (
     COMMA,
@@ -32,8 +32,6 @@ from gEconpy.parser.grammar.tokens import (
 )
 from gEconpy.parser.suggestions import suggest_block_component
 
-_KNOWN_COMPONENTS = frozenset(c.lower() for c in BLOCK_COMPONENTS)
-
 
 def _make_equation_component(keyword: pp.ParserElement, name: str) -> pp.ParserElement:
     component = keyword.suppress() - LBRACE - pp.ZeroOrMore(EQUATION)("equations") - RBRACE - SEMI
@@ -50,50 +48,33 @@ CONTROLS = (
     KW_CONTROLS.suppress() - LBRACE - pp.Optional(VARIABLE_LIST("variables") + SEMI) - RBRACE - SEMI
 ).set_parse_action(lambda t: ("controls", list(t.variables) if t.variables else []))
 
-SHOCK_DISTRIBUTION = VARIABLE_REF("shock_var") + TILDE + DIST_EXPR + pp.Optional(EQUALS + NUMBER)("initial") + SEMI
 
-
-def _build_shock_distribution(tokens) -> GCNDistribution:
-    var = tokens.shock_var
-    param_name = var.name
-
-    dist_name = tokens.dist_name
-
-    dist_kwargs = {}
-    if hasattr(tokens, "dist_args") and tokens.dist_args:
-        for arg in tokens.dist_args:
-            dist_kwargs[arg.arg_name] = arg.arg_value
-
-    wrapper_name = tokens.wrapper_name if hasattr(tokens, "wrapper_name") and tokens.wrapper_name else None
-    wrapper_kwargs = {}
-    if wrapper_name and hasattr(tokens, "wrapper_args") and tokens.wrapper_args:
-        for arg in tokens.wrapper_args:
-            wrapper_kwargs[arg.arg_name] = arg.arg_value
-
-    initial_value = None
-    if tokens.initial:
-        initial_value = float(tokens.initial[0])
+def _build_shock_distribution(tokens: pp.ParseResults) -> GCNDistribution:
+    wrapper_name = tokens.wrapper_name or None
+    initial_value = float(tokens.initial[0]) if tokens.initial else None
 
     return GCNDistribution(
-        parameter_name=param_name,
-        dist_name=dist_name,
-        dist_kwargs=dist_kwargs,
+        parameter_name=tokens.shock_var.name,
+        dist_name=tokens.dist_name,
+        dist_kwargs=_collect_kwargs(tokens.dist_args),
         wrapper_name=wrapper_name,
-        wrapper_kwargs=wrapper_kwargs,
+        wrapper_kwargs=_collect_kwargs(tokens.wrapper_args) if wrapper_name else {},
         initial_value=initial_value,
     )
 
 
-SHOCK_DISTRIBUTION.set_parse_action(_build_shock_distribution)
+SHOCK_DISTRIBUTION = (
+    VARIABLE_REF("shock_var") + TILDE + DIST_EXPR + pp.Optional(EQUALS + NUMBER)("initial") + SEMI
+).set_parse_action(_build_shock_distribution)
 
 SHOCK_VAR = (VARIABLE_REF + SEMI).set_parse_action(lambda t: t[0])
 
-SHOCK_VAR_LIST = (VARIABLE_REF + pp.Suppress(COMMA) + pp.DelimitedList(VARIABLE_REF) + SEMI).set_parse_action(list)
+SHOCK_VAR_LIST = (VARIABLE_REF + COMMA + pp.DelimitedList(VARIABLE_REF) + SEMI).set_parse_action(list)
 
 SHOCK_ITEM = SHOCK_DISTRIBUTION | SHOCK_VAR_LIST | SHOCK_VAR
 
 
-def _build_shocks(tokens) -> tuple[str, tuple[list[Variable], list[GCNDistribution]]]:
+def _build_shocks(tokens: pp.ParseResults) -> tuple[str, tuple[list[Variable], list[GCNDistribution]]]:
     variables = []
     distributions = []
 
@@ -103,7 +84,7 @@ def _build_shocks(tokens) -> tuple[str, tuple[list[Variable], list[GCNDistributi
             variables.append(Variable(name=item.parameter_name))
         elif isinstance(item, Variable):
             variables.append(item)
-        elif isinstance(item, list):
+        else:
             variables.extend(item)
 
     return ("shocks", (variables, distributions))
@@ -116,7 +97,7 @@ SHOCKS = (KW_SHOCKS.suppress() - LBRACE - pp.ZeroOrMore(SHOCK_ITEM)("shock_items
 CALIBRATION_ITEM = DISTRIBUTION | MISSING_TILDE | EQUATION
 
 
-def _build_calibration(tokens) -> tuple[str, list[GCNEquation | GCNDistribution]]:
+def _build_calibration(tokens: pp.ParseResults) -> tuple[str, list[GCNEquation | GCNDistribution]]:
     return ("calibration", list(tokens.cal_items))
 
 
@@ -127,19 +108,18 @@ CALIBRATION = (
 VALID_COMPONENT = DEFINITIONS | CONTROLS | OBJECTIVE | CONSTRAINTS | IDENTITIES | SHOCKS | CALIBRATION
 
 
-def _unknown_component_fail(s: str, loc: int, toks) -> None:
+def _unknown_component_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
     name = toks[0]
-    actual_loc = s.find(name, loc)
-    if actual_loc == -1:
-        actual_loc = loc
-    suggestions = suggest_block_component(name)
+    name_loc = s.find(name, loc)
+    if name_loc == -1:
+        name_loc = loc
     raise GCNParseFailure(
         s,
-        actual_loc,
+        name_loc,
         f"Unknown component '{name}'",
         code=ErrorCode.E013,
         found=name,
-        suggestions=suggestions,
+        suggestions=suggest_block_component(name),
     )
 
 

@@ -1,16 +1,18 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import Self, cast
 
 from gEconpy.parser.errors import ParseLocation
 
 
 class TimeIndex:
     """
-    Represents a time index for a variable.
+    The time index of a variable: an integer offset from the current period, or the steady state.
 
-    Can be an integer offset (0 for t, 1 for t+1, -1 for t-1) or steady-state.
+    Parameters
+    ----------
+    value : int or str
+        An integer offset (0 for ``t``, 1 for ``t+1``, -1 for ``t-1``), or the string ``"ss"`` for the steady state.
     """
 
     __slots__ = ("_value",)
@@ -48,22 +50,19 @@ class TimeIndex:
             return "[ss]"
         if self._value == 0:
             return "[]"
-        if self._value > 0:
-            return f"[{self._value}]"
         return f"[{self._value}]"
 
-    def step_forward(self) -> TimeIndex:
+    def step_forward(self) -> Self:
         if self.is_steady_state:
             raise ValueError("Cannot step forward from steady state")
-        return TimeIndex(self._value + 1)
+        return type(self)(cast(int, self._value) + 1)
 
-    def step_backward(self) -> TimeIndex:
+    def step_backward(self) -> Self:
         if self.is_steady_state:
             raise ValueError("Cannot step backward from steady state")
-        return TimeIndex(self._value - 1)
+        return type(self)(cast(int, self._value) - 1)
 
 
-# Singleton instances for common time indices
 T = TimeIndex(0)
 T_PLUS_1 = TimeIndex(1)
 T_MINUS_1 = TimeIndex(-1)
@@ -71,14 +70,14 @@ STEADY_STATE = TimeIndex("ss")
 
 
 class Operator(Enum):
-    """Binary and unary operators in expressions."""
+    """Binary and unary operators in expressions. ``NEG`` is the only unary operator."""
 
     ADD = auto()
     SUB = auto()
     MUL = auto()
     DIV = auto()
     POW = auto()
-    NEG = auto()  # Unary negation
+    NEG = auto()
 
     def __str__(self) -> str:
         symbols = {
@@ -106,17 +105,18 @@ class BlockComponent(Enum):
 
 class Tag(Enum):
     """
-    Tags that can be applied to GCN objects using @tag syntax.
+    Tags applied to GCN equations with the ``@tag`` syntax.
 
-    Tags modify how objects are processed during model building.
+    ``EXCLUDE`` drops the equation from the final system after optimization. ``MINIMIZE`` makes the objective a
+    minimization problem, and ``MAXIMIZE`` a maximization problem, which is the default.
     """
 
-    EXCLUDE = "exclude"  # Exclude equation from final system after optimization
-    MINIMIZE = "minimize"  # Treat objective as a minimization problem
-    MAXIMIZE = "maximize"  # Explicitly mark objective as maximization (default)
+    EXCLUDE = "exclude"
+    MINIMIZE = "minimize"
+    MAXIMIZE = "maximize"
 
     @classmethod
-    def from_string(cls, name: str) -> Tag:
+    def from_string(cls, name: str) -> Self:
         """
         Look up a tag by name, ignoring case.
 
@@ -129,11 +129,6 @@ class Tag(Enum):
         -------
         tag : Tag
             The matching tag.
-
-        Raises
-        ------
-        ValueError
-            If no tag has that name.
         """
         name_lower = name.lower()
         for tag in cls:
@@ -152,11 +147,8 @@ class Node:
 
     location: ParseLocation | None = field(default=None, compare=False, repr=False, kw_only=True)
 
-    def with_location(self, location: ParseLocation) -> Node:
+    def with_location(self, location: ParseLocation) -> Self:
         raise NotImplementedError
-
-
-# --- Expression Nodes ---
 
 
 @dataclass(frozen=True)
@@ -165,8 +157,8 @@ class Number(Node):
 
     value: float
 
-    def with_location(self, location: ParseLocation) -> Number:
-        return Number(value=self.value, location=location)
+    def with_location(self, location: ParseLocation) -> Self:
+        return type(self)(value=self.value, location=location)
 
     def __str__(self) -> str:
         if self.value == int(self.value):
@@ -176,16 +168,12 @@ class Number(Node):
 
 @dataclass(frozen=True)
 class Parameter(Node):
-    """
-    A model parameter (no time index).
-
-    Parameters are constants that don't vary over time, like `alpha`, `beta`, `delta`.
-    """
+    """A model parameter such as ``alpha`` or ``beta``. Parameters carry no time index."""
 
     name: str
 
-    def with_location(self, location: ParseLocation) -> Parameter:
-        return Parameter(name=self.name, location=location)
+    def with_location(self, location: ParseLocation) -> Self:
+        return type(self)(name=self.name, location=location)
 
     def __str__(self) -> str:
         return self.name
@@ -193,19 +181,15 @@ class Parameter(Node):
 
 @dataclass(frozen=True)
 class Variable(Node):
-    """
-    A time-indexed model variable.
-
-    Variables have a base name and a time index, like `C[]`, `K[-1]`, `Y[1]`, `A[ss]`.
-    """
+    """A time-indexed model variable such as ``C[]``, ``K[-1]``, ``Y[1]``, or ``A[ss]``."""
 
     name: str
     time_index: TimeIndex = field(default_factory=lambda: T)
 
-    def with_location(self, location: ParseLocation) -> Variable:
-        return Variable(name=self.name, time_index=self.time_index, location=location)
+    def with_location(self, location: ParseLocation) -> Self:
+        return type(self)(name=self.name, time_index=self.time_index, location=location)
 
-    def at(self, time_index: TimeIndex | int | str) -> Variable:
+    def at(self, time_index: TimeIndex | int | str) -> Self:
         """
         Return a copy of this variable at a different time index.
 
@@ -221,9 +205,9 @@ class Variable(Node):
         """
         if isinstance(time_index, int | str):
             time_index = TimeIndex(time_index)
-        return Variable(name=self.name, time_index=time_index, location=self.location)
+        return type(self)(name=self.name, time_index=time_index, location=self.location)
 
-    def to_ss(self) -> Variable:
+    def to_ss(self) -> Self:
         """
         Return a copy of this variable at the steady state.
 
@@ -240,14 +224,14 @@ class Variable(Node):
 
 @dataclass(frozen=True)
 class BinaryOp(Node):
-    """A binary operation: left op right."""
+    """A binary operation ``left op right``."""
 
     left: Node
     op: Operator
     right: Node
 
-    def with_location(self, location: ParseLocation) -> BinaryOp:
-        return BinaryOp(left=self.left, op=self.op, right=self.right, location=location)
+    def with_location(self, location: ParseLocation) -> Self:
+        return type(self)(left=self.left, op=self.op, right=self.right, location=location)
 
     def __str__(self) -> str:
         return f"({self.left} {self.op} {self.right})"
@@ -255,13 +239,13 @@ class BinaryOp(Node):
 
 @dataclass(frozen=True)
 class UnaryOp(Node):
-    """A unary operation: op operand."""
+    """A unary operation ``op operand``."""
 
     op: Operator
     operand: Node
 
-    def with_location(self, location: ParseLocation) -> UnaryOp:
-        return UnaryOp(op=self.op, operand=self.operand, location=location)
+    def with_location(self, location: ParseLocation) -> Self:
+        return type(self)(op=self.op, operand=self.operand, location=location)
 
     def __str__(self) -> str:
         return f"({self.op}{self.operand})"
@@ -269,17 +253,13 @@ class UnaryOp(Node):
 
 @dataclass(frozen=True)
 class FunctionCall(Node):
-    """
-    A function call like `log(x)` or `exp(y)`.
-
-    The function name is stored as a string, and arguments are expression nodes.
-    """
+    """A function call such as ``log(x)`` or ``exp(y)``. The function is stored by name."""
 
     func_name: str
     args: tuple[Node, ...]
 
-    def with_location(self, location: ParseLocation) -> FunctionCall:
-        return FunctionCall(func_name=self.func_name, args=self.args, location=location)
+    def with_location(self, location: ParseLocation) -> Self:
+        return type(self)(func_name=self.func_name, args=self.args, location=location)
 
     def __str__(self) -> str:
         args_str = ", ".join(str(arg) for arg in self.args)
@@ -288,33 +268,24 @@ class FunctionCall(Node):
 
 @dataclass(frozen=True)
 class Expectation(Node):
-    """
-    The expectation operator E[][...].
-
-    Contains the expression inside the expectation.
-    """
+    """The expectation operator ``E[][...]`` wrapped around an expression."""
 
     expr: Node
 
-    def with_location(self, location: ParseLocation) -> Expectation:
-        return Expectation(expr=self.expr, location=location)
+    def with_location(self, location: ParseLocation) -> Self:
+        return type(self)(expr=self.expr, location=location)
 
     def __str__(self) -> str:
         return f"E[][{self.expr}]"
 
 
-# --- Equation Node ---
-
-
 @dataclass(frozen=True)
 class GCNEquation(Node):
     """
-    A model equation: lhs = rhs.
+    A model equation ``lhs = rhs``.
 
-    Equations can optionally have:
-    - A Lagrange multiplier name (for constraints)
-    - A calibrating parameter (for calibration equations with ->)
-    - Tags that modify processing (e.g., @exclude)
+    A constraint may name a Lagrange multiplier, a calibration equation may name the parameter it calibrates with
+    ``-> param``, and any equation may carry tags such as ``@exclude``.
     """
 
     lhs: Node
@@ -323,8 +294,8 @@ class GCNEquation(Node):
     calibrating_parameter: str | None = None
     tags: frozenset[Tag] = field(default_factory=frozenset)
 
-    def with_location(self, location: ParseLocation) -> GCNEquation:
-        return GCNEquation(
+    def with_location(self, location: ParseLocation) -> Self:
+        return type(self)(
             lhs=self.lhs,
             rhs=self.rhs,
             lagrange_multiplier=self.lagrange_multiplier,
@@ -333,21 +304,21 @@ class GCNEquation(Node):
             location=location,
         )
 
-    def with_tags(self, tags: frozenset[Tag]) -> GCNEquation:
+    def with_tags(self, tags: frozenset[Tag]) -> Self:
         """
         Return a copy of this equation carrying a different set of tags.
 
         Parameters
         ----------
         tags : frozenset of Tag
-            Tags for the new equation. These replace the current tags rather than adding to them.
+            Tags for the new equation. They replace the current tags.
 
         Returns
         -------
         equation : GCNEquation
             The tagged equation.
         """
-        return GCNEquation(
+        return type(self)(
             lhs=self.lhs,
             rhs=self.rhs,
             lagrange_multiplier=self.lagrange_multiplier,
@@ -380,39 +351,32 @@ class GCNEquation(Node):
         return self.lagrange_multiplier is not None
 
     def __str__(self) -> str:
-        parts = []
-        if self.tags:
-            parts.extend(str(tag) for tag in sorted(self.tags, key=lambda t: t.value))
-        parts.append(f"{self.lhs} = {self.rhs}")
-        base = "\n".join(parts) if self.tags else parts[0]
+        tag_lines = [str(tag) for tag in sorted(self.tags, key=lambda t: t.value)]
+        equation = "\n".join([*tag_lines, f"{self.lhs} = {self.rhs}"])
         if self.lagrange_multiplier:
-            base += f" : {self.lagrange_multiplier}"
+            equation += f" : {self.lagrange_multiplier}"
         if self.calibrating_parameter:
-            base = f"{base} -> {self.calibrating_parameter}"
-        return base
-
-
-# --- Distribution Node ---
+            equation += f" -> {self.calibrating_parameter}"
+        return equation
 
 
 @dataclass(frozen=True)
 class GCNDistribution(Node):
     """
-    A prior distribution declaration.
+    A prior distribution declaration such as ``alpha ~ Beta(mean=0.5, sd=0.1) = 0.35``.
 
-    Represents things like `alpha ~ Beta(mean=0.5, sd=0.1) = 0.35`
-    or wrapped distributions like `maxent(Normal(), lower=0, upper=1) = 0.5`.
+    The distribution may be wrapped, as in ``beta ~ maxent(Normal(), lower=0, upper=1) = 0.5``.
     """
 
     parameter_name: str
     dist_name: str
-    dist_kwargs: dict[str, float | str] = field(default_factory=dict)
+    dist_kwargs: dict[str, float | str | None] = field(default_factory=dict)
     wrapper_name: str | None = None
-    wrapper_kwargs: dict[str, float | None] = field(default_factory=dict)
+    wrapper_kwargs: dict[str, float | str | None] = field(default_factory=dict)
     initial_value: float | None = None
 
-    def with_location(self, location: ParseLocation) -> GCNDistribution:
-        return GCNDistribution(
+    def with_location(self, location: ParseLocation) -> Self:
+        return type(self)(
             parameter_name=self.parameter_name,
             dist_name=self.dist_name,
             dist_kwargs=self.dist_kwargs,
@@ -431,28 +395,42 @@ class GCNDistribution(Node):
         dist_str = f"{self.dist_name}({kwargs_str})"
 
         if self.wrapper_name:
-            wrapper_kwargs_str = ", ".join(f"{k}={v}" for k, v in self.wrapper_kwargs.items())
-            if wrapper_kwargs_str:
-                dist_str = f"{self.wrapper_name}({dist_str}, {wrapper_kwargs_str})"
-            else:
-                dist_str = f"{self.wrapper_name}({dist_str})"
+            wrapper_args = [dist_str, *(f"{k}={v}" for k, v in self.wrapper_kwargs.items())]
+            dist_str = f"{self.wrapper_name}({', '.join(wrapper_args)})"
 
-        result = f"{self.parameter_name} ~ {dist_str}"
+        declaration = f"{self.parameter_name} ~ {dist_str}"
         if self.initial_value is not None:
-            result += f" = {self.initial_value}"
-        return result
-
-
-# --- Block Node ---
+            declaration += f" = {self.initial_value}"
+        return declaration
 
 
 @dataclass
 class GCNBlock:
     """
-    A model block containing equations organized by component type.
+    A named model block, such as ``HOUSEHOLD`` or ``FIRM``, holding its equations by component.
 
-    Blocks have a name (like "HOUSEHOLD", "FIRM") and contain equations
-    organized into components (definitions, controls, objective, etc.).
+    Parameters
+    ----------
+    name : str
+        The block name.
+    definitions : list of GCNEquation, optional
+        Equations from the ``definitions`` component. Defaults to an empty list.
+    controls : list of Variable, optional
+        Variables from the ``controls`` component. Defaults to an empty list.
+    objective : list of GCNEquation, optional
+        Equations from the ``objective`` component. Defaults to an empty list.
+    constraints : list of GCNEquation, optional
+        Equations from the ``constraints`` component. Defaults to an empty list.
+    identities : list of GCNEquation, optional
+        Equations from the ``identities`` component. Defaults to an empty list.
+    shocks : list of Variable, optional
+        Variables from the ``shocks`` component. Defaults to an empty list.
+    shock_distributions : list of GCNDistribution, optional
+        Prior distributions declared on shocks. Defaults to an empty list.
+    calibration : list of GCNEquation or GCNDistribution, optional
+        Entries from the ``calibration`` component. Defaults to an empty list.
+    location : ParseLocation, optional
+        Where the block starts in the source. Defaults to None.
     """
 
     name: str
@@ -466,23 +444,30 @@ class GCNBlock:
     calibration: list[GCNEquation | GCNDistribution] = field(default_factory=list)
     location: ParseLocation | None = field(default=None, compare=False, repr=False)
 
-    def get_component(self, component: BlockComponent) -> list | GCNEquation | None:
+    def get_component(self, component: BlockComponent) -> list[GCNEquation | GCNDistribution | Variable]:
         return getattr(self, component.value)
 
     def has_optimization_problem(self) -> bool:
         return len(self.controls) > 0 and len(self.objective) > 0
 
 
-# --- Model Node (Root) ---
-
-
 @dataclass
 class GCNModel:
     """
-    The root AST node representing a complete GCN model.
+    The root of a parsed GCN file: its blocks and the ``options``, ``tryreduce``, and ``assumptions`` sections.
 
-    Contains all blocks, special block data (options, tryreduce, assumptions),
-    and tracks any prior distributions defined.
+    Parameters
+    ----------
+    blocks : list of GCNBlock, optional
+        The model blocks in source order. Defaults to an empty list.
+    options : dict mapping str to str or bool, optional
+        Entries of the ``options`` section. Defaults to an empty dict.
+    tryreduce : list of str, optional
+        Variable names listed in the ``tryreduce`` section. Defaults to an empty list.
+    assumptions : dict mapping str to dict, optional
+        SymPy assumptions per symbol name, as in ``{"C": {"positive": True}}``. Defaults to an empty dict.
+    filename : str, optional
+        Path of the source file. Defaults to an empty string.
     """
 
     blocks: list[GCNBlock] = field(default_factory=list)
@@ -528,8 +513,8 @@ class GCNModel:
         """
         variables: set[Variable] = set()
         for eq in self.all_equations():
-            variables.update(_collect_variables(eq.lhs))
-            variables.update(_collect_variables(eq.rhs))
+            variables.update(collect_nodes_of_type(eq.lhs, Variable))
+            variables.update(collect_nodes_of_type(eq.rhs, Variable))
         return variables
 
     def all_parameters(self) -> set[Parameter]:
@@ -543,41 +528,31 @@ class GCNModel:
         """
         parameters: set[Parameter] = set()
         for eq in self.all_equations():
-            parameters.update(_collect_parameters(eq.lhs))
-            parameters.update(_collect_parameters(eq.rhs))
+            parameters.update(collect_nodes_of_type(eq.lhs, Parameter))
+            parameters.update(collect_nodes_of_type(eq.rhs, Parameter))
         return parameters
 
 
-def _collect_variables(node: Node) -> set[Variable]:
-    """Recursively collect all Variable nodes from an expression."""
-    return collect_nodes_of_type(node, Variable)
-
-
-def _collect_parameters(node: Node) -> set[Parameter]:
-    """Recursively collect all Parameter nodes from an expression."""
-    return collect_nodes_of_type(node, Parameter)
-
-
-def collect_nodes_of_type(node: Node, node_type: type) -> set:
+def collect_nodes_of_type[NodeT: Node](node: Node, node_type: type[NodeT]) -> set[NodeT]:
     """
-    Recursively collect all nodes of a specific type from an expression.
+    Collect every node of one type from an expression tree.
 
     Parameters
     ----------
     node : Node
-        The expression node to search.
+        Root of the expression to search.
     node_type : type
-        The type of node to collect (e.g., Variable, Parameter).
+        The node class to collect, such as :class:`Variable` or :class:`Parameter`.
 
     Returns
     -------
-    result : set
-        Set of all nodes of the specified type.
+    nodes : set of Node
+        Every node in the tree that is an instance of ``node_type``.
     """
-    # Deferred import to avoid circular dependency (visitor imports from nodes)
-    from gEconpy.parser.ast.visitor import collect_nodes_of_type as _collect  # noqa: PLC0415
+    # Deferred import: the visitor module imports the node classes from this module.
+    from gEconpy.parser.ast.visitor import collect_nodes_of_type as visitor_collect  # noqa: PLC0415
 
-    return _collect(node, node_type)
+    return visitor_collect(node, node_type)
 
 
 def collect_variable_names(node: Node) -> set[str]:

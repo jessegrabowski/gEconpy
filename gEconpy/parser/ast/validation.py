@@ -1,4 +1,5 @@
 from collections import defaultdict
+from collections.abc import Iterable
 
 from gEconpy.parser.ast import (
     GCNBlock,
@@ -18,9 +19,11 @@ from gEconpy.parser.errors import (
 )
 
 
-def validate_block(block: GCNBlock) -> ErrorCollector:  # noqa: PLR0912
+def validate_block(block: GCNBlock) -> ErrorCollector:
     """
-    Validate a single block for semantic errors.
+    Check one block for duplicate names and for an incomplete optimization problem.
+
+    The duplicate check covers the controls, the shocks, and the calibrated parameters.
 
     Parameters
     ----------
@@ -30,52 +33,22 @@ def validate_block(block: GCNBlock) -> ErrorCollector:  # noqa: PLR0912
     Returns
     -------
     errors : ErrorCollector
-        Collection of validation errors found.
+        Errors for each duplicate found. Controls without an objective, or an objective without constraints, add a
+        warning.
     """
     errors = ErrorCollector()
 
-    # Check for duplicate control variables
-    control_names = [v.name for v in block.controls]
-    seen_controls = set()
-    for name in control_names:
-        if name in seen_controls:
-            errors.add(
-                GCNSemanticError(f"Duplicate control variable '{name}' in block {block.name}", code=ErrorCode.E101)
-            )
-        seen_controls.add(name)
+    for name in _repeated_names(v.name for v in block.controls):
+        errors.add(GCNSemanticError(f"Duplicate control variable '{name}' in block {block.name}", code=ErrorCode.E101))
 
-    # Check for duplicate shock variables
-    shock_names = [v.name for v in block.shocks]
-    seen_shocks = set()
-    for name in shock_names:
-        if name in seen_shocks:
-            errors.add(
-                GCNSemanticError(f"Duplicate shock variable '{name}' in block {block.name}", code=ErrorCode.E101)
-            )
-        seen_shocks.add(name)
+    for name in _repeated_names(v.name for v in block.shocks):
+        errors.add(GCNSemanticError(f"Duplicate shock variable '{name}' in block {block.name}", code=ErrorCode.E101))
 
-    # Check for duplicate calibration parameters
-    calibration_params = set()
-    for item in block.calibration:
-        if isinstance(item, GCNDistribution):
-            param_name = item.parameter_name
-        elif isinstance(item, GCNEquation):
-            if isinstance(item.lhs, Parameter):
-                param_name = item.lhs.name
-            else:
-                continue
-        else:
-            continue
+    for name in _repeated_names(_calibrated_parameter_names(block)):
+        errors.add(
+            GCNSemanticError(f"Duplicate calibration for parameter '{name}' in block {block.name}", code=ErrorCode.E101)
+        )
 
-        if param_name in calibration_params:
-            errors.add(
-                GCNSemanticError(
-                    f"Duplicate calibration for parameter '{param_name}' in block {block.name}", code=ErrorCode.E101
-                )
-            )
-        calibration_params.add(param_name)
-
-    # Check that objective exists if controls exist (optimization problem)
     if block.controls and not block.objective:
         errors.add(
             GCNSemanticError(
@@ -85,7 +58,6 @@ def validate_block(block: GCNBlock) -> ErrorCollector:  # noqa: PLR0912
             )
         )
 
-    # Check that constraints exist if objective exists
     if block.objective and not block.constraints:
         errors.add(
             GCNSemanticError(
@@ -96,9 +68,9 @@ def validate_block(block: GCNBlock) -> ErrorCollector:  # noqa: PLR0912
     return errors
 
 
-def validate_model(model: GCNModel) -> ErrorCollector:  # noqa: PLR0912
+def validate_model(model: GCNModel) -> ErrorCollector:
     """
-    Validate a complete model for semantic errors.
+    Validate every block, then check for duplicate block names and parameters calibrated in more than one block.
 
     Parameters
     ----------
@@ -108,77 +80,35 @@ def validate_model(model: GCNModel) -> ErrorCollector:  # noqa: PLR0912
     Returns
     -------
     errors : ErrorCollector
-        Collection of validation errors found.
+        The errors and warnings from every block, plus the model-level errors.
     """
     errors = ErrorCollector()
 
-    # Validate each block
     for block in model.blocks:
-        block_errors = validate_block(block)
-        for error in block_errors:
+        for error in validate_block(block):
             errors.add(error)
 
-    # Check for duplicate block names
-    block_names = [b.name for b in model.blocks]
-    seen_blocks = set()
-    for name in block_names:
-        if name in seen_blocks:
-            errors.add(GCNSemanticError(f"Duplicate block name: {name}", code=ErrorCode.E100))
-        seen_blocks.add(name)
+    for name in _repeated_names(block.name for block in model.blocks):
+        errors.add(GCNSemanticError(f"Duplicate block name: {name}", code=ErrorCode.E100))
 
-    # Collect all defined variables and parameters across blocks
-    all_defined_vars = set()
-    all_defined_params = set()
-    all_shocks = set()
-
+    defining_blocks: dict[str, list[str]] = defaultdict(list)
     for block in model.blocks:
-        # Controls define variables
-        for var in block.controls:
-            all_defined_vars.add(var.name)
+        for param_name in _calibrated_parameter_names(block):
+            defining_blocks[param_name].append(block.name)
 
-        # Shocks define variables
-        for shock in block.shocks:
-            all_shocks.add(shock.name)
-            all_defined_vars.add(shock.name)
-
-        # LHS of definitions/identities define variables
-        for eq in block.definitions + block.identities:
-            if isinstance(eq.lhs, Variable):
-                all_defined_vars.add(eq.lhs.name)
-
-        # Objective LHS defines a variable
-        for eq in block.objective:
-            if isinstance(eq.lhs, Variable):
-                all_defined_vars.add(eq.lhs.name)
-
-        # Calibration defines parameters
-        for item in block.calibration:
-            if isinstance(item, GCNDistribution):
-                all_defined_params.add(item.parameter_name)
-            elif isinstance(item, GCNEquation) and isinstance(item.lhs, Parameter):
-                all_defined_params.add(item.lhs.name)
-
-    # Check for duplicate parameter definitions across blocks
-    param_definitions = defaultdict(list)
-    for block in model.blocks:
-        for item in block.calibration:
-            if isinstance(item, GCNDistribution):
-                param_definitions[item.parameter_name].append(block.name)
-            elif isinstance(item, GCNEquation) and isinstance(item.lhs, Parameter):
-                param_definitions[item.lhs.name].append(block.name)
-
-    for param_name, blocks in param_definitions.items():
-        if len(blocks) > 1:
+    for param_name, block_names in defining_blocks.items():
+        if len(block_names) > 1:
             errors.add(
                 GCNSemanticError(
-                    f"Parameter '{param_name}' defined in multiple blocks: {', '.join(blocks)}", code=ErrorCode.E101
+                    f"Parameter '{param_name}' defined in multiple blocks: {', '.join(block_names)}",
+                    code=ErrorCode.E101,
                 )
             )
 
     return errors
 
 
-def validate_equation(eq: GCNEquation) -> ErrorCollector:
+def validate_equation(eq: GCNEquation) -> ErrorCollector:  # noqa: ARG001
     """
     Validate a single equation.
 
@@ -190,15 +120,9 @@ def validate_equation(eq: GCNEquation) -> ErrorCollector:
     Returns
     -------
     errors : ErrorCollector
-        Collection of validation errors found.
+        Always empty. A GCNEquation carries no state that the parser can leave inconsistent.
     """
-    errors = ErrorCollector()
-
-    # Check that calibrating equations have a parameter on LHS or RHS
-    if eq.is_calibrating and eq.calibrating_parameter is None:
-        errors.add(GCNSemanticError("Calibrating equation has no calibrating parameter"))
-
-    return errors
+    return ErrorCollector()
 
 
 def check_undefined_variables(
@@ -206,48 +130,34 @@ def check_undefined_variables(
     external_variables: set[str] | None = None,
 ) -> ErrorCollector:
     """
-    Check for variables used but not defined.
+    Warn about variables that appear on the right-hand side of an equation without being defined anywhere.
+
+    A variable is defined when it is a control, a shock, or the left-hand side of a definition, identity, or
+    objective in any block.
 
     Parameters
     ----------
     model : GCNModel
         The model to check.
     external_variables : set of str, optional
-        Set of variable names that are defined externally (e.g., from data).
+        Names of variables defined outside the model, such as from data. Defaults to none.
 
     Returns
     -------
     errors : ErrorCollector
-        Collection of validation errors for undefined variables.
+        One warning per undefined variable, in sorted name order.
     """
     errors = ErrorCollector()
     external = external_variables or set()
 
-    # Collect all defined variables
-    defined_vars = set()
+    defined = set()
+    used = set()
     for block in model.blocks:
-        for var in block.controls:
-            defined_vars.add(var.name)
-        for var in block.shocks:
-            defined_vars.add(var.name)
-        for eq in block.definitions + block.identities:
-            if isinstance(eq.lhs, Variable):
-                defined_vars.add(eq.lhs.name)
-        for eq in block.objective:
-            if isinstance(eq.lhs, Variable):
-                defined_vars.add(eq.lhs.name)
+        defined |= _defined_variable_names(block)
+        for eq in block.definitions + block.objective + block.constraints + block.identities:
+            used |= collect_variable_names(eq.rhs)
 
-    # Collect all used variables
-    used_vars = set()
-    for block in model.blocks:
-        for eq in block.definitions + block.constraints + block.identities:
-            used_vars |= collect_variable_names(eq.rhs)
-        for eq in block.objective:
-            used_vars |= collect_variable_names(eq.rhs)
-
-    # Find undefined
-    undefined = used_vars - defined_vars - external
-    for var in sorted(undefined):
+    for var in sorted(used - defined - external):
         errors.add(GCNSemanticError(f"Variable '{var}' is used but not defined", severity=Severity.WARNING))
 
     return errors
@@ -258,45 +168,32 @@ def check_undefined_parameters(
     external_parameters: set[str] | None = None,
 ) -> ErrorCollector:
     """
-    Check for parameters used but not calibrated.
+    Warn about parameters that appear in an equation without a calibration entry in any block.
 
     Parameters
     ----------
     model : GCNModel
         The model to check.
     external_parameters : set of str, optional
-        Set of parameter names that are defined externally.
+        Names of parameters defined outside the model. Defaults to none.
 
     Returns
     -------
     errors : ErrorCollector
-        Collection of validation errors for undefined parameters.
+        One warning per uncalibrated parameter, in sorted name order.
     """
     errors = ErrorCollector()
     external = external_parameters or set()
 
-    # Collect all calibrated parameters
-    calibrated_params = set()
+    calibrated = set()
+    used = set()
     for block in model.blocks:
-        for item in block.calibration:
-            if isinstance(item, GCNDistribution):
-                calibrated_params.add(item.parameter_name)
-            elif isinstance(item, GCNEquation) and isinstance(item.lhs, Parameter):
-                calibrated_params.add(item.lhs.name)
+        calibrated |= set(_calibrated_parameter_names(block))
+        for eq in block.definitions + block.objective + block.constraints + block.identities:
+            used |= collect_parameter_names(eq.lhs)
+            used |= collect_parameter_names(eq.rhs)
 
-    # Collect all used parameters
-    used_params = set()
-    for block in model.blocks:
-        for eq in block.definitions + block.constraints + block.identities:
-            used_params |= collect_parameter_names(eq.lhs)
-            used_params |= collect_parameter_names(eq.rhs)
-        for eq in block.objective:
-            used_params |= collect_parameter_names(eq.lhs)
-            used_params |= collect_parameter_names(eq.rhs)
-
-    # Find undefined
-    undefined = used_params - calibrated_params - external
-    for param in sorted(undefined):
+    for param in sorted(used - calibrated - external):
         errors.add(GCNSemanticError(f"Parameter '{param}' is used but not calibrated", severity=Severity.WARNING))
 
     return errors
@@ -308,34 +205,58 @@ def full_validation(
     external_parameters: set[str] | None = None,
 ) -> ErrorCollector:
     """
-    Run full validation on a model.
+    Run :func:`validate_model`, :func:`check_undefined_variables`, and :func:`check_undefined_parameters`.
 
     Parameters
     ----------
     model : GCNModel
         The model to validate.
     external_variables : set of str, optional
-        Set of externally defined variable names.
+        Names of variables defined outside the model. Defaults to none.
     external_parameters : set of str, optional
-        Set of externally defined parameter names.
+        Names of parameters defined outside the model. Defaults to none.
 
     Returns
     -------
     errors : ErrorCollector
-        All validation errors and warnings.
+        All errors and warnings from the three checks, in that order.
     """
     errors = ErrorCollector()
 
-    model_errors = validate_model(model)
-    for e in model_errors:
-        errors.add(e)
-
-    var_errors = check_undefined_variables(model, external_variables)
-    for e in var_errors:
-        errors.add(e)
-
-    param_errors = check_undefined_parameters(model, external_parameters)
-    for e in param_errors:
-        errors.add(e)
+    for check_errors in (
+        validate_model(model),
+        check_undefined_variables(model, external_variables),
+        check_undefined_parameters(model, external_parameters),
+    ):
+        for error in check_errors:
+            errors.add(error)
 
     return errors
+
+
+def _repeated_names(names: Iterable[str]) -> list[str]:
+    seen = set()
+    repeated = []
+    for name in names:
+        if name in seen:
+            repeated.append(name)
+        seen.add(name)
+    return repeated
+
+
+def _calibrated_parameter_names(block: GCNBlock) -> list[str]:
+    names = []
+    for item in block.calibration:
+        if isinstance(item, GCNDistribution):
+            names.append(item.parameter_name)
+        elif isinstance(item, GCNEquation) and isinstance(item.lhs, Parameter):
+            names.append(item.lhs.name)
+    return names
+
+
+def _defined_variable_names(block: GCNBlock) -> set[str]:
+    names = {v.name for v in block.controls} | {v.name for v in block.shocks}
+    for eq in block.definitions + block.identities + block.objective:
+        if isinstance(eq.lhs, Variable):
+            names.add(eq.lhs.name)
+    return names

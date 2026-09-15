@@ -5,18 +5,18 @@ from enum import Enum
 @dataclass(frozen=True)
 class ErrorInfo:
     """
-    Information about a specific error code.
+    Catalog entry describing one error code.
 
     Parameters
     ----------
     title : str
-        Short title for the error.
+        One-line title of the error.
     explanation : str
-        Detailed explanation of what the error means.
-    common_causes : tuple of str
-        Common reasons this error occurs.
-    fixes : tuple of str
-        Suggested ways to fix the error.
+        What the error means.
+    common_causes : tuple of str, optional
+        Situations that produce the error. Defaults to an empty tuple.
+    fixes : tuple of str, optional
+        Ways to fix the error. Defaults to an empty tuple.
     """
 
     title: str
@@ -27,13 +27,11 @@ class ErrorInfo:
 
 class ErrorCode(Enum):
     """
-    Parser error codes with associated metadata.
+    Parser error codes, each carrying an :class:`ErrorInfo` catalog entry.
 
-    Each error code has an associated ErrorInfo containing title, explanation, common causes, and suggested fixes.
+    Codes ``E000`` to ``E099`` are grammar errors raised while parsing. Codes ``E100`` to ``E199`` are semantic
+    errors raised during validation. Codes ``W001`` to ``W099`` are warnings.
     """
-
-    # Grammar Errors (E001-E099)
-    # These are syntax/structure errors caught during parsing
 
     E000 = ErrorInfo(
         title="Syntax error",
@@ -281,9 +279,6 @@ class ErrorCode(Enum):
         ),
     )
 
-    # Semantic Errors (E100-E199)
-    # These are meaning/logic errors caught during validation
-
     E100 = ErrorInfo(
         title="Duplicate block name",
         explanation="Each block must have a unique name within the model.",
@@ -333,8 +328,6 @@ class ErrorCode(Enum):
         ),
     )
 
-    # Warnings (W001-W099)
-
     W001 = ErrorInfo(
         title="Unused parameter",
         explanation="A parameter is calibrated but never used in any equation.",
@@ -378,38 +371,17 @@ class ErrorCode(Enum):
 
     @property
     def info(self) -> ErrorInfo:
-        """
-        Look up the catalog entry for this code.
-
-        Returns
-        -------
-        info : ErrorInfo
-            The title, explanation, common causes, and fixes for this code.
-        """
+        """The catalog entry for this code: title, explanation, common causes, and fixes."""
         return self.value
 
     @property
     def title(self) -> str:
-        """
-        Look up the one-line title of this code.
-
-        Returns
-        -------
-        title : str
-            The title.
-        """
+        """The one-line title of this code."""
         return self.value.title
 
     @property
     def explanation(self) -> str:
-        """
-        Look up the prose explanation of this code.
-
-        Returns
-        -------
-        explanation : str
-            The explanation.
-        """
+        """The prose explanation of this code."""
         return self.value.explanation
 
     def format_help(self) -> str:
@@ -440,43 +412,44 @@ class ErrorCode(Enum):
 
 def get_error_info(code: str | ErrorCode) -> ErrorInfo | None:
     """
-    Get error information by code.
+    Look up the catalog entry for an error code.
 
     Parameters
     ----------
     code : str or ErrorCode
-        The error code (e.g., "E001" or ErrorCode.E001).
+        The error code, as a member of :class:`ErrorCode` or its name such as ``"E001"``.
 
     Returns
     -------
     info : ErrorInfo or None
-        The error information, or None if not found.
+        The catalog entry, or None when no code has that name.
     """
-    if isinstance(code, ErrorCode):
-        return code.value
-    try:
-        return ErrorCode[code].value
-    except KeyError:
-        return None
+    error_code = _lookup_code(code)
+    return error_code.value if error_code is not None else None
 
 
 def format_error_help(code: str | ErrorCode) -> str:
     """
-    Format detailed help text for an error code.
+    Render the full catalog entry for an error code as help text.
 
     Parameters
     ----------
     code : str or ErrorCode
-        The error code.
+        The error code, as a member of :class:`ErrorCode` or its name such as ``"E001"``.
 
     Returns
     -------
     help_text : str
-        Formatted help text, or empty string if code not found.
+        The title, explanation, common causes, and fixes, or an empty string when no code has that name.
     """
+    error_code = _lookup_code(code)
+    return error_code.format_help() if error_code is not None else ""
+
+
+def _lookup_code(code: str | ErrorCode) -> ErrorCode | None:
     if isinstance(code, ErrorCode):
-        return code.format_help()
+        return code
     try:
-        return ErrorCode[code].format_help()
+        return ErrorCode[code]
     except KeyError:
-        return ""
+        return None

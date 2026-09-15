@@ -1,4 +1,5 @@
 from difflib import unified_diff
+from pathlib import Path
 
 import pytest
 
@@ -10,77 +11,52 @@ from gEconpy.parser.preprocessor import preprocess
 from tests.conftest import ERROR_GCNS as ERROR_GCNS_DIR
 
 
-def get_error_test_cases():
-    """Generate test cases from .gcn files with matching .expected files."""
-    cases = []
-    for gcn_file in sorted(ERROR_GCNS_DIR.glob("*.gcn")):
-        expected_file = gcn_file.with_suffix(".expected")
-        if expected_file.exists():
-            cases.append((gcn_file.name, gcn_file, expected_file))
-    return cases
+def golden_cases(prefix_filter) -> list[Path]:
+    """Collect the error ``.gcn`` fixtures that have a matching ``.expected`` file and pass the name filter."""
+    return [
+        gcn_file
+        for gcn_file in sorted(ERROR_GCNS_DIR.glob("*.gcn"))
+        if gcn_file.with_suffix(".expected").exists() and prefix_filter(gcn_file.name)
+    ]
 
 
-def get_parse_error_test_cases():
-    """Generate test cases for parse errors (Exxx codes)."""
-    return [(name, gcn, exp) for name, gcn, exp in get_error_test_cases() if not name.startswith("V")]
+PARSE_ERROR_CASES = golden_cases(lambda name: not name.startswith("V"))
+VALIDATION_ERROR_CASES = golden_cases(lambda name: name.startswith("V"))
 
 
-def get_validation_error_test_cases():
-    """Generate test cases for validation errors (Vxxx codes)."""
-    return [(name, gcn, exp) for name, gcn, exp in get_error_test_cases() if name.startswith("V")]
-
-
-@pytest.mark.parametrize(
-    "name,gcn_file,expected_file",
-    get_parse_error_test_cases(),
-    ids=lambda x: x if isinstance(x, str) else None,
-)
-def test_parse_error_output_matches_golden_file(name, gcn_file, expected_file):
-    """Test that parse errors (Exxx) match expected output."""
+@pytest.mark.parametrize("gcn_file", PARSE_ERROR_CASES, ids=lambda path: path.name)
+def test_parse_error_output_matches_golden_file(gcn_file):
     content = gcn_file.read_text(encoding="utf-8")
     formatter = ErrorFormatter(use_color=False)
 
     with pytest.raises(GCNParseError) as exc_info:
         preprocess(content, validate=True, filename=gcn_file.name)
 
-    actual_output = formatter.format_error(exc_info.value, content)
-    expected_output = expected_file.read_text(encoding="utf-8").rstrip("\n")
-
-    if actual_output != expected_output:
-        _print_diff(actual_output, expected_output, name)
+    assert_matches_golden(formatter.format_error(exc_info.value, content), gcn_file)
 
 
-@pytest.mark.parametrize(
-    "name,gcn_file,expected_file",
-    get_validation_error_test_cases(),
-    ids=lambda x: x if isinstance(x, str) else None,
-)
-def test_validation_error_output_matches_golden_file(name, gcn_file, expected_file):
-    """Test that validation errors (Vxxx) match expected output."""
+@pytest.mark.parametrize("gcn_file", VALIDATION_ERROR_CASES, ids=lambda path: path.name)
+def test_validation_error_output_matches_golden_file(gcn_file):
     with pytest.raises(GCNValidationError) as exc_info:
         load_gcn_file(str(gcn_file))
 
-    actual_output = str(exc_info.value)
-    expected_output = expected_file.read_text(encoding="utf-8").rstrip("\n")
-
-    if actual_output != expected_output:
-        _print_diff(actual_output, expected_output, name)
+    assert_matches_golden(str(exc_info.value), gcn_file)
 
 
-def _print_diff(actual_output: str, expected_output: str, name: str):
-    """Print a colored diff and raise AssertionError."""
-    actual_lines = actual_output.splitlines()
-    expected_lines = expected_output.splitlines()
+def assert_matches_golden(actual_output: str, gcn_file: Path) -> None:
+    expected_output = gcn_file.with_suffix(".expected").read_text(encoding="utf-8").rstrip("\n")
+    if actual_output == expected_output:
+        return
 
-    diff = unified_diff(actual_lines, expected_lines)
-    for line in diff:
+    for line in unified_diff(actual_output.splitlines(), expected_output.splitlines()):
         if line.startswith("-"):
             print(f"\033[31m{line}\033[0m")
         elif line.startswith("+"):
             print(f"\033[32m{line}\033[0m")
         else:
             print(line)
+
     raise AssertionError(
-        f"Error output for {name} doesn't match expected.\n"
-        f"To update expected file, run: python scripts/regenerate_expected_gcn_errors.py"
+        f"Error output for {gcn_file.name} does not match {gcn_file.with_suffix('.expected').name}. "
+        "To regenerate the expected files, run: python scripts/regenerate_expected_gcn_errors.py"
     )

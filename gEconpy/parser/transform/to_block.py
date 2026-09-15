@@ -1,4 +1,6 @@
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import cast
 
 import sympy as sp
 
@@ -9,240 +11,15 @@ from gEconpy.parser.ast import (
     GCNDistribution,
     GCNEquation,
     GCNModel,
+    Parameter,
     Tag,
+    Variable,
 )
+from gEconpy.parser.errors import ParseLocation
 from gEconpy.parser.transform.expand_time_indices import expand_block_time_indices
-from gEconpy.parser.transform.to_sympy import ast_to_sympy, merge_assumptions
+from gEconpy.parser.transform.to_sympy import ASTToSympyConverter, ast_to_sympy, merge_assumptions
 
-
-def _equation_to_sympy(
-    eq: GCNEquation,
-    assumptions: dict[str, dict[str, bool]] | None = None,
-) -> sp.Eq:
-    """Convert a GCNEquation AST to a sympy equation."""
-    assumptions = assumptions or {}
-    lhs = ast_to_sympy(eq.lhs, assumptions)
-    rhs = ast_to_sympy(eq.rhs, assumptions)
-
-    # For calibrating equations with `-> param`, rewrite as `Eq(param, rhs - lhs)`
-    # This matches what Block._get_param_dict_and_calibrating_equations expects
-    if eq.calibrating_parameter:
-        param_assumptions = merge_assumptions(assumptions.get(eq.calibrating_parameter))
-        param = sp.Symbol(eq.calibrating_parameter, **param_assumptions)
-        # The calibrating equation form is: original_lhs = original_rhs -> param
-        # Block expects: param = original_rhs - original_lhs (as equation to solve)
-        # Actually, Block stores param -> original_rhs in calib_dict where original_rhs is derived from solving
-        # original_lhs = original_rhs for param. For now, just put param on LHS and the RHS expression
-        return sp.Eq(param, rhs - lhs)
-
-    return sp.Eq(lhs, rhs)
-
-
-def _variable_to_sympy(
-    var,
-    assumptions: dict[str, dict[str, bool]] | None = None,
-) -> TimeAwareSymbol:
-    """Convert a Variable AST to TimeAwareSymbol."""
-    assumptions = assumptions or {}
-    return ast_to_sympy(var, assumptions)
-
-
-def _extract_flags(eq: GCNEquation) -> dict[str, bool]:
-    """Extract equation flags from a GCNEquation."""
-    flags = {}
-    if eq.has_tag(Tag.EXCLUDE):
-        flags["exclude"] = True
-    if eq.has_tag(Tag.MINIMIZE):
-        flags["minimize"] = True
-    if eq.has_tag(Tag.MAXIMIZE):
-        flags["maximize"] = True
-    if eq.calibrating_parameter:
-        flags["is_calibrating"] = True
-    else:
-        flags["is_calibrating"] = False
-    return flags
-
-
-def _extract_multiplier(
-    eq: GCNEquation,
-    assumptions: dict[str, dict[str, bool]] | None = None,
-) -> TimeAwareSymbol | None:
-    """Extract Lagrange multiplier from a GCNEquation."""
-    if not eq.lagrange_multiplier:
-        return None
-    assumptions = assumptions or {}
-    name = eq.lagrange_multiplier
-    var_assumptions = merge_assumptions(assumptions.get(name))
-    return TimeAwareSymbol(name, 0, **var_assumptions)
-
-
-def _convert_equation_list(
-    equations: list[GCNEquation],
-    assumptions: dict,
-    eq_num: int,
-    equation_flags: dict,
-    multipliers: dict,
-) -> tuple[dict[int, sp.Eq], int]:
-    """Convert a list of GCNEquations to a dict of sympy equations."""
-    result = {}
-    for eq in equations:
-        result[eq_num] = _equation_to_sympy(eq, assumptions)
-        equation_flags[eq_num] = _extract_flags(eq)
-        multipliers[eq_num] = _extract_multiplier(eq, assumptions)
-        eq_num += 1
-    return result, eq_num
-
-
-def ast_block_to_block(
-    ast_block: GCNBlock,
-    assumptions: dict[str, dict[str, bool]] | None = None,
-    source: str | None = None,
-    ss_solution_dict=None,
-) -> Block:
-    """
-    Convert a GCNBlock AST directly to a Block objec.
-
-    Parameters
-    ----------
-    ast_block : GCNBlock
-        The AST block to convert.
-    assumptions : dict, optional
-        Variable assumptions for sympy symbols.
-    source : str, optional
-        The source code of the GCN file, for rich error reporting.
-    ss_solution_dict : SymbolDictionary, optional
-        Analytically known steady-state solutions. Forwarded to Block for
-        resolving calibration expressions that reference steady-state variables.
-
-    Returns
-    -------
-    block : Block
-        A Block object ready for solve_optimization().
-    """
-    assumptions = assumptions or defaultdict(dict)
-
-    eq_num = 0
-    equation_flags: dict[int, dict[str, bool]] = {}
-    multipliers: dict[int, TimeAwareSymbol | None] = {}
-
-    controls = [_variable_to_sympy(v, assumptions) for v in ast_block.controls] if ast_block.controls else None
-    shocks = [_variable_to_sympy(v, assumptions) for v in ast_block.shocks] if ast_block.shocks else None
-
-    # Extract symbol locations for rich error reporting. This maps symbol names to their ParseLocation from the AST
-    symbol_locations = {}
-    if ast_block.controls:
-        for var in ast_block.controls:
-            if var.location is not None:
-                symbol_locations[var.name] = var.location
-    if ast_block.shocks:
-        for var in ast_block.shocks:
-            if var.location is not None:
-                symbol_locations[var.name] = var.location
-
-    definitions = None
-    if ast_block.definitions:
-        definitions, eq_num = _convert_equation_list(
-            ast_block.definitions, assumptions, eq_num, equation_flags, multipliers
-        )
-
-    objective = None
-    if ast_block.objective:
-        objective, eq_num = _convert_equation_list(
-            ast_block.objective, assumptions, eq_num, equation_flags, multipliers
-        )
-
-    constraints = None
-    if ast_block.constraints:
-        constraints, eq_num = _convert_equation_list(
-            ast_block.constraints, assumptions, eq_num, equation_flags, multipliers
-        )
-
-    identities = None
-    if ast_block.identities:
-        identities, eq_num = _convert_equation_list(
-            ast_block.identities, assumptions, eq_num, equation_flags, multipliers
-        )
-
-    calibration, eq_num, param_locations = _convert_calibration(
-        ast_block.calibration, assumptions, eq_num, equation_flags, multipliers
-    )
-
-    # Merge parameter locations into symbol_locations
-    symbol_locations.update(param_locations)
-
-    return dispatch_block(
-        name=ast_block.name,
-        definitions=definitions,
-        controls=controls,
-        objective=objective,
-        constraints=constraints,
-        identities=identities,
-        calibration=calibration,
-        shocks=shocks,
-        multipliers=multipliers,
-        equation_flags=equation_flags,
-        source=source,
-        symbol_locations=symbol_locations,
-        ss_solution_dict=ss_solution_dict,
-    )
-
-
-def _convert_calibration(
-    calibration_items: list,
-    assumptions: dict,
-    eq_num: int,
-    equation_flags: dict,
-    multipliers: dict,
-) -> tuple[dict[int, sp.Eq] | None, int, dict]:
-    """
-    Convert calibration items (equations and distributions) to sympy equations.
-
-    Returns
-    -------
-    calibration : dict or None
-        Dictionary of calibration equations.
-    eq_num : int
-        Updated equation number counter.
-    param_locations : dict
-        Dictionary mapping parameter names to their ParseLocation.
-    """
-    calib_items = []
-    param_locations = {}
-
-    for item in calibration_items:
-        if isinstance(item, GCNEquation):
-            calib_items.append((item, _equation_to_sympy(item, assumptions)))
-            # For calibrating equations with ->, use the calibrating_parameter name
-            if item.calibrating_parameter and item.location is not None:
-                param_locations[item.calibrating_parameter] = item.location
-            # For simple param = value equations, extract from LHS
-            elif hasattr(item.lhs, "name") and item.location is not None:
-                param_locations[item.lhs.name] = item.location
-        elif isinstance(item, GCNDistribution):
-            if item.initial_value is not None:
-                param_assumptions = merge_assumptions(assumptions.get(item.parameter_name))
-                param = sp.Symbol(item.parameter_name, **param_assumptions)
-                value = sp.Float(item.initial_value)
-                calib_items.append((None, sp.Eq(param, value)))
-            # Store location for distribution parameters
-            if item.location is not None:
-                param_locations[item.parameter_name] = item.location
-
-    if not calib_items:
-        return None, eq_num, param_locations
-
-    calibration = {}
-    for ast_eq, sympy_eq in calib_items:
-        calibration[eq_num] = sympy_eq
-        if ast_eq is not None:
-            equation_flags[eq_num] = _extract_flags(ast_eq)
-            multipliers[eq_num] = _extract_multiplier(ast_eq, assumptions)
-        else:
-            equation_flags[eq_num] = {"is_calibrating": False}
-            multipliers[eq_num] = None
-        eq_num += 1
-
-    return calibration, eq_num, param_locations
+EQUATION_COMPONENTS = ("definitions", "objective", "constraints", "identities", "calibration")
 
 
 def ast_model_to_block_dict(
@@ -253,45 +30,211 @@ def ast_model_to_block_dict(
     ss_solution_dict=None,
 ) -> dict[str, Block]:
     """
-    Convert a GCNModel AST to a dictionary of Block objects.
+    Convert every block of a model AST to a solved :class:`~gEconpy.model.block.basic.Block`.
 
-    This creates Block objects directly from the AST using Block, then calls solve_optimization() on each block.
+    Each block has its deep time indices expanded with :func:`expand_block_time_indices`, is converted with
+    :func:`ast_block_to_block`, and then has its optimization problem solved. The steady-state block is skipped.
 
     Parameters
     ----------
     model : GCNModel
         The parsed model AST.
-    assumptions : dict, optional
-        Variable/parameter assumptions. If None, uses model.assumptions.
+    assumptions : dict mapping str to dict, optional
+        SymPy assumptions per variable or parameter name. Defaults to the assumptions declared in the model.
     simplify_blocks : bool, optional
-        Whether to simplify block equations during optimization.
+        Whether to simplify the equations of each block while solving its optimization problem. Defaults to False.
     source : str, optional
-        The source code of the GCN file, for rich error reporting.
+        The GCN source text, used to point error messages at the offending line. Defaults to None.
     ss_solution_dict : SymbolDictionary, optional
-        Analytically known steady-state solutions. Used to resolve calibration
-        expressions that reference steady-state variables.
+        Analytically known steady-state values, used to resolve calibration expressions that reference
+        steady-state variables. Defaults to None.
 
     Returns
     -------
-    block_dict : dict, str to Block
-        Dictionary mapping block names to Block objects.
+    block_dict : dict mapping str to Block
+        The solved blocks, keyed by block name.
     """
     if assumptions is None:
         assumptions = defaultdict(dict, model.assumptions or {})
 
     block_dict = {}
-
     for ast_block in model.blocks:
-        # Skip STEADY_STATE blocks (handled separately)
-        block_name_upper = ast_block.name.upper().replace("_", "")
-        if block_name_upper in ("STEADYSTATE", "SS"):
+        if _is_steady_state_block(ast_block):
             continue
 
         expanded_block = expand_block_time_indices(ast_block)
-
         block = ast_block_to_block(expanded_block, assumptions, source=source, ss_solution_dict=ss_solution_dict)
-
         block.solve_optimization(try_simplify=simplify_blocks)
         block_dict[block.name] = block
 
     return block_dict
+
+
+def ast_block_to_block(
+    ast_block: GCNBlock,
+    assumptions: dict[str, dict[str, bool]] | None = None,
+    source: str | None = None,
+    ss_solution_dict=None,
+) -> Block:
+    """
+    Convert a block AST to a :class:`~gEconpy.model.block.basic.Block`.
+
+    Equations are numbered consecutively across the definitions, objective, constraints, identities, and
+    calibration components, in that order.
+
+    Parameters
+    ----------
+    ast_block : GCNBlock
+        The block AST to convert.
+    assumptions : dict mapping str to dict, optional
+        SymPy assumptions per variable or parameter name. Defaults to no assumptions.
+    source : str, optional
+        The GCN source text, used to point error messages at the offending line. Defaults to None.
+    ss_solution_dict : SymbolDictionary, optional
+        Analytically known steady-state values, forwarded to the block for resolving calibration expressions that
+        reference steady-state variables. Defaults to None.
+
+    Returns
+    -------
+    block : Block
+        A block ready for ``solve_optimization()``.
+    """
+    assumptions = assumptions or defaultdict(dict)
+
+    converted = {
+        "definitions": [_convert_equation(eq, assumptions) for eq in ast_block.definitions],
+        "objective": [_convert_equation(eq, assumptions) for eq in ast_block.objective],
+        "constraints": [_convert_equation(eq, assumptions) for eq in ast_block.constraints],
+        "identities": [_convert_equation(eq, assumptions) for eq in ast_block.identities],
+        "calibration": _convert_calibration(ast_block.calibration, assumptions),
+    }
+
+    components: dict[str, dict[int, sp.Eq] | None] = {}
+    equation_flags: dict[int, dict[str, bool]] = {}
+    multipliers: dict[int, TimeAwareSymbol | None] = {}
+    eq_num = 0
+    for name in EQUATION_COMPONENTS:
+        equations = converted[name]
+        if not equations:
+            components[name] = None
+            continue
+
+        numbered: dict[int, sp.Eq] = {}
+        for item in equations:
+            numbered[eq_num] = item.equation
+            equation_flags[eq_num] = item.flags
+            multipliers[eq_num] = item.multiplier
+            eq_num += 1
+        components[name] = numbered
+
+    symbol_locations = {
+        var.name: var.location for var in [*ast_block.controls, *ast_block.shocks] if var.location is not None
+    }
+    symbol_locations.update(_calibration_locations(ast_block.calibration))
+
+    return dispatch_block(
+        name=ast_block.name,
+        controls=[_variable_to_symbol(v, assumptions) for v in ast_block.controls] or None,
+        shocks=[_variable_to_symbol(v, assumptions) for v in ast_block.shocks] or None,
+        multipliers=multipliers,
+        equation_flags=equation_flags,
+        source=source,
+        symbol_locations=symbol_locations,
+        ss_solution_dict=ss_solution_dict,
+        **components,
+    )
+
+
+@dataclass(frozen=True)
+class _ConvertedEquation:
+    equation: sp.Eq
+    flags: dict[str, bool]
+    multiplier: TimeAwareSymbol | None
+
+
+def _variable_to_symbol(var: Variable, assumptions: dict[str, dict[str, bool]]) -> TimeAwareSymbol:
+    return cast(TimeAwareSymbol, ast_to_sympy(var, assumptions))
+
+
+def _is_steady_state_block(block: GCNBlock) -> bool:
+    return block.name.upper().replace("_", "") in ("STEADYSTATE", "SS")
+
+
+def _convert_equation(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) -> _ConvertedEquation:
+    return _ConvertedEquation(
+        equation=_equation_to_sympy(eq, assumptions),
+        flags=_extract_flags(eq),
+        multiplier=_extract_multiplier(eq, assumptions),
+    )
+
+
+def _equation_to_sympy(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) -> sp.Eq:
+    converter = ASTToSympyConverter(assumptions)
+    lhs = converter.convert_expr(eq.lhs)
+    rhs = converter.convert_expr(eq.rhs)
+
+    # The block reads a calibrating equation as ``param = residual``, so ``lhs = rhs -> param`` is stored with the
+    # parameter on the left and the residual ``rhs - lhs`` on the right.
+    if eq.calibrating_parameter:
+        param_assumptions = merge_assumptions(assumptions.get(eq.calibrating_parameter))
+        param = sp.Symbol(eq.calibrating_parameter, **param_assumptions)
+        return cast(sp.Eq, sp.Eq(param, rhs - lhs))
+
+    return cast(sp.Eq, sp.Eq(lhs, rhs))
+
+
+def _extract_flags(eq: GCNEquation) -> dict[str, bool]:
+    flags = {}
+    if eq.has_tag(Tag.EXCLUDE):
+        flags["exclude"] = True
+    if eq.has_tag(Tag.MINIMIZE):
+        flags["minimize"] = True
+    if eq.has_tag(Tag.MAXIMIZE):
+        flags["maximize"] = True
+    flags["is_calibrating"] = bool(eq.calibrating_parameter)
+    return flags
+
+
+def _extract_multiplier(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) -> TimeAwareSymbol | None:
+    if not eq.lagrange_multiplier:
+        return None
+    var_assumptions = merge_assumptions(assumptions.get(eq.lagrange_multiplier))
+    return TimeAwareSymbol(eq.lagrange_multiplier, 0, **var_assumptions)
+
+
+def _convert_calibration(
+    calibration_items: list[GCNEquation | GCNDistribution],
+    assumptions: dict[str, dict[str, bool]],
+) -> list[_ConvertedEquation]:
+    # A distribution declaration contributes an equation only when it carries an initial value.
+    converted = []
+    for item in calibration_items:
+        if isinstance(item, GCNEquation):
+            converted.append(_convert_equation(item, assumptions))
+        elif item.initial_value is not None:
+            param_assumptions = merge_assumptions(assumptions.get(item.parameter_name))
+            param = sp.Symbol(item.parameter_name, **param_assumptions)
+            converted.append(
+                _ConvertedEquation(
+                    equation=cast(sp.Eq, sp.Eq(param, sp.Float(item.initial_value))),
+                    flags={"is_calibrating": False},
+                    multiplier=None,
+                )
+            )
+    return converted
+
+
+def _calibration_locations(
+    calibration_items: list[GCNEquation | GCNDistribution],
+) -> dict[str, ParseLocation]:
+    locations = {}
+    for item in calibration_items:
+        if item.location is None:
+            continue
+        if isinstance(item, GCNDistribution):
+            locations[item.parameter_name] = item.location
+        elif item.calibrating_parameter:
+            locations[item.calibrating_parameter] = item.location
+        elif isinstance(item.lhs, Parameter | Variable):
+            locations[item.lhs.name] = item.location
+    return locations

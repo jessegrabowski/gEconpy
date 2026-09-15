@@ -5,69 +5,61 @@ import preliz as pz
 from preliz.distributions.distributions import Distribution
 
 from gEconpy.exceptions import InvalidDistributionException
-from gEconpy.parser.ast import GCNDistribution, GCNModel
+from gEconpy.parser.ast import GCNDistribution, GCNEquation, GCNModel
 from gEconpy.parser.constants import PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
 
 
 def ast_to_distribution(node: GCNDistribution) -> Distribution:
     """
-    Convert a GCNDistribution AST node to a PreliZ distribution.
+    Build the PreliZ distribution declared by an AST node, applying its wrapper if it has one.
 
     Parameters
     ----------
     node : GCNDistribution
-        The distribution AST node to convert.
+        The distribution declaration to convert.
 
     Returns
     -------
     dist : Distribution
-        A PreliZ distribution object.
+        The PreliZ distribution.
     """
-    dist_name = node.dist_name
-    dist_kwargs = dict(node.dist_kwargs)
-
-    if dist_name not in PRELIZ_DISTS:
+    if node.dist_name not in PRELIZ_DISTS:
         raise InvalidDistributionException(node.parameter_name, str(node))
 
-    # Create the base distribution
-    dist = getattr(pz, dist_name)(**dist_kwargs)
+    dist = getattr(pz, node.dist_name)(**node.dist_kwargs)
 
-    # Apply wrapper if present
-    wrapper_name = node.wrapper_name
-    if wrapper_name is not None:
-        if wrapper_name not in PRELIZ_DIST_WRAPPERS:
-            raise ValueError(
-                f"Unknown distribution wrapper {wrapper_name}. Valid wrappers are: {', '.join(PRELIZ_DIST_WRAPPERS)}"
-            )
+    if node.wrapper_name is None:
+        return dist
 
-        wrapper_kwargs = dict(node.wrapper_kwargs)
-        if wrapper_name == "maxent":
-            wrapper_kwargs["plot"] = False
+    if node.wrapper_name not in PRELIZ_DIST_WRAPPERS:
+        raise ValueError(
+            f"Unknown distribution wrapper {node.wrapper_name}. Valid wrappers are: {', '.join(PRELIZ_DIST_WRAPPERS)}"
+        )
 
-        dist = getattr(pz, wrapper_name)(dist, **wrapper_kwargs)
+    wrapper_kwargs = dict(node.wrapper_kwargs)
+    if node.wrapper_name == "maxent":
+        wrapper_kwargs["plot"] = False
 
-    return dist
+    return getattr(pz, node.wrapper_name)(dist, **wrapper_kwargs)
 
 
 def ast_to_distribution_with_metadata(
     node: GCNDistribution,
 ) -> tuple[Distribution, dict[str, Any]]:
     """
-    Convert a GCNDistribution AST node to a PreliZ distribution with metadata.
+    Build the PreliZ distribution declared by an AST node, together with the declaration's metadata.
 
     Parameters
     ----------
     node : GCNDistribution
-        The distribution AST node to convert.
+        The distribution declaration to convert.
 
     Returns
     -------
-    result : tuple of (Distribution, dict)
-        The distribution and a metadata dictionary containing:
-        - parameter_name: str
-        - initial_value: float | None
-        - is_wrapped: bool
-        - wrapper_name: str | None
+    dist : Distribution
+        The PreliZ distribution.
+    metadata : dict
+        The keys ``parameter_name``, ``initial_value``, ``is_wrapped``, and ``wrapper_name``, copied from the node.
     """
     dist = ast_to_distribution(node)
 
@@ -82,50 +74,44 @@ def ast_to_distribution_with_metadata(
 
 
 def distributions_from_calibration(
-    calibration_items: list,
+    calibration_items: list[GCNEquation | GCNDistribution],
 ) -> dict[str, tuple[Distribution, dict[str, Any]]]:
     """
-    Extract distributions from a block's calibration list.
+    Convert the distribution declarations in a block's calibration list, skipping the equations.
 
     Parameters
     ----------
-    calibration_items : list
-        The calibration list from a GCNBlock, which may contain both
-        GCNEquation and GCNDistribution nodes.
+    calibration_items : list of GCNEquation or GCNDistribution
+        The calibration list of a :class:`~gEconpy.parser.ast.GCNBlock`.
 
     Returns
     -------
-    distributions : dict, str to (Distribution, dict) tuple
-        Dictionary mapping parameter names to (distribution, metadata) tuples.
+    distributions : dict mapping str to tuple
+        For each declared parameter name, the pair returned by :func:`ast_to_distribution_with_metadata`.
     """
-    result = {}
-
-    for item in calibration_items:
-        if isinstance(item, GCNDistribution):
-            dist, metadata = ast_to_distribution_with_metadata(item)
-            result[item.parameter_name] = (dist, metadata)
-
-    return result
+    return {
+        item.parameter_name: ast_to_distribution_with_metadata(item)
+        for item in calibration_items
+        if isinstance(item, GCNDistribution)
+    }
 
 
 def distributions_from_model(model: GCNModel) -> dict[str, tuple[Distribution, dict[str, Any]]]:
     """
-    Extract all distributions from a GCNModel.
+    Convert every distribution declaration in a model.
 
     Parameters
     ----------
     model : GCNModel
-        The model to extract distributions from.
+        The model whose blocks hold the declarations.
 
     Returns
     -------
-    distributions : dict, str to (Distribution, dict) tuple
-        Dictionary mapping parameter names to (distribution, metadata) tuples.
+    distributions : dict mapping str to tuple
+        For each declared parameter name, the pair returned by :func:`ast_to_distribution_with_metadata`. A name
+        declared in several blocks keeps the last declaration.
     """
-    result = {}
-
+    distributions = {}
     for block in model.blocks:
-        block_dists = distributions_from_calibration(block.calibration)
-        result.update(block_dists)
-
-    return result
+        distributions.update(distributions_from_calibration(block.calibration))
+    return distributions

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from gEconpy.parser.ast import GCNModel
+from gEconpy.parser.ast import GCNBlock, GCNModel
 from gEconpy.parser.ast.validation import full_validation
 from gEconpy.parser.errors import ErrorCollector
 from gEconpy.parser.grammar.gcn_file import parse_gcn
@@ -11,9 +11,16 @@ from gEconpy.parser.transform.to_sympy import model_to_sympy
 
 class ParseResult:
     """
-    Result of parsing a GCN file.
+    A parsed GCN file: its AST, source text, and lazily computed validation results and SymPy conversions.
 
-    Contains the AST, validation errors/warnings, and converted sympy equations.
+    Parameters
+    ----------
+    ast : GCNModel
+        The parsed model.
+    source : str
+        The GCN source text the AST was parsed from.
+    filename : str, optional
+        The file the source came from, reported in error messages. Defaults to None.
     """
 
     def __init__(
@@ -26,24 +33,24 @@ class ParseResult:
         self.source = source
         self.filename = filename
         self._validation_errors: ErrorCollector | None = None
-        self._sympy_equations: dict | None = None
-        self._distributions: dict | None = None
+        self._sympy_equations: dict[str, dict[str, list]] | None = None
+        self._distributions: dict[str, tuple[Any, dict]] | None = None
 
     @property
     def validation_errors(self) -> ErrorCollector:
-        """Return the ErrorCollector holding the validation errors and warnings, running validation on first use."""
+        """The validation errors and warnings, computed on first access."""
         if self._validation_errors is None:
             self._validation_errors = full_validation(self.ast)
         return self._validation_errors
 
     @property
     def has_errors(self) -> bool:
-        """Return True if validation found at least one error-level issue. Warnings alone give False."""
+        """True if validation found at least one error-level issue. Warnings alone give False."""
         return self.validation_errors.has_errors
 
     @property
     def sympy_equations(self) -> dict[str, dict[str, list]]:
-        """Return the model equations as sympy expressions, grouped by block and component, converting on first use."""
+        """The model equations as SymPy expressions, grouped by block and component, computed on first access."""
         if self._sympy_equations is None:
             self._sympy_equations = model_to_sympy(self.ast)
         return self._sympy_equations
@@ -51,7 +58,7 @@ class ParseResult:
     @property
     def distributions(self) -> dict[str, tuple[Any, dict]]:
         """
-        Return the prior and shock distributions declared in the model, extracting them on first use.
+        The prior and shock distributions declared in the model, computed on first access.
 
         Returns
         -------
@@ -63,33 +70,33 @@ class ParseResult:
         return self._distributions
 
     @property
-    def blocks(self):
-        """Return the list of GCNBlock objects parsed from the file."""
+    def blocks(self) -> list[GCNBlock]:
+        """The parsed blocks, in source order."""
         return self.ast.blocks
 
     @property
-    def options(self):
-        """Return the contents of the ``options`` block, as a dictionary."""
+    def options(self) -> dict[str, str | bool]:
+        """The entries of the ``options`` block."""
         return self.ast.options
 
     @property
-    def tryreduce(self):
-        """Return the variable names listed in the ``tryreduce`` block, as a list of strings."""
+    def tryreduce(self) -> list[str]:
+        """The variable names listed in the ``tryreduce`` block."""
         return self.ast.tryreduce
 
     @property
-    def assumptions(self):
-        """Return the sympy assumptions declared for each variable, as a nested dictionary."""
+    def assumptions(self) -> dict[str, dict[str, bool]]:
+        """The SymPy assumptions declared per symbol name."""
         return self.ast.assumptions
 
     def validate(self, raise_on_error: bool = True) -> ErrorCollector:
         """
-        Run validation and optionally raise on errors.
+        Run validation, raising the first error-level issue when asked to.
 
         Parameters
         ----------
         raise_on_error : bool, optional
-            If True, raise the first error-level issue found. Defaults to True.
+            Raise the first error-level issue found. Defaults to True.
 
         Returns
         -------
@@ -108,33 +115,24 @@ def preprocess(
     validate: bool = True,
 ) -> ParseResult:
     """
-    Parse and preprocess a GCN source string.
+    Parse GCN source text into an AST and, when asked to, validate it.
 
-    This is the main entry point for parsing GCN files. It handles:
-    - Parsing via pyparsing grammar
-    - AST construction
-    - Optional validation
+    Grammar errors raise :class:`~gEconpy.parser.errors.GCNGrammarError`. Validation collects semantic errors on the
+    result without raising, so that callers can report all of them at once.
 
     Parameters
     ----------
     source : str
         The GCN source text to parse.
     filename : str, optional
-        Filename to report in error messages. Defaults to no filename.
+        Filename to report in error messages. Defaults to None.
     validate : bool, optional
-        If True, run validation after parsing. Defaults to True.
+        Run validation after parsing. Defaults to True.
 
     Returns
     -------
     result : ParseResult
-        The parsing result containing AST and metadata.
-
-    Raises
-    ------
-    GCNGrammarError
-        If there are syntax errors in the source.
-    GCNSemanticError
-        If validate=True and there are semantic errors.
+        The parsed model with its source and validation results.
     """
     ast = parse_gcn(source, filename=filename or "<string>")
     result = ParseResult(ast=ast, source=source, filename=filename)
@@ -150,19 +148,19 @@ def preprocess_file(
     validate: bool = True,
 ) -> ParseResult:
     """
-    Parse and preprocess a GCN file.
+    Read a GCN file and parse it with :func:`preprocess`.
 
     Parameters
     ----------
     filepath : str or Path
         Path to the GCN file.
     validate : bool, optional
-        If True, run validation after parsing. Defaults to True.
+        Run validation after parsing. Defaults to True.
 
     Returns
     -------
     result : ParseResult
-        The parsing result containing AST and metadata.
+        The parsed model with its source and validation results.
     """
     filepath = Path(filepath)
     content = filepath.read_text(encoding="utf-8")
@@ -171,10 +169,7 @@ def preprocess_file(
 
 def quick_parse(source: str) -> GCNModel:
     """
-    Parse a GCN source string and return just the AST.
-
-    This is a convenience function for when you just need the AST
-    without validation or metadata.
+    Parse GCN source text and return only the AST, skipping validation.
 
     Parameters
     ----------

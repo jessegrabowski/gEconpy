@@ -14,34 +14,6 @@ from gEconpy.parser.grammar.tokens import (
 MODEL_BLOCK = KW_BLOCK.suppress() - IDENTIFIER("name") - LBRACE - pp.ZeroOrMore(COMPONENT)("components") - RBRACE - SEMI
 
 
-def _build_block(tokens) -> GCNBlock:
-    block = GCNBlock(name=tokens.name)
-
-    for comp_name, content in tokens.components:
-        if comp_name == "definitions":
-            block.definitions = content
-        elif comp_name == "controls":
-            block.controls = content
-        elif comp_name == "objective":
-            block.objective = content
-        elif comp_name == "constraints":
-            block.constraints = content
-        elif comp_name == "identities":
-            block.identities = content
-        elif comp_name == "shocks":
-            variables, distributions = content
-            block.shocks = variables
-            block.shock_distributions = distributions
-        elif comp_name == "calibration":
-            block.calibration = content
-
-    return block
-
-
-MODEL_BLOCK.set_parse_action(_build_block)
-MODEL_BLOCK.ignore(COMMENT)
-
-
 def parse_block(name: str, content: str) -> GCNBlock:
     """
     Parse the body of a block, given the block name separately.
@@ -58,9 +30,7 @@ def parse_block(name: str, content: str) -> GCNBlock:
     block : GCNBlock
         The parsed block.
     """
-    text = f"block {name} {{ {content} }}"
-    result = MODEL_BLOCK.parse_string(text, parse_all=True)
-    return result[0]
+    return parse_block_from_text(f"block {name} {{ {content} }}")
 
 
 def parse_block_from_text(text: str) -> GCNBlock:
@@ -77,8 +47,23 @@ def parse_block_from_text(text: str) -> GCNBlock:
     block : GCNBlock
         The parsed block.
     """
-    result = MODEL_BLOCK.parse_string(text, parse_all=True)
-    return result[0]
+    return MODEL_BLOCK.parse_string(text, parse_all=True)[0]
+
+
+def _build_block(tokens: pp.ParseResults) -> GCNBlock:
+    block = GCNBlock(name=tokens.name)
+
+    for component_name, content in tokens.components:
+        if component_name == "shocks":
+            block.shocks, block.shock_distributions = content
+        else:
+            setattr(block, component_name, content)
+
+    return block
+
+
+MODEL_BLOCK.set_parse_action(_build_block)
+MODEL_BLOCK.ignore(COMMENT)
 
 
 __all__ = [
