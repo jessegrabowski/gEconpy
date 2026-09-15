@@ -2,12 +2,13 @@ import contextlib
 import re
 
 from collections import defaultdict
+from typing import Any
 
 import pyparsing as pp
 
 from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
 from gEconpy.parser.ast import Variable
-from gEconpy.parser.constants import GCN_ASSUMPTIONS
+from gEconpy.parser.constants import GCN_ASSUMPTIONS, KNOWN_ASSUMPTIONS
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNParseFailure
 from gEconpy.parser.grammar.statements import VARIABLE_LIST, VARIABLE_REF
@@ -120,7 +121,7 @@ def remove_special_block(text: str, block_name: str) -> str:
     return _special_block_pattern(block_name).sub("", text)
 
 
-def _first_match(block: pp.ParserElement, text: str, default):
+def _first_match[DefaultT](block: pp.ParserElement, text: str, default: DefaultT) -> Any | DefaultT:
     with contextlib.suppress(pp.ParseException):
         for result, _start, _end in block.scan_string(text):
             return result[0]
@@ -147,7 +148,6 @@ TRYREDUCE_BLOCK.set_parse_action(lambda t: [[variable.name for variable in t.var
 TRYREDUCE_BLOCK.ignore(COMMENT)
 
 ASSUMPTION_NAME = pp.one_of(GCN_ASSUMPTIONS, caseless=True)("assumption")
-_KNOWN_ASSUMPTIONS = frozenset(a.lower() for a in GCN_ASSUMPTIONS)
 
 
 def _unknown_assumption_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
@@ -164,7 +164,7 @@ def _unknown_assumption_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
 
 UNKNOWN_ASSUMPTION = (
     (IDENTIFIER("unknown_name") + pp.FollowedBy(LBRACE))
-    .add_condition(lambda _s, _loc, toks: toks[0].lower() not in _KNOWN_ASSUMPTIONS)
+    .add_condition(lambda _s, _loc, toks: toks[0].lower() not in KNOWN_ASSUMPTIONS)
     .set_parse_action(_unknown_assumption_fail)
 )
 

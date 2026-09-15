@@ -35,7 +35,7 @@ class TestNodeVisitor:
     def test_dispatches_to_visit_methods(self):
         visited = []
 
-        class TestVisitor(NodeVisitor):
+        class NameRecorder(NodeVisitor):
             def visit_Variable(self, node):
                 visited.append(node.name)
 
@@ -47,7 +47,7 @@ class TestNodeVisitor:
             op=Operator.ADD,
             right=Parameter(name="alpha"),
         )
-        TestVisitor().visit(expr)
+        NameRecorder().visit(expr)
 
         assert visited == ["x", "param:alpha"]
 

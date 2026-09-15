@@ -3,7 +3,7 @@ from pathlib import Path
 import pyparsing as pp
 
 from gEconpy.parser.ast import GCNModel
-from gEconpy.parser.constants import BLOCK_COMPONENTS
+from gEconpy.parser.constants import BLOCK_COMPONENTS, KNOWN_COMPONENTS
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNGrammarError, GCNParseFailure, ParseLocation
 from gEconpy.parser.grammar.blocks import MODEL_BLOCK
@@ -13,7 +13,6 @@ from gEconpy.parser.grammar.special_blocks import (
     TRYREDUCE_BLOCK,
 )
 from gEconpy.parser.grammar.tokens import COMMENT
-from gEconpy.parser.suggestions import suggest_block_component
 
 
 def parse_gcn(text: str, filename: str = "") -> GCNModel:
@@ -55,9 +54,6 @@ def parse_gcn_file(filepath: str) -> GCNModel:
     """
     text = Path(filepath).read_text(encoding="utf-8")
     return parse_gcn(text, filename=filepath)
-
-
-_COMPONENT_KEYWORDS = frozenset(c.lower() for c in BLOCK_COMPONENTS)
 
 
 def _tagged(block: pp.ParserElement, kind: str) -> pp.ParserElement:
@@ -110,12 +106,12 @@ def _convert_parse_exception(exc: pp.ParseBaseException, text: str, filename: st
         code = _structural_error_code(pyparsing_message, found)
         message = _structural_message(code, pyparsing_message, found)
         annotation = _structural_annotation(code, found)
-        notes = _structural_notes(code)
     else:
         annotation = _semantic_annotation(code, found, message)
-        notes = _semantic_notes(code, found)
-        if suggestions and not any("Did you mean" in note for note in notes):
-            notes.insert(0, f"Did you mean '{suggestions[0]}'?")
+
+    notes = _fix_notes(code)
+    if suggestions:
+        notes.insert(0, f"Did you mean '{suggestions[0]}'?")
 
     found_clean = found.strip("'\"")
     line, col = exc.lineno, exc.col
@@ -142,7 +138,7 @@ def _convert_parse_exception(exc: pp.ParseBaseException, text: str, filename: st
     )
 
 
-def _semantic_annotation(code: ErrorCode, found: str, message: str = "") -> str:
+def _semantic_annotation(code: ErrorCode, found: str, message: str) -> str:
     if code == ErrorCode.E010:
         return f"invalid time index '{found}'"
 
@@ -152,17 +148,10 @@ def _semantic_annotation(code: ErrorCode, found: str, message: str = "") -> str:
     return code.title.lower()
 
 
-def _semantic_notes(code: ErrorCode, found: str) -> list[str]:
-    notes = []
-
-    if code == ErrorCode.E013:
-        suggestions = suggest_block_component(found)
-        if suggestions:
-            notes.append(f"Did you mean '{suggestions[0]}'?")
-
-    notes.extend(code.info.fixes)
-
-    return notes
+def _fix_notes(code: ErrorCode) -> list[str]:
+    if code == ErrorCode.E000:
+        return []
+    return list(code.info.fixes)
 
 
 def _structural_error_code(message: str, found: str) -> ErrorCode:
@@ -181,7 +170,7 @@ def _structural_error_code(message: str, found: str) -> ErrorCode:
     expected_brace_but_found_word = (
         "Expected '}'" in message and bool(found_clean) and found_clean[0].isalpha() and not at_end_of_text
     )
-    if "Expected ';'" in message or found_clean.lower() in _COMPONENT_KEYWORDS or expected_brace_but_found_word:
+    if "Expected ';'" in message or found_clean.lower() in KNOWN_COMPONENTS or expected_brace_but_found_word:
         return ErrorCode.E001
 
     expected_brace = "Expected '{'" in message or "Expected '}'" in message
@@ -198,7 +187,7 @@ def _structural_message(code: ErrorCode, message: str, found: str) -> str:
     if code == ErrorCode.E000:
         return f"Syntax error: {message}"
 
-    if code == ErrorCode.E001 and found.strip("'\"").lower() in _COMPONENT_KEYWORDS:
+    if code == ErrorCode.E001 and found.strip("'\"").lower() in KNOWN_COMPONENTS:
         return f"{code.title} after previous statement"
 
     return code.title
@@ -212,12 +201,6 @@ def _structural_annotation(code: ErrorCode, found: str) -> str:
         return f"unexpected '{found}'"
 
     return ""
-
-
-def _structural_notes(code: ErrorCode) -> list[str]:
-    if code == ErrorCode.E000:
-        return []
-    return list(code.info.fixes)
 
 
 __all__ = [

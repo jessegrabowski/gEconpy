@@ -7,15 +7,14 @@ from gEconpy.parser.ast import (
     GCNBlock,
     GCNEquation,
     GCNModel,
-    Number,
     Operator,
-    Parameter,
     T,
     TimeIndex,
     Variable,
     collect_nodes_of_type,
 )
 from gEconpy.parser.errors import ParseLocation
+from gEconpy.parser.grammar.statements import parse_equation
 from gEconpy.parser.transform.expand_time_indices import (
     DeepTimeIndexCollector,
     _create_lag_chain,
@@ -248,62 +247,10 @@ class TestExpandModelTimeIndices:
 
 class TestKydlandPrescottScenario:
     def test_time_to_build_model(self):
-        # K[] = (1 - delta) * K[-1] + S[-4]
-        # IF[] = phi1 * S[-3] + phi2 * S[-2] + phi3 * S[-1] + phi4 * S[]
         block = GCNBlock(
             name="CAPITAL_PRODUCER",
-            constraints=[
-                GCNEquation(
-                    lhs=Variable(name="K", time_index=T),
-                    rhs=BinaryOp(
-                        left=BinaryOp(
-                            left=BinaryOp(
-                                left=Number(1),
-                                op=Operator.SUB,
-                                right=Parameter(name="delta"),
-                            ),
-                            op=Operator.MUL,
-                            right=Variable(name="K", time_index=T_MINUS_1),
-                        ),
-                        op=Operator.ADD,
-                        right=Variable(name="S", time_index=TimeIndex(-4)),
-                    ),
-                )
-            ],
-            identities=[
-                GCNEquation(
-                    lhs=Variable(name="IF", time_index=T),
-                    rhs=BinaryOp(
-                        left=BinaryOp(
-                            left=BinaryOp(
-                                left=BinaryOp(
-                                    left=Parameter(name="phi1"),
-                                    op=Operator.MUL,
-                                    right=Variable(name="S", time_index=TimeIndex(-3)),
-                                ),
-                                op=Operator.ADD,
-                                right=BinaryOp(
-                                    left=Parameter(name="phi2"),
-                                    op=Operator.MUL,
-                                    right=Variable(name="S", time_index=TimeIndex(-2)),
-                                ),
-                            ),
-                            op=Operator.ADD,
-                            right=BinaryOp(
-                                left=Parameter(name="phi3"),
-                                op=Operator.MUL,
-                                right=Variable(name="S", time_index=T_MINUS_1),
-                            ),
-                        ),
-                        op=Operator.ADD,
-                        right=BinaryOp(
-                            left=Parameter(name="phi4"),
-                            op=Operator.MUL,
-                            right=Variable(name="S", time_index=T),
-                        ),
-                    ),
-                )
-            ],
+            constraints=[parse_equation("K[] = (1 - delta) * K[-1] + S[-4];")],
+            identities=[parse_equation("IF[] = phi1 * S[-3] + phi2 * S[-2] + phi3 * S[-1] + phi4 * S[];")],
         )
 
         result = expand_block_time_indices(block)

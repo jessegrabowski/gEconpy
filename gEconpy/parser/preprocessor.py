@@ -1,6 +1,10 @@
 from pathlib import Path
 from typing import Any
 
+import sympy as sp
+
+from preliz.distributions.distributions import Distribution
+
 from gEconpy.parser.ast import GCNBlock, GCNModel
 from gEconpy.parser.ast.validation import full_validation
 from gEconpy.parser.errors import ErrorCollector
@@ -33,8 +37,8 @@ class ParseResult:
         self.source = source
         self.filename = filename
         self._validation_errors: ErrorCollector | None = None
-        self._sympy_equations: dict[str, dict[str, list]] | None = None
-        self._distributions: dict[str, tuple[Any, dict]] | None = None
+        self._sympy_equations: dict[str, dict[str, list[tuple[sp.Eq, dict[str, Any]]]]] | None = None
+        self._distributions: dict[str, tuple[Distribution, dict[str, Any]]] | None = None
 
     @property
     def validation_errors(self) -> ErrorCollector:
@@ -49,21 +53,22 @@ class ParseResult:
         return self.validation_errors.has_errors
 
     @property
-    def sympy_equations(self) -> dict[str, dict[str, list]]:
+    def sympy_equations(self) -> dict[str, dict[str, list[tuple[sp.Eq, dict[str, Any]]]]]:
         """The model equations as SymPy expressions, grouped by block and component, computed on first access."""
         if self._sympy_equations is None:
             self._sympy_equations = model_to_sympy(self.ast)
         return self._sympy_equations
 
     @property
-    def distributions(self) -> dict[str, tuple[Any, dict]]:
+    def distributions(self) -> dict[str, tuple[Distribution, dict[str, Any]]]:
         """
         The prior and shock distributions declared in the model, computed on first access.
 
         Returns
         -------
         distributions : dict mapping str to tuple
-            For each declared name, the distribution and a dictionary of its parameters.
+            For each declared name, the pair returned by
+            :func:`~gEconpy.parser.transform.to_distribution.ast_to_distribution_with_metadata`.
         """
         if self._distributions is None:
             self._distributions = distributions_from_model(self.ast)

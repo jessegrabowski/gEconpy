@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+
 from gEconpy.parser.ast import (
     T_MINUS_1,
     BinaryOp,
@@ -18,9 +20,10 @@ from gEconpy.parser.ast.validation import (
     validate_equation,
     validate_model,
 )
+from gEconpy.parser.errors import GCNParseError
 
 
-def _messages(errors) -> list[str]:
+def _messages(errors: Iterable[GCNParseError]) -> list[str]:
     return [str(e) for e in errors]
 
 

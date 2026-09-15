@@ -10,9 +10,7 @@ from gEconpy.parser.ast import (
     GCNEquation,
     GCNModel,
     Node,
-    Number,
     Operator,
-    Parameter,
     UnaryOp,
     Variable,
 )
@@ -27,7 +25,7 @@ PRECEDENCE = {
 }
 
 
-def print_expression(node: Node, parent_precedence: int = 0) -> str:  # noqa: PLR0911
+def print_expression(node: Node, parent_precedence: int = 0) -> str:
     """
     Render an expression node as GCN source text.
 
@@ -45,17 +43,6 @@ def print_expression(node: Node, parent_precedence: int = 0) -> str:  # noqa: PL
         The expression in GCN syntax.
     """
     match node:
-        case Number(value=value):
-            if value == int(value):
-                return str(int(value))
-            return str(value)
-
-        case Parameter(name=name):
-            return name
-
-        case Variable(name=name, time_index=time_index):
-            return f"{name}{time_index}"
-
         case UnaryOp(op=op, operand=operand):
             return f"{op}{print_expression(operand, PRECEDENCE[op])}"
 
@@ -112,19 +99,7 @@ def print_distribution(dist: GCNDistribution) -> str:
     text : str
         The declaration in GCN syntax, without the trailing semicolon.
     """
-    kwargs_str = ", ".join(f"{k}={v}" for k, v in dist.dist_kwargs.items())
-    dist_str = f"{dist.dist_name}({kwargs_str})"
-
-    if dist.wrapper_name:
-        wrapper_args = [dist_str, *(f"{k}={v}" for k, v in dist.wrapper_kwargs.items())]
-        dist_str = f"{dist.wrapper_name}({', '.join(wrapper_args)})"
-
-    text = f"{dist.parameter_name} ~ {dist_str}"
-
-    if dist.initial_value is not None:
-        text += f" = {dist.initial_value}"
-
-    return text
+    return str(dist)
 
 
 def print_block(block: GCNBlock, indent: str = "    ") -> str:

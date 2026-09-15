@@ -2,20 +2,14 @@ from collections.abc import Iterable
 from difflib import SequenceMatcher
 
 from gEconpy.parser.constants import (
-    BLOCK_COMPONENTS,
-    GCN_ASSUMPTIONS,
-    PRELIZ_DIST_WRAPPERS,
-    PRELIZ_DISTS,
-    SPECIAL_BLOCK_NAMES,
+    KNOWN_ASSUMPTIONS,
+    KNOWN_COMPONENTS,
+    KNOWN_DISTRIBUTIONS,
+    KNOWN_SPECIAL_BLOCKS,
+    KNOWN_WRAPPERS,
 )
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.6
-
-KNOWN_DISTRIBUTIONS = frozenset(PRELIZ_DISTS)
-KNOWN_WRAPPERS = frozenset(PRELIZ_DIST_WRAPPERS)
-KNOWN_COMPONENTS = frozenset(c.lower() for c in BLOCK_COMPONENTS)
-KNOWN_SPECIAL_BLOCKS = frozenset(c.lower() for c in SPECIAL_BLOCK_NAMES)
-KNOWN_ASSUMPTIONS = frozenset(GCN_ASSUMPTIONS)
 
 
 def find_similar_names(

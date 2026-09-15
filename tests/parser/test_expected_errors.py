@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from difflib import unified_diff
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from gEconpy.parser.preprocessor import preprocess
 from tests.conftest import ERROR_GCNS as ERROR_GCNS_DIR
 
 
-def golden_cases(prefix_filter) -> list[Path]:
+def golden_cases(prefix_filter: Callable[[str], bool]) -> list[Path]:
     """Collect the error ``.gcn`` fixtures that have a matching ``.expected`` file and pass the name filter."""
     return [
         gcn_file
@@ -44,19 +45,17 @@ def test_validation_error_output_matches_golden_file(gcn_file):
 
 
 def assert_matches_golden(actual_output: str, gcn_file: Path) -> None:
-    expected_output = gcn_file.with_suffix(".expected").read_text(encoding="utf-8").rstrip("\n")
+    expected_file = gcn_file.with_suffix(".expected")
+    expected_output = expected_file.read_text(encoding="utf-8").rstrip("\n")
     if actual_output == expected_output:
         return
 
-    for line in unified_diff(actual_output.splitlines(), expected_output.splitlines()):
-        if line.startswith("-"):
-            print(f"\033[31m{line}\033[0m")
-        elif line.startswith("+"):
-            print(f"\033[32m{line}\033[0m")
-        else:
-            print(line)
-
+    diff = "\n".join(
+        unified_diff(
+            expected_output.splitlines(), actual_output.splitlines(), expected_file.name, "actual", lineterm=""
+        )
+    )
     raise AssertionError(
-        f"Error output for {gcn_file.name} does not match {gcn_file.with_suffix('.expected').name}. "
-        "To regenerate the expected files, run: python scripts/regenerate_expected_gcn_errors.py"
+        f"Error output for {gcn_file.name} does not match {expected_file.name}. "
+        f"To regenerate the expected files, run: python scripts/regenerate_expected_gcn_errors.py\n{diff}"
     )

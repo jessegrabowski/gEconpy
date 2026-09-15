@@ -154,7 +154,7 @@ def check_undefined_variables(
     used = set()
     for block in model.blocks:
         defined |= _defined_variable_names(block)
-        for eq in block.definitions + block.objective + block.constraints + block.identities:
+        for eq in block.all_equations():
             used |= collect_variable_names(eq.rhs)
 
     for var in sorted(used - defined - external):
@@ -189,7 +189,7 @@ def check_undefined_parameters(
     used = set()
     for block in model.blocks:
         calibrated |= set(_calibrated_parameter_names(block))
-        for eq in block.definitions + block.objective + block.constraints + block.identities:
+        for eq in block.all_equations():
             used |= collect_parameter_names(eq.lhs)
             used |= collect_parameter_names(eq.rhs)
 

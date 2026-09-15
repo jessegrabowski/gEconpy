@@ -1,6 +1,7 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import sympy as sp
 
@@ -9,7 +10,7 @@ from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, merge_assumptions
 from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.model.block import Block
-from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel
+from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node
 from gEconpy.parser.constants import STEADY_STATE_NAMES
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
@@ -50,7 +51,7 @@ class ModelPrimitives:
         Parameter names referenced inside shock distribution arguments.
     ss_solution_dict : SymbolDictionary
         Steady-state values the user supplied in the steady state block.
-    options : dict mapping str to str
+    options : dict mapping str to str or bool
         Entries of the ``options`` block.
     tryreduce : list of TimeAwareSymbol
         Variables the ``tryreduce`` block marks for elimination.
@@ -70,7 +71,7 @@ class ModelPrimitives:
     shock_distributions: SymbolDictionary
     distribution_param_names: set[str]
     ss_solution_dict: SymbolDictionary
-    options: dict[str, str]
+    options: dict[str, str | bool]
     tryreduce: list[TimeAwareSymbol]
     assumptions: dict[str, dict[str, bool]]
     block_dict: dict[str, Block] = field(repr=False)
@@ -171,7 +172,7 @@ def ast_model_to_primitives(
 def ast_block_to_equations(
     block: GCNBlock,
     assumptions: dict[str, dict[str, bool]] | None = None,
-) -> dict[str, list[tuple[sp.Eq, dict]]]:
+) -> dict[str, list[tuple[sp.Eq, dict[str, Any]]]]:
     """
     Convert the equations of a parsed block to SymPy, grouped by component.
 
@@ -272,23 +273,20 @@ def ast_block_to_variables_and_shocks(
     """
     assumptions = assumptions or {}
 
-    equation_lhs = [eq.lhs for eq in block.definitions + block.identities + block.objective + block.constraints]
-    variables = _time_aware_symbols(block.controls + equation_lhs, assumptions)
+    equation_lhs = [eq.lhs for eq in block.all_equations()]
+    variables = _time_aware_symbols([*block.controls, *equation_lhs], assumptions)
     shocks = _time_aware_symbols(block.shocks, assumptions)
 
     return list(set(variables)), list(set(shocks))
 
 
-def _time_aware_symbols(nodes, assumptions: dict[str, dict[str, bool]]) -> list[TimeAwareSymbol]:
+def _time_aware_symbols(nodes: Sequence[Node], assumptions: dict[str, dict[str, bool]]) -> list[TimeAwareSymbol]:
     symbols = [ast_to_sympy(node, assumptions) for node in nodes]
     return [symbol.set_t(0) for symbol in symbols if isinstance(symbol, TimeAwareSymbol)]
 
 
 def _block_dict_to_equation_list(block_dict: dict[str, Block]) -> list[sp.Expr]:
-    equations = []
-    for block in block_dict.values():
-        equations.extend(block.system_equations)
-    return equations
+    return [eq for block in block_dict.values() for eq in block.system_equations]
 
 
 def _block_dict_to_param_dict(block_dict: dict[str, Block], dict_name: ParamDictName) -> SymbolDictionary:
@@ -361,16 +359,9 @@ def _equation_to_sympy_eq(eq: GCNEquation, assumptions: dict[str, dict[str, bool
 
 
 def _extract_tryreduce(model: GCNModel, variables: list[TimeAwareSymbol]) -> list[TimeAwareSymbol]:
-    variables_by_base_name = {}
-    for var in variables:
-        variables_by_base_name.setdefault(var.base_name, var)
-
-    tryreduce = []
-    for tryreduce_entry in model.tryreduce:
-        base_name = tryreduce_entry.replace("[]", "").strip()
-        if base_name in variables_by_base_name:
-            tryreduce.append(variables_by_base_name[base_name])
-    return tryreduce
+    variables_by_base_name = {var.base_name: var for var in variables}
+    base_names = (entry.replace("[]", "").strip() for entry in model.tryreduce)
+    return [variables_by_base_name[name] for name in base_names if name in variables_by_base_name]
 
 
 def _extract_distributions(model: GCNModel) -> tuple[SymbolDictionary, SymbolDictionary, set[str]]:

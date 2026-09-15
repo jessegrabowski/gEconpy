@@ -148,7 +148,7 @@ class ErrorFormatter:
 
     def _format_pointer(self, location: ParseLocation, annotation: str = "") -> str:
         padding = " " * (location.column - 1)
-        pointer = self._color("^" * _pointer_length(location), Colors.RED)
+        pointer = self._color("^" * location.pointer_length, Colors.RED)
         gutter = self._color("     | ", Colors.BLUE)
 
         if annotation:
@@ -164,12 +164,6 @@ class ErrorFormatter:
     def _format_note(self, note: str) -> str:
         note_label = self._color("= note:", Colors.CYAN)
         return f"   {note_label} {note}"
-
-
-def _pointer_length(location: ParseLocation) -> int:
-    if location.end_column and location.end_line == location.line:
-        return max(1, location.end_column - location.column)
-    return 1
 
 
 def _supports_color() -> bool:

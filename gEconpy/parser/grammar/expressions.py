@@ -51,7 +51,7 @@ def parse_expression(text: str, context: str = "") -> Node:
         raise _convert_parse_exception(exc, text, context) from None
 
 
-def _parse_time_index(content: str) -> TimeIndex:
+def parse_time_index(content: str) -> TimeIndex:
     if content == "":
         return T
     if content == "ss":
@@ -59,7 +59,7 @@ def _parse_time_index(content: str) -> TimeIndex:
     return TimeIndex(int(content))
 
 
-def _location_at(s: str, loc: int, length: int) -> ParseLocation:
+def location_at(s: str, loc: int, length: int) -> ParseLocation:
     line = pp.lineno(loc, s)
     col = pp.col(loc, s)
     lines = s.splitlines()
@@ -77,7 +77,7 @@ def _location_at(s: str, loc: int, length: int) -> ParseLocation:
 NUMBER = pp.Regex(NUMBER_PATTERN).set_parse_action(lambda t: Number(value=float(t[0])))
 
 TIME_INDEX = (LBRACKET + pp.Optional(TIME_INDEX_CONTENT, default="") + RBRACKET).set_parse_action(
-    lambda t: _parse_time_index(t[0])
+    lambda t: parse_time_index(t[0])
 )
 
 
@@ -109,7 +109,7 @@ EXPR = pp.Forward()
 def _parse_variable(s: str, loc: int, toks: pp.ParseResults) -> Variable:
     name, time_index = toks[0], toks[1]
     time_text = "" if time_index == T else str(time_index)
-    location = _location_at(s, loc, length=len(name) + 2 + len(time_text))
+    location = location_at(s, loc, length=len(name) + 2 + len(time_text))
     return Variable(name=name, time_index=time_index, location=location)
 
 
@@ -118,7 +118,7 @@ VARIABLE = (IDENTIFIER + TIME_INDEX).set_parse_action(_parse_variable)
 
 def _parse_parameter(s: str, loc: int, toks: pp.ParseResults) -> Parameter:
     name = toks[0]
-    return Parameter(name=name, location=_location_at(s, loc, length=len(name)))
+    return Parameter(name=name, location=location_at(s, loc, length=len(name)))
 
 
 PARAMETER = (IDENTIFIER + ~pp.FollowedBy(pp.Literal("[") | pp.Literal("("))).set_parse_action(_parse_parameter)

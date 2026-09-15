@@ -2,6 +2,7 @@ import pytest
 import sympy as sp
 
 from gEconpy.data.examples import get_example_gcn
+from gEconpy.parser.ast import GCNBlock
 from gEconpy.parser.loader import (
     ast_block_to_calibration,
     ast_block_to_equations,
@@ -14,7 +15,7 @@ from gEconpy.parser.preprocessor import quick_parse
 from tests.conftest import TEST_GCNS
 
 
-def parse_single_block(source: str):
+def parse_single_block(source: str) -> GCNBlock:
     return quick_parse(source).blocks[0]
 
 
