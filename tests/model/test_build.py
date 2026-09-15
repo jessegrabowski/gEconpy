@@ -6,21 +6,28 @@ from gEconpy import model_from_gcn
 from gEconpy.exceptions import ExtraParameterError, OrphanParameterError
 from gEconpy.model.model import Model
 
-expected_warnings = [
-    "Simplification via a tryreduce block was requested but not possible because the system is not well defined.",
-    "Removal of constant variables was requested but not possible because the system is not well defined.",
-    "The model does not appear correctly specified, there are 8 equations but 12 variables. It will not be possible to "
-    "solve this model. Please check the specification using available diagnostic tools, and check the GCN file for "
-    "typos.",
-]
-
 
 @pytest.mark.parametrize(
     ["simplify_tryreduce", "simplify_constants", "expected_warning"],
     [
-        (True, False, expected_warnings[0]),
-        (False, True, expected_warnings[1]),
-        (False, False, expected_warnings[2]),
+        (
+            True,
+            False,
+            "Simplification via a tryreduce block was requested but not possible because the system is not well "
+            "defined.",
+        ),
+        (
+            False,
+            True,
+            "Removal of constant variables was requested but not possible because the system is not well defined.",
+        ),
+        (
+            False,
+            False,
+            "The model does not appear correctly specified, there are 8 equations but 12 variables. It will not be "
+            "possible to solve this model. Please check the specification using available diagnostic tools, and "
+            "check the GCN file for typos.",
+        ),
     ],
     ids=["tryreduce", "constants", "no_simplify"],
 )
@@ -40,7 +47,7 @@ def test_build_warns_if_model_not_defined(
 
 
 def test_missing_parameters_raises(tmp_path):
-    GCN_file = """
+    gcn_source = """
                 block HOUSEHOLD
                 {
                     definitions
@@ -75,7 +82,7 @@ def test_missing_parameters_raises(tmp_path):
                 """
 
     gcn_path = tmp_path / "missing_params.gcn"
-    gcn_path.write_text(GCN_file)
+    gcn_path.write_text(gcn_source)
 
     with pytest.raises(
         OrphanParameterError,
@@ -90,7 +97,7 @@ def test_missing_parameters_raises(tmp_path):
         )
 
 
-simple_vars = ["L", "K", "A", "Y", "I", "C", "q", "U", "lambda", "q"]
+simple_vars = ["L", "K", "A", "Y", "I", "C", "q", "U", "lambda"]
 simple_params = ["alpha", "theta", "beta", "delta", "tau", "rho"]
 simple_shocks = ["epsilon"]
 open_vars = [
@@ -202,9 +209,9 @@ def test_variables_parsed(gcn_path, expected_variables, expected_params, expecte
     model_params = [p.name for p in model.params + model.calibrated_params + model.deterministic_params]
     model_shocks = [s.base_name for s in model.shocks]
 
-    assert set(model_vars) - set(expected_variables) == set() and set(expected_variables) - set(model_vars) == set()
-    assert set(model_params) - set(expected_params) == set() and set(expected_params) - set(model_params) == set()
-    assert set(model_shocks) - set(expected_shocks) == set() and set(expected_shocks) - set(model_shocks) == set()
+    assert set(model_vars) == set(expected_variables)
+    assert set(model_params) == set(expected_params)
+    assert set(model_shocks) == set(expected_shocks)
 
 
 @pytest.mark.parametrize(
@@ -226,12 +233,9 @@ def test_load_gcn(gcn_file):
     assert len(mod.shocks) > 0
     assert len(mod.variables) > 0
     assert len(mod.equations) > 0
-
     assert mod.f_params is not None
-
     assert mod.f_ss is not None
 
-    # Verify the model can solve its steady state (this exercises lazy graph building and compilation)
     ss = mod.steady_state(verbose=False, progressbar=False)
     assert ss.success
 

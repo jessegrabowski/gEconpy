@@ -9,7 +9,6 @@ def test_simplify_tryreduce_basic():
     x = TimeAwareSymbol("x", 0)
     y = TimeAwareSymbol("y", 0)
 
-    # x - 1 implies that x = 1, so x can be eliminated
     eqs = [x - 1, y - x]
     variables = [x, y]
     try_reduce_vars = [x]
@@ -26,7 +25,6 @@ def test_simplify_constants_basic():
     x = TimeAwareSymbol("x", 0)
     y = TimeAwareSymbol("y", 0)
 
-    # x - 1 implies that x = 1, so x can be eliminated as a constant
     eqs = [x - 1, y - x]
     variables = [x, y]
 

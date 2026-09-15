@@ -35,27 +35,19 @@ def test_scalar_function():
     np.testing.assert_allclose(result, 4.0)
 
 
-@pytest.mark.parametrize("stack_return", [True, False])
-def test_multiple_outputs(stack_return: bool):
+@pytest.mark.parametrize("stack_return, expected_type", [(True, np.ndarray), (False, list)], ids=["stacked", "list"])
+def test_multiple_outputs(stack_return: bool, expected_type: type):
     x, y, z = sp.symbols("x y z")
-    x2 = x**2
-    y2 = y**2
-    z2 = z**2
     f_func, _ = compile_function(
         [x, y, z],
-        [x2, y2, z2],
+        [x**2, y**2, z**2],
         stack_return=stack_return,
         mode="FAST_COMPILE",
     )
     res = f_func(x=np.float64(2), y=np.float64(3), z=np.float64(4))
-    if stack_return:
-        assert isinstance(res, np.ndarray)
-        assert res.shape == (3,)
-        np.testing.assert_allclose(res, np.array([4.0, 9.0, 16.0]))
-    else:
-        assert isinstance(res, list)
-        assert len(res) == 3
-        np.testing.assert_allclose(np.stack(res), np.array([4.0, 9.0, 16.0]))
+
+    assert isinstance(res, expected_type)
+    np.testing.assert_allclose(np.asarray(res), np.array([4.0, 9.0, 16.0]))
 
 
 def test_matrix_function():
@@ -116,11 +108,10 @@ def test_sympy_to_pytensor_shared_cache():
     x = sp.symbols("x")
     cache = {}
 
-    _, _, cache = sympy_to_pytensor([x], [x**2], cache)
-    _, out2, cache = sympy_to_pytensor([x], [x**3], cache)
+    (x_pt_first,), _, cache = sympy_to_pytensor([x], [x**2], cache)
+    (x_pt_second,), _, cache = sympy_to_pytensor([x], [x**3], cache)
 
-    # Second call should reuse the same input node from cache
-    assert len(out2) == 1
+    assert x_pt_second is x_pt_first
 
 
 def test_make_return_dict_and_update_cache():

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 import pytest
 import sympy as sp
@@ -12,6 +10,7 @@ from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.parser.loader import _block_dict_to_param_dict
 from gEconpy.parser.preprocessor import preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
+from tests.conftest import TEST_GCNS
 
 
 @pytest.fixture
@@ -60,18 +59,15 @@ def test_compile_param_dict_complex(complex_param_system):
 def test_compile_param_dict_cache_reuse(complex_param_system):
     param_dict, deterministic_dict = complex_param_system
 
-    # First compilation should create cache
     cache = {}
-    f1, cache = compile_param_dict_func(param_dict, deterministic_dict, cache=cache)
-
-    # Second compilation should reuse cache
+    f1, cache1 = compile_param_dict_func(param_dict, deterministic_dict, cache=cache)
     f2, cache2 = compile_param_dict_func(param_dict, deterministic_dict, cache=cache)
 
-    # Results should be identical
     result1 = f1(alpha=0.3, beta=0.99, theta=0.5)
     result2 = f2(alpha=0.3, beta=0.99, theta=0.5)
 
-    assert cache is cache2  # Same cache object
+    assert cache1 is cache
+    assert cache2 is cache
     assert_allclose(np.array(list(result1.values())), np.array(list(result2.values())))
 
 
@@ -85,7 +81,7 @@ def test_compile_param_dict_symbolic(complex_param_system):
     assert all(isinstance(k, TensorVariable) for k in symbolic_result)
 
     *_, gamma, _delta = symbolic_result.keys()
-    np.testing.assert_allclose(symbolic_result[gamma].eval({"alpha": 2.0, "beta": 3.0}), np.log(5.0))
+    assert_allclose(symbolic_result[gamma].eval({"alpha": 2.0, "beta": 3.0}), np.log(5.0))
 
 
 EXPECTED_PARAM_DICT = {
@@ -113,8 +109,7 @@ EXPECTED_PARAM_DICT = {
 def test_create_parameter_function(gcn_path, name):
     rng = np.random.default_rng()
     expected = EXPECTED_PARAM_DICT[name]
-    filepath = Path("tests") / "_resources" / "test_gcns" / gcn_path
-    result = preprocess_file(filepath, validate=True)
+    result = preprocess_file(TEST_GCNS / gcn_path, validate=True)
     block_dict = ast_model_to_block_dict(result.ast, simplify_blocks=True)
     param_dict = _block_dict_to_param_dict(block_dict, "param_dict")
     deterministic_dict = _block_dict_to_param_dict(block_dict, "deterministic_dict")
@@ -130,4 +125,4 @@ def test_create_parameter_function(gcn_path, name):
     computed_param_dict = output.to_string().values_to_float()
 
     for k in expected:
-        np.testing.assert_allclose(computed_param_dict[k], expected[k], err_msg=f"{k} not close to tolerance")
+        assert_allclose(computed_param_dict[k], expected[k], err_msg=f"{k} not close to tolerance")

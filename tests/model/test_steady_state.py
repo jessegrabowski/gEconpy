@@ -1,7 +1,5 @@
 import re
 
-from importlib.util import find_spec
-
 import numpy as np
 import pytest
 import sympy as sp
@@ -21,8 +19,6 @@ from tests._resources.cache_compiled_models import load_and_cache_model
 
 
 class TestPropagateSteadyStateThroughIdentities:
-    """Tests for steady-state value propagation through solvable equations."""
-
     def test_propagates_through_lag_chain(self):
         """Chained identities x__lag1 = x[-1], x__lag2 = x__lag1[-1] all resolve to x_ss."""
         x = TimeAwareSymbol("x", 0)
@@ -65,7 +61,7 @@ class TestPropagateSteadyStateThroughIdentities:
         assert float(result[y.to_ss()]) == 1.0
 
     def test_rejects_multi_solution_equations(self):
-        """Equation x^2 = 4 has two solutions; neither is chosen."""
+        """Equation x^2 = 4 has two solutions, so neither is chosen."""
         x = TimeAwareSymbol("x", 0)
         y = TimeAwareSymbol("y", 0)
 
@@ -122,7 +118,7 @@ class TestPropagateSteadyStateThroughIdentities:
         """Empty input with multiple unknowns per equation returns empty."""
         x = TimeAwareSymbol("x", 0)
         y = TimeAwareSymbol("y", 0)
-        # Equation x + y = 0 has two unknowns, cannot be solved
+
         result = propagate_steady_state_through_identities(SymbolDictionary(), [x.to_ss() + y.to_ss()], [x, y])
         assert len(result) == 0
 
@@ -131,10 +127,6 @@ class TestPropagateSteadyStateThroughIdentities:
         A = TimeAwareSymbol("A", 0)
         rho = sp.Symbol("rho")
 
-        # In steady state: log(A_ss) = rho * log(A_ss) + 0
-        # => log(A_ss) * (1 - rho) = 0
-        # => log(A_ss) = 0
-        # => A_ss = 1
         steady_state_eq = sp.log(A.to_ss()) - rho * sp.log(A.to_ss())
 
         result = propagate_steady_state_through_identities(
@@ -147,35 +139,9 @@ class TestPropagateSteadyStateThroughIdentities:
         assert float(result[A.to_ss()]) == 1.0
 
 
-def root_and_min_agree_helper(model: Model, **kwargs):
-    verbose = kwargs.pop("verbose", False)
-    progressbar = kwargs.pop("progressbar", True)
-    root_method = kwargs.pop("root_method", None)
-    minimize_method = kwargs.pop("minimize_method", None)
-    optimizer_kwargs = kwargs.pop("optimizer_kwargs", {})
-
-    _ = kwargs.pop("how", None)
-
-    if root_method:
-        optimizer_kwargs["method"] = root_method
-
-    ss_root = model.steady_state(
-        how="root",
-        verbose=verbose,
-        progressbar=progressbar,
-        optimizer_kwargs=optimizer_kwargs,
-        **kwargs,
-    )
-
-    if minimize_method:
-        optimizer_kwargs["method"] = minimize_method
-    ss_minimize = model.steady_state(
-        how="minimize",
-        verbose=verbose,
-        progressbar=progressbar,
-        optimizer_kwargs=optimizer_kwargs,
-        **kwargs,
-    )
+def assert_root_and_minimize_agree(model: Model, **steady_state_kwargs):
+    ss_root = model.steady_state(how="root", verbose=False, progressbar=False, **steady_state_kwargs)
+    ss_minimize = model.steady_state(how="minimize", verbose=False, progressbar=False, **steady_state_kwargs)
 
     assert ss_root.success
     assert ss_minimize.success
@@ -228,7 +194,6 @@ def test_print_steady_state_report_solver_fails(caplog):
     model_1 = load_and_cache_model("one_block_1.gcn")
     result = model_1.steady_state(verbose=False, progressbar=False)
 
-    # Spoof a failed solving attempt
     result.success = False
     print_steady_state(result)
     expected_output = """Values come from the latest solver iteration but are NOT a valid steady state.
@@ -267,9 +232,9 @@ def test_wrong_and_incomplete_ss_relationship_fails_with_minimize():
     assert not res.success
 
 
-def test_numerical_solvers_suceed_and_agree():
+def test_numerical_solvers_succeed_and_agree():
     model_1 = load_and_cache_model("one_block_1.gcn")
-    root_and_min_agree_helper(model_1, verbose=False, progressbar=False)
+    assert_root_and_minimize_agree(model_1)
 
 
 def test_steady_state_matches_analytic():
@@ -284,7 +249,7 @@ def test_steady_state_matches_analytic():
     U_ss = 1 / (1 - beta) * (C_ss ** (1 - gamma) - 1) / (1 - gamma)
 
     ss_var = [x.to_ss().name for x in model_1.variables]
-    ss_dict = {k: float(v.subs(param_dict)) for k, v in zip(ss_var, [A_ss, C_ss, K_ss, U_ss, lambda_ss], strict=False)}
+    ss_dict = {k: float(v.subs(param_dict)) for k, v in zip(ss_var, [A_ss, C_ss, K_ss, U_ss, lambda_ss], strict=True)}
 
     root_ss_dict = model_1.steady_state(verbose=False, progressbar=False, how="root")
     assert root_ss_dict.success
@@ -303,11 +268,8 @@ def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
     ss_root = model.steady_state(how="root", verbose=False, progressbar=False)
     assert ss_root.success
 
-    # Minimizing the sum of squared residuals from a cold, arbitrary x0 is
-    # sensitive to platform-level floating point for this calibrated model: it
-    # can converge into a different basin (observed passing on arm64, failing on
-    # x86_64). Seed the minimize solver from the root solution so the test checks
-    # that the two solvers agree, rather than the optimizer's luck from x0=0.8.
+    # From the default x0 the minimizer can land in a different basin depending on the platform's floating point,
+    # so seed it from the root solution and test that the two solvers agree there.
     x0 = np.array([float(ss_root[v.name]) for v in model._vars_to_solve])
     ss_minimize = model.steady_state(how="minimize", verbose=False, progressbar=False, optimizer_kwargs={"x0": x0})
     assert ss_minimize.success
@@ -317,23 +279,20 @@ def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
 
 
 @pytest.mark.parametrize(
-    "assumptions, user_bound, expected",
+    "assumptions, user_bound, expected_type",
     [
         ({"positive": True}, (0.0, 1.0), Interval),
-        ({"unit_interval": True, "positive": True}, None, logodds),
-        ({"positive": True}, None, log),
+        ({"unit_interval": True, "positive": True}, None, type(logodds)),
+        ({"positive": True}, None, type(log)),
         ({"negative": True}, None, Interval),
         ({}, None, type(None)),
     ],
     ids=["explicit_bound_wins", "unit_interval", "positive", "negative", "unconstrained"],
 )
-def test_infer_variable_transform_waterfall(assumptions, user_bound, expected):
+def test_infer_variable_transform_waterfall(assumptions, user_bound, expected_type):
     variable = sp.Symbol("x", **assumptions)
     transform = infer_variable_transform(variable, user_bound=user_bound)
-    if expected in (log, logodds):
-        assert transform is expected
-    else:
-        assert isinstance(transform, expected)
+    assert isinstance(transform, expected_type)
 
 
 def test_prefer_transform_solves_unconstrained():
@@ -402,20 +361,19 @@ def test_steady_state_matches_analytic_w_calibrated_params():
     )
     assert numerical_ss_dict.success
 
-    # Test calibration of alpha --> L_ss / K_ss = 0.36
     assert_allclose(numerical_ss_dict["L_ss"] / numerical_ss_dict["K_ss"], 0.36)
 
     ss_vars = [x.to_ss() for x in model_2.variables]
     for k in ss_vars:
         answer = float(answer_dict[k.name].subs(all_params))
-        # ``trust-constr`` converges to its own gtol/xtol, so a numerical steady state cannot
-        # be expected to match the analytic one to the default 1e-7; 1e-6 is ample confirmation.
+        # trust-constr stops at its own gtol and xtol, so the numerical steady state matches the analytic one only to
+        # about 1e-6.
         assert_allclose(answer, numerical_ss_dict[k.name], rtol=1e-6, err_msg=k.name)
 
 
 def test_numerical_solvers_succeed_and_agree_RBC():
     model_3 = load_and_cache_model("rbc_2_block.gcn")
-    root_and_min_agree_helper(model_3, verbose=False, progressbar=False)
+    assert_root_and_minimize_agree(model_3)
 
 
 def test_RBC_steady_state_matches_analytic():
@@ -472,13 +430,10 @@ def test_RBC_steady_state_matches_analytic():
 def test_numerical_solvers_succeed_and_agree_NK():
     model_4 = load_and_cache_model("full_nk_no_ss.gcn")
 
-    # This model's SS can't be solved without some help, so we provide the "obvious" solutions
-    # This is almost equivalent to the full_nk_partial_ss.gcn, with a bit less info
-    # (No solution for mc_ss, r_G, and r)
-    root_and_min_agree_helper(
+    # The solvers need the unit steady states of the shock and inflation processes pinned to converge. This leaves
+    # mc_ss, r_G_ss, and r_ss to be found, which full_nk_partial_ss.gcn provides analytically.
+    assert_root_and_minimize_agree(
         model_4,
-        verbose=False,
-        progressbar=False,
         optimizer_kwargs={"maxiter": 50_000},
         fixed_values={
             "shock_technology_ss": 1.0,

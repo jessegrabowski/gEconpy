@@ -60,21 +60,26 @@ class TestClassifyVariablesByTiming:
         )
         tm1, t, tp1, shocks = classify_variables_by_timing([x_t - x_tm1 + eps, y_tp1 - y_t], ["eps"])
 
-        assert _names(tm1) == ["x"] and _times(tm1) == [-1]
-        assert _names(t) == ["x", "y"] and _times(t) == [0, 0]
-        assert _names(tp1) == ["y"] and _times(tp1) == [1]
+        assert _names(tm1) == ["x"]
+        assert _times(tm1) == [-1]
+        assert _names(t) == ["x", "y"]
+        assert _times(t) == [0, 0]
+        assert _names(tp1) == ["y"]
+        assert _times(tp1) == [1]
         assert _names(shocks) == ["eps"]
 
     def test_absent_times_are_empty(self):
-        """Variables only at t produce empty tm1 and tp1 lists."""
         x_t, y_t = TimeAwareSymbol("x", 0), TimeAwareSymbol("y", 0)
         tm1, _, tp1, _ = classify_variables_by_timing([x_t + y_t], [])
-        assert tm1 == [] and tp1 == []
+        assert tm1 == []
+        assert tp1 == []
 
     def test_shock_with_no_endogenous_at_same_time(self):
         eps = TimeAwareSymbol("eps", 0)
         tm1, t, tp1, shocks = classify_variables_by_timing([eps], ["eps"])
-        assert tm1 == [] and t == [] and tp1 == []
+        assert tm1 == []
+        assert t == []
+        assert tp1 == []
         assert _names(shocks) == ["eps"]
 
     def test_uses_natural_sort_order(self):
