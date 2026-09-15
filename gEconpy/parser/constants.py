@@ -5,6 +5,7 @@ from sympy.abc import _clash1, _clash2
 LOCAL_DICT = {letter: sp.Symbol(letter) for letter in (*_clash1, *_clash2)}
 
 SPECIAL_BLOCK_NAMES = ["OPTIONS", "TRYREDUCE", "ASSUMPTIONS"]
+EQUATION_TAGS = ["exclude", "minimize", "maximize"]
 STEADY_STATE_NAMES = ["STEADY_STATE", "SS", "STEADYSTATE", "STEADY"]
 BLOCK_COMPONENTS = [
     "DEFINITIONS",

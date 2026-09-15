@@ -320,7 +320,7 @@ def interpret_gensys_output(eu: list[int] | tuple[int, ...]) -> str:
 
     message = f"Gensys return codes: {' '.join(map(str, eu))}, with the following meaning:\n"
     if eu[0] == COINCIDENT_ZEROS_CODE and eu[1] == COINCIDENT_ZEROS_CODE:
-        message += "Coincident zeros.  Indeterminacy and/or nonexistence. Check that your system is correctly defined."
+        message += "Coincident zeros: indeterminacy or nonexistence. The system has redundant or missing equations."
     elif eu[0] == INDETERMINATE_CODE:
         message += f"System is indeterminate. There are {eu[2]} loose endogenous variables."
     elif eu[1] == INDETERMINATE_CODE:
@@ -332,7 +332,7 @@ def interpret_gensys_output(eu: list[int] | tuple[int, ...]) -> str:
     elif eu[0] == EXISTENCE_CODE and eu[1] == EXISTENCE_CODE:
         message += "Gensys found a unique solution."
     else:
-        message += "Unknown return code. Check the gensys documentation."
+        message += "Unknown return code."
     return message.strip()
 
 

@@ -336,5 +336,5 @@ class TestComponentErrors:
     )
     def test_equals_instead_of_tilde(self, statement):
         text = f"calibration {{ {statement} }};"
-        with pytest.raises(pp.ParseFatalException, match=r"instead of '~'.*E009"):
+        with pytest.raises(pp.ParseFatalException, match=r"Declare it with '~'.*E009"):
             CALIBRATION.parse_string(text)

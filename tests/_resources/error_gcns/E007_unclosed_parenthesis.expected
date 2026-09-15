@@ -8,6 +8,5 @@ error[E007]: Unbalanced parentheses. Found '';''
    7 |     };
    8 | };
      |
-   = note: Count opening and closing parentheses
-   = note: Check function calls have closing ')'
-   = note: Use an editor with parenthesis matching
+   = note: Close every '(' with ')'
+   = note: Remove the extra '(' or ')'

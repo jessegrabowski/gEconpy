@@ -8,6 +8,5 @@ error[E001]: Missing semicolon. Found ''P''
    7 |     };
    8 | };
      |
-   = note: Add ';' at the end of the statement
-   = note: Check that each equation ends with ';'
-   = note: Check that each block component ends with '};'
+   = note: End the statement with ';'
+   = note: End the block component with '};'

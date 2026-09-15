@@ -7,5 +7,4 @@ error[V001]: Calibrating equation in block HOUSEHOLD uses non-steady-state varia
   27 |     };
   28 | };
      |
-   = note: Calibrating equations define steady-state relationships
-   = note: Use X[ss] instead of X[] for all variables
+   = note: Write every variable in a calibrating equation with the [ss] time index: X[ss]

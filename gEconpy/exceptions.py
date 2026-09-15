@@ -125,10 +125,7 @@ class DynamicCalibratingEquationException(GCNValidationError):
             source=source,
             location=location,
             annotation="variables must use [ss] time index",
-            notes=[
-                "Calibrating equations define steady-state relationships",
-                "Use X[ss] instead of X[] for all variables",
-            ],
+            notes=["Write every variable in a calibrating equation with the [ss] time index: X[ss]"],
             filepath=filepath,
         )
 
@@ -190,9 +187,8 @@ class ControlVariableNotFoundException(GCNValidationError):
             location=location,
             annotation="undeclared control variable",
             notes=[
-                "Control variables must appear in the objective or constraints",
-                "Check spelling of the variable name",
-                "Verify the variable has the correct time index",
+                "Use the control in the objective or a constraint, with the same name and time index as declared",
+                "Remove the control from the controls component",
             ],
             filepath=filepath,
         )
@@ -260,10 +256,9 @@ class InvalidDistributionException(ValueError):
 
     def __init__(self, variable, distribution_string):
         message = (
-            f'The distribution for "{variable}", defined as "{distribution_string}", could not be parsed. Check '
-            f"the GCN file for a typo. Also check that no initial value follows an exogenous shock distribution, "
-            f"as in epsilon[] ~ N(mu=0, sd=1) = 0.5. Shock distributions must not have an equals sign after the "
-            f"distribution definition."
+            f'The distribution for "{variable}", defined as "{distribution_string}", could not be parsed. A shock '
+            f"distribution takes no initial value, so remove any '= value' after it, as in "
+            f"'epsilon[] ~ Normal(mu=0, sigma=1) = 0.5'."
         )
 
         super().__init__(message)
@@ -317,8 +312,9 @@ class ExtraParameterError(ValueError):
         verb = "was" if n == 1 else "were"
         message = (
             f"The following parameter{'s' if n > 1 else ''} {verb} given initial values in calibration blocks but "
-            f"{verb} not used in model equations: {', '.join([x.name for x in extras])} \n"
-            f"Verify your model equations, or remove these parameters if they are not needed."
+            f"{verb} not used in model equations: {', '.join([x.name for x in extras])}. Delete "
+            f"{'it' if n == 1 else 'them'} from the calibration block, or fix the equation that should use "
+            f"{'it' if n == 1 else 'them'}."
         )
 
         super().__init__(message)
@@ -332,8 +328,9 @@ class ExtraParameterWarning(UserWarning):
         verb = "was" if n == 1 else "were"
         message = (
             f"The following parameter{'s' if n > 1 else ''} {verb} given initial values in calibration blocks but "
-            f"{verb} not used in model equations: {', '.join([x.name for x in extras])} \n"
-            f"Verify your model equations, or remove these parameters if they are not needed."
+            f"{verb} not used in model equations: {', '.join([x.name for x in extras])}. Delete "
+            f"{'it' if n == 1 else 'them'} from the calibration block, or fix the equation that should use "
+            f"{'it' if n == 1 else 'them'}."
         )
 
         super().__init__(message)
@@ -362,9 +359,6 @@ class DuplicateParameterError(GCNValidationError):
             source=source,
             location=location,
             annotation=f"'{param_names}' already defined",
-            notes=[
-                "Each parameter should be declared only once",
-                "Remove the duplicate declaration",
-            ],
+            notes=["Delete one of the declarations"],
             filepath=filepath,
         )

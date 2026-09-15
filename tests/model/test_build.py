@@ -24,9 +24,9 @@ from gEconpy.model.model import Model
         (
             False,
             False,
-            "The model does not appear correctly specified, there are 8 equations but 12 variables. It will not be "
-            "possible to solve this model. Please check the specification using available diagnostic tools, and "
-            "check the GCN file for typos.",
+            "The model does not appear correctly specified, there are 8 equations but 12 variables, so the model "
+            "cannot be solved. Add or remove equations until the counts match, and check the GCN file for a "
+            "misspelled variable name that the parser reads as a new variable.",
         ),
     ],
     ids=["tryreduce", "constants", "no_simplify"],

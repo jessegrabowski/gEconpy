@@ -7,6 +7,5 @@ error[V002]: Control variable 'K_t' in block HOUSEHOLD not found in equations
   7 |     };
   8 |
      |
-   = note: Control variables must appear in the objective or constraints
-   = note: Check spelling of the variable name
-   = note: Verify the variable has the correct time index
+   = note: Use the control in the objective or a constraint, with the same name and time index as declared
+   = note: Remove the control from the controls component

@@ -1,6 +1,13 @@
 from dataclasses import dataclass, field
 from enum import Enum
 
+from gEconpy.parser.constants import (
+    BLOCK_COMPONENTS,
+    EQUATION_TAGS,
+    GCN_ASSUMPTIONS,
+    PRELIZ_DIST_WRAPPERS,
+)
+
 
 @dataclass(frozen=True)
 class ErrorInfo:
@@ -25,6 +32,12 @@ class ErrorInfo:
     fixes: tuple[str, ...] = field(default_factory=tuple)
 
 
+_BLOCK_COMPONENT_NAMES = ", ".join(name.lower() for name in BLOCK_COMPONENTS)
+_EQUATION_TAG_NAMES = ", ".join(f"@{tag}" for tag in EQUATION_TAGS)
+_ASSUMPTION_NAMES = ", ".join(GCN_ASSUMPTIONS)
+_WRAPPER_NAMES = ", ".join(PRELIZ_DIST_WRAPPERS)
+
+
 class ErrorCode(Enum):
     """
     Parser error codes, each carrying an :class:`ErrorInfo` catalog entry.
@@ -42,9 +55,8 @@ class ErrorCode(Enum):
             "Invalid expression",
         ),
         fixes=(
-            "Check the line for typos",
-            "Verify the syntax matches GCN format",
-            "Compare with working examples",
+            "Read the token the parser stopped on and the statement before it",
+            "End every statement with ';' and every block component with '};'",
         ),
     )
 
@@ -57,9 +69,8 @@ class ErrorCode(Enum):
             "Forgot semicolon after calibration assignment",
         ),
         fixes=(
-            "Add ';' at the end of the statement",
-            "Check that each equation ends with ';'",
-            "Check that each block component ends with '};'",
+            "End the statement with ';'",
+            "End the block component with '};'",
         ),
     )
 
@@ -72,9 +83,8 @@ class ErrorCode(Enum):
             "Brace inside a string or comment",
         ),
         fixes=(
-            "Count opening and closing braces to find the mismatch",
-            "Check indentation to find missing braces",
-            "Use an editor with brace matching",
+            "Close every block and every block component with '};'",
+            "Remove the extra '{' or '}'",
         ),
     )
 
@@ -85,10 +95,7 @@ class ErrorCode(Enum):
             "Forgot to name the block",
             "Typo in 'block' keyword",
         ),
-        fixes=(
-            "Add a name after 'block': block HOUSEHOLD { ... }",
-            "Check spelling of 'block' keyword",
-        ),
+        fixes=("Name the block: block HOUSEHOLD { ... };",),
     )
 
     E004 = ErrorInfo(
@@ -100,8 +107,8 @@ class ErrorCode(Enum):
             "Copy-paste error left empty braces",
         ),
         fixes=(
-            "Add block components: identities, calibration, controls, etc.",
-            "Remove the empty block if not needed",
+            "Add at least one component to the block",
+            "Delete the block",
         ),
     )
 
@@ -113,10 +120,7 @@ class ErrorCode(Enum):
             "Accidentally deleted the RHS",
             "Copy-paste error",
         ),
-        fixes=(
-            "Add an expression after the '='",
-            "Check if the equation was accidentally truncated",
-        ),
+        fixes=("Write an expression after '=': Y[] = C[] + I[];",),
     )
 
     E006 = ErrorInfo(
@@ -128,9 +132,8 @@ class ErrorCode(Enum):
             "Trailing operator at end of line",
         ),
         fixes=(
-            "Add an expression after the operator",
+            "Write an expression after the operator",
             "Remove the extra operator",
-            "Check for accidentally deleted terms",
         ),
     )
 
@@ -143,9 +146,8 @@ class ErrorCode(Enum):
             "Nested parentheses not closed properly",
         ),
         fixes=(
-            "Count opening and closing parentheses",
-            "Check function calls have closing ')'",
-            "Use an editor with parenthesis matching",
+            "Close every '(' with ')'",
+            "Remove the extra '(' or ')'",
         ),
     )
 
@@ -156,24 +158,20 @@ class ErrorCode(Enum):
             "Empty function call: log()",
             "Missing argument: exp()",
         ),
-        fixes=(
-            "Add an argument to the function: log(C[])",
-            "Check if the argument was accidentally deleted",
-        ),
+        fixes=("Pass an argument to the function: log(C[])",),
     )
 
     E009 = ErrorInfo(
         title="Invalid distribution syntax",
         explanation="Distribution specifications must follow the format: param ~ Distribution(args).",
         common_causes=(
-            "Missing tilde: alpha Beta(a=1, b=1)",
-            "Wrong separator: alpha = Beta(a=1, b=1)",
+            "Missing tilde: rho Beta(alpha=2, beta=2)",
+            "Wrong separator: rho = Beta(alpha=2, beta=2)",
             "Misspelled distribution name",
         ),
         fixes=(
-            "Use tilde for distributions: alpha ~ Beta(a=1, b=1)",
-            "Check distribution name spelling",
-            "Use '=' for fixed values, '~' for distributions",
+            "Declare a prior with '~': rho ~ Beta(alpha=2, beta=2);",
+            "Declare a fixed value with '=': rho = 0.9;",
         ),
     )
 
@@ -185,27 +183,17 @@ class ErrorCode(Enum):
             "Typo in 'ss': Y[SS] instead of Y[ss]",
             "Invalid expression in brackets",
         ),
-        fixes=(
-            "Use Y[] for current period",
-            "Use Y[-1] for lagged values",
-            "Use Y[1] for lead values",
-            "Use Y[ss] for steady state",
-        ),
+        fixes=("Write the time index as an integer or 'ss': Y[], Y[-1], Y[1], Y[ss]",),
     )
 
     E011 = ErrorInfo(
         title="Unexpected character",
         explanation="The parser encountered a character that is not valid in GCN syntax.",
         common_causes=(
-            "Using @ or other special characters",
-            "Unicode characters that look like ASCII but aren't",
-            "Copy-paste from formatted document introduced special characters",
+            "Unicode characters that look like ASCII, such as a curly quote or a minus sign",
+            "Special characters pasted from a formatted document",
         ),
-        fixes=(
-            "Remove or replace the invalid character",
-            "Check for invisible Unicode characters",
-            "Retype the line manually",
-        ),
+        fixes=("Replace the character with its ASCII equivalent",),
     )
 
     E012 = ErrorInfo(
@@ -216,53 +204,32 @@ class ErrorCode(Enum):
             "Accidentally deleted the equals sign",
             "Expression written without assignment",
         ),
-        fixes=(
-            "Add '=' between LHS and RHS: Y[] = C[] + I[]",
-            "Check if the equation was accidentally corrupted",
-        ),
+        fixes=("Separate the two sides with '=': Y[] = C[] + I[];",),
     )
 
     E013 = ErrorInfo(
         title="Unknown block component",
-        explanation=(
-            "Block components must be one of: definitions, controls, objective, "
-            "constraints, identities, shocks, calibration."
-        ),
+        explanation=f"Block components must be one of: {_BLOCK_COMPONENT_NAMES}.",
         common_causes=(
             "Typo in component name: 'identites' instead of 'identities'",
             "Using wrong name: 'equations' instead of 'identities'",
             "Made up component name",
         ),
-        fixes=(
-            "Check spelling of component name",
-            "Valid components: definitions, controls, objective, constraints, identities, shocks, calibration",
-        ),
+        fixes=(f"Rename the component to one of: {_BLOCK_COMPONENT_NAMES}",),
     )
 
     E014 = ErrorInfo(
         title="Unknown equation tag",
-        explanation="Equation tags must be one of the recognized tags.",
-        common_causes=(
-            "Typo in tag name",
-            "Using unsupported tag",
-        ),
-        fixes=(
-            "Check spelling of tag name",
-            "Valid tags: @exclude",
-        ),
+        explanation=f"Equation tags must be one of: {_EQUATION_TAG_NAMES}.",
+        common_causes=("Typo in tag name",),
+        fixes=(f"Rename the tag to one of: {_EQUATION_TAG_NAMES}",),
     )
 
     E015 = ErrorInfo(
         title="Unknown assumption",
-        explanation="Assumption names must be one of the recognized mathematical assumptions.",
-        common_causes=(
-            "Typo in assumption name: 'postive' instead of 'positive'",
-            "Using unsupported assumption type",
-        ),
-        fixes=(
-            "Check spelling of assumption name",
-            "Valid assumptions: positive, negative, nonpositive, nonnegative, real, integer, finite, unit_interval",
-        ),
+        explanation=f"Assumption names must be one of: {_ASSUMPTION_NAMES}.",
+        common_causes=("Typo in assumption name: 'postive' for 'positive'",),
+        fixes=(f"Rename the assumption to one of: {_ASSUMPTION_NAMES}",),
     )
 
     E016 = ErrorInfo(
@@ -275,7 +242,7 @@ class ErrorCode(Enum):
         ),
         fixes=(
             "Wrap the component in a block: block NAME { ... };",
-            "Check that the block's opening brace is in the right place",
+            "Move the '};' that closes the block below the component",
         ),
     )
 
@@ -287,8 +254,8 @@ class ErrorCode(Enum):
             "Two blocks accidentally given the same name",
         ),
         fixes=(
-            "Rename one of the duplicate blocks",
-            "Merge the blocks if they should be one",
+            "Rename one of the blocks",
+            "Merge the two blocks into one",
         ),
     )
 
@@ -300,8 +267,8 @@ class ErrorCode(Enum):
             "Parameter accidentally defined twice in same calibration section",
         ),
         fixes=(
-            "Remove one of the duplicate definitions",
-            "Use different parameter names if they should be distinct",
+            "Delete one of the definitions",
+            "Rename one parameter if the two are distinct",
         ),
     )
 
@@ -309,23 +276,17 @@ class ErrorCode(Enum):
         title="Unknown distribution",
         explanation="The distribution name is not recognized.",
         common_causes=(
-            "Typo in distribution name: 'Betta' instead of 'Beta'",
-            "Using a distribution not supported by PyMC/preliz",
+            "Typo in distribution name: 'Betta' for 'Beta'",
+            "A distribution PreliZ does not define",
         ),
-        fixes=(
-            "Check spelling of distribution name",
-            "Common distributions: Normal, Beta, Gamma, Uniform, Exponential, HalfNormal",
-        ),
+        fixes=("Use a PreliZ distribution name with its capitalization: Normal, Beta, Gamma, InverseGamma, Uniform",),
     )
 
     E103 = ErrorInfo(
         title="Unknown wrapper",
-        explanation="The distribution wrapper is not recognized.",
-        common_causes=("Typo in wrapper name: 'Truncatd' instead of 'Truncated'",),
-        fixes=(
-            "Check spelling of wrapper name",
-            "Valid wrappers: Truncated, Censored, MaxEnt",
-        ),
+        explanation=f"The distribution wrapper must be one of: {_WRAPPER_NAMES}.",
+        common_causes=("Typo in wrapper name: 'Truncatd' for 'Truncated'",),
+        fixes=(f"Rename the wrapper to one of: {_WRAPPER_NAMES}",),
     )
 
     W001 = ErrorInfo(
@@ -337,9 +298,8 @@ class ErrorCode(Enum):
             "Typo in parameter name in equations",
         ),
         fixes=(
-            "Remove the unused parameter if not needed",
-            "Check if equations should use this parameter",
-            "Verify parameter name spelling in equations",
+            "Delete the parameter from the calibration block",
+            "Fix the spelling of the parameter in the equation that should use it",
         ),
     )
 
@@ -351,8 +311,8 @@ class ErrorCode(Enum):
             "Block is meant to be an identity block, not optimization",
         ),
         fixes=(
-            "Add an objective section if this is an optimization problem",
-            "Remove controls if this is not an optimization problem",
+            "Add an objective component",
+            "Delete the controls component",
         ),
     )
 
@@ -364,8 +324,8 @@ class ErrorCode(Enum):
             "Controls defined in wrong block",
         ),
         fixes=(
-            "Add a controls section with the choice variables",
-            "Move objective to the block with controls",
+            "Add a controls component listing the choice variables",
+            "Move the objective to the block that declares the controls",
         ),
     )
 

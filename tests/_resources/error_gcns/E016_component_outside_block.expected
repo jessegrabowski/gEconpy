@@ -8,4 +8,4 @@ error[E016]: Component 'IDENTITIES' found outside of block. Found 'IDENTITIES'
    4 | };
      |
    = note: Wrap the component in a block: block NAME { ... };
-   = note: Check that the block's opening brace is in the right place
+   = note: Move the '};' that closes the block below the component

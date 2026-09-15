@@ -8,5 +8,4 @@ error[E005]: Missing right-hand side of equation. Found ';'
    7 |     };
    8 | };
      |
-   = note: Add an expression after the '='
-   = note: Check if the equation was accidentally truncated
+   = note: Write an expression after '=': Y[] = C[] + I[];

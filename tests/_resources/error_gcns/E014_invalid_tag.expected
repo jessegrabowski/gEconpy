@@ -8,5 +8,4 @@ error[E014]: Unknown tag '@invalid'. Found '@invalid'
    7 |         Y[] = C[];
    8 |     };
      |
-   = note: Check spelling of tag name
-   = note: Valid tags: @exclude
+   = note: Rename the tag to one of: @exclude, @minimize, @maximize

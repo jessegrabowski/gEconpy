@@ -1,4 +1,4 @@
-error[E009]: Used '=' instead of '~' for distribution prior on 'beta'. Use 'beta ~ maxent(...)' instead of 'beta = maxent(...)'. Found '='
+error[E009]: A prior on 'beta' is declared with '='. Declare it with '~': 'beta ~ maxent(...)'. Found '='
   --> E009_equals_instead_of_tilde.gcn:10:9
      |
    8 |     calibration
@@ -8,6 +8,5 @@ error[E009]: Used '=' instead of '~' for distribution prior on 'beta'. Use 'beta
   11 |     };
   12 | };
      |
-   = note: Use tilde for distributions: alpha ~ Beta(a=1, b=1)
-   = note: Check distribution name spelling
-   = note: Use '=' for fixed values, '~' for distributions
+   = note: Declare a prior with '~': rho ~ Beta(alpha=2, beta=2);
+   = note: Declare a fixed value with '=': rho = 0.9;

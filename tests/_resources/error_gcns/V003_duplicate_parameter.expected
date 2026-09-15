@@ -7,5 +7,4 @@ error[V003]: Duplicate parameter declaration in block HOUSEHOLD
   25 |     };
   26 | };
      |
-   = note: Each parameter should be declared only once
-   = note: Remove the duplicate declaration
+   = note: Delete one of the declarations

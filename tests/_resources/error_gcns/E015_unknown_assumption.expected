@@ -9,5 +9,4 @@ error[E015]: Unknown assumption 'postive'. Found 'postive'
    5 |     };
      |
    = note: Did you mean 'positive'?
-   = note: Check spelling of assumption name
-   = note: Valid assumptions: positive, negative, nonpositive, nonnegative, real, integer, finite, unit_interval
+   = note: Rename the assumption to one of: positive, negative, nonpositive, nonnegative, real, integer, finite, unit_interval
