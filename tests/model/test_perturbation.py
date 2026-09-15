@@ -8,8 +8,15 @@ from numpy.testing import assert_allclose
 from pytensor.gradient import verify_grad
 from pytensor.graph.traversal import explicit_graph_inputs
 
+from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.build import model_from_gcn
-from gEconpy.model.perturbation import check_bk_condition_pt, linearize_model
+from gEconpy.model.perturbation import (
+    check_bk_condition,
+    check_bk_condition_pt,
+    linearize_model,
+    make_not_loglin_flags,
+)
 from gEconpy.model.timing import make_all_variable_time_combinations
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.cycle_reduction import (
@@ -97,7 +104,8 @@ class TestLinearizeModel:
             pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         ],
     )
-    def test_loglin_matches_sympy(self, gcn_file):
+    @pytest.mark.parametrize("loglin", [True, False], ids=["loglin", "no_loglin"])
+    def test_matches_sympy(self, gcn_file, loglin):
         mod = load_and_cache_model(gcn_file)
 
         jacobians, ss_inputs, eq_order, var_order = linearize_model(
@@ -105,12 +113,13 @@ class TestLinearizeModel:
             mod.equations,
             mod.shocks,
             cache={},
-            loglin_variables=mod.variables,
+            loglin_variables=mod.variables if loglin else [],
         )
         actual = _compile_and_eval(mod, jacobians, ss_inputs)
         actual = _unpermute_abcd(actual, eq_order, var_order)
 
-        expected_mats = _sympy_jacobians(mod.variables, mod.equations, mod.shocks)
+        not_loglin = [] if loglin else [x.base_name for x in mod.variables]
+        expected_mats = _sympy_jacobians(mod.variables, mod.equations, mod.shocks, not_loglin_variables=not_loglin)
         subs = {
             **mod.parameters().to_sympy(),
             **{x.to_ss(): 0.8 for x in mod.variables},
@@ -119,41 +128,64 @@ class TestLinearizeModel:
 
         for name, actual_mat, sym_mat in zip("ABCD", actual, expected_mats, strict=True):
             expected = np.array(sym_mat.subs(subs)).astype(float)
-            assert_allclose(actual_mat, expected, atol=1e-10, err_msg=f"loglin {name} mismatch for {gcn_file}")
+            assert_allclose(actual_mat, expected, atol=1e-10, err_msg=f"{name} mismatch for {gcn_file}")
+
+    def test_explicit_orderings_permute_rows_and_columns(self):
+        """A caller-supplied permutation is applied verbatim and reported back, even when passed as a list."""
+        mod = load_and_cache_model("rbc_2_block.gcn")
+        n_eq, n_var = len(mod.equations), len(mod.variables)
+        eq_order = list(range(n_eq))[::-1]
+        var_order = list(range(n_var))[::-1]
+
+        default_jacobians, default_ss, default_eq_order, default_var_order = linearize_model(
+            mod.variables, mod.equations, mod.shocks, cache={}
+        )
+        jacobians, ss_inputs, eq_order_out, var_order_out = linearize_model(
+            mod.variables, mod.equations, mod.shocks, cache={}, eq_order=eq_order, var_order=var_order
+        )
+
+        np.testing.assert_array_equal(eq_order_out, eq_order)
+        np.testing.assert_array_equal(var_order_out, var_order)
+
+        default_mats = _unpermute_abcd(
+            _compile_and_eval(mod, default_jacobians, default_ss), default_eq_order, default_var_order
+        )
+        reversed_mats = _unpermute_abcd(_compile_and_eval(mod, jacobians, ss_inputs), eq_order, var_order)
+        for name, default_mat, reversed_mat in zip("ABCD", default_mats, reversed_mats, strict=True):
+            assert_allclose(reversed_mat, default_mat, atol=1e-12, err_msg=f"{name} differs under reversed ordering")
+
+
+class TestMakeNotLoglinFlags:
+    K, C, B = (TimeAwareSymbol(name, 0) for name in "KCB")
+    alpha = sp.Symbol("alpha")
+    steady_state = SymbolDictionary({K.to_ss(): 2.0, C.to_ss(): 0.0, B.to_ss(): -1.0, alpha: 0.3})
 
     @pytest.mark.parametrize(
-        "gcn_file",
+        ("kwargs", "expected"),
         [
-            "one_block_1.gcn",
-            "rbc_2_block.gcn",
-            "open_rbc.gcn",
-            pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+            ({}, [0, 1, 1, 0]),
+            ({"loglin_negative_ss": True}, [0, 1, 0, 0]),
+            ({"not_loglin_variables": ["K", "alpha"]}, [1, 1, 1, 1]),
         ],
+        ids=["zero_and_negative_ss", "allow_negative_ss", "user_exclusions"],
     )
-    def test_no_loglin_matches_sympy(self, gcn_file):
-        mod = load_and_cache_model(gcn_file)
-
-        jacobians, ss_inputs, eq_order, var_order = linearize_model(
-            mod.variables,
-            mod.equations,
-            mod.shocks,
-            cache={},
-            loglin_variables=[],
+    def test_flags(self, kwargs, expected):
+        flags = make_not_loglin_flags(
+            [self.K, self.C, self.B], [self.alpha], self.steady_state, verbose=False, **kwargs
         )
-        actual = _compile_and_eval(mod, jacobians, ss_inputs)
-        actual = _unpermute_abcd(actual, eq_order, var_order)
+        np.testing.assert_array_equal(flags, expected)
 
-        all_excluded = [x.base_name for x in mod.variables]
-        expected_mats = _sympy_jacobians(mod.variables, mod.equations, mod.shocks, not_loglin_variables=all_excluded)
-        subs = {
-            **mod.parameters().to_sympy(),
-            **{x.to_ss(): 0.8 for x in mod.variables},
-            **{x.to_ss(): 0.0 for x in mod.shocks},
-        }
+    def test_log_linearize_false_flags_every_variable(self):
+        flags = make_not_loglin_flags(
+            [self.K, self.C, self.B], [self.alpha], self.steady_state, log_linearize=False, verbose=False
+        )
+        np.testing.assert_array_equal(flags, [1, 1, 1])
 
-        for name, actual_mat, sym_mat in zip("ABCD", actual, expected_mats, strict=True):
-            expected = np.array(sym_mat.subs(subs)).astype(float)
-            assert_allclose(actual_mat, expected, atol=1e-10, err_msg=f"no-loglin {name} mismatch for {gcn_file}")
+    def test_unknown_variable_raises(self):
+        with pytest.raises(ValueError, match="unknown to the model: Z"):
+            make_not_loglin_flags(
+                [self.K, self.C, self.B], [self.alpha], self.steady_state, not_loglin_variables=["Z"], verbose=False
+            )
 
 
 class TestSolvePolicyFunction:
@@ -282,6 +314,95 @@ class TestGensysPytensor:
             pt=[A, B, C, D.astype("float64")],
             rng=np.random.default_rng(),
         )
+
+
+class TestNumbaBackend:
+    @pytest.mark.parametrize(
+        ("op", "dtype"),
+        [
+            (gensys_pt, "float64"),
+            (gensys_pt, "float32"),
+            (cycle_reduction_pt, "float64"),
+            (cycle_reduction_pt, "float32"),
+            (scan_cycle_reduction, "float64"),
+        ],
+        ids=["gensys-f64", "gensys-f32", "cycle_reduction-f64", "cycle_reduction-f32", "scan_cycle_reduction-f64"],
+    )
+    @pytest.mark.parametrize("static_shape", [True, False], ids=["static_shape", "unknown_shape"])
+    def test_matches_python_backend(self, op, dtype, static_shape):
+        """The njit kernels agree with the Python Ops, whatever the input dtype and whether the shape is static.
+
+        ``scan_cycle_reduction`` seeds its convergence norm with a float64 constant, so its ``ifelse`` refuses float32
+        inputs at graph-build time and that combination is not swept here.
+        """
+        mod = load_and_cache_model("one_block_1_ss.gcn")
+        A, B, C, D = [
+            np.ascontiguousarray(x, dtype="float64")
+            for x in mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
+        ]
+
+        inputs = [
+            pt.tensor(name=name, shape=x.shape if static_shape else (None, None), dtype=dtype)
+            for name, x in zip("ABCD", [A, B, C, D], strict=True)
+        ]
+        T, R, *_ = op(*inputs)
+
+        f_py = pytensor.function(inputs, [T, R], mode="FAST_RUN")
+        f_numba = pytensor.function(inputs, [T, R], mode="NUMBA")
+
+        values = [x.astype(dtype) for x in [A, B, C, D]]
+        T_py, R_py = f_py(*values)
+        T_numba, R_numba = f_numba(*values)
+
+        tol = 1e-4 if dtype == "float32" else 1e-8
+        assert_allclose(T_numba, T_py, atol=tol, rtol=tol)
+        assert_allclose(R_numba, R_py, atol=tol, rtol=tol)
+        assert_allclose(A + B @ T_py + C @ T_py @ T_py, 0.0, atol=tol)
+
+
+class TestCheckBKCondition:
+    @staticmethod
+    def _system(gcn_file):
+        if gcn_file == "pert_fails.gcn":
+            mod = model_from_gcn(f"tests/_resources/test_gcns/{gcn_file}", verbose=False, on_unused_parameters="ignore")
+        else:
+            mod = load_and_cache_model(gcn_file)
+        return mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
+
+    @pytest.mark.parametrize(
+        ("gcn_file", "satisfied"), [("one_block_1_ss.gcn", True), ("pert_fails.gcn", False)], ids=["pass", "fail"]
+    )
+    def test_return_value_selects_output(self, gcn_file, satisfied):
+        A, B, C, D = self._system(gcn_file)
+
+        assert check_bk_condition(A, B, C, D, return_value="bool", verbose=False) == satisfied
+        assert check_bk_condition(A, B, C, D, return_value=None, verbose=False) is None
+
+    def test_on_failure_raise_names_the_failure(self):
+        A, B, C, D = self._system("pert_fails.gcn")
+        with pytest.raises(ValueError, match=r"NOT satisfied\. No unique solution"):
+            check_bk_condition(A, B, C, D, on_failure="raise", return_value=None, verbose=False)
+
+    def test_on_failure_raise_is_silent_when_satisfied(self):
+        A, B, C, D = self._system("one_block_1_ss.gcn")
+        assert check_bk_condition(A, B, C, D, on_failure="raise", return_value="bool", verbose=False)
+
+    @pytest.mark.parametrize(
+        ("gcn_file", "satisfied"), [("one_block_1_ss.gcn", True), ("pert_fails.gcn", False)], ids=["pass", "fail"]
+    )
+    def test_symbolic_check_agrees_with_numpy(self, gcn_file, satisfied):
+        A, B, C, D = self._system(gcn_file)
+        lead_var_idx = np.flatnonzero(np.abs(C).sum(axis=0) > 1e-8)
+
+        A_pt, B_pt, C_pt, D_pt = (
+            pt.tensor(name=name, shape=x.shape) for name, x in zip("ABCD", [A, B, C, D], strict=True)
+        )
+        outputs = check_bk_condition_pt(A_pt, B_pt, C_pt, D_pt, lead_var_idx)
+        bk_satisfied, n_forward, n_unstable = pytensor.function([A_pt, B_pt, C_pt], outputs)(A, B, C)
+
+        assert bk_satisfied == satisfied
+        assert n_forward == len(lead_var_idx)
+        assert (n_forward == n_unstable) == satisfied
 
 
 class TestBKConditionGradients:

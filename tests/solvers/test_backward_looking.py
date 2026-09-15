@@ -1,10 +1,16 @@
 import numpy as np
+import pytensor
+import pytensor.tensor as pt
 import pytest
 
 from numpy.testing import assert_allclose
 
 from gEconpy.model.simulate import impulse_response_function, simulate
 from gEconpy.model.statistics import stationary_covariance_matrix
+from gEconpy.solvers.backward_looking import (
+    solve_policy_function_with_backward_direct,
+    solve_policy_function_with_backward_direct_pt,
+)
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 
@@ -42,6 +48,25 @@ class TestBackwardLookingSolve:
         assert_allclose(C, 0.0)
         assert_allclose(A + B @ T, 0.0, atol=1e-10)
         assert_allclose(B @ R + D, 0.0, atol=1e-10)
+
+    def test_direct_solvers_agree_with_model_solution(self, sarima_solved):
+        model, T, R = sarima_solved
+        A, B, C, D = model.linearize_model(verbose=False)
+
+        T_np, R_np = solve_policy_function_with_backward_direct(A, B, C, D)
+
+        A_pt, B_pt, C_pt, D_pt = (pt.dmatrix(name) for name in "ABCD")
+        f = pytensor.function(
+            [A_pt, B_pt, C_pt, D_pt],
+            solve_policy_function_with_backward_direct_pt(A_pt, B_pt, C_pt, D_pt),
+            on_unused_input="ignore",
+        )
+        T_pt, R_pt = f(A, B, C, D)
+
+        assert_allclose(T_np, T, atol=1e-12)
+        assert_allclose(R_np, R, atol=1e-12)
+        assert_allclose(T_pt, T, atol=1e-12)
+        assert_allclose(R_pt, R, atol=1e-12)
 
     def test_T_encodes_ar_coefficients(self, sarima_solved):
         model, T, _ = sarima_solved

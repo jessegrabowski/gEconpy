@@ -55,6 +55,18 @@ class TestRealEig:
 
         verify_grad(f, [test_matrix], rng=rng)
 
+    def test_batched_input_matches_per_matrix(self, rng):
+        M = pt.dtensor3("M")
+        re, im = real_eig(M)
+        f = pytensor.function([M], [re, im])
+
+        batch = rng.standard_normal((3, 4, 4))
+        r, i = f(batch)
+        expected = np.sort(np.abs(np.linalg.eigvals(batch)), axis=1)
+
+        assert r.shape == i.shape == (3, 4)
+        assert_allclose(np.sqrt(r**2 + i**2), expected, atol=1e-12)
+
     @pytest.mark.parametrize("mode", ["NUMBA", "JAX"])
     def test_backend_dispatch_matches_python(self, test_matrix, mode):
         """The backends agree on the moduli. Conjugate pair ordering may differ between them."""

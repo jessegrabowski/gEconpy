@@ -99,12 +99,14 @@ class TestInexactNewtonKrylovSpecific:
         direction = KrylovDirection(krylov_method="gmres", eta_max=0.5, eisenstat_walker=False)
         result = sparse_root(fun, x0, solver=InexactNewtonKrylov(direction=direction), progressbar=False)
         assert result.success
+        np.testing.assert_allclose(fun(result.x)[0], 0.0, atol=1e-8)
 
     def test_bicgstab_also_converges(self, broyden_system):
         fun, x0 = broyden_system
         direction = KrylovDirection(krylov_method="bicgstab")
         result = sparse_root(fun, x0, solver=InexactNewtonKrylov(direction=direction), progressbar=False)
         assert result.success
+        np.testing.assert_allclose(fun(result.x)[0], 0.0, atol=1e-8)
 
     def test_large_broyden(self):
         n = 500
@@ -118,6 +120,7 @@ class TestInexactNewtonKrylovSpecific:
 
         result = sparse_root(fun, -np.ones(n), solver=InexactNewtonKrylov(), progressbar=False)
         assert result.success
+        np.testing.assert_allclose(fun(result.x)[0], 0.0, atol=1e-8)
 
 
 class TestNewtonNonmonotoneSuite(CommonSolverTests):
