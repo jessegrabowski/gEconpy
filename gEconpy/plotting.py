@@ -3,7 +3,7 @@ import warnings
 
 from collections.abc import Mapping
 from itertools import product
-from typing import Any, Literal, cast
+from typing import Any, Literal, NamedTuple, cast
 
 import arviz_stats as azs
 import matplotlib.pyplot as plt
@@ -27,6 +27,7 @@ from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.statistics import check_bk_condition, eigenvalue_sensitivity
 
 _SOLVABILITY_COLORS = {
+    "success": "tab:blue",
     "steady_state": "tab:red",
     "perturbation": "tab:orange",
     "blanchard-kahn": "tab:green",
@@ -47,6 +48,8 @@ _SOLVABILITY_STAGES = [
 _SOLVABILITY_META_COLS = {"failure_step", "norm_deterministic", "norm_stochastic"}
 
 _EIGENVALUE_PLOT_MODULUS_CUTOFF = 10
+
+_SCENARIO_LINE_STYLES = ["-", "--", "-.", ":"]
 
 _REFERENCE_DEFAULTS = {"facecolors": "none", "edgecolors": "k", "s": 60, "linewidths": 1.6, "zorder": 4}
 
@@ -111,19 +114,17 @@ def prepare_gridspec_figure(
     plot_locs : list of tuple of slice
         Row and column slices into ``gs`` for each subplot, in row-major order.
     """
-    remainder = n_plots % n_cols
-    has_remainder = remainder > 0
-    n_rows = n_plots // n_cols + int(has_remainder)
+    n_full_rows, remainder = divmod(n_plots, n_cols)
+    n_rows = math.ceil(n_plots / n_cols)
 
     gs = GridSpec(2 * n_rows, 2 * n_cols, figure=figure)
     plot_locs = [
-        (slice(i * 2, (i + 1) * 2), slice(j * 2, (j + 1) * 2))
-        for i, j in product(range(n_rows - int(has_remainder)), range(n_cols))
+        (slice(i * 2, (i + 1) * 2), slice(j * 2, (j + 1) * 2)) for i, j in product(range(n_full_rows), range(n_cols))
     ]
 
-    if has_remainder:
+    if remainder > 0:
         last_row = slice((n_rows - 1) * 2, n_rows * 2)
-        left_pad = int(n_cols - remainder)
+        left_pad = n_cols - remainder
         for j in range(remainder):
             col_slice = slice(left_pad + j * 2, left_pad + (j + 1) * 2)
             plot_locs.append((last_row, col_slice))
@@ -274,16 +275,18 @@ def plot_simulation(
     """
     if vars_to_plot is None:
         vars_to_plot = simulation.coords["variable"].values.tolist()
+    for variable in vars_to_plot:
+        if variable not in simulation.coords["variable"]:
+            raise ValueError(f"{variable} not found among model variables.")
+
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
 
     fig = plt.figure(figsize=figsize, dpi=dpi)
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots)
 
-    for idx, variable in enumerate(vars_to_plot):
-        if variable not in simulation.coords["variable"]:
-            raise ValueError(f"{variable} not found among model variables.")
-        axis = fig.add_subplot(gs[plot_locs[idx]])
+    for variable, plot_loc in zip(vars_to_plot, plot_locs, strict=True):
+        axis = fig.add_subplot(gs[plot_loc])
 
         _plot_single_variable(
             simulation.sel(variable=variable),
@@ -376,26 +379,22 @@ def plot_irf(
     irf_map = _irf_to_mapping(irf)
     vars_to_plot_resolved, shocks_to_plot_resolved = _resolve_vars_and_shocks(irf_map, vars_to_plot, shocks_to_plot)
 
-    n_plots = len(vars_to_plot_resolved)
-    fig, gs, plot_locs, plot_row_idxs, last_row_idxs = _prepare_irf_grid(
-        figsize=figsize, dpi=dpi, n_plots=n_plots, n_cols=n_cols
+    fig, gs, plot_locs, show_xticks = _prepare_irf_grid(
+        figsize=figsize, dpi=dpi, n_plots=len(vars_to_plot_resolved), n_cols=n_cols
     )
-
-    markers = ["-", "--", "-.", ":"]
     scenario_names = list(irf_map.keys())
 
-    for idx, variable in enumerate(vars_to_plot_resolved):
-        axis = fig.add_subplot(gs[plot_locs[idx]])
+    for idx, (variable, plot_loc) in enumerate(zip(vars_to_plot_resolved, plot_locs, strict=True)):
+        axis = fig.add_subplot(gs[plot_loc])
         _plot_irf_panel(
             axis=axis,
             irf_map=irf_map,
             variable=variable,
             shocks_to_plot=shocks_to_plot_resolved,
             cmap=cmap,
-            markers=markers,
             add_scenario_legend=(idx == 0),
             scenario_names=scenario_names,
-            show_xticks=(plot_row_idxs[idx] in last_row_idxs),
+            show_xticks=show_xticks[idx],
         )
 
     _add_shocks_legend(fig, shocks_to_plot_resolved, legend, legend_kwargs)
@@ -449,38 +448,33 @@ def plot_solvability(
         fig = plot_solvability(results, params_to_plot=["alpha", "beta"])
     """
     plot_data, failure_step, params = _solv_prepare_data(data)
-    _prior_validate_params_to_plot(params_to_plot, params)
-
-    params_use = params if params_to_plot is None else params_to_plot
+    params_use = _validate_params_to_plot(params_to_plot, params)
     n = len(params_use)
 
     if figsize is None:
         side = max(4.0, min(4.0 * n, 20.0))
         figsize = (side, side)
 
-    fig, axes = plt.subplots(n, n, figsize=figsize, dpi=dpi)
-    if n == 1:
-        axes = np.array([[axes]])
+    fig, axes = plt.subplots(n, n, figsize=figsize, dpi=dpi, squeeze=False)
 
-    for row in range(n):
-        for col in range(n):
-            ax = axes[row][col]
-            if col > row:
-                ax.set_visible(False)
-                continue
+    for row, col in product(range(n), range(n)):
+        ax = axes[row, col]
+        if col > row:
+            ax.set_visible(False)
+            continue
 
-            y_name = params_use[row]
-            x_name = params_use[col]
+        y_name = params_use[row]
+        x_name = params_use[col]
 
-            if row == col:
-                _solv_plot_diagonal(ax, plot_data[x_name], plot_data["success"])
-            else:
-                _solv_plot_offdiag(ax, plot_data, failure_step, x_name, y_name)
+        if row == col:
+            _solv_plot_diagonal(ax, plot_data[x_name], plot_data["success"])
+        else:
+            _solv_plot_offdiag(ax, plot_data, failure_step, x_name, y_name)
 
     _solv_format_axes(axes, params_use)
 
     # Only off-diagonal panels carry scatter labels, so the legend is read from the first one below the diagonal.
-    legend_ax = axes[min(1, n - 1)][0] if n > 1 else axes[0][0]
+    legend_ax = axes[1, 0] if n > 1 else axes[0, 0]
     handles, labels = legend_ax.get_legend_handles_labels()
     if handles:
         fig.legend(
@@ -534,22 +528,19 @@ def plot_solvability_summary(data: pd.DataFrame, figsize: tuple[float, float] = 
     """
     counts = data["failure_step"].fillna("success").value_counts(normalize=True)
 
-    color_map = {**_SOLVABILITY_COLORS, "success": "tab:blue"}
-
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     left = 0.0
     for label in _SOLVABILITY_STAGES:
         frac = counts.get(label, 0.0)
         if frac == 0:
             continue
-        color = color_map.get(label, "tab:gray")
+        color = _SOLVABILITY_COLORS.get(label, "tab:gray")
         ax.barh(0, frac, left=left, color=color, label=label.replace("_", " ").title(), height=0.6)
         left += frac
 
     ax.set_xlim(0, 1)
     ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_visible(False)
+    ax.spines[:].set_visible(False)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=min(len(counts), 6), fontsize=8, frameon=False)
     ax.set_title("Solvability Summary")
     fig.tight_layout()
@@ -660,8 +651,7 @@ def plot_eigenvalues(
     eigenvalues = eigenvalues[eigenvalues.Modulus < _EIGENVALUE_PLOT_MODULUS_CUTOFF]
 
     if plot_circle:
-        x_circle = np.linspace(-2 * np.pi, 2 * np.pi, 1000)
-        ax.plot(np.cos(x_circle), np.sin(x_circle), color="k", lw=1)
+        _draw_unit_circle(ax)
 
     ax.set_aspect("equal")
     colors = ["tab:red" if x > 1.0 else "tab:blue" for x in eigenvalues.Modulus]
@@ -754,9 +744,10 @@ def plot_eigenvalue_sensitivity(
     if sensitivity_data is None:
         sensitivity_data = eigenvalue_sensitivity(model, **eigenvalue_sensitivity_kwargs)
 
-    re_plot, im_plot, mod_plot, filtered_data, n_filtered = _filter_eigenvalues(
-        sensitivity_data, filter_zeros, filter_infinite, zero_tol, inf_tol
-    )
+    filtered_data, n_filtered = _filter_eigenvalues(sensitivity_data, filter_zeros, filter_infinite, zero_tol, inf_tol)
+    re_plot = filtered_data.eigenvalues.sel(component="real").values
+    im_plot = filtered_data.eigenvalues.sel(component="imaginary").values
+    mod_plot = filtered_data.eigenvalues.sel(component="modulus").values
 
     all_params = list(sensitivity_data.coords["parameter"].values)
     params_to_plot = _validate_params_to_plot(params_to_plot, all_params)
@@ -771,17 +762,17 @@ def plot_eigenvalue_sensitivity(
     fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True)
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_params, figure=fig)
 
-    xlim, ylim, _ = _compute_axis_limits(re_plot, im_plot)
+    xlim, ylim = _compute_axis_limits(re_plot, im_plot)
 
     grad_re = filtered_data.gradients.sel(part="real").values
     grad_im = filtered_data.gradients.sel(part="imaginary").values
 
-    model_param_names = set(model._default_params.keys())
+    model_param_names = {param.name for param in model.params}
     param_updates = {k: v for k, v in eigenvalue_sensitivity_kwargs.items() if k in model_param_names}
     param_dict = model.parameters(**param_updates)
 
-    for idx, param in enumerate(params_to_plot):
-        ax = fig.add_subplot(gs[plot_locs[idx]])
+    for idx, (param, plot_loc) in enumerate(zip(params_to_plot, plot_locs, strict=True)):
+        ax = fig.add_subplot(gs[plot_loc])
         param_idx = all_params.index(param)
         param_value = float(param_dict.get(param, 1.0))
 
@@ -987,18 +978,15 @@ def annotate_heatmap(
 
     threshold = im.norm(threshold) if threshold is not None else im.norm(data.max()) / 2.0
 
-    kw = {"horizontalalignment": "center", "verticalalignment": "center"}
-    kw.update(textkw)
+    text_kwargs = {"horizontalalignment": "center", "verticalalignment": "center", **textkw}
 
     if isinstance(valfmt, str):
         valfmt = StrMethodFormatter(valfmt)
 
     texts = []
-    for i in range(data.shape[0]):
-        for j in range(data.shape[1]):
-            kw.update(color=textcolors[int(im.norm(data[i, j]) > threshold)])
-            text = im.axes.text(j, i, valfmt(data[i, j], None), **kw)
-            texts.append(text)
+    for i, j in product(range(data.shape[0]), range(data.shape[1])):
+        color = textcolors[int(im.norm(data[i, j]) > threshold)]
+        texts.append(im.axes.text(j, i, valfmt(data[i, j], None), **{**text_kwargs, "color": color}))
 
     return texts
 
@@ -1123,10 +1111,10 @@ def plot_acf(
             n_cols=3,
         )
     """
-    models = {None: acorr} if isinstance(acorr, xr.DataArray) else dict(acorr)
-    diagonals, present_by_model, var_dim = _collect_acf_diagonals(models, sample_dims)
+    tensors = {None: acorr} if isinstance(acorr, xr.DataArray) else dict(acorr)
+    models, var_dim = _collect_acf_diagonals(tensors, sample_dims, dodge)
 
-    diagonal = diagonals[next(iter(diagonals))]
+    diagonal = next(iter(models.values())).diagonal
     all_variables = diagonal.coords[var_dim].values
     if vars_to_plot is None:
         vars_to_plot = all_variables
@@ -1141,33 +1129,27 @@ def plot_acf(
     gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_plots, figure=fig)
     lags = diagonal.coords["lag"].values
 
-    n_models = len(models)
-    offsets = (np.arange(n_models) - (n_models - 1) / 2) * (dodge if n_models > 1 else 0.0)
-    colors = [f"C{i}" for i in range(n_models)]
     ref_var_dim = next((dim for dim in reference.dims if dim != "lag"), None) if reference is not None else None
 
-    for variable, plot_loc in zip(vars_to_plot, plot_locs, strict=False):
+    for variable, plot_loc in zip(vars_to_plot, plot_locs, strict=True):
         axis = fig.add_subplot(gs[plot_loc])
         _draw_acf_panel(
             axis,
             variable,
-            diagonals,
-            present_by_model,
-            var_dim,
-            lags,
-            ci_probs,
-            offsets,
-            colors,
-            reference,
-            ref_var_dim,
-            mean_kwargs,
-            inner_hdi_kwargs,
-            outer_hdi_kwargs,
-            stem_kwargs,
-            reference_kwargs,
+            models=models,
+            var_dim=var_dim,
+            lags=lags,
+            ci_probs=ci_probs,
+            reference=reference,
+            ref_var_dim=ref_var_dim,
+            mean_kwargs=mean_kwargs,
+            inner_hdi_kwargs=inner_hdi_kwargs,
+            outer_hdi_kwargs=outer_hdi_kwargs,
+            stem_kwargs=stem_kwargs,
+            reference_kwargs=reference_kwargs,
         )
 
-    _add_acf_legend(fig, list(models), colors, reference is not None, reference_kwargs)
+    _add_acf_legend(fig, models, reference is not None, reference_kwargs)
     return fig
 
 
@@ -1256,13 +1238,12 @@ def plot_corner(
 
     for row, col in product(range(k_params), range(k_params)):
         ax = axes[row, col]
-        _format_axis_for_corner(ax, fontsize)
-        x_name, y_name = var_names[col], var_names[row]
-
         if col > row:
-            ax.set(xticks=[], yticks=[], xlabel="", ylabel="")
             ax.set_visible(False)
             continue
+
+        _format_axis_for_corner(ax, fontsize)
+        x_name, y_name = var_names[col], var_names[row]
 
         if col == row:
             _plot_diagonal_hist(
@@ -1379,27 +1360,28 @@ def plot_kalman_filter(
     if fig is None:
         fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
 
-    state_name = "state" if not observed else "observed_state"
+    state_name = "observed_state" if observed else "state"
+    output_name = f"{kalman_output}_{group}_observed" if observed else f"{kalman_output}_{group}"
     if vars_to_plot is None:
         vars_to_plot = idata.coords[state_name].values
 
     n_plots = len(vars_to_plot)
     n_cols = min(4, n_plots) if n_cols is None else n_cols
-    output_name = f"{kalman_output}_{group}" if not observed else f"{kalman_output}_{group}_observed"
 
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
     time_idx = idata.coords["time"]
 
-    means = idata[output_name].sel(**{state_name: vars_to_plot}).mean(dim=["chain", "draw"])
-    hdis = azs.hdi(idata[output_name].sel(**{state_name: vars_to_plot}), prob=0.95, skipna=True)
+    output = idata[output_name].sel({state_name: vars_to_plot})
+    means = output.mean(dim=["chain", "draw"])
+    hdis = azs.hdi(output, prob=0.95, skipna=True)
 
-    for idx, variable in enumerate(vars_to_plot):
-        axis = fig.add_subplot(gs[plot_locs[idx]])
+    for variable, plot_loc in zip(vars_to_plot, plot_locs, strict=True):
+        axis = fig.add_subplot(gs[plot_loc])
 
-        axis.plot(time_idx, means.sel(**{state_name: variable}), color="tab:red")
+        axis.plot(time_idx, means.sel({state_name: variable}), color="tab:red")
         axis.fill_between(
             time_idx,
-            *hdis.sel(**{state_name: variable}).values.T,
+            *hdis.sel({state_name: variable}).values.T,
             color="tab:blue",
             alpha=0.5,
         )
@@ -1458,14 +1440,11 @@ def plot_priors(
         model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
         fig = plot_priors(model, n_cols=3)
     """
-    priors = dict(model.param_priors)
-
-    if model.shock_priors:
-        priors |= {
-            shock.param_name_to_hyper_name[name]: hyper_prior
-            for shock in model.shock_priors.values()
-            for name, hyper_prior in shock.hyper_param_dict.items()
-        }
+    priors = dict(model.param_priors) | {
+        shock.param_name_to_hyper_name[name]: hyper_prior
+        for shock in model.shock_priors.values()
+        for name, hyper_prior in shock.hyper_param_dict.items()
+    }
 
     if var_names is not None:
         priors = {name: priors[name] for name in var_names}
@@ -1478,7 +1457,9 @@ def plot_priors(
     fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
     gs, locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_params, figure=fig)
 
-    all_params = model.param_dict | model.hyper_param_dict if isinstance(model, DSGEStateSpace) else model.parameters()
+    all_params = (
+        (model.param_dict | model.hyper_param_dict) if isinstance(model, DSGEStateSpace) else model.parameters()
+    )
 
     for (name, prior), loc in zip(priors.items(), locs, strict=True):
         axis = fig.add_subplot(gs[loc])
@@ -1492,8 +1473,8 @@ def plot_priors(
             )
 
         dist_text = axis.get_title()
-        axis.set_title(name + "\n" + dist_text)
-        value = all_params.get(name, None)
+        axis.set_title(f"{name}\n{dist_text}")
+        value = all_params.get(name)
 
         if mark_initial_value and value is not None:
             axis.axvline(value, ls="--", c="k")
@@ -1569,7 +1550,7 @@ def plot_posterior_with_prior(
     if plot_posterior_kwargs is None:
         plot_posterior_kwargs = {}
 
-    pc = plot_dist(
+    plot_collection = plot_dist(
         idata,
         var_names=var_names,
         kind="kde",
@@ -1583,8 +1564,8 @@ def plot_posterior_with_prior(
         **plot_posterior_kwargs,
     )
 
-    fig = pc.viz["figure"].item()
-    axes_ds = pc.viz["plot"]
+    fig = plot_collection.viz["figure"].item()
+    axes_ds = plot_collection.viz["plot"]
 
     for var_name in var_names:
         if var_name not in axes_ds:
@@ -1593,8 +1574,8 @@ def plot_posterior_with_prior(
         if var_name in prior_dict:
             prior_dict[var_name].plot_pdf(ax=axis, legend=False, color="tab:orange")
         if true_values is not None and var_name in true_values:
-            for v in np.atleast_1d(true_values[var_name].values).ravel():
-                axis.axvline(v, ls="--", c="k", lw=1.0)
+            for true_value in np.ravel(true_values[var_name].values):
+                axis.axvline(true_value, ls="--", c="k", lw=1.0)
 
     return fig
 
@@ -1655,15 +1636,14 @@ def plot_estimated_matrix(
     n_shocks = dsge_mod.k_posdef
     subplot_kwargs = subplot_kwargs or {}
 
-    # squeeze=False keeps ax a 2-D array even for a single shock, so ax[i, j] stays valid.
-    fig, ax = plt.subplots(n_shocks, n_shocks, squeeze=False, **subplot_kwargs)
+    fig, axes = plt.subplots(n_shocks, n_shocks, squeeze=False, **subplot_kwargs)
 
     mu = idata.posterior[matrix_name].mean(dim=["chain", "draw"])
     hdi = azs.hdi(idata.posterior[matrix_name])
-    ax[0, 0].set(xlim=(-1.05, 1.05), ylim=(-1.05, 1.05))
+    axes[0, 0].set(xlim=(-1.05, 1.05), ylim=(-1.05, 1.05))
 
     for i, j in product(range(n_shocks), range(n_shocks)):
-        axis = ax[i, j]
+        axis = axes[i, j]
         if i <= j and symmetrical:
             axis.set_visible(False)
             continue
@@ -1684,10 +1664,14 @@ def plot_estimated_matrix(
     return fig
 
 
-def _style_panel(axis: plt.Axes) -> None:
-    for spine in axis.spines.values():
-        spine.set_visible(False)
-    axis.grid(ls="--", lw=0.5)
+def _style_panel(axis: plt.Axes, **grid_kwargs) -> None:
+    axis.spines[:].set_visible(False)
+    axis.grid(ls="--", lw=0.5, **grid_kwargs)
+
+
+def _draw_unit_circle(axis: plt.Axes, **line_kwargs) -> None:
+    theta = np.linspace(0, 2 * np.pi, 200)
+    axis.plot(np.cos(theta), np.sin(theta), color="k", lw=1, **line_kwargs)
 
 
 def _plot_single_variable(
@@ -1801,19 +1785,34 @@ def _resolve_vars_and_shocks(
 
 
 def _prepare_irf_grid(
-    figsize: tuple[int, int], dpi: int, n_plots: int, n_cols: int | None, figure: Figure | None = None
-) -> tuple[Figure, GridSpec, list[tuple[slice, slice]], list[int], list[int]]:
-    """Create the figure and grid, and work out which grid rows are the bottom ones and so keep their x ticks."""
+    figsize: tuple[int, int], dpi: int, n_plots: int, n_cols: int | None
+) -> tuple[Figure, GridSpec, list[tuple[slice, slice]], list[bool]]:
+    """
+    Create the figure and grid, and flag the panels that keep their x ticks.
+
+    Returns
+    -------
+    fig : Figure
+        The new figure.
+    gs : GridSpec
+        Grid layout of the panels.
+    plot_locs : list of tuple of slice
+        Row and column slices into ``gs`` for each panel.
+    show_xticks : list of bool
+        Whether each panel is in a bottom row and so keeps its x ticks. A partial last row leaves panels of the row
+        above it without a panel underneath, so both rows count as bottom rows.
+    """
     n_cols = min(4, n_plots) if n_cols is None else n_cols
-    fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True) if figure is None else figure
+    fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True)
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
 
     plot_row_idxs = [loc[0].stop // 2 - 1 for loc in plot_locs]
     plot_rows = sorted(set(plot_row_idxs))
     is_square = all(plot_row_idxs.count(i) == n_cols for i in plot_rows)
     last_row_idxs = [plot_rows[-1]] if is_square else plot_rows[-2:]
+    show_xticks = [row_idx in last_row_idxs for row_idx in plot_row_idxs]
 
-    return fig, gs, plot_locs, plot_row_idxs, last_row_idxs
+    return fig, gs, plot_locs, show_xticks
 
 
 def _plot_irf_panel(
@@ -1822,7 +1821,6 @@ def _plot_irf_panel(
     variable: str,
     shocks_to_plot: list[str] | None,
     cmap: str | Colormap | None,
-    markers: list[str],
     add_scenario_legend: bool,
     scenario_names: list[str],
     show_xticks: bool,
@@ -1836,13 +1834,13 @@ def _plot_irf_panel(
             irf_data.sel(**sel_dict),
             ax=axis,
             cmap=cmap,
-            ls=markers[scenario_idx % len(markers)],
+            ls=_scenario_line_style(scenario_idx),
         )
 
     if add_scenario_legend and len(scenario_names) > 1 and scenario_names[0] != "":
         # Scenarios are told apart by line style and shocks by color, so the scenario legend gets one black handle
         # per line style.
-        handles = [Line2D([], [], color="k", ls=markers[idx % len(markers)]) for idx in range(len(scenario_names))]
+        handles = [Line2D([], [], color="k", ls=_scenario_line_style(idx)) for idx in range(len(scenario_names))]
         axis.legend(handles=handles, labels=scenario_names)
 
     axis.set(title=variable)
@@ -1850,6 +1848,10 @@ def _plot_irf_panel(
         axis.set(xticklabels=[], xlabel="")
 
     _style_panel(axis)
+
+
+def _scenario_line_style(scenario_idx: int) -> str:
+    return _SCENARIO_LINE_STYLES[scenario_idx % len(_SCENARIO_LINE_STYLES)]
 
 
 def _add_shocks_legend(fig: Figure, shocks_to_plot: list[str] | None, legend: bool, legend_kwargs: dict | None) -> None:
@@ -1870,13 +1872,6 @@ def _add_shocks_legend(fig: Figure, shocks_to_plot: list[str] | None, legend: bo
     fig.legend(handles=handles, labels=shocks_to_plot, **legend_kwargs)
 
 
-def _prior_validate_params_to_plot(params_to_plot: list[str] | None, params: list[str]) -> None:
-    if params_to_plot is not None:
-        for param in params_to_plot:
-            if param not in params:
-                raise ValueError(f'Cannot plot parameter "{param}", it was not found in the provided data.')
-
-
 def _solv_prepare_data(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]]:
     """
     Split a solvability table into the parameter columns to plot, the failure stage, and the parameter names.
@@ -1892,7 +1887,7 @@ def _solv_prepare_data(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, lis
     """
     failure_step = data["failure_step"].copy()
 
-    plot_data = data.drop(columns=_SOLVABILITY_META_COLS.intersection(data.columns))
+    plot_data = data.drop(columns=[col for col in data.columns if col in _SOLVABILITY_META_COLS])
 
     constant_mask = plot_data.apply(pd.api.types.is_numeric_dtype) & (plot_data.var() < 1e-18)
     plot_data = plot_data.loc[:, ~constant_mask].copy()
@@ -1903,7 +1898,7 @@ def _solv_prepare_data(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, lis
 
 
 def _solv_plot_diagonal(ax: plt.Axes, values: pd.Series, success: pd.Series) -> None:
-    for mask, color in [(success, "tab:blue"), (~success, "tab:red")]:
+    for mask, color in [(success, _SOLVABILITY_COLORS["success"]), (~success, "tab:red")]:
         subset = values[mask]
         if len(subset) < 2:
             continue
@@ -1927,7 +1922,7 @@ def _solv_plot_offdiag(
     ax.scatter(
         plot_data.loc[success, x_name],
         plot_data.loc[success, y_name],
-        c="tab:blue",
+        c=_SOLVABILITY_COLORS["success"],
         s=10,
         label="Success",
     )
@@ -1947,16 +1942,15 @@ def _solv_plot_offdiag(
 
 def _solv_format_axes(axes: np.ndarray, params_use: list[str]) -> None:
     n = len(params_use)
-    for row in range(n):
-        for col in range(n):
-            ax = axes[row][col]
-            if not ax.get_visible():
-                continue
-            if col == 0:
-                ax.set_ylabel(params_use[row])
-            if row == n - 1:
-                ax.set_xlabel(params_use[col])
-            _style_panel(ax)
+    for row, col in product(range(n), range(n)):
+        ax = axes[row, col]
+        if not ax.get_visible():
+            continue
+        if col == 0:
+            ax.set_ylabel(params_use[row])
+        if row == n - 1:
+            ax.set_xlabel(params_use[col])
+        _style_panel(ax)
 
 
 def _filter_eigenvalues(
@@ -1965,25 +1959,17 @@ def _filter_eigenvalues(
     filter_infinite: bool,
     zero_tol: float,
     inf_tol: float | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, xr.Dataset, int]:
+) -> tuple[xr.Dataset, int]:
     """
     Drop zero and infinite eigenvalues from a sensitivity dataset.
 
     Returns
     -------
-    re_vals : ndarray
-        Real parts of the kept eigenvalues.
-    im_vals : ndarray
-        Imaginary parts of the kept eigenvalues.
-    mod_vals : ndarray
-        Moduli of the kept eigenvalues.
     filtered_data : Dataset
         ``sensitivity_data`` restricted to the kept eigenvalues.
     n_filtered : int
         Number of eigenvalues dropped.
     """
-    re_vals = sensitivity_data.eigenvalues.sel(component="real").values
-    im_vals = sensitivity_data.eigenvalues.sel(component="imaginary").values
     mod_vals = sensitivity_data.eigenvalues.sel(component="modulus").values
 
     if inf_tol is None:
@@ -1996,10 +1982,7 @@ def _filter_eigenvalues(
     if filter_infinite:
         mask &= mod_vals < inf_tol
 
-    valid_indices = sensitivity_data.eigenvalue.values[mask]
-    filtered_data = sensitivity_data.sel(eigenvalue=valid_indices)
-
-    return re_vals[mask], im_vals[mask], mod_vals[mask], filtered_data, len(mod_vals) - mask.sum()
+    return sensitivity_data.isel(eigenvalue=mask), int(len(mod_vals) - mask.sum())
 
 
 def _validate_params_to_plot(
@@ -2009,15 +1992,13 @@ def _validate_params_to_plot(
     if params_to_plot is None:
         return all_params
 
-    for p in params_to_plot:
-        if p not in all_params:
-            raise ValueError(f"Parameter '{p}' not found. Available: {all_params}")
+    for param in params_to_plot:
+        if param not in all_params:
+            raise ValueError(f"Parameter '{param}' not found. Available: {all_params}")
     return params_to_plot
 
 
-def _compute_axis_limits(
-    re_vals: np.ndarray, im_vals: np.ndarray
-) -> tuple[tuple[float, float], tuple[float, float], float]:
+def _compute_axis_limits(re_vals: np.ndarray, im_vals: np.ndarray) -> tuple[tuple[float, float], tuple[float, float]]:
     """
     Compute square axis limits centered on the eigenvalues, padded by 30 percent of their spread.
 
@@ -2027,11 +2008,9 @@ def _compute_axis_limits(
         Limits of the real axis.
     ylim : tuple of float
         Limits of the imaginary axis.
-    half_range : float
-        Half the axis range.
     """
     if len(re_vals) == 0:
-        return (-1.5, 1.5), (-1.5, 1.5), 1.5
+        return (-1.5, 1.5), (-1.5, 1.5)
 
     re_min, re_max = re_vals.min(), re_vals.max()
     im_min, im_max = im_vals.min(), im_vals.max()
@@ -2051,7 +2030,7 @@ def _compute_axis_limits(
     xlim = (x_center - half_range, x_center + half_range)
     ylim = (y_center - half_range, y_center + half_range)
 
-    return xlim, ylim, half_range
+    return xlim, ylim
 
 
 def _draw_eigenvalue_panel(
@@ -2105,32 +2084,15 @@ def _draw_eigenvalue_panel(
         Smallest gradient magnitude, as a fraction of the largest, for which an arrow is drawn.
     """
     if plot_circle:
-        theta = np.linspace(0, 2 * np.pi, 200)
-        ax.plot(np.cos(theta), np.sin(theta), color="k", lw=1, zorder=1, label="Unit circle")
+        _draw_unit_circle(ax, zorder=1, label="Unit circle")
 
     stable_mask = mod_plot <= 1.0
-    if stable_mask.any():
-        ax.scatter(
-            re_plot[stable_mask],
-            im_plot[stable_mask],
-            c="tab:blue",
-            s=40,
-            lw=0.5,
-            edgecolor="k",
-            zorder=3,
-            label="Stable (|λ|≤1)",
-        )
-    if (~stable_mask).any():
-        ax.scatter(
-            re_plot[~stable_mask],
-            im_plot[~stable_mask],
-            c="tab:red",
-            s=40,
-            lw=0.5,
-            edgecolor="k",
-            zorder=3,
-            label="Unstable (|λ|>1)",
-        )
+    for mask, color, label in [
+        (stable_mask, "tab:blue", "Stable (|λ|≤1)"),
+        (~stable_mask, "tab:red", "Unstable (|λ|>1)"),
+    ]:
+        if mask.any():
+            ax.scatter(re_plot[mask], im_plot[mask], c=color, s=40, lw=0.5, edgecolor="k", zorder=3, label=label)
 
     # The arrow is the first-order displacement d(lambda)/d(p) * delta_p for a delta_p of perturbation * p.
     delta_p = param_value * perturbation
@@ -2141,15 +2103,14 @@ def _draw_eigenvalue_panel(
     max_grad = grad_mags.max() if grad_mags.size > 0 and grad_mags.max() > 1e-12 else 1.0
     min_grad_threshold = max_grad * min_arrow_frac
 
-    for i in range(len(re_plot)):
-        if grad_mags[i] > min_grad_threshold:
-            ax.annotate(
-                "",
-                xy=(re_plot[i] + arrow_re[i], im_plot[i] + arrow_im[i]),
-                xytext=(re_plot[i], im_plot[i]),
-                arrowprops={"arrowstyle": "->", "color": "k", "lw": 1},
-                zorder=2,
-            )
+    for i in np.flatnonzero(grad_mags > min_grad_threshold):
+        ax.annotate(
+            "",
+            xy=(re_plot[i] + arrow_re[i], im_plot[i] + arrow_im[i]),
+            xytext=(re_plot[i], im_plot[i]),
+            arrowprops={"arrowstyle": "->", "color": "k", "lw": 1},
+            zorder=2,
+        )
 
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
@@ -2160,9 +2121,7 @@ def _draw_eigenvalue_panel(
     ax.set_ylabel("Imaginary")
     perturbed_value = param_value * (1 + perturbation)
     ax.set_title(f"{param_name}: {param_value:.4g} → {perturbed_value:.4g}")
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.grid(ls="--", lw=0.5, alpha=0.5)
+    _style_panel(ax, alpha=0.5)
 
     if show_legend:
         ax.legend(loc="best", fontsize="small", framealpha=0.9)
@@ -2199,23 +2158,33 @@ def _plot_acf_intervals(
     axis.scatter(x, mean, **{"color": color, "s": 38, "zorder": 3, **(mean_kwargs or {})})
 
 
+class _AcfModel(NamedTuple):
+    """One model's autocorrelation diagonal with the dodge offset and color it is drawn with."""
+
+    diagonal: xr.DataArray
+    sample_dims: list[str]
+    offset: float
+    color: str
+
+
 def _collect_acf_diagonals(
-    models: dict, sample_dims: tuple[str, ...]
-) -> tuple[dict[Any, xr.DataArray], dict[Any, list[str]], str | None]:
+    tensors: dict[Any, xr.DataArray], sample_dims: tuple[str, ...], dodge: float
+) -> tuple[dict[Any, _AcfModel], str | None]:
     """
-    Take the diagonal of each model's autocorrelation tensor.
+    Take the diagonal of each model's autocorrelation tensor and assign each model a dodge offset and a color.
 
     Returns
     -------
-    diagonals : dict mapping label to DataArray
-        Each variable's own autocorrelation, per model.
-    present_by_model : dict mapping label to list of str
-        The sample dimensions each model's tensor carries.
+    models : dict mapping label to _AcfModel
+        Each variable's own autocorrelation, per model, with the sample dimensions its tensor carries.
     var_dim : str or None
         Name of the variable dimension of the diagonals.
     """
-    diagonals, present_by_model, var_dim = {}, {}, None
-    for label, tensor in models.items():
+    n_models = len(tensors)
+    offsets = (np.arange(n_models) - (n_models - 1) / 2) * dodge
+
+    models, var_dim = {}, None
+    for (label, tensor), offset, color in zip(tensors.items(), offsets, _color_cycle(n_models), strict=True):
         present = [dim for dim in sample_dims if dim in tensor.dims]
         var_dims = [dim for dim in tensor.dims if dim != "lag" and dim not in present]
         if len(var_dims) != 2:
@@ -2223,52 +2192,52 @@ def _collect_acf_diagonals(
                 "Expected an autocorrelation tensor with a 'lag' dimension and two variable dimensions, but found "
                 f"non-lag/sample dimensions {var_dims}."
             )
-        diagonals[label] = xr_diagonal(tensor, dims=var_dims)
-        present_by_model[label] = present
+        models[label] = _AcfModel(xr_diagonal(tensor, dims=var_dims), present, float(offset), color)
         var_dim = var_dims[0]
-    return diagonals, present_by_model, var_dim
+    return models, var_dim
+
+
+def _color_cycle(n_colors: int) -> list[str]:
+    return [f"C{i}" for i in range(n_colors)]
 
 
 def _draw_acf_panel(
-    axis,
-    variable,
-    diagonals,
-    present_by_model,
-    var_dim,
-    lags,
-    ci_probs,
-    offsets,
-    colors,
-    reference,
-    ref_var_dim,
-    mean_kwargs,
-    inner_hdi_kwargs,
-    outer_hdi_kwargs,
-    stem_kwargs,
-    reference_kwargs,
-):
+    axis: plt.Axes,
+    variable: str,
+    models: dict[Any, _AcfModel],
+    var_dim: str,
+    lags: np.ndarray,
+    ci_probs: tuple[float, float],
+    reference: xr.DataArray | None,
+    ref_var_dim: str | None,
+    mean_kwargs: dict | None,
+    inner_hdi_kwargs: dict | None,
+    outer_hdi_kwargs: dict | None,
+    stem_kwargs: dict | None,
+    reference_kwargs: dict | None,
+) -> None:
     """Draw one autocorrelation panel: each model's sticks or stems plus the optional hollow reference markers."""
     axis.axhline(0, color="k", lw=0.5)
-    for (label, model_diagonal), offset, color in zip(diagonals.items(), offsets, colors, strict=False):
-        if variable not in model_diagonal.coords[var_dim].values:
+    for model in models.values():
+        if variable not in model.diagonal.coords[var_dim].values:
             continue
-        series = model_diagonal.sel({var_dim: variable})
-        if present_by_model[label]:
+        series = model.diagonal.sel({var_dim: variable})
+        if model.sample_dims:
             _plot_acf_intervals(
                 axis,
                 series,
                 lags,
-                present_by_model[label],
+                model.sample_dims,
                 ci_probs,
-                color=color,
-                offset=offset,
+                color=model.color,
+                offset=model.offset,
                 mean_kwargs=mean_kwargs,
                 inner_hdi_kwargs=inner_hdi_kwargs,
                 outer_hdi_kwargs=outer_hdi_kwargs,
             )
         else:
-            axis.scatter(lags + offset, series.values, **{"color": color, **(stem_kwargs or {})})
-            axis.vlines(lags + offset, 0, series.values, color=color)
+            axis.scatter(lags + model.offset, series.values, **{"color": model.color, **(stem_kwargs or {})})
+            axis.vlines(lags + model.offset, 0, series.values, color=model.color)
 
     if ref_var_dim is not None and variable in reference.coords[ref_var_dim].values:
         ref_series = reference.sel({ref_var_dim: variable})
@@ -2281,12 +2250,12 @@ def _draw_acf_panel(
 
 
 def _add_acf_legend(
-    fig: Figure, model_labels: list, colors: list[str], has_reference: bool, reference_kwargs: dict | None = None
+    fig: Figure, models: dict[Any, _AcfModel], has_reference: bool, reference_kwargs: dict | None = None
 ) -> None:
     handles, labels = [], []
-    if len(model_labels) > 1:
-        handles += [Line2D([0], [0], color=color, lw=3) for color in colors]
-        labels += [str(label) for label in model_labels]
+    if len(models) > 1:
+        handles += [Line2D([0], [0], color=model.color, lw=3) for model in models.values()]
+        labels += [str(label) for label in models]
     if has_reference:
         ref = {**_REFERENCE_DEFAULTS, **(reference_kwargs or {})}
         handles.append(

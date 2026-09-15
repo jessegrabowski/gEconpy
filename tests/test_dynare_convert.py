@@ -143,7 +143,7 @@ def test_write_model_equations(nk_model):
     assert out.endswith("end;")
 
     lines = [line for line in out.split("\n") if line not in ["model;", "end;"] and len(line) > 0]
-    count = 0
+    n_equations = 0
     expect_ss_definition = True
 
     for line in lines:
@@ -157,9 +157,9 @@ def test_write_model_equations(nk_model):
 
         else:
             expect_ss_definition = False
-            count += 1
+            n_equations += 1
 
-    assert len(nk_model.equations) == count
+    assert len(nk_model.equations) == n_equations
 
 
 def test_write_steady_state(model):
