@@ -1,5 +1,3 @@
-"""Tests for statement grammar (equations, distributions, variable references)."""
-
 import pyparsing as pp
 import pytest
 
@@ -26,30 +24,26 @@ from gEconpy.parser.grammar.statements import (
 
 
 class TestVariableRef:
-    def test_current_period(self):
-        result = VARIABLE_REF.parse_string("C[]")[0]
+    @pytest.mark.parametrize(
+        "text,name,time_index",
+        [
+            ("C[]", "C", T),
+            ("K[-1]", "K", T_MINUS_1),
+            ("Y[1]", "Y", T_PLUS_1),
+            ("A[ss]", "A", STEADY_STATE),
+            ("epsilon_A[]", "epsilon_A", T),
+        ],
+    )
+    def test_variable_ref(self, text, name, time_index):
+        result = VARIABLE_REF.parse_string(text)[0]
         assert isinstance(result, Variable)
-        assert result.name == "C"
-        assert result.time_index == T
+        assert result.name == name
+        assert result.time_index == time_index
 
-    def test_lagged(self):
-        result = VARIABLE_REF.parse_string("K[-1]")[0]
-        assert result.name == "K"
-        assert result.time_index == T_MINUS_1
-
-    def test_lead(self):
-        result = VARIABLE_REF.parse_string("Y[1]")[0]
-        assert result.name == "Y"
-        assert result.time_index == T_PLUS_1
-
-    def test_steady_state(self):
-        result = VARIABLE_REF.parse_string("A[ss]")[0]
-        assert result.name == "A"
-        assert result.time_index == STEADY_STATE
-
-    def test_underscore_name(self):
-        result = VARIABLE_REF.parse_string("epsilon_A[]")[0]
-        assert result.name == "epsilon_A"
+    def test_location_spans_name_and_index(self):
+        result = VARIABLE_REF.parse_string("  K[-1]")[0]
+        assert result.location.column == 3
+        assert result.location.end_column == 3 + len("K[-1]")
 
 
 class TestVariableList:
@@ -101,7 +95,6 @@ class TestEquation:
         assert result.calibrating_parameter == "beta"
 
     def test_lagrange_and_calibrating(self):
-        # Both can exist (though rare)
         result = EQUATION.parse_string("C[] = Y[] : lambda[] -> alpha;")[0]
         assert result.lagrange_multiplier == "lambda"
         assert result.calibrating_parameter == "alpha"
@@ -115,7 +108,8 @@ class TestEquation:
         result = EQUATION.parse_string("U[] = u[] + beta * E[][U[1]];")[0]
         assert isinstance(result.lhs, Variable)
         assert result.lhs.name == "U"
-        # RHS should be a binary op tree
+        assert isinstance(result.rhs, BinaryOp)
+        assert result.rhs.op == Operator.ADD
 
     def test_steady_state_equation(self):
         result = EQUATION.parse_string("r[ss] = 1 / beta - (1 - delta);")[0]
@@ -172,34 +166,39 @@ class TestDistribution:
         assert result.wrapper_kwargs.get("upper") is None
 
     def test_distribution_parameter_reference(self):
-        # Distribution arg can reference another parameter
         result = DISTRIBUTION.parse_string("eps ~ Normal(mu=0, sigma=sigma_eps);")[0]
         assert result.dist_kwargs["sigma"] == "sigma_eps"
 
 
 class TestEquationErrors:
-    def test_missing_semicolon(self):
-        with pytest.raises(pp.ParseBaseException):
-            EQUATION.parse_string("Y[] = C[]")
-
-    def test_missing_rhs(self):
-        with pytest.raises(pp.ParseBaseException):
-            EQUATION.parse_string("Y[] = ;")
-
-    def test_missing_equals(self):
-        with pytest.raises(pp.ParseBaseException):
-            EQUATION.parse_string("Y[] C[];")
+    @pytest.mark.parametrize(
+        "text,match",
+        [
+            ("Y[] = C[]", "Expected ';'"),
+            ("Y[] = ;", "Missing right-hand side"),
+            ("= C[];", "Missing left-hand side"),
+            ("Y[];", "Missing '='"),
+            ("Y[] C[];", "Expected '='"),
+            ("Y[] = C[]);", "Unmatched '\\)'"),
+        ],
+        ids=["missing_semicolon", "missing_rhs", "missing_lhs", "missing_equals", "juxtaposed", "unmatched_close"],
+    )
+    def test_invalid_equation_raises(self, text, match):
+        with pytest.raises(pp.ParseBaseException, match=match):
+            EQUATION.parse_string(text)
 
 
 class TestDistributionErrors:
-    def test_missing_tilde(self):
-        with pytest.raises(pp.ParseBaseException):
-            DISTRIBUTION.parse_string("alpha Beta(a=1, b=1);")
-
-    def test_unknown_distribution(self):
-        with pytest.raises(pp.ParseBaseException):
-            DISTRIBUTION.parse_string("alpha ~ UnknownDist(a=1);")
-
-    def test_missing_semicolon(self):
-        with pytest.raises(pp.ParseBaseException):
-            DISTRIBUTION.parse_string("alpha ~ Beta(a=1, b=1)")
+    @pytest.mark.parametrize(
+        "text,match",
+        [
+            ("alpha Beta(a=1, b=1);", "Expected '~'"),
+            ("alpha ~ UnknownDist(a=1);", "Unknown distribution 'UnknownDist'"),
+            ("alpha ~ unknownwrap(Beta());", "Unknown distribution wrapper 'unknownwrap'"),
+            ("alpha ~ Beta(a=1, b=1)", "Expected ';'"),
+        ],
+        ids=["missing_tilde", "unknown_distribution", "unknown_wrapper", "missing_semicolon"],
+    )
+    def test_invalid_distribution_raises(self, text, match):
+        with pytest.raises(pp.ParseBaseException, match=match):
+            DISTRIBUTION.parse_string(text)

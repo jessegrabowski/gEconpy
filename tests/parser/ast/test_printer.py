@@ -28,169 +28,74 @@ from gEconpy.parser.ast.printer import (
 from gEconpy.parser.grammar.expressions import parse_expression
 
 
-class TestPrintExpressionAtoms:
-    def test_print_integer(self):
-        node = Number(value=42.0)
-        assert print_expression(node) == "42"
+class TestPrintExpression:
+    @pytest.mark.parametrize(
+        ("node", "expected"),
+        [
+            (Number(value=42.0), "42"),
+            (Number(value=3.14), "3.14"),
+            (Parameter(name="alpha"), "alpha"),
+            (Variable(name="C", time_index=T), "C[]"),
+            (Variable(name="K", time_index=T_MINUS_1), "K[-1]"),
+            (Variable(name="U", time_index=TimeIndex(1)), "U[1]"),
+            (Variable(name="Y", time_index=STEADY_STATE), "Y[ss]"),
+            (UnaryOp(op=Operator.NEG, operand=Parameter(name="x")), "-x"),
+            (FunctionCall(func_name="log", args=(Variable(name="C"),)), "log(C[])"),
+            (Expectation(expr=Variable(name="U", time_index=TimeIndex(1))), "E[][U[1]]"),
+        ],
+    )
+    def test_atoms_and_wrappers(self, node, expected):
+        assert print_expression(node) == expected
 
-    def test_print_float(self):
-        node = Number(value=3.14)
-        assert print_expression(node) == "3.14"
+    @pytest.mark.parametrize(
+        ("op", "symbol"),
+        [
+            (Operator.ADD, "+"),
+            (Operator.SUB, "-"),
+            (Operator.MUL, "*"),
+            (Operator.DIV, "/"),
+            (Operator.POW, "^"),
+        ],
+    )
+    def test_binary_operators(self, op, symbol):
+        node = BinaryOp(left=Parameter(name="a"), op=op, right=Parameter(name="b"))
+        assert print_expression(node) == f"a {symbol} b"
 
-    def test_print_parameter(self):
-        node = Parameter(name="alpha")
-        assert print_expression(node) == "alpha"
-
-    def test_print_variable_at_t(self):
-        node = Variable(name="C", time_index=T)
-        assert print_expression(node) == "C[]"
-
-    def test_print_variable_lagged(self):
-        node = Variable(name="K", time_index=T_MINUS_1)
-        assert print_expression(node) == "K[-1]"
-
-    def test_print_variable_lead(self):
-        node = Variable(name="U", time_index=TimeIndex(1))
-        assert print_expression(node) == "U[1]"
-
-    def test_print_variable_steady_state(self):
-        node = Variable(name="Y", time_index=STEADY_STATE)
-        assert print_expression(node) == "Y[ss]"
-
-
-class TestPrintExpressionOperations:
-    def test_print_addition(self):
+    def test_lower_precedence_left_operand_is_parenthesized(self):
         node = BinaryOp(
-            left=Parameter(name="a"),
-            op=Operator.ADD,
-            right=Parameter(name="b"),
-        )
-        assert print_expression(node) == "a + b"
-
-    def test_print_subtraction(self):
-        node = BinaryOp(
-            left=Parameter(name="a"),
-            op=Operator.SUB,
-            right=Parameter(name="b"),
-        )
-        assert print_expression(node) == "a - b"
-
-    def test_print_multiplication(self):
-        node = BinaryOp(
-            left=Parameter(name="a"),
-            op=Operator.MUL,
-            right=Parameter(name="b"),
-        )
-        assert print_expression(node) == "a * b"
-
-    def test_print_division(self):
-        node = BinaryOp(
-            left=Parameter(name="a"),
-            op=Operator.DIV,
-            right=Parameter(name="b"),
-        )
-        assert print_expression(node) == "a / b"
-
-    def test_print_power(self):
-        node = BinaryOp(
-            left=Parameter(name="K"),
-            op=Operator.POW,
-            right=Parameter(name="alpha"),
-        )
-        assert print_expression(node) == "K ^ alpha"
-
-    def test_print_negation(self):
-        node = UnaryOp(op=Operator.NEG, operand=Parameter(name="x"))
-        assert print_expression(node) == "-x"
-
-    def test_print_nested_needs_parens(self):
-        # (a + b) * c needs parens around a + b
-        node = BinaryOp(
-            left=BinaryOp(
-                left=Parameter(name="a"),
-                op=Operator.ADD,
-                right=Parameter(name="b"),
-            ),
+            left=BinaryOp(left=Parameter(name="a"), op=Operator.ADD, right=Parameter(name="b")),
             op=Operator.MUL,
             right=Parameter(name="c"),
         )
         assert print_expression(node) == "(a + b) * c"
 
-    def test_print_nested_no_parens_needed(self):
-        # a * b + c doesn't need parens
+    def test_higher_precedence_left_operand_is_bare(self):
         node = BinaryOp(
-            left=BinaryOp(
-                left=Parameter(name="a"),
-                op=Operator.MUL,
-                right=Parameter(name="b"),
-            ),
+            left=BinaryOp(left=Parameter(name="a"), op=Operator.MUL, right=Parameter(name="b")),
             op=Operator.ADD,
             right=Parameter(name="c"),
         )
         assert print_expression(node) == "a * b + c"
 
 
-class TestPrintExpressionFunctions:
-    def test_print_log(self):
-        node = FunctionCall(func_name="log", args=(Parameter(name="x"),))
-        assert print_expression(node) == "log(x)"
-
-    def test_print_exp(self):
-        node = FunctionCall(func_name="exp", args=(Parameter(name="x"),))
-        assert print_expression(node) == "exp(x)"
-
-    def test_print_function_with_expression_arg(self):
-        node = FunctionCall(
-            func_name="log",
-            args=(Variable(name="C"),),
-        )
-        assert print_expression(node) == "log(C[])"
-
-
-class TestPrintExpectation:
-    def test_print_expectation(self):
-        node = Expectation(expr=Variable(name="U", time_index=TimeIndex(1)))
-        assert print_expression(node) == "E[][U[1]]"
-
-
 class TestPrintEquation:
     def test_simple_equation(self):
-        eq = GCNEquation(
-            lhs=Variable(name="Y"),
-            rhs=Variable(name="C"),
-        )
+        eq = GCNEquation(lhs=Variable(name="Y"), rhs=Variable(name="C"))
         assert print_equation(eq) == "Y[] = C[]"
 
     def test_equation_with_lagrange(self):
-        eq = GCNEquation(
-            lhs=Variable(name="C"),
-            rhs=Variable(name="Y"),
-            lagrange_multiplier="lambda",
-        )
+        eq = GCNEquation(lhs=Variable(name="C"), rhs=Variable(name="Y"), lagrange_multiplier="lambda")
         assert print_equation(eq) == "C[] = Y[] : lambda[]"
 
     def test_calibrating_equation(self):
-        eq = GCNEquation(
-            lhs=Parameter(name="beta"),
-            rhs=Number(value=0.99),
-            calibrating_parameter="beta",
-        )
-        result = print_equation(eq)
-        assert "beta = 0.99" in result
-        assert "-> beta" in result
+        eq = GCNEquation(lhs=Parameter(name="beta"), rhs=Number(value=0.99), calibrating_parameter="beta")
+        assert print_equation(eq) == "beta = 0.99 -> beta"
 
 
 class TestPrintDistribution:
     def test_simple_distribution(self):
-        dist = GCNDistribution(
-            parameter_name="alpha",
-            dist_name="Beta",
-            dist_kwargs={"alpha": 2, "beta": 5},
-        )
-        result = print_distribution(dist)
-        assert "alpha ~ Beta(" in result
-        assert "alpha=2" in result
-        assert "beta=5" in result
+        dist = GCNDistribution(parameter_name="alpha", dist_name="Beta", dist_kwargs={"alpha": 2, "beta": 5})
+        assert print_distribution(dist) == "alpha ~ Beta(alpha=2, beta=5)"
 
     def test_distribution_with_initial_value(self):
         dist = GCNDistribution(
@@ -199,8 +104,7 @@ class TestPrintDistribution:
             dist_kwargs={"alpha": 2, "beta": 5},
             initial_value=0.35,
         )
-        result = print_distribution(dist)
-        assert "= 0.35" in result
+        assert print_distribution(dist) == "alpha ~ Beta(alpha=2, beta=5) = 0.35"
 
     def test_wrapped_distribution(self):
         dist = GCNDistribution(
@@ -211,43 +115,40 @@ class TestPrintDistribution:
             wrapper_kwargs={"lower": 0.95, "upper": 0.999},
             initial_value=0.99,
         )
-        result = print_distribution(dist)
-        assert "maxent(Beta()" in result
-        assert "lower=0.95" in result
-        assert "upper=0.999" in result
+        assert print_distribution(dist) == "beta ~ maxent(Beta(), lower=0.95, upper=0.999) = 0.99"
 
 
 class TestPrintBlock:
     def test_simple_block(self):
-        block = GCNBlock(name="TEST")
-        block.identities = [
-            GCNEquation(
-                lhs=Variable(name="Y"),
-                rhs=Variable(name="C"),
-            )
-        ]
-        result = print_block(block)
-        assert "block TEST" in result
-        assert "identities" in result
-        assert "Y[] = C[]" in result
+        block = GCNBlock(name="TEST", identities=[GCNEquation(lhs=Variable(name="Y"), rhs=Variable(name="C"))])
+        expected = "\n".join(
+            [
+                "block TEST",
+                "{",
+                "    identities",
+                "    {",
+                "        Y[] = C[];",
+                "    };",
+                "",
+                "};",
+            ]
+        )
+        assert print_block(block) == expected
 
     def test_block_with_controls(self):
-        block = GCNBlock(name="HOUSEHOLD")
-        block.controls = [Variable(name="C"), Variable(name="L")]
+        block = GCNBlock(name="HOUSEHOLD", controls=[Variable(name="C"), Variable(name="L")])
         result = print_block(block)
         assert "controls" in result
         assert "C[], L[]" in result
 
     def test_block_with_calibration(self):
-        block = GCNBlock(name="TEST")
-        block.calibration = [
-            GCNEquation(lhs=Parameter(name="alpha"), rhs=Number(value=0.35)),
-            GCNDistribution(
-                parameter_name="beta",
-                dist_name="Beta",
-                dist_kwargs={"alpha": 2, "beta": 5},
-            ),
-        ]
+        block = GCNBlock(
+            name="TEST",
+            calibration=[
+                GCNEquation(lhs=Parameter(name="alpha"), rhs=Number(value=0.35)),
+                GCNDistribution(parameter_name="beta", dist_name="Beta", dist_kwargs={"alpha": 2, "beta": 5}),
+            ],
+        )
         result = print_block(block)
         assert "calibration" in result
         assert "alpha = 0.35" in result
@@ -256,64 +157,48 @@ class TestPrintBlock:
 
 class TestPrintModel:
     def test_model_with_options(self):
-        model = GCNModel(
-            blocks=[],
-            options={"output logfile": True, "output LaTeX": False},
-            tryreduce=[],
-            assumptions={},
-        )
+        model = GCNModel(options={"output logfile": True, "output LaTeX": False})
         result = print_model(model)
         assert "options" in result
         assert "output logfile = TRUE" in result
         assert "output LaTeX = FALSE" in result
 
     def test_model_with_tryreduce(self):
-        model = GCNModel(
-            blocks=[],
-            options={},
-            tryreduce=["U[]", "TC[]"],
-            assumptions={},
-        )
+        model = GCNModel(tryreduce=["U[]", "TC[]"])
         result = print_model(model)
         assert "tryreduce" in result
         assert "U[], TC[]" in result
 
-    def test_full_model(self):
-        block = GCNBlock(name="HOUSEHOLD")
-        block.controls = [Variable(name="C")]
-        block.objective = [
-            GCNEquation(
-                lhs=Variable(name="U"),
-                rhs=Variable(name="u"),
-            )
-        ]
-        block.constraints = [
-            GCNEquation(
-                lhs=Variable(name="C"),
-                rhs=Variable(name="Y"),
-                lagrange_multiplier="lambda",
-            )
-        ]
-
-        model = GCNModel(
-            blocks=[block],
-            options={"output logfile": True},
-            tryreduce=["U[]"],
-            assumptions={},
+    def test_model_with_assumptions_groups_by_assumption(self):
+        model = GCNModel(assumptions={"K": {"positive": True}, "C": {"positive": True, "real": False}})
+        expected = "\n".join(
+            [
+                "assumptions",
+                "{",
+                "    positive",
+                "    {",
+                "        C, K;",
+                "    };",
+                "};",
+            ]
         )
+        assert print_model(model) == expected
+
+    def test_full_model(self):
+        block = GCNBlock(
+            name="HOUSEHOLD",
+            controls=[Variable(name="C")],
+            objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))],
+            constraints=[GCNEquation(lhs=Variable(name="C"), rhs=Variable(name="Y"), lagrange_multiplier="lambda")],
+        )
+        model = GCNModel(blocks=[block], options={"output logfile": True}, tryreduce=["U[]"])
         result = print_model(model)
 
-        assert "options" in result
-        assert "tryreduce" in result
-        assert "block HOUSEHOLD" in result
-        assert "controls" in result
-        assert "objective" in result
-        assert "constraints" in result
+        for section in ["options", "tryreduce", "block HOUSEHOLD", "controls", "objective", "constraints"]:
+            assert section in result
 
 
 class TestRoundTrip:
-    """Test that parsing then printing produces equivalent output."""
-
     @pytest.mark.parametrize(
         "expr_str",
         [
@@ -328,27 +213,22 @@ class TestRoundTrip:
             "K[] ^ alpha",
             "log(C[])",
             "exp(x)",
+            "A[] * K[-1] ^ alpha * L[] ^ (1 - alpha)",
+            "u[] + beta * E[][U[1]]",
+            "a - (b - c)",
+            "a - (b + c)",
+            "a / (b * c)",
+            "a + (b + c)",
+            "(a ^ b) ^ c",
+            "a ^ b ^ c",
+            "a ^ (b * c)",
+            "-a ^ b",
+            "a ^ -b",
+            "a * -b",
+            "-(a + b)",
+            "log(a + b) / (c - d) ^ 2",
         ],
     )
-    def test_simple_expressions_roundtrip(self, expr_str):
+    def test_printed_expression_reparses_to_same_tree(self, expr_str):
         node = parse_expression(expr_str)
-        printed = print_expression(node)
-        reparsed = parse_expression(printed)
-        reprinted = print_expression(reparsed)
-        assert printed == reprinted
-
-    def test_complex_expression_roundtrip(self):
-        expr_str = "A[] * K[-1] ^ alpha * L[] ^ (1 - alpha)"
-        node = parse_expression(expr_str)
-        printed = print_expression(node)
-        reparsed = parse_expression(printed)
-        reprinted = print_expression(reparsed)
-        assert printed == reprinted
-
-    def test_bellman_roundtrip(self):
-        expr_str = "u[] + beta * E[][U[1]]"
-        node = parse_expression(expr_str)
-        printed = print_expression(node)
-        reparsed = parse_expression(printed)
-        reprinted = print_expression(reparsed)
-        assert printed == reprinted
+        assert parse_expression(print_expression(node)) == node

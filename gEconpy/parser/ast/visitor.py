@@ -14,13 +14,18 @@ class NodeVisitor:
     """
     Base class for AST visitors.
 
-    Subclass and implement visit_<NodeType> methods to handle specific node types.
-    Unhandled node types fall through to `generic_visit`, which recursively visits
-    children.
+    Subclass and implement ``visit_<NodeType>`` methods for the node types of interest. Node types without a
+    dedicated method fall through to :meth:`generic_visit`, which visits the children.
 
     Examples
     --------
+    Collect the name of every variable in an equation:
+
     .. code-block:: python
+
+        from gEconpy.parser.ast import NodeVisitor
+        from gEconpy.parser.grammar.expressions import parse_expression
+
 
         class VariableCollector(NodeVisitor):
             def __init__(self):
@@ -31,13 +36,13 @@ class NodeVisitor:
 
 
         collector = VariableCollector()
-        collector.visit(some_equation)
+        collector.visit(parse_expression("A[] * K[-1] ^ alpha"))
         print(collector.variables)
     """
 
     def visit(self, node: Node) -> Any:
         """
-        Dispatch to the appropriate visit method based on node type.
+        Dispatch to the ``visit_<NodeType>`` method matching the node's class.
 
         Parameters
         ----------
@@ -46,23 +51,26 @@ class NodeVisitor:
 
         Returns
         -------
-        Any
-            Result of the visit method.
+        result : Any
+            Whatever the matching visit method returns.
         """
         method_name = f"visit_{type(node).__name__}"
         visitor = getattr(self, method_name, self.generic_visit)
         return visitor(node)
 
-    def generic_visit(self, node: Node) -> None:
+    def generic_visit(self, node: Node) -> Any:
         """
-        Default visitor that recursively visits child nodes.
-
-        Override this to change default traversal behavior.
+        Visit the children of a node. Override to change the default traversal.
 
         Parameters
         ----------
         node : Node
             The AST node to visit.
+
+        Returns
+        -------
+        result : Any
+            None. Subclasses may return a value.
         """
         if isinstance(node, BinaryOp):
             self.visit(node.left)
@@ -81,34 +89,35 @@ class NodeVisitor:
 
 class NodeTransformer(NodeVisitor):
     """
-    AST visitor that can transform nodes.
+    AST visitor whose visit methods return a node.
 
-    Similar to `NodeVisitor`, but visit methods should return a node.
-    Return the same node to keep it unchanged, or a new node to replace it.
-    The transformer automatically handles structural changes, only creating
-    new parent nodes when children have changed.
+    Return the node itself to leave it unchanged, or a new node to replace it. Parent nodes are rebuilt only when a
+    child changed, so unchanged subtrees keep their identity.
 
     Examples
     --------
+    Rename one variable throughout an equation:
+
     .. code-block:: python
+
+        from gEconpy.parser.ast import NodeTransformer, Variable
+        from gEconpy.parser.grammar.expressions import parse_expression
+
 
         class VariableRenamer(NodeTransformer):
             def visit_Variable(self, node):
-                if node.name == "old_name":
-                    return Variable(name="new_name", time_index=node.time_index)
+                if node.name == "K":
+                    return Variable(name="K_new", time_index=node.time_index)
                 return node
 
 
-        transformer = VariableRenamer()
-        new_equation = transformer.visit(old_equation)
+        renamed = VariableRenamer().visit(parse_expression("A[] * K[-1] ^ alpha"))
+        print(renamed)
     """
 
     def generic_visit(self, node: Node) -> Node:  # noqa: PLR0911
         """
-        Default transformer that recursively transforms child nodes.
-
-        Creates new parent nodes only when children have actually changed,
-        preserving object identity for unchanged subtrees.
+        Transform the children of a node and rebuild the node if any of them changed.
 
         Parameters
         ----------
@@ -117,8 +126,8 @@ class NodeTransformer(NodeVisitor):
 
         Returns
         -------
-        Node
-            The original node if unchanged, or a new node with transformed children.
+        node : Node
+            The original node if no child changed, otherwise a new node with the transformed children.
         """
         if isinstance(node, BinaryOp):
             new_left = self.visit(node.left)
@@ -159,28 +168,27 @@ class NodeTransformer(NodeVisitor):
                 location=node.location,
             )
 
-        # Leaf nodes (Number, Parameter, Variable) - return as-is
         return node
 
 
-class NodeCollector(NodeVisitor):
+class NodeCollector[NodeT: Node](NodeVisitor):
     """
-    Visitor that collects all nodes of a specific type.
+    Visitor that collects every node of one type.
 
     Parameters
     ----------
     node_type : type
-        The type of node to collect.
+        The node class to collect.
 
     Attributes
     ----------
-    collected : set
-        Set of all collected nodes.
+    collected : set of Node
+        The nodes collected so far.
     """
 
-    def __init__(self, node_type: type):
+    def __init__(self, node_type: type[NodeT]):
         self.node_type = node_type
-        self.collected: set = set()
+        self.collected: set[NodeT] = set()
 
     def visit(self, node: Node) -> None:
         if isinstance(node, self.node_type):
@@ -188,21 +196,21 @@ class NodeCollector(NodeVisitor):
         super().visit(node)
 
 
-def collect_nodes_of_type(node: Node, node_type: type) -> set:
+def collect_nodes_of_type[NodeT: Node](node: Node, node_type: type[NodeT]) -> set[NodeT]:
     """
-    Recursively collect all nodes of a specific type from an AST.
+    Collect every node of one type from an AST.
 
     Parameters
     ----------
     node : Node
         The root node to search.
     node_type : type
-        The type of node to collect (e.g., Variable, Parameter).
+        The node class to collect, such as :class:`~gEconpy.parser.ast.Variable`.
 
     Returns
     -------
-    set
-        Set of all nodes of the specified type.
+    nodes : set of Node
+        Every node in the tree that is an instance of ``node_type``.
     """
     collector = NodeCollector(node_type)
     collector.visit(node)

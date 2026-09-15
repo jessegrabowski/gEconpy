@@ -9,10 +9,10 @@ from gEconpy.parser.loader import load_gcn_file
 
 def get_css() -> str:
     """
-    Generate a CSS string to style generated HTML used to represent a gEconpy model.
+    Build the stylesheet for the HTML representation of a model.
 
-    The style is inspired by the xarray HTML representation. Each block is rendered in a unified container with an
-    unbroken background, and the whole block is collapsible.
+    The layout follows the xarray HTML representation: each block is a collapsible container with an unbroken
+    background.
 
     Returns
     -------
@@ -108,16 +108,16 @@ def get_css() -> str:
 
 def generate_html(blocks: list[Block]) -> HTML:
     """
-    Represent a model in HTML.
+    Render model blocks as collapsible HTML with MathJax-typeset equations.
 
     Parameters
     ----------
     blocks : list of Block
-        Blocks to represent.
+        Blocks to render, in display order.
 
     Returns
     -------
-    html : ``HTML``
+    html : HTML
         An IPython display object holding the rendered model.
     """
     html_parts = []
@@ -153,21 +153,28 @@ def generate_html(blocks: list[Block]) -> HTML:
     </script>
     """)
 
-    final_html = "\n".join(html_parts)
-    return HTML(final_html)
+    return HTML("\n".join(html_parts))
 
 
 def print_gcn_file(gcn_path: str | Path) -> None:
     """
-    Display a model in HTML.
+    Display the blocks of a GCN file as collapsible HTML in a notebook.
 
     Parameters
     ----------
     gcn_path : str or Path
         Path to the GCN file.
-    """
-    result = load_gcn_file(gcn_path, simplify_blocks=False)
-    blocks = list(result.block_dict.values())
 
-    html = generate_html(blocks)
-    display(html)
+    Examples
+    --------
+    Inspect the packaged RBC model before building it:
+
+    .. code-block:: python
+
+        import gEconpy as ge
+        from gEconpy.data import get_example_gcn
+
+        ge.print_gcn_file(get_example_gcn("RBC"))
+    """
+    primitives = load_gcn_file(gcn_path, simplify_blocks=False)
+    display(generate_html(list(primitives.block_dict.values())))

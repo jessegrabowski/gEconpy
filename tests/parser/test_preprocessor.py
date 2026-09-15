@@ -17,52 +17,34 @@ class TestQuickParse:
             quick_parse("")
 
     def test_simple_block(self):
-        source = """
-        block HOUSEHOLD
-        {
-            identities { Y[] = C[]; };
-        };
-        """
-        result = quick_parse(source)
-        assert len(result.blocks) == 1
-        assert result.blocks[0].name == "HOUSEHOLD"
+        model = quick_parse("block HOUSEHOLD { identities { Y[] = C[]; }; };")
+        assert len(model.blocks) == 1
+        assert model.blocks[0].name == "HOUSEHOLD"
 
     def test_with_options(self):
-        source = """
-        options { output logfile = TRUE; };
-        block TEST { identities { X[] = 1; }; };
-        """
-        result = quick_parse(source)
-        assert result.options["output logfile"] is True
+        model = quick_parse("options { output logfile = TRUE; }; block TEST { identities { X[] = 1; }; };")
+        assert model.options["output logfile"] is True
 
 
 class TestPreprocess:
-    def test_returns_parse_result(self):
+    def test_returns_parse_result_with_source(self):
         source = "block TEST { identities { X[] = 1; }; };"
         result = preprocess(source)
         assert isinstance(result, ParseResult)
         assert isinstance(result.ast, GCNModel)
-
-    def test_source_preserved(self):
-        source = "block TEST { identities { X[] = 1; }; };"
-        result = preprocess(source)
         assert result.source == source
 
-    def test_filename_preserved(self):
-        source = "block TEST { };"
-        result = preprocess(source, filename="test.gcn")
-        assert result.filename == "test.gcn"
+    @pytest.mark.parametrize("filename", [None, "test.gcn"])
+    def test_filename_preserved(self, filename):
+        result = preprocess("block TEST { };", filename=filename)
+        assert result.filename == filename
 
     def test_validation_runs_by_default(self):
-        source = "block TEST { controls { C[]; }; };"  # Has controls but no objective
-        result = preprocess(source)
-        # Should have a warning about controls without objective
+        result = preprocess("block TEST { controls { C[]; }; };")
         assert len(list(result.validation_errors)) > 0
 
     def test_validation_can_be_disabled(self):
-        source = "block TEST { controls { C[]; }; };"
-        result = preprocess(source, validate=False)
-        # _validation_errors should still be None
+        result = preprocess("block TEST { controls { C[]; }; };", validate=False)
         assert result._validation_errors is None
 
 
@@ -81,59 +63,33 @@ class TestParseResult:
         """
         return preprocess(source)
 
-    def test_blocks_accessor(self, simple_model):
-        assert len(simple_model.blocks) == 1
-        assert simple_model.blocks[0].name == "HOUSEHOLD"
-
-    def test_options_accessor(self, simple_model):
+    def test_ast_accessors(self, simple_model):
+        assert [block.name for block in simple_model.blocks] == ["HOUSEHOLD"]
         assert simple_model.options == {}
-
-    def test_tryreduce_accessor(self, simple_model):
         assert simple_model.tryreduce == []
+        assert simple_model.assumptions == {}
 
-    def test_assumptions_accessor(self, simple_model):
-        assert isinstance(simple_model.assumptions, dict)
-
-    def test_sympy_equations_lazy(self, simple_model):
+    def test_sympy_equations_computed_on_first_access(self, simple_model):
         assert simple_model._sympy_equations is None
-        _ = simple_model.sympy_equations
-        assert simple_model._sympy_equations is not None
+        equations = simple_model.sympy_equations
+        assert simple_model._sympy_equations is equations
+        assert "identities" in equations["HOUSEHOLD"]
 
-    def test_sympy_equations_content(self, simple_model):
-        eqs = simple_model.sympy_equations
-        assert "HOUSEHOLD" in eqs
-        assert "identities" in eqs["HOUSEHOLD"]
-
-    def test_distributions_lazy(self, simple_model):
+    def test_distributions_computed_on_first_access(self, simple_model):
         assert simple_model._distributions is None
-        _ = simple_model.distributions
-        assert simple_model._distributions is not None
+        distributions = simple_model.distributions
+        assert simple_model._distributions is distributions
+        assert distributions == {}
 
-    def test_has_errors_false_for_valid(self, simple_model):
-        # May have warnings but not errors
+    def test_valid_model_has_no_errors(self, simple_model):
         assert not simple_model.has_errors
-
-    def test_validate_returns_errors(self, simple_model):
-        errors = simple_model.validate(raise_on_error=False)
-        assert errors is not None
+        assert not simple_model.validate(raise_on_error=False).has_errors
 
 
 class TestPreprocessWithDistributions:
     def test_distributions_extracted(self):
-        source = """
-        block TEST
-        {
-            calibration
-            {
-                alpha ~ Beta(alpha=2, beta=5) = 0.35;
-                beta = 0.99;
-            };
-        };
-        """
-        result = preprocess(source)
-        dists = result.distributions
-        assert "alpha" in dists
-        assert "beta" not in dists  # Not a distribution
+        source = "block TEST { calibration { alpha ~ Beta(alpha=2, beta=5) = 0.35; beta = 0.99; }; };"
+        assert set(preprocess(source).distributions) == {"alpha"}
 
     def test_multiple_distributions(self):
         source = """
@@ -146,109 +102,91 @@ class TestPreprocessWithDistributions:
             };
         };
         """
-        result = preprocess(source)
-        dists = result.distributions
-        assert len(dists) == 2
+        assert set(preprocess(source).distributions) == {"alpha", "delta"}
 
 
-class TestPreprocessWithAllFeatures:
-    def test_full_model(self):
-        source = """
-        options
+def test_preprocess_full_model():
+    source = """
+    options
+    {
+        output logfile = TRUE;
+    };
+
+    tryreduce
+    {
+        U[];
+    };
+
+    assumptions
+    {
+        positive { C[], K[]; };
+    };
+
+    block HOUSEHOLD
+    {
+        definitions
         {
-            output logfile = TRUE;
+            u[] = log(C[]);
         };
 
-        tryreduce
+        controls
         {
-            U[];
+            C[], K[];
         };
 
-        assumptions
+        objective
         {
-            positive { C[], K[]; };
+            U[] = u[] + beta * E[][U[1]];
         };
 
-        block HOUSEHOLD
+        constraints
         {
-            definitions
-            {
-                u[] = log(C[]);
-            };
-
-            controls
-            {
-                C[], K[];
-            };
-
-            objective
-            {
-                U[] = u[] + beta * E[][U[1]];
-            };
-
-            constraints
-            {
-                C[] + K[] = Y[] : lambda[];
-            };
-
-            identities
-            {
-                Y[] = A[] * K[-1] ^ alpha;
-                log(A[]) = rho * log(A[-1]) + epsilon[];
-            };
-
-            shocks
-            {
-                epsilon[];
-            };
-
-            calibration
-            {
-                alpha = 0.35;
-                beta = 0.99;
-                rho = 0.95;
-            };
+            C[] + K[] = Y[] : lambda[];
         };
-        """
-        result = preprocess(source)
 
-        assert result.options["output logfile"] is True
-        assert "U" in result.tryreduce
-        assert "C" in result.assumptions
-        assert len(result.blocks) == 1
+        identities
+        {
+            Y[] = A[] * K[-1] ^ alpha;
+            log(A[]) = rho * log(A[-1]) + epsilon[];
+        };
 
-        block = result.blocks[0]
-        assert len(block.definitions) == 1
-        assert len(block.controls) == 2
-        assert block.objective is not None
-        assert len(block.constraints) == 1
-        assert len(block.identities) == 2
-        assert len(block.shocks) == 1
-        assert len(block.calibration) == 3
+        shocks
+        {
+            epsilon[];
+        };
+
+        calibration
+        {
+            alpha = 0.35;
+            beta = 0.99;
+            rho = 0.95;
+        };
+    };
+    """
+    result = preprocess(source)
+
+    assert result.options["output logfile"] is True
+    assert result.tryreduce == ["U"]
+    assert set(result.assumptions) == {"C", "K"}
+    assert len(result.blocks) == 1
+
+    block = result.blocks[0]
+    assert len(block.definitions) == 1
+    assert len(block.controls) == 2
+    assert len(block.objective) == 1
+    assert len(block.constraints) == 1
+    assert len(block.identities) == 2
+    assert len(block.shocks) == 1
+    assert len(block.calibration) == 3
 
 
-class TestPreprocessFile:
-    @pytest.fixture
-    def gcn_dir(self):
-        return TEST_GCNS
-
-    def test_parse_existing_file(self, gcn_dir):
-        gcn_path = gcn_dir / "one_block_1.gcn"
-        if not gcn_path.exists():
-            pytest.skip(f"Test file not found: {gcn_path}")
-
-        result = preprocess_file(gcn_path)
-        assert isinstance(result, ParseResult)
-        assert len(result.blocks) >= 1
-        assert result.filename == str(gcn_path)
-
-    def test_parse_basic_rbc(self, gcn_dir):
-        gcn_path = gcn_dir / "basic_rbc.gcn"
-        if not gcn_path.exists():
-            pytest.skip(f"Test file not found: {gcn_path}")
-
-        result = preprocess_file(gcn_path)
-        assert len(result.blocks) >= 1
+@pytest.mark.parametrize("filename", ["one_block_1.gcn", "basic_rbc.gcn"])
+def test_preprocess_file(filename):
+    gcn_path = TEST_GCNS / filename
+    result = preprocess_file(gcn_path)
+    assert isinstance(result, ParseResult)
+    assert len(result.blocks) >= 1
+    assert result.filename == str(gcn_path)
 
 
 class TestValidation:
@@ -266,34 +204,21 @@ class TestValidation:
         block A { calibration { alpha = 0.3; }; };
         block B { calibration { alpha = 0.4; }; };
         """
-        result = preprocess(source)
-        assert result.has_errors
+        assert preprocess(source).has_errors
 
     def test_validate_raises_on_error(self):
-        source = """
-        block TEST { };
-        block TEST { };
-        """
-        result = preprocess(source, validate=False)
+        result = preprocess("block TEST { }; block TEST { };", validate=False)
         with pytest.raises(GCNSemanticError):
             result.validate(raise_on_error=True)
 
 
 class TestEdgeCases:
-    def test_empty_source_raises(self):
-        with pytest.raises(GCNGrammarError):
-            preprocess("")
-
-    def test_only_comments_raises(self):
-        source = """
-        # This is a comment
-        # Another comment
-        """
-        with pytest.raises(GCNGrammarError):
-            preprocess(source)
-
-    def test_whitespace_only_raises(self):
-        source = "   \n\n\t\t   \n   "
+    @pytest.mark.parametrize(
+        "source",
+        ["", "\n        # This is a comment\n        # Another comment\n        ", "   \n\n\t\t   \n   "],
+        ids=["empty", "only_comments", "whitespace_only"],
+    )
+    def test_source_without_blocks_raises(self, source):
         with pytest.raises(GCNGrammarError):
             preprocess(source)
 

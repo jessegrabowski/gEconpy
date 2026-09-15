@@ -3,13 +3,10 @@ import pytest
 
 from gEconpy.parser.ast import (
     T_MINUS_1,
-    BinaryOp,
     GCNDistribution,
     GCNEquation,
-    Number,
     Parameter,
     T,
-    Variable,
 )
 from gEconpy.parser.grammar.components import (
     CALIBRATION,
@@ -196,6 +193,19 @@ class TestShocks:
         assert variables[0].name == "epsilon_A"
         assert len(distributions) == 1
         assert distributions[0].dist_name == "Normal"
+        assert distributions[0].dist_kwargs == {"mu": 0.0, "sigma": "sigma_eps"}
+
+    def test_shock_distribution_evaluates_arithmetic_arguments(self):
+        text = "shocks { epsilon_A[] ~ Normal(mu=0, sigma=1/100) = 0.5; };"
+        _name, (_variables, distributions) = SHOCKS.parse_string(text)[0]
+        assert distributions[0].dist_kwargs == {"mu": 0.0, "sigma": pytest.approx(0.01)}
+        assert distributions[0].initial_value == 0.5
+
+    def test_shock_variable_list(self):
+        text = "shocks { epsilon_A[], epsilon_B[]; epsilon_C[]; };"
+        _name, (variables, distributions) = SHOCKS.parse_string(text)[0]
+        assert [v.name for v in variables] == ["epsilon_A", "epsilon_B", "epsilon_C"]
+        assert distributions == []
 
     def test_mixed_shocks(self):
         text = """shocks
@@ -286,41 +296,25 @@ class TestCalibration:
 
 
 class TestComponent:
-    """Test the combined COMPONENT parser."""
-
-    def test_parses_definitions(self):
-        text = "definitions { u[] = log(C[]); };"
+    @pytest.mark.parametrize(
+        "text,expected_name",
+        [
+            ("definitions { u[] = log(C[]); };", "definitions"),
+            ("controls { C[], L[]; };", "controls"),
+            ("identities { Y[] = C[]; };", "identities"),
+            ("shocks { epsilon[]; };", "shocks"),
+            ("calibration { beta = 0.99; };", "calibration"),
+            ("DEFINITIONS { u[] = log(C[]); };", "definitions"),
+            ("Calibration { beta = 0.99; };", "calibration"),
+        ],
+    )
+    def test_dispatches_on_keyword(self, text, expected_name):
         name, _content = COMPONENT.parse_string(text)[0]
-        assert name == "definitions"
+        assert name == expected_name
 
-    def test_parses_controls(self):
-        text = "controls { C[], L[]; };"
-        name, _content = COMPONENT.parse_string(text)[0]
-        assert name == "controls"
-
-    def test_parses_identities(self):
-        text = "identities { Y[] = C[]; };"
-        name, _content = COMPONENT.parse_string(text)[0]
-        assert name == "identities"
-
-    def test_parses_shocks(self):
-        text = "shocks { epsilon[]; };"
-        name, _content = COMPONENT.parse_string(text)[0]
-        assert name == "shocks"
-
-    def test_parses_calibration(self):
-        text = "calibration { beta = 0.99; };"
-        name, _content = COMPONENT.parse_string(text)[0]
-        assert name == "calibration"
-
-    def test_case_insensitive(self):
-        text = "DEFINITIONS { u[] = log(C[]); };"
-        name, _content = COMPONENT.parse_string(text)[0]
-        assert name == "definitions"
-
-        text = "Calibration { beta = 0.99; };"
-        name, _content = COMPONENT.parse_string(text)[0]
-        assert name == "calibration"
+    def test_unknown_component_raises(self):
+        with pytest.raises(pp.ParseFatalException, match="Unknown component 'invalid_component'"):
+            COMPONENT.parse_string("invalid_component { };")
 
 
 class TestComponentErrors:
@@ -328,31 +322,19 @@ class TestComponentErrors:
         with pytest.raises(pp.ParseBaseException):
             DEFINITIONS.parse_string("definitions { u[] = log(C[]); }")
 
-    def test_wrong_content_type(self):
-        # controls expects variable list, not equation
+    def test_controls_rejects_equation(self):
         with pytest.raises(pp.ParseBaseException):
             CONTROLS.parse_string("controls { Y[] = C[]; };")
 
-    def test_equals_instead_of_tilde_with_wrapper(self):
-        text = """calibration
-        {
-            beta = maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99;
-        };"""
-        with pytest.raises(pp.ParseFatalException, match="instead of '~'"):
-            CALIBRATION.parse_string(text)
-
-    def test_equals_instead_of_tilde_with_bare_dist(self):
-        text = """calibration
-        {
-            alpha = Beta(alpha=2, beta=5) = 0.35;
-        };"""
-        with pytest.raises(pp.ParseFatalException, match="instead of '~'"):
-            CALIBRATION.parse_string(text)
-
-    def test_equals_instead_of_tilde_error_code(self):
-        text = """calibration
-        {
-            beta = maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99;
-        };"""
-        with pytest.raises(pp.ParseFatalException, match="E009"):
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "beta = maxent(Beta(), lower=0.95, upper=0.999, mass=0.99) = 0.99;",
+            "alpha = Beta(alpha=2, beta=5) = 0.35;",
+        ],
+        ids=["wrapped", "bare"],
+    )
+    def test_equals_instead_of_tilde(self, statement):
+        text = f"calibration {{ {statement} }};"
+        with pytest.raises(pp.ParseFatalException, match=r"instead of '~'.*E009"):
             CALIBRATION.parse_string(text)

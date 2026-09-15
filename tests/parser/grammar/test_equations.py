@@ -3,9 +3,7 @@ import pytest
 from pyparsing import ParseBaseException, ParseException
 
 from gEconpy.parser.ast import (
-    T_MINUS_1,
     BinaryOp,
-    Expectation,
     Number,
     Operator,
     Parameter,
@@ -13,7 +11,6 @@ from gEconpy.parser.ast import (
     Tag,
     Variable,
 )
-from gEconpy.parser.errors import GCNGrammarError
 from gEconpy.parser.grammar import parse_equation
 
 
@@ -73,7 +70,6 @@ class TestCalibratingEquations:
 
 class TestComplexEquations:
     def test_nk_wage_setting(self):
-        # From full_nk.gcn
         eq = parse_equation("LHS_w[] = 1 / (1 + psi_w) * w_star[] * lambda[] * L_d_star[];")
         assert eq.lhs == Variable(name="LHS_w")
 
@@ -109,13 +105,11 @@ class TestEdgeCases:
         assert eq.lhs == Variable(name="TC")
 
     def test_equation_with_expectation_and_lagrange(self):
-        # Edge case: expectation in constraint
         eq = parse_equation("V[] = u[] + beta * E[][V[1]] : mu[];")
         assert eq.has_lagrange_multiplier
         assert eq.lagrange_multiplier == "mu"
 
     def test_brackets_in_expression_dont_confuse_equals(self):
-        # The = should be found correctly despite brackets in the expression
         eq = parse_equation("Y[] = A[] * K[-1] ^ alpha;")
         assert eq.lhs == Variable(name="Y")
 
@@ -125,7 +119,6 @@ class TestEdgeCases:
         assert not eq.has_lagrange_multiplier
 
     def test_very_long_equation(self):
-        # Stress test with a long equation
         eq = parse_equation(
             "Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha) + "
             "B[] * M[-1] ^ beta * N[] ^ (1 - beta) + "
@@ -138,7 +131,6 @@ class TestEdgeCases:
         assert eq.lhs == Variable(name="Y")
 
     def test_whitespace_variations(self):
-        # Tabs, multiple spaces, newlines within equation
         eq = parse_equation("Y[]\t=\t\tC[]  +   I[];")
         assert eq.lhs == Variable(name="Y")
 
@@ -160,35 +152,40 @@ class TestEdgeCases:
 
 
 class TestErrorCases:
-    def test_missing_equals_raises(self):
-        with pytest.raises((ParseException, ParseBaseException)):
-            parse_equation("Y[] + C[];")
+    @pytest.mark.parametrize(
+        "text,match",
+        [
+            ("Y[] + C[];", "Missing '='"),
+            ("", "Expected"),
+            (";", "Expected"),
+            ("Y[ = C[];", "Invalid time index"),
+            ("Y[] = (C[] + I[];", r"Expected '\)'"),
+            ("Y[abc] = C[];", "Invalid time index"),
+            ("Y[] = C[] = I[];", "Expected ';', found '='"),
+            ("@unknown Y[] = C[];", "Unknown tag"),
+        ],
+        ids=[
+            "missing_equals",
+            "empty",
+            "only_semicolon",
+            "malformed_variable",
+            "unclosed_parenthesis",
+            "invalid_time_index",
+            "double_equals",
+            "unknown_tag",
+        ],
+    )
+    def test_invalid_equation_raises(self, text, match):
+        with pytest.raises(ParseBaseException, match=match):
+            parse_equation(text)
 
-    def test_empty_string_raises(self):
+    def test_empty_string_raises_plain_parse_exception(self):
         with pytest.raises(ParseException):
             parse_equation("")
 
-    def test_only_semicolon_raises(self):
-        with pytest.raises(ParseException):
-            parse_equation(";")
-
-    def test_malformed_variable_raises(self):
-        with pytest.raises(ParseBaseException):
-            parse_equation("Y[ = C[];")
-
-    def test_unclosed_parenthesis_raises(self):
-        with pytest.raises(ParseBaseException, match="Expected '\\)'"):
-            parse_equation("Y[] = (C[] + I[];")
-
-    def test_invalid_time_index_raises(self):
-        with pytest.raises(ParseBaseException, match="Invalid time index"):
-            parse_equation("Y[abc] = C[];")
-
 
 class TestAmbiguousCases:
-    def test_arrow_in_expression_vs_calibrating(self):
-        # -> should only be treated as calibrating marker at top level
-        # This tests that we find the RIGHT arrow
+    def test_calibrating_parameter_may_repeat_lhs_name(self):
         eq = parse_equation("x = 0.5 -> x;")
         assert eq.is_calibrating
         assert eq.calibrating_parameter == "x"
@@ -203,36 +200,25 @@ class TestAmbiguousCases:
         assert eq.lhs == Parameter(name="x")
 
     def test_function_on_lhs(self):
-        # log(X[]) = ... is valid
         eq = parse_equation("log(A[]) = rho * log(A[-1]);")
         assert eq.lhs.func_name == "log"
 
     def test_complex_lhs(self):
-        # LHS can be an expression, not just a variable
         eq = parse_equation("C[] + I[] = Y[];")
         assert isinstance(eq.lhs, BinaryOp)
         assert eq.rhs == Variable(name="Y")
 
     def test_lagrange_looks_like_variable_in_rhs(self):
-        # Make sure lambda[] in RHS isn't confused with Lagrange marker
         eq = parse_equation("C[] = lambda[] * w[];")
         assert not eq.has_lagrange_multiplier
-        assert "lambda" not in str(eq.lagrange_multiplier or "")
+        assert eq.lagrange_multiplier is None
 
-    def test_steady_state_all_around(self):
+    def test_steady_state_lagrange_multiplier(self):
         eq = parse_equation("C[ss] + I[ss] = Y[ss] : lambda[ss];")
-        # Note: Lagrange multipliers are typically written as var[] not var[ss]
-        # This tests that we handle the ss case if someone writes it
-        # The current implementation expects lambda[] format
         assert eq.lhs.left.time_index.is_steady_state
+        assert eq.lagrange_multiplier == "lambda"
 
-    def test_double_equals_raises(self):
-        # Two equals signs in one equation is invalid GCN syntax
-        with pytest.raises(ParseException):
-            parse_equation("Y[] = C[] = I[];")
-
-    def test_arrow_like_minus_greater(self):
-        # "- >" with space should NOT be arrow
+    def test_minus_is_not_arrow(self):
         eq = parse_equation("Y[] = C[] - 1;")
         assert not eq.is_calibrating
 
@@ -245,9 +231,8 @@ class TestAmbiguousCases:
         assert eq.is_calibrating
         assert eq.rhs.value == 1e-10
 
-    def test_division_chain(self):
+    def test_division_chain_is_left_associative(self):
         eq = parse_equation("Y[] = A[] / B[] / C[];")
-        # Should be left-associative: (A / B) / C
         assert eq.rhs.op == Operator.DIV
         assert eq.rhs.left.op == Operator.DIV
 
@@ -279,16 +264,6 @@ class TestEquationTags:
         assert eq.tags == frozenset()
         assert not eq.is_excluded
 
-    def test_unknown_tag_raises(self):
-        with pytest.raises(ParseBaseException, match="Unknown tag"):
-            parse_equation("@unknown Y[] = C[];")
-
     def test_tag_case_insensitive(self):
         eq = parse_equation("@EXCLUDE Y[] = C[];")
         assert eq.is_excluded
-
-    def test_with_tags_method(self):
-        eq = parse_equation("Y[] = C[];")
-        tagged = eq.with_tags(frozenset([Tag.EXCLUDE]))
-        assert tagged.is_excluded
-        assert not eq.is_excluded  # Original unchanged

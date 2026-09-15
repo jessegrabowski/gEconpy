@@ -5,6 +5,7 @@ from gEconpy.parser.ast import (
     BinaryOp,
     Expectation,
     FunctionCall,
+    Node,
     Number,
     Operator,
     Parameter,
@@ -28,11 +29,26 @@ from gEconpy.parser.grammar.tokens import (
 )
 
 
-def _parse_number(tokens) -> Number:
-    return Number(value=float(tokens[0]))
+def parse_expression(text: str, context: str = "") -> Node:
+    """
+    Parse a mathematical expression string into an abstract syntax tree node.
 
+    Parameters
+    ----------
+    text : str
+        The expression to parse.
+    context : str, optional
+        Name to report in error messages, identifying where the expression came from. Defaults to an empty string.
 
-NUMBER = pp.Regex(NUMBER_PATTERN).set_parse_action(_parse_number)
+    Returns
+    -------
+    node : Node
+        Root of the parsed expression.
+    """
+    try:
+        return EXPR.parse_string(text, parse_all=True)[0]
+    except pp.ParseBaseException as exc:
+        raise _convert_parse_exception(exc, text, context) from None
 
 
 def _parse_time_index(content: str) -> TimeIndex:
@@ -43,31 +59,45 @@ def _parse_time_index(content: str) -> TimeIndex:
     return TimeIndex(int(content))
 
 
+def _location_at(s: str, loc: int, length: int) -> ParseLocation:
+    line = pp.lineno(loc, s)
+    col = pp.col(loc, s)
+    lines = s.splitlines()
+    source_line = lines[line - 1] if 0 < line <= len(lines) else ""
+
+    return ParseLocation(
+        line=line,
+        column=col,
+        end_line=line,
+        end_column=col + length,
+        source_line=source_line,
+    )
+
+
+NUMBER = pp.Regex(NUMBER_PATTERN).set_parse_action(lambda t: Number(value=float(t[0])))
+
 TIME_INDEX = (LBRACKET + pp.Optional(TIME_INDEX_CONTENT, default="") + RBRACKET).set_parse_action(
     lambda t: _parse_time_index(t[0])
 )
 
-_VALID_TIME_INDEX_INNER = pp.Regex(r"-?\d+") | pp.Keyword("ss")
-_INVALID_CONTENT = pp.Regex(r"[^\]]+")
 
-
-def _invalid_time_index_fail(s: str, loc: int, toks) -> None:
-    var_name = toks.var_name
-    invalid_content = toks.invalid_content
-    invalid_index = f"[{invalid_content}]"
+def _invalid_time_index_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
+    invalid_index = f"[{toks.invalid_content}]"
     raise GCNParseFailure(
         s,
         loc,
-        f"Invalid time index '{invalid_index}' for variable '{var_name}'",
+        f"Invalid time index '{invalid_index}' for variable '{toks.var_name}'",
         code=ErrorCode.E010,
         found=invalid_index,
     )
 
 
+_INVALID_CONTENT = pp.Regex(r"[^\]]+")
+
 INVALID_TIME_INDEX_VAR = (
     IDENTIFIER("var_name")
     + pp.Literal("[").suppress()
-    + ~pp.FollowedBy(_VALID_TIME_INDEX_INNER + pp.Literal("]"))
+    + ~pp.FollowedBy(TIME_INDEX_CONTENT + pp.Literal("]"))
     + ~pp.FollowedBy(pp.Literal("]"))
     + _INVALID_CONTENT("invalid_content")
     + pp.Literal("]").suppress()
@@ -76,74 +106,38 @@ INVALID_TIME_INDEX_VAR = (
 EXPR = pp.Forward()
 
 
-def _parse_variable(s: str, loc: int, toks) -> Variable:
-    line = pp.lineno(loc, s)
-    col = pp.col(loc, s)
-    lines = s.splitlines()
-    source_line = lines[line - 1] if 0 < line <= len(lines) else ""
-
-    name = toks[0]
-    time_index = toks[1]
-    # Estimate token length (name + [] or [time])
-    time_str = str(time_index) if time_index != T else ""
-    token_len = len(name) + 2 + len(time_str)
-
-    location = ParseLocation(
-        line=line,
-        column=col,
-        end_line=line,
-        end_column=col + token_len,
-        source_line=source_line,
-    )
+def _parse_variable(s: str, loc: int, toks: pp.ParseResults) -> Variable:
+    name, time_index = toks[0], toks[1]
+    time_text = "" if time_index == T else str(time_index)
+    location = _location_at(s, loc, length=len(name) + 2 + len(time_text))
     return Variable(name=name, time_index=time_index, location=location)
 
 
 VARIABLE = (IDENTIFIER + TIME_INDEX).set_parse_action(_parse_variable)
 
 
-def _parse_parameter(s: str, loc: int, toks) -> Parameter:
-    line = pp.lineno(loc, s)
-    col = pp.col(loc, s)
-    lines = s.splitlines()
-    source_line = lines[line - 1] if 0 < line <= len(lines) else ""
-
+def _parse_parameter(s: str, loc: int, toks: pp.ParseResults) -> Parameter:
     name = toks[0]
-    location = ParseLocation(
-        line=line,
-        column=col,
-        end_line=line,
-        end_column=col + len(name),
-        source_line=source_line,
-    )
-    return Parameter(name=name, location=location)
+    return Parameter(name=name, location=_location_at(s, loc, length=len(name)))
 
 
 PARAMETER = (IDENTIFIER + ~pp.FollowedBy(pp.Literal("[") | pp.Literal("("))).set_parse_action(_parse_parameter)
 
-_EMPTY_BRACKETS = pp.Literal("[]")
-_OPEN_BRACKET = pp.Literal("[")
-
-EXPECTATION = (pp.Combine(KW_E + _EMPTY_BRACKETS + _OPEN_BRACKET) - EXPR - RBRACKET).set_parse_action(
+EXPECTATION = (pp.Combine(KW_E + pp.Literal("[]") + pp.Literal("[")) - EXPR - RBRACKET).set_parse_action(
     lambda t: Expectation(expr=t[1])
 )
 
 FUNC_ARGS = pp.DelimitedList(EXPR, min=1)("args")
 
 
-def _parse_function_call(tokens) -> FunctionCall:
-    func_name = tokens[0]
-    args = tuple(tokens.args)
-    return FunctionCall(func_name=func_name, args=args)
-
-
-def _empty_function_fail(s: str, loc: int, toks) -> None:
-    func_name = toks[0]
+def _empty_function_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
+    call_text = f"{toks[0]}()"
     raise GCNParseFailure(
         s,
         loc,
-        f"Empty function call '{func_name}()'",
+        f"Empty function call '{call_text}'",
         code=ErrorCode.E008,
-        found=f"{func_name}()",
+        found=call_text,
     )
 
 
@@ -152,7 +146,7 @@ EMPTY_FUNC_CALL = (
 ).set_parse_action(_empty_function_fail)
 
 FUNC_CALL = EMPTY_FUNC_CALL | (IDENTIFIER("func_name") + LPAREN - FUNC_ARGS - RPAREN).set_parse_action(
-    _parse_function_call
+    lambda t: FunctionCall(func_name=t[0], args=tuple(t.args))
 )
 
 PAREN_EXPR = LPAREN - EXPR - RPAREN
@@ -169,32 +163,16 @@ _OP_MAP = {
 }
 
 
-def _make_unary_op(tokens) -> UnaryOp:
-    toks = tokens[0]
-    return UnaryOp(op=Operator.NEG, operand=toks[1])
+def _make_unary_op(tokens: pp.ParseResults) -> UnaryOp:
+    _sign, operand = tokens[0]
+    return UnaryOp(op=Operator.NEG, operand=operand)
 
 
-def _make_binary_op_left(tokens) -> BinaryOp:
-    toks = tokens[0]
-    result = toks[0]
-    i = 1
-    while i < len(toks):
-        op_str = toks[i]
-        right = toks[i + 1]
+def _make_binary_op(tokens: pp.ParseResults) -> BinaryOp:
+    operands = tokens[0]
+    result = operands[0]
+    for op_str, right in zip(operands[1::2], operands[2::2], strict=True):
         result = BinaryOp(left=result, op=_OP_MAP[op_str], right=right)
-        i += 2
-    return result
-
-
-def _make_binary_op_right(tokens) -> BinaryOp:
-    toks = tokens[0]
-    result = toks[0]
-    i = 1
-    while i < len(toks):
-        op_str = toks[i]
-        right = toks[i + 1]
-        result = BinaryOp(left=result, op=_OP_MAP[op_str], right=right)
-        i += 2
     return result
 
 
@@ -202,9 +180,9 @@ EXPR <<= pp.infix_notation(
     ATOM,
     [
         (pp.Literal("-"), 1, pp.OpAssoc.RIGHT, _make_unary_op),
-        (pp.one_of("^ **"), 2, pp.OpAssoc.RIGHT, _make_binary_op_right),
-        (pp.one_of("* /"), 2, pp.OpAssoc.LEFT, _make_binary_op_left),
-        (pp.one_of("+ -"), 2, pp.OpAssoc.LEFT, _make_binary_op_left),
+        (pp.one_of("^ **"), 2, pp.OpAssoc.RIGHT, _make_binary_op),
+        (pp.one_of("* /"), 2, pp.OpAssoc.LEFT, _make_binary_op),
+        (pp.one_of("+ -"), 2, pp.OpAssoc.LEFT, _make_binary_op),
     ],
 )
 
@@ -212,100 +190,61 @@ EXPR.ignore(COMMENT)
 
 
 def _convert_parse_exception(exc: pp.ParseBaseException, text: str, context: str = "") -> GCNGrammarError:
-    line = exc.lineno
-    col = exc.col
-    source_line = exc.line if hasattr(exc, "line") and exc.line else ""
-
+    line, col = exc.lineno, exc.col
+    source_line = exc.line
     if not source_line and text:
         lines = text.split("\n")
         if 0 < line <= len(lines):
             source_line = lines[line - 1]
 
-    location = ParseLocation(line=line, column=col, source_line=source_line)
-
-    expected = str(exc.expected) if hasattr(exc, "expected") else ""
-    found = exc.found if hasattr(exc, "found") and exc.found else ""
-
-    message = _classify_expression_error(exc, expected, found)
+    found = exc.found or ""
+    message = str(exc.msg)
 
     return GCNGrammarError(
-        message=message,
-        expected=expected if expected else None,
-        found=found if found else None,
-        location=location,
+        message=_classify_expression_error(message, found),
+        found=found,
+        location=ParseLocation(line=line, column=col, source_line=source_line),
         context=context,
-        code=_get_error_code(exc, expected),
+        code=_get_error_code(message),
     )
 
 
-def _classify_expression_error(exc: pp.ParseBaseException, expected: str, found: str) -> str:  # noqa: PLR0911
-    msg = str(exc.msg) if hasattr(exc, "msg") else str(exc)
+def _classify_expression_error(message: str, found: str) -> str:
+    if "Empty function call" in message:
+        return message.split(". E008", maxsplit=1)[0]
 
-    if "Empty function call" in msg:
-        return msg.split(". E008")[0]
+    if "Invalid time index" in message:
+        return message.split(". E010", maxsplit=1)[0]
 
-    if "Invalid time index" in msg:
-        return msg.split(". E010")[0]
-
-    if "end of text" in msg.lower():
-        if found in ("^", "**", "*", "/", "+", "-"):
+    if "end of text" in message.lower():
+        if found in _OP_MAP:
             return f"Unexpected operator '{found}' at end of expression"
         return "Incomplete expression"
 
-    if (expected and "+" in expected) or "-" in expected:
-        return "Missing operand after operator"
+    for brackets, explanation in (("()", "Unbalanced parentheses"), ("[]", "Invalid variable syntax")):
+        if any(bracket in message for bracket in brackets):
+            return explanation
 
-    if "(" in msg or ")" in msg:
-        return "Unbalanced parentheses"
-
-    if "[" in msg or "]" in msg:
-        return "Invalid variable syntax"
-
-    return f"Invalid expression syntax: {msg}"
+    return f"Invalid expression syntax: {message}"
 
 
-def _get_error_code(exc: pp.ParseBaseException, expected: str) -> ErrorCode:
-    msg = str(exc.msg) if hasattr(exc, "msg") else str(exc)
-
-    if "E008" in msg or "Empty function call" in msg:
+def _get_error_code(message: str) -> ErrorCode:
+    if "E008" in message or "Empty function call" in message:
         return ErrorCode.E008
 
-    if "E010" in msg or "Invalid time index" in msg:
+    if "E010" in message or "Invalid time index" in message:
         return ErrorCode.E010
 
-    if "(" in msg or ")" in msg:
+    if "(" in message or ")" in message:
         return ErrorCode.E007
-    if expected and ("+" in expected or "-" in expected or "*" in expected):
-        return ErrorCode.E006
-    if "[" in msg or "]" in msg:
+
+    if "[" in message or "]" in message:
         return ErrorCode.E010
 
     return ErrorCode.E006
 
 
-def parse_expression(text: str, context: str = ""):
-    """
-    Parse a mathematical expression string into an abstract syntax tree node.
-
-    Parameters
-    ----------
-    text : str
-        The expression to parse.
-    context : str, optional
-        Name to report in error messages, identifying where the expression came from. Defaults to an empty string.
-
-    Returns
-    -------
-    node : Node
-        Root of the parsed expression.
-
-    Raises
-    ------
-    GCNGrammarError
-        If the expression cannot be parsed.
-    """
-    try:
-        result = EXPR.parse_string(text, parse_all=True)
-        return result[0]
-    except pp.ParseBaseException as exc:
-        raise _convert_parse_exception(exc, text, context) from None
+__all__ = [
+    "EXPR",
+    "parse_expression",
+]

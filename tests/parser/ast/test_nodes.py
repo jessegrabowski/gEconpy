@@ -10,10 +10,10 @@ from gEconpy.parser.ast import (
     GCNBlock,
     GCNEquation,
     GCNModel,
-    Number,
     Operator,
     Parameter,
     T,
+    Tag,
     TimeIndex,
     Variable,
 )
@@ -46,6 +46,23 @@ class TestTimeIndex:
         assert d[T] == "now"
         assert d[T_PLUS_1] == "future"
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(0, "[]"), (1, "[1]"), (-1, "[-1]"), (-3, "[-3]"), ("ss", "[ss]")],
+    )
+    def test_str(self, value, expected):
+        assert str(TimeIndex(value)) == expected
+
+
+class TestTag:
+    @pytest.mark.parametrize("name", ["exclude", "EXCLUDE", "Exclude"])
+    def test_from_string_ignores_case(self, name):
+        assert Tag.from_string(name) is Tag.EXCLUDE
+
+    def test_from_string_unknown_raises(self):
+        with pytest.raises(ValueError, match="Unknown tag '@bogus'"):
+            Tag.from_string("bogus")
+
 
 class TestVariable:
     def test_at_accepts_int_or_string(self):
@@ -60,8 +77,8 @@ class TestVariable:
     def test_can_be_used_in_set(self):
         variables = {
             Variable(name="C"),
-            Variable(name="C"),  # duplicate
-            Variable(name="C", time_index=T_PLUS_1),  # different time
+            Variable(name="C"),
+            Variable(name="C", time_index=T_PLUS_1),
             Variable(name="K"),
         }
         assert len(variables) == 3
@@ -69,7 +86,6 @@ class TestVariable:
 
 class TestExpressionNodes:
     def test_nested_binary_ops_preserve_structure(self):
-        # (C + I) * K  vs  C + (I * K) should be different
         left_assoc = BinaryOp(
             left=BinaryOp(left=Variable(name="C"), op=Operator.ADD, right=Variable(name="I")),
             op=Operator.MUL,
@@ -83,16 +99,13 @@ class TestExpressionNodes:
         assert left_assoc != right_assoc
 
     def test_function_call_with_nested_expression(self):
-        # log(C / L)
         expr = FunctionCall(
             func_name="log",
             args=(BinaryOp(left=Variable(name="C"), op=Operator.DIV, right=Variable(name="L")),),
         )
-        assert "log" in str(expr)
-        assert "C" in str(expr)
+        assert str(expr) == "log((C[] / L[]))"
 
     def test_expectation_contains_expression(self):
-        # E[][beta * U[1]]
         inner = BinaryOp(
             left=Parameter(name="beta"),
             op=Operator.MUL,
@@ -103,8 +116,7 @@ class TestExpressionNodes:
 
 
 class TestGCNEquation:
-    def test_lagrange_and_calibrating_are_exclusive_in_practice(self):
-        # Both can technically be set, but semantically one or the other
+    def test_lagrange_and_calibrating_flags(self):
         eq_lagrange = GCNEquation(
             lhs=Variable(name="Y"),
             rhs=Variable(name="C"),
@@ -118,32 +130,33 @@ class TestGCNEquation:
         assert eq_lagrange.has_lagrange_multiplier and not eq_lagrange.is_calibrating
         assert eq_calib.is_calibrating and not eq_calib.has_lagrange_multiplier
 
+    def test_str_includes_tags_multiplier_and_calibrating_parameter(self):
+        eq = GCNEquation(
+            lhs=Variable(name="Y"),
+            rhs=Variable(name="C"),
+            lagrange_multiplier="lambda",
+            calibrating_parameter="beta",
+            tags=frozenset([Tag.MINIMIZE, Tag.EXCLUDE]),
+        )
+        assert str(eq) == "@exclude\n@minimize\nY[] = C[] : lambda -> beta"
+
 
 class TestGCNBlock:
-    def test_has_optimization_problem_requires_both_controls_and_objective(self):
-        # Controls only - no optimization
-        block1 = GCNBlock(name="TEST", controls=[Variable(name="C")])
-        assert not block1.has_optimization_problem()
-
-        # Objective only - no optimization
-        block2 = GCNBlock(
-            name="TEST",
-            objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))],
-        )
-        assert not block2.has_optimization_problem()
-
-        # Both - has optimization
-        block3 = GCNBlock(
-            name="TEST",
-            controls=[Variable(name="C")],
-            objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))],
-        )
-        assert block3.has_optimization_problem()
+    @pytest.mark.parametrize(
+        ("controls", "objective", "expected"),
+        [
+            ([Variable(name="C")], [], False),
+            ([], [GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))], False),
+            ([Variable(name="C")], [GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))], True),
+        ],
+    )
+    def test_has_optimization_problem_requires_both_controls_and_objective(self, controls, objective, expected):
+        block = GCNBlock(name="TEST", controls=controls, objective=objective)
+        assert block.has_optimization_problem() is expected
 
 
 class TestGCNModel:
     def test_all_variables_traverses_nested_expressions(self):
-        # Y = C + I where C and I are in a nested BinaryOp
         eq = GCNEquation(
             lhs=Variable(name="Y"),
             rhs=BinaryOp(
@@ -161,7 +174,6 @@ class TestGCNModel:
         assert names == {"Y", "C", "I", "K"}
 
     def test_all_parameters_finds_params_in_function_calls(self):
-        # log(alpha * K)
         eq = GCNEquation(
             lhs=Variable(name="Y"),
             rhs=FunctionCall(
@@ -180,7 +192,6 @@ class TestGCNModel:
         assert params == {"alpha"}
 
     def test_all_variables_finds_vars_inside_expectations(self):
-        # U = u + beta * E[][U[1]]
         eq = GCNEquation(
             lhs=Variable(name="U"),
             rhs=BinaryOp(
@@ -195,5 +206,4 @@ class TestGCNModel:
         )
         model = GCNModel(blocks=[GCNBlock(name="TEST", identities=[eq])])
         names = {v.name for v in model.all_variables()}
-        assert "U" in names
-        assert "u" in names
+        assert names == {"U", "u"}

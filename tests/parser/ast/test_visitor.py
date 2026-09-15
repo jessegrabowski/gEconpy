@@ -1,12 +1,10 @@
 from gEconpy.parser.ast import (
-    T_MINUS_1,
     BinaryOp,
     Expectation,
     FunctionCall,
     GCNEquation,
     NodeTransformer,
     NodeVisitor,
-    Number,
     Operator,
     Parameter,
     T,
@@ -15,6 +13,22 @@ from gEconpy.parser.ast import (
     Variable,
     collect_nodes_of_type,
 )
+
+
+def _equation_with_every_node_type() -> GCNEquation:
+    return GCNEquation(
+        lhs=Variable(name="Y", time_index=T),
+        rhs=BinaryOp(
+            left=UnaryOp(op=Operator.NEG, operand=Variable(name="a", time_index=T)),
+            op=Operator.ADD,
+            right=Expectation(
+                expr=FunctionCall(
+                    func_name="log",
+                    args=(Variable(name="b", time_index=TimeIndex(1)),),
+                )
+            ),
+        ),
+    )
 
 
 class TestNodeVisitor:
@@ -28,16 +42,14 @@ class TestNodeVisitor:
             def visit_Parameter(self, node):
                 visited.append(f"param:{node.name}")
 
-        visitor = TestVisitor()
         expr = BinaryOp(
             left=Variable(name="x", time_index=T),
             op=Operator.ADD,
             right=Parameter(name="alpha"),
         )
-        visitor.visit(expr)
+        TestVisitor().visit(expr)
 
-        assert "x" in visited
-        assert "param:alpha" in visited
+        assert visited == ["x", "param:alpha"]
 
     def test_traverses_all_node_types(self):
         names = []
@@ -46,23 +58,7 @@ class TestNodeVisitor:
             def visit_Variable(self, node):
                 names.append(node.name)
 
-        visitor = NameCollector()
-
-        # Nested expression with all node types
-        expr = GCNEquation(
-            lhs=Variable(name="Y", time_index=T),
-            rhs=BinaryOp(
-                left=UnaryOp(op=Operator.NEG, operand=Variable(name="a", time_index=T)),
-                op=Operator.ADD,
-                right=Expectation(
-                    expr=FunctionCall(
-                        func_name="log",
-                        args=(Variable(name="b", time_index=TimeIndex(1)),),
-                    )
-                ),
-            ),
-        )
-        visitor.visit(expr)
+        NameCollector().visit(_equation_with_every_node_type())
 
         assert set(names) == {"Y", "a", "b"}
 
@@ -75,40 +71,27 @@ class TestNodeTransformer:
                     return Variable(name="x_new", time_index=node.time_index)
                 return node
 
-        transformer = SelectiveRenamer()
         y_node = Variable(name="y", time_index=T)
         expr = BinaryOp(
             left=Variable(name="x", time_index=T),
             op=Operator.ADD,
             right=y_node,
         )
-        result = transformer.visit(expr)
+        result = SelectiveRenamer().visit(expr)
 
         assert result.left.name == "x_new"
-        assert result.right is y_node  # Same object - identity preserved
+        assert result.right is y_node
+
+    def test_returns_same_node_when_nothing_changes(self):
+        expr = _equation_with_every_node_type()
+        assert NodeTransformer().visit(expr) is expr
 
     def test_transforms_all_node_types(self):
         class Renamer(NodeTransformer):
             def visit_Variable(self, node):
                 return Variable(name=f"{node.name}_new", time_index=node.time_index)
 
-        transformer = Renamer()
-
-        # Nested expression with all node types
-        expr = GCNEquation(
-            lhs=Variable(name="Y", time_index=T),
-            rhs=BinaryOp(
-                left=UnaryOp(op=Operator.NEG, operand=Variable(name="a", time_index=T)),
-                op=Operator.ADD,
-                right=Expectation(
-                    expr=FunctionCall(
-                        func_name="log",
-                        args=(Variable(name="b", time_index=TimeIndex(1)),),
-                    )
-                ),
-            ),
-        )
-        result = transformer.visit(expr)
+        result = Renamer().visit(_equation_with_every_node_type())
 
         assert result.lhs.name == "Y_new"
         assert result.rhs.left.operand.name == "a_new"
@@ -119,14 +102,13 @@ class TestNodeTransformer:
             def visit_Variable(self, node):
                 return Variable(name=f"{node.name}_new", time_index=node.time_index)
 
-        transformer = Renamer()
         eq = GCNEquation(
             lhs=Variable(name="Y", time_index=T),
             rhs=Variable(name="C", time_index=T),
             lagrange_multiplier="lambda",
             calibrating_parameter="beta",
         )
-        result = transformer.visit(eq)
+        result = Renamer().visit(eq)
 
         assert result.lagrange_multiplier == "lambda"
         assert result.calibrating_parameter == "beta"

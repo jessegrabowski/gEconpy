@@ -1,16 +1,17 @@
-"""Tests for special block grammar (options, tryreduce, assumptions)."""
-
 import pytest
 
 from pyparsing import ParseBaseException
 
+from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
 from gEconpy.parser.grammar.special_blocks import (
     ASSUMPTIONS_BLOCK,
     OPTIONS_BLOCK,
     TRYREDUCE_BLOCK,
+    extract_special_block_content,
     parse_assumptions,
     parse_options,
     parse_tryreduce,
+    remove_special_block,
 )
 
 
@@ -20,20 +21,20 @@ class TestOptionsBlock:
         result = OPTIONS_BLOCK.parse_string(text)[0]
         assert result == {}
 
-    def test_single_boolean_true(self):
-        text = "options { verbose = TRUE; };"
-        result = OPTIONS_BLOCK.parse_string(text)[0]
-        assert result["verbose"] is True
-
-    def test_single_boolean_false(self):
-        text = "options { verbose = FALSE; };"
-        result = OPTIONS_BLOCK.parse_string(text)[0]
-        assert result["verbose"] is False
-
-    def test_string_value(self):
-        text = "options { solver = gensys; };"
-        result = OPTIONS_BLOCK.parse_string(text)[0]
-        assert result["solver"] == "gensys"
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("options { verbose = TRUE; };", {"verbose": True}),
+            ("options { verbose = FALSE; };", {"verbose": False}),
+            ("options { verbose = true; };", {"verbose": True}),
+            ("options { solver = gensys; };", {"solver": "gensys"}),
+            ("options { output logfile = TRUE; };", {"output logfile": True}),
+            ("OPTIONS { verbose = TRUE; };", {"verbose": True}),
+        ],
+        ids=["true", "false", "lowercase_true", "identifier", "multi_word_key", "uppercase_keyword"],
+    )
+    def test_single_option(self, text, expected):
+        assert OPTIONS_BLOCK.parse_string(text)[0] == expected
 
     def test_multiple_options(self):
         text = """options {
@@ -46,45 +47,21 @@ class TestOptionsBlock:
         assert result["output"] == "latex"
         assert result["debug"] is False
 
-    def test_multi_word_key(self):
-        text = "options { output logfile = TRUE; };"
-        result = OPTIONS_BLOCK.parse_string(text)[0]
-        assert result["output logfile"] is True
-
-    def test_case_insensitive_keyword(self):
-        text = "OPTIONS { verbose = TRUE; };"
-        result = OPTIONS_BLOCK.parse_string(text)[0]
-        assert result["verbose"] is True
-
-    def test_case_insensitive_boolean(self):
-        text = "options { verbose = true; };"
-        result = OPTIONS_BLOCK.parse_string(text)[0]
-        assert result["verbose"] is True
-
 
 class TestTryreduceBlock:
-    def test_single_variable(self):
-        text = "tryreduce { U[]; };"
-        result = TRYREDUCE_BLOCK.parse_string(text)[0]
-        assert result == ["U"]
-
-    def test_multiple_variables(self):
-        text = "tryreduce { U[], TC[], Div[]; };"
-        result = TRYREDUCE_BLOCK.parse_string(text)[0]
-        assert result == ["U", "TC", "Div"]
-
-    def test_case_insensitive_keyword(self):
-        text = "TRYREDUCE { U[]; };"
-        result = TRYREDUCE_BLOCK.parse_string(text)[0]
-        assert result == ["U"]
-
-    def test_with_whitespace(self):
-        text = """tryreduce
-        {
-            U[], TC[];
-        };"""
-        result = TRYREDUCE_BLOCK.parse_string(text)[0]
-        assert result == ["U", "TC"]
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("tryreduce { };", []),
+            ("tryreduce { U[]; };", ["U"]),
+            ("tryreduce { U[], TC[], Div[]; };", ["U", "TC", "Div"]),
+            ("TRYREDUCE { U[]; };", ["U"]),
+            ("tryreduce\n{\n    U[], TC[];\n};", ["U", "TC"]),
+        ],
+        ids=["empty", "single", "multiple", "uppercase_keyword", "multiline"],
+    )
+    def test_tryreduce(self, text, expected):
+        assert TRYREDUCE_BLOCK.parse_string(text)[0] == expected
 
 
 class TestAssumptionsBlock:
@@ -94,12 +71,20 @@ class TestAssumptionsBlock:
         assert "C" in result
         assert result["C"]["positive"] is True
 
-    def test_single_assumption_multiple_variables(self):
-        text = "assumptions { positive { C[], K[], L[]; }; };"
+    @pytest.mark.parametrize(
+        "text,expected_names",
+        [
+            ("assumptions { positive { C[], K[], L[]; }; };", ["C", "K", "L"]),
+            ("assumptions { positive { alpha, beta; }; };", ["alpha", "beta"]),
+            ("assumptions { positive { C[], alpha, K[], beta; }; };", ["C", "alpha", "K", "beta"]),
+            ("ASSUMPTIONS { positive { C[]; }; };", ["C"]),
+        ],
+        ids=["variables", "parameters", "mixed", "uppercase_keyword"],
+    )
+    def test_assumption_applies_to_every_listed_name(self, text, expected_names):
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert "C" in result
-        assert "K" in result
-        assert "L" in result
+        assert list(result) == expected_names
+        assert all(result[name]["positive"] is True for name in expected_names)
 
     def test_multiple_assumptions(self):
         text = """assumptions {
@@ -116,25 +101,6 @@ class TestAssumptionsBlock:
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
         assert result["alpha"]["unit_interval"] is True
         assert result["alpha"]["positive"] is True
-
-    def test_parameter_in_assumptions(self):
-        text = "assumptions { positive { alpha, beta; }; };"
-        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert "alpha" in result
-        assert "beta" in result
-
-    def test_mixed_variables_and_parameters(self):
-        text = "assumptions { positive { C[], alpha, K[], beta; }; };"
-        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert "C" in result
-        assert "alpha" in result
-        assert "K" in result
-        assert "beta" in result
-
-    def test_case_insensitive_keyword(self):
-        text = "ASSUMPTIONS { positive { C[]; }; };"
-        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert "C" in result
 
     def test_case_insensitive_assumption(self):
         text = "assumptions { POSITIVE { C[]; }; };"
@@ -192,8 +158,20 @@ class TestParseAssumptionsFn:
     def test_returns_default_when_no_assumptions(self):
         text = "block HOUSEHOLD { };"
         result = parse_assumptions(text)
-        # Should return empty dict or default
-        assert isinstance(result, dict)
+        assert result["anything"] == DEFAULT_ASSUMPTIONS
+
+
+class TestSpecialBlockText:
+    def test_extract_block_text(self):
+        text = "options { verbose = TRUE; };\nblock HOUSEHOLD { };"
+        assert extract_special_block_content(text, "options") == "options { verbose = TRUE; };"
+        assert extract_special_block_content(text, "OPTIONS") == "options { verbose = TRUE; };"
+        assert extract_special_block_content(text, "tryreduce") is None
+
+    def test_remove_block_text(self):
+        text = "options { verbose = TRUE; };\nblock HOUSEHOLD { };"
+        assert remove_special_block(text, "options") == "\nblock HOUSEHOLD { };"
+        assert remove_special_block(text, "tryreduce") == text
 
 
 class TestSpecialBlockErrors:
@@ -206,6 +184,5 @@ class TestSpecialBlockErrors:
             TRYREDUCE_BLOCK.parse_string("tryreduce { U[] }")
 
     def test_assumptions_invalid_assumption(self):
-        # "invalid" is not a valid assumption name
-        with pytest.raises(ParseBaseException):
+        with pytest.raises(ParseBaseException, match="Unknown assumption 'invalid'"):
             ASSUMPTIONS_BLOCK.parse_string("assumptions { invalid { C[]; }; };")

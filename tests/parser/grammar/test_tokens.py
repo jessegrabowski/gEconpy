@@ -1,5 +1,3 @@
-"""Tests for grammar tokens."""
-
 import pytest
 
 from pyparsing import ParseException
@@ -37,41 +35,23 @@ from gEconpy.parser.grammar.tokens import (
 
 
 class TestStructuralTokens:
-    def test_braces(self):
-        result = (LBRACE + RBRACE).parse_string("{}")
-        assert list(result) == []  # Suppressed
-
-    def test_parentheses(self):
-        result = (LPAREN + RPAREN).parse_string("()")
-        assert list(result) == []
-
-    def test_brackets(self):
-        result = (LBRACKET + RBRACKET).parse_string("[]")
-        assert list(result) == []
-
-    def test_semicolon(self):
-        result = SEMI.parse_string(";")
-        assert list(result) == []
-
-    def test_comma(self):
-        result = COMMA.parse_string(",")
-        assert list(result) == []
-
-    def test_equals(self):
-        result = EQUALS.parse_string("=")
-        assert list(result) == []
-
-    def test_colon(self):
-        result = COLON.parse_string(":")
-        assert list(result) == []
-
-    def test_tilde(self):
-        result = TILDE.parse_string("~")
-        assert list(result) == []
-
-    def test_arrow(self):
-        result = ARROW.parse_string("->")
-        assert list(result) == []
+    @pytest.mark.parametrize(
+        "grammar,text",
+        [
+            (LBRACE + RBRACE, "{}"),
+            (LPAREN + RPAREN, "()"),
+            (LBRACKET + RBRACKET, "[]"),
+            (SEMI, ";"),
+            (COMMA, ","),
+            (EQUALS, "="),
+            (COLON, ":"),
+            (TILDE, "~"),
+            (ARROW, "->"),
+        ],
+        ids=["braces", "parentheses", "brackets", "semicolon", "comma", "equals", "colon", "tilde", "arrow"],
+    )
+    def test_structural_tokens_are_suppressed(self, grammar, text):
+        assert list(grammar.parse_string(text)) == []
 
 
 class TestIdentifier:
@@ -92,50 +72,39 @@ class TestIdentifier:
         result = IDENTIFIER.parse_string(text)
         assert result[0] == text
 
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "123",  # Starts with digit
-            "1abc",  # Starts with digit
-        ],
-    )
-    def test_invalid_identifiers(self, text):
+    @pytest.mark.parametrize("text", ["123", "1abc"])
+    def test_identifier_cannot_start_with_digit(self, text):
         with pytest.raises(ParseException):
             IDENTIFIER.parse_string(text)
 
 
 class TestNumber:
     @pytest.mark.parametrize(
-        "text,expected",
+        "text",
         [
-            # Integers
-            ("42", "42"),
-            ("0", "0"),
-            ("007", "007"),
-            # Floats
-            ("3.14", "3.14"),
-            ("123.", "123."),
-            (".5", ".5"),
-            (".123", ".123"),
-            ("0.0", "0.0"),
-            # Scientific notation
-            ("1e10", "1e10"),
-            ("1E10", "1E10"),
-            ("1e+10", "1e+10"),
-            ("1e-10", "1e-10"),
-            ("1.5e10", "1.5e10"),
-            (".5e10", ".5e10"),
-            ("123.e10", "123.e10"),
-            ("1.5E-3", "1.5E-3"),
+            "42",
+            "0",
+            "007",
+            "3.14",
+            "123.",
+            ".5",
+            ".123",
+            "0.0",
+            "1e10",
+            "1E10",
+            "1e+10",
+            "1e-10",
+            "1.5e10",
+            ".5e10",
+            "123.e10",
+            "1.5E-3",
         ],
     )
-    def test_valid_numbers(self, text, expected):
+    def test_valid_numbers(self, text):
         result = NUMBER.parse_string(text)
-        assert result[0] == expected
+        assert result[0] == text
 
     def test_number_does_not_match_identifier(self):
-        # "123abc" should not match as number "123"
-
         with pytest.raises(ParseException):
             NUMBER.parse_string("123abc", parse_all=True)
 
@@ -144,43 +113,33 @@ class TestTimeIndex:
     @pytest.mark.parametrize(
         "text,expected",
         [
-            ("[]", ""),  # Current period
-            ("[-1]", "-1"),  # Lag
-            ("[1]", "1"),  # Lead
-            ("[ss]", "ss"),  # Steady state
-            ("[-10]", "-10"),  # Multiple digit lag
-            ("[100]", "100"),  # Multiple digit lead
+            ("[]", ""),
+            ("[-1]", "-1"),
+            ("[1]", "1"),
+            ("[ss]", "ss"),
+            ("[-10]", "-10"),
+            ("[100]", "100"),
         ],
     )
     def test_time_index(self, text, expected):
         result = TIME_INDEX.parse_string(text)
         assert result[0] == expected
 
-    @pytest.mark.parametrize(
-        "text,expected",
-        [
-            ("-1", "-1"),
-            ("1", "1"),
-            ("0", "0"),
-            ("ss", "ss"),
-            ("-100", "-100"),
-        ],
-    )
-    def test_time_index_content(self, text, expected):
+    @pytest.mark.parametrize("text", ["-1", "1", "0", "ss", "-100"])
+    def test_time_index_content(self, text):
         result = TIME_INDEX_CONTENT.parse_string(text)
-        assert result[0] == expected
+        assert result[0] == text
 
 
 class TestKeywords:
-    def test_block_keyword(self):
-        # Case insensitive
-        for variant in ["block", "BLOCK", "Block", "BLoCK"]:
-            result = KW_BLOCK.parse_string(variant)
-            assert result[0].lower() == "block"
+    @pytest.mark.parametrize("variant", ["block", "BLOCK", "Block", "BLoCK"])
+    def test_block_keyword_is_case_insensitive(self, variant):
+        result = KW_BLOCK.parse_string(variant)
+        assert result[0].lower() == "block"
 
-    def test_component_keywords(self):
-
-        keywords = [
+    @pytest.mark.parametrize(
+        "keyword,expected",
+        [
             (KW_DEFINITIONS, "definitions"),
             (KW_CONTROLS, "controls"),
             (KW_OBJECTIVE, "objective"),
@@ -188,28 +147,17 @@ class TestKeywords:
             (KW_IDENTITIES, "identities"),
             (KW_SHOCKS, "shocks"),
             (KW_CALIBRATION, "calibration"),
-        ]
-        for kw, expected in keywords:
-            result = kw.parse_string(expected.upper())
-            assert result[0].lower() == expected
+            (KW_TRUE, "true"),
+            (KW_FALSE, "false"),
+        ],
+    )
+    def test_keywords_are_case_insensitive(self, keyword, expected):
+        assert keyword.parse_string(expected.upper())[0].lower() == expected
+        assert keyword.parse_string(expected.lower())[0].lower() == expected
 
-    def test_boolean_keywords(self):
-        result_true = KW_TRUE.parse_string("TRUE")
-        assert result_true[0].upper() == "TRUE"
+    def test_expectation_keyword_is_case_sensitive(self):
+        assert KW_E.parse_string("E")[0] == "E"
 
-        result_false = KW_FALSE.parse_string("FALSE")
-        assert result_false[0].upper() == "FALSE"
-
-        # Case insensitive
-        result_true_lower = KW_TRUE.parse_string("true")
-        assert result_true_lower[0].lower() == "true"
-
-    def test_expectation_keyword_case_sensitive(self):
-        # E must be uppercase
-        result = KW_E.parse_string("E")
-        assert result[0] == "E"
-
-        # Lowercase should fail
         with pytest.raises(ParseException):
             KW_E.parse_string("e")
 
@@ -221,7 +169,6 @@ class TestComments:
         assert "this is a comment" in result[0]
 
     def test_comment_with_content_before(self):
-        # Comment should only match from # onwards
         grammar = IDENTIFIER + COMMENT
         result = grammar.parse_string("alpha # comment")
         assert result[0] == "alpha"
@@ -229,7 +176,6 @@ class TestComments:
 
 class TestTokenCombinations:
     def test_variable_pattern(self):
-        # IDENTIFIER + TIME_INDEX should work together
         grammar = IDENTIFIER + TIME_INDEX
         result = grammar.parse_string("C[]")
         assert result[0] == "C"
@@ -240,28 +186,24 @@ class TestTokenCombinations:
         assert result[1] == "-1"
 
     def test_assignment_pattern(self):
-        # IDENTIFIER + EQUALS + NUMBER
         grammar = IDENTIFIER + EQUALS + NUMBER
         result = grammar.parse_string("beta = 0.99")
         assert result[0] == "beta"
         assert result[1] == "0.99"
 
     def test_distribution_pattern_structure(self):
-        # param ~ Dist(...)
         grammar = IDENTIFIER + TILDE + IDENTIFIER + LPAREN + RPAREN
         result = grammar.parse_string("alpha ~ Beta()")
         assert result[0] == "alpha"
         assert result[1] == "Beta"
 
     def test_lagrange_pattern(self):
-        # : lambda[]
         grammar = COLON + IDENTIFIER + TIME_INDEX
         result = grammar.parse_string(": lambda[]")
         assert result[0] == "lambda"
         assert result[1] == ""
 
     def test_calibrating_pattern(self):
-        # -> param
         grammar = ARROW + IDENTIFIER
         result = grammar.parse_string("-> beta")
         assert result[0] == "beta"

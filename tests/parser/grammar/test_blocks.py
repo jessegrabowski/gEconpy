@@ -1,14 +1,7 @@
-"""Tests for model block grammar."""
-
 import pyparsing as pp
 import pytest
 
-from gEconpy.parser.ast import (
-    GCNBlock,
-    GCNDistribution,
-    GCNEquation,
-    Variable,
-)
+from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation
 from gEconpy.parser.grammar.blocks import MODEL_BLOCK
 
 
@@ -29,12 +22,8 @@ class TestModelBlockBasic:
         with pytest.raises(pp.ParseBaseException, match="Expected ';'"):
             MODEL_BLOCK.parse_string(text)
 
-    def test_block_case_insensitive_keyword(self):
-        text = "BLOCK TEST { };"
-        result = MODEL_BLOCK.parse_string(text)[0]
-        assert result.name == "TEST"
-
-        text = "Block TEST { };"
+    @pytest.mark.parametrize("text", ["BLOCK TEST { };", "Block TEST { };"])
+    def test_block_case_insensitive_keyword(self, text):
         result = MODEL_BLOCK.parse_string(text)[0]
         assert result.name == "TEST"
 

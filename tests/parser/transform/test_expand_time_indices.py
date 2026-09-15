@@ -13,18 +13,15 @@ from gEconpy.parser.ast import (
     T,
     TimeIndex,
     Variable,
+    collect_nodes_of_type,
 )
 from gEconpy.parser.errors import ParseLocation
 from gEconpy.parser.transform.expand_time_indices import (
-    AUX_LAG_SEPARATOR,
-    AUX_LEAD_SEPARATOR,
     DeepTimeIndexCollector,
     _create_lag_chain,
     _create_lead_chain,
     expand_block_time_indices,
     expand_model_time_indices,
-    make_lag_name,
-    make_lead_name,
 )
 
 
@@ -77,26 +74,21 @@ class TestDeepTimeIndexCollector:
 class TestCreateChains:
     def test_lag_chain_structure(self):
         equations = _create_lag_chain("S", 3)
-        assert len(equations) == 3
-        # S__lag1[] = S[-1]
-        assert equations[0].lhs.name == "S__lag1"
-        assert equations[0].rhs.name == "S"
-        # S__lag2[] = S__lag1[-1]
-        assert equations[1].lhs.name == "S__lag2"
-        assert equations[1].rhs.name == "S__lag1"
-        # S__lag3[] = S__lag2[-1]
-        assert equations[2].lhs.name == "S__lag3"
-        assert equations[2].rhs.name == "S__lag2"
+        assert [(eq.lhs.name, eq.rhs.name) for eq in equations] == [
+            ("S__lag1", "S"),
+            ("S__lag2", "S__lag1"),
+            ("S__lag3", "S__lag2"),
+        ]
+        assert all(eq.lhs.time_index == T and eq.rhs.time_index == T_MINUS_1 for eq in equations)
 
     def test_lead_chain_has_expectations(self):
         equations = _create_lead_chain("C", 2)
-        assert len(equations) == 2
-        # C__lead1[] = E[][C[1]]
-        assert equations[0].lhs.name == "C__lead1"
-        assert isinstance(equations[0].rhs, Expectation)
-        assert equations[0].rhs.expr.name == "C"
-        # C__lead2[] = E[][C__lead1[1]]
-        assert equations[1].rhs.expr.name == "C__lead1"
+        assert all(isinstance(eq.rhs, Expectation) for eq in equations)
+        assert [(eq.lhs.name, eq.rhs.expr.name) for eq in equations] == [
+            ("C__lead1", "C"),
+            ("C__lead2", "C__lead1"),
+        ]
+        assert all(eq.rhs.expr.time_index == T_PLUS_1 for eq in equations)
 
 
 class TestExpandBlockTimeIndices:
@@ -110,8 +102,7 @@ class TestExpandBlockTimeIndices:
                 )
             ],
         )
-        result = expand_block_time_indices(block)
-        assert result is block
+        assert expand_block_time_indices(block) is block
 
     def test_expands_deep_lag(self):
         block = GCNBlock(
@@ -125,11 +116,8 @@ class TestExpandBlockTimeIndices:
         )
         result = expand_block_time_indices(block)
 
-        # Creates 3 lag chain equations
         assert len(result.identities) == 3
-        # Constraint now uses S__lag3[-1]
-        assert result.constraints[0].rhs.name == "S__lag3"
-        assert result.constraints[0].rhs.time_index == T_MINUS_1
+        assert result.constraints[0].rhs == Variable(name="S__lag3", time_index=T_MINUS_1)
 
     def test_expands_deep_lead(self):
         block = GCNBlock(
@@ -143,11 +131,9 @@ class TestExpandBlockTimeIndices:
         )
         result = expand_block_time_indices(block)
 
-        # Original + 2 lead equations
         assert len(result.identities) == 3
         v_eq = next(eq for eq in result.identities if eq.lhs.name == "V")
-        assert v_eq.rhs.expr.name == "C__lead2"
-        assert v_eq.rhs.expr.time_index == T_PLUS_1
+        assert v_eq.rhs.expr == Variable(name="C__lead2", time_index=T_PLUS_1)
 
     def test_same_variable_with_both_deep_lag_and_lead(self):
         block = GCNBlock(
@@ -165,12 +151,11 @@ class TestExpandBlockTimeIndices:
         )
         result = expand_block_time_indices(block)
 
-        # Original + 2 lag + 2 lead
+        lag_names = [eq.lhs.name for eq in result.identities if "__lag" in eq.lhs.name]
+        lead_names = [eq.lhs.name for eq in result.identities if "__lead" in eq.lhs.name]
         assert len(result.identities) == 5
-        lag_eqs = [eq for eq in result.identities if "__lag" in eq.lhs.name]
-        lead_eqs = [eq for eq in result.identities if "__lead" in eq.lhs.name]
-        assert len(lag_eqs) == 2
-        assert len(lead_eqs) == 2
+        assert lag_names == ["x__lag1", "x__lag2"]
+        assert lead_names == ["x__lead1", "x__lead2"]
 
     def test_transforms_all_equation_types(self):
         block = GCNBlock(
@@ -194,7 +179,6 @@ class TestExpandBlockTimeIndices:
         assert result.objective[0].rhs.name == "V__lead1"
 
     def test_preserves_source_location(self):
-
         loc = ParseLocation(line=5, column=10, end_line=5, end_column=15)
         block = GCNBlock(
             name="TEST",
@@ -211,7 +195,6 @@ class TestExpandBlockTimeIndices:
         assert transformed_eq.rhs.location == loc
 
     def test_transforms_controls_with_deep_indices(self):
-        # Control S[-4] should become S__lag3[-1]
         block = GCNBlock(
             name="TEST",
             controls=[
@@ -227,12 +210,10 @@ class TestExpandBlockTimeIndices:
         )
         result = expand_block_time_indices(block)
 
-        # Controls should be transformed
-        assert len(result.controls) == 2
-        assert result.controls[0].name == "C"
-        assert result.controls[0].time_index == T
-        assert result.controls[1].name == "S__lag3"
-        assert result.controls[1].time_index == T_MINUS_1
+        assert result.controls == [
+            Variable(name="C", time_index=T),
+            Variable(name="S__lag3", time_index=T_MINUS_1),
+        ]
 
 
 class TestExpandModelTimeIndices:
@@ -261,14 +242,14 @@ class TestExpandModelTimeIndices:
         )
         result = expand_model_time_indices(model)
 
-        assert len(result.blocks[0].identities) == 3  # orig + 2 lag
-        assert len(result.blocks[1].identities) == 2  # orig + 1 lag
+        assert len(result.blocks[0].identities) == 3
+        assert len(result.blocks[1].identities) == 2
 
 
 class TestKydlandPrescottScenario:
     def test_time_to_build_model(self):
-        # K[] = (1-delta)*K[-1] + S[-4]
-        # IF[] = phi1*S[-3] + phi2*S[-2] + phi3*S[-1] + phi4*S[]
+        # K[] = (1 - delta) * K[-1] + S[-4]
+        # IF[] = phi1 * S[-3] + phi2 * S[-2] + phi3 * S[-1] + phi4 * S[]
         block = GCNBlock(
             name="CAPITAL_PRODUCER",
             constraints=[
@@ -327,19 +308,11 @@ class TestKydlandPrescottScenario:
 
         result = expand_block_time_indices(block)
 
-        # IF identity + 3 lag chain equations
         assert len(result.identities) == 4
 
-        # Verify no deep indices remain
-        def has_deep_indices(node):
-            if isinstance(node, Variable) and not node.time_index.is_steady_state:
-                t = node.time_index.value
-                return isinstance(t, int) and (t < -1 or t > 1)
-            if isinstance(node, BinaryOp):
-                return has_deep_indices(node.left) or has_deep_indices(node.right)
-            if isinstance(node, GCNEquation):
-                return has_deep_indices(node.lhs) or has_deep_indices(node.rhs)
-            return False
-
-        for eq in result.constraints + result.identities:
-            assert not has_deep_indices(eq)
+        offsets = {
+            var.time_index.value
+            for eq in result.constraints + result.identities
+            for var in collect_nodes_of_type(eq, Variable)
+        }
+        assert offsets <= {-1, 0, 1}
