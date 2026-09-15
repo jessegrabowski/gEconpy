@@ -1,6 +1,8 @@
 import re
 
 import numpy as np
+import pytensor
+import pytensor.tensor as pt
 import pytest
 import sympy as sp
 
@@ -10,12 +12,19 @@ from scipy import optimize
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.model import Model, infer_variable_transform
+from gEconpy.model.model import (
+    Model,
+    infer_variable_bounds,
+    infer_variable_transform,
+    transform_steady_state_system,
+)
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.steady_state import (
     compile_known_ss,
     print_steady_state,
     propagate_steady_state_through_identities,
+    pt_error_from_resid,
+    system_to_steady_state,
 )
 from tests._resources.cache_compiled_models import load_and_cache_model
 
@@ -163,6 +172,32 @@ def test_solve_ss_with_partial_user_solution():
     assert res.success
 
 
+def test_system_to_steady_state_collapses_time_indices_and_zeros_shocks():
+    x, eps = TimeAwareSymbol("x", 0), TimeAwareSymbol("eps", 0)
+    rho = sp.Symbol("rho")
+
+    (steady_state_eq,) = system_to_steady_state([x - rho * x.set_t(-1) - eps + x.set_t(1) ** 2], [eps])
+
+    assert sp.expand(steady_state_eq - (x.to_ss() ** 2 + x.to_ss() * (1 - rho))) == 0
+
+
+@pytest.mark.parametrize(
+    "error_function, expected",
+    [("squared", 14.0), ("mean_squared", 14.0 / 3), ("abs", 6.0), ("l2-norm", np.sqrt(14.0))],
+    ids=str,
+)
+def test_pt_error_from_resid(error_function, expected):
+    resid = pt.dvector("resid")
+    f = pytensor.function([resid], pt_error_from_resid(resid, error_function), mode="FAST_COMPILE")
+
+    assert_allclose(f(np.array([1.0, -2.0, 3.0])), expected)
+
+
+def test_pt_error_from_resid_rejects_unknown_function():
+    with pytest.raises(NotImplementedError, match="Error function huber not implemented"):
+        pt_error_from_resid(pt.dvector("resid"), "huber")
+
+
 def test_compile_known_ss_symbolic_keys_only_known_variables():
     model = load_and_cache_model("rbc_2_block_partial_ss.gcn")
     _, cache = compile_param_dict_func(model._param_dict, model._deterministic_dict, return_symbolic=True)
@@ -203,6 +238,28 @@ def test_print_steady_state_report_solver_successful(caplog):
     assert _collapse_whitespace(caplog.messages[-1]) == _collapse_whitespace(expected_output)
 
 
+def test_print_steady_state_lists_calibrated_parameters_after_variables(caplog):
+    model = load_and_cache_model("one_block_2_no_extra.gcn")
+    res = model.steady_state(how="root", verbose=False, progressbar=False)
+
+    expected_output = """A_ss               1.000
+                         C_ss               0.360
+                         I_ss               0.019
+                         K_ss               0.975
+                         L_ss               0.351
+                         U_ss            -192.072
+                         Y_ss               0.379
+                         lambda_ss          1.887
+                         q_ss               1.887
+
+
+                         alpha              0.076"""
+
+    print_steady_state(res)
+
+    assert _collapse_whitespace(caplog.messages[-1]) == _collapse_whitespace(expected_output)
+
+
 def test_print_steady_state_report_solver_fails(caplog):
     model_1 = load_and_cache_model("one_block_1.gcn")
     result = model_1.steady_state(verbose=False, progressbar=False)
@@ -217,6 +274,45 @@ def test_print_steady_state_report_solver_fails(caplog):
                          lambda_ss          0.120"""
 
     assert _collapse_whitespace(caplog.messages[-1]) == _collapse_whitespace(expected_output)
+
+
+@pytest.mark.parametrize(
+    "fixed_values, expected_msg",
+    [
+        (
+            {"K": 3.0, "K_ss": 3.0},
+            "The following variables were provided twice (once with a _ss suffix and once without):\nK",
+        ),
+        (
+            {"Z_ss": 3.0},
+            "The following variables or calibrated parameters were given fixed steady state values but are unknown "
+            "to the model: Z",
+        ),
+    ],
+    ids=["duplicate_with_and_without_suffix", "unknown_variable"],
+)
+def test_invalid_fixed_values_raise(fixed_values, expected_msg):
+    model_1 = load_and_cache_model("one_block_1.gcn")
+
+    with pytest.raises(ValueError, match=re.escape(expected_msg)):
+        model_1.steady_state(fixed_values=fixed_values, verbose=False, progressbar=False)
+
+
+def test_unknown_how_raises():
+    model_1 = load_and_cache_model("one_block_1.gcn")
+
+    with pytest.raises(NotImplementedError, match=re.escape("got 'newton'")):
+        model_1.steady_state(how="newton")
+
+
+def test_fixed_values_completing_analytic_steady_state_skip_the_solver():
+    model = load_and_cache_model("one_block_1_ss.gcn")
+    analytic = model.steady_state(verbose=False, progressbar=False)
+
+    res = model.steady_state(fixed_values={"K_ss": analytic["K_ss"]}, verbose=False, progressbar=False)
+
+    assert res.success
+    assert res.to_string() == analytic.to_string()
 
 
 def test_incomplete_ss_relationship_raises_with_root():
@@ -242,6 +338,37 @@ def test_wrong_and_incomplete_ss_relationship_fails_with_minimize():
 def test_numerical_solvers_succeed_and_agree():
     model_1 = load_and_cache_model("one_block_1.gcn")
     assert_root_and_minimize_agree(model_1)
+
+
+@pytest.mark.parametrize(
+    "how, kwargs",
+    [
+        ("root", {"use_jac": False}),
+        ("root", {"jitter_x0": True}),
+        ("minimize", {"jitter_x0": True}),
+        ("minimize", {"use_hess": True, "use_hessp": False}),
+    ],
+    ids=["root_no_jac", "root_jitter", "minimize_jitter", "minimize_hess"],
+)
+def test_solver_options_reach_the_same_steady_state(how, kwargs):
+    model_1 = load_and_cache_model("one_block_1.gcn")
+    reference = model_1.steady_state(how="root", verbose=False, progressbar=False)
+
+    res = model_1.steady_state(how=how, verbose=False, progressbar=False, **kwargs)
+
+    assert res.success
+    for k in reference:
+        assert_allclose(res[k], reference[k], rtol=1e-6, err_msg=k)
+
+
+def test_hess_and_hessp_together_warn_and_use_hessp(caplog):
+    model_1 = load_and_cache_model("one_block_1.gcn")
+
+    with caplog.at_level("WARNING"):
+        res = model_1.steady_state(how="minimize", use_hess=True, use_hessp=True, verbose=False, progressbar=False)
+
+    assert res.success
+    assert "Both use_hess and use_hessp are set to True. use_hessp will be used." in caplog.messages
 
 
 def test_steady_state_matches_analytic():
@@ -300,6 +427,34 @@ def test_infer_variable_transform_waterfall(assumptions, user_bound, expected_ty
     variable = sp.Symbol("x", **assumptions)
     transform = infer_variable_transform(variable, user_bound=user_bound)
     assert isinstance(transform, expected_type)
+
+
+@pytest.mark.parametrize(
+    "assumptions, expected",
+    [({"positive": True}, (1e-8, None)), ({"negative": True}, (None, -1e-8)), ({}, (None, None))],
+    ids=["positive", "negative", "unconstrained"],
+)
+def test_infer_variable_bounds(assumptions, expected):
+    assert infer_variable_bounds(TimeAwareSymbol("x", 0, **assumptions)) == expected
+
+
+def test_transform_steady_state_system_round_trips_and_preserves_residuals():
+    x, y = pt.dscalars("x", "y")
+    equations = [x - 2.0, y + x]
+
+    transformed, y_nodes, to_unconstrained, to_constrained = transform_steady_state_system(
+        equations, [x, y], [log, None]
+    )
+
+    f_original = pytensor.function([x, y], equations, mode="FAST_COMPILE")
+    f_transformed = pytensor.function(y_nodes, transformed, mode="FAST_COMPILE")
+
+    constrained_point = np.array([3.0, -1.5])
+    unconstrained_point = to_unconstrained(constrained_point)
+
+    assert_allclose(unconstrained_point, [np.log(3.0), -1.5])
+    assert_allclose(to_constrained(unconstrained_point), constrained_point)
+    assert_allclose(f_transformed(*unconstrained_point), f_original(*constrained_point))
 
 
 def test_prefer_transform_solves_unconstrained():

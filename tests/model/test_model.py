@@ -1,8 +1,10 @@
+import itertools
 import re
 
 import numdifftools as nd
 import numpy as np
 import pandas as pd
+import pytensor
 import pytensor.tensor as pt
 import pytest
 import xarray as xr
@@ -11,9 +13,11 @@ from numpy.testing import assert_allclose
 from pytensor.graph.traversal import explicit_graph_inputs
 
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.exceptions import GensysFailedException
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import compile_for_scipy, make_cache_key
+from gEconpy.model.model import DROrder
 from gEconpy.model.perturbation import (
     check_bk_condition,
     compute_bk_eigenvalues,
@@ -40,7 +44,7 @@ from tests.conftest import TEST_GCNS
 
 @pytest.fixture
 def rng():
-    return np.random.default_rng()
+    return np.random.default_rng(seed=1234)
 
 
 def _model_without_analytic_steady_state(gcn_file):
@@ -83,6 +87,18 @@ def test_deterministic_model_parameters():
     params = model.parameters(theta=0.9)
     assert params["theta"] == 0.9
     assert_allclose(params["zeta"], -np.log(0.9))
+
+    # Deterministic names are ignored, so the output of one call can be passed back into the next.
+    params = model.parameters(theta=0.9, zeta=100.0)
+    assert_allclose(params["zeta"], -np.log(0.9))
+    assert model.parameters(**params) == params
+
+
+def test_unknown_parameter_update_raises():
+    model = load_and_cache_model("one_block_1_ss.gcn")
+
+    with pytest.raises(ModelUnknownParameterError, match="do not exist in the model: not_a_param"):
+        model.parameters(not_a_param=1.0)
 
 
 def test_get_returns_symbols_and_names_a_close_match():
@@ -215,13 +231,13 @@ def _compile_ss_derivative_funcs(gcn_file):
         if node is not None and node in resid_inputs:
             ss_nodes.append(node)
 
-    error_graph, grad_graph, hess_graph, _, _ = build_minimize_graphs(
+    error_graph, grad_graph, hess_graph, hessp_graph, hessp_p = build_minimize_graphs(
         equations,
         ss_nodes,
         error_func=model._error_func,
         use_jac=True,
         use_hess=True,
-        use_hessp=False,
+        use_hessp=True,
     )
     _, jac_graph = build_root_graphs(equations, ss_nodes, use_jac=True)
 
@@ -233,8 +249,10 @@ def _compile_ss_derivative_funcs(gcn_file):
             ("error", error_graph),
             ("grad", grad_graph),
             ("hess", hess_graph),
+            ("hessp", hessp_graph),
         ]
     }
+    compiled["hessp_direction_name"] = hessp_p.name
     return model, ss_result, compiled
 
 
@@ -258,6 +276,10 @@ def test_ss_derivatives_match_numeric():
     hess = np.asarray(f["hess"](**perturbed_point, **params))
     numeric_hess = nd.Hessian(lambda x: float(np.asarray(f["error"](**at(x), **params))))(test_point)
     assert_allclose(hess, numeric_hess, rtol=1e-8, atol=1e-8)
+
+    direction = np.arange(1.0, len(test_point) + 1)
+    hessp = np.asarray(f["hessp"](**perturbed_point, **params, **{f["hessp_direction_name"]: direction}))
+    assert_allclose(hessp, numeric_hess @ direction, rtol=1e-8, atol=1e-8)
 
     jac = np.asarray(f["jac"](**perturbed_point, **params))
     numeric_jac = nd.Jacobian(lambda x: np.asarray(f["resid"](**at(x), **params)).ravel())(test_point)
@@ -393,8 +415,6 @@ def test_linearize(gcn_file):
 
 def test_linearize_with_custom_params(rng):
     model = load_and_cache_model("one_block_1_ss.gcn")
-    params = model.parameters(rho=0.5)
-    assert params["rho"] == 0.5
 
     # The technology process is A[t] = rho * A[t-1] + eps, so d(equation)/d(A[t-1]) is rho.
     rho = rng.beta(1, 1)
@@ -426,17 +446,24 @@ def test_linearize_steady_state_kwargs_override_verbose(caplog):
     ],
     ids=["one_block_ss", "two_block_ss", "full_nk"],
 )
-def test_symbolic_linearization_returns_pytensor_graphs(gcn_file):
+def test_symbolic_linearization_graphs_evaluate_to_permuted_linearization(gcn_file):
     model = load_and_cache_model(gcn_file)
-    jacobians, ss_nodes, param_nodes, eq_order, var_order = model.symbolic_linearization(verbose=False)
+    steady_state = model.steady_state(verbose=False, progressbar=False)
+    params = model.parameters()
 
-    assert len(jacobians) == 4
-    assert all(isinstance(j, pt.TensorVariable) for j in jacobians)
-    assert len(ss_nodes) == len(model.variables)
-    assert all(isinstance(n, pt.TensorVariable) for n in ss_nodes)
-    assert all(isinstance(n, pt.TensorVariable) for n in param_nodes)
-    assert eq_order.shape == (len(model.equations),)
-    assert var_order.shape == (len(model.variables),)
+    jacobians, ss_nodes, param_nodes, eq_order, var_order = model.symbolic_linearization(verbose=False)
+    f = pytensor.function([*ss_nodes, *param_nodes], jacobians, mode="FAST_COMPILE", on_unused_input="ignore")
+
+    ss_inputs = [steady_state[f"{v.base_name}_ss"] for v in model.variables]
+    A, B, C, D = f(*ss_inputs, *[params[node.name] for node in param_nodes])
+
+    # The graphs carry rows in eq_order and columns in var_order. Undoing both recovers linearize_model's layout.
+    inv_eq, inv_var = np.argsort(eq_order), np.argsort(var_order)
+    unpermuted = [A[inv_eq][:, inv_var], B[inv_eq][:, inv_var], C[inv_eq][:, inv_var], D[inv_eq]]
+    expected = model.linearize_model(steady_state=steady_state, verbose=False)
+
+    for name, actual, reference in zip("ABCD", unpermuted, expected, strict=True):
+        assert_allclose(actual, reference, atol=1e-8, err_msg=name)
 
 
 def test_symbolic_linearization_caches():
@@ -446,6 +473,33 @@ def test_symbolic_linearization_caches():
 
     for a, b in zip(jac1, jac2, strict=True):
         assert a is b
+
+
+@pytest.mark.parametrize("method_name", ["linearize_model", "symbolic_linearization"])
+def test_second_order_linearization_raises(method_name):
+    model = load_and_cache_model("one_block_1_ss.gcn")
+
+    with pytest.raises(NotImplementedError, match="Only first order linearization is currently supported"):
+        getattr(model, method_name)(order=2, verbose=False)
+
+
+def test_dr_order_groups_variables_and_equations_by_time_shift():
+    static, pred, mixed, fwd = (TimeAwareSymbol(name, 0) for name in ["static", "pred", "mixed", "fwd"])
+    equations = [
+        fwd.set_t(1) - mixed,
+        static - pred,
+        pred - 0.5 * pred.set_t(-1),
+        mixed.set_t(1) - mixed.set_t(-1) + static,
+    ]
+
+    order = DROrder.from_model([fwd, mixed, pred, static], equations)
+
+    assert order.var_order.tolist() == [3, 2, 1, 0]
+    assert order.eq_order.tolist() == [1, 2, 0, 3]
+    assert (order.n_static_var, order.n_pred_only_var, order.n_mixed_var, order.n_forward_only_var) == (1, 1, 1, 1)
+    assert (order.n_static_eq, order.n_lag_only_eq, order.n_lead_only_eq, order.n_both_eq) == (1, 1, 1, 1)
+    assert order.var_order[order.inv_var_order].tolist() == [0, 1, 2, 3]
+    assert order.eq_order[order.inv_eq_order].tolist() == [0, 1, 2, 3]
 
 
 def test_invalid_solver_raises():
@@ -636,39 +690,45 @@ def test_summarize_perturbation_solution():
         assert_allclose(res[name].to_numpy(), matrix)
 
 
-def test_validate_shock_options():
+@pytest.mark.parametrize(
+    "shock_kwargs, expected_msg",
+    [
+        ({}, "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. You passed 0."),
+        (
+            {"shock_cov_matrix": np.eye(1), "shock_std": 0.1},
+            "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. You passed 2.",
+        ),
+        (
+            {"shock_std_dict": {"lol :)": 0.1}},
+            "Unexpected shocks in shock_std_dict. The following names were not found among the model shocks: lol :)",
+        ),
+        (
+            {"shock_std_dict": {"epsilon_R": 0.1, "epsilon_pi": 0.1}},
+            "If shock_std_dict is specified, it must give values for all shocks. The following shocks were not found "
+            "among the provided keys: epsilon_Y, epsilon_preference",
+        ),
+        ({"shock_cov_matrix": np.eye(2)}, "Incorrect covariance matrix shape. Expected (4, 4), found (2, 2)"),
+        ({"shock_std": [0.1, 0.2]}, "Length of shock_std (2) does not match the number of shocks (4)"),
+        ({"shock_std": [0.1, 0.2, 0.0, 0.4]}, "Shock standard deviations must be positive"),
+        ({"shock_std": -0.1}, "Shock standard deviation must be positive"),
+    ],
+    ids=[
+        "none_given",
+        "two_given",
+        "unknown_shock_name",
+        "missing_shock_name",
+        "wrong_cov_shape",
+        "wrong_std_length",
+        "non_positive_std_list",
+        "negative_std_scalar",
+    ],
+)
+def test_validate_shock_options(shock_kwargs, expected_msg):
     model = load_and_cache_model("full_nk.gcn")
     T, R = model.solve_model(solver="gensys", verbose=False)
 
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. You passed 0."
-        ),
-    ):
-        stationary_covariance_matrix(model, T, R)
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. You passed 2."
-        ),
-    ):
-        stationary_covariance_matrix(model, T, R, shock_cov_matrix=np.eye(1), shock_std=0.1)
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "Unexpected shocks in shock_std_dict. The following names were not found among the model shocks: lol :)"
-        ),
-    ):
-        stationary_covariance_matrix(model, T, R, shock_std_dict={"lol :)": 0.1})
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape("Incorrect covariance matrix shape. Expected (4, 4), found (2, 2)"),
-    ):
-        stationary_covariance_matrix(model, T, R, shock_cov_matrix=np.eye(2))
+    with pytest.raises(ValueError, match=re.escape(expected_msg)):
+        stationary_covariance_matrix(model, T, R, **shock_kwargs)
 
 
 def test_build_Q_matrix(rng):
@@ -705,15 +765,18 @@ def test_build_Q_matrix_accepts_list_of_stds():
     assert_allclose(Q, np.diag(np.array(stds) ** 2))
 
 
-def test_maybe_linearize_model_linearizes_partial_input_when_not_verbose(caplog):
+@pytest.mark.parametrize("verbose", [True, False], ids=["verbose", "quiet"])
+def test_maybe_linearize_model_relinearizes_partial_input(caplog, verbose):
     model = load_and_cache_model("rbc_linearized.gcn")
-    A, B, _C, _D = model.linearize_model(verbose=False)
+    expected = model.linearize_model(verbose=False)
+    A, B, _C, _D = expected
 
     with caplog.at_level("WARNING"):
-        outputs = _maybe_linearize_model(model, A, B, None, None, verbose=False)
+        outputs = _maybe_linearize_model(model, A, B, None, None, verbose=verbose)
 
-    assert all(x is not None for x in outputs)
-    assert "incomplete subset" not in caplog.text
+    for actual, reference in zip(outputs, expected, strict=True):
+        assert_allclose(actual, reference)
+    assert ("Passing an incomplete subset of A, B, C, and D (you passed 2)" in caplog.text) == verbose
 
 
 def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
@@ -753,50 +816,30 @@ def test_compute_stationary_covariance(caplog, gcn_file):
 
 
 @pytest.mark.parametrize(
-    "gcn_file",
+    "gcn_file, state_name, rho_name",
     [
-        "one_block_1_ss.gcn",
-        "open_rbc.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
-        "rbc_linearized.gcn",
+        ("one_block_1_ss.gcn", "A", "rho"),
+        ("open_rbc.gcn", "A", "rho_A"),
+        ("rbc_linearized.gcn", "A", "rho_A"),
+        pytest.param("full_nk.gcn", "shock_technology", "rho_technology", marks=pytest.mark.include_nk),
+        pytest.param("full_nk.gcn", "shock_preference", "rho_preference", marks=pytest.mark.include_nk),
     ],
 )
-def test_autocovariance_matrix(gcn_file, rng):
+def test_autocorrelation_of_ar1_state_decays_at_rho(gcn_file, state_name, rho_name, rng):
     model = load_and_cache_model(gcn_file)
+    state_idx = model.variables.index(model.get(state_name))
+    rho_value = rng.beta(10, 1)
 
-    shocks = model.shocks
-    shock_eqs = [eq for eq in model.equations if any(s in eq.atoms() for s in shocks)]
+    autocorr = autocorrelation_matrix(
+        model,
+        shock_std=0.1,
+        solver="gensys",
+        verbose=False,
+        return_xr=False,
+        **{rho_name: rho_value},
+    )
 
-    for eq in shock_eqs:
-        atoms = eq.atoms()
-        shock = next(x for x in atoms if x in shocks)
-        if shock.base_name in ["epsilon_R", "epsilon_pi"]:
-            # These shocks do not enter through an AR(1) process, so the decay check below does not apply.
-            continue
-
-        state = next(x for x in atoms if x in model.variables)
-        state_idx = model.variables.index(state)
-
-        rho = next(x for x in atoms if x in model.params)
-        rho_value = rng.beta(10, 1)
-
-        # The autocorrelation of an AR(1) state decays at rate rho ** t.
-        autocorr = autocorrelation_matrix(
-            model,
-            shock_std=0.1,
-            solver="gensys",
-            verbose=False,
-            return_xr=False,
-            **{rho.name: rho_value},
-        )
-
-        assert_allclose(
-            autocorr[:, state_idx, state_idx],
-            rho_value ** np.arange(10),
-            atol=1e-8,
-            rtol=1e-8,
-            err_msg=f"Error computing {state} autocovariance in {gcn_file}",
-        )
+    assert_allclose(autocorr[:, state_idx, state_idx], rho_value ** np.arange(10), atol=1e-8, rtol=1e-8)
 
 
 @pytest.mark.parametrize(
@@ -837,50 +880,48 @@ def irf_inputs():
     return model, T, R
 
 
+SHOCK_SIZE_CASES = [
+    (0.1, ["epsilon_A", "epsilon_B"]),
+    (np.array([0.1, 0.1]), ["epsilon_A", "epsilon_B"]),
+    ({"epsilon_A": 0.1, "epsilon_B": 0.1}, ["epsilon_A", "epsilon_B"]),
+    ({"epsilon_B": 0.1}, ["epsilon_B"]),
+]
+SHOCK_SIZE_IDS = ["single_float", "array", "dict", "partial_dict"]
+
+
 class TestIRF:
-    @pytest.mark.parametrize(
-        "shock_size",
-        [
-            0.1,
-            np.array([0.1, 0.1]),
-            {"epsilon_A": 0.1, "epsilon_B": 0.1},
-            {"epsilon_B": 0.1},
-        ],
-        ids=["single_float", "array", "dict", "partial_dict"],
-    )
-    @pytest.mark.parametrize("return_individual_shocks", [True, False], ids=["individual_shocks", "joint_shocks"])
-    def test_irf_from_shock_size(self, irf_inputs, shock_size, return_individual_shocks):
+    @pytest.mark.parametrize("shock_size, expected_shocks", SHOCK_SIZE_CASES, ids=SHOCK_SIZE_IDS)
+    def test_irf_from_shock_size_with_individual_shocks(self, irf_inputs, shock_size, expected_shocks):
         model, T, R = irf_inputs
-        n_variables, n_shocks = R.shape
+        n_variables, _n_shocks = R.shape
 
         irf = impulse_response_function(
-            model,
-            T,
-            R,
-            simulation_length=1000,
-            shock_size=shock_size,
-            return_individual_shocks=return_individual_shocks,
+            model, T, R, simulation_length=1000, shock_size=shock_size, return_individual_shocks=True
         )
 
-        assert "time" in irf.coords
-        assert "variable" in irf.coords
-        assert ("shock" in irf.coords) == return_individual_shocks
-        if return_individual_shocks and isinstance(shock_size, dict):
-            assert set(irf.coords["shock"].values) == set(shock_size.keys())
-
-        assert len(irf.coords["time"]) == 1000
-        assert len(irf.coords["variable"]) == n_variables
+        assert dict(irf.sizes) == {"shock": len(expected_shocks), "time": 1000, "variable": n_variables}
+        assert list(irf.coords["shock"].values) == expected_shocks
 
         # After 1000 periods the responses have died out.
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
 
-        n_test_shocks = 1 if isinstance(shock_size, float | int) else len(shock_size)
-        if (n_shocks > 1) and (n_test_shocks > 1) and return_individual_shocks:
-            assert not np.allclose(irf.sel(shock="epsilon_A").values, irf.sel(shock="epsilon_B").values)
+        for first, second in itertools.combinations(expected_shocks, 2):
+            assert not np.allclose(irf.sel(shock=first).values, irf.sel(shock=second).values)
 
-    @pytest.mark.parametrize("return_individual_shocks", [True, False], ids=["individual_shocks", "joint_shocks"])
+    @pytest.mark.parametrize("shock_size, _expected_shocks", SHOCK_SIZE_CASES, ids=SHOCK_SIZE_IDS)
+    def test_irf_from_shock_size_with_joint_shocks(self, irf_inputs, shock_size, _expected_shocks):
+        model, T, R = irf_inputs
+        n_variables, _n_shocks = R.shape
+
+        irf = impulse_response_function(
+            model, T, R, simulation_length=1000, shock_size=shock_size, return_individual_shocks=False
+        )
+
+        assert dict(irf.sizes) == {"time": 1000, "variable": n_variables}
+        assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
+
     @pytest.mark.parametrize("n_shocked", [1, 2], ids=["single_shock", "two_shocks"])
-    def test_irf_from_trajectory(self, irf_inputs, return_individual_shocks, n_shocked):
+    def test_irf_from_trajectory_with_individual_shocks(self, irf_inputs, n_shocked):
         model, T, R = irf_inputs
         n_variables, n_shocks = R.shape
 
@@ -888,24 +929,27 @@ class TestIRF:
         shock_trajectory[0, :n_shocked] = 0.1
 
         irf = impulse_response_function(
-            model,
-            T,
-            R,
-            simulation_length=1000,
-            shock_trajectory=shock_trajectory,
-            return_individual_shocks=return_individual_shocks,
+            model, T, R, simulation_length=1000, shock_trajectory=shock_trajectory, return_individual_shocks=True
         )
 
-        assert "time" in irf.coords
-        assert "variable" in irf.coords
-        assert ("shock" in irf.coords) == return_individual_shocks
-
-        assert len(irf.coords["time"]) == 1000
-        assert len(irf.coords["variable"]) == n_variables
+        assert dict(irf.sizes) == {"shock": n_shocks, "time": 1000, "variable": n_variables}
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
+        assert not np.allclose(irf.sel(shock="epsilon_A").values, irf.sel(shock="epsilon_B").values)
 
-        if return_individual_shocks:
-            assert not np.allclose(irf.sel(shock="epsilon_A").values, irf.sel(shock="epsilon_B").values)
+    @pytest.mark.parametrize("n_shocked", [1, 2], ids=["single_shock", "two_shocks"])
+    def test_irf_from_trajectory_with_joint_shocks(self, irf_inputs, n_shocked):
+        model, T, R = irf_inputs
+        n_variables, n_shocks = R.shape
+
+        shock_trajectory = np.zeros((1000, n_shocks))
+        shock_trajectory[0, :n_shocked] = 0.1
+
+        irf = impulse_response_function(
+            model, T, R, simulation_length=1000, shock_trajectory=shock_trajectory, return_individual_shocks=False
+        )
+
+        assert dict(irf.sizes) == {"time": 1000, "variable": n_variables}
+        assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
 
     def test_size_dict_limits_shock_axis(self, irf_inputs):
         model, T, R = irf_inputs
@@ -957,6 +1001,7 @@ def test_simulate(gcn_file, argument):
         shock_std=shock_std,
         shock_std_dict=shock_std_dict,
         shock_cov_matrix=shock_cov_matrix,
+        random_seed=1234,
     )
 
     assert data.shape == (n_simulations, simulation_length, n_variables)
@@ -965,8 +1010,8 @@ def test_simulate(gcn_file, argument):
     Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1, return_df=False)
     sigma = np.cov(data.isel(time=-1).values.T)
 
-    corr = np.corrcoef(np.r_[Sigma.ravel(), sigma.ravel()])
-    assert abs(corr) > 0.99
+    corr = np.corrcoef(Sigma.ravel(), sigma.ravel())[0, 1]
+    assert corr > 0.99
 
     assert_allclose(np.diag(Sigma), np.diag(sigma), rtol=0.1)
 

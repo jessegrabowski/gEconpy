@@ -107,7 +107,7 @@ EXPECTED_PARAM_DICT = {
     ids=["one_block_simple", "one_block_simple_2"],
 )
 def test_create_parameter_function(gcn_path, name):
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed=1234)
     expected = EXPECTED_PARAM_DICT[name]
     result = preprocess_file(TEST_GCNS / gcn_path, validate=True)
     block_dict = ast_model_to_block_dict(result.ast, simplify_blocks=True)

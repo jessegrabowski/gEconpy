@@ -1,8 +1,10 @@
+import re
+import warnings
+
 import pytest
 
 from gEconpy import model_from_gcn
-from gEconpy.exceptions import ExtraParameterError, OrphanParameterError
-from gEconpy.model.model import Model
+from gEconpy.exceptions import ExtraParameterError, ExtraParameterWarning, OrphanParameterError
 from tests.conftest import TEST_GCNS
 
 
@@ -221,27 +223,57 @@ def test_variables_parsed(gcn_path, expected_variables, expected_params, expecte
     ],
     ids=["one_block_simple", "open_rbc", "full_nk"],
 )
-def test_load_gcn(gcn_file):
+def test_load_gcn_with_block_simplification_yields_square_solvable_model(gcn_file):
     mod = model_from_gcn(TEST_GCNS / gcn_file, simplify_blocks=True, verbose=False)
-    assert isinstance(mod, Model)
-    assert len(mod.shocks) > 0
-    assert len(mod.variables) > 0
-    assert len(mod.equations) > 0
-    assert mod.f_params is not None
-    assert mod.f_ss is not None
+    assert len(mod.equations) == len(mod.variables)
 
     ss = mod.steady_state(verbose=False, progressbar=False)
     assert ss.success
 
 
 def test_loading_fails_if_orphan_parameters():
-    with pytest.raises(OrphanParameterError):
+    with pytest.raises(OrphanParameterError, match="any calibration block: orphan"):
         model_from_gcn(TEST_GCNS / "open_rbc_orphan_params.gcn")
 
 
+EXTRA_PARAMETER_MESSAGE = (
+    "The following parameters were given initial values in calibration blocks but were not used in model equations: "
+    "extra_param, sigma_epsilon_A. Delete them from the calibration block, or fix the equation that should use them."
+)
+
+
 def test_loading_fails_if_extra_parameters():
-    with pytest.raises(ExtraParameterError):
+    with pytest.raises(ExtraParameterError, match=re.escape(EXTRA_PARAMETER_MESSAGE)):
         model_from_gcn(TEST_GCNS / "open_rbc_extra_params.gcn")
+
+
+def test_extra_parameters_warn_when_requested():
+    with pytest.warns(ExtraParameterWarning, match=re.escape(EXTRA_PARAMETER_MESSAGE)):
+        model = model_from_gcn(TEST_GCNS / "open_rbc_extra_params.gcn", verbose=False, on_unused_parameters="warn")
+
+    assert "extra_param" in model.parameters()
+
+
+def test_extra_parameters_ignored_when_requested():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        model = model_from_gcn(TEST_GCNS / "open_rbc_extra_params.gcn", verbose=False, on_unused_parameters="ignore")
+
+    assert "extra_param" in model.parameters()
+
+
+@pytest.mark.parametrize("backend, expected_mode", [("numpy", "FAST_COMPILE"), ("pytensor", None)], ids=str)
+def test_deprecated_backend_maps_to_mode_and_logs_deprecation(backend, expected_mode, caplog):
+    with caplog.at_level("WARNING"):
+        model = model_from_gcn(TEST_GCNS / "one_block_1_ss.gcn", verbose=False, backend=backend)
+
+    assert model._mode == expected_mode
+    assert "The `backend` argument is deprecated" in caplog.text
+
+
+def test_invalid_backend_raises():
+    with pytest.raises(ValueError, match="Invalid backend='jax'"):
+        model_from_gcn(TEST_GCNS / "one_block_1_ss.gcn", verbose=False, backend="jax")
 
 
 def test_build_report(caplog):
