@@ -22,59 +22,82 @@ from gEconpy.utilities import (
 
 _TARGET_TIME_INDICES = (-1, 0, 1)
 
+_FLAG_TO_ALLOWED_COMPONENTS = {
+    "is_calibrating": ["calibration"],
+    "exclude": ["constraints"],
+    "minimize": ["objective"],
+    "maximize": ["objective"],
+}
 
-def _expand_definition_for_all_times(
-    lhs: TimeAwareSymbol,
-    rhs: sp.Expr,
-) -> dict[TimeAwareSymbol, sp.Expr]:
-    """
-    Expand a single definition to cover time indices -1, 0, and +1.
-
-    Given a definition ``X[t0] = f(...)`` at some base time index ``t0``, produce
-    substitution entries for ``X[-1]``, ``X[0]``, and ``X[1]`` by shifting the
-    entire equation by the required offset.
-
-    Parameters
-    ----------
-    lhs : TimeAwareSymbol
-        Left-hand side of the definition
-    rhs : sp.Expr
-        Right-hand side expression
-
-    Returns
-    -------
-    sub_dict : dict of TimeAwareSymbol to sp.Expr
-        Mapping with entries at time indices -1, 0, and +1.
-    """
-    base_t = lhs.time_index
-    sub_dict = {}
-
-    for target_t in _TARGET_TIME_INDICES:
-        offset = target_t - base_t
-        shifted_lhs = lhs
-        shifted_rhs = rhs
-
-        if offset > 0:
-            for _ in range(offset):
-                shifted_lhs = step_equation_forward(shifted_lhs)
-                shifted_rhs = step_equation_forward(shifted_rhs)
-        elif offset < 0:
-            for _ in range(-offset):
-                shifted_lhs = step_equation_backward(shifted_lhs)
-                shifted_rhs = step_equation_backward(shifted_rhs)
-
-        sub_dict[shifted_lhs] = shifted_rhs
-
-    return sub_dict
+_N_ATOMS_IN_DIRECT_DEFINITION = 3
 
 
 class Block:
-    """The Block class holds equations and parameters associated with each block of the DSGE model."""
+    r"""
+    One block of a DSGE model: its equations, parameters, and the optimization problem they imply.
 
-    #    TODO: Split components out into their own class/protocol and let them handle their own parsing?
-    #    TODO: Refactor this into an abstract class with basic functionality, then create some child classes for
-    #     specific problems, e.g. IdentityBlock, OptimizationBlock, CRRABlock, etc, each with their own optimization
-    #     machinery.
+    A block with both ``controls`` and an ``objective`` is an optimization problem. :meth:`solve_optimization`
+    builds its Lagrangian and differentiates it with respect to each control. A block with neither is a set of
+    identities.
+
+    Parameters
+    ----------
+    name : str
+        The name of the block.
+    definitions : dict mapping int to sympy.Eq, optional
+        Definition equations, keyed by equation number.
+    controls : list of TimeAwareSymbol, optional
+        Control variables of the optimization problem.
+    objective : dict mapping int to sympy.Eq, optional
+        The objective equation, keyed by equation number. Exactly one entry is allowed.
+    constraints : dict mapping int to sympy.Eq, optional
+        Constraint equations, keyed by equation number.
+    identities : dict mapping int to sympy.Eq, optional
+        Identity equations, keyed by equation number.
+    calibration : dict mapping int to sympy.Eq, optional
+        Calibration equations, keyed by equation number.
+    shocks : list of TimeAwareSymbol, optional
+        Shock variables.
+    multipliers : dict mapping int to TimeAwareSymbol or None, optional
+        The Lagrange multiplier on each constraint, keyed by constraint index. Entries of None get a generated
+        multiplier named ``lambda__<short_name>_<i>``.
+    equation_flags : dict mapping int to dict, optional
+        The flag dictionary of each equation, keyed by equation number.
+    source : str, optional
+        The source code of the GCN file, for error reporting.
+    symbol_locations : dict mapping str to ParseLocation, optional
+        The location of each symbol in ``source``, for error reporting.
+    ss_solution_dict : SymbolDictionary, optional
+        Analytically known steady-state solutions, used to resolve calibration expressions that reference
+        steady-state variables such as ``phi_B = f(Y[ss])``.
+
+    Examples
+    --------
+    The parser builds one of these for every block in a GCN file, so the constructor is only needed when
+    assembling a model programmatically:
+
+    .. code-block:: python
+
+        import sympy as sp
+
+        from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+        from gEconpy.model.block import Block
+
+        U, U_next = TimeAwareSymbol("U", 0), TimeAwareSymbol("U", 1)
+        C, L, w = (TimeAwareSymbol(name, 0) for name in ("C", "L", "w"))
+        beta = sp.Symbol("beta")
+
+        block = Block(
+            name="HOUSEHOLD",
+            objective={0: sp.Eq(U, sp.log(C) - L + beta * U_next)},
+            constraints={1: sp.Eq(C, w * L)},
+            controls=[C, L],
+            multipliers={0: None, 1: None},
+            calibration={2: sp.Eq(beta, sp.Float(0.99))},
+            equation_flags={0: {}, 1: {}, 2: {"is_calibrating": False}},
+        )
+        print(block.variables, block.param_dict)
+    """
 
     def __init__(
         self,
@@ -90,43 +113,8 @@ class Block:
         equation_flags: dict[int, dict[str, bool]] | None = None,
         source: str | None = None,
         symbol_locations: dict[str, ParseLocation] | None = None,
-        ss_solution_dict=None,
+        ss_solution_dict: SymbolDictionary | None = None,
     ) -> None:
-        """
-        Initialize a Block from sympy equations.
-
-        Parameters
-        ----------
-        name : str
-            The name of the block.
-        definitions : dict[int, sp.Eq], optional
-            Dictionary of definition equations, indexed by equation number.
-        controls : list[TimeAwareSymbol], optional
-            List of control variables.
-        objective : dict[int, sp.Eq], optional
-            Dictionary containing the objective equation.
-        constraints : dict[int, sp.Eq], optional
-            Dictionary of constraint equations.
-        identities : dict[int, sp.Eq], optional
-            Dictionary of identity equations.
-        calibration : dict[int, sp.Eq], optional
-            Dictionary of calibration equations.
-        shocks : list[TimeAwareSymbol], optional
-            List of shock variables.
-        multipliers : dict[int, TimeAwareSymbol | None], optional
-            Dictionary mapping constraint indices to Lagrange multipliers.
-        equation_flags : dict[int, dict[str, bool]], optional
-            Dictionary mapping equation indices to flag dictionaries.
-        source : str, optional
-            The source code of the GCN file, for rich error reporting.
-        symbol_locations : dict, optional
-            Dictionary mapping symbol names to their ParseLocation in the source.
-            Used for rich error reporting during validation.
-        ss_solution_dict : SymbolDictionary, optional
-            Analytically known steady-state solutions. Used to resolve calibration
-            expressions that reference steady-state variables (e.g.
-            ``phi_B = f(Y[ss])``).
-        """
         self.name = name
         self.short_name = "".join(word[0] for word in name.split("_"))
 
@@ -148,22 +136,16 @@ class Block:
         self.eliminated_variables: list[sp.Symbol] = []
         self.equation_flags = equation_flags or {}
 
-        # Store source info for rich error reporting
         self._source = source
         self._symbol_locations = symbol_locations or {}
         self._ss_solution_dict = ss_solution_dict
 
-        # Count equations
         self.n_equations = sum(
             len(eq_dict) if eq_dict else 0 for eq_dict in [definitions, objective, constraints, identities, calibration]
         )
 
-        # Run validation
         self.initialized = self._validate_initialization()
-
-        # Run post-initialization processing
         self._consolidate_definitions()
-
         self._get_variable_list()
         self._get_param_dict_and_calibrating_equations()
 
@@ -193,33 +175,183 @@ class Block:
         """Calibration equations, in the order of ``params_to_calibrate``."""
         return list(self.calib_dict.values())
 
-    def _validate_initialization(self) -> bool:
-        """
-        Check whether the block has been successfully initialized.
+    def solve_optimization(self, try_simplify: bool = True) -> None:
+        r"""
+        Derive the block's system equations, including the first-order conditions of its optimization problem.
 
-        At a high level, gEcon allows for two kinds of blocks: those with and those without an optimization problem.
-        To have an optimization problem, the block needs both the `controls` and `objective` components to be present.
-        Additionally, all control variables need to be represented among the equations in `objective`, `definitions`,
-        and `constraints`.
+        The block structure implies the program
+
+        .. math::
+
+            \max_{\text{controls}} \sum_{t=0}^{\infty} \text{objective} \quad
+            \text{subject to} \quad \text{constraints}
+
+        with Lagrangian
+
+        .. math::
+
+            \mathcal{L} = \sum_{t=0}^{\infty} \text{objective}
+                - \lambda_1 \, \text{constraint}_1 - \dots - \lambda_n \, \text{constraint}_n.
+
+        Differentiating :math:`\mathcal{L}` with respect to each control gives one first-order condition per control.
+        An objective tagged ``@minimize`` is negated before the Lagrangian is formed, so the first-order conditions
+        are those of the minimization program.
+
+        The identities, the constraints not tagged ``@exclude``, the objective, and the first-order conditions are
+        stored in ``system_equations``, with definitions substituted in. A block with no optimization problem stores
+        only its identities and constraints.
 
         Parameters
         ----------
-        self : Block
-            The block to be checked
+        try_simplify : bool, optional
+            Whether to run :meth:`simplify_system_equations` on the result. Defaults to True.
 
-        Returns
-        -------
-        bool
-            Indicates whether the block has been successfully initialized.
+        Examples
+        --------
+        A household choosing consumption and labor subject to a budget constraint yields one first-order condition
+        per control:
 
-        Raises
-        ------
-        OptimizationProblemNotDefinedException
-            If either the `controls` or `objective` component is missing
-        MultipleObjectiveFunctionsException
-            If there is more than one objective function defined
-        ControlVariableNotFoundException
-            If a control variable is not found in any of the `objective`, `definitions`, or `constraints` equations.
+        .. code-block:: python
+
+            import sympy as sp
+
+            from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+            from gEconpy.model.block import Block
+
+            U, U_next = TimeAwareSymbol("U", 0), TimeAwareSymbol("U", 1)
+            C, L, w = (TimeAwareSymbol(name, 0) for name in ("C", "L", "w"))
+            beta = sp.Symbol("beta")
+
+            block = Block(
+                name="HOUSEHOLD",
+                objective={0: sp.Eq(U, sp.log(C) - L + beta * U_next)},
+                constraints={1: sp.Eq(C, w * L)},
+                controls=[C, L],
+                multipliers={0: None, 1: None},
+                equation_flags={0: {}, 1: {}},
+            )
+            block.solve_optimization()
+            print(block.system_equations)
+        """
+        sub_dict = {}
+
+        self.system_equations = []
+
+        if self.definitions is not None:
+            _, definitions = unpack_keys_and_values(self.definitions)
+            sub_dict = {eq.lhs: eq.rhs for eq in definitions}
+
+        if self.identities is not None:
+            _, identities = unpack_keys_and_values(self.identities)
+            for eq in identities:
+                self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
+
+        if self.constraints is not None:
+            eq_idx, constraints = unpack_keys_and_values(self.constraints)
+            for idx, eq in zip(eq_idx, constraints, strict=True):
+                if not self.equation_flags[idx].get("exclude", False):
+                    self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
+
+        if self.controls is None and self.objective is None:
+            return
+
+        obj_idx, objective = unpack_keys_and_values(self.objective)
+        obj_idx, objective = obj_idx[0], objective[0]
+
+        self.system_equations.append(set_equality_equals_zero(objective.subs(sub_dict)))
+
+        _, multipliers = unpack_keys_and_values(self.multipliers)
+
+        discount_factor = self._get_discount_factor()
+        lagrange = self._build_lagrangian()
+
+        if multipliers[obj_idx] is not None:
+            raise NotImplementedError(
+                "Lagrange multipliers on the objective equation are not supported. Rewrite the model to define the "
+                "stochastic discount factor directly."
+            )
+
+        for control in self.controls:
+            foc = self._compute_foc(control, lagrange, discount_factor)
+            self.system_equations.append(foc.powsimp())
+
+        if try_simplify:
+            self.simplify_system_equations()
+
+        self._get_variable_list()
+
+    def simplify_system_equations(self) -> None:
+        """
+        Eliminate generated Lagrange multipliers from ``system_equations`` and canonicalize powers.
+
+        A generated multiplier (named ``lambda__*``) that appears in a two-term identity ``x = y`` or ``x = -y`` is
+        solved for and substituted out of every equation. User-named multipliers stay, matching gEcon. Every
+        remaining equation is then passed through :func:`sympy.powsimp` to collapse the ``x**e / x`` patterns that
+        chain-rule differentiation leaves behind.
+
+        Examples
+        --------
+        With ``try_simplify=False`` the generated multiplier ``lambda__H_1`` stays in the system until this method
+        removes it:
+
+        .. code-block:: python
+
+            import sympy as sp
+
+            from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+            from gEconpy.model.block import Block
+
+            U, U_next = TimeAwareSymbol("U", 0), TimeAwareSymbol("U", 1)
+            C, L, w = (TimeAwareSymbol(name, 0) for name in ("C", "L", "w"))
+            beta = sp.Symbol("beta")
+
+            block = Block(
+                name="HOUSEHOLD",
+                objective={0: sp.Eq(U, sp.log(C) - L + beta * U_next)},
+                constraints={1: sp.Eq(C, w * L)},
+                controls=[C, L],
+                multipliers={0: None, 1: None},
+                equation_flags={0: {}, 1: {}},
+            )
+            block.solve_optimization(try_simplify=False)
+            print(block.system_equations)
+
+            block.simplify_system_equations()
+            print(block.system_equations, block.eliminated_variables)
+        """
+        system = self.system_equations
+        simplified_system = system.copy()
+        variables = [x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
+        generated_multipliers = list({x for x in variables if "lambda__" in x.base_name})
+
+        eliminated_variables = []
+        for multiplier in generated_multipliers:
+            candidates = [eq for eq in simplified_system if multiplier in eq.atoms()]
+            for eq in candidates:
+                if len(eq.atoms()) <= _N_ATOMS_IN_DIRECT_DEFINITION:
+                    sub_dict = sp.solve(eq, multiplier, dict=True)[0]
+                    sub_dict = expand_subs_for_all_times(sub_dict)
+                    eliminated_variables.extend(list(sub_dict.keys()))
+                    simplified_system = [eq.subs(sub_dict) for eq in simplified_system]
+                    break
+
+        simplified_system = [eq for eq in simplified_system if eq != 0]
+        simplified_system = [sp.powsimp(eq) for eq in simplified_system]
+
+        self.system_equations = simplified_system
+        self.eliminated_variables = eliminated_variables
+
+        for key, value in self.multipliers.items():
+            if value in eliminated_variables:
+                self.multipliers[key] = None
+
+    def _validate_initialization(self) -> bool:
+        """
+        Check that the block is well formed.
+
+        An optimization problem needs both ``controls`` and ``objective``, exactly one objective equation, and every
+        control appearing somewhere in ``objective``, ``definitions``, or ``constraints``. Equation flags may only
+        appear on the component they apply to.
         """
         if self.objective is not None and self.controls is None:
             raise OptimizationProblemNotDefinedException(block_name=self.name, missing="controls")
@@ -231,14 +363,9 @@ class Block:
             raise MultipleObjectiveFunctionsException(block_name=self.name, eqs=list(self.objective.values()))
 
         if self.controls is not None:
+            equation_dicts = [d for d in (self.definitions, self.objective, self.constraints) if d is not None]
             for control in self.controls:
-                control_found = False
-                eq_dicts = [x for x in [self.definitions, self.objective, self.constraints] if x is not None]
-                for eq_dict in eq_dicts:
-                    for eq in list(eq_dict.values()):
-                        if control in eq.atoms():
-                            control_found = True
-                            break
+                control_found = any(control in eq.atoms() for eq_dict in equation_dicts for eq in eq_dict.values())
                 if not control_found:
                     location = self._symbol_locations.get(str(control.base_name))
                     raise ControlVariableNotFoundException(
@@ -248,49 +375,23 @@ class Block:
                         location=location,
                     )
 
-        # Validate equation flags
-        # - the "is_calibrating" key can only occur in the calibration block
-        # - the "exclude" key can only occur in the constraints block
-        # - the "minimize" and "maximize" keys can only occur in the objective block
-        valid_flags = {
-            "is_calibrating": ["calibration"],
-            "exclude": ["constraints"],
-            "minimize": ["objective"],
-            "maximize": ["objective"],
+        components = {
+            "definitions": self.definitions,
+            "objective": self.objective,
+            "constraints": self.constraints,
+            "identities": self.identities,
         }
-
-        for name, eq_block in zip(
-            ["definitions", "objective", "constraints", "identities"],
-            [self.definitions, self.objective, self.constraints, self.identities],
-            strict=False,
-        ):
-            if eq_block is not None:
-                for key, eq in eq_block.items():
-                    if (
-                        self.equation_flags[key].get("is_calibrating", False)
-                        and name not in valid_flags["is_calibrating"]
-                    ):
+        for component_name, equations in components.items():
+            if equations is None:
+                continue
+            for key, eq in equations.items():
+                for flag, allowed_components in _FLAG_TO_ALLOWED_COMPONENTS.items():
+                    if self.equation_flags[key].get(flag, False) and component_name not in allowed_components:
                         raise ValueError(
-                            f"Equation {eq} in {name} block of {self.name} has an invalid decorator: is_calibrating. "
-                            f"This flag should only appear in the calibration block."
-                        )
-                    if self.equation_flags[key].get("exclude", False) and name not in valid_flags["exclude"]:
-                        raise ValueError(
-                            f"Equation {eq} in {name} block of {self.name} has an invalid decorator: exclude. "
-                            f"This flag should only appear in the constraints block."
-                        )
-                    if self.equation_flags[key].get("minimize", False) and name not in valid_flags["minimize"]:
-                        raise ValueError(
-                            f"Equation {eq} in {name} block of {self.name} has an invalid decorator: minimize. "
-                            f"This flag should only appear in the objective block."
-                        )
-                    if self.equation_flags[key].get("maximize", False) and name not in valid_flags["maximize"]:
-                        raise ValueError(
-                            f"Equation {eq} in {name} block of {self.name} has an invalid decorator: maximize. "
-                            f"This flag should only appear in the objective block."
+                            f"Equation {eq} in {component_name} block of {self.name} has an invalid decorator: "
+                            f"{flag}. This flag should only appear in the {allowed_components[0]} block."
                         )
 
-        # Check mutual exclusivity of @minimize and @maximize
         if self.objective is not None:
             for key in self.objective:
                 flags = self.equation_flags[key]
@@ -301,8 +402,8 @@ class Block:
 
         return True
 
-    def _consolidate_definitions(self):
-        """Combine definitions that refer to other definitions via subsitution."""
+    def _consolidate_definitions(self) -> None:
+        """Substitute definitions that refer to other definitions until each depends on no other."""
         if self.definitions is None:
             return
 
@@ -311,7 +412,7 @@ class Block:
         self.definitions = {k: sp.Eq(v.lhs, v.rhs.subs(sub_dict)) for k, v in self.definitions.items()}
 
     def _get_variable_list(self) -> None:
-        """Get a list of all unique variables in the Block and store it in the class attribute "variables"."""
+        """Collect every steady-state variable of the block into ``variables``, sorted by name."""
         objective, constraints, identities, multipliers = [], [], [], []
         sub_dict = {}
         if self.definitions is not None:
@@ -327,8 +428,6 @@ class Block:
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
 
-        all_equations = [eq for eq_list in [objective, constraints, identities] for eq in eq_list]
-
         if self.multipliers is not None:
             _, multipliers = unpack_keys_and_values(self.multipliers)
             multipliers = [x for x in multipliers if x is not None]
@@ -342,11 +441,6 @@ class Block:
                 if variable.to_ss() not in self.variables:
                     self.variables.append(variable.to_ss())
 
-        if self.variables is None:
-            return
-
-        # Can't directly check if variables are not in shocks, because shocks will be None if there are none in the
-        # model
         shocks = self.shocks or []
         self.variables = [*self.variables, *multipliers]
         self.variables = sorted(
@@ -354,61 +448,33 @@ class Block:
             key=lambda x: x.name,
         )
 
-    def _get_and_record_equation_numbers(self, equations: list[sp.Eq]) -> list[int]:
-        """
-        Get a list of all unique variables in the Block and store it in the class attribute "variables".
-
-        Returns
-        -------
-        list
-            A list of equation number indices
-        """
-        n_equations = len(equations)
-        equation_numbers = range(self.n_equations, self.n_equations + n_equations)
-        self.n_equations += n_equations
-
-        return equation_numbers
-
     def _get_param_dict_and_calibrating_equations(self) -> None:
         """
-        Extract parameters and calibrating equations from the calibration block.
+        Split the calibration block into parameters, calibrating equations, and deterministic relationships.
 
-        The calibration block, as implemented in gEcon, mixes together parameters, which are fixed values with a
-        user-provided value, with calibrating equations, which are extra conditions added to the steady-state system.
-        This function divides these out so that the Model instance can ask for only one or the other.
-
-        These are divided heuristically: a parameter is assumed to be an equation of the form x = y, where x is a
-        Sympy symbol (NOT a TimeAwareSymbol) and y is a Sympy number.
-
-        Calibrating equations are identified by the use of the "->" operator in the GCN file, and are flagged during
-        parsing. All TimeAwareSymbols in calibrating equations must be in the steady state, or else a Exception will be
-        raised.
-
-        Deterministic equations are parameters defined as functions of other parameters. For example, in a linear model,
-        the user will need to define steady state values as model parameters. These parameters are analogous to
-        equations beginning with # in Dynare.
+        gEcon's calibration block mixes three things. A parameter is an equation ``x = y`` with ``x`` a plain
+        ``sympy.Symbol`` and ``y`` a number. A calibrating equation is written with ``->`` in the GCN file, is
+        flagged as such by the parser, and adds a condition to the steady-state system. Its variables must all be in
+        the steady state. A deterministic relationship is a parameter defined as a function of other parameters, the
+        analog of a ``#`` line in Dynare.
         """
-        # It is possible that an initialized block will not have a calibration component
         if self.calibration is None:
             return
 
         eq_idxs, equations = unpack_keys_and_values(self.calibration)
         duplicates = []
 
-        # Main parameter processing loop
-        for idx, eq in zip(eq_idxs, equations, strict=False):
+        for idx, eq in zip(eq_idxs, equations, strict=True):
             atoms = eq.atoms()
             lhs, rhs = eq.lhs, eq.rhs
             if not lhs.is_symbol:
                 raise ValueError(
                     "Left-hand side of calibrating expressions should be the single parameter to be "
-                    f"computed. Found multiple argumnets: {eq.lhs.args}"
+                    f"computed. Found multiple arguments: {eq.lhs.args}"
                 )
 
             param = eq.lhs
 
-            # Check if the RHS is just a number (most common case). If so, convert it to a float (rather than
-            # an sp.Float, which won't play nice with lambdify later)
             if eq.rhs.is_number:
                 value = eq.rhs.evalf()
                 if param in self.param_dict:
@@ -416,12 +482,7 @@ class Block:
                 else:
                     self.param_dict[param] = value
 
-            # If the RHS was not a number, its either a calibrating equation or a deterministic relationship of other
-            # parameters.
-
-            # Calibrating equations are tagged in the equation_flags dictionary during parsing.
             elif self.equation_flags[idx]["is_calibrating"]:
-                # Calibrating equations can have variables, but they must be in the steady state
                 if not all(x.time_index == "ss" for x in atoms if isinstance(x, TimeAwareSymbol)):
                     location = self._symbol_locations.get(str(param))
                     raise DynamicCalibratingEquationException(
@@ -434,15 +495,9 @@ class Block:
                     self.calib_dict[param] = rhs
 
             else:
-                # What is left should only be "deterministic relationships", parameters that are defined as
-                # functions of other parameters that the user wants to keep track of.
-
-                # Check that these are functions of numbers and parameters only
                 ss_vars = [x for x in atoms if isinstance(x, TimeAwareSymbol)]
                 if ss_vars:
-                    # Allow steady-state variable references if we have analytic solutions
                     rhs = self._try_substitute_ss_values(eq, rhs, ss_vars)
-                    # Re-check: if variables remain after substitution, it's an error
                     if any(isinstance(x, TimeAwareSymbol) for x in rhs.atoms()):
                         raise ValueError(
                             "Parameters defined as functions in the calibration sub-block cannot be functions "
@@ -455,9 +510,7 @@ class Block:
                     self.deterministic_dict[lhs] = rhs.doit()
 
         if len(duplicates) > 0:
-            # Get location of first duplicate for error reporting
-            first_dup = duplicates[0]
-            location = self._symbol_locations.get(str(first_dup))
+            location = self._symbol_locations.get(str(duplicates[0]))
             raise DuplicateParameterError(duplicates, self.name, source=self._source, location=location)
 
     def _try_substitute_ss_values(
@@ -466,25 +519,22 @@ class Block:
         rhs: sp.Expr,
         ss_vars: list[TimeAwareSymbol],
     ) -> sp.Expr:
-        """Substitute analytic steady-state values into a calibration RHS.
-
-        If all steady-state variables in ``rhs`` have analytic solutions in the
-        model's STEADY_STATE block, substitute them away so the expression
-        becomes a pure function of parameters.
+        """
+        Replace the steady-state variables in a deterministic calibration expression with their analytic values.
 
         Parameters
         ----------
-        eq : sp.Eq
-            The original calibration equation (for error messages).
-        rhs : sp.Expr
-            Right-hand side expression to substitute into.
+        eq : sympy.Eq
+            The calibration equation, used in error messages.
+        rhs : sympy.Expr
+            The right-hand side to substitute into.
         ss_vars : list of TimeAwareSymbol
-            Steady-state variables found in ``rhs``.
+            The steady-state variables found in ``rhs``.
 
         Returns
         -------
-        sp.Expr
-            The substituted expression.
+        substituted : sympy.Expr
+            ``rhs`` as a function of parameters only.
         """
         if not all(x.time_index == "ss" for x in ss_vars):
             raise ValueError(
@@ -521,7 +571,7 @@ class Block:
         return rhs.subs(sub_dict)
 
     def _build_lagrangian(self) -> sp.Add:
-        """Build the Lagrangian associated with the block's optimization program."""
+        """Build the Lagrangian of the block's optimization program, generating multipliers where none were named."""
         objective = next(iter(self.objective.values()))
         obj_key = next(iter(self.objective.keys()))
         is_minimization = self.equation_flags[obj_key].get("minimize", False)
@@ -531,68 +581,51 @@ class Block:
         sub_dict = {}
 
         if self.definitions is not None:
-            definitions = list(self.definitions.values())
-            for eq in definitions:
+            for eq in self.definitions.values():
                 sub_dict.update(_expand_definition_for_all_times(eq.lhs, eq.rhs))
-
-        i = 1
 
         obj_rhs = objective.rhs.subs(sub_dict)
         if is_minimization:
             obj_rhs = -obj_rhs
 
         lagrange = obj_rhs
+        next_generated_index = 1
         for key, constraint in constraints.items():
             if multipliers[key] is not None:
                 lm = multipliers[key]
             else:
-                lm = TimeAwareSymbol(f"lambda__{self.short_name}_{i}", 0, **DEFAULT_ASSUMPTIONS)
-                self.multipliers[i] = lm
-                i += 1
+                lm = TimeAwareSymbol(f"lambda__{self.short_name}_{next_generated_index}", 0, **DEFAULT_ASSUMPTIONS)
+                self.multipliers[next_generated_index] = lm
+                next_generated_index += 1
 
             lagrange = lagrange - lm * (constraint.lhs.subs(sub_dict) - constraint.rhs.subs(sub_dict))
 
         return lagrange
 
-    def _get_discount_factor(self) -> sp.Symbol | None:
+    def _get_discount_factor(self) -> sp.Expr:
         """
-        Calculate the discount factor of a Bellman equation.
+        Extract the discount factor from a Bellman-form objective.
 
-        A Bellman equation has the form X[] = a[] + b * E[][X[1]], where `a[]` is the value of the objective function at
-        time `t`, and `E[][X[1]]` is the expected continuation value conditioned on the current information set. The
-        parameter `b` (0 < b < 1) is the discount factor that ensures the equation converges to a fixed point. This
-        function extracts `b` from the objective function and returns it as a sympy symbol.
-
-        For single period optimizations, the discount factor is 1.
-
-        TODO: This function currently assumes the continuation value is a single variable, it will fail in the case of
-        TODO: something like X[] = a[] + b * E[][Y[1] + Z[1]], although i don't know how such a function could arise?
+        A Bellman equation has the form ``X[] = a[] + b * E[][X[1]]``, where ``a[]`` is the instantaneous value and
+        ``b`` is the discount factor. The continuation term must contain ``X[1]`` and nothing else at ``t+1``. A
+        static objective, with no ``t+1`` variables, has discount factor 1.
 
         Returns
         -------
-        sp.Symbol
-            The discount factor of the Bellman equation.
-
-        Raises
-        ------
-        ValueError
-            If the block has multiple t+1 variables in the Bellman equation.
+        discount_factor : sympy.Expr
+            The coefficient on the continuation value.
         """
         _, objective = unpack_keys_and_values(self.objective)
         objective = objective[0]
 
         variables = [x for x in objective.atoms() if isinstance(x, TimeAwareSymbol)]
 
-        # Return 1 if there is no continuation value -- static optimization
         if all(x.time_index in [0, -1] for x in variables):
             return sp.Float(1.0)
 
-        # We expect a bellman equation of the form X[] = a[] + E[][f(a[1]]. Step one is to identify a[], the
-        # instantaneous value function at time t. It should be a term isolated on the RHS of the equation.
         current_value = objective.lhs
         continuation_value = [x for x in objective.rhs.args if x.has(current_value.set_t(1))]
 
-        # continuation_value = [x for x in variables if x.time_index == 1 and x.set_t(0) in variables]
         if len(continuation_value) == 0:
             raise ValueError(
                 f"Block {self.name} did not find the continuation value of the current state value in the following"
@@ -604,165 +637,19 @@ class Block:
         continuation_value = continuation_value[0]
         return continuation_value.subs({current_value.set_t(1): 1})
 
-    def simplify_system_equations(self) -> None:
-        """Simplify the first-order conditions in ``system_equations``.
-
-        Two passes run in sequence:
-
-        1. **Generated-multiplier elimination.** When the Lagrangian carries auto-generated multipliers (named
-           ``lambda__*``) that appear in a trivial linear identity ``x = ±y``, substitute them away. User-named
-           multipliers are kept, matching gEcon's behavior.
-
-        2. **Power canonicalization.** Apply :func:`~sympy.simplify.powsimp.powsimp` to collapse
-           ``Pow(x, e)/x -> Pow(x, e-1)`` patterns left over by chain-rule differentiation (typical for CRRA-style
-           utility output).
-        """
-        system = self.system_equations
-        simplified_system = system.copy()
-        variables = [x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
-        generated_multipliers = list({x for x in variables if "lambda__" in x.base_name})
-
-        # x = y will have 2 atoms, x = -y will have 3
-        N_TOKENS_IN_DIRECT_DEFINITION = 3
-
-        eliminated_variables = []
-        for x in generated_multipliers:
-            candidates = [eq for eq in simplified_system if x in eq.atoms()]
-            for eq in candidates:
-                if len(eq.atoms()) <= N_TOKENS_IN_DIRECT_DEFINITION:
-                    sub_dict = sp.solve(eq, x, dict=True)[0]
-                    sub_dict = expand_subs_for_all_times(sub_dict)
-                    eliminated_variables.extend(list(sub_dict.keys()))
-                    simplified_system = [eq.subs(sub_dict) for eq in simplified_system]
-                    break
-
-        simplified_system = [eq for eq in simplified_system if eq != 0]
-        simplified_system = [sp.powsimp(eq) for eq in simplified_system]
-
-        self.system_equations = simplified_system
-        self.eliminated_variables = eliminated_variables
-
-        for key, value in self.multipliers.items():
-            if value in eliminated_variables:
-                self.multipliers[key] = None
-
-    def solve_optimization(self, try_simplify: bool = True) -> None:
-        r"""
-        Solve the Block's optimization program.
-
-        The optimization program is implied by the block structure as follows:
-
-        .. math::
-
-            \begin{aligned}
-            \max_{\text{[Controls]}} \quad & \sum_{t=0}^{\infty} \text{[Objective]} \\
-            \text{subject to} \quad & \text{[Constraints]}
-            \end{aligned}
-
-        By setting up the following Lagrangian:
-
-        .. math::
-            :nowrap:
-
-            L = Sum_{t=0}^\infty \text{Objective} - lambda_1 * \text{constraint}_1 - ... - \lambda_n *
-            \text{constraint}_n
-
-        And taking the derivative with respect to each control variable in turn.
-
-        When the objective equation carries the ``@minimize`` tag, the objective is automatically negated before
-        forming the Lagrangian (i.e. ``minimize f`` is converted to ``maximize -f``). The resulting first-order
-        conditions are those of the corresponding minimization program.
-
-        Parameters
-        ----------
-        try_simplify : bool
-            Whether to apply simplifications to the FoCs.
-
-        Returns
-        -------
-        None
-
-        Notes
-        -----
-        All first order conditions, along with the constraints and objective are stored in the .system_equations method.
-        No attempt is made to simplify the resulting system if try_simplify = False.
-        """
-        # TODO: Add helper functions to simplify common setups, including CRRA/log-utility (extract Euler equation,
-        #     labor supply curve, etc), and common production functions (CES, CD -- extract demand curves, prices, or
-        #     marginal costs)
-        sub_dict = {}
-
-        self.system_equations = []
-
-        if self.definitions is not None:
-            _, definitions = unpack_keys_and_values(self.definitions)
-            sub_dict = {eq.lhs: eq.rhs for eq in definitions}
-
-        if self.identities is not None:
-            _, identities = unpack_keys_and_values(self.identities)
-            for eq in identities:
-                self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
-
-        if self.constraints is not None:
-            eq_idx, constraints = unpack_keys_and_values(self.constraints)
-            for idx, eq in zip(eq_idx, constraints, strict=False):
-                if not self.equation_flags[idx].get("exclude", False):
-                    self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
-
-        if self.controls is None and self.objective is None:
-            return
-
-        # Solve Lagrangian
-        controls = self.controls
-        obj_idx, objective = unpack_keys_and_values(self.objective)
-        obj_idx, objective = obj_idx[0], objective[0]
-
-        self.system_equations.append(set_equality_equals_zero(objective.subs(sub_dict)))
-
-        _, multipliers = unpack_keys_and_values(self.multipliers)
-
-        discount_factor = self._get_discount_factor()
-        lagrange = self._build_lagrangian()
-
-        # Corner case, if the objective function has a named lagrange multiplier
-        # (pointless? but done in some gEcon example GCN files)
-        if multipliers[obj_idx] is not None:
-            raise NotImplementedError(
-                "Lagrange multipliers in the objective block is not currently supported. This may break backwards"
-                "compatibility with some gEcon example GCN files. Re-write the model to directly define the stochastic"
-                "discount factor."
-            )
-            # self.system_equations.append(
-            #     multipliers[obj_idx] - diff_through_time(lagrange, objective.lhs, discount_factor)
-            # )
-
-        for control in controls:
-            foc = self._compute_foc(control, lagrange, discount_factor)
-            self.system_equations.append(foc.powsimp())
-
-        if try_simplify:
-            self.simplify_system_equations()
-
-        # Update the variable list
-        self._get_variable_list()
-
     def _compute_foc(self, control: TimeAwareSymbol, lagrange: sp.Expr, discount_factor: sp.Expr | int) -> sp.Expr:
-        """Compute the first-order condition for a single control variable.
+        """
+        Compute the first-order condition for one control variable.
 
-        The default implementation differentiates the Lagrangian through time via :func:`diff_through_time`.
-        Specialized subclasses such as :class:`~gEconpy.model.block.cobb_douglas.CobbDouglasBlock` override this to
-        emit closed-form FOCs without invoking :func:`~sympy.core.function.diff` on the constraint, sidestepping the
-        chain-rule expansion that dominates compile time on common functional forms.
+        The default differentiates the Lagrangian through time with :func:`~gEconpy.utilities.diff_through_time`.
+        Subclasses such as :class:`~gEconpy.model.block.cobb_douglas.CobbDouglasBlock` override this to emit a
+        closed form for the constraint derivative, which is far smaller than the chain-rule expansion
+        :func:`sympy.diff` produces.
         """
         return diff_through_time(lagrange, control, discount_factor)
 
     def __html_repr__(self) -> str:
-        """
-        Return an HTML representation of the block.
-
-        The block is rendered as a collapsible section with collapsible sub-sections for each component (definitions,
-        controls, objective, constraints, identities, shocks, calibration).
-        """
+        """Render the block as a collapsible HTML section with one sub-section per component."""
         html_parts = []
         html_parts.append(f"<details class='block-info'><summary class='block-title'>Block: {self.name}</summary>")
         html_parts.append("<div class='block-content'>")
@@ -794,7 +681,48 @@ class Block:
                 html_parts.append(f"<p>{latex_repr}</p>")
             html_parts.append("</details>")
 
-        html_parts.append("</div>")  # close block-content
-        html_parts.append("</details>")  # close block-info
+        html_parts.append("</div>")
+        html_parts.append("</details>")
 
         return "\n".join(html_parts)
+
+
+def _expand_definition_for_all_times(
+    lhs: TimeAwareSymbol,
+    rhs: sp.Expr,
+) -> dict[TimeAwareSymbol, sp.Expr]:
+    """
+    Shift a definition ``X[t0] = f(...)`` to time indices -1, 0, and 1.
+
+    Parameters
+    ----------
+    lhs : TimeAwareSymbol
+        Left-hand side of the definition.
+    rhs : sympy.Expr
+        Right-hand side of the definition.
+
+    Returns
+    -------
+    sub_dict : dict mapping TimeAwareSymbol to sympy.Expr
+        The shifted right-hand side, keyed by the shifted left-hand side, for each target time index.
+    """
+    base_t = lhs.time_index
+    sub_dict = {}
+
+    for target_t in _TARGET_TIME_INDICES:
+        offset = target_t - base_t
+        shifted_lhs = lhs
+        shifted_rhs = rhs
+
+        if offset > 0:
+            for _ in range(offset):
+                shifted_lhs = step_equation_forward(shifted_lhs)
+                shifted_rhs = step_equation_forward(shifted_rhs)
+        elif offset < 0:
+            for _ in range(-offset):
+                shifted_lhs = step_equation_backward(shifted_lhs)
+                shifted_rhs = step_equation_backward(shifted_rhs)
+
+        sub_dict[shifted_lhs] = shifted_rhs
+
+    return sub_dict

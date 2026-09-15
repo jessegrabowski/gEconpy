@@ -9,6 +9,7 @@ import sympy as sp
 from pytensor.graph.replace import graph_replace
 from sympytensor import as_tensor
 
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import build_symbolic_jacobian, make_cache_key
 from gEconpy.model.timing import classify_variables_by_timing
@@ -18,260 +19,24 @@ if TYPE_CHECKING:
     from gEconpy.model.model import Model
 
 
-def _substitute_steady_state_values(
-    equations: list[sp.Expr],
-    ss_solution_dict,
-) -> list[sp.Expr]:
-    """Replace steady-state variables in equations with their analytic expressions.
-
-    Parameters
-    ----------
-    equations : list of sp.Expr
-        Model equations that may contain ``X_ss`` symbols.
-    ss_solution_dict : SymbolDictionary
-        Analytically known steady-state solutions mapping ``X_ss`` to expressions.
-
-    Returns
-    -------
-    equations : list of sp.Expr
-        Equations with steady-state variables substituted away.
-
-    Raises
-    ------
-    ValueError
-        If any steady-state variables remain that lack analytic solutions.
-    """
-    ss_atoms = {a for eq in equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == "ss"}
-    if not ss_atoms:
-        return equations
-
-    sub_dict = {}
-    if ss_solution_dict:
-        sympy_dict = ss_solution_dict.to_sympy()
-        for atom in ss_atoms:
-            for key, value in sympy_dict.items():
-                if safe_to_ss(key).name == atom.name:
-                    sub_dict[atom] = value
-                    break
-
-    remaining = ss_atoms - set(sub_dict.keys())
-    if remaining:
-        names = ", ".join(sorted(str(a) for a in remaining))
-        raise ValueError(
-            f"Perfect foresight simulation requires all steady-state variables to have analytic "
-            f"solutions, but the following do not: {names}. Provide analytic steady-state values "
-            f"in the STEADY_STATE block of your GCN file."
-        )
-
-    return [eq.subs(sub_dict) for eq in equations]
-
-
-def _build_jacobian_var_lists(
-    var_names: list[str],
-    tm1_by_name: dict[str, pt.TensorVariable],
-    tp1_by_name: dict[str, pt.TensorVariable],
-    vars_t_pt: list[pt.TensorVariable],
-) -> tuple[list[pt.TensorVariable], list[pt.TensorVariable], list[pt.TensorVariable]]:
-    """Build variable lists for all time indices, creating dummies where needed."""
-    jac_vars_tm1 = [tm1_by_name.get(name, pt.dscalar(f"{name}_tm1_dummy")) for name in var_names]
-    jac_vars_t = list(vars_t_pt)
-    jac_vars_tp1 = [tp1_by_name.get(name, pt.dscalar(f"{name}_tp1_dummy")) for name in var_names]
-    return jac_vars_tm1, jac_vars_t, jac_vars_tp1
-
-
-def _build_vector_replacements(
-    var_names: list[str],
-    jac_vars_tm1: list[pt.TensorVariable],
-    jac_vars_t: list[pt.TensorVariable],
-    jac_vars_tp1: list[pt.TensorVariable],
-    shocks_pt: list[pt.TensorVariable],
-    y_tm1_vec: pt.TensorVariable,
-    y_t_vec: pt.TensorVariable,
-    y_tp1_vec: pt.TensorVariable,
-    x_t_vec: pt.TensorVariable | None,
-) -> dict:
-    """Map scalar variables to vector element indexing."""
-    replacements = {}
-    for i in range(len(var_names)):
-        replacements[jac_vars_tm1[i]] = y_tm1_vec[i]
-        replacements[jac_vars_t[i]] = y_t_vec[i]
-        replacements[jac_vars_tp1[i]] = y_tp1_vec[i]
-    if x_t_vec is not None:
-        for i, var in enumerate(shocks_pt):
-            replacements[var] = x_t_vec[i]
-    return replacements
-
-
-def _compile_single_period_function(
-    model: "Model",
-    **compile_kwargs,
-) -> tuple[Callable, list[str], list[str], list[str]]:
-    """Compile single-period residual and Jacobian function.
-
-    Returns
-    -------
-    f : Callable
-        Pytensor function computing (residuals, jacobian) for one period.
-    var_names : list of str
-        Variable names in column order.
-    shock_names : list of str
-        Shock names in column order.
-    param_names : list of str
-        Parameter names in input order.
-    """
-    shock_names = [s.base_name for s in model.shocks]
-
-    equations = _substitute_steady_state_values(model.equations, model._ss_solution_dict)
-    vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(equations, shock_names)
-
-    cache: dict = {}
-    equations_pt = [as_tensor(eq, cache=cache) for eq in equations]
-
-    def get_pt_var(sym: TimeAwareSymbol) -> pt.TensorVariable:
-        return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
-
-    # Collect parameters that actually appear in the equations (both free and deterministic)
-    all_param_symbols = model.params + model.deterministic_params
-    params_in_equations = []
-    params_pt = []
-    for p in all_param_symbols:
-        key = make_cache_key(p.name, cls=sp.Symbol)
-        if key in cache:
-            params_in_equations.append(p)
-            params_pt.append(cache[key])
-    param_names = [p.name for p in params_in_equations]
-
-    vars_t_pt = [get_pt_var(x) for x in vars_t]
-    shocks_pt = [get_pt_var(x) for x in shocks_t]
-
-    n_vars = len(vars_t_pt)
-    n_shocks = len(shocks_pt)
-    var_names = [x.base_name for x in vars_t]
-
-    tm1_by_name = {x.base_name: get_pt_var(x) for x in vars_tm1}
-    tp1_by_name = {x.base_name: get_pt_var(x) for x in vars_tp1}
-
-    jac_vars_tm1, jac_vars_t, jac_vars_tp1 = _build_jacobian_var_lists(var_names, tm1_by_name, tp1_by_name, vars_t_pt)
-
-    # Differentiate symbolically w.r.t. the timing symbols, in the same [tm1 | t | tp1]
-    # column order as the jac_vars lists. The shared ``cache`` makes the matrix's column
-    # nodes identical to those lists (for variables that appear at that time index), so the
-    # downstream ``vec_replacements`` substitution still lines up; absent time indices
-    # yield structurally-zero columns.
-    jac_wrt = [v.set_t(-1) for v in vars_t] + list(vars_t) + [v.set_t(1) for v in vars_t]
-    jacobian = build_symbolic_jacobian(equations, jac_wrt, cache, to_ss=False)
-    residuals = pt.stack(equations_pt)
-
-    y_tm1_vec = pt.dvector("y_tm1", shape=(n_vars,))
-    y_t_vec = pt.dvector("y_t", shape=(n_vars,))
-    y_tp1_vec = pt.dvector("y_tp1", shape=(n_vars,))
-    x_t_vec = pt.dvector("x_t", shape=(n_shocks,)) if n_shocks > 0 else None
-
-    vec_replacements = _build_vector_replacements(
-        var_names, jac_vars_tm1, jac_vars_t, jac_vars_tp1, shocks_pt, y_tm1_vec, y_t_vec, y_tp1_vec, x_t_vec
-    )
-
-    residuals_vec = graph_replace(residuals, vec_replacements, strict=False)
-    jacobian_vec = graph_replace(jacobian, vec_replacements, strict=False)
-
-    func_inputs = [y_tm1_vec, y_t_vec, y_tp1_vec]
-    if x_t_vec is not None:
-        func_inputs.append(x_t_vec)
-    func_inputs.extend(params_pt)
-
-    if "on_unused_input" not in compile_kwargs:
-        compile_kwargs["on_unused_input"] = "ignore"
-
-    f = pytensor.function(func_inputs, [residuals_vec, jacobian_vec], **compile_kwargs)
-
-    return f, var_names, [x.base_name for x in shocks_t], param_names
-
-
-def _compile_single_period_residual_function(
-    model: "Model",
-    **compile_kwargs,
-) -> Callable:
-    """Compile single-period residual-only function (no Jacobian).
-
-    This is a cheap evaluation function used during line search to avoid computing the
-    Jacobian at rejected trial points.
-
-    Returns
-    -------
-    f : Callable
-        Pytensor function computing only residuals for one period.
-    """
-    shock_names = [s.base_name for s in model.shocks]
-
-    equations = _substitute_steady_state_values(model.equations, model._ss_solution_dict)
-    vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(equations, shock_names)
-
-    cache: dict = {}
-    equations_pt = [as_tensor(eq, cache=cache) for eq in equations]
-
-    def get_pt_var(sym: TimeAwareSymbol) -> pt.TensorVariable:
-        return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
-
-    all_param_symbols = model.params + model.deterministic_params
-    params_pt = []
-    for p in all_param_symbols:
-        key = make_cache_key(p.name, cls=sp.Symbol)
-        if key in cache:
-            params_pt.append(cache[key])
-
-    vars_t_pt = [get_pt_var(x) for x in vars_t]
-    shocks_pt_list = [get_pt_var(x) for x in shocks_t]
-
-    n_vars = len(vars_t_pt)
-    n_shocks = len(shocks_pt_list)
-    var_names = [x.base_name for x in vars_t]
-
-    tm1_by_name = {x.base_name: get_pt_var(x) for x in vars_tm1}
-    tp1_by_name = {x.base_name: get_pt_var(x) for x in vars_tp1}
-
-    jac_vars_tm1, jac_vars_t, jac_vars_tp1 = _build_jacobian_var_lists(var_names, tm1_by_name, tp1_by_name, vars_t_pt)
-
-    residuals = pt.stack(equations_pt)
-
-    y_tm1_vec = pt.dvector("y_tm1", shape=(n_vars,))
-    y_t_vec = pt.dvector("y_t", shape=(n_vars,))
-    y_tp1_vec = pt.dvector("y_tp1", shape=(n_vars,))
-    x_t_vec = pt.dvector("x_t", shape=(n_shocks,)) if n_shocks > 0 else None
-
-    vec_replacements = _build_vector_replacements(
-        var_names, jac_vars_tm1, jac_vars_t, jac_vars_tp1, shocks_pt_list, y_tm1_vec, y_t_vec, y_tp1_vec, x_t_vec
-    )
-
-    residuals_vec = graph_replace(residuals, vec_replacements, strict=False)
-
-    func_inputs = [y_tm1_vec, y_t_vec, y_tp1_vec]
-    if x_t_vec is not None:
-        func_inputs.append(x_t_vec)
-    func_inputs.extend(params_pt)
-
-    if "on_unused_input" not in compile_kwargs:
-        compile_kwargs["on_unused_input"] = "ignore"
-
-    return pytensor.function(func_inputs, [residuals_vec], **compile_kwargs)
-
-
 @dataclass
 class PerfectForesightProblem:
     """
-    Compiled perfect foresight problem.
+    Compiled single-period functions of a model, plus the names that fix their input and output ordering.
 
     Attributes
     ----------
     f_resid_and_jac : callable
-        Function returning the residuals and the three jacobians of one period's equations.
+        Function returning the residuals and the ``(n_eq, 3 * n_vars)`` Jacobian of one period's equations. It is
+        called as ``f(y_tm1, y_t, y_tp1, [x_t,] *params)``, with ``x_t`` omitted when the model has no shocks.
     f_resid_only : callable or None
-        Function returning only the residuals of one period's equations, or None if it was not compiled.
+        Function with the same inputs returning only the residuals, or None when it was not compiled.
     var_names : list of str
-        Model variable names, giving the column order of the stacked system.
+        Variable names, giving the column order of the stacked system.
     shock_names : list of str
-        Model shock names.
+        Shock names, giving the order of ``x_t``.
     param_names : list of str
-        Model parameter names, in the order the compiled functions expect them.
+        Parameter names, in the order the compiled functions expect them.
     T : int
         Number of periods in the simulation horizon.
     """
@@ -305,29 +70,164 @@ def compile_perfect_foresight_problem(
     **compile_kwargs,
 ) -> PerfectForesightProblem:
     """
-    Compile the single-period dynamic function for perfect foresight simulation.
+    Compile the single-period residual and Jacobian functions used by the perfect foresight solver.
 
     Parameters
     ----------
     model : Model
-        Model to compile. Every steady-state variable must have an analytic solution.
+        Model to compile. Every steady-state variable that appears in its equations must have an analytic solution.
     T : int
         Number of periods in the simulation horizon.
     **compile_kwargs
-        Additional keyword arguments forwarded to the pytensor function compilation.
+        Keyword arguments forwarded to :func:`pytensor.function`. ``on_unused_input`` defaults to ``"ignore"``.
 
     Returns
     -------
     problem : PerfectForesightProblem
-        The compiled residual and jacobian functions, together with the variable, shock, and parameter names.
+        The compiled functions, together with the variable, shock, and parameter names.
     """
-    f_resid_and_jac, var_names, shock_names, param_names = _compile_single_period_function(model, **compile_kwargs)
-    f_resid_only = _compile_single_period_residual_function(model, **compile_kwargs)
+    graph = _build_single_period_graph(model)
+    compile_kwargs.setdefault("on_unused_input", "ignore")
+
+    f_resid_and_jac = pytensor.function(graph.inputs, [graph.residuals, graph.jacobian], **compile_kwargs)
+    f_resid_only = pytensor.function(graph.inputs, [graph.residuals], **compile_kwargs)
+
     return PerfectForesightProblem(
         f_resid_and_jac=f_resid_and_jac,
         f_resid_only=f_resid_only,
-        var_names=var_names,
-        shock_names=shock_names,
-        param_names=param_names,
+        var_names=graph.var_names,
+        shock_names=graph.shock_names,
+        param_names=graph.param_names,
         T=T,
     )
+
+
+@dataclass
+class _SinglePeriodGraph:
+    inputs: list[pt.TensorVariable]
+    residuals: pt.TensorVariable
+    jacobian: pt.TensorVariable
+    var_names: list[str]
+    shock_names: list[str]
+    param_names: list[str]
+
+
+def _build_single_period_graph(model: "Model") -> _SinglePeriodGraph:
+    """
+    Build the symbolic residual and Jacobian of one period's equations as functions of stacked input vectors.
+
+    The model equations are converted to pytensor once, differentiated with respect to every variable at ``t-1``,
+    ``t``, and ``t+1``, and then rewritten so that each scalar variable reads from an element of ``y_tm1``, ``y_t``,
+    ``y_tp1``, or ``x_t``. A variable that never appears at some time index gets a structurally zero Jacobian column
+    there.
+    """
+    shock_names = [s.base_name for s in model.shocks]
+
+    equations = _substitute_steady_state_values(model.equations, model._ss_solution_dict)
+    vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(equations, shock_names)
+
+    cache: dict = {}
+    equations_pt = [as_tensor(eq, cache=cache) for eq in equations]
+
+    def get_pt_var(sym: TimeAwareSymbol) -> pt.TensorVariable:
+        return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
+
+    params_in_equations = []
+    params_pt = []
+    for param in model.params + model.deterministic_params:
+        key = make_cache_key(param.name, cls=sp.Symbol)
+        if key in cache:
+            params_in_equations.append(param)
+            params_pt.append(cache[key])
+
+    var_names = [x.base_name for x in vars_t]
+    vars_t_pt = [get_pt_var(x) for x in vars_t]
+    shocks_pt = [get_pt_var(x) for x in shocks_t]
+    n_vars = len(vars_t_pt)
+    n_shocks = len(shocks_pt)
+
+    # Variables absent at t-1 or t+1 get a dummy scalar so every time index has one node per variable.
+    tm1_by_name = {x.base_name: get_pt_var(x) for x in vars_tm1}
+    tp1_by_name = {x.base_name: get_pt_var(x) for x in vars_tp1}
+    vars_tm1_pt = [tm1_by_name.get(name, pt.dscalar(f"{name}_tm1_dummy")) for name in var_names]
+    vars_tp1_pt = [tp1_by_name.get(name, pt.dscalar(f"{name}_tp1_dummy")) for name in var_names]
+
+    # The shared cache makes the Jacobian's column nodes the same objects as the vars_*_pt lists wherever the
+    # variable appears at that time index, so the vector replacement below lines up.
+    jacobian_wrt = [v.set_t(-1) for v in vars_t] + list(vars_t) + [v.set_t(1) for v in vars_t]
+    jacobian = build_symbolic_jacobian(equations, jacobian_wrt, cache, to_ss=False)
+    residuals = pt.stack(equations_pt)
+
+    y_tm1 = pt.dvector("y_tm1", shape=(n_vars,))
+    y_t = pt.dvector("y_t", shape=(n_vars,))
+    y_tp1 = pt.dvector("y_tp1", shape=(n_vars,))
+    x_t = pt.dvector("x_t", shape=(n_shocks,)) if n_shocks > 0 else None
+
+    replacements = {}
+    for i in range(n_vars):
+        replacements[vars_tm1_pt[i]] = y_tm1[i]
+        replacements[vars_t_pt[i]] = y_t[i]
+        replacements[vars_tp1_pt[i]] = y_tp1[i]
+    if x_t is not None:
+        for i, shock in enumerate(shocks_pt):
+            replacements[shock] = x_t[i]
+
+    residuals_vec, jacobian_vec = graph_replace([residuals, jacobian], replacements, strict=False)
+
+    inputs = [y_tm1, y_t, y_tp1]
+    if x_t is not None:
+        inputs.append(x_t)
+    inputs.extend(params_pt)
+
+    return _SinglePeriodGraph(
+        inputs=inputs,
+        residuals=residuals_vec,
+        jacobian=jacobian_vec,
+        var_names=var_names,
+        shock_names=[x.base_name for x in shocks_t],
+        param_names=[p.name for p in params_in_equations],
+    )
+
+
+def _substitute_steady_state_values(
+    equations: list[sp.Expr],
+    ss_solution_dict: SymbolDictionary | None,
+) -> list[sp.Expr]:
+    """
+    Replace every steady-state variable in the equations with its analytic expression.
+
+    Parameters
+    ----------
+    equations : list of sympy.Expr
+        Model equations that may contain ``X_ss`` symbols.
+    ss_solution_dict : SymbolDictionary, optional
+        Analytically known steady-state solutions, keyed by steady-state variable.
+
+    Returns
+    -------
+    equations : list of sympy.Expr
+        Equations with no steady-state variables left.
+    """
+    ss_atoms = {a for eq in equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == "ss"}
+    if not ss_atoms:
+        return equations
+
+    sub_dict = {}
+    if ss_solution_dict:
+        sympy_dict = ss_solution_dict.to_sympy()
+        for atom in ss_atoms:
+            for key, value in sympy_dict.items():
+                if safe_to_ss(key).name == atom.name:
+                    sub_dict[atom] = value
+                    break
+
+    remaining = ss_atoms - set(sub_dict.keys())
+    if remaining:
+        names = ", ".join(sorted(str(a) for a in remaining))
+        raise ValueError(
+            f"Perfect foresight simulation requires all steady-state variables to have analytic "
+            f"solutions, but the following do not: {names}. Provide analytic steady-state values "
+            f"in the STEADY_STATE block of your GCN file."
+        )
+
+    return [eq.subs(sub_dict) for eq in equations]

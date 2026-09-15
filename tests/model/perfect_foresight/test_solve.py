@@ -113,16 +113,13 @@ class TestForwardOnlyModel:
         )
         assert result.success
 
-        # Expansionary shock raises all variables on impact
         assert trajectory["x"].iloc[0] > 0
         assert trajectory["pi"].iloc[0] > 0
         assert trajectory["i"].iloc[0] > 0
 
-        # rn follows AR(1) exactly
         rho = forward_model.parameters()["rho"]
         assert_allclose(trajectory["rn"].values, 0.01 * rho ** np.arange(simulation_length), rtol=1e-10)
 
-        # All variables decay toward steady state
         assert abs(trajectory["x"].iloc[-1]) < abs(trajectory["x"].iloc[0])
 
     def test_taylor_rule_holds(self, forward_model):
@@ -256,7 +253,6 @@ class TestSteadyStateKwargs:
 
 class TestDeterministicParameters:
     def test_steady_state_is_fixed_point(self, open_rbc_model):
-        """Models with deterministic parameters (e.g. rstar = 1/beta - 1) should solve correctly."""
         trajectory, result = solve_perfect_foresight(open_rbc_model, simulation_length=20)
 
         assert result.success
@@ -265,7 +261,6 @@ class TestDeterministicParameters:
             assert_allclose(trajectory[var].values, ss[f"{var}_ss"], rtol=1e-6)
 
     def test_shock_response_converges(self, open_rbc_model):
-        """Perfect foresight with a shock should converge and trend toward steady state."""
         simulation_length = 50
         shock_path = np.zeros(simulation_length)
         shock_path[0] = 0.01
@@ -277,12 +272,10 @@ class TestDeterministicParameters:
         )
         assert result.success
 
-        # The trajectory should not be constant (the shock had an effect)
         ss = open_rbc_model.steady_state(verbose=False)
         ss_vals = np.array([ss[f"{var}_ss"] for var in trajectory.columns])
         deviations = np.abs(trajectory.values - ss_vals)
 
-        # Deviations should be smaller at the end than right after the shock
         assert np.sum(deviations[-1]) < np.sum(deviations[1])
 
 
@@ -330,7 +323,6 @@ class TestMakePiecewiseX0:
     def test_step_transition_at_midpoint(self):
         x0 = make_piecewise_x0(self.INIT_SS, self.TERM_SS, simulation_length=100)
 
-        # Default: step at simulation_length // 2
         assert_allclose(x0.loc[49, "K"], 1.0)
         assert_allclose(x0.loc[50, "K"], 2.0)
 
@@ -343,15 +335,12 @@ class TestMakePiecewiseX0:
             transition_periods=21,
         )
 
-        # Before and after transition region
         assert_allclose(x0.loc[39, "K"], 1.0)
         assert_allclose(x0.loc[61, "K"], 2.0)
 
-        # Endpoints of the transition region (weight=0 and weight=1)
         assert_allclose(x0.loc[40, "K"], 1.0)
         assert_allclose(x0.loc[60, "K"], 2.0)
 
-        # Exact midpoint (index 10 of 21, weight = 10/20 = 0.5)
         assert_allclose(x0.loc[50, "K"], 1.5)
         assert_allclose(x0.loc[50, "C"], 0.75)
 
@@ -377,7 +366,6 @@ class TestParamPaths:
         ss_default = rbc_model.steady_state(verbose=False)
         traj_default, res_default = solve_perfect_foresight(rbc_model, simulation_length=20)
 
-        # A different depreciation rate should yield a different fixed point
         params = rbc_model.parameters()
         delta = params["delta"]
         traj_override, res_override = solve_perfect_foresight(
@@ -386,7 +374,8 @@ class TestParamPaths:
             param_paths={"delta": delta * 1.5},
         )
 
-        assert res_default.success and res_override.success
+        assert res_default.success
+        assert res_override.success
         assert not np.allclose(traj_default["K"].values, traj_override["K"].values)
 
     def test_none_param_paths_matches_default(self, rbc_model):
@@ -414,7 +403,6 @@ class TestParamPaths:
         ss_init = rbc_model.steady_state(verbose=False, delta=delta_init)
         ss_term = rbc_model.steady_state(verbose=False, delta=delta_term)
 
-        # Without explicit conditions, solver should auto-compute distinct boundary SS values
         x0 = make_piecewise_x0(ss_init, ss_term, simulation_length=T, transition_periods=10)
         traj_auto, res_auto = solve_perfect_foresight(
             rbc_model,
@@ -423,7 +411,6 @@ class TestParamPaths:
             param_paths={"delta": delta_path},
         )
 
-        # With explicit conditions matching the same SS values
         traj_explicit, res_explicit = solve_perfect_foresight(
             rbc_model,
             simulation_length=T,
@@ -433,5 +420,6 @@ class TestParamPaths:
             param_paths={"delta": delta_path},
         )
 
-        assert res_auto.success and res_explicit.success
+        assert res_auto.success
+        assert res_explicit.success
         assert_allclose(traj_auto.values, traj_explicit.values, rtol=1e-8)
