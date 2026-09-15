@@ -355,6 +355,36 @@ def test_solver_options_reach_the_same_steady_state(how, kwargs):
         assert_allclose(res[k], reference[k], rtol=1e-6, err_msg=k)
 
 
+@pytest.mark.parametrize(
+    "optimizer_kwargs, method",
+    [(None, "trust-ncg"), ({"method": "newton-cg"}, "newton-cg"), ({"method": "dogleg"}, "dogleg")],
+    ids=["default_method", "newton-cg", "dogleg"],
+)
+def test_minimize_without_jac_rejects_gradient_methods(optimizer_kwargs, method):
+    model_1 = load_and_cache_model("one_block_1.gcn")
+
+    with pytest.raises(ValueError, match=re.escape(f"Method {method!r} requires a gradient")):
+        model_1.steady_state(
+            how="minimize",
+            use_jac=False,
+            use_hessp=False,
+            verbose=False,
+            progressbar=False,
+            optimizer_kwargs=optimizer_kwargs,
+        )
+
+
+def test_minimize_without_jac_accepts_gradient_method_when_hessp_builds_the_gradient():
+    model_1 = load_and_cache_model("one_block_1.gcn")
+    reference = model_1.steady_state(verbose=False, progressbar=False)
+
+    result = model_1.steady_state(how="minimize", use_jac=False, use_hessp=True, verbose=False, progressbar=False)
+
+    assert result.success
+    for name, value in reference.items():
+        assert_allclose(result[name], value, rtol=1e-6, err_msg=name)
+
+
 def test_hess_and_hessp_together_warn_and_use_hessp(caplog):
     model_1 = load_and_cache_model("one_block_1.gcn")
 

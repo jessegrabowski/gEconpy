@@ -45,6 +45,7 @@ _log = logging.getLogger(__name__)
 
 STEADY_STATE_TOL = 1e-8
 BOX_BOUND_METHODS = ("trust-constr", "L-BFGS-B", "powell")
+GRADIENT_REQUIRED_METHODS = ("trust-ncg", "trust-krylov", "trust-exact", "dogleg", "newton-cg")
 
 
 def infer_variable_bounds(variable: TimeAwareSymbol | sp.Symbol) -> tuple[float | None, float | None]:
@@ -848,7 +849,9 @@ class Model:
             ``'minimize'`` when the analytic solution is incomplete. Default ``'analytic'``.
         use_jac : bool, optional
             Use the Jacobian of the residuals (``'root'``) or the gradient of the error (``'minimize'``). Ignored
-            when ``how`` is ``'analytic'``. Default True.
+            when ``how`` is ``'analytic'``. A ``'minimize'`` method that requires a gradient (``'trust-ncg'``,
+            ``'trust-krylov'``, ``'trust-exact'``, ``'dogleg'``, ``'newton-cg'``) raises ``ValueError`` when this,
+            ``use_hess``, and ``use_hessp`` are all False. Default True.
         use_hess : bool, optional
             Use the Hessian of the error function. Ignored unless ``how`` is ``'minimize'``. Default False.
         use_hessp : bool, optional
@@ -1934,6 +1937,14 @@ class Model:
             )
             x0_solve = to_unconstrained(x0)
             bounds_arg = None
+
+        gradient_available = use_jac or use_hess or use_hessp
+        if not gradient_available and method.lower() in GRADIENT_REQUIRED_METHODS:
+            raise ValueError(
+                f"Method {method!r} requires a gradient, but use_jac, use_hess, and use_hessp are all False. Pass "
+                f"use_jac=True, or choose a gradient-free method such as 'nelder-mead' or 'powell' via "
+                f"optimizer_kwargs={{'method': ...}}."
+            )
 
         maxiter = optimizer_kwargs.pop("maxiter", 5000)
         options = optimizer_kwargs.setdefault("options", {})

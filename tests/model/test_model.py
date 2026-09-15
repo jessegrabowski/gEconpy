@@ -301,7 +301,7 @@ def test_ss_derivative_graphs_compile():
 
 @pytest.mark.parametrize(
     ("how", "optimizer_kwargs"),
-    [("root", {"maxiter": 50_000, "method": "hybr"}), ("minimize", {})],
+    [("root", {"maxiter": 50_000, "method": "hybr", "options": {"xtol": 1e-12}}), ("minimize", {})],
     ids=["root", "minimize"],
 )
 @pytest.mark.parametrize(
