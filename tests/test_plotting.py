@@ -12,10 +12,10 @@ import pymc as pm
 import pytest
 import xarray as xr
 
-from matplotlib.collections import PathCollection
+from matplotlib.collections import PathCollection, PolyCollection
 from matplotlib.colorbar import Colorbar
-from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
+from matplotlib.ticker import StrMethodFormatter
 
 from gEconpy.model.simulate import impulse_response_function, simulate
 from gEconpy.model.statespace import DSGEStateSpace
@@ -288,38 +288,62 @@ def test_prepare_gridspec_figure_wide_last_loc():
 
 
 @pytest.mark.parametrize(
-    "kwargs, n_axes",
+    "kwargs, expected_titles",
     [
-        ({}, 3),
-        ({"vars_to_plot": ["Y", "C"]}, 2),
-        ({"fig_kwargs": {"figsize": (8, 6), "dpi": 80}, "color": "tab:green"}, 3),
+        ({}, ["Y", "C", "K"]),
+        ({"vars_to_plot": ["K", "Y"]}, ["K", "Y"]),
+        ({"n_cols": 1, "fig_kwargs": {"figsize": (8, 6), "dpi": 80}, "color": "tab:green"}, ["Y", "C", "K"]),
     ],
     ids=["defaults", "subset", "fig_and_line_kwargs"],
 )
-def test_plot_timeseries(timeseries_data, kwargs, n_axes):
+def test_plot_timeseries_one_panel_per_variable(timeseries_data, kwargs, expected_titles):
     fig = plot_timeseries(timeseries_data, **kwargs)
-    assert len(fig.axes) == n_axes
+    assert [ax.get_title() for ax in fig.axes] == expected_titles
+    assert all(len(ax.get_lines()) == 1 for ax in fig.axes)
+
+
+def test_plot_timeseries_forwards_line_kwargs(timeseries_data):
+    fig = plot_timeseries(timeseries_data, color="tab:green", lw=2.5)
+    assert all(ax.get_lines()[0].get_color() == "tab:green" for ax in fig.axes)
+    assert all(ax.get_lines()[0].get_linewidth() == 2.5 for ax in fig.axes)
 
 
 @pytest.mark.parametrize(
-    "kwargs, n_axes",
+    "kwargs, expected_titles",
     [
-        ({"vars_to_plot": ["Y", "C", "K"]}, 3),
-        ({"vars_to_plot": ["Y", "C"]}, 2),
-        ({"vars_to_plot": ["Y", "C", "K"], "ci": 0.95}, 3),
-        ({"vars_to_plot": ["Y", "C", "K"], "ci": 0.95, "n_cols": 2}, 3),
-        ({"vars_to_plot": ["Y", "C"], "cmap": "YlGn", "fill_color": "tab:red"}, 2),
+        ({"vars_to_plot": ["Y", "C", "K"]}, ["Y", "C", "K"]),
+        ({"vars_to_plot": ["C", "Y"]}, ["C", "Y"]),
+        ({"vars_to_plot": ["Y", "C", "K"], "ci": 0.95, "n_cols": 2}, ["Y", "C", "K"]),
+        ({"vars_to_plot": ["Y", "C"], "cmap": "YlGn", "fill_color": "tab:red"}, ["Y", "C"]),
     ],
-    ids=["three_vars", "two_vars", "ci", "ci_ncols", "cmap_fill"],
+    ids=["three_vars", "two_vars_reordered", "ci_ncols", "cmap_fill"],
 )
-def test_plot_simulation(simulation_data, kwargs, n_axes):
+def test_plot_simulation_one_panel_per_variable(simulation_data, kwargs, expected_titles):
     fig = plot_simulation(simulation_data, **kwargs)
-    assert len(fig.axes) == n_axes
+    assert [ax.get_title() for ax in fig.axes] == expected_titles
 
 
 def test_plot_simulation_defaults_plots_all_variables(simulation_data, rbc_model):
     fig = plot_simulation(simulation_data)
-    assert len(fig.axes) == len(rbc_model.variables)
+    assert [ax.get_title() for ax in fig.axes] == [v.base_name for v in rbc_model.variables]
+
+
+def test_plot_simulation_without_ci_draws_every_trajectory(simulation_data):
+    fig = plot_simulation(simulation_data, vars_to_plot=["Y"])
+    axis = fig.axes[0]
+    assert len(axis.get_lines()) == simulation_data.sizes["simulation"]
+    assert axis.findobj(PolyCollection) == []
+
+
+def test_plot_simulation_with_ci_draws_mean_quantiles_and_band(simulation_data):
+    fig = plot_simulation(simulation_data, vars_to_plot=["Y"], ci=0.9, fill_color="tab:red")
+    axis = fig.axes[0]
+    band = axis.findobj(PolyCollection)
+
+    # One mean line plus the two quantile lines that edge the band.
+    assert len(axis.get_lines()) == 3
+    assert len(band) == 1
+    assert np.allclose(band[0].get_facecolor()[0], mcolors.to_rgba("tab:red", alpha=0.25))
 
 
 def test_plot_simulation_bad_var_raises(simulation_data):
@@ -382,11 +406,46 @@ def test_plot_irf_bad_shock_raises(irf_setup):
         plot_irf(irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y", "Invalid"])
 
 
-def test_plot_irf_legend_on_figure(irf_setup):
+@pytest.mark.parametrize("legend_kwargs", [None, {"loc": "upper right"}], ids=["default_kwargs", "custom_kwargs"])
+def test_plot_irf_legend_on_figure_names_plotted_shocks(irf_setup, legend_kwargs):
     _model, irf = irf_setup
-    fig = plot_irf(irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y"], legend=True)
+    fig = plot_irf(irf, vars_to_plot=["Y", "C"], shocks_to_plot=["epsilon_Y"], legend=True, legend_kwargs=legend_kwargs)
     assert all(axis.get_legend() is None for axis in fig.axes)
-    assert len(fig.figure.legends) == 1
+    assert len(fig.legends) == 1
+    assert [text.get_text() for text in fig.legends[0].get_texts()] == ["epsilon_Y"]
+
+
+def test_plot_irf_multiple_scenarios_legend_lists_each_shock_once(irf_setup):
+    model, irf = irf_setup
+    fig = plot_irf([irf, irf], vars_to_plot=["Y"], legend=True)
+    shock_names = [shock.base_name for shock in model.shocks]
+    assert [text.get_text() for text in fig.legends[0].get_texts()] == shock_names
+    assert [text.get_text() for text in fig.axes[0].get_legend().get_texts()] == ["Scenario 0", "Scenario 1"]
+
+
+@pytest.mark.parametrize(
+    "n_vars, expected_xlabels",
+    [(4, ["", "", "time", "time"]), (5, ["", "", "time", "time", "time"])],
+    ids=["full_last_row", "partial_last_row"],
+)
+def test_plot_irf_keeps_x_ticks_on_bottom_panels_only(irf_setup, n_vars, expected_xlabels):
+    # A partial last row leaves panels in the row above without a panel underneath, so both rows keep their ticks.
+    model, irf = irf_setup
+    vars_to_plot = [v.base_name for v in model.variables][:n_vars]
+    fig = plot_irf(irf, vars_to_plot=vars_to_plot, n_cols=2)
+    assert [ax.get_xlabel() for ax in fig.axes] == expected_xlabels
+
+
+def test_plot_irf_rejects_unsupported_container(irf_setup):
+    _model, irf = irf_setup
+    with pytest.raises(TypeError, match="irf must be a DataArray, a list of DataArrays, or a dict"):
+        plot_irf((irf,))
+
+
+def test_plot_irf_rejects_non_list_vars_to_plot(irf_setup):
+    _model, irf = irf_setup
+    with pytest.raises(TypeError, match="Expected str or list for variable"):
+        plot_irf(irf, vars_to_plot=("Y",))
 
 
 @pytest.mark.parametrize(
@@ -403,20 +462,66 @@ def test_plot_solvability_hides_upper_triangle(solvability_data):
     fig = plot_solvability(solvability_data)
     # Three parameters -> the strict upper triangle (3 panels) is hidden.
     assert sum(not ax.get_visible() for ax in fig.axes) == 3
+    assert [ax.get_xlabel() for ax in fig.axes[-3:]] == ["alpha", "beta", "rho"]
+
+
+def test_plot_solvability_legend_names_every_failure_stage(solvability_data):
+    fig = plot_solvability(solvability_data)
+    stages = solvability_data["failure_step"].fillna("success").unique()
+    expected = sorted(stage.replace("_", " ").title() for stage in stages)
+    assert sorted(text.get_text() for text in fig.legends[0].get_texts()) == expected
+
+
+def test_plot_solvability_skips_constant_and_diagnostic_columns(solvability_data):
+    rng = np.random.default_rng(0)
+    n = len(solvability_data)
+    data = solvability_data.assign(
+        fixed=1.0, norm_deterministic=rng.uniform(size=n), norm_stochastic=rng.uniform(size=n)
+    )
+    fig = plot_solvability(data)
+    assert len(fig.axes) == 9
+    assert [ax.get_xlabel() for ax in fig.axes[-3:]] == ["alpha", "beta", "rho"]
+
+
+def test_plot_solvability_single_parameter_draws_one_density_panel(solvability_data):
+    fig = plot_solvability(solvability_data, params_to_plot=["alpha"])
+    assert len(fig.axes) == 1
+    assert fig.axes[0].get_visible()
+
+
+def test_plot_solvability_bad_param_raises(solvability_data):
+    with pytest.raises(ValueError, match="Parameter 'bogus' not found"):
+        plot_solvability(solvability_data, params_to_plot=["alpha", "bogus"])
 
 
 def test_plot_solvability_summary(solvability_data):
     fig = plot_solvability_summary(solvability_data)
     n_categories = solvability_data["failure_step"].fillna("success").nunique()
     assert len(fig.axes) == 1
-    # One stacked bar segment per failure-step category present in the data.
+    # One stacked bar segment per failure-step category present in the data, spanning the full unit bar.
     assert len(fig.axes[0].patches) == n_categories
+    assert sum(patch.get_width() for patch in fig.axes[0].patches) == pytest.approx(1.0)
 
 
-@pytest.mark.parametrize("kwargs", [{}, {"plot_circle": False}], ids=["defaults", "no_circle"])
-def test_plot_eigenvalues(one_block_model, kwargs):
-    fig = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW, **kwargs)
-    assert isinstance(fig, Figure)
+def test_plot_solvability_summary_all_success_draws_one_full_segment(solvability_data):
+    fig = plot_solvability_summary(solvability_data.assign(failure_step=None))
+    patches = fig.axes[0].patches
+    assert len(patches) == 1
+    assert patches[0].get_width() == pytest.approx(1.0)
+    assert [text.get_text() for text in fig.axes[0].get_legend().get_texts()] == ["Success"]
+
+
+@pytest.mark.parametrize("plot_circle, n_lines", [(True, 1), (False, 0)], ids=["circle", "no_circle"])
+def test_plot_eigenvalues_unit_circle_toggle(one_block_model, plot_circle, n_lines):
+    fig = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW, plot_circle=plot_circle)
+    assert len(fig.axes[0].get_lines()) == n_lines
+
+
+def test_plot_eigenvalues_draws_on_given_figure(one_block_model):
+    fig, axis = plt.subplots()
+    returned = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW, fig=fig)
+    assert returned is fig
+    assert len(axis.findobj(PathCollection)) == 1
 
 
 def test_plot_eigenvalues_leaves_caller_kwargs_unchanged(one_block_model):
@@ -425,13 +530,26 @@ def test_plot_eigenvalues_leaves_caller_kwargs_unchanged(one_block_model):
     assert linearize_kwargs == LINEARIZE_KW
 
 
-def test_plot_eigenvalues_scatter_point_count(one_block_model):
-    fig = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW)
-    scatter_points = fig.axes[0].findobj(PathCollection)[0].get_offsets().data
+def _eigenvalue_scatter(fig):
+    return fig.axes[0].findobj(PathCollection)[0]
+
+
+def test_plot_eigenvalues_drops_infinite_and_colors_unstable(one_block_model):
+    # The docstring promises that eigenvalues with modulus above 10 are dropped and those above 1 are drawn in red.
+    inf_cutoff = 10
     data = check_bk_condition(one_block_model, return_value="dataframe", verbose=False, steady_state_kwargs=SS_KW)
-    inf_cutoff = 1.5
-    n_finite = (data["Modulus"] < inf_cutoff).sum()
-    assert n_finite == scatter_points.shape[0]
+    finite = data[data["Modulus"] < inf_cutoff]
+    n_infinite = len(data) - len(finite)
+    assert n_infinite > 0
+
+    fig = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW)
+    scatter = _eigenvalue_scatter(fig)
+    red = mcolors.to_rgba("tab:red")
+    n_red = sum(tuple(color) == red for color in scatter.get_facecolors())
+
+    np.testing.assert_allclose(scatter.get_offsets().data, finite[["Real", "Imaginary"]].to_numpy())
+    assert n_red == (finite["Modulus"] > 1.0).sum()
+    assert f"{n_infinite} Eigenvalues with Infinity Modulus not shown" in fig.axes[0].get_title()
 
 
 def test_plot_eigenvalues_explicit_matrices_match_model(one_block_model):
@@ -439,33 +557,72 @@ def test_plot_eigenvalues_explicit_matrices_match_model(one_block_model):
     explicit = plot_eigenvalues(one_block_model, A=A, B=B, C=C, D=D)
     from_model = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW)
 
-    def n_points(fig):
-        return fig.axes[0].findobj(PathCollection)[0].get_offsets().data.shape[0]
+    np.testing.assert_allclose(
+        _eigenvalue_scatter(explicit).get_offsets().data, _eigenvalue_scatter(from_model).get_offsets().data
+    )
 
-    # Supplying A, B, C, D must reproduce the eigenvalues found by linearizing internally.
-    assert n_points(explicit) == n_points(from_model)
+
+def test_plot_eigenvalues_parameter_updates_move_eigenvalues(one_block_model):
+    baseline = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW)
+    updated = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW, beta=0.9)
+
+    baseline_points = _eigenvalue_scatter(baseline).get_offsets().data
+    updated_points = _eigenvalue_scatter(updated).get_offsets().data
+    assert baseline_points.shape == updated_points.shape
+    assert not np.allclose(baseline_points, updated_points)
 
 
 @pytest.mark.parametrize(
-    "kwargs",
+    "kwargs, expected_params, expected_perturbation",
     [
-        {},
-        {"params_to_plot": ["alpha", "rho"]},
-        {"plot_circle": False, "n_cols": 2},
-        {"perturbation": 0.05, "figsize": (8, 8), "dpi": 80},
+        ({}, ["alpha", "delta", "beta", "gamma", "rho"], "1.0%"),
+        ({"params_to_plot": ["alpha", "rho"]}, ["alpha", "rho"], "1.0%"),
+        ({"plot_circle": False, "n_cols": 2}, ["alpha", "delta", "beta", "gamma", "rho"], "1.0%"),
+        ({"perturbation": 0.05, "figsize": (8, 8), "dpi": 80}, ["alpha", "delta", "beta", "gamma", "rho"], "5.0%"),
     ],
     ids=["defaults", "subset", "no_circle_ncols", "perturbation"],
 )
-def test_plot_eigenvalue_sensitivity(one_block_model, sensitivity_data, kwargs):
+def test_plot_eigenvalue_sensitivity_one_panel_per_parameter(
+    one_block_model, sensitivity_data, kwargs, expected_params, expected_perturbation
+):
     fig = plot_eigenvalue_sensitivity(one_block_model, sensitivity_data=sensitivity_data, **kwargs)
-    assert isinstance(fig, Figure)
+    assert [ax.get_title().split(":")[0] for ax in fig.axes] == expected_params
+    assert f"({expected_perturbation} perturbation)" in fig.get_suptitle()
 
 
-def test_plot_eigenvalue_sensitivity_subset_panel_count(one_block_model, sensitivity_data):
+def test_plot_eigenvalue_sensitivity_reports_filtered_count(one_block_model, sensitivity_data):
+    n_eigenvalues = sensitivity_data.sizes["eigenvalue"]
+    n_zero = int((sensitivity_data.eigenvalues.sel(component="modulus") < 1e-6).sum())
+    assert 0 < n_zero < n_eigenvalues
+
+    zeros_only = plot_eigenvalue_sensitivity(one_block_model, sensitivity_data=sensitivity_data, filter_infinite=False)
+    everything = plot_eigenvalue_sensitivity(one_block_model, sensitivity_data=sensitivity_data, inf_tol=0.0)
+
+    assert f"{n_zero} zero/infinite eigenvalues not shown" in zeros_only.get_suptitle()
+    assert f"{n_eigenvalues} zero/infinite eigenvalues not shown" in everything.get_suptitle()
+
+
+def test_plot_eigenvalue_sensitivity_computes_data_at_given_parameters(one_block_model):
     fig = plot_eigenvalue_sensitivity(
-        one_block_model, sensitivity_data=sensitivity_data, params_to_plot=["alpha", "rho"]
+        one_block_model,
+        params_to_plot=["beta", "rho"],
+        verbose=False,
+        steady_state_kwargs={"progressbar": False},
+        beta=0.9,
     )
-    assert sum(ax.get_visible() for ax in fig.axes) == 2
+    titles = [ax.get_title() for ax in fig.axes]
+    assert titles[0].startswith("beta: 0.9 ")
+    assert titles[1].startswith("rho: 0.95 ")
+
+
+def test_plot_eigenvalue_sensitivity_bad_param_raises(one_block_model, sensitivity_data):
+    with pytest.raises(ValueError, match="Parameter 'bogus' not found"):
+        plot_eigenvalue_sensitivity(one_block_model, sensitivity_data=sensitivity_data, params_to_plot=["bogus"])
+
+
+def test_plot_eigenvalue_sensitivity_empty_params_raises(one_block_model, sensitivity_data):
+    with pytest.raises(ValueError, match="No parameters to plot"):
+        plot_eigenvalue_sensitivity(one_block_model, sensitivity_data=sensitivity_data, params_to_plot=[])
 
 
 @pytest.mark.parametrize(
@@ -481,13 +638,30 @@ def test_plot_eigenvalue_sensitivity_subset_panel_count(one_block_model, sensiti
 )
 def test_plot_covariance_matrix(cov_matrix, kwargs):
     fig = plot_covariance_matrix(cov_matrix, **kwargs)
-    assert fig.findobj(AxesImage)
+    image = fig.findobj(AxesImage)[0]
+    np.testing.assert_allclose(image.get_array().data, cov_matrix.to_numpy())
+    assert [label.get_text() for label in image.axes.get_xticklabels()] == list(cov_matrix.columns)
+    assert len(image.axes.texts) == cov_matrix.size
+
+
+def test_plot_covariance_matrix_subset(cov_matrix):
+    fig = plot_covariance_matrix(cov_matrix, vars_to_plot=["C", "K"])
+    image = fig.findobj(AxesImage)[0]
+    np.testing.assert_allclose(image.get_array().data, cov_matrix.loc[["C", "K"], ["C", "K"]].to_numpy())
+    assert [label.get_text() for label in image.axes.get_yticklabels()] == ["C", "K"]
 
 
 def test_plot_heatmap_returns_image_and_colorbar(cov_matrix):
-    im, cbar = plot_heatmap(cov_matrix)
+    im, cbar = plot_heatmap(cov_matrix, cbarlabel="Cov")
     assert isinstance(im, AxesImage)
     assert isinstance(cbar, Colorbar)
+    assert cbar.ax.get_ylabel() == "Cov"
+
+
+def test_plot_heatmap_draws_on_given_axis(cov_matrix):
+    _fig, axis = plt.subplots()
+    im, _ = plot_heatmap(cov_matrix, ax=axis)
+    assert im.axes is axis
 
 
 def test_plot_heatmap_non_square_tick_labels():
@@ -504,12 +678,28 @@ def test_annotate_heatmap_uses_given_data(data):
     assert [text.get_text() for text in texts] == ["1", "2", "3", "4"]
 
 
+@pytest.mark.parametrize("valfmt", ["{x:.1f}", StrMethodFormatter("{x:.1f}")], ids=["str", "formatter"])
+def test_annotate_heatmap_threshold_splits_text_colors(valfmt):
+    im, _ = plot_heatmap(pd.DataFrame([[0.0, 1.0], [2.0, 3.0]]))
+    texts = annotate_heatmap(im, valfmt=valfmt, threshold=1.5, textcolors=("navy", "ivory"))
+    assert [text.get_text() for text in texts] == ["0.0", "1.0", "2.0", "3.0"]
+    assert [text.get_color() for text in texts] == ["navy", "navy", "ivory", "ivory"]
+
+
 @pytest.mark.parametrize("cmap", ["viridis", plt.get_cmap("viridis")], ids=["name", "colormap"])
 def test_set_axis_cmap_accepts_name_and_colormap(cmap):
     axis = plt.figure().add_subplot()
     set_axis_cmap(axis, cmap)
     first_color = axis.plot([0, 1])[0].get_color()
     assert np.allclose(mcolors.to_rgba(first_color), plt.get_cmap("viridis")(0.0))
+
+
+def test_set_axis_cmap_none_restores_default_cycle():
+    axis = plt.figure().add_subplot()
+    set_axis_cmap(axis, "viridis")
+    set_axis_cmap(axis, None)
+    first_color = axis.plot([0, 1])[0].get_color()
+    assert first_color == plt.rcParams["axes.prop_cycle"].by_key()["color"][0]
 
 
 @pytest.mark.parametrize("vars_to_plot", [["C", "K", "A"], ["C"]], ids=["three", "one"])
@@ -531,6 +721,11 @@ def test_plot_acf_n_cols_none_uses_default(acf_data, one_block_model):
 def test_plot_acf_bad_var_raises(acf_data):
     with pytest.raises(ValueError, match="Cannot plot"):
         plot_acf(acf_data, vars_to_plot=["K", "C", "Invalid"])
+
+
+def test_plot_acf_rejects_tensor_without_two_variable_dims(acf_data):
+    with pytest.raises(ValueError, match="two variable dimensions"):
+        plot_acf(acf_data.isel(variable_aux=0))
 
 
 def test_plot_acf_forest_axis_count(posterior_acf):
@@ -567,6 +762,26 @@ def test_plot_kalman_filter(prior_idata, kalman_output, vars_to_plot):
     assert all(axis.get_title() in vars_to_plot for axis in fig.axes)
 
 
+@pytest.mark.parametrize(
+    "variable, n_lines",
+    [("Y", 2), ("K", 1)],
+    ids=["observed_gets_data_line", "latent_has_no_data_line"],
+)
+def test_plot_kalman_filter_overlays_data_only_for_observed_states(prior_idata, variable, n_lines):
+    idata, fake_data = prior_idata
+    fig = plot_kalman_filter(idata["conditional_prior"], fake_data, group="prior", vars_to_plot=[variable])
+    assert len(fig.axes[0].get_lines()) == n_lines
+    assert len(fig.axes[0].findobj(PolyCollection)) == 1
+
+
+def test_plot_kalman_filter_draws_on_given_figure(prior_idata):
+    idata, fake_data = prior_idata
+    fig = plt.figure()
+    returned = plot_kalman_filter(idata["conditional_prior"], fake_data, group="prior", vars_to_plot=["Y"], fig=fig)
+    assert returned is fig
+    assert len(fig.axes) == 1
+
+
 def test_plot_kalman_filter_bad_output_raises(prior_idata):
     idata, fake_data = prior_idata
     with pytest.raises(ValueError, match='kalman_output must be one of "filtered", "predicted", "smoothed"'):
@@ -595,6 +810,12 @@ def test_plot_priors_plots_all_priors(ss_mod):
     assert len(titles) == len(ss_mod.shock_priors | ss_mod.param_priors)
 
 
+def test_plot_priors_accepts_model(rbc_model):
+    fig = plot_priors(rbc_model)
+    titles = [ax.get_title().split("\n")[0] for ax in fig.axes]
+    assert titles == [*rbc_model.param_priors, "sigma_A"]
+
+
 @pytest.mark.parametrize("var_names", [["alpha"], ["alpha", "beta", "rho_A"]], ids=["one", "three"])
 def test_plot_priors_var_names_subset(ss_mod, var_names):
     fig = plot_priors(ss_mod, var_names=var_names, n_cols=6)
@@ -612,7 +833,8 @@ def test_plot_priors_marks_initial_values(ss_mod):
 
     marked = plot_priors(ss_mod, mark_initial_value=True)
     unmarked = plot_priors(ss_mod, mark_initial_value=False)
-    assert n_initial_value_marks(marked) > n_initial_value_marks(unmarked)
+    assert n_initial_value_marks(marked) == len(marked.axes)
+    assert n_initial_value_marks(unmarked) == 0
 
 
 def test_plot_corner_grid_shape(prior_idata):
@@ -642,6 +864,12 @@ def test_plot_corner_accepts_any_layout_engine(prior_idata, layout):
     assert len(fig.axes) == 4
 
 
+def test_plot_corner_missing_group_raises(prior_idata):
+    idata, _ = prior_idata
+    with pytest.raises(ValueError, match="idata object with a posterior group"):
+        plot_corner(idata, group="posterior")
+
+
 def test_plot_corner_bad_var_raises(prior_idata):
     idata, _ = prior_idata
     valid = next(iter(idata.prior.data_vars))
@@ -666,17 +894,17 @@ def test_plot_corner_missing_colorby_raises(prior_idata):
 
 
 @pytest.mark.parametrize(
-    "kwargs, n_var",
+    "kwargs",
     [
-        ({"var_names": ["alpha", "beta", "sigma"]}, 3),
-        ({"var_names": ["alpha", "beta"], "n_cols": 1}, 2),
-        ({"var_names": ["alpha"], "fig_kwargs": {"figsize": (6, 4), "dpi": 110}}, 1),
+        {"var_names": ["alpha", "beta", "sigma"]},
+        {"var_names": ["alpha", "beta"], "n_cols": 1},
+        {"var_names": ["alpha"], "fig_kwargs": {"figsize": (6, 4), "dpi": 110}},
     ],
     ids=["three_vars", "n_cols", "fig_kwargs"],
 )
-def test_plot_posterior_with_prior(fake_posterior_idata, kwargs, n_var):
+def test_plot_posterior_with_prior(fake_posterior_idata, kwargs):
     fig = plot_posterior_with_prior(fake_posterior_idata, prior_dict={}, **kwargs)
-    assert len(fig.axes) >= n_var
+    assert [ax.get_title() for ax in fig.axes] == kwargs["var_names"]
 
 
 def test_plot_posterior_with_prior_overlays_prior(fake_posterior_idata):
@@ -720,7 +948,7 @@ def test_plot_posterior_with_prior_accepts_one_shot_iterable(fake_posterior_idat
         var_names=(name for name in ["alpha", "beta"]),
         prior_dict={},
     )
-    assert isinstance(fig, Figure)
+    assert [ax.get_title() for ax in fig.axes] == ["alpha", "beta"]
 
 
 def _matrix_dsge_stub(n_shocks):
@@ -731,24 +959,32 @@ def _matrix_dsge_stub(n_shocks):
 
 
 @pytest.mark.parametrize(
-    "kwargs",
-    [{}, {"symmetrical": False}, {"subplot_kwargs": {"figsize": (6, 6), "dpi": 90}}],
-    ids=["defaults", "not_symmetrical", "subplot_kwargs"],
+    "kwargs, n_visible",
+    [
+        ({}, 3),
+        ({"symmetrical": False}, 9),
+        ({"subplot_kwargs": {"figsize": (6, 6), "dpi": 90}}, 3),
+    ],
+    ids=["symmetrical_hides_upper_triangle", "not_symmetrical_shows_all", "subplot_kwargs"],
 )
-def test_plot_estimated_matrix(fake_posterior_idata, kwargs):
+def test_plot_estimated_matrix_panel_visibility(fake_posterior_idata, kwargs, n_visible):
     fig = plot_estimated_matrix(fake_posterior_idata, _matrix_dsge_stub(3), matrix_name="state_chol_corr", **kwargs)
-    assert isinstance(fig, Figure)
     assert len(fig.axes) == 9
+    assert sum(ax.get_visible() for ax in fig.axes) == n_visible
 
 
-def test_plot_estimated_matrix_symmetrical_hides_upper_triangle(fake_posterior_idata):
+def test_plot_estimated_matrix_marks_posterior_mean(fake_posterior_idata):
     fig = plot_estimated_matrix(fake_posterior_idata, _matrix_dsge_stub(3), matrix_name="state_chol_corr")
-    # Only the strict lower triangle (3 panels) stays visible.
-    assert sum(ax.get_visible() for ax in fig.axes) == 3
+    posterior_mean = fake_posterior_idata.posterior["state_chol_corr"].mean(["chain", "draw"]).values
+
+    # Row 1, column 0 is the first visible panel of the lower triangle.
+    axis = fig.axes[3]
+    point = axis.findobj(PathCollection)[0].get_offsets().data
+    np.testing.assert_allclose(point, [[posterior_mean[1, 0], 0.0]])
+    assert axis.get_ylabel() == "1"
 
 
 def test_plot_estimated_matrix_single_shock(fake_posterior_idata):
     # k_posdef=1 makes plt.subplots return a bare Axes unless squeeze=False keeps ax[i, j] indexing valid.
     fig = plot_estimated_matrix(fake_posterior_idata, _matrix_dsge_stub(1), matrix_name="state_chol_corr")
-    assert isinstance(fig, Figure)
     assert len(fig.axes) == 1
