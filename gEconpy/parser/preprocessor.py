@@ -153,7 +153,7 @@ def preprocess_file(
     validate: bool = True,
 ) -> ParseResult:
     """
-    Read a GCN file and parse it with :func:`preprocess`.
+    Read a GCN file and parse it with :func:`~gEconpy.parser.preprocessor.preprocess`.
 
     Parameters
     ----------

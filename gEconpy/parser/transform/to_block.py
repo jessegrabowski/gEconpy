@@ -34,7 +34,8 @@ def ast_model_to_block_dict(
     """
     Convert every block of a model AST to a solved :class:`~gEconpy.model.block.basic.Block`.
 
-    Each block has its deep time indices expanded with :func:`expand_block_time_indices`, is converted with
+    Each block has its deep time indices expanded with
+    :func:`~gEconpy.parser.transform.expand_time_indices.expand_block_time_indices`, is converted with
     :func:`ast_block_to_block`, and then has its optimization problem solved. The steady-state block is skipped.
 
     Parameters

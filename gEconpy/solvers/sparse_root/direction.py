@@ -51,7 +51,9 @@ class NewtonDirection:
         Sparse linear solver called as ``linear_solver(A, b)``. Defaults to :func:`scipy.sparse.linalg.spsolve`.
     """
 
-    linear_solver: Callable = spsolve
+    # A function stored directly as the class attribute becomes the attribute's docstring under autodoc, and
+    # scipy's spsolve docstring uses roles Sphinx does not define, so the default lives in a factory.
+    linear_solver: Callable = field(default_factory=lambda: spsolve)
 
     def compute(
         self,
@@ -95,7 +97,7 @@ class ChordDirection:
         Number of direction computations between Jacobian refreshes. Defaults to 5.
     """
 
-    linear_solver: Callable = spsolve
+    linear_solver: Callable = field(default_factory=lambda: spsolve)
     recompute_every: int = 5
     _cached_jac: sp.spmatrix | None = field(init=False, repr=False, default=None)
     _call_count: int = field(init=False, repr=False, default=0)

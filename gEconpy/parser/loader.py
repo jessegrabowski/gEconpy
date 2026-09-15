@@ -120,7 +120,7 @@ def ast_model_to_primitives(
     source: str | None = None,
 ) -> ModelPrimitives:
     """
-    Build :class:`~gEconpy.model.block.Block` objects from a parsed model, solve them, and collect the primitives.
+    Build :class:`~gEconpy.model.block.basic.Block` objects from a parsed model, solve them, and collect the primitives.
 
     Parameters
     ----------

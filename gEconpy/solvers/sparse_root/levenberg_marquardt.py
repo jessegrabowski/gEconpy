@@ -45,7 +45,7 @@ class LevenbergMarquardt:
     min_lam: float = 1e-15
     max_lam: float = 1e15
     max_reject: int = 50
-    linear_solver: Callable = spsolve
+    linear_solver: Callable = field(default_factory=lambda: spsolve)
 
     _lam: float = field(init=False, repr=False, default=0.0)
 

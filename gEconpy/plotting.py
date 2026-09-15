@@ -1298,9 +1298,8 @@ def plot_kalman_filter(
     Parameters
     ----------
     idata : DataTree
-        Conditional prior or posterior samples, as returned by
-        :meth:`~gEconpy.model.statespace.DSGEStateSpace.sample_conditional_prior` or
-        :meth:`~gEconpy.model.statespace.DSGEStateSpace.sample_conditional_posterior`.
+        Conditional prior or posterior samples, as returned by ``sample_conditional_prior`` or
+        ``sample_conditional_posterior`` of :class:`~gEconpy.model.statespace.DSGEStateSpace`.
     data : DataFrame
         Observed data. Columns that match a plotted state are drawn as a dashed black line.
     kalman_output : {"predicted", "filtered", "smoothed"}, optional
@@ -1517,7 +1516,7 @@ def plot_posterior_with_prior(
         Keyword arguments used to create the figure. Defaults to 14 inches wide, 3 inches per row of panels, at
         144 dpi.
     plot_posterior_kwargs : dict, optional
-        Keyword arguments forwarded to :func:`arviz_plots.plot_dist`. Empty by default.
+        Keyword arguments forwarded to :func:`arviz.plot_dist`. Empty by default.
 
     Returns
     -------

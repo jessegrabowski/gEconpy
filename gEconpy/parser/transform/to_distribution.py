@@ -82,7 +82,7 @@ def distributions_from_calibration(
     Parameters
     ----------
     calibration_items : list of GCNEquation or GCNDistribution
-        The calibration list of a :class:`~gEconpy.parser.ast.GCNBlock`.
+        The calibration list of a :class:`~gEconpy.parser.ast.nodes.GCNBlock`.
 
     Returns
     -------

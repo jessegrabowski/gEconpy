@@ -1420,9 +1420,8 @@ def data_from_prior(
     random_seed : Generator or int, optional
         Seed for every random draw. Defaults to None.
     mvn_method : str, optional
-        Multivariate normal sampling method passed to
-        :meth:`~pymc_extras.statespace.core.statespace.PyMCStateSpace.sample_unconditional_prior`. Defaults to
-        ``"svd"``.
+        Multivariate normal sampling method passed to ``sample_unconditional_prior`` of
+        :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace`. Defaults to ``"svd"``.
     build_statespace_kwargs : dict, optional
         Keyword arguments forwarded to :meth:`DSGEStateSpace.build_statespace_graph`. Defaults to None.
 

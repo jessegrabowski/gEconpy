@@ -284,8 +284,8 @@ class Block:
 
         A generated multiplier (named ``lambda__*``) that appears in a two-term identity ``x = y`` or ``x = -y`` is
         solved for and substituted out of every equation. User-named multipliers stay, matching gEcon. Every
-        remaining equation is then passed through :func:`sympy.powsimp` to collapse the ``x**e / x`` patterns that
-        chain-rule differentiation leaves behind.
+        remaining equation is then passed through :func:`~sympy.simplify.powsimp.powsimp` to collapse the ``x**e / x``
+        patterns that chain-rule differentiation leaves behind.
 
         Examples
         --------
@@ -626,7 +626,7 @@ class Block:
         The default differentiates the Lagrangian through time with :func:`~gEconpy.utilities.diff_through_time`.
         Subclasses such as :class:`~gEconpy.model.block.cobb_douglas.CobbDouglasBlock` override this to emit a
         closed form for the constraint derivative, which is far smaller than the chain-rule expansion
-        :func:`sympy.diff` produces.
+        :func:`~sympy.core.function.diff` produces.
         """
         return diff_through_time(lagrange, control, discount_factor)
 

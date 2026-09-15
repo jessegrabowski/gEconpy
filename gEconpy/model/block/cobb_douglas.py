@@ -30,8 +30,8 @@ class CobbDouglasBlock(Block):
             = \frac{\partial \text{obj}}{\partial x_i} + \mu \, a_i \, \frac{Y}{x_i}
 
     where :math:`\mu` is the multiplier on the production constraint. The constraint itself is never passed to
-    :func:`sympy.diff`, so the chain-rule expansion :math:`a_i A x_i^{a_i - 1} \prod_{j \neq i} x_j^{a_j}` never
-    enters the compiled graph.
+    :func:`~sympy.core.function.diff`, so the chain-rule expansion
+    :math:`a_i A x_i^{a_i - 1} \prod_{j \neq i} x_j^{a_j}` never enters the compiled graph.
 
     The parser constructs this class through :func:`~gEconpy.model.block.registry.dispatch_block` whenever
     :meth:`detect` matches. Its constructor takes the same arguments as :class:`~gEconpy.model.block.basic.Block`.

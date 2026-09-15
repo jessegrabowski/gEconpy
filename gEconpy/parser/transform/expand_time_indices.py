@@ -66,7 +66,7 @@ def expand_block_time_indices(block: GCNBlock) -> GCNBlock:
 
 def expand_model_time_indices(model: GCNModel) -> GCNModel:
     """
-    Apply :func:`expand_block_time_indices` to every block of a model.
+    Apply :func:`~gEconpy.parser.transform.expand_time_indices.expand_block_time_indices` to every block of a model.
 
     Parameters
     ----------

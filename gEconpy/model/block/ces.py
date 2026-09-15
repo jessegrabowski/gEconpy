@@ -35,9 +35,9 @@ class CESBlock(Block):
               + \mu \, \text{share}_i \, A^s \left(\frac{Y}{x_i}\right)^{1-s}
 
     where :math:`\mu` is the multiplier on the production constraint and the :math:`A^s` factor is dropped when the
-    constraint has no productivity term. The constraint itself is never passed to :func:`sympy.diff`, so the
-    chain-rule expansion through the inner sum and the double exponent :math:`\text{inner}^{1/s - 1}` never enters
-    the compiled graph.
+    constraint has no productivity term. The constraint itself is never passed to :func:`~sympy.core.function.diff`,
+    so the chain-rule expansion through the inner sum and the double exponent :math:`\text{inner}^{1/s - 1}` never
+    enters the compiled graph.
 
     The parser constructs this class through :func:`~gEconpy.model.block.registry.dispatch_block` whenever
     :meth:`detect` matches. Its constructor takes the same arguments as :class:`~gEconpy.model.block.basic.Block`.
