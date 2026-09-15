@@ -1,44 +1,44 @@
 options
 {
-	output logfile = FALSE;
-	output LaTeX = FALSE;
+    output logfile = FALSE;
+    output LaTeX = FALSE;
 };
 
 tryreduce
 {
-	U[], TC[];
+    U[], TC[];
 };
 
 block HOUSEHOLD
 {
-	definitions
-	{
-		u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) - L[] ^ (1 + sigma_L) / (1 + sigma_L);
-	};
+    definitions
+    {
+        u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) - L[] ^ (1 + sigma_L) / (1 + sigma_L);
+    };
 
-	controls
-	{
-		C[], L[], I[], K[];
-	};
+    controls
+    {
+        C[], L[], I[], K[];
+    };
 
-	objective
-	{
-		U[] = u[] + beta * E[][U[1]];
-	};
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
 
-	constraints
-	{
-		C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
-		K[] = (1 - delta) * K[-1] + I[];
-	};
+    constraints
+    {
+        C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
+        K[] = (1 - delta) * K[-1] + I[];
+    };
 
-	calibration
-	{
-		beta = 0.99;
-		delta = 0.02;
-		sigma_C = 1.5;
-		sigma_L = 2.0;
-	};
+    calibration
+    {
+        beta = 0.99;
+        delta = 0.02;
+        sigma_C = 1.5;
+        sigma_L = 2.0;
+    };
 };
 
 block FIRM

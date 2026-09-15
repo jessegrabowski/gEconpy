@@ -13,15 +13,15 @@ def matrix_to_dataframe(
 
     Parameters
     ----------
-    matrix: np.ndarray
+    matrix : np.ndarray
         DSGE matrix to convert to a DataFrame. Each dimension should have shape n_variables or n_shocks.
-    model: Model
+    model : Model
         DSGE model object.
-    dim1: str, optional
+    dim1 : str, optional
         Name of the first dimension. One of ``'variable'``, ``'equation'``, or ``'shock'``.
-    dim2: str, optional
+    dim2 : str, optional
         Name of the second dimension.
-    round: int, optional
+    round : int, optional
         Decimal places.
 
     Returns

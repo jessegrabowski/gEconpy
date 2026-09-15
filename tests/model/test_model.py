@@ -25,6 +25,7 @@ from gEconpy.model.perturbation import (
 from gEconpy.model.simulate import impulse_response_function, simulate
 from gEconpy.model.statistics import (
     autocorrelation_matrix,
+    autocovariance_matrix,
     build_Q_matrix,
     eigenvalue_sensitivity,
     matrix_to_dataframe,
@@ -869,6 +870,29 @@ def test_autocovariance_matrix(gcn_file, rng):
             rtol=1e-8,
             err_msg=f"Error computing {state} autocovariance in {gcn_file}",
         )
+
+
+@pytest.mark.parametrize(
+    "gcn_file",
+    [
+        "one_block_1_ss.gcn",
+        "open_rbc.gcn",
+        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
+        "rbc_linearized.gcn",
+    ],
+)
+def test_autocovariance_matrix_lag_zero_is_stationary_covariance(gcn_file):
+    model = load_and_cache_model(gcn_file)
+    shock_std_dict = {shock.base_name: 0.1 for shock in model.shocks}
+
+    autocov = autocovariance_matrix(
+        model, shock_std_dict=shock_std_dict, solver="gensys", verbose=False, return_xr=False
+    )
+    Sigma = stationary_covariance_matrix(
+        model, shock_std_dict=shock_std_dict, solver="gensys", verbose=False, return_df=False
+    )
+
+    assert_allclose(autocov[0], Sigma, atol=1e-8, rtol=1e-8)
 
 
 def setup_cov_arguments(argument, n_shocks, model):

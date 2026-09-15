@@ -10,7 +10,8 @@ _REGISTRY: list[type[Block]] = []
 
 
 def register_block(cls: type[Block]) -> type[Block]:
-    """Register a :class:`Block` subclass for dispatch.
+    """
+    Register a :class:`~gEconpy.model.block.basic.Block` subclass for dispatch.
 
     Intended for use as a decorator on subclass definitions. Subclasses are appended in registration order, so callers
     who care about precedence should ensure the simpler form is imported (and thus registered) first.
@@ -48,14 +49,51 @@ def dispatch_block(
     symbol_locations: dict | None = None,
     ss_solution_dict=None,
 ) -> Block:
-    """Construct a :class:`Block` or one of its specialized subclasses.
+    """
+    Construct a :class:`~gEconpy.model.block.basic.Block` or one of its specialized subclasses.
 
-    Walks the registry in order. The first subclass whose ``detect`` returns True is constructed with the same kwargs.
-    If none match, returns a general :class:`Block`. Detection is conservative: false positives (silent miss of
-    user-added terms) are bugs; false negatives (no dispatch, slow path) are acceptable.
+    Walk the registry in order and construct the first subclass whose ``detect`` returns True, passing it the same
+    keyword arguments. If none match, return a general :class:`~gEconpy.model.block.basic.Block`. Detection is
+    conservative, so a missed dispatch costs only speed while a false positive is a bug.
 
-    Parameters mirror :class:`Block.__init__` exactly so the dispatcher is a drop-in replacement for ``Block(...)`` at
-    the parser construction site.
+    Parameters mirror :class:`~gEconpy.model.block.basic.Block` exactly, so the dispatcher is a drop-in replacement
+    for ``Block(...)`` at the parser construction site.
+
+    Parameters
+    ----------
+    name : str
+        The name of the block.
+    definitions : dict mapping int to sp.Eq, optional
+        Definition equations, indexed by equation number.
+    controls : list of TimeAwareSymbol, optional
+        Control variables.
+    objective : dict mapping int to sp.Eq, optional
+        The objective equation, indexed by equation number.
+    constraints : dict mapping int to sp.Eq, optional
+        Constraint equations, indexed by equation number.
+    identities : dict mapping int to sp.Eq, optional
+        Identity equations, indexed by equation number.
+    calibration : dict mapping int to sp.Eq, optional
+        Calibration equations, indexed by equation number.
+    shocks : list of TimeAwareSymbol, optional
+        Shock variables.
+    multipliers : dict mapping int to TimeAwareSymbol, optional
+        Mapping from constraint index to the Lagrange multiplier on that constraint.
+    equation_flags : dict mapping int to dict, optional
+        Mapping from equation index to that equation's flag dictionary.
+    source : str, optional
+        The source code of the GCN file, used for rich error reporting.
+    symbol_locations : dict, optional
+        Mapping from symbol name to its ParseLocation in the source, used for rich error reporting during
+        validation.
+    ss_solution_dict : SymbolDictionary, optional
+        Analytically known steady-state solutions. Used to resolve calibration expressions that reference
+        steady-state variables.
+
+    Returns
+    -------
+    block : Block
+        The constructed block, of the most specific registered subclass that matches.
     """
     kwargs = {
         "name": name,

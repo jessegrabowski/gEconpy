@@ -28,12 +28,12 @@ block STEADY_STATE
         z[ss] = 1;
 
         tau_C[ss] = tau_C;
-		tau_K[ss] = tau_K;
-		tau_L[ss] = tau_L;
+        tau_K[ss] = tau_K;
+        tau_L[ss] = tau_L;
 
         SDF[ss] = beta;
 
-		r[ss] = (1 + tau_C[ss]) / (1 - tau_K[ss]) * (1 / beta - (1 - delta));
+        r[ss] = (1 + tau_C[ss]) / (1 - tau_K[ss]) * (1 / beta - (1 - delta));
         i[ss] = pi[ss] / beta - 1;
 
         P_reset[ss] = ((1 - phi_p * pi[ss] ^ (epsilon_p - 1)) / (1 - phi_p)) ^ (1 / (1 - epsilon_p));
@@ -85,7 +85,7 @@ block HOUSEHOLD
     definitions
     {
         u[] = (C[] - phi_H * C[-1]) ^ (1 - sigma) / (1 - sigma) - theta[] * N[] ^ (1 + chi) / (1 + chi);
-		Psi_z[] = psi_z_1 * (z[] - 1) + psi_z / 2 * (z[] - 1) ^ 2;
+        Psi_z[] = psi_z_1 * (z[] - 1) + psi_z / 2 * (z[] - 1) ^ 2;
     };
 
     objective
@@ -128,16 +128,16 @@ block HOUSEHOLD
         sigma ~ maxent(Gamma(), lower=1.5, upper=5.0) = 3;
         theta ~ maxent(Gamma(), lower=0.8, upper=3.0) = 1.0;
         chi ~ maxent(Gamma(), lower=0.8, upper=3.0) = 1.0;
-        gamma_I	~ maxent(Gamma(), lower=3.0, upper=10.0, mass=0.99) = 6.32;
+        gamma_I ~ maxent(Gamma(), lower=3.0, upper=10.0, mass=0.99) = 6.32;
         phi_H ~ Beta(alpha=3, beta=3) = 0.75;
 
         rho_beta ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
         rho_theta ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
         rho_I ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
-		psi_z ~ maxent(Beta(), lower=0.05, upper=0.30) = 0.169;
+        psi_z ~ maxent(Beta(), lower=0.05, upper=0.30) = 0.169;
 
-		# Choose this to be r[ss] so that z[] has no effect on the steady-state
-		psi_z_1 = (1 + tau_C) * (1 / beta - (1 - delta));
+        # Choose this to be r[ss] so that z[] has no effect on the steady-state
+        psi_z_1 = (1 + tau_C) * (1 / beta - (1 - delta));
     };
 };
 
@@ -256,9 +256,9 @@ block GOVERNMENT
     definitions
     {
         tax_income[] = tau_C[] * (C[] + I[]) +
-					   tau_K[] * z[] * K[-1] * r[] +
-					   tau_L[] * N[] * w[] +
-					   T[];
+                       tau_K[] * z[] * K[-1] * r[] +
+                       tau_L[] * N[] * w[] +
+                       T[];
     };
 
     identities
@@ -271,22 +271,22 @@ block GOVERNMENT
                     phi_Y * (log(Y[]) - log(Y[ss]))) +
                 epsilon_i[];
 
-		log(pi_obj[]) = (1 - rho_pi_dot) * log(pi_bar) +
-			rho_pi_dot * log(pi_obj[-1]) + epsilon_pi_obj[];
+        log(pi_obj[]) = (1 - rho_pi_dot) * log(pi_bar) +
+            rho_pi_dot * log(pi_obj[-1]) + epsilon_pi_obj[];
 
         # Fiscal authority
         tau_C[] = (1 - rho_tau_C) * tau_C +
                       rho_tau_C * tau_C[-1] +
-		              (1 - rho_tau_C) * phi_tau_C * (log(Y[]) - log(Y[ss]))
-		              + epsilon_tau_C[];
+                      (1 - rho_tau_C) * phi_tau_C * (log(Y[]) - log(Y[ss]))
+                      + epsilon_tau_C[];
         tau_K[] = (1 - rho_tau_K) * tau_K +
                       rho_tau_K * tau_K[-1] +
-		              (1 - rho_tau_K) * phi_tau_K * (log(Y[]) - log(Y[ss]))
-		              + epsilon_tau_K[];
+                      (1 - rho_tau_K) * phi_tau_K * (log(Y[]) - log(Y[ss]))
+                      + epsilon_tau_K[];
         tau_L[] = (1 - rho_tau_L) * tau_L +
                       rho_tau_L * tau_L[-1] +
-		              (1 - rho_tau_L) * phi_tau_L * (log(Y[]) - log(Y[ss]))
-		              + epsilon_tau_L[];
+                      (1 - rho_tau_L) * phi_tau_L * (log(Y[]) - log(Y[ss]))
+                      + epsilon_tau_L[];
 
         # Spending process
         log(G[]) = (1 - rho_G) * log(G[ss]) + rho_G * log(G[-1]) + epsilon_G[];

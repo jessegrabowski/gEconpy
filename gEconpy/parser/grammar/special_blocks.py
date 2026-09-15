@@ -95,7 +95,7 @@ def _build_assumptions(tokens) -> dict[str, dict[str, bool]]:
             assumption_kwargs[var_name][assumption_name] = True
             # ``unit_interval`` is not a native sympy predicate; it is stored inertly in ``assumptions0`` for
             # the steady-state solver to read (routes the variable to a logit transform). It still implies
-            # positivity, so set sympy's ``positive`` too — that one carries real algebraic implications.
+            # positivity, so set sympy's ``positive`` too, and that one carries real algebraic implications.
             if assumption_name == "unit_interval":
                 assumption_kwargs[var_name]["positive"] = True
 
@@ -109,7 +109,19 @@ SPECIAL_BLOCK = OPTIONS_BLOCK | TRYREDUCE_BLOCK | ASSUMPTIONS_BLOCK
 
 
 def parse_options(text: str) -> dict[str, bool | str]:
-    """Parse an options block from GCN text."""
+    """
+    Parse the ``options`` block of a GCN file.
+
+    Parameters
+    ----------
+    text : str
+        GCN text to scan for an options block.
+
+    Returns
+    -------
+    options : dict mapping str to bool or str
+        The declared options. Empty if the text has no options block.
+    """
     try:
         for result, _start, _end in OPTIONS_BLOCK.scan_string(text):
             return result[0]
@@ -119,7 +131,19 @@ def parse_options(text: str) -> dict[str, bool | str]:
 
 
 def parse_tryreduce(text: str) -> list[str]:
-    """Parse a tryreduce block from GCN text."""
+    """
+    Parse the ``tryreduce`` block of a GCN file.
+
+    Parameters
+    ----------
+    text : str
+        GCN text to scan for a tryreduce block.
+
+    Returns
+    -------
+    variables : list of str
+        Names of the variables to try to eliminate. Empty if the text has no tryreduce block.
+    """
     try:
         for result, _start, _end in TRYREDUCE_BLOCK.scan_string(text):
             return result[0]
@@ -129,7 +153,20 @@ def parse_tryreduce(text: str) -> list[str]:
 
 
 def parse_assumptions(text: str) -> dict[str, dict[str, bool]]:
-    """Parse an assumptions block from GCN text."""
+    """
+    Parse the ``assumptions`` block of a GCN file.
+
+    Parameters
+    ----------
+    text : str
+        GCN text to scan for an assumptions block.
+
+    Returns
+    -------
+    assumptions : dict mapping str to dict
+        Sympy assumptions for each named variable. If the text has no assumptions block, returns a default
+        dictionary that supplies the package defaults for any name.
+    """
     try:
         for result, _start, _end in ASSUMPTIONS_BLOCK.scan_string(text):
             return result[0]
@@ -139,7 +176,21 @@ def parse_assumptions(text: str) -> dict[str, dict[str, bool]]:
 
 
 def extract_special_block_content(text: str, block_name: str) -> str | None:
-    """Extract the raw content of a special block from text."""
+    """
+    Extract the raw text of a special block, braces and trailing semicolon included.
+
+    Parameters
+    ----------
+    text : str
+        GCN text to search.
+    block_name : str
+        Name of the block to extract, for example ``options``. Matching ignores case.
+
+    Returns
+    -------
+    content : str or None
+        The matched text, or None if the block is not present.
+    """
     pattern = rf"{block_name}\s*\{{.*?\}};"
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     if match:
@@ -148,7 +199,21 @@ def extract_special_block_content(text: str, block_name: str) -> str | None:
 
 
 def remove_special_block(text: str, block_name: str) -> str:
-    """Remove a special block from text."""
+    """
+    Delete every occurrence of a special block from GCN text.
+
+    Parameters
+    ----------
+    text : str
+        GCN text to edit.
+    block_name : str
+        Name of the block to remove, for example ``options``. Matching ignores case.
+
+    Returns
+    -------
+    text : str
+        The text with the block removed.
+    """
     pattern = rf"{block_name}\s*\{{.*?\}};"
     return re.sub(pattern, "", text, flags=re.DOTALL | re.IGNORECASE)
 

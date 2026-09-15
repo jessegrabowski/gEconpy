@@ -26,7 +26,7 @@ def natural_sort_key(symbol: TimeAwareSymbol) -> list:
 
 
 def collect_time_aware_atoms(equations: list[sp.Expr]) -> set[TimeAwareSymbol]:
-    """Collect all :class:`TimeAwareSymbol` atoms from a list of sympy expressions.
+    """Collect all :class:`~gEconpy.classes.time_aware_symbol.TimeAwareSymbol` atoms from a list of sympy expressions.
 
     Parameters
     ----------

@@ -1,6 +1,6 @@
 tryreduce
 {
-	U[], TC[];
+    U[], TC[];
 };
 
 assumptions
@@ -44,36 +44,36 @@ block STEADY_STATE
 
 block HOUSEHOLD
 {
-	definitions
-	{
-		u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) - Theta * L[] ^ (1 + sigma_L) / (1 + sigma_L);
-	};
+    definitions
+    {
+        u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C) - Theta * L[] ^ (1 + sigma_L) / (1 + sigma_L);
+    };
 
-	controls
-	{
-		C[], L[], I[], K[];
-	};
+    controls
+    {
+        C[], L[], I[], K[];
+    };
 
-	objective
-	{
-		U[] = u[] + beta * E[][U[1]];
-	};
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
 
-	constraints
-	{
-		C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
+    constraints
+    {
+        C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
 
-		K[] = (1 - delta) * K[-1] + I[];
-	};
+        K[] = (1 - delta) * K[-1] + I[];
+    };
 
-	calibration
-	{
-		beta = 0.99;
-		delta = 0.02;
-		sigma_C = 1.5;
-		sigma_L = 2.0;
-		Theta = 1.0;
-	};
+    calibration
+    {
+        beta = 0.99;
+        delta = 0.02;
+        sigma_C = 1.5;
+        sigma_L = 2.0;
+        Theta = 1.0;
+    };
 };
 
 block FIRM

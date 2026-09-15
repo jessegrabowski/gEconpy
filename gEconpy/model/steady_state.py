@@ -29,14 +29,38 @@ ERROR_FUNCTIONS = Literal["squared", "mean_squared", "abs", "l2-norm"]
 
 
 def make_steady_state_shock_dict(shocks: list[TimeAwareSymbol]) -> SymbolDictionary:
+    """
+    Build a substitution dictionary setting every shock to zero in the steady state.
+
+    Parameters
+    ----------
+    shocks : list of TimeAwareSymbol
+        Model shocks.
+
+    Returns
+    -------
+    shock_dict : SymbolDictionary
+        Mapping from each steady-state shock symbol to 0.0.
+    """
     return SymbolDictionary.fromkeys(shocks, 0.0).to_ss()
 
 
-def make_steady_state_variables(variables: list[TimeAwareSymbol]) -> list[sp.Symbol]:
-    return [x.to_ss() for x in variables]
-
-
 def system_to_steady_state(system: list[sp.Expr], shocks: list[TimeAwareSymbol]) -> list[sp.Expr]:
+    """
+    Rewrite a dynamic system of equations in steady-state form.
+
+    Parameters
+    ----------
+    system : list of sp.Expr
+        Model equations, written in time-indexed variables.
+    shocks : list of TimeAwareSymbol
+        Model shocks, which are set to zero.
+
+    Returns
+    -------
+    system : list of sp.Expr
+        Simplified steady-state equations.
+    """
     shock_dict = make_steady_state_shock_dict(shocks)
     return [eq_to_ss(eq).subs(shock_dict).simplify() for eq in system]
 
@@ -321,6 +345,35 @@ def compile_known_ss(
     stack_return: bool | None = None,
     **kwargs,
 ):
+    """
+    Compile a function returning the user-provided analytic steady-state solution.
+
+    Parameters
+    ----------
+    ss_solution_dict : SymbolDictionary
+        Known steady-state values, keyed by variable. If empty, no function is compiled.
+    variables : list of TimeAwareSymbol or sp.Symbol
+        Model variables, used to order the outputs of the compiled function.
+    parameters : list of sp.Symbol
+        Model parameters, which become the inputs of the compiled function.
+    cache : dict
+        Sympytensor cache mapping cache keys to pytensor nodes, shared across conversions.
+    return_symbolic : bool, optional
+        If True, return a symbolic pytensor graph instead of a compiled function. Default False.
+    stack_return : bool, optional
+        If True, stack the outputs into a single array. Defaults to the opposite of ``return_symbolic``.
+    **kwargs
+        Additional keyword arguments forwarded to :func:`~gEconpy.model.compile.compile_function`.
+
+    Returns
+    -------
+    f_ss : callable, dict, or None
+        Function mapping parameter values to steady-state values, or a dictionary of pytensor nodes if
+        ``return_symbolic`` is True. None if ``ss_solution_dict`` is empty.
+    cache : dict
+        Updated cache dictionary.
+    """
+
     def to_ss(x):
         if isinstance(x, TimeAwareSymbol):
             return x.to_ss()
@@ -357,6 +410,14 @@ def compile_known_ss(
 
 
 def print_steady_state(ss_dict: SteadyStateResults):
+    """
+    Log a table of steady-state values, listing calibrated parameters after the variables.
+
+    Parameters
+    ----------
+    ss_dict : SteadyStateResults
+        Steady-state values to print. A warning is included if the results are not flagged as successful.
+    """
     output = []
     if not ss_dict.success:
         output.append("Values come from the latest solver iteration but are NOT a valid steady state.")

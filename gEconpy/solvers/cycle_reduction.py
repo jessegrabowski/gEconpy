@@ -36,30 +36,30 @@ def cycle_reduction_numpy(
 
     Parameters
     ----------
-    A0: Arraylike
+    A0 : ndarray
         Coefficient matrix associated with the constant term of the matrix quadratic equation. In DSGE models, this is
         dF_d_t-1, the derivative of the system with respect to variables that enter as lags
-    A1: ArrayLike
+    A1 : ndarray
         Coefficient matrix associated with the linear term of the matrix quadratic equation. In DSGE models, this is
         dF_d_t, the derivative of the system with respect to variables that enter at the current time
-    A2: ArrayLike
+    A2 : ndarray
         Coefficient matrix associated with the quadratic term of the matrix quadratic equation. In DSGE models, this is
         dF_d_t+1, the derivative of the system with respect to variables that enter in expectation
-    max_iter: int, default: 1000
-        Maximum number of iterations to perform before giving up.
-    tol: float, default: 1e-7
-        Floating point tolerance used to detect algorithmic convergence
+    max_iter : int, optional
+        Maximum number of iterations to perform before giving up. Defaults to 1000.
+    tol : float, optional
+        Floating point tolerance used to detect algorithmic convergence. Defaults to 1e-7.
 
     Returns
     -------
-    X: array
-        Solution to matrix quadratic equation
-    res: array
-        Residual of the matrix quadratic equation, or None if the algorithm fails to converge
-    result: str
+    X : ndarray
+        Solution to the matrix quadratic equation, or None if the algorithm fails to converge.
+    res : ndarray
+        Residual of the matrix quadratic equation, or None if the algorithm fails to converge.
+    result : str
         String indicating the result of the optimization. If the algorithm converges, this will be "Optimization
         successful". If the algorithm fails to converge, this will be "Iteration on all matrices failed to converged"
-    log_norm: float
+    log_norm : float
         Logarithm of the L1 norm of the matrix A1. This is useful for diagnosing the success of the algorithm.
 
     References
@@ -187,6 +187,15 @@ class CycleReductionWrapper(Op):
     gufunc_signature = "(n,n),(n,n),(n,n)->(n,n)"
 
     def __init__(self, max_iter=1000, tol=1e-9):
+        """Create the Op.
+
+        Parameters
+        ----------
+        max_iter : int
+            Maximum number of cycle reduction iterations. Defaults to 1000.
+        tol : float
+            Floating point tolerance used to detect convergence. Defaults to 1e-9.
+        """
         self.max_iter = int(max_iter)
         self.tol = tol
         super().__init__()
@@ -203,6 +212,7 @@ class CycleReductionWrapper(Op):
         return [(n, n)]
 
     def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
+        """Solve for the policy matrix by cycle reduction."""
         A, B, C = inputs
         T, _res, _result, _log_norm = cycle_reduction_numpy(A, B, C, max_iter=self.max_iter, tol=self.tol)
 
@@ -213,6 +223,32 @@ class CycleReductionWrapper(Op):
 
 
 def cycle_reduction_pt(A, B, C, D, max_iter=1000, tol=1e-9):
+    """Build a symbolic graph that solves a linearized DSGE system by cycle reduction.
+
+    The cycle reduction iteration runs inside an Op, so the graph itself holds a single node.
+
+    Parameters
+    ----------
+    A : TensorVariable
+        Jacobian of the system with respect to variables at t-1, evaluated at the steady state.
+    B : TensorVariable
+        Jacobian of the system with respect to variables at t, evaluated at the steady state.
+    C : TensorVariable
+        Jacobian of the system with respect to variables at t+1, evaluated at the steady state.
+    D : TensorVariable
+        Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
+    max_iter : int, optional
+        Maximum number of cycle reduction iterations. Defaults to 1000.
+    tol : float, optional
+        Floating point tolerance used to detect convergence. Defaults to 1e-9.
+
+    Returns
+    -------
+    T : TensorVariable
+        Transition matrix, giving the effect of variable values at t on their values at t+1.
+    R : TensorVariable
+        Selection matrix, giving the effect of exogenous shocks at t on variable values at t+1.
+    """
     T = CycleReductionWrapper(max_iter=max_iter, tol=tol)(A, B, C)
     R = pt_compute_selection_matrix(B, C, D, T)
     return T, R
@@ -301,6 +337,38 @@ def scan_cycle_reduction(
     tol: float = 1e-7,
     use_adjoint_gradients: bool = True,
 ):
+    """Build a symbolic graph that solves a linearized DSGE system with an unrolled cycle reduction scan.
+
+    Unlike :func:`~gEconpy.solvers.cycle_reduction.cycle_reduction_pt`, the iteration is a pytensor scan, so
+    the graph can be differentiated directly.
+
+    Parameters
+    ----------
+    A : TensorVariable
+        Jacobian of the system with respect to variables at t-1, evaluated at the steady state.
+    B : TensorVariable
+        Jacobian of the system with respect to variables at t, evaluated at the steady state.
+    C : TensorVariable
+        Jacobian of the system with respect to variables at t+1, evaluated at the steady state.
+    D : TensorVariable
+        Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
+    max_iter : int, optional
+        Number of scan steps. Steps taken after convergence are no-ops. Defaults to 50.
+    tol : float, optional
+        Floating point tolerance used to detect convergence. Defaults to 1e-7.
+    use_adjoint_gradients : bool, optional
+        If True, differentiate with the closed-form adjoints of the matrix quadratic equation instead of
+        backpropagating through the scan. Defaults to True.
+
+    Returns
+    -------
+    T : TensorVariable
+        Transition matrix, giving the effect of variable values at t on their values at t+1.
+    R : TensorVariable
+        Selection matrix, giving the effect of exogenous shocks at t on variable values at t+1.
+    n_steps : TensorVariable
+        Number of cycle reduction steps taken before convergence.
+    """
     A = pt.as_tensor_variable(A, name="A")
     B = pt.as_tensor_variable(B, name="B")
     C = pt.as_tensor_variable(C, name="C")
@@ -338,35 +406,36 @@ def solve_policy_function_with_cycle_reduction(
 
     Parameters
     ----------
-    A: np.ndarray
+    A : ndarray
         Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to past variables
         values that are known when decision-making: those with t-1 subscripts.
-    B: np.ndarray
+    B : ndarray
         Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
         are observed when decision-making: those with t subscripts.
-    C: np.ndarray
+    C : ndarray
         Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to variables that
         enter in expectation when decision-making: those with t+1 subscripts.
-    D: np.ndarray
+    D : ndarray
         Jacobian matrix of the DSGE system, evaluated at the steady state, taken with respect to exogenous shocks.
-    max_iter: int, default: 1000
-        Maximum number of iterations to perform before giving up.
-    tol: float, default: 1e-7
-        Floating point tolerance used to detect algorithmic convergence
-    verbose: bool, default: True
-        If true, prints the sum of squared residuals that result when the system is computed used the solution.
+    max_iter : int, optional
+        Maximum number of iterations to perform before giving up. Defaults to 100.
+    tol : float, optional
+        Floating point tolerance used to detect algorithmic convergence. Defaults to 1e-8.
+    verbose : bool, optional
+        If True, log the sum of squared residuals obtained when the system is evaluated at the solution.
+        Defaults to True.
 
     Returns
     -------
-    T: ArrayLike
+    T : ndarray
         Transition matrix T in state space jargon. Gives the effect of variable values at time t on the
         values of the variables at time t+1.
-    R: ArrayLike
-        Selection matrix R in state space jargon. Gives the effect of exogenous shocks at the t on the values of
+    R : ndarray
+        Selection matrix R in state space jargon. Gives the effect of exogenous shocks at t on the values of
         variables at time t+1.
-    result: str
-        String describing result of the cycle reduction algorithm
-    log_norm: float
+    result : str
+        String describing the result of the cycle reduction algorithm.
+    log_norm : float
         Log L1 matrix norm of the first matrix (A2 -> A1 -> A0) that did not converge.
 
     References

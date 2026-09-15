@@ -18,6 +18,21 @@ from gEconpy.utilities import eq_to_ss
 
 
 def output_to_tensor(x, cache):
+    """
+    Convert a sympy expression to a pytensor variable, mapping plain numbers to constants.
+
+    Parameters
+    ----------
+    x : sp.Expr or float
+        Expression to convert.
+    cache : dict
+        Sympytensor cache mapping cache keys to pytensor nodes, shared across conversions.
+
+    Returns
+    -------
+    x_pt : TensorVariable
+        Pytensor variable corresponding to ``x``.
+    """
     if isinstance(x, int | float | sp.Float | sp.Integer):
         return pytensor.tensor.constant(x, dtype=pytensor.config.floatX)
 
@@ -32,15 +47,15 @@ def dictionary_return_wrapper(f: Callable, outputs: list[sp.Symbol]) -> Callable
 
     Parameters
     ----------
-    f: Callable
-        The function to wrap
-    outputs: list[sp.Symbol]
+    f : callable
+        The function to wrap.
+    outputs : list of sp.Symbol
         The output symbols of the function, in the same order as the outputs of the function.
 
     Returns
     -------
-    inner: Callable
-        The wrapped function
+    inner : callable
+        The wrapped function.
     """
 
     @wraps(f, updated=())
@@ -65,31 +80,27 @@ def compile_function(
 
     Parameters
     ----------
-    inputs: list[sp.Symbol]
+    inputs : list of sp.Symbol
         The inputs to the function.
-
-    outputs: list[Union[sp.Symbol, sp.Expr]]
-        The outputs of the function.
-
-    cache: dict, optional
+    outputs : list of sp.Expr
+        The outputs of the function. A sympy matrix is also accepted.
+    cache : dict, optional
         A dictionary mapping from pytensor symbols to sympy expressions. Used to prevent duplicate mappings from
         sympy symbol to pytensor symbol from being created. Default is an empty dictionary.
-
-    stack_return: bool, optional
-        If True, the function will return a single numpy array with all outputs stacked. Default is False.
-
-    pop_return: bool, optional
-        If True, the function will return only the 0th element of the output. Default is False.
-
-    return_symbolic: bool, default False
-        If True, return a symbolic pytensor computation graph instead of a compiled function.
+    stack_return : bool, optional
+        If True, the function returns a single numpy array with all outputs stacked. Default False.
+    pop_return : bool, optional
+        If True, the function returns only the 0th element of the output. Default False.
+    return_symbolic : bool, optional
+        If True, return a symbolic pytensor computation graph instead of a compiled function. Default False.
+    **kwargs
+        Additional keyword arguments forwarded to :func:`~gEconpy.model.compile.compile_to_pytensor_function`.
 
     Returns
     -------
-    f: Callable
+    f : callable
         A python function that computes the outputs from the inputs.
-
-    cache: dict
+    cache : dict
         A dictionary mapping from sympy symbols to pytensor symbols.
     """
     f, cache = compile_to_pytensor_function(inputs, outputs, cache, stack_return, pop_return, return_symbolic, **kwargs)
@@ -123,9 +134,8 @@ def sympy_to_pytensor(
         Dictionary mapping sympytensor cache keys to pytensor variables. Used to maintain a consistent namespace
         across multiple conversions. Default is an empty dictionary.
     cse : bool, optional
-        Eliminate common subexpressions (``sp.cse``) before conversion. Shrinks the forward graph but inflates
-        gradient compilation, because the shared subexpressions become high-fanout nodes that densify the reverse-mode
-        backward graph; enable only for forward-only compiles. Default False.
+        Eliminate common subexpressions (``sp.cse``) before conversion. This shrinks the forward graph but inflates
+        gradient compilation, so enable it only for forward-only compiles. Default False.
 
     Returns
     -------
@@ -147,7 +157,7 @@ def sympy_to_pytensor(
         # ...) could otherwise collide with a model variable or parameter, both
         # in sp.cse itself and in the shared sympytensor cache keyed below.
         substitutions, reduced = sp.cse(list(exprs), symbols=sp.numbered_symbols("__cse_tmp_"), optimizations="basic")
-        # Build intermediates in topo order — reduced[i] references them by Symbol
+        # Build intermediates in topo order -- reduced[i] references them by Symbol
         # name, so plant each into the cache under sympytensor's key shape before
         # converting the reduced outputs.
         for dummy_sym, rhs in substitutions:
@@ -166,20 +176,16 @@ def build_symbolic_jacobians(
     to_ss: bool = False,
     shocks: list[TimeAwareSymbol] | None = None,
 ) -> list[TensorVariable]:
-    """Build several dense Jacobians via symbolic differentiation, sharing one ``sp.cse`` pass.
+    """
+    Build several dense Jacobians via symbolic differentiation, sharing one ``sp.cse`` pass.
 
-    Each spec is an ``(equations, wrt)`` pair. Every Jacobian entry is differentiated symbolically; a single
-    common-subexpression-elimination pass runs over the union of *all* entries so subexpressions shared across
-    the Jacobians (e.g. the A/B/C/D of a linearized model, which are derivatives of the same equations) are
-    extracted once. The extracted intermediates are planted in ``cache`` and the reduced matrices are
-    materialized through :func:`sympytensor.as_tensor`, whose dense-matrix printer bakes numeric/zero entries
-    into a constant base array and emits a single scatter over the symbolic entries. Pre-sharing keeps the graph
-    small before ``pt.grad`` replicates it, which is where the gradient-compile speedup comes from.
+    Each spec is an ``(equations, wrt)`` pair. One common-subexpression-elimination pass runs over the union of all
+    entries, so subexpressions shared across the Jacobians are extracted once.
 
     Parameters
     ----------
     specs : list of (list of sympy expression, list of sympy Symbol)
-        ``(equations, wrt)`` pairs; one dense Jacobian is built per pair.
+        ``(equations, wrt)`` pairs. One dense Jacobian is built per pair.
     cache : dict
         Sympytensor cache mapping cache keys to pytensor nodes, shared across conversions.
     to_ss : bool, optional
@@ -229,10 +235,11 @@ def build_symbolic_jacobian(
     to_ss: bool = False,
     shocks: list[TimeAwareSymbol] | None = None,
 ) -> TensorVariable:
-    """Build a single dense Jacobian via symbolic differentiation.
+    """
+    Build a single dense Jacobian via symbolic differentiation.
 
-    Thin wrapper over :func:`build_symbolic_jacobians`; CSE runs over this Jacobian's own entries. See that
-    function for details.
+    Thin wrapper over :func:`~gEconpy.model.compile.build_symbolic_jacobians`, with common-subexpression elimination
+    running over this Jacobian's own entries.
 
     Parameters
     ----------
@@ -269,31 +276,30 @@ def compile_to_pytensor_function(
 
     Parameters
     ----------
-    inputs: list[sp.Symbol]
+    inputs : list of sp.Symbol
         The inputs to the function.
-    outputs: list[Union[sp.Symbol, sp.Expr]]
+    outputs : list of sp.Expr
         The outputs of the function.
-    cache: dict
+    cache : dict
         Dictionary mapping sympy symbols to pytensor symbols. Used to maintain namespace scope between different
         compiled functions.
-    stack_return: bool
-        If True, the function will return a single numpy array with all outputs. Otherwise it will return a list
-        of numpy arrays.
-    pop_return: bool
-        If True, the function will return only the 0th element of the output. Used to remove the list wrapper around
+    stack_return : bool
+        If True, the function returns a single numpy array with all outputs. Otherwise it returns a list of numpy
+        arrays.
+    pop_return : bool
+        If True, the function returns only the 0th element of the output. Used to remove the list wrapper around
         single-output functions.
-    return_symbolic: bool
-        If True, the function will return a symbolic pytensor computation graph instead of a compiled function.
-    kwargs: dict
+    return_symbolic : bool
+        If True, return a symbolic pytensor computation graph instead of a compiled function.
+    **kwargs
         Additional keyword arguments passed to ``pytensor.function`` via
-        :func:`~gEconpy.pytensorf.compile.compile_pytensor_function`.
-        Ignored if return_symbolic is True.
+        :func:`~gEconpy.pytensorf.compile.compile_pytensor_function`. Ignored if return_symbolic is True.
 
     Returns
     -------
-    f: Callable
+    f : callable
         The compiled function.
-    cache: dict
+    cache : dict
         Pytensor caching information.
     """
     input_pt, output_pt, cache = sympy_to_pytensor(inputs, outputs, cache)
@@ -319,14 +325,14 @@ def make_cache_key(name: str, cls: sp.Symbol) -> tuple:
 
     Parameters
     ----------
-    name: str
+    name : str
         The name of the sympy symbol.
-    cls: sp.Symbol
-        Type of sympy symbol (e.g. sp.Symbol, sp.Idx, TimeAwareSymbol, etc)
+    cls : type
+        Type of sympy symbol, for example sp.Symbol, sp.Idx, or TimeAwareSymbol.
 
     Returns
     -------
-    key: tuple
+    key : tuple
         A tuple containing information about the sympy symbol.
     """
     return name, cls, (), "floatX", ()
@@ -343,23 +349,22 @@ def make_return_dict_and_update_cache(
 
     Parameters
     ----------
-    input_symbols: list[sp.Symbol]
-        Symbolic inputs to the function being compiled
-    output_tensors: TensorVariable | list[TensorVariable]
-        Output tensors of the function being compiled
-    cache: dict
+    input_symbols : list of sp.Symbol
+        Symbolic inputs to the function being compiled.
+    output_tensors : TensorVariable or list of TensorVariable
+        Output tensors of the function being compiled.
+    cache : dict
         Dictionary mapping sympy symbols to pytensor symbols, used to maintain a consistent namespace between
-        compiled functions
-    cls: sp.Symbol, optional
-        The type of the sympy symbol (e.g. sp.Symbol, sp.Idx, sp.IndexedBase, TimeAwareSymbol, etc). Default is
-        sp.Symbol
+        compiled functions.
+    cls : type, optional
+        The type of the sympy symbol, for example sp.Symbol, sp.Idx, or TimeAwareSymbol. Default sp.Symbol.
 
     Returns
     -------
-    out_dict: dict
-        Dictionary mapping from input symbols to output tensors
-    cache: dict
-        Updated cache dictionary
+    out_dict : dict
+        Dictionary mapping from input symbols to output tensors.
+    cache : dict
+        Updated cache dictionary.
     """
     if cls is None:
         cls = sp.Symbol
@@ -382,10 +387,23 @@ def compile_for_scipy(
     outputs: TensorVariable | list[TensorVariable],
     mode: str | None = None,
 ) -> Callable:
-    """Compile a pytensor graph into a callable that accepts all inputs as keyword arguments.
+    """
+    Compile a pytensor graph into a callable that accepts all inputs as keyword arguments.
 
-    Unused kwargs are silently ignored. Intended for one-off evaluations (e.g. postprocessing at the solution
-    point). For hot-loop scipy calls, use ``pack_and_compile`` instead.
+    Unused keyword arguments are silently ignored. Intended for one-off evaluations. For hot-loop scipy calls, use
+    :func:`~gEconpy.model.compile.pack_and_compile` instead.
+
+    Parameters
+    ----------
+    outputs : TensorVariable or list of TensorVariable
+        Graph outputs to compile.
+    mode : str, optional
+        Pytensor compilation mode. The pytensor default is used if not provided.
+
+    Returns
+    -------
+    wrapper : callable
+        Compiled function accepting its inputs as keyword arguments.
     """
     inputs = list(explicit_graph_inputs(outputs))
     f = compile_pytensor_function(inputs, outputs, mode=mode, on_unused_input="ignore")
@@ -405,7 +423,8 @@ def pack_and_compile(
     param_dict: SymbolDictionary | None = None,
     mode: str | None = None,
 ) -> Callable:
-    """Replace SS variable scalars with ``x_flat[i]`` indexing and compile.
+    """
+    Replace steady-state variable scalars with ``x_flat[i]`` indexing and compile.
 
     Only SS nodes that are actual graph inputs are replaced. If ``param_dict`` is provided, parameter values
     are frozen into the closure and the returned function has signature ``f(x_flat)``; otherwise it is
@@ -424,7 +443,7 @@ def pack_and_compile(
 
     Returns
     -------
-    callable
+    f : callable
         Compiled function.
     """
     graph_inputs = set(explicit_graph_inputs(outputs))

@@ -46,6 +46,13 @@ repos:
       files: ^(pyproject\.toml|pixi\.lock|conda_envs/environment_dev\.yml)$
       pass_filenames: false
 
+    - id: docs-api
+      name: API pages match the source
+      entry: pixi run -e docs docs-api
+      language: system
+      pass_filenames: false
+      files: ^(gEconpy/.*\.py|docs/generate_api\.py)$
+
     - id: notebook_name
       entry: '\(notebook_name\)='
       language: pygrep

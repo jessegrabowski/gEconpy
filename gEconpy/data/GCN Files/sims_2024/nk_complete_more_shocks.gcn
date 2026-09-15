@@ -80,7 +80,7 @@ block HOUSEHOLD
     definitions
     {
         u[] = (C[] - phi_H * C[-1]) ^ (1 - sigma) / (1 - sigma) - theta[] * N[] ^ (1 + chi) / (1 + chi);
-		Psi_z[] = psi_z_1 * (z[] - 1) + psi_z / 2 * (z[] - 1) ^ 2;
+        Psi_z[] = psi_z_1 * (z[] - 1) + psi_z / 2 * (z[] - 1) ^ 2;
     };
 
     objective
@@ -120,16 +120,16 @@ block HOUSEHOLD
         sigma ~ maxent(Gamma(), lower=1.5, upper=5.0) = 3;
         theta ~ maxent(Gamma(), lower=0.8, upper=3.0) = 1.0;
         chi ~ maxent(Gamma(), lower=0.8, upper=3.0) = 1.0;
-        gamma_I	~ maxent(Gamma(), lower=3.0, upper=10.0, mass=0.99) = 6.32;
+        gamma_I ~ maxent(Gamma(), lower=3.0, upper=10.0, mass=0.99) = 6.32;
         phi_H ~ Beta(alpha=3, beta=3) = 0.75;
 
         rho_beta ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
         rho_theta ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
         rho_I ~ maxent(Beta(), lower=0.8, upper=0.99) = 0.9;
-		psi_z ~ maxent(Beta(), lower=0.05, upper=0.30) = 0.169;
+        psi_z ~ maxent(Beta(), lower=0.05, upper=0.30) = 0.169;
 
-		# Choose this to be r[ss] so that z[] has no effect on the steady-state
-		psi_z_1 = 1 / beta - (1 - delta);
+        # Choose this to be r[ss] so that z[] has no effect on the steady-state
+        psi_z_1 = 1 / beta - (1 - delta);
     };
 };
 
@@ -254,8 +254,8 @@ block GOVERNMENT
                     phi_Y * (log(Y[]) - log(Y[ss]))) +
                 epsilon_i[];
 
-		log(pi_obj[]) = (1 - rho_pi_dot) * log(pi_bar) +
-			rho_pi_dot * log(pi_obj[-1]) + epsilon_pi_obj[];
+        log(pi_obj[]) = (1 - rho_pi_dot) * log(pi_bar) +
+            rho_pi_dot * log(pi_obj[-1]) + epsilon_pi_obj[];
 
         # Fiscal authority
         G[] + i[-1] * B[-1] / pi[] = T[] + B[] - B[-1] / pi[];

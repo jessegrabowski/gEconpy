@@ -87,7 +87,7 @@ def determine_n_unstable(
     -----
     Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m.
     This is a thin Python shim over the numba-compiled
-    :func:`_determine_n_unstable_core`, which can't accept `None` for `div`.
+    ``_determine_n_unstable_core``, which cannot accept ``None`` for ``div``.
     """
     compute_div = div is None
     div_eff = 1.01 if compute_div else float(div)
@@ -136,7 +136,7 @@ def build_u_v_d(
         Input matrix to decompose.
     realsmall : float, optional
         Threshold below which singular values are treated as zero. Default
-        :data:`EPSILON`.
+        ``EPSILON``.
     invalid_system : bool, optional
         If True, return zero-sized outputs so downstream code can short-circuit
         an ill-posed system. Default False.
@@ -214,7 +214,7 @@ def _gensys_core(
 
     Uses the scipy ``"ouc"`` sort convention (stable = strictly inside unit
     circle, threshold 1.0), dropping Sims's dynamic-div heuristic. The heuristic
-    only matters for eigenvalues in (1.0, 1.01] — empirically absent from
+    only matters for eigenvalues in (1.0, 1.01] -- empirically absent from
     well-posed DSGE models.
     """
     n = g1.shape[0]
@@ -577,7 +577,7 @@ def _gensys_setup(
     n_eq = A.shape[0]
     n_shocks = D.shape[1]
 
-    # Indices of "lead" columns — those C-columns with any non-negligible entry.
+    # Indices of "lead" columns -- those C-columns with any non-negligible entry.
     col_abs_sum = np.zeros(C.shape[1], dtype=np.float64)
     for j in range(C.shape[1]):
         total = 0.0
@@ -622,6 +622,32 @@ def solve_policy_function_with_gensys(
     tol: float = 1e-8,
     return_all_matrices: bool = True,
 ) -> tuple:
+    """Solve for the policy function of a linearized DSGE system with :func:`~gEconpy.solvers.gensys.gensys`.
+
+    Assembles the gensys canonical form from the Jacobians of the model and passes it to
+    :func:`~gEconpy.solvers.gensys.gensys`.
+
+    Parameters
+    ----------
+    A : ndarray
+        Jacobian of the system with respect to variables at t-1, evaluated at the steady state.
+    B : ndarray
+        Jacobian of the system with respect to variables at t, evaluated at the steady state.
+    C : ndarray
+        Jacobian of the system with respect to variables at t+1, evaluated at the steady state.
+    D : ndarray
+        Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
+    tol : float, optional
+        Floating point tolerance used to detect zero columns and to judge rank. Defaults to 1e-8.
+    return_all_matrices : bool, optional
+        Whether to return every matrix computed by :func:`~gEconpy.solvers.gensys.gensys`, or only the policy
+        function and the existence and uniqueness codes. Defaults to True.
+
+    Returns
+    -------
+    result : tuple
+        Output of :func:`~gEconpy.solvers.gensys.gensys`, whose contents depend on ``return_all_matrices``.
+    """
     A_f = np.ascontiguousarray(A, dtype=np.float64)
     B_f = np.ascontiguousarray(B, dtype=np.float64)
     C_f = np.ascontiguousarray(C, dtype=np.float64)
@@ -636,6 +662,14 @@ class GensysWrapper(Op):
     gufunc_signature = "(n,n),(n,n),(n,n),(n,k)->(n,n),()"
 
     def __init__(self, tol=1e-8):
+        """Create the Op.
+
+        Parameters
+        ----------
+        tol : float
+            Floating point tolerance passed to
+            :func:`~gEconpy.solvers.gensys.solve_policy_function_with_gensys`. Defaults to 1e-8.
+        """
         self.tol = tol
         super().__init__()
 
@@ -655,6 +689,7 @@ class GensysWrapper(Op):
         return [(n, n), ()]
 
     def perform(self, node: Apply, inputs: list[np.ndarray], outputs: list[list[None]]) -> None:
+        """Solve for the policy matrix with gensys and flag whether the solution is unique and stable."""
         A, B, C, D = inputs
         G_1, eu = solve_policy_function_with_gensys(A, B, C, D, tol=self.tol, return_all_matrices=False)
 
@@ -677,6 +712,30 @@ class GensysWrapper(Op):
 
 
 def gensys_pt(A, B, C, D, tol=1e-8):
+    """Build a symbolic graph that solves a linearized DSGE system with gensys.
+
+    Parameters
+    ----------
+    A : TensorVariable
+        Jacobian of the system with respect to variables at t-1, evaluated at the steady state.
+    B : TensorVariable
+        Jacobian of the system with respect to variables at t, evaluated at the steady state.
+    C : TensorVariable
+        Jacobian of the system with respect to variables at t+1, evaluated at the steady state.
+    D : TensorVariable
+        Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
+    tol : float, optional
+        Floating point tolerance used by the gensys solve. Defaults to 1e-8.
+
+    Returns
+    -------
+    T : TensorVariable
+        Transition matrix, giving the effect of variable values at t on their values at t+1.
+    R : TensorVariable
+        Selection matrix, giving the effect of exogenous shocks at t on variable values at t+1.
+    success : TensorVariable
+        Boolean scalar that is True when gensys found a unique, stable solution.
+    """
     T, success = GensysWrapper(tol=tol)(A, B, C, D)
     R = pt_compute_selection_matrix(B, C, D, T)
 

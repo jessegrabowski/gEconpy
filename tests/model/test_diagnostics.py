@@ -2,7 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gEconpy.model.statistics import prior_solvability_check, solvability_check
+from gEconpy.exceptions import SteadyStateNotFoundError
+from gEconpy.model import statistics
+from gEconpy.model.statistics import check_steady_state, prior_solvability_check, solvability_check
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 
@@ -90,3 +92,25 @@ def test_prior_solvability_check_raises_without_priors(model_without_priors):
 def test_prior_solvability_check_raises_on_unknown_param_subset(model_with_priors):
     with pytest.raises(ValueError, match="param_subset"):
         prior_solvability_check(model_with_priors, n_samples=5, param_subset=["not_a_param"])
+
+
+def test_check_steady_state_logs_success_for_valid_steady_state(model_without_priors, caplog):
+    steady_state = model_without_priors.steady_state(verbose=False, progressbar=False)
+
+    with caplog.at_level("WARNING"):
+        check_steady_state(model_without_priors, steady_state=steady_state)
+
+    assert "successfully found" in caplog.text
+
+
+def test_check_steady_state_raises_on_wrong_steady_state(model_without_priors):
+    steady_state = model_without_priors.steady_state(verbose=False, progressbar=False)
+    first_variable = next(iter(steady_state))
+    steady_state[first_variable] = steady_state[first_variable] + 1.0
+
+    with pytest.raises(SteadyStateNotFoundError):
+        check_steady_state(model_without_priors, steady_state=steady_state)
+
+
+def test_statistics_exports_no_private_names():
+    assert not [name for name in statistics.__all__ if name.startswith("_")]

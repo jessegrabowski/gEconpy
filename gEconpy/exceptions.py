@@ -176,6 +176,8 @@ class DynamicCalibratingEquationException(GCNValidationError):
 
 
 class OptimizationProblemNotDefinedException(ValueError):
+    """Raised when a block declares controls without an objective, or an objective without controls."""
+
     def __init__(self, block_name: str, missing: str) -> None:
         self.block_name = block_name
         self.missing = missing
@@ -190,6 +192,8 @@ class OptimizationProblemNotDefinedException(ValueError):
 
 
 class MultipleObjectiveFunctionsException(ValueError):
+    """Raised when a block declares more than one objective function."""
+
     def __init__(self, block_name: str, eqs: list[sp.Expr]) -> None:
         self.block_name = block_name
 
@@ -238,6 +242,8 @@ class ControlVariableNotFoundException(GCNValidationError):
 
 
 class ModelUnknownParameterError(ValueError):
+    """Raised when a parameter update names a parameter that the model does not have."""
+
     def __init__(self, unknown_updates: list[str]):
         self.unknown_updates = unknown_updates
 
@@ -250,6 +256,8 @@ class ModelUnknownParameterError(ValueError):
 
 
 class PerturbationSolutionNotFoundException(ValueError):
+    """Raised when an operation needs a perturbation solution but the model has not been solved."""
+
     def __init__(self):
         message = (
             "This operation cannot be completed until the model has a solved perturbation solution. Please "
@@ -260,6 +268,8 @@ class PerturbationSolutionNotFoundException(ValueError):
 
 
 class SteadyStateNotFoundError(ValueError):
+    """Raised when the provided steady-state values leave non-zero residuals in some model equations."""
+
     def __init__(self, equations):
         message = (
             "The provided steady-state values did not result in zero residuals for the following equations:\n"
@@ -271,12 +281,16 @@ class SteadyStateNotFoundError(ValueError):
 
 
 class GensysFailedException(ValueError):
+    """Raised when the gensys solver cannot return a unique stable solution."""
+
     def __init__(self, eu):
         message = interpret_gensys_output(eu)
         super().__init__(message)
 
 
 class VariableNotFoundException(ValueError):
+    """Raised when a requested variable is not among the model variables."""
+
     def __init__(self, variable):
         var_name = variable.base_name
         message = f"Variable {var_name} was not found among model variables."
@@ -285,6 +299,8 @@ class VariableNotFoundException(ValueError):
 
 
 class InvalidDistributionException(ValueError):
+    """Raised when a distribution declaration in a GCN file cannot be interpreted."""
+
     def __init__(self, variable, distribution_string):
         message = (
             f'The distribution associated with "{variable}", defined as "{distribution_string}", appears to have '
@@ -297,6 +313,8 @@ class InvalidDistributionException(ValueError):
 
 
 class MultipleParameterDefinitionException(ValueError):
+    """Raised when a distribution declaration sets the same parameter more than once."""
+
     def __init__(self, variable_name: str, d_name: str, param_name: str, result_list: list[str]) -> None:
         message = (
             f'The {d_name} distribution associated with "{variable_name}" has multiple declarations for '
@@ -308,6 +326,8 @@ class MultipleParameterDefinitionException(ValueError):
 
 
 class InvalidParameterException(ValueError):
+    """Raised when a distribution declaration passes a parameter the distribution does not accept."""
+
     def __init__(self, dist_name, param_name, valid_params):
         message = (
             f"Unknown parameter {param_name} passed to distribution {dist_name}. Valid "
@@ -318,6 +338,8 @@ class InvalidParameterException(ValueError):
 
 
 class OrphanParameterError(ValueError):
+    """Raised when a parameter appears in the model equations but in no calibration block."""
+
     def __init__(self, orphans):
         orphans = set(orphans)
         n = len(orphans)
@@ -331,6 +353,8 @@ class OrphanParameterError(ValueError):
 
 
 class ExtraParameterError(ValueError):
+    """Raised when a calibration block defines a parameter that no model equation uses."""
+
     def __init__(self, extras):
         n = len(extras)
         verb = "was" if n == 1 else "were"
@@ -344,6 +368,8 @@ class ExtraParameterError(ValueError):
 
 
 class ExtraParameterWarning(UserWarning):
+    """Warns that a calibration block defines a parameter that no model equation uses."""
+
     def __init__(self, extras):
         n = len(extras)
         verb = "was" if n == 1 else "were"

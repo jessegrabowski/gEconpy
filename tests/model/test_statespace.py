@@ -132,7 +132,7 @@ def test_constant_params_excluded_from_prior_samples():
         for var_name in ss_mod.observed_states:
             pm.Gamma(f"error_sigma_{var_name}", alpha=2, beta=100)
 
-    true_params, data, _ = data_from_prior(ss_mod, pm_mod, n_samples=5, random_seed=17031)
+    true_params, data, _ = data_from_prior(statespace_mod=ss_mod, pymc_model=pm_mod, n_samples=5, random_seed=17031)
 
     assert isinstance(true_params, xr.Dataset)
     assert data.shape[1] == 3
@@ -1301,9 +1301,7 @@ def test_sample_autocorrelation_matches_analytical_acf(autocorrelation_setup):
         coords={"chain": [0], "draw": [0]},
     )
 
-    analytical = autocorrelation_matrix(
-        model, shock_cov_matrix=np.eye(1) * 0.01, correlation=True, return_xr=True, verbose=False
-    )
+    analytical = autocorrelation_matrix(model, shock_cov_matrix=np.eye(1) * 0.01, return_xr=True, verbose=False)
     n_lags = analytical.sizes["lag"]
     sampled = ss_mod.sample_autocorrelation_matrices(degenerate, n_lags=n_lags).isel(chain=0, draw=0)
 

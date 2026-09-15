@@ -1,6 +1,6 @@
 tryreduce
 {
-	Pi[], U[];
+    Pi[], U[];
 };
 
 block STEADYSTATE
@@ -8,9 +8,9 @@ block STEADYSTATE
 
     definitions
     {
-		# Capital/Labor Ratio
-		N[ss] = (alpha * beta * A[ss] / (1 - beta * (1 - delta)))
-					^ (1 / (1 - alpha));
+        # Capital/Labor Ratio
+        N[ss] = (alpha * beta * A[ss] / (1 - beta * (1 - delta)))
+                    ^ (1 / (1 - alpha));
     };
 
     identities
@@ -18,88 +18,88 @@ block STEADYSTATE
         A[ss] = 1.0;
         Pi[ss] = 0.0;
         L[ss] = (1 - alpha) / Theta / (1 - delta * N[ss] ^ (1 - alpha));
-		K[ss] = N[ss] * L[ss];
+        K[ss] = N[ss] * L[ss];
 
-		w[ss] = (1 - alpha) * N[ss] ^ alpha;
+        w[ss] = (1 - alpha) * N[ss] ^ alpha;
 
-		Y[ss] = A[ss] * K[ss] ^ alpha * L[ss] ^ (1 - alpha);
-		I[ss] = delta * K[ss];
-		C[ss] = Y[ss] - I[ss];
+        Y[ss] = A[ss] * K[ss] ^ alpha * L[ss] ^ (1 - alpha);
+        I[ss] = delta * K[ss];
+        C[ss] = Y[ss] - I[ss];
 
-		U[ss] = (1 / (1 - beta)) * (log(C[ss]) - Theta * L[ss]);
+        U[ss] = (1 / (1 - beta)) * (log(C[ss]) - Theta * L[ss]);
         lambda[ss] = 1 / C[ss];
     };
 };
 
 block HOUSEHOLD
 {
-	definitions
-	{
-		u[] = log(C[]) - Theta * L[];
-	};
+    definitions
+    {
+        u[] = log(C[]) - Theta * L[];
+    };
 
-	objective
-	{
-		U[] = u[] + beta * E[][U[1]];
-	};
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
 
-	controls
-	{
-		C[], L[];
-	};
+    controls
+    {
+        C[], L[];
+    };
 
-	constraints
-	{
-	    @exclude
-		C[] = w[] * L[] + Pi[] : lambda[];
-	};
+    constraints
+    {
+        @exclude
+        C[] = w[] * L[] + Pi[] : lambda[];
+    };
 
-	calibration
-	{
-		beta = 0.99;
-		Theta = 1;
-	};
+    calibration
+    {
+        beta = 0.99;
+        Theta = 1;
+    };
 };
 
 block FIRM
 {
-	definitions
-	{
-		pi[] = Y[] - (w[] * L[] + I[]);
-	};
+    definitions
+    {
+        pi[] = Y[] - (w[] * L[] + I[]);
+    };
 
-	objective
-	{
-		Pi[] = pi[] + beta * E[][lambda[1] / lambda[] * Pi[1]];
-	};
+    objective
+    {
+        Pi[] = pi[] + beta * E[][lambda[1] / lambda[] * Pi[1]];
+    };
 
-	controls
-	{
-		Y[], L[], K[], I[];
-	};
+    controls
+    {
+        Y[], L[], K[], I[];
+    };
 
-	constraints
-	{
-		Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha);
-		K[] = (1 - delta) * K[-1] + I[];
-	};
+    constraints
+    {
+        Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha);
+        K[] = (1 - delta) * K[-1] + I[];
+    };
 
-	identities
+    identities
     {
         log(A[]) = rho_A * log(A[-1]) + epsilon_A[];
     };
 
-	shocks
+    shocks
     {
         epsilon_A[];
     };
 
-	calibration
-	{
-		delta = 0.035;
-		alpha = 0.35;
-		rho_A = 0.95;
-	};
+    calibration
+    {
+        delta = 0.035;
+        alpha = 0.35;
+        rho_A = 0.95;
+    };
 };
 
 block EQUILIBRIUM

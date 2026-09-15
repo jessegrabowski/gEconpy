@@ -11,14 +11,14 @@ def solve_backward_policy(A: np.ndarray, B: np.ndarray) -> np.ndarray:
 
     Parameters
     ----------
-    A : np.ndarray
+    A : ndarray
         Jacobian matrix with respect to variables at t-1.
-    B : np.ndarray
+    B : ndarray
         Jacobian matrix with respect to variables at t.
 
     Returns
     -------
-    T : np.ndarray
+    T : ndarray
         The policy function matrix that maps current state variables to control variables.
     """
     return linalg.solve(-B, A)
@@ -49,7 +49,7 @@ def solve_backward_shock_matrix(B: np.ndarray, D: np.ndarray) -> np.ndarray:
 
     The equation for the shock matrix R in the general case is:
 
-    .. math ::
+    .. math::
 
         R = -(C T + B)^{-1} D
 
@@ -59,21 +59,21 @@ def solve_backward_shock_matrix(B: np.ndarray, D: np.ndarray) -> np.ndarray:
 
     Since the :math:`C` matrix is zero in backward-looking models, this equation simplifies to:
 
-    .. math ::
+    .. math::
 
         R = -B^{-1} D
 
     Parameters
     ----------
-    B : np.ndarray
+    B : ndarray
         Jacobian matrix with respect to variables at t.
-    D : np.ndarray
+    D : ndarray
         Jacobian matrix with respect exogenous shock variables.
 
     Returns
     -------
-    R : np.ndarray
-        The shock matrix that maps current state variables to future state variables.
+    R : ndarray
+        The shock matrix that maps exogenous shocks to variable values.
     """
     return -np.linalg.solve(B, D)
 
@@ -82,7 +82,7 @@ def solve_backward_shock_matrix_pt(B: TensorVariable, D: TensorVariable) -> Tens
     """
     Solves for the shock matrix in a backward-looking model using PyTensor.
 
-    For details, see :func:`solve_backward_shock_matrix`.
+    For details, see :func:`~gEconpy.solvers.backward_looking.solve_backward_shock_matrix`.
 
     Parameters
     ----------
@@ -94,7 +94,7 @@ def solve_backward_shock_matrix_pt(B: TensorVariable, D: TensorVariable) -> Tens
     Returns
     -------
     R : TensorVariable
-        The shock matrix that maps current state variables to future state variables.
+        The shock matrix that maps exogenous shocks to variable values.
     """
     return -pt.linalg.solve(B, D)
 
@@ -110,21 +110,21 @@ def solve_policy_function_with_backward_direct(
 
     Parameters
     ----------
-    A : np.ndarray
+    A : ndarray
         Jacobian matrix with respect to variables at t-1.
-    B : np.ndarray
+    B : ndarray
         Jacobian matrix with respect to variables at t.
-    C : np.ndarray
-        Jacobian matrix with respect to variables at t+1. Assumed to be zero in backward-looking models; included
+    C : ndarray
+        Jacobian matrix with respect to variables at t+1. Assumed to be zero in backward-looking models. Included
         for API consistency with forward-looking models.
-    D : np.ndarray
+    D : ndarray
         Jacobian matrix with respect to variables exogenous shocks.
 
     Returns
     -------
-    T : np.ndarray
+    T : ndarray
         The policy function matrix that maps current state variables to control variables.
-    R : np.ndarray
+    R : ndarray
         The transition matrix that maps current state variables to future state variables.
     """
     T = solve_backward_policy(A, B)
@@ -142,7 +142,7 @@ def solve_policy_function_with_backward_direct_pt(
     """
     Solves for the policy function in a backward-looking model using a direct method with PyTensor.
 
-    For details, see :func:`solve_policy_function_with_backward_direct`.
+    For details, see :func:`~gEconpy.solvers.backward_looking.solve_policy_function_with_backward_direct`.
 
     Parameters
     ----------
@@ -151,7 +151,7 @@ def solve_policy_function_with_backward_direct_pt(
     B : TensorVariable
         Jacobian matrix with respect to variables at t.
     C : TensorVariable
-        Jacobian matrix with respect to variables at t+1. Assumed to be zero in backward-looking models; included
+        Jacobian matrix with respect to variables at t+1. Assumed to be zero in backward-looking models. Included
         for API consistency with forward-looking models.
     D : TensorVariable
         Jacobian matrix with respect to exogenous shocks.

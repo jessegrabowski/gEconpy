@@ -23,28 +23,28 @@ def compile_param_dict_func(
 
     Parameters
     ----------
-    param_dict: SymbolDictionary
+    param_dict : SymbolDictionary
         A dictionary of free parameters.
-    deterministic_dict: SymbolDictionary
+    deterministic_dict : SymbolDictionary
         A dictionary of deterministic parameters, with the keys being the parameters and the values being the
         expressions to compute them.
-    cache: dict, optional
+    cache : dict, optional
         A dictionary mapping from pytensor symbols to sympy expressions. Used to prevent duplicate mappings from
         sympy symbol to pytensor symbol from being created. Default is a empty dictionary, implying no other functions
         have been compiled yet.
-    return_symbolic: bool, default False
+    return_symbolic : bool, optional
         When true, return a symbolic graph representing the computation of parameter values
-        rather than a compiled pytensor function.
+        rather than a compiled pytensor function. Defaults to False.
     mode : str or None, optional
         Pytensor compilation mode (e.g. ``'JAX'``, ``'FAST_COMPILE'``).
         Forwarded to the underlying compiler. Default is None.
 
     Returns
     -------
-    f: Callable
+    f : Callable
         A function that takes the free parameters as keyword arguments and returns a dictionary of the computed
         parameters.
-    cache: dict
+    cache : dict
         A dictionary mapping from sympy symbols to pytensor symbols.
     """
     cache = {} if cache is None else cache

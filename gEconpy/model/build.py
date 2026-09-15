@@ -1,8 +1,8 @@
 import logging
 import sys
+import warnings
 
 from pathlib import Path
-from warnings import warn
 
 import sympy as sp
 
@@ -157,7 +157,7 @@ def check_for_extra_params(
         if on_unused_parameters == "raise":
             raise ExtraParameterError(extras)
         if on_unused_parameters == "warn":
-            warn(ExtraParameterWarning(extras), stacklevel=2)
+            warnings.warn(ExtraParameterWarning(extras), stacklevel=2)
 
 
 def _collect_distribution_atoms(
@@ -686,7 +686,7 @@ def statespace_from_gcn(
 
     loglin_vars = [v for v in variables if v.base_name not in not_loglin_variables] if log_linearize else []
 
-    # Internal path — equation reordering is a no-op for downstream solvers (T/R are
+    # Internal path -- equation reordering is a no-op for downstream solvers (T/R are
     # variable-indexed). The order is computed once and cached on the Model in
     # ``Model.dr_order``; here we don't have a Model handle yet (this build creates the
     # DSGEStateSpace), so we let ``_linearize_model`` compute it on its own.
@@ -863,6 +863,6 @@ def build_report(
             f"{n_var} {_pluralize('variable', n_var)}. It will not be possible to solve this model. Please check "
             f"the specification using available diagnostic tools, and check the GCN file for typos."
         )
-        warn(message, stacklevel=2)
+        warnings.warn(message, stacklevel=2)
 
     _log.info(report)

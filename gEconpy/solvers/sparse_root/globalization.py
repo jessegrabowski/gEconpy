@@ -72,6 +72,32 @@ class ArmijoBacktracking:
         proposal: DirectionProposal,
         args: tuple[Any, ...],
     ) -> LineSearchResult:
+        """Backtrack along the proposed direction until the Armijo sufficient decrease condition is satisfied.
+
+        Parameters
+        ----------
+        fun : callable
+            Fused residual and Jacobian function, called as ``fun(x, *args)``.
+        x : ndarray
+            Current iterate.
+        phi_current : float
+            Merit value at ``x``.
+        proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
+            Search direction and its slope.
+        args : tuple
+            Extra positional arguments passed to ``fun``.
+
+        Returns
+        -------
+        result : LineSearchResult
+            Accepted point, its residuals and Jacobian, the merit value, the step length, and the number of
+            function evaluations used.
+
+        Raises
+        ------
+        RuntimeError
+            If no step length satisfies the acceptance test within ``max_iter`` reductions.
+        """
         alpha = 1.0
         dx, slope = proposal.direction, proposal.slope
 
@@ -105,11 +131,11 @@ class ArmijoBacktracking:
 class NonmonotoneBacktracking:
     """Grippo-Lampariello-Lucidi nonmonotone backtracking line search.
 
-    Instead of requiring ``φ(x + α d) ≤ φ(x) + c₁ α slope`` (monotone Armijo),
+    Instead of requiring ``phi(x + alpha d) <= phi(x) + c1 alpha slope`` (monotone Armijo),
     this strategy compares against the maximum merit over the last ``memory``
     iterates::
 
-        φ(x + α d) ≤ max(φ_{k}, ..., φ_{k-M+1}) + c₁ α slope
+        phi(x + alpha d) <= max(phi_{k}, ..., phi_{k-M+1}) + c1 alpha slope
 
     This allows occasional increases in the merit function, helping the solver
     escape narrow valleys where monotone line search takes tiny steps.
@@ -126,7 +152,7 @@ class NonmonotoneBacktracking:
         Number of past merit values to keep. ``memory=1`` recovers standard Armijo.
     merit_fun : callable or None
         Cheap function ``merit_fun(x, *args) -> residuals`` used to evaluate the merit function during
-        backtracking. See :class:`ArmijoBacktracking` for details.
+        backtracking. See :class:`~gEconpy.solvers.sparse_root.globalization.ArmijoBacktracking` for details.
     """
 
     c1: float = DEFAULT_ARMIJO_C1
@@ -147,6 +173,32 @@ class NonmonotoneBacktracking:
         proposal: DirectionProposal,
         args: tuple[Any, ...],
     ) -> LineSearchResult:
+        """Backtrack along the proposed direction until the nonmonotone decrease condition is satisfied.
+
+        Parameters
+        ----------
+        fun : callable
+            Fused residual and Jacobian function, called as ``fun(x, *args)``.
+        x : ndarray
+            Current iterate.
+        phi_current : float
+            Merit value at ``x``.
+        proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
+            Search direction and its slope.
+        args : tuple
+            Extra positional arguments passed to ``fun``.
+
+        Returns
+        -------
+        result : LineSearchResult
+            Accepted point, its residuals and Jacobian, the merit value, the step length, and the number of
+            function evaluations used.
+
+        Raises
+        ------
+        RuntimeError
+            If no step length satisfies the acceptance test within ``max_iter`` reductions.
+        """
         self._phi_history.append(phi_current)
         phi_ref = max(self._phi_history)
 

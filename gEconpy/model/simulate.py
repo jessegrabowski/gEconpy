@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import xarray as xr
 
-from gEconpy.model.statistics import _maybe_solve_model, _validate_shock_options, build_Q_matrix
+from gEconpy.model.statistics import build_Q_matrix
+from gEconpy.model.statistics.validation import _maybe_solve_model, _validate_shock_options
 
 if TYPE_CHECKING:
     from gEconpy.model.model import Model
@@ -19,9 +20,24 @@ _log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ShockSpec:
-    """Representation of a shock input used to generate an impulse response function."""
+    """
+    Representation of a shock input used to generate an impulse response function.
 
-    mode: str  # one of "trajectory",  "cov", or "size"
+    Attributes
+    ----------
+    mode : str
+        Which of the three shock specifications is in use, one of "trajectory", "cov", or "size".
+    trajectory : ndarray or None
+        Path of shock values, of shape (n_periods, n_shocks). Set only when ``mode`` is "trajectory".
+    cov : ndarray or None
+        Shock covariance matrix, of shape (n_shocks, n_shocks). Set only when ``mode`` is "cov".
+    size : float, ndarray, dict mapping str to float, or None
+        Size of the shock applied to each shock in the model. Set only when ``mode`` is "size".
+    orthogonalize : bool
+        If True, orthogonalize the shocks with a Cholesky decomposition of ``cov``.
+    """
+
+    mode: str
     trajectory: np.ndarray | None
     cov: np.ndarray | None
     size: float | np.ndarray | dict[str, float] | None
@@ -220,12 +236,12 @@ def impulse_response_function(
 
     Parameters
     ----------
-    model: Model
+    model : Model
         DSGE Model object
-    T: np.ndarray, optional
+    T : np.ndarray, optional
         Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
         method.
-    R: np.ndarray, optional
+    R : np.ndarray, optional
         Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
     simulation_length : int, optional
         The number of periods to compute the IRFs over. The default is 40.
@@ -239,19 +255,19 @@ def impulse_response_function(
             - If dictionary, a diagonal matrix will be created with entries corresponding to the keys in the
               dictionary. Shocks that are not specified will be set to zero.
 
-        Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
+        Only one of `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
     shock_cov : Optional[np.ndarray], default=None
         A user-specified covariance matrix for the shocks. It should be a 2D numpy array with
         dimensions (n_shocks, n_shocks), where n_shocks is the number of shocks in the state space model.
 
-        Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
+        Only one of `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
     shock_trajectory : Optional[np.ndarray], default=None
         A pre-defined trajectory of shocks applied to the system. It should be a 2D numpy array
         with dimensions (n, n_shocks), where n is the number of time steps and k_posdef is the
         number of shocks in the state space model.
 
-        Only one of `use_stationary_cov`, `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
-    return_individual_shocks: bool, optional
+        Only one of `shock_cov`, `shock_size`, or `shock_trajectory` can be specified.
+    return_individual_shocks : bool, optional
         If True, an IRF will be computed separately for each shock in the model. An additional dimension will be added
         to the output DataArray to show each shock. This is only valid if `shock_size` is a scalar, dictionary, or if
         the covariance matrix is diagonal.
@@ -334,27 +350,22 @@ def simulate(
 
     Parameters
     ----------
-    model: Model
+    model : Model
         DSGE Model object
-    T: np.ndarray, optional
+    T : np.ndarray, optional
         Transition matrix of the solved system. If None, this will be computed using the model's ``solve_model``
-        method. Ignored if ``use_param_priors`` is True.
-    R: np.ndarray, optional
+        method.
+    R : np.ndarray, optional
         Selection matrix of the solved system. If None, this will be computed using the model's ``solve_model`` method.
-        Ignored if ``use_param_priors`` is True.
-    use_param_priors: bool, optional
-        If True, each simulation will be generated using a different random draw from the model's
-        prior distributions. Default is False, in which case a fixed T and R matrix will be used for each simulation.
-        If True, T and R are ignored.
     n_simulations : int, optional
         Number of trajectories to simulate. Default is 1.
     simulation_length : int, optional
         Length of each simulated trajectory. Default is 40.
-    shock_std_dict: dict, optional
+    shock_std_dict : dict, optional
         Dictionary of shock names and standard deviations to be used to build Q
-    shock_cov_matrix: array, optional
+    shock_cov_matrix : array, optional
         An (n_shocks, n_shocks) covariance matrix describing the exogenous shocks
-    shock_std: float or sequence, optional
+    shock_std : float or sequence, optional
         Standard deviation of all model shocks.
     random_seed : int, RandomState or Generator, optional
         Seed for the random number generator.

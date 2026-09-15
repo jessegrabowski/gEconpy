@@ -13,6 +13,11 @@ def get_css() -> str:
 
     The style is inspired by the xarray HTML representation. Each block is rendered in a unified container with an
     unbroken background, and the whole block is collapsible.
+
+    Returns
+    -------
+    css : str
+        A ``<style>`` element scoped to the model container.
     """
     return r"""
     <style>
@@ -108,7 +113,12 @@ def generate_html(blocks: list[Block]) -> HTML:
     Parameters
     ----------
     blocks : list of Block
-        List of blocks to represent
+        Blocks to represent.
+
+    Returns
+    -------
+    html : ``HTML``
+        An IPython display object holding the rendered model.
     """
     html_parts = []
     html_parts.append("""
@@ -154,7 +164,7 @@ def print_gcn_file(gcn_path: str | Path) -> None:
     Parameters
     ----------
     gcn_path : str or Path
-        Path to the GCN file
+        Path to the GCN file.
     """
     result = load_gcn_file(gcn_path, simplify_blocks=False)
     blocks = list(result.block_dict.values())

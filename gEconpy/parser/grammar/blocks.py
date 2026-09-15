@@ -43,14 +43,40 @@ MODEL_BLOCK.ignore(COMMENT)
 
 
 def parse_block(name: str, content: str) -> GCNBlock:
-    """Parse block content into a GCNBlock (compatibility function)."""
+    """
+    Parse the body of a block, given the block name separately.
+
+    Parameters
+    ----------
+    name : str
+        Name of the block.
+    content : str
+        Body of the block, without the surrounding braces.
+
+    Returns
+    -------
+    block : GCNBlock
+        The parsed block.
+    """
     text = f"block {name} {{ {content} }}"
     result = MODEL_BLOCK.parse_string(text, parse_all=True)
     return result[0]
 
 
 def parse_block_from_text(text: str) -> GCNBlock:
-    """Parse a complete block definition from text."""
+    """
+    Parse a complete block definition, including the ``block`` keyword and the block name.
+
+    Parameters
+    ----------
+    text : str
+        Text of the block definition.
+
+    Returns
+    -------
+    block : GCNBlock
+        The parsed block.
+    """
     result = MODEL_BLOCK.parse_string(text, parse_all=True)
     return result[0]
 

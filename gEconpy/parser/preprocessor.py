@@ -31,48 +31,55 @@ class ParseResult:
 
     @property
     def validation_errors(self) -> ErrorCollector:
-        """Lazily compute validation errors."""
+        """Return the ErrorCollector holding the validation errors and warnings, running validation on first use."""
         if self._validation_errors is None:
             self._validation_errors = full_validation(self.ast)
         return self._validation_errors
 
     @property
     def has_errors(self) -> bool:
-        """Check if there are any validation errors (not warnings)."""
+        """Return True if validation found at least one error-level issue. Warnings alone give False."""
         return self.validation_errors.has_errors
 
     @property
     def sympy_equations(self) -> dict[str, dict[str, list]]:
-        """Lazily convert AST to sympy equations."""
+        """Return the model equations as sympy expressions, grouped by block and component, converting on first use."""
         if self._sympy_equations is None:
             self._sympy_equations = model_to_sympy(self.ast)
         return self._sympy_equations
 
     @property
     def distributions(self) -> dict[str, tuple[Any, dict]]:
-        """Lazily extract distributions from the model."""
+        """
+        Return the prior and shock distributions declared in the model, extracting them on first use.
+
+        Returns
+        -------
+        distributions : dict mapping str to tuple
+            For each declared name, the distribution and a dictionary of its parameters.
+        """
         if self._distributions is None:
             self._distributions = distributions_from_model(self.ast)
         return self._distributions
 
     @property
     def blocks(self):
-        """Convenience accessor for model blocks."""
+        """Return the list of GCNBlock objects parsed from the file."""
         return self.ast.blocks
 
     @property
     def options(self):
-        """Convenience accessor for model options."""
+        """Return the contents of the ``options`` block, as a dictionary."""
         return self.ast.options
 
     @property
     def tryreduce(self):
-        """Convenience accessor for tryreduce variables."""
+        """Return the variable names listed in the ``tryreduce`` block, as a list of strings."""
         return self.ast.tryreduce
 
     @property
     def assumptions(self):
-        """Convenience accessor for variable assumptions."""
+        """Return the sympy assumptions declared for each variable, as a nested dictionary."""
         return self.ast.assumptions
 
     def validate(self, raise_on_error: bool = True) -> ErrorCollector:
@@ -81,8 +88,8 @@ class ParseResult:
 
         Parameters
         ----------
-        raise_on_error : bool
-            If True, raise an exception if there are errors.
+        raise_on_error : bool, optional
+            If True, raise the first error-level issue found. Defaults to True.
 
         Returns
         -------
@@ -113,9 +120,9 @@ def preprocess(
     source : str
         The GCN source text to parse.
     filename : str, optional
-        The filename (for error messages).
-    validate : bool
-        If True, run validation after parsing.
+        Filename to report in error messages. Defaults to no filename.
+    validate : bool, optional
+        If True, run validation after parsing. Defaults to True.
 
     Returns
     -------
@@ -147,10 +154,10 @@ def preprocess_file(
 
     Parameters
     ----------
-    filepath : str | Path
+    filepath : str or Path
         Path to the GCN file.
-    validate : bool
-        If True, run validation after parsing.
+    validate : bool, optional
+        If True, run validation after parsing. Defaults to True.
 
     Returns
     -------

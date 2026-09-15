@@ -116,7 +116,7 @@ def _match_ces_constraint(constraints: dict[int, sp.Eq] | None) -> dict | None:
 
     where :math:`s = (\psi - 1)/\psi` for an elasticity of substitution :math:`\psi`. The shares :math:`\text{share}_i`
     are typically parameter expressions (e.g. :math:`\alpha^{1/\psi}` and :math:`(1-\alpha)^{1/\psi}` in the standard
-    two-input form), but the matcher accepts any sympy expression for the share — the closed-form FOC identity does
+    two-input form), but the matcher accepts any sympy expression for the share -- the closed-form FOC identity does
     not depend on the share's internal structure.
 
     Match is conservative: requires exactly one constraint, the residual to decompose cleanly into
@@ -129,7 +129,7 @@ def _match_ces_constraint(constraints: dict[int, sp.Eq] | None) -> dict | None:
     Parameters
     ----------
     constraints : dict mapping int to sympy.Eq, optional
-        Block constraints keyed by equation index, as held on a :class:`Block`.
+        Block constraints keyed by equation index, as held on a :class:`~gEconpy.model.block.basic.Block`.
 
     Returns
     -------
@@ -184,7 +184,7 @@ def _match_ces_constraint(constraints: dict[int, sp.Eq] | None) -> dict | None:
 
 @register_block
 class CESBlock(Block):
-    r"""A :class:`Block` whose constraint is a CES production function of arbitrary input count.
+    r"""A :class:`~gEconpy.model.block.basic.Block` with a CES production constraint of arbitrary input count.
 
     The constraint takes the general form
 
@@ -208,8 +208,8 @@ class CESBlock(Block):
               + \mu \cdot \text{share}_i \cdot A^s \cdot \left(\frac{Y}{x_i}\right)^{1-s}
 
     where :math:`\mu` is the Lagrange multiplier on the production constraint. The constraint itself is never
-    differentiated by :func:`sympy.diff`, avoiding the chain-rule expansion that involves both the inner-sum
-    subgraph and the double-exponent :math:`\text{inner}^{1/s - 1}`.
+    differentiated by :func:`~sympy.core.function.diff`, avoiding the chain-rule expansion that involves both the
+    inner-sum subgraph and the double-exponent :math:`\text{inner}^{1/s - 1}`.
     """
 
     @classmethod
@@ -217,14 +217,14 @@ class CESBlock(Block):
         cls,
         constraints: dict[int, sp.Eq] | None,
         objective: dict[int, sp.Eq] | None,
-        identities: dict[int, sp.Eq] | None,  # noqa: ARG003 — part of the dispatch contract; other subclasses use it
+        identities: dict[int, sp.Eq] | None,  # noqa: ARG003 -- part of the dispatch contract; other subclasses use it
     ) -> bool:
         """Conservative match for a CES production block.
 
         The block must have an objective (it is an optimization, not an identity-only block) and exactly one
-        constraint whose residual matches the CES form via :func:`_match_ces_constraint`. The objective itself is not
+        constraint whose residual matches the CES form via ``_match_ces_constraint``. The objective itself is not
         constrained: the closed-form constraint derivative is exact regardless of what the firm is maximizing, so
-        :meth:`_compute_foc` simply differentiates the objective symbolically and adds the closed-form constraint
+        ``_compute_foc`` simply differentiates the objective symbolically and adds the closed-form constraint
         term.
 
         Parameters
@@ -240,13 +240,24 @@ class CESBlock(Block):
         -------
         match : bool
             True if the block is a canonical CES optimization. False otherwise; caller falls back to the general
-            :class:`Block` (or another more-specific subclass earlier in the registry).
+            :class:`~gEconpy.model.block.basic.Block` (or another more-specific subclass earlier in the registry).
         """
         if objective is None:
             return False
         return _match_ces_constraint(constraints) is not None
 
     def __init__(self, *args, **kwargs):
+        """
+        Initialize a CES block.
+
+        All arguments are passed through to :class:`~gEconpy.model.block.basic.Block`, which documents them.
+
+        Raises
+        ------
+        RuntimeError
+            If the block's constraints do not match the CES form. Reaching this state means the dispatcher chose the
+            wrong class.
+        """
         super().__init__(*args, **kwargs)
         self._ces_match = _match_ces_constraint(self.constraints)
         if self._ces_match is None:

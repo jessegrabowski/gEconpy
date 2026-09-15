@@ -241,7 +241,26 @@ class StructuralErrorHandler:
 
 
 def parse_gcn(text: str, filename: str = "") -> GCNModel:
-    """Parse a complete GCN file into a GCNModel AST."""
+    """
+    Parse the text of a complete GCN file into an abstract syntax tree.
+
+    Parameters
+    ----------
+    text : str
+        Contents of the GCN file.
+    filename : str, optional
+        Name to report in error messages. Defaults to an empty string.
+
+    Returns
+    -------
+    model : GCNModel
+        The parsed model.
+
+    Raises
+    ------
+    GCNGrammarError
+        If the text is not a syntactically valid GCN file.
+    """
     try:
         result = GCN_FILE.parse_string(text, parse_all=True)
         return _build_model(result, filename=filename)
@@ -250,7 +269,24 @@ def parse_gcn(text: str, filename: str = "") -> GCNModel:
 
 
 def parse_gcn_file(filepath: str) -> GCNModel:
-    """Parse a GCN file from disk."""
+    """
+    Read a GCN file from disk and parse it into an abstract syntax tree.
+
+    Parameters
+    ----------
+    filepath : str
+        Path to the GCN file.
+
+    Returns
+    -------
+    model : GCNModel
+        The parsed model.
+
+    Raises
+    ------
+    GCNGrammarError
+        If the file is not a syntactically valid GCN file.
+    """
     text = Path(filepath).read_text(encoding="utf-8")
     return parse_gcn(text, filename=filepath)
 

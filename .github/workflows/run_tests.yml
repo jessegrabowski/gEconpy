@@ -135,14 +135,47 @@ jobs:
         path: coverage/coverage-${{ steps.matrix-id.outputs.id }}.xml
 
 
+  docs:
+    name: "Docs"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0  # hatch-vcs derives the version from tags
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        with:
+          pixi-version: v0.79.0
+          environments: docs
+          cache: true
+
+      # A green build does not imply current pages: the API pages are generated from the import graph,
+      # so a module added or a helper made public goes unmentioned until docs-api is re-run.
+      - name: Check the API pages match the source
+        run: |
+          pixi run -e docs docs-api
+          if ! git diff --exit-code docs/source/api/; then
+            echo "::error::docs/source/api is out of date. Run 'pixi run -e docs docs-api' and commit the result."
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain docs/source/api/)" ]; then
+            git status --porcelain docs/source/api/
+            echo "::error::docs-api produced new pages. Run it locally and commit them."
+            exit 1
+          fi
+
+      # docs-build carries -W, so a broken reference or an orphaned page fails here rather than
+      # shipping a page with a hole in it. The same command runs locally.
+      - name: Build the docs
+        run: pixi run -e docs docs-build
+
   all-checks:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     name: "All tests"
-    needs: [test]
+    needs: [test, docs]
     steps:
       - name: Check build matrix status
-        if: ${{ needs.test.result != 'success' }}
+        if: ${{ needs.test.result != 'success' || needs.docs.result != 'success' }}
         run: exit 1
 
   upload-coverage:

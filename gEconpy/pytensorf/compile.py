@@ -9,7 +9,18 @@ from pytensor.tensor.variable import TensorVariable
 
 
 def rewrite_pregrad(graph):
-    """Run canonicalize + stabilize on a graph before gradient propagation."""
+    """Run the canonicalize and stabilize rewrites on a graph before gradient propagation.
+
+    Parameters
+    ----------
+    graph : TensorVariable or list of TensorVariable
+        Graph to rewrite.
+
+    Returns
+    -------
+    rewritten : TensorVariable or list of TensorVariable
+        The rewritten graph, matching the structure of ``graph``.
+    """
     return rewrite_graph(graph, include=("canonicalize", "stabilize"))
 
 
@@ -63,14 +74,9 @@ def compile_pytensor_function(
 ) -> Function:
     """Compile a pytensor graph to a callable function.
 
-    Wraps ``pytensor.function`` with:
-
-    - Pre-grad rewrites (canonicalize + stabilize) via ``rewrite_pregrad``
-    - Function caching via ``functools.cache`` (identity-based on graph nodes)
-    - ``on_unused_input="ignore"`` by default
-
-    All parameters mirror ``pytensor.function`` except for the changed defaults
-    noted above.
+    Wraps ``pytensor.function``, adding pre-gradient rewrites via
+    :func:`~gEconpy.pytensorf.compile.rewrite_pregrad` and caching keyed on the identity of the graph nodes.
+    Parameters mirror ``pytensor.function``, except that ``on_unused_input`` defaults to ``"ignore"``.
 
     Parameters
     ----------
@@ -79,30 +85,29 @@ def compile_pytensor_function(
     outputs : TensorVariable or list of TensorVariable
         Output nodes for the compiled function.
     mode : str or Mode, optional
-        Pytensor compilation mode. Common values: ``"FAST_COMPILE"``
-        (Python, no C), ``"FAST_RUN"`` (C compilation), ``"JAX"``
-        (JAX backend). Default is ``None`` (pytensor's default).
+        Pytensor compilation mode, such as ``"FAST_COMPILE"``, ``"FAST_RUN"``, ``"NUMBA"`` or ``"JAX"``.
+        Defaults to None, which uses pytensor's own default mode.
     updates : dict or list of tuples, optional
         Expressions for shared variable updates.
     givens : dict or list of tuples, optional
         Substitutions to apply before compiling.
-    accept_inplace : bool
-        If True, accept graph with in-place operations.
+    accept_inplace : bool, optional
+        If True, accept a graph containing in-place operations. Defaults to False.
     name : str, optional
-        Name for the compiled function (for debugging).
-    rebuild_strict : bool
-        If True, require inputs to match graph exactly.
+        Name for the compiled function, used in debugging output. Defaults to None.
+    rebuild_strict : bool, optional
+        If True, require the inputs to match the graph exactly. Defaults to True.
     allow_input_downcast : bool, optional
-        If True, allow numeric inputs to be silently downcast.
+        If True, allow numeric inputs to be silently downcast. Defaults to None.
     on_unused_input : str, optional
-        What to do if an input is unused. Default is ``"ignore"``.
-    trust_input : bool
-        If True, skip input validation at call time. Default is ``False``.
+        What to do when an input is unused. Defaults to ``"ignore"``.
+    trust_input : bool, optional
+        If True, skip input validation at call time. Defaults to False.
 
     Returns
     -------
-    f : pytensor.function
-        Compiled callable.
+    f : callable
+        Compiled pytensor function.
     """
     if isinstance(outputs, list):
         outputs = tuple(outputs)
@@ -132,5 +137,11 @@ def clear_compile_cache() -> None:
 
 
 def compile_cache_info():
-    """Return cache statistics (hits, misses, maxsize, currsize)."""
+    """Report the state of the compiled function cache.
+
+    Returns
+    -------
+    info : tuple
+        Named tuple of cache statistics, with fields ``hits``, ``misses``, ``maxsize`` and ``currsize``.
+    """
     return _compile_cached.cache_info()

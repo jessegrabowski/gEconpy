@@ -14,8 +14,8 @@ def get_example_gcn(name: str) -> Path:
 
     Returns
     -------
-    model : Model
-        The loaded model.
+    path : Path
+        Path to the .gcn file.
     """
     gcn_dir = Path(__file__).parent / "GCN Files"
     return gcn_dir / f"{name}.gcn"

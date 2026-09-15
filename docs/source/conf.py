@@ -42,6 +42,7 @@ extensions = [
     "sphinx_codeautolink",
     "generate_gallery",
     "sphinx.ext.autodoc",
+    "sphinx.ext.doctest",
     "numpydoc",
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.autosummary",
@@ -54,8 +55,8 @@ autosectionlabel_prefix_document = True
 # directories to ignore when looking for source files.
 exclude_patterns = [
     "_build",
-    "**.ipynb_checkpoints",
-    "*/autosummary/*.rst",
+    "**/.ipynb_checkpoints",
+    "examples/GCN Files",
     "Thumbs.db",
     ".DS_Store",
 ]
@@ -113,8 +114,8 @@ master_doc = "index"
 # Don't auto-generate summary for class members.
 autosummary_generate = True
 autodoc_typehints = "none"
+add_module_names = False
 autoclass_content = "class"
-remove_from_toctrees = ["**/classmethods/*"]
 
 numpydoc_show_class_members = False
 numpydoc_xref_param_type = True
@@ -134,7 +135,92 @@ numpydoc_xref_ignore = {
     "instance",
     "M",
     "N",
+    "to",
+    "mapping",
+    "expression",
+    "tuples",
+    "transform",
+    "symbol",
+    "nested",
+    "a",
+    "Matplotlib",
+    "pymc",
+    "pandas",
 }
+
+# numpydoc_xref_param_type cross-references every word of a type field, so a class named bare or by its
+# import alias needs its documented path here. Third-party targets resolve through intersphinx.
+numpydoc_xref_aliases = {
+    "SymbolDictionary": "gEconpy.classes.containers.SymbolDictionary",
+    "SteadyStateResults": "gEconpy.classes.containers.SteadyStateResults",
+    "TimeAwareSymbol": "gEconpy.classes.time_aware_symbol.TimeAwareSymbol",
+    "Block": "gEconpy.model.block.basic.Block",
+    "Model": "gEconpy.model.model.Model",
+    "DSGEStateSpace": "gEconpy.model.statespace.DSGEStateSpace",
+    "Variable": "gEconpy.parser.ast.nodes.Variable",
+    "Parameter": "gEconpy.parser.ast.nodes.Parameter",
+    "Tag": "gEconpy.parser.ast.nodes.Tag",
+    "TimeIndex": "gEconpy.parser.ast.nodes.TimeIndex",
+    "Node": "gEconpy.parser.ast.nodes.Node",
+    "GCNModel": "gEconpy.parser.ast.nodes.GCNModel",
+    "GCNBlock": "gEconpy.parser.ast.nodes.GCNBlock",
+    "GCNEquation": "gEconpy.parser.ast.nodes.GCNEquation",
+    "GCNDistribution": "gEconpy.parser.ast.nodes.GCNDistribution",
+    "ErrorCollector": "gEconpy.parser.errors.ErrorCollector",
+    "ParseLocation": "gEconpy.parser.errors.ParseLocation",
+    "GCNParseError": "gEconpy.parser.errors.GCNParseError",
+    "GCNGrammarError": "gEconpy.parser.errors.GCNGrammarError",
+    "GCNSemanticError": "gEconpy.parser.errors.GCNSemanticError",
+    "GCNErrorCollection": "gEconpy.parser.errors.GCNErrorCollection",
+    "ErrorCode": "gEconpy.parser.error_catalog.ErrorCode",
+    "ErrorInfo": "gEconpy.parser.error_catalog.ErrorInfo",
+    "ParseResult": "gEconpy.parser.preprocessor.ParseResult",
+    "RootSolver": "gEconpy.solvers.sparse_root.base.RootSolver",
+    "DirectionStrategy": "gEconpy.solvers.sparse_root.direction.DirectionStrategy",
+    "GlobalizationStrategy": "gEconpy.solvers.sparse_root.globalization.GlobalizationStrategy",
+    "Distribution": "preliz.distributions.distributions.Distribution",
+    "TensorVariable": "pytensor.tensor.TensorVariable",
+    "Apply": "pytensor.graph.basic.Apply",
+    "Mode": "pytensor.compile.mode.Mode",
+    "pd.DataFrame": "pandas.DataFrame",
+    "DataFrame": "pandas.DataFrame",
+    "pd.DatetimeIndex": "pandas.DatetimeIndex",
+    "xr.DataArray": "xarray.DataArray",
+    "DataArray": "xarray.DataArray",
+    "xr.Dataset": "xarray.Dataset",
+    "xr.DataTree": "xarray.DataTree",
+    "sp.Expr": "sympy.core.expr.Expr",
+    "sympy.Expr": "sympy.core.expr.Expr",
+    "sp.Symbol": "sympy.core.symbol.Symbol",
+    "sympy.Symbol": "sympy.core.symbol.Symbol",
+    "Symbol": "sympy.core.symbol.Symbol",
+    "sp.Eq": "sympy.core.relational.Eq",
+    "sympy.Eq": "sympy.core.relational.Eq",
+    "sp.Basic": "sympy.core.basic.Basic",
+    "MutableDenseMatrix": "sympy.matrices.dense.MutableDenseMatrix",
+    "Figure": "matplotlib.figure.Figure",
+    "plt.Figure": "matplotlib.figure.Figure",
+    "Colormap": "matplotlib.colors.Colormap",
+    "GridSpec": "matplotlib.gridspec.GridSpec",
+    "ArrayLike": "numpy.typing.ArrayLike",
+    "np.random.Generator": "numpy.random.Generator",
+    "Path": "pathlib.Path",
+    "pm.Model": "pymc.model.core.Model",
+    "OptimizeResult": "scipy.optimize.OptimizeResult",
+    "sparse.csc_matrix": "scipy.sparse.csc_matrix",
+}
+
+# A role naming a symbol that moved or was deleted otherwise renders as plain text with a green build.
+nitpicky = True
+
+# Targets no docstring can make resolve: projects whose inventory does not carry the object, and two
+# pytensor gradient helpers the pytensor inventory omits.
+nitpick_ignore_regex = [
+    ("py:.*", r"arviz\..*"),
+    ("py:.*", r"preliz\..*"),
+    ("py:.*", r"sympytensor\..*"),
+    ("py:func", r"pytensor\.gradient\.grad_(undefined|not_implemented)"),
+]
 
 # -- MyST config  -------------------------------------------------
 myst_enable_extensions = [
@@ -164,6 +250,9 @@ intersphinx_mapping = {
     "myst": ("https://myst-parser.readthedocs.io/en/latest", None),
     "myst-nb": ("https://myst-nb.readthedocs.io/en/latest/", None),
     "python": ("https://docs.python.org/3/", None),
+    "pandas": ("https://pandas.pydata.org/docs/", None),
+    "matplotlib": ("https://matplotlib.org/stable/", None),
+    "pymc": ("https://www.pymc.io/projects/docs/en/stable/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
     "xarray": ("https://docs.xarray.dev/en/stable/", None),
     "sympy": ("https://docs.sympy.org/latest/", None),

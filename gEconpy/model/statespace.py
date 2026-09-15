@@ -77,35 +77,38 @@ class DSGEStateSpace(PyMCStateSpace):
         """
         Create a :class:`pmx.statespace.PyMCStateSpace` model representing a linearized DSGE.
 
-        Users should not create this class direction, and should instead use
-        :func:`gEconpy.model.build.statespace_from_gcn` to compile a statespace model from a gcn file.
+        Users should not create this class directly, and should instead use
+        :func:`~gEconpy.model.build.statespace_from_gcn` to compile a statespace model from a gcn file.
 
         Parameters
         ----------
-        variables: list of TimeAwareSymbol
-            List of variables in the model
-        shocks: list of TimeAwareSymbol
-            List of shocks in the model
-        equations: list of sympy.Expr
-            List of equations in the model
-        param_dict: dict
-            Dictionary of default parameter values, as defined in the model file
-        hyper_param_dict: dict
-            Dictionary of default hyperparameter values, as defined in the model file
-        param_priors: dict
-            Dictionary of preliz parameter priors
-        shock_priors: dict
-            Dictionary of preliz shock priors
-        parameter_mapping: dict
-            Symbolic function mapping input parameters to the full vector of parameters, including
-            deterministic.
-        steady_state_mapping: dict
-            Symbolic function mapping input parameters to the steady state values of the model
-        linearized_system: list of pt.TensorVariable
-            List of four symbolic expressions representing the linearized system of equations as partial
-            jacobians of the model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with
-            respect to exogenous shocks (D), each evaluated at the (symbolic) steady state.
-        log_linearized_variables: list of str, optional
+        variables : list of TimeAwareSymbol
+            Variables in the model.
+        shocks : list of TimeAwareSymbol
+            Shocks in the model.
+        equations : list of sp.Expr
+            Equations in the model.
+        param_dict : dict mapping str to float
+            Default parameter values, as defined in the model file.
+        hyper_param_dict : dict mapping str to float
+            Default hyperparameter values, as defined in the model file.
+        param_priors : SymbolDictionary
+            Preliz parameter priors, keyed by parameter name.
+        shock_priors : SymbolDictionary
+            Preliz shock priors, keyed by shock name.
+        parameter_mapping : dict mapping TensorVariable to TensorVariable
+            Symbolic function mapping input parameters to the full vector of parameters, including deterministic
+            parameters.
+        steady_state_mapping : dict mapping TensorVariable to TensorVariable
+            Symbolic function mapping input parameters to the steady-state values of the model.
+        linearized_system : list of TensorVariable
+            Four symbolic expressions representing the linearized system of equations as partial jacobians of the
+            model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with respect to exogenous
+            shocks (D), each evaluated at the symbolic steady state.
+        var_order : ndarray, optional
+            Variable column permutation applied when the system was linearized. The identity permutation is assumed
+            if not provided.
+        log_linearized_variables : list of str, optional
             Base names of variables that were log-linearized when building ``linearized_system``. Used by
             ``configure(ss_obs_intercept=...)`` to decide whether an observation intercept entry is
             ``log(v_ss(p))`` (log-linearized) or ``v_ss(p)`` (level-linearized).
@@ -119,8 +122,11 @@ class DSGEStateSpace(PyMCStateSpace):
         missing_fill_value : float, optional
             Sentinel that replaces missing observations before the filter runs. Default is ``MISSING_FILL`` from
             pymc-extras.
-        verbose: bool
-            If True, show diagnostic messages.
+        sympytensor_cache : dict, optional
+            Sympytensor cache mapping cache keys to pytensor nodes, shared with the graphs that built the model. A
+            new cache is created if not provided.
+        verbose : bool, optional
+            If True, show diagnostic messages. Default True.
         """
         self.variables = variables
         self.equations = equations
@@ -298,7 +304,7 @@ class DSGEStateSpace(PyMCStateSpace):
         cumulator_vars = self._cumulator_variables
 
         if not self._obs_equations:
-            # Pure selector design — keep the existing constant-numpy path.
+            # Pure selector design -- keep the existing constant-numpy path.
             Z = np.zeros((self.k_endog, self.k_states))
             for i, name in enumerate(self.observed_states):
                 orig_idx = self._orig_state_names.index(name)
@@ -313,7 +319,7 @@ class DSGEStateSpace(PyMCStateSpace):
                     Z[i, orig_idx] = 1.0
             return Z
 
-        # At least one observation equation in play — build Z symbolically.
+        # At least one observation equation in play -- build Z symbolically.
         # Use ``inc_subtensor`` for the obs-equation rows so that overlapping
         # contributions from ``(lag, d)`` aggregation pairs accumulate
         # (e.g. annual-summed quarterly log-differences telescope).
@@ -356,7 +362,7 @@ class DSGEStateSpace(PyMCStateSpace):
         For each observed state :math:`v`:
 
         - If :math:`v` has a user-supplied observation equation, the entry is
-          the linearization's constant term — for example
+          the linearization's constant term -- for example
           :math:`\log Y_{ss}(p) + \log Z_{ss}(p)` for the BGP growth-rate
           observation.
         - Else if :math:`v` is in ``self._ss_obs_intercept_states``, the entry
@@ -410,7 +416,7 @@ class DSGEStateSpace(PyMCStateSpace):
         Parse a GCN-syntax observation equation into a sympy expression in the model's namespace.
 
         Accepts contemporaneous and lagged variable references (``v[]``,
-        ``v[-1]``, ...). Leads raise ``ValueError`` — an observation cannot
+        ``v[-1]``, ...). Leads raise ``ValueError`` -- an observation cannot
         depend on the future.
 
         Parameters
@@ -555,7 +561,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         def to_tensor(sym_expr):
             tv = as_tensor(sym_expr, self._sympytensor_cache)
-            # sympy integers (e.g. 0 or 1) come through as Python ints — wrap.
+            # sympy integers (e.g. 0 or 1) come through as Python ints -- wrap.
             if not isinstance(tv, pt.Variable):
                 tv = pt.as_tensor_variable(tv)
             return tv
@@ -623,7 +629,7 @@ class DSGEStateSpace(PyMCStateSpace):
                     [----|-----------------|
                     [ F  |  kron(I_n, C)   ]
 
-        where ``C`` is the ``(s-1) × (s-1)`` lower-shift companion matrix (constant, shared
+        where ``C`` is the ``(s-1) x (s-1)`` lower-shift companion matrix (constant, shared
         by all aggregated variables), and ``F`` is a loading matrix with unit selectors that
         copy each lagged variable value into the first cumulator position.
 
@@ -801,7 +807,7 @@ class DSGEStateSpace(PyMCStateSpace):
         if self._ss_obs_intercept_states or self._obs_equations:
             obs_intercept = self._make_obs_intercept()
             # ``_make_obs_intercept`` reads ``self.steady_state_mapping`` directly for the
-            # ``ss_obs_intercept`` branch — those SS expressions are in free parameter
+            # ``ss_obs_intercept`` branch -- those SS expressions are in free parameter
             # placeholders, so ``constant_params`` leaks unless we bake constants in
             # here too.
             if constant_replacements:
@@ -875,7 +881,7 @@ class DSGEStateSpace(PyMCStateSpace):
             - ``"first"``: Point-in-time at start of aggregation window. No cumulator needed.
               Data should have values at the first period of each window.
 
-            Variables NOT in this dict use a direct selector — suitable for high-frequency
+            Variables NOT in this dict use a direct selector -- suitable for high-frequency
             observations (no ``NaN`` in data) or low-frequency point-in-time observations.
             The Kalman filter handles missing values automatically.
         aggregation_period : int
@@ -888,7 +894,7 @@ class DSGEStateSpace(PyMCStateSpace):
             For each entry, the intercept is :math:`\\log v_{ss}(p)` if the variable was
             log-linearized when building the model and :math:`v_{ss}(p)` if it was
             level-linearized. Observed states *not* in this list keep an
-            ``obs_intercept`` of zero — appropriate when the data is already in deviation
+            ``obs_intercept`` of zero -- appropriate when the data is already in deviation
             form (HP-cycled, demeaned, etc.). Pass ``observed_states`` to enable per-draw
             steady-state subtraction for every observed series. Default ``None`` (no
             entries; ``obs_intercept`` left at zero).
@@ -1069,7 +1075,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         # Cumulator-aggregated observed states that are also observation equations
         # route their lag storage through the obs-eq lag block, not the cumulator
-        # block — exclude them here to match ``_cumulator_variables``.
+        # block -- exclude them here to match ``_cumulator_variables``.
         n_cumulator_vars = sum(
             1
             for name, method in temporal_aggregation.items()
@@ -1106,6 +1112,14 @@ class DSGEStateSpace(PyMCStateSpace):
                 )
 
     def set_states(self) -> tuple[State, ...]:
+        """
+        List the states of the statespace model.
+
+        Returns
+        -------
+        states : tuple
+            Hidden model variables, cumulator states, observation lag states, and observed states, in that order.
+        """
         observed_states = self._obs_state_names if self._obs_state_names is not None else []
         hidden_states = [State(name=x.base_name, observed=False) for x in self.variables]
         cumulator_states = [State(name=name, observed=False) for name in self._cumulator_state_names]
@@ -1114,6 +1128,15 @@ class DSGEStateSpace(PyMCStateSpace):
         return *hidden_states, *cumulator_states, *obs_lag_states, *observed_states
 
     def set_parameters(self) -> tuple[Parameter, ...]:
+        """
+        List the parameters the statespace model expects from the PyMC model.
+
+        Returns
+        -------
+        parameters : tuple of Parameter
+            Non-constant model parameters, followed by the shock covariance parameters and any measurement error
+            parameters.
+        """
         # TODO: Extract information from assumptions and use them to denote constraints on the parameters
         constant_params = self.constant_parameters if self.constant_parameters is not None else []
         parameters = [Parameter(name=x.name, shape=()) for x in self.input_parameters if x.name not in constant_params]
@@ -1140,13 +1163,30 @@ class DSGEStateSpace(PyMCStateSpace):
         return tuple(parameters)
 
     def set_shocks(self) -> tuple[Shock]:
+        """
+        List the shocks of the statespace model.
+
+        Returns
+        -------
+        shocks : tuple
+            One shock per exogenous shock in the model.
+        """
         return tuple(Shock(name=x.base_name) for x in self.shocks)
 
     def set_coords(self) -> tuple[Coord, ...]:
+        """
+        List the coordinates of the statespace model.
+
+        Returns
+        -------
+        coords : tuple
+            The default coordinates implied by the model states, shocks, and observed states.
+        """
         return self.default_coords()
 
     @property
     def param_dims(self):
+        """Dimension names of each model parameter, empty until the model is configured."""
         if not self._configured:
             return {}
 
@@ -1340,6 +1380,14 @@ class DSGEStateSpace(PyMCStateSpace):
         )[name]
 
     def to_pymc(self, exclude_priors: list[str] | None = None):
+        """
+        Add the model's parameter and shock priors to the active PyMC model context.
+
+        Parameters
+        ----------
+        exclude_priors : list of str, optional
+            Names of priors to skip. Constant parameters are always skipped. No priors are excluded by default.
+        """
         if exclude_priors is None:
             exclude_priors = []
 
@@ -1359,7 +1407,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
 
 def data_from_prior(
-    statepace_mod: DSGEStateSpace,
+    statespace_mod: DSGEStateSpace,
     pymc_model: pm.Model,
     index: pd.DatetimeIndex | None = None,
     n_samples: int = 500,
@@ -1375,18 +1423,18 @@ def data_from_prior(
 
     Parameters
     ----------
-    statepace_mod: DSGEStateSpace
+    statespace_mod : DSGEStateSpace
         Statespace model to generate data from. Must have been configured with the .configure method.
-    pymc_model: pm.Model
+    pymc_model : pm.Model
         PyMC model with priors on expected DSGE parameters. It should **not** have a Kalman Filter added via
         build_statespace_graph.
-    index: pd.DatetimeIndex
+    index : pd.DatetimeIndex, optional
         Index to use for the generated data. If None, a quarterly index from 1980-01-01 to 2024-11-01 is used.
-    n_samples: int
+    n_samples : int, optional
         Number of prior predictive samples to draw.
-    pct_missing: float
+    pct_missing : float, optional
         Percentage of missing data to introduce into the generated data. Must be between 0 and 1.
-    random_seed: np.random.Generator or int, optional
+    random_seed : np.random.Generator or int, optional
         Random number generator to use for sampling. If None, the default numpy random number generator is used.
     mvn_method : str, optional
         Method to use for sampling from the multivariate normal distribution of the state transitions. Passed to
@@ -1396,11 +1444,11 @@ def data_from_prior(
 
     Returns
     -------
-    true_parameters: xr.Dataset
+    true_parameters : xr.Dataset
         True parameters used to generate the data.
-    data: pd.DataFrame
+    data : pd.DataFrame
         Generated data.
-    prior_idata: xr.DataTree
+    prior_idata : xr.DataTree
         Draws from the prior predictive distribution, plus conditional prior predictive samples.
     """
     rng = np.random.default_rng(random_seed)
@@ -1409,22 +1457,22 @@ def data_from_prior(
 
     if index is None:
         index = pd.date_range(start="1980-01-01", end="2024-11-01", freq="QS-OCT")
-    dummy_data = pd.DataFrame(np.nan, index=index, columns=statepace_mod.observed_states)
+    dummy_data = pd.DataFrame(np.nan, index=index, columns=statespace_mod.observed_states)
     dummy_data.index.freq = dummy_data.index.inferred_freq
 
     # Copy the model so the original model is unchanged
     new_model = pymc_model.copy()
 
     with new_model:
-        statepace_mod.build_statespace_graph(dummy_data, **build_statespace_kwargs)
+        statespace_mod.build_statespace_graph(dummy_data, **build_statespace_kwargs)
 
     with warnings.catch_warnings(action="ignore"), freeze_dims_and_data(new_model):
         prior_idata = pm.sample_prior_predictive(
-            n_samples, compile_kwargs={"mode": statepace_mod.mode}, random_seed=rng
+            n_samples, compile_kwargs={"mode": statespace_mod.mode}, random_seed=rng
         )
 
     with warnings.catch_warnings(action="ignore"):
-        prior_trajectories = statepace_mod.sample_unconditional_prior(
+        prior_trajectories = statespace_mod.sample_unconditional_prior(
             prior_idata, random_seed=rng, mvn_method=mvn_method
         )
 
@@ -1457,33 +1505,29 @@ def prepare_mixed_frequency_data(
     """
     Expand low-frequency data to a high-frequency index for mixed-frequency estimation.
 
-    Each low-frequency value is placed at the first or last high-frequency period within
-    its aggregation window, with ``NaN`` at all other periods.  The Kalman filter treats
-    ``NaN`` entries as missing observations.
+    Each low-frequency value is placed at the first or last high-frequency period within its aggregation window, with
+    ``NaN`` at all other periods. The Kalman filter treats ``NaN`` entries as missing observations.
 
-    The flow-vs-stock distinction is irrelevant here — both are placed identically.  The
-    distinction only matters in :meth:`DSGEStateSpace.configure`, where ``flow_variables``
-    triggers cumulator-state augmentation so the observation equation sums over the window.
+    Flow and stock variables are placed identically. The distinction matters only in
+    :meth:`~gEconpy.model.statespace.DSGEStateSpace.configure`, where ``flow_variables`` triggers cumulator-state
+    augmentation so the observation equation sums over the window.
 
     Parameters
     ----------
-    low_freq_data : pd.DataFrame
-        Observed data at low frequency.  The index should be a ``DatetimeIndex`` at the
-        low-frequency periodicity (e.g. annual).  Each column corresponds to an observed
-        variable.
+    low_freq_data : DataFrame
+        Observed data at low frequency. The index should be a ``DatetimeIndex`` at the low-frequency periodicity, for
+        example annual. Each column corresponds to an observed variable.
     high_freq : str
-        Pandas frequency string for the high-frequency (model) periodicity, e.g. ``"QS"``
-        for quarterly.
-    aggregation_period : int
-        Number of high-frequency periods per low-frequency observation.  Default is 4
-        (annual from quarterly).
-    observation_position : str
-        Whether the low-frequency observation corresponds to the ``"first"`` or ``"last"``
-        high-frequency period in each window.  Default is ``"last"``.
+        Pandas frequency string for the high-frequency model periodicity, for example "QS" for quarterly.
+    aggregation_period : int, optional
+        Number of high-frequency periods per low-frequency observation. Default 4, which is annual from quarterly.
+    observation_position : str, optional
+        Whether the low-frequency observation corresponds to the "first" or "last" high-frequency period in each
+        window. Default "last".
 
     Returns
     -------
-    pd.DataFrame
+    result : DataFrame
         High-frequency DataFrame with ``NaN`` at unobserved periods.
 
     Examples

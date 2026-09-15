@@ -1,7 +1,7 @@
 options
 {
-	output logfile = FALSE;
-	output LaTeX = FALSE;
+    output logfile = FALSE;
+    output LaTeX = FALSE;
 };
 
 tryreduce
@@ -19,46 +19,46 @@ assumptions
 
 block HOUSEHOLD
 {
-	definitions
-	{
-		u[] = (C[] ^ theta * (1 - L[]) ^ (1 - theta)) ^ (1 - tau) / (1 - tau);
-	};
+    definitions
+    {
+        u[] = (C[] ^ theta * (1 - L[]) ^ (1 - theta)) ^ (1 - tau) / (1 - tau);
+    };
 
-	controls
-	{
-		C[], L[], I[], K[], Y[];
-	};
+    controls
+    {
+        C[], L[], I[], K[], Y[];
+    };
 
-	objective
-	{
-		U[] = u[] + beta * E[][U[1]];
-	};
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
 
-	constraints
-	{
-		Y[] = A[] * K[] ^ alpha * L[] ^ (1 - alpha);
-		I[] = Y[] - C[] : lambda[];
-		K[] = I[] + (1 - delta) * K[-1] : q[];
-	};
+    constraints
+    {
+        Y[] = A[] * K[] ^ alpha * L[] ^ (1 - alpha);
+        I[] = Y[] - C[] : lambda[];
+        K[] = I[] + (1 - delta) * K[-1] : q[];
+    };
 
-	identities
-	{
-		log(A[]) = rho * log(A[-1]) + epsilon[];
-	};
+    identities
+    {
+        log(A[]) = rho * log(A[-1]) + epsilon[];
+    };
 
-	shocks
-	{
-		epsilon[];
-	};
+    shocks
+    {
+        epsilon[];
+    };
 
-	calibration
-	{
-		L[ss] / K[ss] = 0.36 -> alpha;
-		theta = 0.357;
-		beta = 1 / 1.01;
-		delta = 0.02;
-		tau = 2;
+    calibration
+    {
+        L[ss] / K[ss] = 0.36 -> alpha;
+        theta = 0.357;
+        beta = 1 / 1.01;
+        delta = 0.02;
+        tau = 2;
 
-		rho = 0.95;
-	};
+        rho = 0.95;
+    };
 };

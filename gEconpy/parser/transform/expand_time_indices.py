@@ -16,12 +16,40 @@ AUX_LEAD_SEPARATOR = "__lead"
 
 
 def make_lag_name(var_name: str, level: int) -> str:
-    """Generate auxiliary variable name for lag chain: ``x`` -> ``x__lag1``."""
+    """
+    Build the auxiliary variable name for one link of a lag chain, turning ``x`` at level 1 into ``x__lag1``.
+
+    Parameters
+    ----------
+    var_name : str
+        Name of the original variable.
+    level : int
+        Position in the lag chain, counting from 1.
+
+    Returns
+    -------
+    name : str
+        The auxiliary variable name.
+    """
     return f"{var_name}{AUX_LAG_SEPARATOR}{level}"
 
 
 def make_lead_name(var_name: str, level: int) -> str:
-    """Generate auxiliary variable name for lead chain: ``x`` -> ``x__lead1``."""
+    """
+    Build the auxiliary variable name for one link of a lead chain, turning ``x`` at level 1 into ``x__lead1``.
+
+    Parameters
+    ----------
+    var_name : str
+        Name of the original variable.
+    level : int
+        Position in the lead chain, counting from 1.
+
+    Returns
+    -------
+    name : str
+        The auxiliary variable name.
+    """
     return f"{var_name}{AUX_LEAD_SEPARATOR}{level}"
 
 
