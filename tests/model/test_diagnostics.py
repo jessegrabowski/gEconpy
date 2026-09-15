@@ -57,6 +57,11 @@ def test_both_solvers_succeed_at_defaults(model_with_priors, solver):
     assert result["failure_step"].isna().all(), f"solver={solver!r}: {result['failure_step'].value_counts().to_dict()}"
 
 
+def test_unknown_solver_raises_before_checking_any_draw(model_with_priors):
+    with pytest.raises(ValueError, match="Unknown solver 'newton'"):
+        solvability_check(model_with_priors, _make_samples(model_with_priors), solver="newton", progressbar=False)
+
+
 def test_parallel_produces_same_outcomes_as_serial(model_with_priors):
     samples = _make_samples(model_with_priors)
     serial = solvability_check(model_with_priors, samples, cores=1, progressbar=False)

@@ -348,8 +348,9 @@ def postprocess_optimizer_res(
     """
     Check an optimizer result against residual and gradient tolerances and report the outcome.
 
-    The optimizer sometimes reports failure at a point that satisfies the tolerances, so success is granted if either
-    the optimizer or the numeric check accepts the solution.
+    Success requires the numeric check to pass. The optimizer's own flag does not decide the outcome in either
+    direction: an optimizer that reports failure at a point satisfying the tolerances still counts as a success, and
+    one that reports convergence at a point violating them counts as a failure.
 
     Parameters
     ----------
@@ -386,7 +387,7 @@ def postprocess_optimizer_res(
 
     if numeric_success and not success:
         word = " IS "
-    elif not numeric_success and not success:
+    elif not numeric_success:
         word = " NOT "
     else:
         word = " "
@@ -397,6 +398,12 @@ def postprocess_optimizer_res(
             ", although optimizer returned success = False.\n"
             "This can be ignored, but to silence this message, try reducing the solver-specific tolerance, "
             "or use a different solution algorithm."
+        )
+    elif not numeric_success and success:
+        line_1 += (
+            ", although optimizer returned success = True.\n"
+            "The optimizer stopped at a point that does not satisfy the residual tolerance. Try a different "
+            "solution algorithm, a tighter solver-specific tolerance, or a better initial point."
         )
 
     msg = (
@@ -411,7 +418,7 @@ def postprocess_optimizer_res(
 
     if verbose:
         _log.info(msg)
-    res_dict.success = success | numeric_success
+    res_dict.success = numeric_success
     return res_dict
 
 
