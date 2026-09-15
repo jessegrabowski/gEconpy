@@ -1301,9 +1301,7 @@ def test_sample_autocorrelation_matches_analytical_acf(autocorrelation_setup):
         coords={"chain": [0], "draw": [0]},
     )
 
-    analytical = autocorrelation_matrix(
-        model, shock_cov_matrix=np.eye(1) * 0.01, correlation=True, return_xr=True, verbose=False
-    )
+    analytical = autocorrelation_matrix(model, shock_cov_matrix=np.eye(1) * 0.01, return_xr=True, verbose=False)
     n_lags = analytical.sizes["lag"]
     sampled = ss_mod.sample_autocorrelation_matrices(degenerate, n_lags=n_lags).isel(chain=0, draw=0)
 
