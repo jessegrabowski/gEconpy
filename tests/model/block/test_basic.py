@@ -259,8 +259,8 @@ class TestBlockCases:
         assert len(block.shocks) == 1
 
     def test_lagrange_parsing(self, block):
-        n_nones = [0 if x is None else 1 for x in list(block.multipliers.values())]
-        assert sum(n_nones) == 2
+        n_named_multipliers = sum(x is not None for x in block.multipliers.values())
+        assert n_named_multipliers == 2
         assert block.multipliers[3] == parsed_var("lambda", 0)
         assert block.multipliers[4] == parsed_var("q", 0)
 
@@ -373,7 +373,7 @@ class TestBlockCases:
             K.to_ss(),
         ]
 
-        sub_dict = dict(zip(all_variables, rng.uniform(0, 1, size=len(all_variables)), strict=False))
+        sub_dict = dict(zip(all_variables, rng.uniform(0, 1, size=len(all_variables)), strict=True))
         sub_dict[Theta] = 0
         sub_dict[zeta] = 0
 
@@ -409,37 +409,6 @@ class TestBlockCases:
 
         assert (block._build_lagrangian() - L).simplify() == 0
 
-    def test_firm_FOC(self, rng):
-        result = load_gcn_file(TEST_GCNS / "rbc_2_block.gcn")
-        firm_block = result.block_dict["FIRM"]
-        firm_block.solve_optimization()
-
-        Y = parsed_var("Y", 0)
-        TC = parsed_var("TC", 0)
-        K = parsed_var("K", -1)
-        L = parsed_var("L", 0)
-        A = parsed_var("A", 0)
-        r = parsed_var("r", 0)
-        w = parsed_var("w", 0)
-        P = parsed_var("P", 0)
-        epsilon = parsed_var("epsilon_A", 0)
-        alpha, rho = parsed_symbols(["alpha", "rho_A"])
-
-        # The chain-rule FOCs of the general Block and the closed-form FOCs of CobbDouglasBlock only agree at points
-        # where the production residual is zero, so Y is computed from the constraint while the rest are sampled.
-        rest_vars = [TC, K, L, A, A.step_backward(), P, r, w, alpha, rho, epsilon]
-        sub_dict = dict(zip(rest_vars, rng.uniform(0.1, 1, size=len(rest_vars)), strict=False))
-        sub_dict[Y] = float(sub_dict[A] * sub_dict[K] ** sub_dict[alpha] * sub_dict[L] ** (1 - sub_dict[alpha]))
-
-        dL_dK = -r + P * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
-        dL_dL = -w + P * A * (1 - alpha) * K**alpha * L ** (-alpha)
-
-        subbed_system = [float(eq.subs(sub_dict)) for eq in firm_block.system_equations]
-        for expected in [float(dL_dK.subs(sub_dict)), float(dL_dL.subs(sub_dict))]:
-            assert any(abs(actual - expected) < 1e-10 for actual in subbed_system), (
-                f"Expected FOC value {expected} not found in system_equations (values: {subbed_system})"
-            )
-
     def test_get_param_dict_and_calibrating_equations(self, block):
         block.solve_optimization(try_simplify=False)
 
@@ -473,7 +442,7 @@ class TestBlockCases:
 
         assert [x.name for x in block.deterministic_params] == ["Theta", "zeta"]
         answers = [3 + 1 / 1.01 * 0.95, -np.log(0.357)]
-        for eq, answer in zip(block.deterministic_relationships, answers, strict=False):
+        for eq, answer in zip(block.deterministic_relationships, answers, strict=True):
             np.testing.assert_allclose(float(eq.subs(block.param_dict).evalf()), answer)
 
     def test_variable_list(self, block):
@@ -670,8 +639,13 @@ def test_ss_variable_in_calibration_resolves_to_deterministic_param():
     assert block.deterministic_dict[phi] == Y_bar**2 + alpha
 
 
-def test_minimize_tag_produces_correct_firm_focs(rng):
-    result = load_gcn_file(TEST_GCNS / "rbc_2_block_minimize.gcn")
+@pytest.mark.parametrize(
+    "gcn_file",
+    ["rbc_2_block.gcn", "rbc_2_block_minimize.gcn"],
+    ids=["maximize-profit", "minimize-cost"],
+)
+def test_firm_focs_match_closed_form(gcn_file, rng):
+    result = load_gcn_file(TEST_GCNS / gcn_file)
     firm_block = result.block_dict["FIRM"]
 
     Y = parsed_var("Y", 0)
@@ -685,9 +659,10 @@ def test_minimize_tag_produces_correct_firm_focs(rng):
     epsilon = parsed_var("epsilon_A", 0)
     alpha, rho = parsed_symbols(["alpha", "rho_A"])
 
-    # Y is set consistently with the production constraint for the reason given in test_firm_FOC.
+    # The chain-rule FOCs of the general Block and the closed-form FOCs of CobbDouglasBlock only agree at points
+    # where the production residual is zero, so Y is computed from the constraint while the rest are sampled.
     rest_vars = [TC, K, L, A, A.step_backward(), P, r, w, alpha, rho, epsilon]
-    sub_dict = dict(zip(rest_vars, rng.uniform(0.1, 1, size=len(rest_vars)), strict=False))
+    sub_dict = dict(zip(rest_vars, rng.uniform(0.1, 1, size=len(rest_vars)), strict=True))
     sub_dict[Y] = float(sub_dict[A] * sub_dict[K] ** sub_dict[alpha] * sub_dict[L] ** (1 - sub_dict[alpha]))
 
     expected_dL_dK = -r + P * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)

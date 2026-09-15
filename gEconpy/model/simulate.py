@@ -155,7 +155,7 @@ def simulate(
     simulation_length: int = 40,
     shock_std_dict: dict[str, float] | None = None,
     shock_cov_matrix: np.ndarray | None = None,
-    shock_std: np.ndarray | list | float | np.ndarray = None,
+    shock_std: np.ndarray | list | float | None = None,
     random_seed: int | np.random.RandomState | None = None,
     **solve_model_kwargs,
 ) -> xr.DataArray:
@@ -232,14 +232,8 @@ def simulate(
         method="svd",
     )
 
-    trajectories = np.zeros((n_simulations, simulation_length, len(model.variables)))
     T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-
-    trajectories[:, 0, :] = np.einsum("nk,sk->sn", R, epsilons[:, 0, :])
-    for t in range(1, simulation_length):
-        stochastic = np.einsum("nk,sk->sn", R, epsilons[:, t, :])
-        deterministic = np.einsum("nm,sm->sn", T, trajectories[:, t - 1, :])
-        trajectories[:, t, :] = deterministic + stochastic
+    trajectories = _simulate_linear_system(T, R, epsilons)
 
     return xr.DataArray(
         trajectories,
@@ -374,16 +368,21 @@ def _build_trajectory(
 
 
 def _simulate_linear_system(T: np.ndarray, R: np.ndarray, shock_trajectory: np.ndarray) -> np.ndarray:
-    """Iterate :math:`x_t = T x_{t-1} + R e_t` from :math:`x_{-1} = 0` along the shock path :math:`e_t`."""
+    """
+    Iterate :math:`x_t = T x_{t-1} + R e_t` from :math:`x_{-1} = 0` along the shock path :math:`e_t`.
+
+    ``shock_trajectory`` has shape ``(..., n_periods, n_shocks)`` and any leading dimensions are simulated
+    independently, giving states of shape ``(..., n_periods, n_vars)``.
+    """
     T = np.asarray(T)
     R = np.asarray(R)
-    n_periods = shock_trajectory.shape[0]
+    n_periods = shock_trajectory.shape[-2]
     n_vars = T.shape[0]
 
-    states = np.zeros((n_periods, n_vars), dtype=float)
-    states[0] = R @ shock_trajectory[0]
+    states = np.zeros((*shock_trajectory.shape[:-2], n_periods, n_vars), dtype=float)
+    states[..., 0, :] = shock_trajectory[..., 0, :] @ R.T
     for t in range(1, n_periods):
-        states[t] = T @ states[t - 1] + R @ shock_trajectory[t]
+        states[..., t, :] = states[..., t - 1, :] @ T.T + shock_trajectory[..., t, :] @ R.T
     return states
 
 

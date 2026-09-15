@@ -395,14 +395,14 @@ def _eval_obs_pieces(ss_mod, param_values):
     return _evaluate_at(ss_mod, [ss_mod.ssm["obs_intercept"], ss_mod.ssm["design"]], param_values)
 
 
-def _model_ss_values(gcn_file):
-    model = load_and_cache_model(gcn_file)
+def _model_ss_values():
+    model = load_and_cache_model(NL_GCN)
     ss_vals = model.steady_state(verbose=False, progressbar=False)
     return model, ss_vals
 
 
 def test_ss_obs_intercept_evaluates_to_log_v_ss(rbc_nonlinear_ss):
-    model, ss_vals = _model_ss_values("rbc_2_block_ss.gcn")
+    model, ss_vals = _model_ss_values()
     rbc_nonlinear_ss.configure(
         observed_states=["Y", "C", "L"],
         measurement_error=["Y", "C", "L"],
@@ -422,7 +422,7 @@ def test_ss_obs_intercept_evaluates_to_log_v_ss(rbc_nonlinear_ss):
 
 
 def test_ss_obs_intercept_zero_for_unmentioned_states(rbc_nonlinear_ss):
-    model, ss_vals = _model_ss_values("rbc_2_block_ss.gcn")
+    model, ss_vals = _model_ss_values()
     rbc_nonlinear_ss.configure(
         observed_states=["Y", "C"],
         measurement_error=["Y", "C"],
@@ -436,7 +436,7 @@ def test_ss_obs_intercept_zero_for_unmentioned_states(rbc_nonlinear_ss):
 
 
 def test_ss_obs_intercept_sum_aggregation_scales_intercept(rbc_nonlinear_ss):
-    model, ss_vals = _model_ss_values("rbc_2_block_ss.gcn")
+    model, ss_vals = _model_ss_values()
     rbc_nonlinear_ss.configure(
         observed_states=["Y"],
         measurement_error=["Y"],
@@ -675,12 +675,12 @@ def _build_expected_Z(ss_mod, per_period_coeffs, agg_method, agg_period):
 
 
 def _ss_floats():
-    ss = load_and_cache_model("rbc_2_block_ss.gcn").steady_state(verbose=False, progressbar=False)
+    ss = load_and_cache_model(NL_GCN).steady_state(verbose=False, progressbar=False)
     return {key.removesuffix("_ss"): float(val) for key, val in ss.items()}
 
 
 def _params_at_calib():
-    return load_and_cache_model("rbc_2_block_ss.gcn").parameters()
+    return load_and_cache_model(NL_GCN).parameters()
 
 
 # Each entry is (eq_string, coeffs_fn, intercept_fn, agg, period, expected_depths). ``coeffs_fn(ss, params)`` returns

@@ -128,22 +128,12 @@ class CobbDouglasBlock(Block):
         foc : sympy.Expr
             First-order condition residual.
         """
-        mu = self.multipliers[self._match.idx]
-        if mu is None:
-            raise RuntimeError(
-                f"CobbDouglasBlock {self.name!r} has no multiplier on its production constraint. Call "
-                "solve_optimization, which generates one, before computing first-order conditions."
-            )
-
-        obj_idx, obj_eq = next(iter(self.objective.items()))
-        objective_rhs = obj_eq.rhs
-        if self.equation_flags.get(obj_idx, {}).get("minimize", False):
-            objective_rhs = -objective_rhs
-        objective_term = diff_through_time(objective_rhs, control, discount_factor)
-
-        for input_symbol, exponent in self._match.inputs:
+        match = self._match
+        for input_symbol, exponent in match.inputs:
             if control == input_symbol:
-                return objective_term + mu * exponent * self._match.output / input_symbol
+                mu = self._constraint_multiplier(match.idx)
+                marginal_product = exponent * match.output / input_symbol
+                return self._objective_derivative(control, discount_factor) + mu * marginal_product
 
         return diff_through_time(lagrange, control, discount_factor)
 

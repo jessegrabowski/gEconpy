@@ -152,7 +152,7 @@ def sample_uniform(
         rng = np.random.default_rng(seed)
         unit_samples = rng.uniform(size=(n_samples, len(names)))
     elif method in QMC_ENGINES:
-        unit_samples = _unit_hypercube_samples(n_samples, d=len(names), seed=seed, method=method)
+        unit_samples = _unit_hypercube_samples(n_samples, n_dims=len(names), seed=seed, method=method)
     else:
         raise ValueError(
             f"Unknown sampling method {method!r}. Choose from 'random', 'lhs', 'sobol', 'halton', 'poisson_disk'."
@@ -259,7 +259,7 @@ def sample_from_priors_qmc(
     if method not in INVERSE_CDF_ENGINES:
         raise ValueError(f"Unknown method {method!r} for sample_from_priors_qmc. Choose from 'sobol', 'halton', 'lhs'.")
 
-    unit_samples = _unit_hypercube_samples(n_samples, d=len(names), seed=seed, method=method)
+    unit_samples = _unit_hypercube_samples(n_samples, n_dims=len(names), seed=seed, method=method)
 
     # ppf(0) and ppf(1) are infinite for unbounded priors, so keep the draws strictly inside the unit interval.
     eps = np.finfo(float).eps
@@ -271,7 +271,7 @@ def sample_from_priors_qmc(
 
 def _unit_hypercube_samples(
     n_samples: int,
-    d: int,
+    n_dims: int,
     seed: int | np.random.Generator | None,
     method: str,
 ) -> np.ndarray:
@@ -283,5 +283,5 @@ def _unit_hypercube_samples(
 
     engine_kwargs = {"scramble": True} if method in ("sobol", "halton") else {}
     engine_seed = seed if isinstance(seed, int | None) else None
-    sampler = QMC_ENGINES[method](d=d, seed=engine_seed, **engine_kwargs)
+    sampler = QMC_ENGINES[method](d=n_dims, seed=engine_seed, **engine_kwargs)
     return sampler.random(n_samples)

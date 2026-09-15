@@ -1,6 +1,5 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import pytensor
 import pytensor.tensor as pt
@@ -12,11 +11,9 @@ from sympytensor import as_tensor
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import build_symbolic_jacobian, make_cache_key
+from gEconpy.model.model import Model
 from gEconpy.model.timing import classify_variables_by_timing
 from gEconpy.utilities import safe_to_ss
-
-if TYPE_CHECKING:
-    from gEconpy.model.model import Model
 
 
 @dataclass
@@ -65,7 +62,7 @@ class PerfectForesightProblem:
 
 
 def compile_perfect_foresight_problem(
-    model: "Model",
+    model: Model,
     T: int,
     **compile_kwargs,
 ) -> PerfectForesightProblem:
@@ -112,7 +109,7 @@ class _SinglePeriodGraph:
     param_names: list[str]
 
 
-def _build_single_period_graph(model: "Model") -> _SinglePeriodGraph:
+def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
     """
     Build the symbolic residual and Jacobian of one period's equations as functions of stacked input vectors.
 
@@ -212,14 +209,10 @@ def _substitute_steady_state_values(
     if not ss_atoms:
         return equations
 
-    sub_dict = {}
+    values_by_name = {}
     if ss_solution_dict:
-        sympy_dict = ss_solution_dict.to_sympy()
-        for atom in ss_atoms:
-            for key, value in sympy_dict.items():
-                if safe_to_ss(key).name == atom.name:
-                    sub_dict[atom] = value
-                    break
+        values_by_name = {safe_to_ss(key).name: value for key, value in ss_solution_dict.to_sympy().items()}
+    sub_dict = {atom: values_by_name[atom.name] for atom in ss_atoms if atom.name in values_by_name}
 
     remaining = ss_atoms - set(sub_dict.keys())
     if remaining:

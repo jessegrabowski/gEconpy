@@ -1,6 +1,5 @@
 from collections.abc import Callable, Iterator
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -8,6 +7,7 @@ import pandas as pd
 from scipy import sparse
 from scipy.optimize import OptimizeResult
 
+from gEconpy.model.model import Model
 from gEconpy.model.perfect_foresight.assemble import assemble_stacked_jacobian
 from gEconpy.model.perfect_foresight.compile import (
     PerfectForesightProblem,
@@ -18,12 +18,9 @@ from gEconpy.solvers.sparse_root import NewtonArmijo, sparse_root
 from gEconpy.solvers.sparse_root.base import RootSolver
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 
-if TYPE_CHECKING:
-    from gEconpy.model.model import Model
-
 
 def solve_perfect_foresight(
-    model: "Model",
+    model: Model,
     simulation_length: int,
     x0: np.ndarray | pd.DataFrame | dict[str, float] | None = None,
     initial_conditions: dict[str, float] | None = None,
@@ -338,12 +335,12 @@ def _build_shock_matrix(
     T: int,
 ) -> np.ndarray:
     """Arrange the user's shock paths into a ``(T, n_shocks)`` matrix, with zeros for shocks not given."""
-    n_shocks = len(shock_names)
-    shock_matrix = np.zeros((T, n_shocks))
+    shock_matrix = np.zeros((T, len(shock_names)))
+
     if shocks:
-        for i, name in enumerate(shock_names):
-            if name in shocks:
-                shock_matrix[: len(shocks[name]), i] = shocks[name]
+        for name, path in shocks.items():
+            shock_matrix[:, shock_names.index(name)] = path
+
     return shock_matrix
 
 
@@ -371,21 +368,20 @@ def _evaluate_periods(
     y_terminal: np.ndarray,
     x: np.ndarray,
     params: np.ndarray,
-    n_vars: int,
-    n_shocks: int,
-    T: int,
-) -> Iterator[tuple[int, tuple]]:
-    """Call ``f`` once per period with the neighboring periods, using the boundary vectors at the ends."""
-    y_mat = y.reshape(T, n_vars)
+    problem: PerfectForesightProblem,
+) -> Iterator[list[np.ndarray]]:
+    """Call ``f`` once per period, in order, with the neighboring periods and the boundary vectors at the ends."""
+    T = problem.T
+    y_mat = y.reshape(T, problem.n_vars)
     for t in range(T):
         y_tm1 = y_initial if t == 0 else y_mat[t - 1]
         y_t = y_mat[t]
         y_tp1 = y_terminal if t == T - 1 else y_mat[t + 1]
 
-        if n_shocks > 0:
-            yield t, f(y_tm1, y_t, y_tp1, x[t], *params[t])
+        if problem.n_shocks > 0:
+            yield f(y_tm1, y_t, y_tp1, x[t], *params[t])
         else:
-            yield t, f(y_tm1, y_t, y_tp1, *params[t])
+            yield f(y_tm1, y_t, y_tp1, *params[t])
 
 
 def _compute_stacked_residuals_and_jacobian(
@@ -396,19 +392,11 @@ def _compute_stacked_residuals_and_jacobian(
     params: np.ndarray,
     problem: PerfectForesightProblem,
 ) -> tuple[np.ndarray, sparse.csc_matrix]:
-    n_eq = problem.n_eq
-    T = problem.T
+    period_outputs = _evaluate_periods(problem.f_resid_and_jac, y, y_initial, y_terminal, x, params, problem)
+    residuals, jacobians = zip(*period_outputs, strict=True)
 
-    residuals = np.zeros(T * n_eq)
-    jacobians = [None] * T
-
-    for t, (period_residuals, period_jacobian) in _evaluate_periods(
-        problem.f_resid_and_jac, y, y_initial, y_terminal, x, params, problem.n_vars, problem.n_shocks, T
-    ):
-        residuals[t * n_eq : (t + 1) * n_eq] = period_residuals
-        jacobians[t] = period_jacobian
-
-    return residuals, assemble_stacked_jacobian(jacobians, problem.n_vars, n_eq, T)
+    stacked_jacobian = assemble_stacked_jacobian(list(jacobians), problem.n_vars, problem.n_eq, problem.T)
+    return np.concatenate(residuals), stacked_jacobian
 
 
 def _compute_stacked_residuals(
@@ -419,14 +407,5 @@ def _compute_stacked_residuals(
     params: np.ndarray,
     problem: PerfectForesightProblem,
 ) -> np.ndarray:
-    n_eq = problem.n_eq
-    T = problem.T
-
-    residuals = np.zeros(T * n_eq)
-
-    for t, (period_residuals,) in _evaluate_periods(
-        problem.f_resid_only, y, y_initial, y_terminal, x, params, problem.n_vars, problem.n_shocks, T
-    ):
-        residuals[t * n_eq : (t + 1) * n_eq] = period_residuals
-
-    return residuals
+    period_outputs = _evaluate_periods(problem.f_resid_only, y, y_initial, y_terminal, x, params, problem)
+    return np.concatenate([residuals for (residuals,) in period_outputs])
