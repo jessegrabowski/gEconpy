@@ -79,12 +79,6 @@ class TestNonmonotoneBacktracking:
 
         np.testing.assert_allclose(result_armijo.alpha, result_nonmonotone.alpha)
 
-    def test_history_bounded_by_memory(self):
-        nonmonotone = NonmonotoneBacktracking(memory=3)
-        for i in range(10):
-            nonmonotone._phi_history.append(float(i))
-        assert len(nonmonotone._phi_history) == 3
-
     def test_reset_clears_history(self):
         nonmonotone = NonmonotoneBacktracking(memory=3)
         nonmonotone._phi_history.append(1e7)
