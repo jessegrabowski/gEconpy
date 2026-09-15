@@ -37,7 +37,7 @@ class LineSearchSolver:
     globalization: GlobalizationStrategy = field(default_factory=ArmijoBacktracking)
 
     def init(self, fun: RootFunction, x0: np.ndarray, args: tuple) -> SolverState:
-        """Evaluate ``fun`` at ``x0``, reset the direction strategy, and build the initial solver state.
+        """Evaluate ``fun`` at ``x0``, reset the direction and globalization strategies, and build the initial state.
 
         Parameters
         ----------
@@ -55,6 +55,8 @@ class LineSearchSolver:
         """
         if hasattr(self.direction, "reset"):
             self.direction.reset()
+        if hasattr(self.globalization, "reset"):
+            self.globalization.reset()
         return initial_state(fun, x0, args)
 
     def step(self, fun: RootFunction, state: SolverState, args: tuple) -> tuple[SolverState, StepInfo]:

@@ -156,6 +156,10 @@ class NonmonotoneBacktracking:
     def __post_init__(self):
         self._phi_history = deque(maxlen=self.memory)
 
+    def reset(self) -> None:
+        """Forget the merit history so the next solve starts from its own first iterate."""
+        self._phi_history.clear()
+
     def search(
         self,
         fun: RootFunction,

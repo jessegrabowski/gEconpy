@@ -87,6 +87,19 @@ class TestSymbolDictionary:
     def test_copy_is_new_object(self, symbol_dict):
         assert symbol_dict.copy() is not symbol_dict
 
+    @pytest.mark.parametrize("method", ["copy", "values_to_float", "float_to_values"])
+    def test_copy_keeps_subclass_and_attributes(self, method):
+        results = SteadyStateResults({C: 1.0})
+        results.success = True
+
+        copied = getattr(results, method)()
+        assert isinstance(copied, SteadyStateResults)
+        assert copied.success
+
+    def test_step_forward_leaves_steady_state_keys(self):
+        d = SymbolDictionary({C.to_ss(): 1.0, C: 2.0})
+        assert d.step_forward() == {C.to_ss(): 1.0, C.step_forward(): 2.0}
+
     @pytest.mark.parametrize("method", ["to_string", "to_sympy", "values_to_float"])
     def test_assumptions_preserved(self, symbol_dict, method):
         assumptions = symbol_dict._assumptions.copy()

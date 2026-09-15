@@ -71,7 +71,8 @@ def build_Q_matrix(
             Q[position, position] = std**2
         return Q
 
-    return np.eye(len(model_shocks)) * shock_std**2
+    std = np.broadcast_to(np.asarray(shock_std, dtype=float), (len(model_shocks),))
+    return np.diag(std**2)
 
 
 def stationary_covariance_matrix(
