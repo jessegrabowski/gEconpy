@@ -1,6 +1,7 @@
 import logging
 
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import sympy as sp
@@ -16,7 +17,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 _log = logging.getLogger(__name__)
 
 
-def flatten_list(items, result_list=None):
+def flatten_list(items: Any, result_list: list[Any] | None = None) -> list[Any]:
     """
     Flatten an arbitrarily nested list into a single flat list.
 
@@ -47,18 +48,18 @@ def flatten_list(items, result_list=None):
     return result_list
 
 
-def set_equality_equals_zero(eq):
+def set_equality_equals_zero(eq: sp.Expr) -> sp.Expr:
     """
     Rewrite a sympy equality as an expression equal to zero.
 
     Parameters
     ----------
-    eq : sp.Expr
+    eq : sympy expression
         Expression to rewrite. Non-equalities are returned unchanged.
 
     Returns
     -------
-    eq : sp.Expr
+    eq : sympy expression
         ``eq.rhs - eq.lhs`` if ``eq`` is an equality, otherwise ``eq``.
     """
     if not isinstance(eq, sp.Eq):
@@ -67,20 +68,20 @@ def set_equality_equals_zero(eq):
     return eq.rhs - eq.lhs
 
 
-def eq_to_ss(eq: sp.Expr, shocks: list[TimeAwareSymbol] | None = None):
+def eq_to_ss(eq: sp.Expr, shocks: list[TimeAwareSymbol] | None = None) -> sp.Expr:
     """
     Replace every time-aware symbol in an equation by its steady-state counterpart.
 
     Parameters
     ----------
-    eq : sp.Expr
+    eq : sympy expression
         Equation to convert.
     shocks : list of TimeAwareSymbol, optional
         Shocks whose steady-state values are set to zero. No shocks are zeroed by default.
 
     Returns
     -------
-    eq : sp.Expr
+    eq : sympy expression
         Equation written entirely in steady-state symbols.
     """
     shock_subs = {} if shocks is None else {x.to_ss(): 0.0 for x in shocks}
@@ -91,18 +92,18 @@ def eq_to_ss(eq: sp.Expr, shocks: list[TimeAwareSymbol] | None = None):
     return eq.subs(to_ss_subs).subs(shock_subs)
 
 
-def safe_to_ss(x: sp.Symbol):
+def safe_to_ss(x: sp.Symbol) -> sp.Symbol:
     """
     Convert ``x`` to steady-state if it is TimeAware, or return it unchanged otherwise.
 
     Parameters
     ----------
-    x : sp.Symbol
+    x : sympy Symbol
         Symbol to convert.
 
     Returns
     -------
-    x : sp.Symbol
+    x : sympy Symbol
         Steady-state symbol if ``x`` is a TimeAwareSymbol, otherwise ``x`` itself.
     """
     if isinstance(x, TimeAwareSymbol):
@@ -110,7 +111,7 @@ def safe_to_ss(x: sp.Symbol):
     return x
 
 
-def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]):
+def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]) -> dict[TimeAwareSymbol, sp.Expr]:
     """
     Expand a substitution dictionary to cover time indices t-1, t, t+1, and the steady state.
 
@@ -132,18 +133,18 @@ def expand_subs_for_all_times(sub_dict: dict[TimeAwareSymbol, TimeAwareSymbol]):
     return result
 
 
-def step_equation_forward(eq):
+def step_equation_forward(eq: sp.Expr) -> sp.Expr:
     """
     Advance the time index of every time-aware symbol in an equation by one period.
 
     Parameters
     ----------
-    eq : sp.Expr
+    eq : sympy expression
         Equation to step forward.
 
     Returns
     -------
-    eq : sp.Expr
+    eq : sympy expression
         Equation with all time indices incremented.
     """
     to_step = [variable for variable in set(eq.atoms()) if hasattr(variable, "step_forward")]
@@ -154,18 +155,18 @@ def step_equation_forward(eq):
     return eq
 
 
-def step_equation_backward(eq):
+def step_equation_backward(eq: sp.Expr) -> sp.Expr:
     """
     Move the time index of every time-aware symbol in an equation back by one period.
 
     Parameters
     ----------
-    eq : sp.Expr
+    eq : sympy expression
         Equation to step backward.
 
     Returns
     -------
-    eq : sp.Expr
+    eq : sympy expression
         Equation with all time indices decremented.
     """
     to_step = [variable for variable in set(eq.atoms()) if hasattr(variable, "step_backward")]
@@ -176,27 +177,33 @@ def step_equation_backward(eq):
     return eq
 
 
-def diff_through_time(eq, dx, discount_factor=1):
-    r"""Differentiate an equation with respect to a time-aware symbol, summing across time shifts.
+def diff_through_time(eq: sp.Expr, dx: TimeAwareSymbol, discount_factor: sp.Expr | int = 1) -> sp.Expr:
+    r"""
+    Differentiate an equation with respect to a time-aware symbol, summing across time shifts.
 
-    Computes :math:`\sum_{k=0}^{K} \beta^k \cdot \frac{\partial}{\partial dx} \mathrm{step}^k(\mathrm{eq})` where each
-    step shifts every TimeAwareSymbol's time index forward by one. The number of iterations ``K`` is determined by the
-    spread between ``dx``'s time index and the earliest appearance of ``dx``'s base symbol in ``eq``: stepping forward
-    further can only increase the time indices of all instances, so once the leftmost has shifted past ``dx``, no
-    additional contribution is possible.
+    Compute
+
+    .. math::
+
+        \sum_{k=0}^{K} \beta^k \frac{\partial}{\partial x} \mathrm{step}^k(\mathrm{eq})
+
+    where each step shifts every time-aware symbol's time index forward by one. The number of steps :math:`K` is the
+    spread between the time index of ``dx`` and the earliest time index at which its base symbol appears in ``eq``.
+    Stepping forward further can only increase every time index, so once the earliest occurrence has shifted past
+    ``dx`` no additional contribution is possible.
 
     Parameters
     ----------
-    eq : sympy.Expr
-        Equation (typically a Lagrangian) to differentiate.
+    eq : sympy expression
+        Equation to differentiate, typically a Lagrangian.
     dx : TimeAwareSymbol
         Variable to differentiate with respect to.
-    discount_factor : sympy.Expr or int, optional
-        Multiplicative discount factor applied at each forward step. Default 1 (no discounting).
+    discount_factor : sympy expression or int, optional
+        Multiplicative discount factor applied at each forward step. Defaults to 1, which applies no discounting.
 
     Returns
     -------
-    total : sympy.Expr
+    total : sympy expression
         Sum of discounted derivatives across all relevant time shifts.
     """
     times_in_eq = {a.time_index for a in eq.atoms(TimeAwareSymbol) if a.base_name == dx.base_name}
@@ -212,20 +219,22 @@ def diff_through_time(eq, dx, discount_factor=1):
     return total
 
 
-def substitute_all_equations(eqs, *sub_dicts):
+def substitute_all_equations(
+    eqs: list[sp.Expr] | dict[Any, Any], *sub_dicts: dict[Any, Any]
+) -> list[sp.Expr] | dict[Any, Any]:
     """
     Apply one or more substitution dictionaries to a collection of equations.
 
     Parameters
     ----------
-    eqs : list of sp.Expr or dict
+    eqs : list of sympy expression or dict
         Equations to substitute into. Dictionary values that are plain numbers are left unchanged.
     *sub_dicts : dict
         Substitution dictionaries, merged left to right before use. Keys may be strings or sympy symbols.
 
     Returns
     -------
-    eqs : list of sp.Expr or dict
+    eqs : list of sympy expression or dict
         Equations after substitution, in the same container type as the input.
     """
     if len(sub_dicts) > 1:
@@ -242,8 +251,7 @@ def substitute_all_equations(eqs, *sub_dicts):
     return result
 
 
-def is_variable(x):
-    """Return True if ``x`` is a TimeAwareSymbol."""
+def is_variable(x: object) -> bool:
     return isinstance(x, TimeAwareSymbol)
 
 
@@ -275,7 +283,7 @@ def is_number(x: str) -> bool:
         return True
 
 
-def unpack_keys_and_values(d):
+def unpack_keys_and_values(d: dict[Any, Any]) -> tuple[list[Any], list[Any]]:
     """
     Split a dictionary into parallel lists of keys and values.
 
@@ -297,7 +305,7 @@ def unpack_keys_and_values(d):
     return keys, values
 
 
-def merge_dictionaries(*dicts):
+def merge_dictionaries(*dicts: dict[Any, Any]) -> dict[Any, Any]:
     """
     Merge dictionaries into a single dictionary.
 
@@ -311,16 +319,13 @@ def merge_dictionaries(*dicts):
     result : dict
         Merged dictionary.
     """
-    if not isinstance(dicts, list | tuple):
-        return dicts
-
     result = {}
     for d in dicts:
         result.update(d)
     return result
 
 
-def make_all_var_time_combos(var_list):
+def make_all_var_time_combos(var_list: list[TimeAwareSymbol]) -> list[TimeAwareSymbol]:
     """
     List every variable at time indices t-1, t, t+1, and the steady state.
 
@@ -367,9 +372,9 @@ def postprocess_optimizer_res(
         Function returning the system jacobian given the steady-state values as keyword arguments.
     tol : float, optional
         Threshold the sum of squared residuals, maximum absolute error, gradient L2 norm, and maximum absolute
-        gradient must each fall below. Default 1e-6.
+        gradient must each fall below. Defaults to 1e-6.
     verbose : bool, optional
-        If True, log a summary of the solution diagnostics. Default True.
+        If True, log a summary of the solution diagnostics. Defaults to True.
 
     Returns
     -------
@@ -386,8 +391,6 @@ def postprocess_optimizer_res(
     grad_norm = np.linalg.norm(df_dx, ord=2)
     abs_max_grad = np.max(np.abs(df_dx))
 
-    # Sometimes the optimizer is way too strict and returns success of False even if the point is pretty clearly
-    # minimum.
     numeric_success = all(condition < tol for condition in [sse, max_abs_error, grad_norm, abs_max_grad])
 
     if numeric_success and not success:
@@ -410,7 +413,7 @@ def postprocess_optimizer_res(
         f"{'-' * 80}\n"
         f"{'Optimizer message':<30}{res.message}\n"
         f"{'Sum of squared residuals':<30}{sse}\n"
-        f"{'Maximum absoluate error':<30}{max_abs_error}\n"
+        f"{'Maximum absolute error':<30}{max_abs_error}\n"
         f"{'Gradient L2-norm at solution':<30}{grad_norm}\n"
         f"{'Max abs gradient at solution':<30}{abs_max_grad}"
     )
@@ -421,21 +424,21 @@ def postprocess_optimizer_res(
     return res_dict
 
 
-def get_name(x: str | sp.Symbol, base_name=False) -> str:
+def get_name(x: str | sp.Symbol, base_name: bool = False) -> str | None:
     """
-    Return the name of a string, TimeAwareSymbol, or sp.Symbol object.
+    Return the name of a string, TimeAwareSymbol, or sympy Symbol.
 
     Parameters
     ----------
-    x : str, or sp.Symbol
-        The object whose name is to be returned. If str, x is directly returned.
-    base_name : bool
-        If True, return TimeAwareSymbol base name (the name without any time suffix)
+    x : str or sympy Symbol
+        Object whose name is returned. A string is returned as is.
+    base_name : bool, optional
+        If True, return the base name of a TimeAwareSymbol, without its time suffix. Defaults to False.
 
     Returns
     -------
-    name : str
-        The name of the object.
+    name : str or None
+        The name of the object, or None when ``x`` is none of the supported types.
     """
     if isinstance(x, str):
         return x
@@ -454,11 +457,9 @@ def flatten_substitution_dict(
     """
     Resolve a substitution dictionary so each value references no other keys.
 
-    Walks the dependency DAG of ``sub_dict`` in topological order, substituting each
-    RHS through its already-resolved predecessors exactly once. After the pass, any
-    ``expr.subs(flat_dict)`` call converges in a single sweep, which is much faster than
-    iterating substitutions to a fixed point when the dict has many cross-references
-    (e.g. a STEADY_STATE block whose hints chain through each other).
+    Walk the dependency graph of ``sub_dict`` in topological order, substituting each value through its resolved
+    predecessors exactly once. Afterwards a single ``expr.subs(flat_dict)`` sweep converges, so callers need not
+    iterate substitutions to a fixed point when values chain through each other.
 
     Parameters
     ----------
@@ -469,11 +470,6 @@ def flatten_substitution_dict(
     -------
     flat_dict : dict mapping sympy symbol to sympy expression
         Same keys as the input, with values fully resolved against each other.
-
-    Raises
-    ------
-    ValueError
-        If the dependency graph contains a cycle.
     """
     keys = set(sub_dict)
     deps: dict[sp.Expr, set[sp.Expr]] = {}
@@ -490,7 +486,10 @@ def flatten_substitution_dict(
         if key in flat:
             return flat[key]
         if key in visiting:
-            raise ValueError(f"Cycle detected in substitution dictionary involving {key}")
+            raise ValueError(
+                f"Substitution dictionary has a cycle involving {key}. Rewrite the definitions so no value "
+                "depends on itself through other keys."
+            )
         visiting.add(key)
 
         value = sub_dict[key]

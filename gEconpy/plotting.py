@@ -1,3 +1,4 @@
+import math
 import warnings
 
 from collections.abc import Mapping
@@ -5,7 +6,6 @@ from itertools import product
 from typing import Any, Literal, cast
 
 import arviz_stats as azs
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -17,6 +17,8 @@ from matplotlib.dates import DateFormatter, YearLocator
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
+from matplotlib.text import Text
+from matplotlib.ticker import Formatter, StrMethodFormatter
 from scipy import stats
 from xarray_einstats.linalg import diagonal as xr_diagonal
 
@@ -24,9 +26,52 @@ from gEconpy.model.model import Model
 from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.statistics import check_bk_condition, eigenvalue_sensitivity
 
+_SOLVABILITY_COLORS = {
+    "steady_state": "tab:red",
+    "perturbation": "tab:orange",
+    "blanchard-kahn": "tab:green",
+    "deterministic_norm": "tab:purple",
+    "stochastic_norm": "tab:pink",
+}
+_SOLVABILITY_STAGES = [
+    "success",
+    "steady_state",
+    "perturbation",
+    "blanchard-kahn",
+    "deterministic_norm",
+    "stochastic_norm",
+]
 
-def set_matplotlib_style():
-    """Update the global matplotlib rcParams with the gEconpy plotting defaults."""
+# Columns that solvability_check appends to the parameter draws. They are diagnostics, so they are never plotted as
+# parameters.
+_SOLVABILITY_META_COLS = {"failure_step", "norm_deterministic", "norm_stochastic"}
+
+_EIGENVALUE_PLOT_MODULUS_CUTOFF = 10
+
+_REFERENCE_DEFAULTS = {"facecolors": "none", "edgecolors": "k", "s": 60, "linewidths": 1.6, "zorder": 4}
+
+
+def set_matplotlib_style() -> None:
+    """
+    Update the global matplotlib rcParams with the gEconpy plotting defaults.
+
+    The defaults set a wide 14 by 4 inch figure at 144 dpi, dashed grid lines, no axis spines, and constrained
+    layout.
+
+    Examples
+    --------
+    Apply the style once at the top of a script or notebook so that every later figure picks it up:
+
+    .. code-block:: python
+
+        import matplotlib.pyplot as plt
+
+        from gEconpy.plotting import set_matplotlib_style
+
+        set_matplotlib_style()
+        fig, ax = plt.subplots()
+        ax.plot([0, 1, 2], [1, 3, 2])
+    """
     config = {
         "figure.figsize": (14, 4),
         "figure.dpi": 144,
@@ -44,25 +89,27 @@ def set_matplotlib_style():
     plt.rcParams.update(config)
 
 
-def prepare_gridspec_figure(n_cols: int, n_plots: int, figure: plt.Figure | None = None) -> tuple[GridSpec, list]:
+def prepare_gridspec_figure(
+    n_cols: int, n_plots: int, figure: Figure | None = None
+) -> tuple[GridSpec, list[tuple[slice, slice]]]:
     """
-    Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
+    Lay out a grid of subplots, centering the last row when the number of plots does not fill it.
 
     Parameters
     ----------
     n_cols : int
-        The number of columns in the grid.
+        Number of columns in the grid.
     n_plots : int
-        The number of subplots in the grid.
+        Number of subplots in the grid.
     figure : Figure, optional
-        The figure object to use
+        Figure the grid belongs to. By default the grid is not attached to a figure.
 
     Returns
     -------
-    GridSpec
-        A matplotlib GridSpec object representing the layout of the grid.
-    list of tuple(slice, slice)
-        A list of tuples of slices representing the indices of the grid cells to be used for each subplot.
+    gs : GridSpec
+        Grid layout with two grid cells per subplot in each direction, so that a partial last row can be centered.
+    plot_locs : list of tuple of slice
+        Row and column slices into ``gs`` for each subplot, in row-major order.
     """
     remainder = n_plots % n_cols
     has_remainder = remainder > 0
@@ -84,13 +131,13 @@ def prepare_gridspec_figure(n_cols: int, n_plots: int, figure: plt.Figure | None
     return gs, plot_locs
 
 
-def set_axis_cmap(axis, cmap):
+def set_axis_cmap(axis: plt.Axes, cmap: str | None) -> None:
     """
     Set the color cycle of an axis from a named colormap.
 
     Parameters
     ----------
-    axis : matplotlib axes
+    axis : matplotlib Axes
         Axis whose property cycle is set.
     cmap : str or None
         Name of a matplotlib colormap, sampled at 20 evenly spaced points. If None, the axis reverts to the default
@@ -103,90 +150,50 @@ def set_axis_cmap(axis, cmap):
     axis.set_prop_cycle(cycler)
 
 
-def _plot_single_variable(data: xr.DataArray, ax, ci=None, cmap=None, fill_color="tab:blue", **line_kwargs):
-    """
-    Plot the mean and optionally a confidence interval for a single variable.
-
-    Parameters
-    ----------
-    data : xr.DataArray
-        A DataFrame with one or more columns containing the data to plot.
-    ax : Matplotlib Axes
-        The Axes object to plot on.
-    ci : float, optional
-        The confidence interval to plot, between 0 and 1. If not provided, only the mean will be plotted.
-    cmap : str or Colormap, optional
-        The color map to use for the data.
-    fill_color : str, optional
-        The color to use to fill the confidence interval.
-    line_kwargs : optional
-        Additional keyword arguments to pass to the line plot.
-
-    Returns
-    -------
-    None
-    """
-    set_axis_cmap(ax, cmap)
-
-    if ci is None:
-        hue = "shock" if "shock" in data.coords else None
-        data.plot.line(x="time", ax=ax, add_legend=False, hue=hue, **line_kwargs)
-        if hue is not None:
-            lines = ax.get_lines()
-            for line, shock in zip(lines, data.coords["shock"].values, strict=False):
-                line.set_label(shock)
-
-    else:
-        q_low, q_high = ((1 - ci) / 2), 1 - ((1 - ci) / 2)
-        ci_bounds = data.quantile([q_low, q_high], dim=["simulation"])
-
-        data.mean(dim="simulation").plot.line(x="time", ax=ax, add_legend=False, **line_kwargs)
-        ci_bounds.plot.line(
-            ax=ax,
-            x="time",
-            hue="quantile",
-            ls="--",
-            lw=0.5,
-            color="k",
-            add_legend=False,
-        )
-        ax.fill_between(
-            ci_bounds.coords["time"].values,
-            *ci_bounds.transpose("quantile", "time").values,
-            color=fill_color,
-            alpha=0.25,
-        )
-
-
 def plot_timeseries(
     df: pd.DataFrame,
     vars_to_plot: list[str] | None = None,
     n_cols: int | None = None,
     fig_kwargs: dict | None = None,
     **line_kwargs,
-) -> plt.Figure:
+) -> Figure:
     """
-    Plot a DataFrame of time series data.
+    Plot each column of a DataFrame of time series in its own panel.
 
     Parameters
     ----------
-    df : pd.DataFrame
-        A DataFrame with one or more columns containing the data to plot. The columns should be the variables to plot
-        and the index should be the time.
+    df : DataFrame
+        Data to plot. Each column is a variable and the index is a datetime index.
     vars_to_plot : list of str, optional
-        A list of the variables to plot. If not provided, all variables in the DataFrame will be plotted.
+        Columns to plot. All columns are plotted by default.
     n_cols : int, optional
-        The number of columns of plots to show. If not provided, the minimum of (4, number of columns in df) will be
-        used.
+        Number of columns in the panel grid. Defaults to the smaller of 4 and the number of variables plotted.
     fig_kwargs : dict, optional
-        Additional keyword arguments to pass to the figure creation.
+        Keyword arguments forwarded to :func:`matplotlib.pyplot.figure`. Empty by default.
     **line_kwargs
-        Additional keyword arguments to pass to the line plot.
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.plot`.
 
     Returns
     -------
     figure : Figure
-        The Matplotlib Figure object containing the plots.
+        Figure containing one panel per variable.
+
+    Examples
+    --------
+    Plot three random walks on a quarterly index:
+
+    .. code-block:: python
+
+        import numpy as np
+        import pandas as pd
+
+        from gEconpy.plotting import plot_timeseries
+
+        rng = np.random.default_rng(0)
+        index = pd.date_range("1960-01-01", periods=200, freq="QS")
+        df = pd.DataFrame({name: rng.standard_normal(200).cumsum() for name in ["Y", "C", "I"]}, index=index)
+
+        fig = plot_timeseries(df, n_cols=3, color="tab:red")
     """
     if fig_kwargs is None:
         fig_kwargs = {}
@@ -220,35 +227,50 @@ def plot_simulation(
     fill_color: str | None = None,
     figsize: tuple[int, int] = (12, 8),
     dpi: int = 100,
-) -> plt.Figure:
+) -> Figure:
     """
-    Plot a simulation of multiple variables.
+    Plot simulated trajectories of model variables, one panel per variable.
 
     Parameters
     ----------
-    simulation : pd.DataFrame
-        A DataFrame with one or more columns containing the data to plot. The columns should be the variables to plot
-        and the index should be the time.
+    simulation : DataArray
+        Output of :func:`~gEconpy.model.simulate.simulate`, with ``simulation``, ``time``, and ``variable``
+        dimensions.
     vars_to_plot : list of str, optional
-        A list of the variables to plot. If not provided, all variables in the simulation DataFrame will be plotted.
+        Variables to plot. All variables in ``simulation`` are plotted by default.
     ci : float, optional
-        The confidence interval to plot, between 0 and 1. If not provided, only the mean will be plotted.
+        Width of the credible band to draw around the mean trajectory, between 0 and 1. By default every simulated
+        trajectory is drawn and no band is shown.
     n_cols : int, optional
-        The number of columns of plots to show. If not provided, the minimum of (4, number of columns in df) will be
-        used.
+        Number of columns in the panel grid. Defaults to the smaller of 4 and the number of variables plotted.
     cmap : str or Colormap, optional
-        The color map to use for the data.
+        Colormap used for the trajectory lines. Defaults to the matplotlib color cycle.
     fill_color : str, optional
-        The color to use to fill the confidence interval.
-    figsize : tuple of int
-        The size of the figure in inches. Default is (12, 8).
-    dpi : int
-        The resolution of the figure in dots per inch. Default is 100.
+        Color of the credible band. Defaults to matplotlib's default fill color.
+    figsize : tuple of int, optional
+        Figure size in inches. Defaults to (12, 8).
+    dpi : int, optional
+        Figure resolution in dots per inch. Defaults to 100.
 
     Returns
     -------
-    Figure
-        The Matplotlib Figure object containing the plots.
+    fig : Figure
+        Figure containing one panel per variable.
+
+    Examples
+    --------
+    Simulate the RBC example model and draw a 90 percent band around the mean path of output and consumption:
+
+    .. code-block:: python
+
+        from gEconpy import model_from_gcn, simulate
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_simulation
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        simulation = simulate(model, n_simulations=200, simulation_length=40, shock_std=0.01, verbose=False)
+
+        fig = plot_simulation(simulation, vars_to_plot=["Y", "C"], ci=0.9)
     """
     if vars_to_plot is None:
         vars_to_plot = simulation.coords["variable"].values.tolist()
@@ -272,138 +294,14 @@ def plot_simulation(
         )
 
         axis.set(title=variable)
-        [spine.set_visible(False) for spine in axis.spines.values()]
-        axis.grid(ls="--", lw=0.5)
+        _style_panel(axis)
 
     fig.tight_layout()
     return fig
 
 
-def _irf_to_mapping(
-    irf: xr.DataTree | list[xr.DataTree] | dict[str, xr.DataTree],
-) -> dict[str, xr.DataArray]:
-    """Normalize IRF input into a mapping of scenario name -> DataArray."""
-    if isinstance(irf, xr.DataArray):
-        return {"": irf}
-    if isinstance(irf, list):
-        return {f"Scenario {i}": irf[i] for i in range(len(irf))}
-    if isinstance(irf, dict):
-        return irf
-    raise ValueError(f"Unsupported irf type: {type(irf)}")
-
-
-def _resolve_list_to_plot(
-    value: str | list[str] | None,
-    available: list[str],
-    item_name: str,
-) -> list[str]:
-    """Turn a string or None into a validated list against 'available'."""
-    if value is None:
-        return available
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, list):
-        raise TypeError(f"Expected str or list for {item_name}, got {type(value)}")
-    for v in value:
-        if v not in available:
-            raise ValueError(f"{item_name} '{v}' not found among available: {available}")
-    return value
-
-
-def _resolve_vars_and_shocks(
-    irf_map: dict[str, xr.DataArray],
-    vars_to_plot: str | list[str] | None,
-    shocks_to_plot: str | list[str] | None,
-) -> tuple[list[str], list[str] | None]:
-    coords = next(iter(irf_map.values())).coords
-    variables = coords["variable"].values.tolist()
-    vars_resolved = _resolve_list_to_plot(vars_to_plot, variables, "variable")
-
-    shocks_resolved: list[str] | None
-    if "shock" in coords:
-        shocks = coords["shock"].values.tolist()
-        shocks_resolved = _resolve_list_to_plot(shocks_to_plot, shocks, "shock")
-    else:
-        shocks_resolved = None
-
-    return vars_resolved, shocks_resolved
-
-
-def _prepare_irf_grid(figsize, dpi, n_plots: int, n_cols: int | None, figure: plt.Figure | None = None):
-    """Create figure and gridspec, return gs, plot_locs, row indices, and last rows."""
-    n_cols = min(4, n_plots) if n_cols is None else n_cols
-    fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True) if figure is None else figure
-    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
-
-    plot_row_idxs = [loc[0].stop // 2 - 1 for loc in plot_locs]
-    plot_rows = sorted(set(plot_row_idxs))
-    is_square = all(plot_row_idxs.count(i) == n_cols for i in plot_rows)
-    last_row_idxs = [plot_rows[-1]] if is_square else plot_rows[-2:]
-
-    return fig, gs, plot_locs, plot_row_idxs, last_row_idxs
-
-
-def _plot_irf_panel(
-    axis,
-    irf_map: dict[str, xr.DataArray],
-    variable: str,
-    shocks_to_plot: list[str] | None,
-    cmap: str | Colormap | None,
-    markers: list[str],
-    add_scenario_legend: bool,
-    scenario_names: list[str],
-    show_xticks: bool,
-) -> None:
-    """Plot one variable panel across scenarios, style axis, optionally add legend."""
-    sel_dict: dict[str, Any] = {"variable": variable}
-    if shocks_to_plot is not None:
-        sel_dict["shock"] = shocks_to_plot
-
-    for scenario_idx, (_scenario, irf_data) in enumerate(irf_map.items()):
-        _plot_single_variable(
-            irf_data.sel(**sel_dict),
-            ax=axis,
-            cmap=cmap,
-            ls=markers[scenario_idx % len(markers)],
-        )
-
-    if add_scenario_legend and len(scenario_names) > 1 and scenario_names[0] != "":
-        # One handle per scenario, carrying the scenario's line style (scenarios
-        # are distinguished by style; colour encodes the shock).
-        handles = [Line2D([], [], color="k", ls=markers[idx % len(markers)]) for idx in range(len(scenario_names))]
-        axis.legend(handles=handles, labels=scenario_names)
-
-    axis.set(title=variable)
-    if not show_xticks:
-        axis.set(xticklabels=[], xlabel="")
-
-    [spine.set_visible(False) for spine in axis.spines.values()]
-    axis.grid(ls="--", lw=0.5)
-
-
-def _add_shocks_legend(
-    fig: plt.Figure, shocks_to_plot: list[str] | None, legend: bool, legend_kwargs: dict | None
-) -> None:
-    """Add a global legend for shocks using the first axis' handles."""
-    if not legend:
-        return
-    if legend_kwargs is None:
-        n_shocks_to_plot = len(shocks_to_plot) if shocks_to_plot is not None else 1
-        legend_kwargs = {
-            "ncol": min(4, n_shocks_to_plot),
-            "loc": "lower center",
-            "bbox_to_anchor": (0.5, 1.0),
-        }
-    handles = fig.axes[0].get_lines()
-    if shocks_to_plot is not None:
-        # With multiple scenarios the first panel holds n_scenarios * n_shocks lines;
-        # the first n_shocks (scenario 0) already carry every shock colour.
-        handles = handles[: len(shocks_to_plot)]
-    fig.legend(handles=handles, labels=shocks_to_plot, **legend_kwargs)
-
-
 def plot_irf(
-    irf: xr.DataTree | list[xr.DataTree] | dict[str, xr.DataTree],
+    irf: xr.DataArray | list[xr.DataArray] | dict[str, xr.DataArray],
     vars_to_plot: str | list[str] | None = None,
     shocks_to_plot: str | list[str] | None = None,
     n_cols: int | None = None,
@@ -412,38 +310,68 @@ def plot_irf(
     legend_kwargs: dict | None = None,
     figsize: tuple[int, int] = (14, 10),
     dpi: int = 100,
-) -> plt.Figure:
+) -> Figure:
     """
-    Plot the impulse response functions for a set of variables.
+    Plot impulse response functions, one panel per variable and one line per shock.
 
     Parameters
     ----------
-    irf : xr.DataArray, list of xr.DataArray, or dict of xr.DataArray
-        A DataArray with the impulse response functions. The index should contain the variables to plot, and the columns
-        should contain the shocks, with a multi-index for the period and shock type. When plotting multiple scenarios,
-        provide a list of DataArrays or a dictionary with the scenario names as keys.
-    vars_to_plot : list of str, optional
-        A list of variables to plot. If not provided, all variables in the DataFrame will be plotted.
-    shocks_to_plot : list of str, optional
-        A list of shocks to plot. If not provided, all shocks in the DataFrame will be plotted.
+    irf : DataArray, list of DataArray, or dict mapping str to DataArray
+        Output of :func:`~gEconpy.model.simulate.impulse_response_function`, with ``time`` and ``variable``
+        dimensions and, when computed shock by shock, a ``shock`` dimension. Pass a list or a dictionary of such
+        arrays to overlay several scenarios. Scenarios are distinguished by line style, and dictionary keys are used
+        as the scenario names in the legend.
+    vars_to_plot : str or list of str, optional
+        Variables to plot. All variables are plotted by default.
+    shocks_to_plot : str or list of str, optional
+        Shocks to plot. All shocks are plotted by default.
     n_cols : int, optional
-        The number of columns to use in the plot grid. If not provided, the number of columns will be determined
-        automatically based on the number of variables to plot.
+        Number of columns in the panel grid. Defaults to the smaller of 4 and the number of variables plotted.
     legend : bool, optional
-        Whether to show a legend with the shocks.
+        If True, add a figure-level legend naming the shocks. Defaults to False.
     cmap : str or Colormap, optional
-        The color map to use for the impulse response functions.
+        Colormap used for the shock lines. Defaults to the matplotlib color cycle.
     legend_kwargs : dict, optional
-        Keyword arguments to pass to `matplotlib.figure.Figure.legend()`.
-    figsize : tuple, optional
-        The size of the figure in inches.
+        Keyword arguments forwarded to :meth:`matplotlib.figure.Figure.legend`. Defaults to a legend centered above
+        the panels with up to four columns.
+    figsize : tuple of int, optional
+        Figure size in inches. Defaults to (14, 10).
     dpi : int, optional
-        The DPI of the figure.
+        Figure resolution in dots per inch. Defaults to 100.
 
     Returns
     -------
-    matplotlib.figure.Figure
-        The figure object.
+    fig : Figure
+        Figure containing one panel per variable.
+
+    Examples
+    --------
+    Plot the response of output, consumption, and investment to a technology shock in the RBC example model:
+
+    .. code-block:: python
+
+        from gEconpy import impulse_response_function, model_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_irf
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        irf = impulse_response_function(model, simulation_length=40, shock_size=0.01, verbose=False)
+
+        fig = plot_irf(irf, vars_to_plot=["Y", "C", "I"], legend=True)
+
+    Overlay two calibrations of the same model by passing a dictionary keyed by scenario name:
+
+    .. code-block:: python
+
+        from gEconpy import impulse_response_function, model_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_irf
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        baseline = impulse_response_function(model, simulation_length=40, shock_size=0.01, verbose=False)
+        persistent = impulse_response_function(model, simulation_length=40, shock_size=0.01, verbose=False, rho_A=0.99)
+
+        fig = plot_irf({"baseline": baseline, "rho_A = 0.99": persistent}, vars_to_plot=["Y", "C", "I"])
     """
     irf_map = _irf_to_mapping(irf)
     vars_to_plot_resolved, shocks_to_plot_resolved = _resolve_vars_and_shocks(irf_map, vars_to_plot, shocks_to_plot)
@@ -474,139 +402,51 @@ def plot_irf(
     return fig
 
 
-def _prior_validate_params_to_plot(params_to_plot: list[str] | None, params: list[str]) -> None:
-    """Validate the requested params_to_plot against available params."""
-    if params_to_plot is not None:
-        for param in params_to_plot:
-            if param not in params:
-                raise ValueError(f'Cannot plot parameter "{param}", it was not found in the provided data.')
-
-
-_SOLVABILITY_COLORS = {
-    "steady_state": "tab:red",
-    "perturbation": "tab:orange",
-    "blanchard-kahn": "tab:green",
-    "deterministic_norm": "tab:purple",
-    "stochastic_norm": "tab:pink",
-}
-
-# Columns appended by solvability_check that are NOT parameters.
-_SOLVABILITY_META_COLS = {"failure_step", "norm_deterministic", "norm_stochastic"}
-
-
-def _solv_prepare_data(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]]:
-    """Split solvability DataFrame into plot-ready components.
-
-    Returns
-    -------
-    plot_data : pd.DataFrame
-        Non-constant parameter columns plus a ``success`` boolean column.
-    failure_step : pd.Series
-        Original failure_step column (NaN = success).
-    params : list of str
-        Parameter column names available for plotting.
-    """
-    failure_step = data["failure_step"].copy()
-
-    plot_data = data.drop(columns=_SOLVABILITY_META_COLS.intersection(data.columns))
-
-    constant_mask = plot_data.apply(pd.api.types.is_numeric_dtype) & (plot_data.var() < 1e-18)
-    plot_data = plot_data.loc[:, ~constant_mask].copy()
-
-    plot_data["success"] = failure_step.isna()
-    params = [c for c in plot_data.columns if c != "success"]
-    return plot_data, failure_step, params
-
-
-def _solv_plot_diagonal(ax: plt.Axes, values: pd.Series, success: pd.Series) -> None:
-    """KDE densities for success (blue) vs failure (red) on a diagonal panel."""
-    for mask, color in [(success, "tab:blue"), (~success, "tab:red")]:
-        subset = values[mask]
-        if len(subset) < 2:
-            continue
-        lo, hi = subset.min(), subset.max()
-        pad = max((hi - lo) * 0.1, abs(lo) * 0.05 + 1e-12)
-        grid = np.linspace(lo - pad, hi + pad, 100)
-        kde = stats.gaussian_kde(subset)
-        density = kde.pdf(grid)
-        ax.plot(grid, density, color=color)
-        ax.fill_between(grid, density, 0, color=color, alpha=0.25)
-
-
-def _solv_plot_offdiag(
-    ax: plt.Axes,
-    plot_data: pd.DataFrame,
-    failure_step: pd.Series,
-    x_name: str,
-    y_name: str,
-) -> None:
-    """Scatter success vs failure-by-reason on an off-diagonal panel."""
-    success = plot_data["success"]
-    ax.scatter(
-        plot_data.loc[success, x_name],
-        plot_data.loc[success, y_name],
-        c="tab:blue",
-        s=10,
-        label="Success",
-    )
-
-    reasons = failure_step[~success]
-    for reason in reasons.unique():
-        mask = reasons == reason
-        color = _SOLVABILITY_COLORS.get(reason, "tab:gray")
-        ax.scatter(
-            plot_data.loc[~success, x_name][mask],
-            plot_data.loc[~success, y_name][mask],
-            c=color,
-            s=10,
-            label=reason.replace("_", " ").title(),
-        )
-
-
-def _solv_format_axes(axes: np.ndarray, params_use: list[str]) -> None:
-    """Apply axis labels, grids, and spine visibility to the solvability grid."""
-    n = len(params_use)
-    for row in range(n):
-        for col in range(n):
-            ax = axes[row][col]
-            if not ax.get_visible():
-                continue
-            if col == 0:
-                ax.set_ylabel(params_use[row])
-            if row == n - 1:
-                ax.set_xlabel(params_use[col])
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-            ax.grid(ls="--", lw=0.5)
-
-
 def plot_solvability(
     data: pd.DataFrame,
     params_to_plot: list[str] | None = None,
     figsize: tuple[float, float] | None = None,
     dpi: int = 100,
-) -> plt.Figure:
-    """Pair-plot of solvability results colored by failure stage.
+) -> Figure:
+    """
+    Pair-plot parameter draws, colored by the stage at which solving the model failed.
 
-    Diagonal panels show KDE densities for successful (blue) vs failed (red) draws. Off-diagonal panels show
-    scatter plots colored by the specific failure stage.
+    Diagonal panels show kernel density estimates of successful draws in blue and failed draws in red. Off-diagonal
+    panels scatter the draws, colored by failure stage.
 
     Parameters
     ----------
-    data : pd.DataFrame
+    data : DataFrame
         Output of :func:`~gEconpy.model.statistics.perturbation_diagnostics.solvability_check` or
         :func:`~gEconpy.model.statistics.perturbation_diagnostics.prior_solvability_check`. Must contain a
         ``failure_step`` column.
     params_to_plot : list of str, optional
-        Subset of parameter columns to include. If ``None``, all non-constant numeric columns are plotted.
+        Parameter columns to include. All non-constant numeric columns are plotted by default.
     figsize : tuple of float, optional
-        Figure size ``(width, height)`` in inches. Defaults to ``(4 * n_params, 4 * n_params)``.
-    dpi : int, default 100
-        Figure resolution.
+        Figure size in inches. Defaults to a square of 4 inches per parameter, capped at 20 inches.
+    dpi : int, optional
+        Figure resolution in dots per inch. Defaults to 100.
 
     Returns
     -------
-    matplotlib.figure.Figure
+    fig : Figure
+        Figure containing the pair-plot grid.
+
+    Examples
+    --------
+    Draw parameters from the priors declared in the RBC example model, record where solving fails, and plot the
+    result for two parameters:
+
+    .. code-block:: python
+
+        from gEconpy import model_from_gcn, prior_solvability_check
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_solvability
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        results = prior_solvability_check(model, n_samples=50, seed=0, progressbar=False)
+
+        fig = plot_solvability(results, params_to_plot=["alpha", "beta"])
     """
     plot_data, failure_step, params = _solv_prepare_data(data)
     _prior_validate_params_to_plot(params_to_plot, params)
@@ -639,7 +479,7 @@ def plot_solvability(
 
     _solv_format_axes(axes, params_use)
 
-    # Legend from any off-diagonal panel (row=1, col=0 if available)
+    # Only off-diagonal panels carry scatter labels, so the legend is read from the first one below the diagonal.
     legend_ax = axes[min(1, n - 1)][0] if n > 1 else axes[0][0]
     handles, labels = legend_ax.get_legend_handles_labels()
     if handles:
@@ -657,21 +497,40 @@ def plot_solvability(
     return fig
 
 
-def plot_solvability_summary(data: pd.DataFrame, figsize: tuple[float, float] = (8, 1.5), dpi: int = 144) -> plt.Figure:
-    """Stacked horizontal bar showing the proportion of draws at each failure stage.
+def plot_solvability_summary(data: pd.DataFrame, figsize: tuple[float, float] = (8, 1.5), dpi: int = 144) -> Figure:
+    """
+    Draw a stacked horizontal bar showing the share of draws that succeeded or failed at each solving stage.
 
     Parameters
     ----------
-    data : pd.DataFrame
-        Output of :func:`~gEconpy.model.statistics.perturbation_diagnostics.solvability_check`.
-    figsize : tuple of float, default (8, 1.5)
-        Figure size.
-    dpi : int, default 100
-        Figure resolution.
+    data : DataFrame
+        Output of :func:`~gEconpy.model.statistics.perturbation_diagnostics.solvability_check` or
+        :func:`~gEconpy.model.statistics.perturbation_diagnostics.prior_solvability_check`. Must contain a
+        ``failure_step`` column.
+    figsize : tuple of float, optional
+        Figure size in inches. Defaults to (8, 1.5).
+    dpi : int, optional
+        Figure resolution in dots per inch. Defaults to 144.
 
     Returns
     -------
-    matplotlib.figure.Figure
+    fig : Figure
+        Figure containing the single bar.
+
+    Examples
+    --------
+    Summarize how often prior draws from the RBC example model fail to solve:
+
+    .. code-block:: python
+
+        from gEconpy import model_from_gcn, prior_solvability_check
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_solvability_summary
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        results = prior_solvability_check(model, n_samples=50, seed=0, progressbar=False)
+
+        fig = plot_solvability_summary(results)
     """
     counts = data["failure_step"].fillna("success").value_counts(normalize=True)
 
@@ -679,7 +538,7 @@ def plot_solvability_summary(data: pd.DataFrame, figsize: tuple[float, float] = 
 
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     left = 0.0
-    for label in ["success", "steady_state", "perturbation", "blanchard-kahn", "deterministic_norm", "stochastic_norm"]:
+    for label in _SOLVABILITY_STAGES:
         frac = counts.get(label, 0.0)
         if frac == 0:
             continue
@@ -698,59 +557,79 @@ def plot_solvability_summary(data: pd.DataFrame, figsize: tuple[float, float] = 
 
 
 def plot_eigenvalues(
-    model: Any,
+    model: Model,
     A: np.ndarray | None = None,
     B: np.ndarray | None = None,
     C: np.ndarray | None = None,
     D: np.ndarray | None = None,
     linearize_model_kwargs: dict | None = None,
-    fig: plt.Figure | None = None,
+    fig: Figure | None = None,
     figsize: tuple[float, float] | None = None,
     dpi: int | None = None,
     plot_circle: bool = True,
     **parameter_updates,
-):
+) -> Figure:
     """
-    Plot the eigenvalues of the model solution, along with a unit circle.
+    Scatter the generalized eigenvalues of the linearized model on the complex plane.
 
-    Eigenvalues with modulus greater than 1 are shown in red, while those with modulus less than 1 are shown in blue.
-    Eigenvalues greater than 10 in modulus are not drawn.
+    Eigenvalues with modulus greater than 1 are drawn in red and the rest in blue. Eigenvalues with modulus greater
+    than 10 are treated as infinite and left out, and the title reports how many were dropped.
 
     Parameters
     ----------
     model : Model
-        DSGE model object
-    A : np.ndarray, optional
-        Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to variables
-        at t-1. If provided, all of A, B, C and D must be provided.
-    B : np.ndarray, optional
-        Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to variables
-        at t. If provided, all of A, B, C and D must be provided.
-    C : np.ndarray, optional
-        Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to variables
-        at t+1. If provided, all of A, B, C and D must be provided.
-    D : np.ndarray, optional
-        Matrix of partial derivative, linearized around the steady state. Derivatives taken with respect to exogenous
-        shocks. If provided, all of A, B, C and D must be provided.
+        Model to linearize.
+    A : ndarray, optional
+        Jacobian of the model equations with respect to variables at ``t-1``. When given, ``B``, ``C``, and ``D``
+        must be given too. By default the model is linearized here.
+    B : ndarray, optional
+        Jacobian with respect to variables at ``t``. See ``A``.
+    C : ndarray, optional
+        Jacobian with respect to variables at ``t+1``. See ``A``.
+    D : ndarray, optional
+        Jacobian with respect to the exogenous shocks. See ``A``.
     linearize_model_kwargs : dict, optional
-        Arguments passed to :func:`~gEconpy.model.perturbation.linearize_model`. Ignored if A, B, C and D are
-        provided.
+        Keyword arguments forwarded to :meth:`~gEconpy.model.model.Model.linearize_model`. Ignored when the
+        Jacobians are given. Empty by default.
     fig : Figure, optional
-        The figure object to plot on. If not provided, a new figure will be created.
-    figsize : tuple[float, float], optional
-        The size of the figure to create.
+        Figure to draw on. Its first axis is used. A new figure is created by default.
+    figsize : tuple of float, optional
+        Size of the created figure in inches. Defaults to (5, 5).
     dpi : int, optional
-        The resolution of the figure to create.
+        Resolution of the created figure in dots per inch. Defaults to 100.
     plot_circle : bool, optional
-        Whether to plot the unit circle. Default True.
+        If True, draw the unit circle. Defaults to True.
     **parameter_updates
-        Parameter values at which to linearize the model, passed as keyword arguments. Ignored if A, B, C and D are
-        provided.
+        Parameter values at which to linearize the model. Ignored when the Jacobians are given.
 
     Returns
     -------
     fig : Figure
-        The figure object containing the plot.
+        Figure containing the eigenvalue scatter.
+
+    Examples
+    --------
+    Plot the eigenvalues of the RBC example model at its calibrated parameter values:
+
+    .. code-block:: python
+
+        from gEconpy import model_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_eigenvalues
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        fig = plot_eigenvalues(model, linearize_model_kwargs={"verbose": False})
+
+    Linearize at a different value of one parameter by passing it as a keyword argument:
+
+    .. code-block:: python
+
+        from gEconpy import model_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_eigenvalues
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        fig = plot_eigenvalues(model, linearize_model_kwargs={"verbose": False}, beta=0.97)
     """
     if figsize is None:
         figsize = (5, 5)
@@ -762,11 +641,9 @@ def plot_eigenvalues(
     else:
         ax = fig.axes[0]
 
-    if linearize_model_kwargs is None:
-        linearize_model_kwargs = {}
-    linearize_model_kwargs.update(parameter_updates)
+    linearize_model_kwargs = {**(linearize_model_kwargs or {}), **parameter_updates}
 
-    data = cast(
+    eigenvalues = cast(
         pd.DataFrame,
         check_bk_condition(
             model,
@@ -779,230 +656,19 @@ def plot_eigenvalues(
         ),
     )
 
-    MAX_PLOT_VAL = 10
-    n_infinity = (data["Modulus"] > MAX_PLOT_VAL).sum()
-    data = data[data.Modulus < MAX_PLOT_VAL]
+    n_infinity = (eigenvalues["Modulus"] > _EIGENVALUE_PLOT_MODULUS_CUTOFF).sum()
+    eigenvalues = eigenvalues[eigenvalues.Modulus < _EIGENVALUE_PLOT_MODULUS_CUTOFF]
 
     if plot_circle:
         x_circle = np.linspace(-2 * np.pi, 2 * np.pi, 1000)
         ax.plot(np.cos(x_circle), np.sin(x_circle), color="k", lw=1)
 
     ax.set_aspect("equal")
-    colors = ["tab:red" if x > 1.0 else "tab:blue" for x in data.Modulus]
-    ax.scatter(data.Real, data.Imaginary, color=colors, s=50, lw=1, edgecolor="k")
-    [spine.set_visible(False) for spine in ax.spines.values()]
-    ax.grid(ls="--", lw=0.5)
+    colors = ["tab:red" if x > 1.0 else "tab:blue" for x in eigenvalues.Modulus]
+    ax.scatter(eigenvalues.Real, eigenvalues.Imaginary, color=colors, s=50, lw=1, edgecolor="k")
+    _style_panel(ax)
     ax.set_title(f"Eigenvalues of Model Solution\n{n_infinity} Eigenvalues with Infinity Modulus not shown.")
     return fig
-
-
-def _compute_axis_limits(
-    re_vals: np.ndarray, im_vals: np.ndarray
-) -> tuple[tuple[float, float], tuple[float, float], float]:
-    """
-    Compute axis limits that zoom to eigenvalue data with padding.
-
-    Returns square limits centered on the data for equal aspect ratio plotting.
-
-    Parameters
-    ----------
-    re_vals : ndarray
-        Real parts of eigenvalues.
-    im_vals : ndarray
-        Imaginary parts of eigenvalues.
-
-    Returns
-    -------
-    xlim : tuple of float
-        (xmin, xmax) axis limits.
-    ylim : tuple of float
-        (ymin, ymax) axis limits.
-    half_range : float
-        Half the axis range (for arrow scaling).
-    """
-    if len(re_vals) == 0:
-        return (-1.5, 1.5), (-1.5, 1.5), 1.5
-
-    re_min, re_max = re_vals.min(), re_vals.max()
-    im_min, im_max = im_vals.min(), im_vals.max()
-
-    re_range = max(re_max - re_min, 0.1)
-    im_range = max(im_max - im_min, 0.1)
-    pad_re = re_range * 0.3
-    pad_im = im_range * 0.3
-
-    xlim = (re_min - pad_re, re_max + pad_re)
-    ylim = (im_min - pad_im, im_max + pad_im)
-
-    x_center = (xlim[0] + xlim[1]) / 2
-    y_center = (ylim[0] + ylim[1]) / 2
-    half_range = max(xlim[1] - xlim[0], ylim[1] - ylim[0]) / 2
-
-    xlim = (x_center - half_range, x_center + half_range)
-    ylim = (y_center - half_range, y_center + half_range)
-
-    return xlim, ylim, half_range
-
-
-def _draw_eigenvalue_panel(
-    ax: plt.Axes,
-    re_plot: np.ndarray,
-    im_plot: np.ndarray,
-    mod_plot: np.ndarray,
-    d_re: np.ndarray,
-    d_im: np.ndarray,
-    param_name: str,
-    param_value: float,
-    perturbation: float,
-    xlim: tuple[float, float],
-    ylim: tuple[float, float],
-    plot_circle: bool,
-    show_legend: bool,
-    min_arrow_frac: float,
-) -> None:
-    """
-    Draw a single eigenvalue sensitivity panel.
-
-    Parameters
-    ----------
-    ax : Axes
-        Matplotlib axes to draw on.
-    re_plot : ndarray
-        Real parts of eigenvalues.
-    im_plot : ndarray
-        Imaginary parts of eigenvalues.
-    mod_plot : ndarray
-        Moduli of eigenvalues.
-    d_re : ndarray
-        Gradient of real part w.r.t. parameter.
-    d_im : ndarray
-        Gradient of imaginary part w.r.t. parameter.
-    param_name : str
-        Parameter name for title.
-    param_value : float
-        Current parameter value (for scaling perturbation).
-    perturbation : float
-        Perturbation size as decimal fraction of parameter value (0.01 = 1%).
-    xlim : tuple of float
-        X-axis limits.
-    ylim : tuple of float
-        Y-axis limits.
-    plot_circle : bool
-        Whether to draw the unit circle.
-    show_legend : bool
-        Whether to show legend on this panel.
-    min_arrow_frac : float
-        Minimum gradient magnitude as fraction of max to draw arrow.
-    """
-    if plot_circle:
-        theta = np.linspace(0, 2 * np.pi, 200)
-        ax.plot(np.cos(theta), np.sin(theta), color="k", lw=1, zorder=1, label="Unit circle")
-
-    stable_mask = mod_plot <= 1.0
-    if stable_mask.any():
-        ax.scatter(
-            re_plot[stable_mask],
-            im_plot[stable_mask],
-            c="tab:blue",
-            s=40,
-            lw=0.5,
-            edgecolor="k",
-            zorder=3,
-            label="Stable (|λ|≤1)",
-        )
-    if (~stable_mask).any():
-        ax.scatter(
-            re_plot[~stable_mask],
-            im_plot[~stable_mask],
-            c="tab:red",
-            s=40,
-            lw=0.5,
-            edgecolor="k",
-            zorder=3,
-            label="Unstable (|λ|>1)",
-        )
-
-    # Compute actual eigenvalue displacement for given perturbation
-    # d_lambda = (d lambda / d p) * (p * perturbation)
-    delta_p = param_value * perturbation
-    arrow_re = d_re * delta_p
-    arrow_im = d_im * delta_p
-
-    grad_mags = np.sqrt(d_re**2 + d_im**2)
-    max_grad = grad_mags.max() if grad_mags.size > 0 and grad_mags.max() > 1e-12 else 1.0
-    min_grad_threshold = max_grad * min_arrow_frac
-
-    for i in range(len(re_plot)):
-        if grad_mags[i] > min_grad_threshold:
-            ax.annotate(
-                "",
-                xy=(re_plot[i] + arrow_re[i], im_plot[i] + arrow_im[i]),
-                xytext=(re_plot[i], im_plot[i]),
-                arrowprops={"arrowstyle": "->", "color": "k", "lw": 1},
-                zorder=2,
-            )
-
-    ax.set_xlim(xlim)
-    ax.set_ylim(ylim)
-    ax.set_aspect("equal")
-    ax.axhline(0, color="gray", lw=0.5, ls="--", zorder=0)
-    ax.axvline(0, color="gray", lw=0.5, ls="--", zorder=0)
-    ax.set_xlabel("Real")
-    ax.set_ylabel("Imaginary")
-    perturbed_value = param_value * (1 + perturbation)
-    ax.set_title(f"{param_name}: {param_value:.4g} → {perturbed_value:.4g}")
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.grid(ls="--", lw=0.5, alpha=0.5)
-
-    if show_legend:
-        ax.legend(loc="best", fontsize="small", framealpha=0.9)
-
-
-def _filter_eigenvalues(
-    sensitivity_data: xr.Dataset,
-    filter_zeros: bool,
-    filter_infinite: bool,
-    zero_tol: float,
-    inf_tol: float | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, xr.Dataset]:
-    """
-    Filter eigenvalues to exclude zeros and infinites.
-
-    Returns filtered real, imaginary, modulus arrays and the filtered dataset.
-    """
-    re_vals = sensitivity_data.eigenvalues.sel(component="real").values
-    im_vals = sensitivity_data.eigenvalues.sel(component="imaginary").values
-    mod_vals = sensitivity_data.eigenvalues.sel(component="modulus").values
-
-    if inf_tol is None:
-        finite_mods = mod_vals[mod_vals < 1e6]
-        inf_tol = max(10 * finite_mods.max(), 10.0) if len(finite_mods) > 0 else 1e6
-
-    mask = np.ones(len(mod_vals), dtype=bool)
-    if filter_zeros:
-        mask &= mod_vals > zero_tol
-    if filter_infinite:
-        mask &= mod_vals < inf_tol
-
-    valid_indices = sensitivity_data.eigenvalue.values[mask]
-    filtered_data = sensitivity_data.sel(eigenvalue=valid_indices)
-
-    return re_vals[mask], im_vals[mask], mod_vals[mask], filtered_data, len(mod_vals) - mask.sum()
-
-
-def _validate_params_to_plot(
-    params_to_plot: list[str] | None,
-    all_params: list[str],
-) -> list[str]:
-    """Validate and return the list of parameters to plot."""
-    if params_to_plot is None:
-        return all_params
-
-    for p in params_to_plot:
-        if p not in all_params:
-            raise ValueError(f"Parameter '{p}' not found. Available: {all_params}")
-    return params_to_plot
 
 
 def plot_eigenvalue_sensitivity(
@@ -1022,70 +688,66 @@ def plot_eigenvalue_sensitivity(
     **eigenvalue_sensitivity_kwargs,
 ) -> Figure:
     """
-    Plot eigenvalue sensitivity to parameters on the complex plane.
+    Plot how each eigenvalue of the linearized model moves when a parameter is increased.
 
-    For each parameter, creates a subplot showing eigenvalues on the complex plane with
-    the unit circle. Arrows indicate how each eigenvalue moves when the parameter is
-    increased by the specified fraction.
+    Each panel shows the eigenvalues on the complex plane for one parameter, with an arrow from each eigenvalue to
+    where it moves when the parameter is increased by the fraction ``perturbation``.
 
     Parameters
     ----------
     model : Model
-        A gEconpy DSGE model.
+        Model whose eigenvalues are plotted.
     sensitivity_data : Dataset, optional
-        Pre-computed output from ``eigenvalue_sensitivity``. If not provided, it will be
-        computed using ``eigenvalue_sensitivity_kwargs``.
+        Output of :func:`~gEconpy.model.statistics.perturbation_diagnostics.eigenvalue_sensitivity`. By default it is
+        computed here from ``model`` and ``eigenvalue_sensitivity_kwargs``.
     params_to_plot : list of str, optional
-        Parameter names to create plots for. If not provided, all parameters are plotted.
-    perturbation : float, default 0.01
-        Size of parameter perturbation as a decimal fraction (0.01 = 1%, 0.10 = 10%).
-        Arrows show eigenvalue movement for this fractional increase in parameter value.
-    filter_zeros : bool, default True
-        Whether to exclude eigenvalues with modulus below ``zero_tol``.
-    filter_infinite : bool, default True
-        Whether to exclude eigenvalues with modulus above ``inf_tol``.
-    zero_tol : float, default 1e-6
-        Threshold below which eigenvalues are considered zero.
+        Parameters to draw a panel for. All parameters are plotted by default.
+    perturbation : float, optional
+        Fractional increase in the parameter value that the arrows show. Defaults to 0.01, a 1 percent increase.
+    filter_zeros : bool, optional
+        If True, leave out eigenvalues with modulus below ``zero_tol``. Defaults to True.
+    filter_infinite : bool, optional
+        If True, leave out eigenvalues with modulus above ``inf_tol``. Defaults to True.
+    zero_tol : float, optional
+        Modulus below which an eigenvalue counts as zero. Defaults to 1e-6.
     inf_tol : float, optional
-        Threshold above which eigenvalues are considered infinite. If not provided,
-        defaults to 10x the maximum finite eigenvalue modulus.
-    min_arrow_frac : float, default 0.10
-        Minimum gradient magnitude as fraction of per-parameter maximum required to
-        draw an arrow. Filters out visually insignificant arrows.
+        Modulus above which an eigenvalue counts as infinite. Defaults to 10 times the largest modulus below 1e6,
+        with a floor of 10, or to 1e6 when every modulus is at least 1e6.
+    min_arrow_frac : float, optional
+        Smallest gradient magnitude, as a fraction of the largest gradient magnitude, for which an arrow is drawn.
+        Defaults to 0.10.
     n_cols : int, optional
-        Number of columns in the subplot grid. Defaults to ``min(4, n_params)``.
+        Number of columns in the panel grid. Defaults to the smaller of 4 and the number of parameters plotted.
     figsize : tuple of float, optional
-        Figure size in inches. If not provided, computed from number of subplots.
+        Figure size in inches. Defaults to 4 inches per panel in each direction.
     dpi : int, optional
-        Figure resolution. Default is 144.
-    plot_circle : bool, default True
-        Whether to draw the unit circle on each subplot.
+        Figure resolution in dots per inch. Defaults to 144.
+    plot_circle : bool, optional
+        If True, draw the unit circle on each panel. Defaults to True.
     **eigenvalue_sensitivity_kwargs
-        Keyword arguments passed to ``eigenvalue_sensitivity`` if ``sensitivity_data``
-        is not provided (e.g., ``verbose=False``, parameter overrides).
+        Keyword arguments forwarded to
+        :func:`~gEconpy.model.statistics.perturbation_diagnostics.eigenvalue_sensitivity` when ``sensitivity_data``
+        is not given, including parameter values to linearize at. Parameter values are also used to label the
+        panels.
 
     Returns
     -------
     fig : Figure
-        Matplotlib figure containing the sensitivity plots.
+        Figure containing one panel per parameter.
 
     Examples
     --------
+    Show how the eigenvalues of the RBC example model respond to a 5 percent increase in the discount factor and the
+    capital share:
+
     .. code-block:: python
 
-        from gEconpy.model.build import model_from_gcn
+        from gEconpy import model_from_gcn
+        from gEconpy.data import get_example_gcn
         from gEconpy.plotting import plot_eigenvalue_sensitivity
 
-        model = model_from_gcn("rbc.gcn")
-
-        # Show eigenvalue movement for 1% parameter increase (default)
-        fig = plot_eigenvalue_sensitivity(model, verbose=False)
-
-        # Show eigenvalue movement for 10% parameter increase
-        fig = plot_eigenvalue_sensitivity(model, perturbation=0.10)
-
-        # Plot only specific parameters
-        fig = plot_eigenvalue_sensitivity(model, params_to_plot=["beta", "delta"])
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        fig = plot_eigenvalue_sensitivity(model, params_to_plot=["beta", "alpha"], perturbation=0.05, verbose=False)
     """
     dpi = dpi or 144
 
@@ -1101,10 +763,10 @@ def plot_eigenvalue_sensitivity(
 
     n_params = len(params_to_plot)
     if n_params == 0:
-        raise ValueError("No parameters to plot.")
+        raise ValueError("No parameters to plot. Pass at least one parameter name in params_to_plot.")
 
     n_cols = n_cols or min(4, n_params)
-    figsize = figsize or (4 * n_cols, 4 * ((n_params + n_cols - 1) // n_cols))
+    figsize = figsize or (4 * n_cols, 4 * math.ceil(n_params / n_cols))
 
     fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True)
     gs, plot_locs = prepare_gridspec_figure(n_cols, n_params, figure=fig)
@@ -1158,37 +820,50 @@ def plot_covariance_matrix(
     cmap: str = "YlGn",
     heatmap_kwargs: dict | None = None,
     annotation_kwargs: dict | None = None,
-) -> plt.Figure:
+) -> Figure:
     """
-    Plot a heatmap of the covariance matrix of the input data.
+    Draw an annotated heatmap of a covariance matrix.
 
     Parameters
     ----------
-    data : pd.DataFrame
-        A square DataFrame, representing a covariance matrix. The index and the columns should both have the same
-        values.
+    data : DataFrame
+        Square covariance matrix whose index and columns hold the same variable names.
     vars_to_plot : list of str, optional
-        A list of strings containing the names of the variables to plot. If not provided, all variables in the input
-        data will be plotted.
+        Variables to include. All variables are plotted by default.
     cbarlabel : str, optional
-        The label for the colorbar.
+        Label of the colorbar. Defaults to "Covariance".
     figsize : tuple of float, optional
-        The size of the figure to create, in inches.
+        Figure size in inches. Defaults to (4, 4).
     dpi : int, optional
-        The dots per inch of the figure.
+        Figure resolution in dots per inch. Defaults to 100.
     cbar_kw : dict, optional
-        A dictionary of keyword arguments to pass to the colorbar.
+        Keyword arguments forwarded to :meth:`matplotlib.figure.Figure.colorbar`. Defaults to ``{"shrink": 0.5}``.
     cmap : str, optional
-        The color map to use for the heatmap.
+        Colormap of the heatmap. Defaults to "YlGn".
     heatmap_kwargs : dict, optional
-        Keyword arguments forwarded to plt.imshow
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.imshow`. Empty by default.
     annotation_kwargs : dict, optional
-        Keyword arguments forwarded to ``annotate_heatmap``.
+        Keyword arguments forwarded to :func:`annotate_heatmap`. Empty by default.
 
     Returns
     -------
-    matplotlib.figure.Figure
-        A figure containing the heatmap.
+    fig : Figure
+        Figure containing the heatmap.
+
+    Examples
+    --------
+    Plot the stationary covariance of output, consumption, and investment in the RBC example model:
+
+    .. code-block:: python
+
+        from gEconpy import model_from_gcn, stationary_covariance_matrix
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_covariance_matrix
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        covariance = stationary_covariance_matrix(model, shock_std=0.01, verbose=False)
+
+        fig = plot_covariance_matrix(covariance, vars_to_plot=["Y", "C", "I"])
     """
     if vars_to_plot is None:
         vars_to_plot = data.columns
@@ -1216,63 +891,57 @@ def plot_covariance_matrix(
 
 def plot_heatmap(
     data: pd.DataFrame,
-    ax: Any | None = None,
+    ax: plt.Axes | None = None,
     cbar_kw: dict | None = None,
     cbarlabel: str | None = "",
     **kwargs,
 ):
     """
-    Create a heatmap from a pandas dataframe.
+    Draw a labeled heatmap of a DataFrame with a colorbar.
 
     Parameters
     ----------
     data : DataFrame
         Data to plot. Row and column labels are used as tick labels.
-    ax : matplotlib axes, optional
-        Axis to plot the heatmap on. If not provided, the current axis is used, or a new one is created.
+    ax : matplotlib Axes, optional
+        Axis to draw on. Defaults to the current axis.
     cbar_kw : dict, optional
-        Keyword arguments forwarded to ``matplotlib.figure.Figure.colorbar``. Default ``{"shrink": 0.5}``.
+        Keyword arguments forwarded to :meth:`matplotlib.figure.Figure.colorbar`. Defaults to ``{"shrink": 0.5}``.
     cbarlabel : str, optional
-        The label for the colorbar. Default is an empty string.
+        Label of the colorbar. Defaults to an empty string.
     **kwargs
-        All other arguments are forwarded to ``imshow``.
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.imshow`.
 
     Returns
     -------
-    im : matplotlib image
+    im : AxesImage
         The image created by ``imshow``.
-    cbar : matplotlib colorbar
+    cbar : Colorbar
         The colorbar attached to the image.
     """
-    if not ax:
+    if ax is None:
         ax = plt.gca()
 
     if cbar_kw is None:
         cbar_kw = {"shrink": 0.5}
 
-    # Plot the heatmap
     im = ax.imshow(data, **kwargs)
 
     n_rows, n_columns = data.shape
 
-    # Create colorbar
     cbar = ax.figure.colorbar(im, ax=ax, **cbar_kw)
     cbar.ax.set_ylabel(cbarlabel, rotation=-90, va="bottom")
 
-    # Show all ticks and label them with the respective list entries.
     ax.set(
         xticks=np.arange(n_rows),
         xticklabels=data.columns,
         yticks=np.arange(n_columns),
         yticklabels=data.index,
     )
-
-    # Let the horizontal axes labeling appear on top.
     ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
-
-    # Turn spines off and create white grid.
     ax.spines[:].set_visible(False)
 
+    # Minor ticks between the cells carry a white grid that separates the cells.
     ax.set_xticks(np.arange(data.shape[1] + 1) - 0.5, minor=True)
     ax.set_yticks(np.arange(data.shape[0] + 1) - 0.5, minor=True)
     ax.grid(which="minor", color="w", linestyle="-", linewidth=3)
@@ -1283,54 +952,47 @@ def plot_heatmap(
 
 def annotate_heatmap(
     im,
-    data=None,
-    valfmt="{x:.2f}",
-    textcolors=("black", "white"),
-    threshold=None,
+    data: np.ndarray | None = None,
+    valfmt: str | Formatter = "{x:.2f}",
+    textcolors: tuple[str, str] = ("black", "white"),
+    threshold: float | None = None,
     **textkw,
-):
+) -> list[Text]:
     """
-    Add annotation to a heatmap.
+    Write the value of each cell of a heatmap on top of it.
 
     Parameters
     ----------
-    im : matplotlib image
-        The image to be labeled.
+    im : AxesImage
+        The heatmap image to annotate.
     data : ndarray, optional
-        Data used to annotate. The image's own data is used by default.
-    valfmt : str or matplotlib formatter, optional
-        The format of the annotations inside the heatmap. A string is interpreted with the string format method, for
-        example "$ {x:.2f}". Default "{x:.2f}".
+        Values to write. Defaults to the image's own data.
+    valfmt : str or matplotlib Formatter, optional
+        Format of the annotations. A string is used as a ``str.format`` template with the value bound to ``x``, for
+        example "$ {x:.2f}". Defaults to "{x:.2f}".
     textcolors : tuple of str, optional
-        A pair of colors. The first is used for values below the threshold, the second for those above. Default
-        ("black", "white").
+        Text colors for values below and above ``threshold``. Defaults to ("black", "white").
     threshold : float, optional
-        Value in data units separating the two text colors. The middle of the colormap is used by default.
+        Value in data units that separates the two text colors. Defaults to the middle of the colormap.
     **textkw
-        All other arguments are forwarded to each call to ``text`` used to create the text labels.
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.text` for each label.
 
     Returns
     -------
-    texts : list of matplotlib text
-        The text objects added to the heatmap, in row-major order.
+    texts : list of matplotlib Text
+        The labels added to the heatmap, in row-major order.
     """
     if not isinstance(data, list | np.ndarray):
         data = im.get_array()
 
-    # Normalize the threshold to the images color range.
     threshold = im.norm(threshold) if threshold is not None else im.norm(data.max()) / 2.0
 
-    # Set default alignment to center, but allow it to be
-    # overwritten by textkw.
     kw = {"horizontalalignment": "center", "verticalalignment": "center"}
     kw.update(textkw)
 
-    # Get the formatter in case a string is supplied
     if isinstance(valfmt, str):
-        valfmt = matplotlib.ticker.StrMethodFormatter(valfmt)
+        valfmt = StrMethodFormatter(valfmt)
 
-    # Loop over the data and create a `Text` for each "pixel".
-    # Change the text's color depending on the data.
     texts = []
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
@@ -1339,136 +1001,6 @@ def annotate_heatmap(
             texts.append(text)
 
     return texts
-
-
-def _acf_hdi_bounds(series: xr.DataArray, prob: float) -> tuple[np.ndarray, np.ndarray]:
-    """Return per-lag (lower, upper) bounds of the ``prob`` highest-density interval of ``series``."""
-    hdi = azs.hdi(series, prob=prob)
-    ci_dim = next(dim for dim in hdi.dims if dim != "lag")
-    return hdi.isel({ci_dim: 0}).values, hdi.isel({ci_dim: 1}).values
-
-
-def _plot_acf_intervals(
-    axis: plt.Axes,
-    series: xr.DataArray,
-    lags: np.ndarray,
-    sample_dims: list[str],
-    ci_probs: tuple[float, float],
-    color: str = "tab:blue",
-    offset: float = 0.0,
-    mean_kwargs: dict | None = None,
-    inner_hdi_kwargs: dict | None = None,
-    outer_hdi_kwargs: dict | None = None,
-) -> None:
-    """Draw a forest-style autocorrelation on ``axis``: a posterior-mean point plus two nested HDI sticks per lag."""
-    inner_prob, outer_prob = sorted(ci_probs)
-    mean = series.mean(sample_dims).values
-    outer_lo, outer_hi = _acf_hdi_bounds(series, outer_prob)
-    inner_lo, inner_hi = _acf_hdi_bounds(series, inner_prob)
-
-    x = lags + offset
-    axis.vlines(x, outer_lo, outer_hi, **{"color": color, "lw": 1.0, **(outer_hdi_kwargs or {})})
-    axis.vlines(x, inner_lo, inner_hi, **{"color": color, "lw": 3.0, **(inner_hdi_kwargs or {})})
-    axis.scatter(x, mean, **{"color": color, "s": 38, "zorder": 3, **(mean_kwargs or {})})
-
-
-def _collect_acf_diagonals(models: dict, sample_dims: tuple[str, ...]):
-    """Diagonalize each model's autocorrelation tensor; return (diagonals, present-sample-dims, variable dim)."""
-    diagonals, present_by_model, var_dim = {}, {}, None
-    for label, tensor in models.items():
-        present = [dim for dim in sample_dims if dim in tensor.dims]
-        var_dims = [dim for dim in tensor.dims if dim != "lag" and dim not in present]
-        if len(var_dims) != 2:
-            raise ValueError(
-                "Expected an autocorrelation tensor with a 'lag' dimension and two variable dimensions, but found "
-                f"non-lag/sample dimensions {var_dims}."
-            )
-        diagonals[label] = xr_diagonal(tensor, dims=var_dims)
-        present_by_model[label] = present
-        var_dim = var_dims[0]
-    return diagonals, present_by_model, var_dim
-
-
-_REFERENCE_DEFAULTS = {"facecolors": "none", "edgecolors": "k", "s": 60, "linewidths": 1.6, "zorder": 4}
-
-
-def _draw_acf_panel(
-    axis,
-    variable,
-    diagonals,
-    present_by_model,
-    var_dim,
-    lags,
-    ci_probs,
-    offsets,
-    colors,
-    reference,
-    ref_var_dim,
-    mean_kwargs,
-    inner_hdi_kwargs,
-    outer_hdi_kwargs,
-    stem_kwargs,
-    reference_kwargs,
-):
-    """Draw one autocorrelation subplot: each model's forest (or stem) plus an optional hollow reference overlay."""
-    axis.axhline(0, color="k", lw=0.5)
-    for (label, model_diagonal), offset, color in zip(diagonals.items(), offsets, colors, strict=False):
-        if variable not in model_diagonal.coords[var_dim].values:
-            continue
-        series = model_diagonal.sel({var_dim: variable})
-        if present_by_model[label]:
-            _plot_acf_intervals(
-                axis,
-                series,
-                lags,
-                present_by_model[label],
-                ci_probs,
-                color=color,
-                offset=offset,
-                mean_kwargs=mean_kwargs,
-                inner_hdi_kwargs=inner_hdi_kwargs,
-                outer_hdi_kwargs=outer_hdi_kwargs,
-            )
-        else:
-            axis.scatter(lags + offset, series.values, **{"color": color, **(stem_kwargs or {})})
-            axis.vlines(lags + offset, 0, series.values, color=color)
-
-    if ref_var_dim is not None and variable in reference.coords[ref_var_dim].values:
-        ref_series = reference.sel({ref_var_dim: variable})
-        axis.scatter(
-            reference.coords["lag"].values, ref_series.values, **{**_REFERENCE_DEFAULTS, **(reference_kwargs or {})}
-        )
-
-    [spine.set_visible(False) for spine in axis.spines.values()]
-    axis.grid(ls="--", lw=0.5)
-    axis.set(title=str(variable))
-
-
-def _add_acf_legend(
-    fig: plt.Figure, model_labels: list, colors: list[str], has_reference: bool, reference_kwargs: dict | None = None
-) -> None:
-    """Add a legend distinguishing overlaid models and/or the reference series, if either is present."""
-    handles, labels = [], []
-    if len(model_labels) > 1:
-        handles += [Line2D([0], [0], color=color, lw=3) for color in colors]
-        labels += [str(label) for label in model_labels]
-    if has_reference:
-        ref = {**_REFERENCE_DEFAULTS, **(reference_kwargs or {})}
-        handles.append(
-            Line2D(
-                [0],
-                [0],
-                ls="none",
-                marker="o",
-                mfc=ref["facecolors"],
-                mec=ref["edgecolors"],
-                mew=ref["linewidths"],
-                ms=ref["s"] ** 0.5,
-            )
-        )
-        labels.append("data")
-    if handles and fig.axes:
-        fig.axes[0].legend(handles, labels, fontsize=8)
 
 
 def plot_acf(
@@ -1486,66 +1018,110 @@ def plot_acf(
     outer_hdi_kwargs: dict | None = None,
     stem_kwargs: dict | None = None,
     reference_kwargs: dict | None = None,
-) -> plt.Figure:
-    r"""
-    Plot the autocorrelation function for a set of variables.
+) -> Figure:
+    """
+    Plot the autocorrelation function of each variable, one panel per variable.
 
-    ``acorr`` is an autocorrelation tensor with a ``lag`` dimension and two square variable dimensions (the
-    cross-correlation axes, e.g. ``variable``/``variable_aux`` or ``state``/``state_aux``). Only the diagonal --
-    each variable's own autocorrelation -- is drawn. If the tensor also carries posterior sample dimensions
-    (``chain``, ``draw``), the result is an uncertainty-aware **forest**: a point at the posterior mean with two
-    nested credible-interval sticks at each lag. Otherwise it is a single-estimate **stem** plot.
+    ``acorr`` is an autocorrelation tensor with a ``lag`` dimension and two variable dimensions, for example
+    ``variable`` and ``variable_aux``. Only the diagonal, each variable's own autocorrelation, is drawn. When the
+    tensor also carries posterior sample dimensions, each lag shows the posterior mean with two nested
+    credible-interval sticks. Otherwise each lag is drawn as a single stem.
 
-    Pass a mapping of ``{label: tensor}`` to overlay several models on the same axes; their forests are dodged
-    along the lag axis, coloured per model, and a legend of the labels is added.
+    Pass a mapping of label to tensor to overlay several models on the same axes. Their sticks are dodged along the
+    lag axis, colored per model, and a legend of the labels is added.
 
     Parameters
     ----------
     acorr : DataArray or mapping of str to DataArray
-        The autocorrelation tensor(s). A single tensor is plotted directly; a mapping overlays one dodged,
-        coloured forest per entry. Each tensor must have a ``lag`` dimension and exactly two non-lag, non-sample
-        variable dimensions, and may additionally carry the ``sample_dims``.
+        Autocorrelation tensor, or one tensor per model to overlay. Each tensor must have a ``lag`` dimension and
+        exactly two variable dimensions, and may also carry the ``sample_dims``.
     vars_to_plot : list of str, optional
-        Variables to plot. Plot every variable in ``acorr`` (the first entry, if a mapping) when not provided.
+        Variables to plot. All variables in ``acorr``, or in its first entry when it is a mapping, are plotted by
+        default.
     sample_dims : tuple of str, optional
-        Dimensions treated as posterior samples; their presence switches stems to forest intervals. Default
-        ``("chain", "draw")``.
+        Dimensions treated as posterior samples. Their presence switches from stems to credible intervals.
+        Defaults to ``("chain", "draw")``.
     ci_probs : tuple of float, optional
-        The two credible-interval probabilities drawn at each lag as (inner, outer); the inner interval gets the
-        thicker line. Ignored for tensors with no sample dimensions. Default ``(0.5, 0.94)``.
+        Probabilities of the inner and outer credible intervals drawn at each lag. The inner interval is drawn with
+        the thicker line. Ignored for tensors without sample dimensions. Defaults to ``(0.5, 0.94)``.
     reference : DataArray, optional
-        A second autocorrelation to overlay as hollow markers -- typically the empirical ACF of the observed data,
-        for a model-vs-data check. Indexed by ``lag`` and a single variable dimension; only variables that also
-        appear in ``acorr`` are overlaid. Default None.
+        A second autocorrelation to overlay as hollow markers, typically the empirical autocorrelation of observed
+        data. Indexed by ``lag`` and one variable dimension. Only variables that also appear in ``acorr`` are drawn.
+        No reference is drawn by default.
     dodge : float, optional
-        Horizontal offset between successive models' forests when ``acorr`` is a mapping. Default 0.2.
-    figsize : tuple, optional
-        Figure size in inches. Default ``(14, 4)``.
+        Horizontal offset between the sticks of successive models when ``acorr`` is a mapping. Defaults to 0.2.
+    figsize : tuple of int, optional
+        Figure size in inches. Defaults to (14, 4).
     dpi : int, optional
-        Figure resolution in dots per inch. Default 100.
+        Figure resolution in dots per inch. Defaults to 100.
     n_cols : int, optional
-        Number of columns in the subplot grid. Default 4.
+        Number of columns in the panel grid. Defaults to 4.
     mean_kwargs : dict, optional
-        Keyword arguments forwarded to ``Axes.scatter`` for the posterior-mean point of each forest, merged over
-        the defaults ``{"s": 38, "zorder": 3}`` (per-model ``color`` is set automatically). Default None.
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.scatter` for the posterior-mean point, merged
+        over the defaults ``{"s": 38, "zorder": 3}``. The per-model color is set automatically. Empty by default.
     inner_hdi_kwargs : dict, optional
-        Keyword arguments forwarded to ``Axes.vlines`` for the inner (thicker) HDI stick, merged over the default
-        ``{"lw": 3.0}``. Default None.
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.vlines` for the inner credible-interval stick,
+        merged over the default ``{"lw": 3.0}``. Empty by default.
     outer_hdi_kwargs : dict, optional
-        Keyword arguments forwarded to ``Axes.vlines`` for the outer (thinner) HDI stick, merged over the default
-        ``{"lw": 1.0}``. Default None.
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.vlines` for the outer credible-interval stick,
+        merged over the default ``{"lw": 1.0}``. Empty by default.
     stem_kwargs : dict, optional
-        Keyword arguments forwarded to ``Axes.scatter`` for the stem marker drawn when a tensor has no sample
-        dimensions. Default None.
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.scatter` for the stem marker drawn when a tensor
+        has no sample dimensions. Empty by default.
     reference_kwargs : dict, optional
-        Keyword arguments forwarded to ``Axes.scatter`` for the hollow reference markers, merged over the defaults
-        ``{"facecolors": "none", "edgecolors": "k", "s": 60, "linewidths": 1.6, "zorder": 4}``. The legend proxy
-        for the reference series is kept in sync with these settings. Default None.
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.scatter` for the hollow reference markers,
+        merged over the defaults ``{"facecolors": "none", "edgecolors": "k", "s": 60, "linewidths": 1.6,
+        "zorder": 4}``. The legend entry for the reference series uses the same settings. Empty by default.
 
     Returns
     -------
-    matplotlib.figure.Figure
-        Figure object containing the plots.
+    fig : Figure
+        Figure containing one panel per variable.
+
+    Examples
+    --------
+    Plot the model-implied autocorrelation of output, consumption, and investment in the RBC example model:
+
+    .. code-block:: python
+
+        from gEconpy import autocorrelation_matrix, model_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_acf
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        acorr = autocorrelation_matrix(model, shock_std=0.01, n_lags=10, verbose=False)
+
+        fig = plot_acf(acorr, vars_to_plot=["Y", "C", "I"], n_cols=3)
+
+    Overlay two calibrations and compare both against a reference series, here the autocorrelation of an AR(1)
+    process with coefficient 0.9:
+
+    .. code-block:: python
+
+        import numpy as np
+        import xarray as xr
+
+        from gEconpy import autocorrelation_matrix, model_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_acf
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        baseline = autocorrelation_matrix(model, shock_std=0.01, n_lags=10, verbose=False)
+        persistent = autocorrelation_matrix(model, shock_std=0.01, n_lags=10, verbose=False, rho_A=0.99)
+
+        lags = np.arange(11)
+        reference = xr.DataArray(
+            np.stack([0.9**lags] * 3, axis=1),
+            dims=["lag", "variable"],
+            coords={"lag": lags, "variable": ["Y", "C", "I"]},
+        )
+
+        fig = plot_acf(
+            {"baseline": baseline, "rho_A = 0.99": persistent},
+            vars_to_plot=["Y", "C", "I"],
+            reference=reference,
+            n_cols=3,
+        )
     """
     models = {None: acorr} if isinstance(acorr, xr.DataArray) else dict(acorr)
     diagonals, present_by_model, var_dim = _collect_acf_diagonals(models, sample_dims)
@@ -1557,12 +1133,12 @@ def plot_acf(
     else:
         missing = [var for var in vars_to_plot if var not in all_variables]
         if missing:
-            raise ValueError(f"Cannot plot {missing}; not found in the provided autocorrelation tensor")
+            raise ValueError(f"Cannot plot {missing}: not found in the provided autocorrelation tensor")
 
     n_plots = len(vars_to_plot)
     n_cols = min(n_cols, n_plots)
     fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
-    gc, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_plots, figure=fig)
+    gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_plots, figure=fig)
     lags = diagonal.coords["lag"].values
 
     n_models = len(models)
@@ -1571,7 +1147,7 @@ def plot_acf(
     ref_var_dim = next((dim for dim in reference.dims if dim != "lag"), None) if reference is not None else None
 
     for variable, plot_loc in zip(vars_to_plot, plot_locs, strict=False):
-        axis = fig.add_subplot(gc[plot_loc])
+        axis = fig.add_subplot(gs[plot_loc])
         _draw_acf_panel(
             axis,
             variable,
@@ -1595,108 +1171,6 @@ def plot_acf(
     return fig
 
 
-def _validate_and_prepare_corner_inputs(
-    idata: Any,
-    group: str,
-    var_names: list[str] | None,
-    figure_kwargs: dict | None,
-    colorby: str | None,
-    scatter_kwargs: dict | None,
-) -> tuple[list[str], int, dict, np.ndarray | None, dict | None]:
-    """Validate inputs and resolve plotting options for plot_corner."""
-    if not hasattr(idata, group):
-        raise ValueError(f"Argument idata should be an arviz idata object with a {group} group")
-
-    figure_kwargs = figure_kwargs or {}
-
-    vars_available = list(idata[group].data_vars)
-    var_names = var_names or vars_available
-    for v in var_names:
-        if v not in vars_available:
-            raise ValueError(f'Variable "{v}" not found in idata[{group}]')
-
-    # Optional color mapping
-    color_data = None
-    resolved_scatter_kwargs = None
-    if colorby is not None:
-        if colorby not in vars_available:
-            raise ValueError(f'colorby "{colorby}" not found in idata[{group}]')
-        color_data = idata[group][colorby].values.ravel()
-        resolved_scatter_kwargs = {"zorder": 100, "cmap": "viridis", "s": 10, "alpha": 0.5}
-        if scatter_kwargs:
-            resolved_scatter_kwargs.update(scatter_kwargs)
-
-    return var_names, len(var_names), figure_kwargs, color_data, resolved_scatter_kwargs
-
-
-def _format_axis_for_corner(ax, fontsize: int) -> None:
-    """Apply standard tick formatting for corner plot axes."""
-    ax.ticklabel_format(axis="both", style="sci")
-    ax.yaxis.major.formatter.set_powerlimits((-2, 2))
-    ax.yaxis.offsetText.set_fontsize(fontsize)
-    ax.xaxis.major.formatter.set_powerlimits((-2, 2))
-    ax.xaxis.offsetText.set_fontsize(fontsize)
-
-
-def _plot_diagonal_hist(ax, data: np.ndarray, bins: int, fontsize: int, is_last_row: bool) -> None:
-    """Draw the 1D histogram on the diagonal panel."""
-    ax.hist(data, bins=bins, histtype="step", density=True)
-    ax.set_yticklabels([])
-    ax.tick_params(axis="both", left=False, bottom=is_last_row, labelsize=fontsize)
-    if not is_last_row:
-        ax.set_xticklabels([])
-        ax.tick_params(axis="x", which="both", bottom=False)
-
-
-def _plot_offdiag_panel(
-    ax,
-    x_name: str,
-    y_name: str,
-    x_data: np.ndarray,
-    y_data: np.ndarray,
-    rug_bins: int,
-    rug_levels: int,
-    show_marginal_modes: bool,
-    fontsize: int,
-    draw_xlabel: bool,
-    draw_ylabel: bool,
-    color_data: np.ndarray | None,
-    scatter_kwargs: dict | None,
-) -> None:
-    """Draw the off-diagonal joint density and optional scatter layer."""
-    if color_data is not None and scatter_kwargs is not None:
-        ax.scatter(x_data, y_data, c=color_data, **scatter_kwargs)
-
-    # 2D histogram (y first, then x to match contour axes)
-    H, y_edges, x_edges = np.histogram2d(y_data, x_data, bins=rug_bins)
-
-    # Mode via argmax -> unique pair
-    iy, ix = np.unravel_index(np.argmax(H), H.shape)
-    x_mode, y_mode = x_edges[ix], y_edges[iy]
-
-    ax.contourf(x_edges[:-1], y_edges[:-1], H, cmap="Blues", levels=rug_levels)
-
-    if show_marginal_modes:
-        ax.axvline(x_mode, ls="--", lw=0.5, color="k")
-        ax.axhline(y_mode, ls="--", lw=0.5, color="k")
-        ax.scatter(x_mode, y_mode, color="k", marker="s", s=20)
-
-    # Labels and ticks
-    if draw_ylabel:
-        ax.set_ylabel(y_name, fontsize=fontsize)
-    else:
-        ax.set_yticklabels([])
-        ax.tick_params(axis="y", which="both", left=False)
-
-    if draw_xlabel:
-        ax.set_xlabel(x_name, fontsize=fontsize)
-    else:
-        ax.set_xticklabels([])
-        ax.tick_params(axis="x", which="both", bottom=False)
-
-    ax.tick_params(axis="both", which="both", labelsize=fontsize)
-
-
 def plot_corner(
     idata: Any,
     group: str = "posterior",
@@ -1709,61 +1183,75 @@ def plot_corner(
     fontsize: int = 6,
     show_marginal_modes: bool = True,
     scatter_kwargs: dict | None = None,
-) -> plt.Figure:
+) -> Figure:
     """
-    Draw a corner plot, also known as a scatterplot matrix, of the posterior distributions of a set of variables.
+    Draw a corner plot of the joint distribution of a set of sampled variables.
 
-    Each panel of the plot shows the two-dimensional distribution of two of the variables, marginalizing over the
-    remaining variables. The diagonal panels show the one-dimensional distribution of each variable.
+    Each off-diagonal panel shows the two-dimensional density of a pair of variables, marginalizing over the rest.
+    Diagonal panels show the one-dimensional histogram of each variable.
 
     Parameters
     ----------
-    idata : arviz.InferenceData
-        An arviz idata object with a posterior group.
+    idata : arviz InferenceData or DataTree
+        Samples with a group named ``group``.
     group : str, optional
-        The group from the InferenceData to plot, either "prior" or "posterior". Default "posterior".
+        Group of ``idata`` to plot, for example "prior" or "posterior". Defaults to "posterior".
     var_names : list of str, optional
-        A list of strings specifying the variables to plot. If not provided, all variables in ``idata`` will be
-        plotted.
+        Variables to plot. All variables in the group are plotted by default.
     colorby : str, optional
-        Name of a variable in the chosen group used to color the off-diagonal scatter points. Points are drawn in a
-        single color by default.
+        Variable in the group whose value colors a scatter of the draws drawn over each off-diagonal panel. No
+        scatter is drawn by default.
     figure_kwargs : dict, optional
-        Additional keyword arguments to pass to the figure creation.
+        Keyword arguments forwarded to :func:`matplotlib.pyplot.subplots`. Empty by default.
     hist_bins : int, optional
-        The number of bins to use for the histograms on the diagonal panels. Default 100.
+        Number of histogram bins on the diagonal panels. Defaults to 100.
     rug_bins : int, optional
-        The number of bins to use for the histograms on the off-diagonal panels. Default 20.
+        Number of bins per axis of the two-dimensional histograms on the off-diagonal panels. Defaults to 20.
     rug_levels : int, optional
-        The number of contour levels to use for the histograms on the off-diagonal panels. Default 6.
+        Number of contour levels on the off-diagonal panels. Defaults to 6.
     fontsize : int, optional
-        The font size for the axis labels and ticks. Default 6.
+        Font size of the axis labels and ticks. Defaults to 6.
     show_marginal_modes : bool, optional
-        Whether to show the modes of the marginal distributions. Default True.
+        If True, mark the mode of each two-dimensional histogram with dashed lines. Defaults to True.
     scatter_kwargs : dict, optional
-        Keyword arguments forwarded to the off-diagonal scatter plots. Ignored unless ``colorby`` is given.
+        Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.scatter` for the colored draws. Ignored unless
+        ``colorby`` is given. Defaults to ``{"zorder": 100, "cmap": "viridis", "s": 10, "alpha": 0.5}``.
 
     Returns
     -------
     fig : Figure
-        Figure object containing the plots.
+        Figure containing the panel grid.
+
+    Examples
+    --------
+    Draw the joint prior of the RBC example model's parameters from a PyMC model built from the priors declared in
+    the GCN file:
+
+    .. code-block:: python
+
+        import pymc as pm
+
+        from gEconpy import statespace_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_corner
+
+        ss_mod = statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
+        with pm.Model(coords=ss_mod.coords):
+            ss_mod.to_pymc()
+            prior = pm.sample_prior_predictive(500, random_seed=0)
+
+        fig = plot_corner(prior, group="prior", var_names=["alpha", "beta", "delta"], colorby="rho_A")
     """
-    (
-        var_names,
-        k_params,
-        figure_kwargs,
-        color_data,
-        resolved_scatter_kwargs,
-    ) = _validate_and_prepare_corner_inputs(
+    var_names, color_data, resolved_scatter_kwargs = _validate_and_prepare_corner_inputs(
         idata=idata,
         group=group,
         var_names=var_names,
-        figure_kwargs=figure_kwargs,
         colorby=colorby,
         scatter_kwargs=scatter_kwargs,
     )
+    k_params = len(var_names)
 
-    fig, axes = plt.subplots(k_params, k_params, **figure_kwargs)
+    fig, axes = plt.subplots(k_params, k_params, **(figure_kwargs or {}))
     flat_data = {name: idata[group][name].values.ravel() for name in var_names}
 
     for row, col in product(range(k_params), range(k_params)):
@@ -1771,7 +1259,6 @@ def plot_corner(
         _format_axis_for_corner(ax, fontsize)
         x_name, y_name = var_names[col], var_names[row]
 
-        # Hide upper triangle
         if col > row:
             ax.set(xticks=[], yticks=[], xlabel="", ylabel="")
             ax.set_visible(False)
@@ -1787,7 +1274,6 @@ def plot_corner(
             )
             continue
 
-        # Off-diagonal panel
         _plot_offdiag_panel(
             ax=ax,
             x_name=x_name,
@@ -1822,40 +1308,70 @@ def plot_kalman_filter(
     figsize: tuple[int, int] = (14, 6),
     dpi: int = 144,
     observed: bool = False,
-):
+) -> Figure:
     """
-    Plot Kalman filter, prediction or smoothed series for variables in idata.
+    Plot the mean and 95 percent credible band of the Kalman filter output for each state.
 
     Parameters
     ----------
-    idata : xarray.Dataset
-        Dataset with Kalman filter variables.
-    data : pandas.DataFrame
-        DataFrame with original time series data.
-    kalman_output : str, optional
-        String indicating whether to plot filtered, predicted, or smoothed series.
-        Must be one of 'filtered', 'predicted', or 'smoothed'.
-    group : str, optional
-        The idata group to plot, either "prior" or "posterior". Default "posterior".
+    idata : DataTree
+        Conditional prior or posterior samples, as returned by
+        :meth:`~gEconpy.model.statespace.DSGEStateSpace.sample_conditional_prior` or
+        :meth:`~gEconpy.model.statespace.DSGEStateSpace.sample_conditional_posterior`.
+    data : DataFrame
+        Observed data. Columns that match a plotted state are drawn as a dashed black line.
+    kalman_output : {"predicted", "filtered", "smoothed"}, optional
+        Which Kalman filter output to plot. Defaults to "predicted".
+    group : {"prior", "posterior"}, optional
+        Which group of ``idata`` holds the samples. Defaults to "posterior".
     n_cols : int, optional
-        Number of columns in the plot.
+        Number of columns in the panel grid. Defaults to the smaller of 4 and the number of states plotted.
     vars_to_plot : list of str, optional
-        List of variable names to plot.
-    fig : matplotlib.figure.Figure, optional
-        Matplotlib Figure object to plot on.
+        States to plot. All states are plotted by default.
+    fig : Figure, optional
+        Figure to draw on. A new figure is created by default.
     figsize : tuple of int, optional
-        Figure size in inches.
+        Size of the created figure in inches. Defaults to (14, 6).
     dpi : int, optional
-        Figure DPI.
+        Resolution of the created figure in dots per inch. Defaults to 144.
     observed : bool, optional
-        If True, plot the observed states together with the data series they
-        are fit against. If False, plot the model's latent states. Default
-        False.
+        If True, plot the observed states from the ``*_observed`` variables of ``idata``. If False, plot the
+        latent states. Defaults to False.
 
     Returns
     -------
-    matplotlib.figure.Figure
-        Matplotlib Figure object with the plot.
+    fig : Figure
+        Figure containing one panel per state.
+
+    Examples
+    --------
+    Generate data from the prior of the RBC example model, run the Kalman filter over it under the prior, and plot
+    the smoothed latent states against the generating data:
+
+    .. code-block:: python
+
+        import pymc as pm
+
+        from gEconpy import data_from_prior, statespace_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_kalman_filter
+
+        ss_mod = statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
+        ss_mod.configure(observed_states=["Y"], verbose=False)
+
+        with pm.Model(coords=ss_mod.coords) as pm_mod:
+            ss_mod.to_pymc()
+            pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+
+        true_params, data, prior_idata = data_from_prior(ss_mod, pm_mod, n_samples=50, random_seed=0)
+
+        with pm_mod:
+            ss_mod.build_statespace_graph(data)
+        conditional_prior = ss_mod.sample_conditional_prior(prior_idata, progressbar=False)
+
+        fig = plot_kalman_filter(
+            conditional_prior, data, kalman_output="smoothed", group="prior", vars_to_plot=["Y", "C", "K"]
+        )
     """
     if kalman_output.lower() not in ["filtered", "predicted", "smoothed"]:
         raise ValueError(f'kalman_output must be one of "filtered", "predicted", "smoothed". Found {kalman_output}.')
@@ -1893,8 +1409,7 @@ def plot_kalman_filter(
 
         axis.set(title=variable, xlabel=None, ylabel="% Deviation from SS")
         axis.tick_params(axis="x", rotation=45)
-        [spine.set_visible(False) for spine in axis.spines.values()]
-        axis.grid(ls="--", lw=0.5)
+        _style_panel(axis)
 
     return fig
 
@@ -1906,50 +1421,58 @@ def plot_priors(
     dpi: int = 144,
     n_cols: int = 6,
     mark_initial_value: bool = True,
-):
+) -> Figure:
     """
-    Plot the prior distributions of a model's parameters and shock hyper-parameters.
+    Plot the prior density of each model parameter and shock hyperparameter.
 
     Parameters
     ----------
     model : Model or DSGEStateSpace
         Model whose priors are plotted.
     var_names : list of str, optional
-        Names of the parameters to plot. All parameters with priors are plotted by default.
+        Parameters to plot. All parameters with priors are plotted by default.
     figsize : tuple of int, optional
-        The size of the figure to create, in inches. Sized from the number of parameters by default.
+        Figure size in inches. Defaults to 14 inches wide and 2 inches per row of panels.
     dpi : int, optional
-        The resolution of the figure. Default 144.
+        Figure resolution in dots per inch. Defaults to 144.
     n_cols : int, optional
-        The number of columns of plots to show. Default 6.
+        Number of columns in the panel grid. Defaults to 6.
     mark_initial_value : bool, optional
-        If True, draw a vertical line at each parameter's current value. Default True.
+        If True, draw a dashed vertical line at each parameter's calibrated value. Defaults to True.
 
     Returns
     -------
     fig : Figure
-        Figure object containing the plots.
+        Figure containing one panel per parameter.
+
+    Examples
+    --------
+    Plot the priors declared in the RBC example model's GCN file:
+
+    .. code-block:: python
+
+        from gEconpy import model_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_priors
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        fig = plot_priors(model, n_cols=3)
     """
-    pz_priors = model.param_priors
-    hyper_priors = {}
+    priors = dict(model.param_priors)
 
     if model.shock_priors:
-        hyper_priors = {
+        priors |= {
             shock.param_name_to_hyper_name[name]: hyper_prior
             for shock in model.shock_priors.values()
             for name, hyper_prior in shock.hyper_param_dict.items()
         }
 
-    pz_priors = pz_priors | hyper_priors
-
-    if var_names is None:
-        var_names = pz_priors.keys()
-
-    priors = {k: pz_priors[k] for k in var_names}
+    if var_names is not None:
+        priors = {name: priors[name] for name in var_names}
     n_params = len(priors)
 
     if figsize is None:
-        n_rows = n_params // n_cols
+        n_rows = math.ceil(n_params / n_cols)
         figsize = (14, 2 * n_rows)
 
     fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
@@ -1957,7 +1480,7 @@ def plot_priors(
 
     all_params = model.param_dict | model.hyper_param_dict if isinstance(model, DSGEStateSpace) else model.parameters()
 
-    for (name, prior), loc in zip(pz_priors.items(), locs, strict=False):
+    for (name, prior), loc in zip(priors.items(), locs, strict=True):
         axis = fig.add_subplot(gs[loc])
         with warnings.catch_warnings(action="ignore"):
             prior.plot_pdf(
@@ -1972,51 +1495,76 @@ def plot_priors(
         axis.set_title(name + "\n" + dist_text)
         value = all_params.get(name, None)
 
-        if mark_initial_value and value:
+        if mark_initial_value and value is not None:
             axis.axvline(value, ls="--", c="k")
 
     return fig
 
 
 def plot_posterior_with_prior(
-    idata,
-    var_names,
-    prior_dict,
-    true_values=None,
-    n_cols=5,
-    fig_kwargs=None,
-    plot_posterior_kwargs=None,
-) -> plt.Figure:
+    idata: Any,
+    var_names: list[str],
+    prior_dict: dict,
+    true_values: xr.Dataset | None = None,
+    n_cols: int = 5,
+    fig_kwargs: dict | None = None,
+    plot_posterior_kwargs: dict | None = None,
+) -> Figure:
     """
-    Plot marginal posterior distributions with their priors overlaid.
+    Plot the marginal posterior of each variable with its prior density overlaid.
 
     Parameters
     ----------
-    idata : arviz.InferenceData
-        Inference data with a posterior group.
+    idata : arviz InferenceData or DataTree
+        Samples with a posterior group.
     var_names : list of str
-        Names of the variables to plot.
-    prior_dict : dict mapping str to Distribution
-        Prior for each variable, keyed by variable name. Variables absent from the dictionary are drawn without a
+        Variables to plot.
+    prior_dict : dict mapping str to preliz distribution
+        Prior of each variable, keyed by variable name. Variables absent from the dictionary are drawn without a
         prior.
-    true_values : dict mapping str to DataArray, optional
-        Reference values to mark with a vertical line. No lines are drawn by default.
+    true_values : Dataset, optional
+        Reference values to mark with a dashed vertical line, keyed by variable name. No lines are drawn by default.
     n_cols : int, optional
-        The number of columns of plots to show. Default 5.
+        Number of columns in the panel grid. Defaults to 5.
     fig_kwargs : dict, optional
-        Keyword arguments used to create the figure. Sized from the number of variables by default.
+        Keyword arguments used to create the figure. Defaults to 14 inches wide, 3 inches per row of panels, at
+        144 dpi.
     plot_posterior_kwargs : dict, optional
-        Additional keyword arguments forwarded to ``arviz_plots.plot_dist``.
+        Keyword arguments forwarded to :func:`arviz_plots.plot_dist`. Empty by default.
 
     Returns
     -------
     fig : Figure
-        Figure object containing the plots.
+        Figure containing one panel per variable.
+
+    Examples
+    --------
+    Compare posterior samples against their priors. The posterior here is random, since no estimation is run:
+
+    .. code-block:: python
+
+        import arviz_base as azb
+        import numpy as np
+        import preliz as pz
+        import xarray as xr
+
+        from gEconpy.plotting import plot_posterior_with_prior
+
+        rng = np.random.default_rng(0)
+        priors = {"alpha": pz.Beta(2.0, 5.0), "rho_A": pz.Beta(10.0, 2.0)}
+        posterior = {
+            "alpha": rng.beta(20.0, 40.0, size=(2, 500)),
+            "rho_A": rng.beta(80.0, 10.0, size=(2, 500)),
+        }
+        idata = azb.from_dict({"posterior": posterior})
+        true_values = xr.Dataset({"alpha": 0.35, "rho_A": 0.9})
+
+        fig = plot_posterior_with_prior(idata, var_names=["alpha", "rho_A"], prior_dict=priors, true_values=true_values)
     """
     var_names = list(var_names)
 
     if fig_kwargs is None:
-        n_rows = max(1, -(-len(var_names) // n_cols))
+        n_rows = max(1, math.ceil(len(var_names) / n_cols))
         fig_kwargs = {"figsize": (14, n_rows * 3), "dpi": 144}
     if plot_posterior_kwargs is None:
         plot_posterior_kwargs = {}
@@ -2052,32 +1600,57 @@ def plot_posterior_with_prior(
 
 
 def plot_estimated_matrix(
-    idata,
-    dsge_mod,
-    matrix_name="state_chol_corr",
-    subplot_kwargs=None,
+    idata: Any,
+    dsge_mod: DSGEStateSpace,
+    matrix_name: str = "state_chol_corr",
+    subplot_kwargs: dict | None = None,
     symmetrical: bool = True,
-):
+) -> Figure:
     """
-    Plot posterior means and credible intervals for the entries of an estimated shock matrix.
+    Plot the posterior mean and credible interval of each entry of an estimated shock matrix.
 
     Parameters
     ----------
-    idata : arviz.InferenceData
-        Inference data with a posterior group holding ``matrix_name``.
+    idata : arviz InferenceData or DataTree
+        Samples with a posterior group holding ``matrix_name``.
     dsge_mod : DSGEStateSpace
-        Model the matrix was estimated for, used for the shock names and the matrix size.
+        Model the matrix was estimated for. Its shock names label the panels and its number of shocks sets the grid
+        size.
     matrix_name : str, optional
-        Name of the posterior variable to plot. Default "state_chol_corr".
+        Posterior variable to plot. Defaults to "state_chol_corr".
     subplot_kwargs : dict, optional
-        Keyword arguments forwarded to ``matplotlib.pyplot.subplots``.
+        Keyword arguments forwarded to :func:`matplotlib.pyplot.subplots`. Empty by default.
     symmetrical : bool, optional
-        If True, hide the upper triangle and the diagonal. Default True.
+        If True, hide the upper triangle and the diagonal. Defaults to True.
 
     Returns
     -------
     fig : Figure
-        Figure object containing the plots.
+        Figure containing one panel per matrix entry.
+
+    Examples
+    --------
+    Plot the estimated shock correlation matrix of a model configured with a full shock covariance. The posterior
+    here is random, since no estimation is run:
+
+    .. code-block:: python
+
+        import arviz_base as azb
+        import numpy as np
+
+        from gEconpy import statespace_from_gcn
+        from gEconpy.data import get_example_gcn
+        from gEconpy.plotting import plot_estimated_matrix
+
+        ss_mod = statespace_from_gcn(get_example_gcn("New_Keynesian"), verbose=False)
+        ss_mod.configure(observed_states=["Y", "pi", "r"], full_shock_covariance=True, verbose=False)
+
+        rng = np.random.default_rng(0)
+        n_shocks = ss_mod.k_posdef
+        posterior = {"state_chol_corr": rng.uniform(-1.0, 1.0, size=(2, 500, n_shocks, n_shocks))}
+        idata = azb.from_dict({"posterior": posterior}, dims={"state_chol_corr": ["shock", "shock_aux"]})
+
+        fig = plot_estimated_matrix(idata, ss_mod, subplot_kwargs={"figsize": (8, 8)})
     """
     n_shocks = dsge_mod.k_posdef
     subplot_kwargs = subplot_kwargs or {}
@@ -2109,6 +1682,730 @@ def plot_estimated_matrix(
         axis.tick_params(axis="x", labelsize=6)
 
     return fig
+
+
+def _style_panel(axis: plt.Axes) -> None:
+    for spine in axis.spines.values():
+        spine.set_visible(False)
+    axis.grid(ls="--", lw=0.5)
+
+
+def _plot_single_variable(
+    data: xr.DataArray,
+    ax: plt.Axes,
+    ci: float | None = None,
+    cmap: str | Colormap | None = None,
+    fill_color: str | None = "tab:blue",
+    **line_kwargs,
+) -> None:
+    """
+    Plot every trajectory of one variable, or its mean with a credible band when ``ci`` is given.
+
+    Parameters
+    ----------
+    data : DataArray
+        Trajectories of one variable, with a ``time`` dimension and either a ``simulation`` or a ``shock``
+        dimension.
+    ax : matplotlib Axes
+        Axis to draw on.
+    ci : float, optional
+        Width of the credible band, between 0 and 1. By default every trajectory is drawn and no band is shown.
+    cmap : str or Colormap, optional
+        Colormap of the trajectory lines. Defaults to the matplotlib color cycle.
+    fill_color : str, optional
+        Color of the credible band. Defaults to "tab:blue".
+    **line_kwargs
+        Keyword arguments forwarded to the line plot.
+    """
+    set_axis_cmap(ax, cmap)
+
+    if ci is None:
+        hue = "shock" if "shock" in data.coords else None
+        data.plot.line(x="time", ax=ax, add_legend=False, hue=hue, **line_kwargs)
+        if hue is not None:
+            lines = ax.get_lines()
+            for line, shock in zip(lines, data.coords["shock"].values, strict=False):
+                line.set_label(shock)
+        return
+
+    q_low, q_high = ((1 - ci) / 2), 1 - ((1 - ci) / 2)
+    ci_bounds = data.quantile([q_low, q_high], dim=["simulation"])
+
+    data.mean(dim="simulation").plot.line(x="time", ax=ax, add_legend=False, **line_kwargs)
+    ci_bounds.plot.line(
+        ax=ax,
+        x="time",
+        hue="quantile",
+        ls="--",
+        lw=0.5,
+        color="k",
+        add_legend=False,
+    )
+    ax.fill_between(
+        ci_bounds.coords["time"].values,
+        *ci_bounds.transpose("quantile", "time").values,
+        color=fill_color,
+        alpha=0.25,
+    )
+
+
+def _irf_to_mapping(
+    irf: xr.DataArray | list[xr.DataArray] | dict[str, xr.DataArray],
+) -> dict[str, xr.DataArray]:
+    if isinstance(irf, xr.DataArray):
+        return {"": irf}
+    if isinstance(irf, list):
+        return {f"Scenario {i}": scenario for i, scenario in enumerate(irf)}
+    if isinstance(irf, dict):
+        return irf
+    raise TypeError(
+        f"irf must be a DataArray, a list of DataArrays, or a dict mapping scenario names to DataArrays, but got "
+        f"{type(irf)}."
+    )
+
+
+def _resolve_list_to_plot(
+    value: str | list[str] | None,
+    available: list[str],
+    item_name: str,
+) -> list[str]:
+    if value is None:
+        return available
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        raise TypeError(f"Expected str or list for {item_name}, got {type(value)}")
+    for v in value:
+        if v not in available:
+            raise ValueError(f"{item_name} '{v}' not found among available: {available}")
+    return value
+
+
+def _resolve_vars_and_shocks(
+    irf_map: dict[str, xr.DataArray],
+    vars_to_plot: str | list[str] | None,
+    shocks_to_plot: str | list[str] | None,
+) -> tuple[list[str], list[str] | None]:
+    coords = next(iter(irf_map.values())).coords
+    variables = coords["variable"].values.tolist()
+    vars_resolved = _resolve_list_to_plot(vars_to_plot, variables, "variable")
+
+    shocks_resolved: list[str] | None
+    if "shock" in coords:
+        shocks = coords["shock"].values.tolist()
+        shocks_resolved = _resolve_list_to_plot(shocks_to_plot, shocks, "shock")
+    else:
+        shocks_resolved = None
+
+    return vars_resolved, shocks_resolved
+
+
+def _prepare_irf_grid(
+    figsize: tuple[int, int], dpi: int, n_plots: int, n_cols: int | None, figure: Figure | None = None
+) -> tuple[Figure, GridSpec, list[tuple[slice, slice]], list[int], list[int]]:
+    """Create the figure and grid, and work out which grid rows are the bottom ones and so keep their x ticks."""
+    n_cols = min(4, n_plots) if n_cols is None else n_cols
+    fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=True) if figure is None else figure
+    gs, plot_locs = prepare_gridspec_figure(n_cols, n_plots, figure=fig)
+
+    plot_row_idxs = [loc[0].stop // 2 - 1 for loc in plot_locs]
+    plot_rows = sorted(set(plot_row_idxs))
+    is_square = all(plot_row_idxs.count(i) == n_cols for i in plot_rows)
+    last_row_idxs = [plot_rows[-1]] if is_square else plot_rows[-2:]
+
+    return fig, gs, plot_locs, plot_row_idxs, last_row_idxs
+
+
+def _plot_irf_panel(
+    axis: plt.Axes,
+    irf_map: dict[str, xr.DataArray],
+    variable: str,
+    shocks_to_plot: list[str] | None,
+    cmap: str | Colormap | None,
+    markers: list[str],
+    add_scenario_legend: bool,
+    scenario_names: list[str],
+    show_xticks: bool,
+) -> None:
+    sel_dict: dict[str, Any] = {"variable": variable}
+    if shocks_to_plot is not None:
+        sel_dict["shock"] = shocks_to_plot
+
+    for scenario_idx, irf_data in enumerate(irf_map.values()):
+        _plot_single_variable(
+            irf_data.sel(**sel_dict),
+            ax=axis,
+            cmap=cmap,
+            ls=markers[scenario_idx % len(markers)],
+        )
+
+    if add_scenario_legend and len(scenario_names) > 1 and scenario_names[0] != "":
+        # Scenarios are told apart by line style and shocks by color, so the scenario legend gets one black handle
+        # per line style.
+        handles = [Line2D([], [], color="k", ls=markers[idx % len(markers)]) for idx in range(len(scenario_names))]
+        axis.legend(handles=handles, labels=scenario_names)
+
+    axis.set(title=variable)
+    if not show_xticks:
+        axis.set(xticklabels=[], xlabel="")
+
+    _style_panel(axis)
+
+
+def _add_shocks_legend(fig: Figure, shocks_to_plot: list[str] | None, legend: bool, legend_kwargs: dict | None) -> None:
+    if not legend:
+        return
+    if legend_kwargs is None:
+        n_shocks_to_plot = len(shocks_to_plot) if shocks_to_plot is not None else 1
+        legend_kwargs = {
+            "ncol": min(4, n_shocks_to_plot),
+            "loc": "lower center",
+            "bbox_to_anchor": (0.5, 1.0),
+        }
+    handles = fig.axes[0].get_lines()
+    if shocks_to_plot is not None:
+        # With several scenarios the first panel holds n_scenarios * n_shocks lines, and the first n_shocks of them
+        # already carry every shock color.
+        handles = handles[: len(shocks_to_plot)]
+    fig.legend(handles=handles, labels=shocks_to_plot, **legend_kwargs)
+
+
+def _prior_validate_params_to_plot(params_to_plot: list[str] | None, params: list[str]) -> None:
+    if params_to_plot is not None:
+        for param in params_to_plot:
+            if param not in params:
+                raise ValueError(f'Cannot plot parameter "{param}", it was not found in the provided data.')
+
+
+def _solv_prepare_data(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]]:
+    """
+    Split a solvability table into the parameter columns to plot, the failure stage, and the parameter names.
+
+    Returns
+    -------
+    plot_data : DataFrame
+        Non-constant parameter columns plus a boolean ``success`` column.
+    failure_step : Series
+        The ``failure_step`` column. NaN marks a successful draw.
+    params : list of str
+        Parameter column names available for plotting.
+    """
+    failure_step = data["failure_step"].copy()
+
+    plot_data = data.drop(columns=_SOLVABILITY_META_COLS.intersection(data.columns))
+
+    constant_mask = plot_data.apply(pd.api.types.is_numeric_dtype) & (plot_data.var() < 1e-18)
+    plot_data = plot_data.loc[:, ~constant_mask].copy()
+
+    plot_data["success"] = failure_step.isna()
+    params = [c for c in plot_data.columns if c != "success"]
+    return plot_data, failure_step, params
+
+
+def _solv_plot_diagonal(ax: plt.Axes, values: pd.Series, success: pd.Series) -> None:
+    for mask, color in [(success, "tab:blue"), (~success, "tab:red")]:
+        subset = values[mask]
+        if len(subset) < 2:
+            continue
+        lo, hi = subset.min(), subset.max()
+        pad = max((hi - lo) * 0.1, abs(lo) * 0.05 + 1e-12)
+        grid = np.linspace(lo - pad, hi + pad, 100)
+        kde = stats.gaussian_kde(subset)
+        density = kde.pdf(grid)
+        ax.plot(grid, density, color=color)
+        ax.fill_between(grid, density, 0, color=color, alpha=0.25)
+
+
+def _solv_plot_offdiag(
+    ax: plt.Axes,
+    plot_data: pd.DataFrame,
+    failure_step: pd.Series,
+    x_name: str,
+    y_name: str,
+) -> None:
+    success = plot_data["success"]
+    ax.scatter(
+        plot_data.loc[success, x_name],
+        plot_data.loc[success, y_name],
+        c="tab:blue",
+        s=10,
+        label="Success",
+    )
+
+    reasons = failure_step[~success]
+    for reason in reasons.unique():
+        mask = reasons == reason
+        color = _SOLVABILITY_COLORS.get(reason, "tab:gray")
+        ax.scatter(
+            plot_data.loc[~success, x_name][mask],
+            plot_data.loc[~success, y_name][mask],
+            c=color,
+            s=10,
+            label=reason.replace("_", " ").title(),
+        )
+
+
+def _solv_format_axes(axes: np.ndarray, params_use: list[str]) -> None:
+    n = len(params_use)
+    for row in range(n):
+        for col in range(n):
+            ax = axes[row][col]
+            if not ax.get_visible():
+                continue
+            if col == 0:
+                ax.set_ylabel(params_use[row])
+            if row == n - 1:
+                ax.set_xlabel(params_use[col])
+            _style_panel(ax)
+
+
+def _filter_eigenvalues(
+    sensitivity_data: xr.Dataset,
+    filter_zeros: bool,
+    filter_infinite: bool,
+    zero_tol: float,
+    inf_tol: float | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, xr.Dataset, int]:
+    """
+    Drop zero and infinite eigenvalues from a sensitivity dataset.
+
+    Returns
+    -------
+    re_vals : ndarray
+        Real parts of the kept eigenvalues.
+    im_vals : ndarray
+        Imaginary parts of the kept eigenvalues.
+    mod_vals : ndarray
+        Moduli of the kept eigenvalues.
+    filtered_data : Dataset
+        ``sensitivity_data`` restricted to the kept eigenvalues.
+    n_filtered : int
+        Number of eigenvalues dropped.
+    """
+    re_vals = sensitivity_data.eigenvalues.sel(component="real").values
+    im_vals = sensitivity_data.eigenvalues.sel(component="imaginary").values
+    mod_vals = sensitivity_data.eigenvalues.sel(component="modulus").values
+
+    if inf_tol is None:
+        finite_mods = mod_vals[mod_vals < 1e6]
+        inf_tol = max(10 * finite_mods.max(), 10.0) if len(finite_mods) > 0 else 1e6
+
+    mask = np.ones(len(mod_vals), dtype=bool)
+    if filter_zeros:
+        mask &= mod_vals > zero_tol
+    if filter_infinite:
+        mask &= mod_vals < inf_tol
+
+    valid_indices = sensitivity_data.eigenvalue.values[mask]
+    filtered_data = sensitivity_data.sel(eigenvalue=valid_indices)
+
+    return re_vals[mask], im_vals[mask], mod_vals[mask], filtered_data, len(mod_vals) - mask.sum()
+
+
+def _validate_params_to_plot(
+    params_to_plot: list[str] | None,
+    all_params: list[str],
+) -> list[str]:
+    if params_to_plot is None:
+        return all_params
+
+    for p in params_to_plot:
+        if p not in all_params:
+            raise ValueError(f"Parameter '{p}' not found. Available: {all_params}")
+    return params_to_plot
+
+
+def _compute_axis_limits(
+    re_vals: np.ndarray, im_vals: np.ndarray
+) -> tuple[tuple[float, float], tuple[float, float], float]:
+    """
+    Compute square axis limits centered on the eigenvalues, padded by 30 percent of their spread.
+
+    Returns
+    -------
+    xlim : tuple of float
+        Limits of the real axis.
+    ylim : tuple of float
+        Limits of the imaginary axis.
+    half_range : float
+        Half the axis range.
+    """
+    if len(re_vals) == 0:
+        return (-1.5, 1.5), (-1.5, 1.5), 1.5
+
+    re_min, re_max = re_vals.min(), re_vals.max()
+    im_min, im_max = im_vals.min(), im_vals.max()
+
+    re_range = max(re_max - re_min, 0.1)
+    im_range = max(im_max - im_min, 0.1)
+    pad_re = re_range * 0.3
+    pad_im = im_range * 0.3
+
+    xlim = (re_min - pad_re, re_max + pad_re)
+    ylim = (im_min - pad_im, im_max + pad_im)
+
+    x_center = (xlim[0] + xlim[1]) / 2
+    y_center = (ylim[0] + ylim[1]) / 2
+    half_range = max(xlim[1] - xlim[0], ylim[1] - ylim[0]) / 2
+
+    xlim = (x_center - half_range, x_center + half_range)
+    ylim = (y_center - half_range, y_center + half_range)
+
+    return xlim, ylim, half_range
+
+
+def _draw_eigenvalue_panel(
+    ax: plt.Axes,
+    re_plot: np.ndarray,
+    im_plot: np.ndarray,
+    mod_plot: np.ndarray,
+    d_re: np.ndarray,
+    d_im: np.ndarray,
+    param_name: str,
+    param_value: float,
+    perturbation: float,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    plot_circle: bool,
+    show_legend: bool,
+    min_arrow_frac: float,
+) -> None:
+    """
+    Draw one eigenvalue sensitivity panel: the eigenvalues, the unit circle, and an arrow per eigenvalue.
+
+    Parameters
+    ----------
+    ax : matplotlib Axes
+        Axis to draw on.
+    re_plot : ndarray
+        Real parts of the eigenvalues.
+    im_plot : ndarray
+        Imaginary parts of the eigenvalues.
+    mod_plot : ndarray
+        Moduli of the eigenvalues.
+    d_re : ndarray
+        Derivative of each real part with respect to the parameter.
+    d_im : ndarray
+        Derivative of each imaginary part with respect to the parameter.
+    param_name : str
+        Parameter name, used in the title.
+    param_value : float
+        Current parameter value.
+    perturbation : float
+        Fractional increase in the parameter value that the arrows show.
+    xlim : tuple of float
+        Limits of the real axis.
+    ylim : tuple of float
+        Limits of the imaginary axis.
+    plot_circle : bool
+        If True, draw the unit circle.
+    show_legend : bool
+        If True, add a legend to this panel.
+    min_arrow_frac : float
+        Smallest gradient magnitude, as a fraction of the largest, for which an arrow is drawn.
+    """
+    if plot_circle:
+        theta = np.linspace(0, 2 * np.pi, 200)
+        ax.plot(np.cos(theta), np.sin(theta), color="k", lw=1, zorder=1, label="Unit circle")
+
+    stable_mask = mod_plot <= 1.0
+    if stable_mask.any():
+        ax.scatter(
+            re_plot[stable_mask],
+            im_plot[stable_mask],
+            c="tab:blue",
+            s=40,
+            lw=0.5,
+            edgecolor="k",
+            zorder=3,
+            label="Stable (|λ|≤1)",
+        )
+    if (~stable_mask).any():
+        ax.scatter(
+            re_plot[~stable_mask],
+            im_plot[~stable_mask],
+            c="tab:red",
+            s=40,
+            lw=0.5,
+            edgecolor="k",
+            zorder=3,
+            label="Unstable (|λ|>1)",
+        )
+
+    # The arrow is the first-order displacement d(lambda)/d(p) * delta_p for a delta_p of perturbation * p.
+    delta_p = param_value * perturbation
+    arrow_re = d_re * delta_p
+    arrow_im = d_im * delta_p
+
+    grad_mags = np.sqrt(d_re**2 + d_im**2)
+    max_grad = grad_mags.max() if grad_mags.size > 0 and grad_mags.max() > 1e-12 else 1.0
+    min_grad_threshold = max_grad * min_arrow_frac
+
+    for i in range(len(re_plot)):
+        if grad_mags[i] > min_grad_threshold:
+            ax.annotate(
+                "",
+                xy=(re_plot[i] + arrow_re[i], im_plot[i] + arrow_im[i]),
+                xytext=(re_plot[i], im_plot[i]),
+                arrowprops={"arrowstyle": "->", "color": "k", "lw": 1},
+                zorder=2,
+            )
+
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.set_aspect("equal")
+    ax.axhline(0, color="gray", lw=0.5, ls="--", zorder=0)
+    ax.axvline(0, color="gray", lw=0.5, ls="--", zorder=0)
+    ax.set_xlabel("Real")
+    ax.set_ylabel("Imaginary")
+    perturbed_value = param_value * (1 + perturbation)
+    ax.set_title(f"{param_name}: {param_value:.4g} → {perturbed_value:.4g}")
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.grid(ls="--", lw=0.5, alpha=0.5)
+
+    if show_legend:
+        ax.legend(loc="best", fontsize="small", framealpha=0.9)
+
+
+def _acf_hdi_bounds(series: xr.DataArray, prob: float) -> tuple[np.ndarray, np.ndarray]:
+    """Return the per-lag lower and upper bounds of the ``prob`` highest-density interval of ``series``."""
+    hdi = azs.hdi(series, prob=prob)
+    ci_dim = next(dim for dim in hdi.dims if dim != "lag")
+    return hdi.isel({ci_dim: 0}).values, hdi.isel({ci_dim: 1}).values
+
+
+def _plot_acf_intervals(
+    axis: plt.Axes,
+    series: xr.DataArray,
+    lags: np.ndarray,
+    sample_dims: list[str],
+    ci_probs: tuple[float, float],
+    color: str = "tab:blue",
+    offset: float = 0.0,
+    mean_kwargs: dict | None = None,
+    inner_hdi_kwargs: dict | None = None,
+    outer_hdi_kwargs: dict | None = None,
+) -> None:
+    """Draw a posterior-mean point plus two nested credible-interval sticks at each lag."""
+    inner_prob, outer_prob = sorted(ci_probs)
+    mean = series.mean(sample_dims).values
+    outer_lo, outer_hi = _acf_hdi_bounds(series, outer_prob)
+    inner_lo, inner_hi = _acf_hdi_bounds(series, inner_prob)
+
+    x = lags + offset
+    axis.vlines(x, outer_lo, outer_hi, **{"color": color, "lw": 1.0, **(outer_hdi_kwargs or {})})
+    axis.vlines(x, inner_lo, inner_hi, **{"color": color, "lw": 3.0, **(inner_hdi_kwargs or {})})
+    axis.scatter(x, mean, **{"color": color, "s": 38, "zorder": 3, **(mean_kwargs or {})})
+
+
+def _collect_acf_diagonals(
+    models: dict, sample_dims: tuple[str, ...]
+) -> tuple[dict[Any, xr.DataArray], dict[Any, list[str]], str | None]:
+    """
+    Take the diagonal of each model's autocorrelation tensor.
+
+    Returns
+    -------
+    diagonals : dict mapping label to DataArray
+        Each variable's own autocorrelation, per model.
+    present_by_model : dict mapping label to list of str
+        The sample dimensions each model's tensor carries.
+    var_dim : str or None
+        Name of the variable dimension of the diagonals.
+    """
+    diagonals, present_by_model, var_dim = {}, {}, None
+    for label, tensor in models.items():
+        present = [dim for dim in sample_dims if dim in tensor.dims]
+        var_dims = [dim for dim in tensor.dims if dim != "lag" and dim not in present]
+        if len(var_dims) != 2:
+            raise ValueError(
+                "Expected an autocorrelation tensor with a 'lag' dimension and two variable dimensions, but found "
+                f"non-lag/sample dimensions {var_dims}."
+            )
+        diagonals[label] = xr_diagonal(tensor, dims=var_dims)
+        present_by_model[label] = present
+        var_dim = var_dims[0]
+    return diagonals, present_by_model, var_dim
+
+
+def _draw_acf_panel(
+    axis,
+    variable,
+    diagonals,
+    present_by_model,
+    var_dim,
+    lags,
+    ci_probs,
+    offsets,
+    colors,
+    reference,
+    ref_var_dim,
+    mean_kwargs,
+    inner_hdi_kwargs,
+    outer_hdi_kwargs,
+    stem_kwargs,
+    reference_kwargs,
+):
+    """Draw one autocorrelation panel: each model's sticks or stems plus the optional hollow reference markers."""
+    axis.axhline(0, color="k", lw=0.5)
+    for (label, model_diagonal), offset, color in zip(diagonals.items(), offsets, colors, strict=False):
+        if variable not in model_diagonal.coords[var_dim].values:
+            continue
+        series = model_diagonal.sel({var_dim: variable})
+        if present_by_model[label]:
+            _plot_acf_intervals(
+                axis,
+                series,
+                lags,
+                present_by_model[label],
+                ci_probs,
+                color=color,
+                offset=offset,
+                mean_kwargs=mean_kwargs,
+                inner_hdi_kwargs=inner_hdi_kwargs,
+                outer_hdi_kwargs=outer_hdi_kwargs,
+            )
+        else:
+            axis.scatter(lags + offset, series.values, **{"color": color, **(stem_kwargs or {})})
+            axis.vlines(lags + offset, 0, series.values, color=color)
+
+    if ref_var_dim is not None and variable in reference.coords[ref_var_dim].values:
+        ref_series = reference.sel({ref_var_dim: variable})
+        axis.scatter(
+            reference.coords["lag"].values, ref_series.values, **{**_REFERENCE_DEFAULTS, **(reference_kwargs or {})}
+        )
+
+    _style_panel(axis)
+    axis.set(title=str(variable))
+
+
+def _add_acf_legend(
+    fig: Figure, model_labels: list, colors: list[str], has_reference: bool, reference_kwargs: dict | None = None
+) -> None:
+    handles, labels = [], []
+    if len(model_labels) > 1:
+        handles += [Line2D([0], [0], color=color, lw=3) for color in colors]
+        labels += [str(label) for label in model_labels]
+    if has_reference:
+        ref = {**_REFERENCE_DEFAULTS, **(reference_kwargs or {})}
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                ls="none",
+                marker="o",
+                mfc=ref["facecolors"],
+                mec=ref["edgecolors"],
+                mew=ref["linewidths"],
+                ms=ref["s"] ** 0.5,
+            )
+        )
+        labels.append("data")
+    if handles and fig.axes:
+        fig.axes[0].legend(handles, labels, fontsize=8)
+
+
+def _validate_and_prepare_corner_inputs(
+    idata: Any,
+    group: str,
+    var_names: list[str] | None,
+    colorby: str | None,
+    scatter_kwargs: dict | None,
+) -> tuple[list[str], np.ndarray | None, dict | None]:
+    """
+    Check that the requested variables exist and resolve the optional color mapping.
+
+    Returns
+    -------
+    var_names : list of str
+        Variables to plot.
+    color_data : ndarray or None
+        Flattened values of ``colorby``, or None when no scatter is drawn.
+    scatter_kwargs : dict or None
+        Keyword arguments for the colored scatter, or None when no scatter is drawn.
+    """
+    if not hasattr(idata, group):
+        raise ValueError(f"Argument idata should be an arviz idata object with a {group} group")
+
+    vars_available = list(idata[group].data_vars)
+    var_names = var_names or vars_available
+    for v in var_names:
+        if v not in vars_available:
+            raise ValueError(f'Variable "{v}" not found in idata[{group}]')
+
+    if colorby is None:
+        return var_names, None, None
+
+    if colorby not in vars_available:
+        raise ValueError(f'colorby "{colorby}" not found in idata[{group}]')
+    color_data = idata[group][colorby].values.ravel()
+    resolved_scatter_kwargs = {"zorder": 100, "cmap": "viridis", "s": 10, "alpha": 0.5, **(scatter_kwargs or {})}
+
+    return var_names, color_data, resolved_scatter_kwargs
+
+
+def _format_axis_for_corner(ax: plt.Axes, fontsize: int) -> None:
+    ax.ticklabel_format(axis="both", style="sci")
+    ax.yaxis.major.formatter.set_powerlimits((-2, 2))
+    ax.yaxis.offsetText.set_fontsize(fontsize)
+    ax.xaxis.major.formatter.set_powerlimits((-2, 2))
+    ax.xaxis.offsetText.set_fontsize(fontsize)
+
+
+def _plot_diagonal_hist(ax: plt.Axes, data: np.ndarray, bins: int, fontsize: int, is_last_row: bool) -> None:
+    ax.hist(data, bins=bins, histtype="step", density=True)
+    ax.set_yticklabels([])
+    ax.tick_params(axis="both", left=False, bottom=is_last_row, labelsize=fontsize)
+    if not is_last_row:
+        ax.set_xticklabels([])
+        ax.tick_params(axis="x", which="both", bottom=False)
+
+
+def _plot_offdiag_panel(
+    ax: plt.Axes,
+    x_name: str,
+    y_name: str,
+    x_data: np.ndarray,
+    y_data: np.ndarray,
+    rug_bins: int,
+    rug_levels: int,
+    show_marginal_modes: bool,
+    fontsize: int,
+    draw_xlabel: bool,
+    draw_ylabel: bool,
+    color_data: np.ndarray | None,
+    scatter_kwargs: dict | None,
+) -> None:
+    if color_data is not None and scatter_kwargs is not None:
+        ax.scatter(x_data, y_data, c=color_data, **scatter_kwargs)
+
+    # histogram2d takes y first so that the histogram's axes line up with the contour's.
+    H, y_edges, x_edges = np.histogram2d(y_data, x_data, bins=rug_bins)
+
+    iy, ix = np.unravel_index(np.argmax(H), H.shape)
+    x_mode, y_mode = x_edges[ix], y_edges[iy]
+
+    ax.contourf(x_edges[:-1], y_edges[:-1], H, cmap="Blues", levels=rug_levels)
+
+    if show_marginal_modes:
+        ax.axvline(x_mode, ls="--", lw=0.5, color="k")
+        ax.axhline(y_mode, ls="--", lw=0.5, color="k")
+        ax.scatter(x_mode, y_mode, color="k", marker="s", s=20)
+
+    if draw_ylabel:
+        ax.set_ylabel(y_name, fontsize=fontsize)
+    else:
+        ax.set_yticklabels([])
+        ax.tick_params(axis="y", which="both", left=False)
+
+    if draw_xlabel:
+        ax.set_xlabel(x_name, fontsize=fontsize)
+    else:
+        ax.set_xticklabels([])
+        ax.tick_params(axis="x", which="both", bottom=False)
+
+    ax.tick_params(axis="both", which="both", labelsize=fontsize)
 
 
 __all__ = [

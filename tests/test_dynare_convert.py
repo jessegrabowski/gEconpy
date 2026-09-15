@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 import sympy as sp
 
-from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.dynare_convert import (
     DynareCodePrinter,
@@ -19,6 +18,7 @@ from gEconpy.dynare_convert import (
     write_variable_declarations,
 )
 from gEconpy.parser.constants import LOCAL_DICT
+from tests._resources.cache_compiled_models import load_and_cache_model
 
 
 @pytest.mark.parametrize("op", ["*", "/"], ids=["multiplication", "division"])
@@ -60,40 +60,36 @@ def test_print_power():
     expr = sp.parse_expr("(omega * eta) ** (-0.5)", local_dict=LOCAL_DICT)
     out = printer.doprint(expr)
 
-    # It alphabetizes?
+    # sympy orders the factors alphabetically.
     assert out == "1 / sqrt(eta * omega)"
 
 
 @pytest.mark.parametrize("name", ["a", "alpha", "x", "beta", "a_name_with_underscores"])
-@pytest.mark.parametrize("time_index", [0, 1, -1, "ss"])
-def test_print_time_aware_symbol(name, time_index):
+@pytest.mark.parametrize(
+    "time_index, expected_suffix",
+    [(0, ""), (1, "(+1)"), (-1, "(-1)"), ("ss", "_ss")],
+    ids=["t", "t+1", "t-1", "ss"],
+)
+def test_print_time_aware_symbol(name, time_index, expected_suffix):
     printer = DynareCodePrinter()
-    expr = TimeAwareSymbol(name, time_index)
-    out = printer.doprint(expr)
+    out = printer.doprint(TimeAwareSymbol(name, time_index))
 
-    if time_index == 0:
-        assert out == name
-    elif time_index == -1:
-        assert out == f"{name}({time_index})"
-    elif time_index == 1:
-        assert out == f"{name}(+{time_index})"
-    elif time_index == "ss":
-        assert out == f"{name}_ss"
+    assert out == f"{name}{expected_suffix}"
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def model():
-    return model_from_gcn("tests/_resources/test_gcns/one_block_1_dist.gcn", verbose=False)
+    return load_and_cache_model("one_block_1_dist.gcn")
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def ss_model():
-    return model_from_gcn("tests/_resources/test_gcns/one_block_1_ss.gcn", verbose=False)
+    return load_and_cache_model("one_block_1_ss.gcn")
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def nk_model():
-    return model_from_gcn("tests/_resources/test_gcns/full_nk.gcn", verbose=False)
+    return load_and_cache_model("full_nk.gcn")
 
 
 def test_write_variable_declarations(model):
@@ -154,7 +150,8 @@ def test_write_model_equations(nk_model):
         clean_line = line.replace(" ", "").replace(";", "")
         if clean_line.startswith("#"):
             assert "=" in line
-            assert expect_ss_definition  # All the ss definitions should be at the beginning and all together
+            # Every steady-state definition precedes the first equation.
+            assert expect_ss_definition
             name, _value = clean_line.split("=")
             assert name.endswith("_ss")
 
@@ -211,7 +208,7 @@ def test_make_mod_file(linewidth, nk_model):
 
     lines = out.split("\n")
 
-    # Model equations don't respect the line length -- filter them out
+    # Model equations are not wrapped, so only the declaration blocks are checked.
     eq_start_idx = lines.index("model;")
     eq_end_idx = lines.index("end;", eq_start_idx)
 
