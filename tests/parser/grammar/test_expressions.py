@@ -15,6 +15,7 @@ from gEconpy.parser.ast import (
     Variable,
     collect_nodes_of_type,
 )
+from gEconpy.parser.ast.printer import print_expression
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNGrammarError, GCNParseFailure
 from gEconpy.parser.grammar.expressions import parse_expression
@@ -182,6 +183,44 @@ class TestFunctionCalls:
         assert GCNParseFailure.SEPARATOR not in error.message
 
 
+class TestGrammarErrors:
+    @pytest.mark.parametrize(
+        "text, code, message, found, column",
+        [
+            ("a +", ErrorCode.E006, "Unexpected operator '+' at end of expression. Found '+'", "+", 3),
+            ("a b", ErrorCode.E006, "Incomplete expression. Found 'b'", "b", 3),
+            ("(a + b", ErrorCode.E007, "Unbalanced parentheses. Found 'end of text'", "end of text", 7),
+            ("log(a", ErrorCode.E007, "Unbalanced parentheses. Found 'end of text'", "end of text", 6),
+            ("Y[", ErrorCode.E010, "Invalid variable syntax. Found 'end of text'", "end of text", 3),
+        ],
+        ids=["trailing_operator", "juxtaposed_atoms", "unclosed_paren", "unclosed_call", "unclosed_bracket"],
+    )
+    def test_structural_failure_maps_to_catalog_code(self, text, code, message, found, column):
+        with pytest.raises(GCNGrammarError) as exc_info:
+            parse_expression(text, context="objective of HOUSEHOLD")
+
+        error = exc_info.value
+        assert error.code == code
+        assert error.message == message
+        assert error.found == found
+        assert error.context == "objective of HOUSEHOLD"
+        assert (error.location.line, error.location.column) == (1, column)
+        assert error.location.source_line == text
+
+
+class TestNodeLocations:
+    def test_atoms_record_column_span(self):
+        result = parse_expression("C[] + alpha")
+
+        assert (result.left.location.column, result.left.location.end_column) == (1, 4)
+        assert (result.right.location.column, result.right.location.end_column) == (7, 12)
+        assert result.left.location.source_line == "C[] + alpha"
+
+    def test_location_tracks_line_of_multiline_source(self):
+        result = parse_expression("a +\n  K[]")
+        assert (result.right.location.line, result.right.location.column) == (2, 3)
+
+
 class TestExpectation:
     def test_simple_expectation(self):
         result = parse_expression("E[][U[1]]")
@@ -204,10 +243,6 @@ class TestComplexExpressions:
         assert result.right.op == Operator.MUL
         assert isinstance(result.right.right, Expectation)
 
-    def test_production_function(self):
-        result = parse_expression("A[] * K[-1] ^ alpha * L[] ^ (1 - alpha)")
-        assert isinstance(result, BinaryOp)
-
     def test_nested_function_calls(self):
         result = parse_expression("log(exp(x))")
         assert isinstance(result, FunctionCall)
@@ -217,6 +252,21 @@ class TestComplexExpressions:
 
 
 class TestRealWorldExpressions:
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            "A[] * K[-1] ^ alpha * L[] ^ (1 - alpha)",
+            "(1 - alpha) * mc[ss] ^ (1 / (1 - alpha)) * (alpha / r[ss]) ^ (alpha / (1 - alpha))",
+            "psi / 2 * (K[] - K[-1]) ^ 2",
+            "I[] * (1 - gamma_I / 2 * (I[] / I[-1] - 1) ^ 2)",
+            "eta_p * pi[] ^ (1 / psi_p) + (1 - eta_p) * pi_star[] ^ (-1 / psi_p)",
+            "beta * eta_w * E[][pi[1] * (w_star[1] / w_star[]) ^ (1 / psi_w) * LHS_w[1]]",
+        ],
+        ids=["production", "nk_wage", "capital_adjustment", "investment_adjustment", "price_evolution", "wage_ratio"],
+    )
+    def test_canonical_source_prints_back_unchanged(self, expr):
+        assert print_expression(parse_expression(expr)) == expr
+
     def test_utility_with_habit_formation(self):
         expr = "(C[] - phi_H * C[-1]) ^ (1 - sigma_C) / (1 - sigma_C)"
         result = parse_expression(expr)
@@ -228,11 +278,6 @@ class TestRealWorldExpressions:
         result = parse_expression(expr)
         assert result.op == Operator.DIV
 
-    def test_wage_from_full_nk(self):
-        expr = "(1 - alpha) * mc[ss] ^ (1 / (1 - alpha)) * (alpha / r[ss]) ^ (alpha / (1 - alpha))"
-        result = parse_expression(expr)
-        assert isinstance(result, BinaryOp)
-
     def test_steady_state_output(self):
         expr = (
             "w[ss] ^ ((sigma_L + 1) / (sigma_C + sigma_L)) * "
@@ -241,11 +286,6 @@ class TestRealWorldExpressions:
         result = parse_expression(expr)
         assert isinstance(result, BinaryOp)
         assert result.op == Operator.MUL
-
-    def test_capital_adjustment_cost(self):
-        expr = "psi / 2 * (K[] - K[-1]) ^ 2"
-        result = parse_expression(expr)
-        assert isinstance(result, BinaryOp)
 
     def test_nested_expectation_with_ratio(self):
         expr = "beta * eta_w * E[][pi[1] * (w_star[1] / w_star[]) ^ (1 / psi_w) * LHS_w[1]]"

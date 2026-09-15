@@ -22,6 +22,7 @@ from gEconpy.parser.ast import (
 )
 from gEconpy.parser.grammar.expressions import parse_expression
 from gEconpy.parser.transform.to_sympy import (
+    ASTToSympyConverter,
     ast_to_sympy,
     block_to_sympy,
     equation_to_sympy,
@@ -107,6 +108,17 @@ class TestConvertFunctions:
             ast_to_sympy(node)
 
 
+class TestConvertRejectsWrongNodeKinds:
+    def test_convert_expr_rejects_equation(self):
+        eq = GCNEquation(lhs=Variable(name="Y"), rhs=Variable(name="C"))
+        with pytest.raises(TypeError, match="Expected an expression node, got a GCNEquation"):
+            ASTToSympyConverter().convert_expr(eq)
+
+    def test_convert_rejects_non_expression_node(self):
+        with pytest.raises(TypeError, match="Cannot convert GCNBlock to SymPy"):
+            ast_to_sympy(GCNBlock(name="TEST"))
+
+
 class TestConvertExpectation:
     def test_expectation_is_transparent(self):
         node = Expectation(expr=Variable(name="U", time_index=TimeIndex(1)))
@@ -134,6 +146,19 @@ class TestConvertEquation:
         _result, metadata = equation_to_sympy(eq)
         assert metadata["is_calibrating"] is True
         assert metadata["calibrating_parameter"] == parsed_symbol("beta")
+
+    def test_assumptions_reach_multiplier_and_calibrating_parameter(self):
+        eq = GCNEquation(
+            lhs=Variable(name="C"),
+            rhs=Variable(name="Y"),
+            lagrange_multiplier="lambda",
+            calibrating_parameter="beta",
+        )
+        assumptions = {"lambda": {"positive": True}, "beta": {"negative": True}}
+        _result, metadata = equation_to_sympy(eq, assumptions)
+
+        assert metadata["lagrange_multiplier"].is_positive is True
+        assert metadata["calibrating_parameter"].is_negative is True
 
     def test_calibrating_equation_rearrangement(self):
         # L[ss] / K[ss] = 0.36 -> alpha  becomes  alpha = L[ss] / K[ss] - 0.36

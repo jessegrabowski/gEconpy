@@ -2,6 +2,7 @@ import pytest
 
 from gEconpy.data.examples import get_example_gcn
 from gEconpy.parser.ast import GCNModel
+from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNGrammarError
 from gEconpy.parser.grammar.gcn_file import parse_gcn, parse_gcn_file
 from tests.conftest import TEST_GCNS
@@ -65,9 +66,8 @@ class TestGCNFileWithSpecialBlocks:
         block TEST { };
         """
         result = parse_gcn(text)
-        assert "C" in result.assumptions
-        assert "K" in result.assumptions
-        assert "alpha" in result.assumptions
+        assert set(result.assumptions) == {"C", "K", "alpha"}
+        assert all(result.assumptions[name]["positive"] is True for name in ("C", "K", "alpha"))
 
     def test_all_special_blocks(self):
         text = """
@@ -272,11 +272,7 @@ class TestGCNModelMethods:
         };
         """
         result = parse_gcn(text)
-        variables = result.all_variables()
-        var_names = {v.name for v in variables}
-        assert "Y" in var_names
-        assert "C" in var_names
-        assert "I" in var_names
+        assert {v.name for v in result.all_variables()} == {"Y", "C", "I"}
 
     def test_all_parameters(self):
         text = """
@@ -287,10 +283,7 @@ class TestGCNModelMethods:
         };
         """
         result = parse_gcn(text)
-        parameters = result.all_parameters()
-        param_names = {p.name for p in parameters}
-        assert "alpha" in param_names
-        assert "beta" in param_names
+        assert {p.name for p in result.all_parameters()} == {"alpha", "beta"}
 
 
 class TestGCNFileErrors:
@@ -315,6 +308,74 @@ class TestGCNFileErrors:
 
         assert exc_info.value.found == "Y"
         assert "Found 'Y'" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "text, code, found, column, annotation, first_note",
+        [
+            (
+                "block TEST { identities { Y[] = log(C[]; }; };",
+                ErrorCode.E007,
+                ";",
+                40,
+                "unbalanced parentheses",
+                "Close every '(' with ')'",
+            ),
+            (
+                "block TEST { identities { Y[] = ; }; };",
+                ErrorCode.E005,
+                ";",
+                27,
+                "missing right-hand side of equation",
+                "Write an expression after '=': Y[] = C[] + I[];",
+            ),
+            (
+                "block TEST { defintions { u[] = 1; }; };",
+                ErrorCode.E013,
+                "defintions",
+                14,
+                "unknown block component",
+                "Did you mean 'definitions'?",
+            ),
+            (
+                "block TEST { identities { Y[abc] = C[]; }; };",
+                ErrorCode.E010,
+                "[abc]",
+                27,
+                "invalid time index '[abc]'",
+                "Write the time index as an integer or 'ss': Y[], Y[-1], Y[1], Y[ss]",
+            ),
+            (
+                "block TEST { calibration { alpha = Beta(a=1); }; };",
+                ErrorCode.E009,
+                "=",
+                28,
+                "invalid distribution syntax",
+                "Declare a prior with '~': rho ~ Beta(alpha=2, beta=2);",
+            ),
+            (
+                "block TEST { identities { Y[] = C[] = 1; }; };",
+                ErrorCode.E001,
+                "Y",
+                27,
+                "missing semicolon",
+                "End the statement with ';'",
+            ),
+        ],
+        ids=["unclosed_paren", "empty_rhs", "unknown_component", "bad_time_index", "missing_tilde", "double_equals"],
+    )
+    def test_error_carries_code_span_annotation_and_fix_note(self, text, code, found, column, annotation, first_note):
+        with pytest.raises(GCNGrammarError) as exc_info:
+            parse_gcn(text, filename="model.gcn")
+
+        error = exc_info.value
+        location = error.location
+        assert error.code == code
+        assert error.found == found
+        assert error.annotation == annotation
+        assert error.notes[0] == first_note
+        assert (location.line, location.column, location.end_column) == (1, column, column + len(found))
+        assert location.filename == "model.gcn"
+        assert location.source_line == text
 
 
 class TestGCNFileEdgeCases:

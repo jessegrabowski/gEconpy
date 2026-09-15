@@ -5,9 +5,12 @@ from gEconpy.parser.ast import (
     BinaryOp,
     Expectation,
     GCNBlock,
+    GCNDistribution,
     GCNEquation,
     GCNModel,
+    Number,
     Operator,
+    Parameter,
     T,
     TimeIndex,
     Variable,
@@ -193,6 +196,27 @@ class TestExpandBlockTimeIndices:
         transformed_eq = next(e for e in result.identities if e.lhs.name == "z")
         assert transformed_eq.rhs.location == loc
 
+    def test_rebuilt_block_keeps_untouched_components(self):
+        shock = Variable(name="epsilon")
+        shock_distribution = GCNDistribution(parameter_name="epsilon", dist_name="Normal", dist_kwargs={"sigma": 1})
+        calibration = GCNEquation(lhs=Parameter(name="rho"), rhs=Number(value=0.9))
+        location = ParseLocation(line=1, column=1)
+        block = GCNBlock(
+            name="TEST",
+            identities=[GCNEquation(lhs=Variable(name="z"), rhs=Variable(name="x", time_index=TimeIndex(-2)))],
+            shocks=[shock],
+            shock_distributions=[shock_distribution],
+            calibration=[calibration],
+            location=location,
+        )
+        result = expand_block_time_indices(block)
+
+        assert result is not block
+        assert result.shocks == [shock]
+        assert result.shock_distributions == [shock_distribution]
+        assert result.calibration == [calibration]
+        assert result.location == location
+
     def test_transforms_controls_with_deep_indices(self):
         block = GCNBlock(
             name="TEST",
@@ -243,6 +267,19 @@ class TestExpandModelTimeIndices:
 
         assert len(result.blocks[0].identities) == 3
         assert len(result.blocks[1].identities) == 2
+
+    def test_keeps_model_sections(self):
+        model = GCNModel(
+            blocks=[GCNBlock(name="B", identities=[GCNEquation(lhs=Variable(name="x"), rhs=Variable(name="y"))])],
+            options={"output logfile": True},
+            tryreduce=["U"],
+            assumptions={"x": {"positive": True}},
+            filename="model.gcn",
+        )
+        result = expand_model_time_indices(model)
+
+        assert result == model
+        assert result.filename == "model.gcn"
 
 
 class TestKydlandPrescottScenario:

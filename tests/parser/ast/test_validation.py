@@ -36,13 +36,20 @@ class TestValidateBlock:
         block = GCNBlock(name="TEST", controls=[Variable(name="C"), Variable(name="L"), Variable(name="C")])
         errors = validate_block(block)
         assert errors.has_errors
-        assert any("Duplicate control variable 'C'" in msg for msg in _messages(errors))
+        assert _messages(errors) == [
+            "[E101] Duplicate control variable 'C' in block TEST",
+            "[W002] Block TEST has controls but no objective function",
+        ]
 
     def test_duplicate_shock_variable(self):
         block = GCNBlock(name="TEST", shocks=[Variable(name="epsilon_A"), Variable(name="epsilon_A")])
         errors = validate_block(block)
         assert errors.has_errors
-        assert any("Duplicate shock variable 'epsilon_A'" in msg for msg in _messages(errors))
+        assert _messages(errors) == ["[E101] Duplicate shock variable 'epsilon_A' in block TEST"]
+
+    def test_name_repeated_three_times_is_reported_twice(self):
+        block = GCNBlock(name="TEST", shocks=[Variable(name="e"), Variable(name="e"), Variable(name="e")])
+        assert _messages(validate_block(block)) == ["[E101] Duplicate shock variable 'e' in block TEST"] * 2
 
     def test_duplicate_calibration_parameter(self):
         block = GCNBlock(
@@ -54,19 +61,19 @@ class TestValidateBlock:
         )
         errors = validate_block(block)
         assert errors.has_errors
-        assert any("Duplicate calibration for parameter 'alpha'" in msg for msg in _messages(errors))
+        assert _messages(errors) == ["[E101] Duplicate calibration for parameter 'alpha' in block TEST"]
 
     def test_controls_without_objective_warning(self):
         block = GCNBlock(name="TEST", controls=[Variable(name="C")])
         errors = validate_block(block)
         assert not errors.has_errors
-        assert any("controls but no objective" in msg for msg in _messages(errors.warnings))
+        assert _messages(errors.warnings) == ["[W002] Block TEST has controls but no objective function"]
 
     def test_objective_without_constraints_warning(self):
         block = GCNBlock(name="TEST", objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))])
         errors = validate_block(block)
         assert not errors.has_errors
-        assert any("objective but no constraints" in msg for msg in _messages(errors.warnings))
+        assert _messages(errors.warnings) == ["[W003] Block TEST has objective but no constraints"]
 
     def test_valid_optimization_block_no_errors(self):
         block = GCNBlock(
@@ -88,7 +95,7 @@ class TestValidateModel:
         model = GCNModel(blocks=[GCNBlock(name="HOUSEHOLD"), GCNBlock(name="HOUSEHOLD")])
         errors = validate_model(model)
         assert errors.has_errors
-        assert any("Duplicate block name: HOUSEHOLD" in msg for msg in _messages(errors))
+        assert _messages(errors) == ["[E100] Duplicate block name: HOUSEHOLD"]
 
     def test_parameter_defined_in_multiple_blocks(self):
         model = GCNModel(
@@ -105,7 +112,7 @@ class TestValidateModel:
         )
         errors = validate_model(model)
         assert errors.has_errors
-        assert any("'alpha' defined in multiple blocks: HOUSEHOLD, FIRM" in msg for msg in _messages(errors))
+        assert _messages(errors) == ["[E101] Parameter 'alpha' defined in multiple blocks: HOUSEHOLD, FIRM"]
 
     def test_valid_multi_block_model(self):
         model = GCNModel(
@@ -238,19 +245,29 @@ class TestFullValidation:
         errors = full_validation(GCNModel(blocks=[block]), external_variables={"I"})
         assert not list(errors)
 
-    def test_multiple_issues(self):
+    def test_reports_block_then_model_then_variable_then_parameter_issues(self):
         model = GCNModel(
             blocks=[
                 GCNBlock(name="BLOCK_A", controls=[Variable(name="C"), Variable(name="C")]),
                 GCNBlock(
                     name="BLOCK_A",
+                    identities=[
+                        GCNEquation(
+                            lhs=Variable(name="Y"),
+                            rhs=BinaryOp(left=Parameter(name="beta"), op=Operator.MUL, right=Variable(name="X")),
+                        )
+                    ],
                     calibration=[GCNEquation(lhs=Parameter(name="alpha"), rhs=Number(value=0.3))],
                 ),
             ]
         )
-        messages = _messages(full_validation(model))
-        assert any("Duplicate control" in msg for msg in messages)
-        assert any("Duplicate block" in msg for msg in messages)
+        assert _messages(full_validation(model)) == [
+            "[E101] Duplicate control variable 'C' in block BLOCK_A",
+            "[W002] Block BLOCK_A has controls but no objective function",
+            "[E100] Duplicate block name: BLOCK_A",
+            "Variable 'X' is used but not defined",
+            "Parameter 'beta' is used but not calibrated",
+        ]
 
 
 class TestDistributionValidation:
@@ -264,4 +281,4 @@ class TestDistributionValidation:
         )
         errors = validate_block(block)
         assert errors.has_errors
-        assert any("Duplicate calibration for parameter 'alpha'" in msg for msg in _messages(errors))
+        assert _messages(errors) == ["[E101] Duplicate calibration for parameter 'alpha' in block TEST"]

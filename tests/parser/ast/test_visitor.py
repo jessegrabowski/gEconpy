@@ -13,6 +13,7 @@ from gEconpy.parser.ast import (
     Variable,
     collect_nodes_of_type,
 )
+from gEconpy.parser.errors import ParseLocation
 
 
 def _equation_with_every_node_type() -> GCNEquation:
@@ -96,6 +97,34 @@ class TestNodeTransformer:
         assert result.lhs.name == "Y_new"
         assert result.rhs.left.operand.name == "a_new"
         assert result.rhs.right.expr.args[0].name == "b_new"
+
+    def test_rebuilt_nodes_keep_their_locations(self):
+        class Renamer(NodeTransformer):
+            def visit_Variable(self, node):
+                return Variable(name=f"{node.name}_new", time_index=node.time_index)
+
+        locations = [ParseLocation(line=1, column=column) for column in range(1, 6)]
+        eq = GCNEquation(
+            lhs=Variable(name="Y", time_index=T),
+            rhs=BinaryOp(
+                left=UnaryOp(op=Operator.NEG, operand=Variable(name="a", time_index=T), location=locations[1]),
+                op=Operator.ADD,
+                right=Expectation(
+                    expr=FunctionCall(func_name="log", args=(Variable(name="b", time_index=T),), location=locations[3]),
+                    location=locations[2],
+                ),
+                location=locations[0],
+            ),
+            location=locations[4],
+        )
+        result = Renamer().visit(eq)
+
+        assert result is not eq
+        assert result.location == locations[4]
+        assert result.rhs.location == locations[0]
+        assert result.rhs.left.location == locations[1]
+        assert result.rhs.right.location == locations[2]
+        assert result.rhs.right.expr.location == locations[3]
 
     def test_preserves_equation_metadata(self):
         class Renamer(NodeTransformer):

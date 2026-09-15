@@ -199,3 +199,20 @@ class TestDistributionsFromModel:
         result = distributions_from_model(model)
 
         assert set(result) == {"beta", "alpha"}
+
+    def test_later_block_overrides_earlier_declaration(self):
+        model = GCNModel(
+            blocks=[
+                GCNBlock(
+                    name="FIRST",
+                    calibration=[GCNDistribution(parameter_name="alpha", dist_name="Beta", dist_kwargs={})],
+                ),
+                GCNBlock(
+                    name="SECOND",
+                    calibration=[GCNDistribution(parameter_name="alpha", dist_name="Gamma", dist_kwargs={})],
+                ),
+            ]
+        )
+
+        dist, _metadata = distributions_from_model(model)["alpha"]
+        assert isinstance(dist, pz.Gamma)

@@ -1,3 +1,4 @@
+import pyparsing as pp
 import pytest
 
 from gEconpy.parser.error_catalog import ErrorCode
@@ -6,6 +7,7 @@ from gEconpy.parser.errors import (
     GCNErrorCollection,
     GCNGrammarError,
     GCNParseError,
+    GCNParseFailure,
     GCNSemanticError,
     ParseLocation,
     Severity,
@@ -36,9 +38,11 @@ class TestParseLocation:
             (ParseLocation(line=1, column=5, source_line="    X[] = Y[];"), "    X[] = Y[];\n    ^"),
             (ParseLocation(line=1, column=1, source_line="X[] = Y[];"), "X[] = Y[];\n^"),
             (ParseLocation(line=1, column=3, end_line=1, end_column=7, source_line="a bcde f"), "a bcde f\n  ^^^^"),
+            (ParseLocation(line=1, column=3, end_line=2, end_column=7, source_line="a bcde f"), "a bcde f\n  ^"),
+            (ParseLocation(line=1, column=3, end_line=1, end_column=3, source_line="a bcde f"), "a bcde f\n  ^"),
             (ParseLocation(line=1, column=5), ""),
         ],
-        ids=["indented", "at_start", "span", "no_source_line"],
+        ids=["indented", "at_start", "span", "multiline_span", "empty_span", "no_source_line"],
     )
     def test_format_pointer(self, loc, expected):
         assert loc.format_pointer() == expected
@@ -62,6 +66,40 @@ class TestParseLocation:
     def test_to_lsp_range_without_span_covers_one_character(self):
         loc = ParseLocation(line=5, column=10)
         assert loc.to_lsp_range()["end"] == {"line": 4, "character": 10}
+
+
+class TestGCNParseFailure:
+    def test_structured_data_survives_message_encoding(self):
+        failure = GCNParseFailure(
+            "alpha ~ Betta(a=1);",
+            loc=8,
+            msg="Unknown distribution 'Betta'",
+            code=ErrorCode.E102,
+            found="Betta",
+            suggestions=["Beta", "BetaBinomial"],
+        )
+        wrapped = pp.ParseException("alpha ~ Betta(a=1);", loc=8, msg=failure.msg)
+
+        assert GCNParseFailure.decode(wrapped) == (
+            "Unknown distribution 'Betta'",
+            ErrorCode.E102,
+            "Betta",
+            ["Beta", "BetaBinomial"],
+        )
+
+    def test_copy_keeps_structured_data_and_decodable_message(self):
+        failure = GCNParseFailure("log()", loc=0, msg="Empty function call", code=ErrorCode.E008, found="log()")
+        copied = failure.copy()
+
+        assert (copied.error_code, copied.gcn_found, copied.suggestions, copied.loc) == (ErrorCode.E008, "log()", [], 0)
+        assert copied.msg == failure.msg
+
+    def test_plain_pyparsing_exception_decodes_to_e000(self):
+        exc = pp.ParseException("Y[] = C[]", loc=9, msg="Expected ';'")
+        message, code, found, suggestions = GCNParseFailure.decode(exc)
+
+        assert (message, code, suggestions) == ("Expected ';'", ErrorCode.E000, [])
+        assert found == exc.found
 
 
 class TestGCNParseError:

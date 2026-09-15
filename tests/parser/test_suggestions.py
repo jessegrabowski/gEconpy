@@ -60,6 +60,9 @@ class TestFindSimilarNames:
     def test_results_ranked_by_similarity(self):
         assert find_similar_names("bet", ["beta", "theta", "zeta"])[0] == "beta"
 
+    def test_ties_break_alphabetically(self):
+        assert find_similar_names("ab", ["abd", "abc", "abe"]) == ["abc", "abd", "abe"]
+
     def test_max_results_honored(self):
         assert len(find_similar_names("a", ["ab", "ac", "ad", "ae"], max_results=2)) == 2
 

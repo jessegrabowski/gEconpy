@@ -1,6 +1,7 @@
 import pytest
 
 from gEconpy.parser.ast import GCNModel
+from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNGrammarError, GCNSemanticError
 from gEconpy.parser.preprocessor import (
     ParseResult,
@@ -41,7 +42,10 @@ class TestPreprocess:
 
     def test_validation_runs_by_default(self):
         result = preprocess("block TEST { controls { C[]; }; };")
-        assert len(list(result.validation_errors)) > 0
+        assert [str(error) for error in result.validation_errors] == [
+            "[W002] Block TEST has controls but no objective function"
+        ]
+        assert not result.has_errors
 
     def test_validation_can_be_disabled(self):
         result = preprocess("block TEST { controls { C[]; }; };", validate=False)
@@ -69,21 +73,25 @@ class TestParseResult:
         assert simple_model.tryreduce == []
         assert simple_model.assumptions == {}
 
-    def test_sympy_equations_computed_on_first_access(self, simple_model):
-        assert simple_model._sympy_equations is None
+    def test_sympy_equations_computed_once(self, simple_model):
         equations = simple_model.sympy_equations
-        assert simple_model._sympy_equations is equations
-        assert "identities" in equations["HOUSEHOLD"]
+        assert simple_model.sympy_equations is equations
+        assert set(equations["HOUSEHOLD"]) == {"definitions", "objective", "constraints", "identities", "calibration"}
+        assert len(equations["HOUSEHOLD"]["identities"]) == 1
 
-    def test_distributions_computed_on_first_access(self, simple_model):
-        assert simple_model._distributions is None
+    def test_distributions_computed_once(self, simple_model):
         distributions = simple_model.distributions
-        assert simple_model._distributions is distributions
+        assert simple_model.distributions is distributions
         assert distributions == {}
 
     def test_valid_model_has_no_errors(self, simple_model):
         assert not simple_model.has_errors
         assert not simple_model.validate(raise_on_error=False).has_errors
+
+    def test_validate_with_raise_returns_collector_when_only_warnings(self):
+        result = preprocess("block TEST { controls { C[]; }; };", validate=False)
+        errors = result.validate(raise_on_error=True)
+        assert [error.code for error in errors.warnings] == [ErrorCode.W002]
 
 
 class TestPreprocessWithDistributions:
@@ -180,13 +188,17 @@ def test_preprocess_full_model():
     assert len(block.calibration) == 3
 
 
-@pytest.mark.parametrize("filename", ["one_block_1.gcn", "basic_rbc.gcn"])
-def test_preprocess_file(filename):
+@pytest.mark.parametrize(
+    "filename, block_names",
+    [("one_block_1.gcn", ["HOUSEHOLD"]), ("basic_rbc.gcn", ["HOUSEHOLD", "FIRM", "TECHNOLOGY_SHOCKS"])],
+)
+def test_preprocess_file(filename, block_names):
     gcn_path = TEST_GCNS / filename
     result = preprocess_file(gcn_path)
-    assert isinstance(result, ParseResult)
-    assert len(result.blocks) >= 1
+    assert [block.name for block in result.blocks] == block_names
     assert result.filename == str(gcn_path)
+    assert result.source == gcn_path.read_text(encoding="utf-8")
+    assert not result.has_errors
 
 
 class TestValidation:
@@ -204,11 +216,12 @@ class TestValidation:
         block A { calibration { alpha = 0.3; }; };
         block B { calibration { alpha = 0.4; }; };
         """
-        assert preprocess(source).has_errors
+        errors = preprocess(source).validation_errors
+        assert [str(error) for error in errors] == ["[E101] Parameter 'alpha' defined in multiple blocks: A, B"]
 
     def test_validate_raises_on_error(self):
         result = preprocess("block TEST { }; block TEST { };", validate=False)
-        with pytest.raises(GCNSemanticError):
+        with pytest.raises(GCNSemanticError, match=r"\[E100\] Duplicate block name: TEST"):
             result.validate(raise_on_error=True)
 
 

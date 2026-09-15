@@ -26,6 +26,7 @@ from gEconpy.parser.ast.printer import (
     print_model,
 )
 from gEconpy.parser.grammar.expressions import parse_expression
+from gEconpy.parser.preprocessor import quick_parse
 
 
 class TestPrintExpression:
@@ -135,11 +136,29 @@ class TestPrintBlock:
         )
         assert print_block(block) == expected
 
-    def test_block_with_controls(self):
-        block = GCNBlock(name="HOUSEHOLD", controls=[Variable(name="C"), Variable(name="L")])
-        result = print_block(block)
-        assert "controls" in result
-        assert "C[], L[]" in result
+    def test_block_with_controls_and_shocks_on_one_line_each(self):
+        block = GCNBlock(
+            name="HOUSEHOLD",
+            controls=[Variable(name="C"), Variable(name="K", time_index=T_MINUS_1)],
+            shocks=[Variable(name="epsilon")],
+        )
+        assert print_block(block, indent="  ") == "\n".join(
+            [
+                "block HOUSEHOLD",
+                "{",
+                "  controls",
+                "  {",
+                "    C[], K[-1];",
+                "  };",
+                "",
+                "  shocks",
+                "  {",
+                "    epsilon[];",
+                "  };",
+                "",
+                "};",
+            ]
+        )
 
     def test_block_with_calibration(self):
         block = GCNBlock(
@@ -147,27 +166,39 @@ class TestPrintBlock:
             calibration=[
                 GCNEquation(lhs=Parameter(name="alpha"), rhs=Number(value=0.35)),
                 GCNDistribution(parameter_name="beta", dist_name="Beta", dist_kwargs={"alpha": 2, "beta": 5}),
+                GCNEquation(
+                    lhs=Variable(name="Y", time_index=STEADY_STATE),
+                    rhs=Number(value=1.0),
+                    calibrating_parameter="delta",
+                ),
             ],
         )
-        result = print_block(block)
-        assert "calibration" in result
-        assert "alpha = 0.35" in result
-        assert "beta ~ Beta" in result
+        assert print_block(block) == "\n".join(
+            [
+                "block TEST",
+                "{",
+                "    calibration",
+                "    {",
+                "        alpha = 0.35;",
+                "        beta ~ Beta(alpha=2, beta=5);",
+                "        Y[ss] = 1 -> delta;",
+                "    };",
+                "",
+                "};",
+            ]
+        )
 
 
 class TestPrintModel:
     def test_model_with_options(self):
-        model = GCNModel(options={"output logfile": True, "output LaTeX": False})
-        result = print_model(model)
-        assert "options" in result
-        assert "output logfile = TRUE" in result
-        assert "output LaTeX = FALSE" in result
+        model = GCNModel(options={"output logfile": True, "output LaTeX": False, "solver": "gensys"})
+        assert print_model(model) == "\n".join(
+            ["options", "{", "    output logfile = TRUE;", "    output LaTeX = FALSE;", "    solver = gensys;", "};"]
+        )
 
     def test_model_with_tryreduce(self):
         model = GCNModel(tryreduce=["U[]", "TC[]"])
-        result = print_model(model)
-        assert "tryreduce" in result
-        assert "U[], TC[]" in result
+        assert print_model(model) == "\n".join(["tryreduce", "{", "    U[], TC[];", "};"])
 
     def test_model_with_assumptions_groups_by_assumption(self):
         model = GCNModel(assumptions={"K": {"positive": True}, "C": {"positive": True, "real": False}})
@@ -192,10 +223,38 @@ class TestPrintModel:
             constraints=[GCNEquation(lhs=Variable(name="C"), rhs=Variable(name="Y"), lagrange_multiplier="lambda")],
         )
         model = GCNModel(blocks=[block], options={"output logfile": True}, tryreduce=["U[]"])
-        result = print_model(model)
 
-        for section in ["options", "tryreduce", "block HOUSEHOLD", "controls", "objective", "constraints"]:
-            assert section in result
+        assert print_model(model) == "\n\n".join(
+            [
+                "options\n{\n    output logfile = TRUE;\n};",
+                "tryreduce\n{\n    U[];\n};",
+                print_block(block),
+            ]
+        )
+
+    def test_printed_model_reparses_to_same_ast(self):
+        source = """
+        options { output logfile = TRUE; solver = gensys; };
+        assumptions { positive { C[], K[], alpha; }; };
+
+        block HOUSEHOLD
+        {
+            definitions { u[] = log(C[]); };
+            controls { C[], K[]; };
+            objective { U[] = u[] + beta * E[][U[1]]; };
+            constraints { C[] + K[] = Y[] : lambda[]; };
+            identities { Y[] = A[] * K[-1] ^ alpha; };
+            shocks { epsilon[]; };
+            calibration
+            {
+                alpha ~ maxent(Beta(alpha=2, beta=5), lower=0.2, upper=0.5) = 0.35;
+                beta = 0.99;
+                Y[ss] / K[ss] = 0.36 -> delta;
+            };
+        };
+        """
+        model = quick_parse(source)
+        assert quick_parse(print_model(model)) == model
 
 
 class TestRoundTrip:

@@ -8,15 +8,21 @@ from gEconpy.parser.ast import (
     Expectation,
     FunctionCall,
     GCNBlock,
+    GCNDistribution,
     GCNEquation,
     GCNModel,
+    Number,
     Operator,
     Parameter,
     T,
     Tag,
     TimeIndex,
+    UnaryOp,
     Variable,
 )
+from gEconpy.parser.errors import ParseLocation
+
+LOCATION = ParseLocation(line=3, column=7, end_line=3, end_column=12, source_line="    Y[] = C[];")
 
 
 class TestTimeIndex:
@@ -83,6 +89,53 @@ class TestVariable:
         }
         assert len(variables) == 3
 
+    def test_at_and_to_ss_keep_location(self):
+        v = Variable(name="X", location=LOCATION)
+        assert v.at(-1) == Variable(name="X", time_index=T_MINUS_1)
+        assert v.at(-1).location == LOCATION
+        assert v.to_ss().time_index == STEADY_STATE
+        assert v.to_ss().location == LOCATION
+
+
+class TestWithLocation:
+    @pytest.mark.parametrize(
+        "node",
+        [
+            Number(value=2.5),
+            Parameter(name="alpha"),
+            Variable(name="K", time_index=T_MINUS_1),
+            BinaryOp(left=Parameter(name="a"), op=Operator.POW, right=Parameter(name="b")),
+            UnaryOp(op=Operator.NEG, operand=Parameter(name="a")),
+            FunctionCall(func_name="log", args=(Parameter(name="a"), Parameter(name="b"))),
+            Expectation(expr=Variable(name="U", time_index=T_PLUS_1)),
+            GCNEquation(
+                lhs=Variable(name="Y"),
+                rhs=Variable(name="C"),
+                lagrange_multiplier="lambda",
+                calibrating_parameter="beta",
+                tags=frozenset([Tag.EXCLUDE]),
+            ),
+            GCNDistribution(
+                parameter_name="alpha",
+                dist_name="Beta",
+                dist_kwargs={"alpha": 2, "beta": 5},
+                wrapper_name="maxent",
+                wrapper_kwargs={"lower": 0.2},
+                initial_value=0.35,
+            ),
+        ],
+        ids=lambda node: type(node).__name__,
+    )
+    def test_copies_every_field_and_attaches_location(self, node):
+        relocated = node.with_location(LOCATION)
+
+        assert relocated == node
+        assert relocated.location == LOCATION
+        assert node.location is None
+        assert {k: v for k, v in vars(relocated).items() if k != "location"} == {
+            k: v for k, v in vars(node).items() if k != "location"
+        }
+
 
 class TestExpressionNodes:
     def test_nested_binary_ops_preserve_structure(self):
@@ -129,6 +182,21 @@ class TestGCNEquation:
         )
         assert eq_lagrange.has_lagrange_multiplier and not eq_lagrange.is_calibrating
         assert eq_calib.is_calibrating and not eq_calib.has_lagrange_multiplier
+
+    def test_with_tags_replaces_tags_and_keeps_everything_else(self):
+        eq = GCNEquation(
+            lhs=Variable(name="Y"),
+            rhs=Variable(name="C"),
+            lagrange_multiplier="lambda",
+            tags=frozenset([Tag.EXCLUDE]),
+            location=LOCATION,
+        )
+        retagged = eq.with_tags(frozenset([Tag.MINIMIZE]))
+
+        assert retagged.tags == frozenset([Tag.MINIMIZE])
+        assert retagged.lagrange_multiplier == "lambda"
+        assert retagged.location == LOCATION
+        assert eq.tags == frozenset([Tag.EXCLUDE])
 
     def test_str_includes_tags_multiplier_and_calibrating_parameter(self):
         eq = GCNEquation(

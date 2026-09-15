@@ -96,6 +96,18 @@ class TestAssumptionsBlock:
         assert result["K"]["positive"] is True
         assert result["shock"]["real"] is True
 
+    def test_name_in_several_subblocks_accumulates_assumptions(self):
+        text = "assumptions { positive { C[]; }; negative { K[]; }; unit_interval { C[]; }; };"
+        result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
+        assert result == {
+            "C": {**DEFAULT_ASSUMPTIONS, "positive": True, "unit_interval": True},
+            "K": {**DEFAULT_ASSUMPTIONS, "negative": True},
+        }
+
+    def test_listed_names_start_from_package_defaults(self):
+        result = ASSUMPTIONS_BLOCK.parse_string("assumptions { positive { C[]; }; };")[0]
+        assert result["C"] == {**DEFAULT_ASSUMPTIONS, "positive": True}
+
     def test_unit_interval_implies_positive(self):
         text = "assumptions { unit_interval { alpha; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
