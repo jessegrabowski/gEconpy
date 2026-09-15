@@ -9,6 +9,7 @@ from numpy.testing import assert_allclose
 from gEconpy import impulse_response_function
 from gEconpy.model.perfect_foresight import solve_perfect_foresight
 from gEconpy.model.perfect_foresight.solve import _normalize_condition_keys, make_piecewise_x0
+from gEconpy.solvers.sparse_root import LevenbergMarquardt, NewtonArmijo
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 
@@ -68,7 +69,8 @@ class TestBackwardOnlyModel:
 
         assert_allclose(trajectory[["x", "y"]].values, expected, rtol=1e-10)
 
-    def test_shock_response_matches_irf(self, backward_var_model):
+    @pytest.mark.parametrize("path_type", [np.asarray, list], ids=["array", "list"])
+    def test_shock_response_matches_irf(self, backward_var_model, path_type):
         simulation_length = 30
         shock_path = np.zeros(simulation_length)
         shock_path[0] = 0.1
@@ -76,7 +78,7 @@ class TestBackwardOnlyModel:
         trajectory, result = solve_perfect_foresight(
             backward_var_model,
             simulation_length=simulation_length,
-            shocks={"epsilon_x": shock_path},
+            shocks={"epsilon_x": path_type(shock_path)},
         )
         assert result.success
 
@@ -218,6 +220,7 @@ class TestX0Dispatch:
         assert result.success
 
     def test_x0_dataframe_reindexes_columns(self, rbc_model):
+        """A guess with columns in reverse order is already the steady state, so Newton converges in one step."""
         ss_dict = rbc_model.steady_state(verbose=False)
         var_names = [v.base_name for v in rbc_model.variables]
         simulation_length = 10
@@ -228,8 +231,12 @@ class TestX0Dispatch:
             columns=reversed_names,
         )
 
-        _, result = solve_perfect_foresight(rbc_model, simulation_length=simulation_length, x0=x0_df)
+        trajectory, result = solve_perfect_foresight(rbc_model, simulation_length=simulation_length, x0=x0_df)
         assert result.success
+        assert result.nit <= 1
+        assert list(trajectory.columns) == var_names
+        for name in var_names:
+            assert_allclose(trajectory[name].values, ss_dict[f"{name}_ss"], rtol=1e-8)
 
     @pytest.mark.parametrize("bad_shape", [(5, 3), (10,), (20, 1)])
     def test_x0_array_wrong_shape_raises(self, rbc_model, bad_shape):
@@ -239,6 +246,28 @@ class TestX0Dispatch:
     def test_x0_dataframe_wrong_length_raises(self, rbc_model):
         with pytest.raises(ValueError, match="rows"):
             solve_perfect_foresight(rbc_model, simulation_length=20, x0=pd.DataFrame(np.zeros((5, 1))))
+
+
+class TestSolverArgument:
+    @pytest.mark.parametrize(
+        "solver",
+        [NewtonArmijo(), LevenbergMarquardt()],
+        ids=["newton-armijo-with-globalization", "levenberg-marquardt-without-globalization"],
+    )
+    def test_user_solver_reaches_the_same_path_when_reused(self, rbc_model, solver):
+        """A caller-owned solver instance works on the first call and again on a second, with no state carried over."""
+        ss_dict = rbc_model.steady_state(verbose=False)
+        conditions = {"initial_conditions": {"K": 0.9 * ss_dict["K_ss"]}}
+
+        reference, _ = solve_perfect_foresight(rbc_model, simulation_length=20, **conditions)
+        first, first_result = solve_perfect_foresight(rbc_model, simulation_length=20, solver=solver, **conditions)
+        second, second_result = solve_perfect_foresight(rbc_model, simulation_length=20, solver=solver, **conditions)
+
+        assert first_result.success
+        assert second_result.success
+        assert first_result.nit == second_result.nit
+        assert_allclose(first.values, reference.values, rtol=1e-8)
+        assert_allclose(second.values, reference.values, rtol=1e-8)
 
 
 class TestSteadyStateKwargs:
@@ -364,23 +393,29 @@ class TestMakePiecewiseX0:
         assert list(x0.columns) == var_names
         assert_allclose(x0.iloc[0].values, [0.8, 1.0, 0.5])
 
+    def test_var_name_missing_from_a_steady_state_raises(self):
+        with pytest.raises(ValueError, match="missing values for: L"):
+            make_piecewise_x0(self.INIT_SS, self.TERM_SS, simulation_length=10, var_names=["K", "L"])
 
-class TestParamPaths:
-    def test_scalar_path_changes_steady_state(self, rbc_model):
-        ss_default = rbc_model.steady_state(verbose=False)
-        traj_default, res_default = solve_perfect_foresight(rbc_model, simulation_length=20)
-
-        params = rbc_model.parameters()
-        delta = params["delta"]
-        traj_override, res_override = solve_perfect_foresight(
-            rbc_model,
-            simulation_length=20,
-            param_paths={"delta": delta * 1.5},
+    def test_transition_running_past_the_horizon_is_clamped(self):
+        """A window that overruns the horizon interpolates over the remaining periods and ends at the terminal value."""
+        x0 = make_piecewise_x0(
+            self.INIT_SS, self.TERM_SS, simulation_length=10, transition_start=7, transition_periods=5
         )
 
-        assert res_default.success
-        assert res_override.success
-        assert not np.allclose(traj_default["K"].values, traj_override["K"].values)
+        assert_allclose(x0["K"].values, [1.0] * 7 + [1.0, 1.5, 2.0])
+
+
+class TestParamPaths:
+    def test_scalar_path_is_a_fixed_point_at_the_overridden_steady_state(self, rbc_model):
+        delta = 1.5 * rbc_model.parameters()["delta"]
+        ss_override = rbc_model.steady_state(verbose=False, delta=delta)
+
+        trajectory, result = solve_perfect_foresight(rbc_model, simulation_length=20, param_paths={"delta": delta})
+
+        assert result.success
+        for var in trajectory.columns:
+            assert_allclose(trajectory[var].values, ss_override[f"{var}_ss"], rtol=1e-6)
 
     def test_none_param_paths_matches_default(self, rbc_model):
         traj_default, _ = solve_perfect_foresight(rbc_model, simulation_length=20)
@@ -388,14 +423,21 @@ class TestParamPaths:
 
         assert_allclose(traj_default.values, traj_explicit.values)
 
-    def test_time_varying_path_accepted(self, rbc_model):
+    def test_time_varying_path_enters_each_period_with_its_own_value(self, rbc_model):
+        """The capital accumulation constraint holds period by period with the delta of that period."""
         params = rbc_model.parameters()
         T = 20
         delta_path = np.full(T, params["delta"])
         delta_path[T // 2 :] *= 1.5
 
-        _, result = solve_perfect_foresight(rbc_model, simulation_length=T, param_paths={"delta": delta_path})
+        trajectory, result = solve_perfect_foresight(rbc_model, simulation_length=T, param_paths={"delta": delta_path})
         assert result.success
+
+        ss_initial = rbc_model.steady_state(verbose=False)
+        K_lag = np.r_[ss_initial["K_ss"], trajectory["K"].values[:-1]]
+        resources = trajectory["A"].values * K_lag ** params["alpha"] + (1 - delta_path) * K_lag
+        assert_allclose(trajectory["C"].values + trajectory["K"].values, resources, rtol=1e-8)
+        assert not np.allclose(trajectory["K"].values[T // 2 :], ss_initial["K_ss"])
 
     @pytest.mark.parametrize("rho_0", [0.0, 1e-8], ids=["exact-zero", "near-zero"])
     def test_zero_entry_at_first_period_keeps_jacobian_structure(self, rbc_model, rho_0):
