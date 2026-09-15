@@ -12,6 +12,7 @@ from gEconpy.exceptions import (
     OptimizationProblemNotDefinedException,
 )
 from gEconpy.model.block import Block
+from gEconpy.model.block.cobb_douglas import CobbDouglasBlock
 from gEconpy.parser import constants
 from gEconpy.parser.loader import load_gcn_file, load_gcn_string
 from gEconpy.parser.preprocessor import preprocess
@@ -674,6 +675,65 @@ def test_firm_focs_match_closed_form(gcn_file, rng):
         assert any(abs(actual - expected_foc) < 1e-10 for actual in subbed_system), (
             f"Expected FOC value {expected_foc} not found in system_equations (values: {subbed_system})"
         )
+
+
+FIRM_WITH_COST_DEFINITION = """
+block FIRM
+{
+    definitions
+    {
+        cost[] = r[] * K[] + w[] * L[];
+    };
+
+    controls
+    {
+        K[], L[];
+    };
+
+    objective
+    {
+        Pi[] = Y[] - cost[];
+    };
+
+    constraints
+    {
+        Y[] = A[] * K[] ^ alpha * L[] ^ (1 - alpha) : mu[];
+    };
+
+    calibration
+    {
+        alpha = 0.35;
+    };
+};
+"""
+
+
+def test_closed_form_focs_substitute_definitions():
+    """The closed-form FOC must see the cost written in a definition, as the generic Lagrangian does."""
+    closed_form = get_unsolved_block_from_string(FIRM_WITH_COST_DEFINITION, block_name="FIRM")
+    assert isinstance(closed_form, CobbDouglasBlock)
+
+    generic = Block(
+        name=closed_form.name,
+        definitions=closed_form.definitions,
+        controls=closed_form.controls,
+        objective=closed_form.objective,
+        constraints=closed_form.constraints,
+        calibration=closed_form.calibration,
+        multipliers=dict(closed_form.multipliers),
+        equation_flags=closed_form.equation_flags,
+    )
+    closed_form.solve_optimization(try_simplify=False)
+    generic.solve_optimization(try_simplify=False)
+
+    Y, A, K, L = parsed_var("Y", 0), parsed_var("A", 0), parsed_var("K", 0), parsed_var("L", 0)
+    alpha = parsed_symbol("alpha")
+    on_constraint = {Y: A * K**alpha * L ** (1 - alpha)}
+
+    for closed_form_foc, generic_foc in zip(
+        closed_form.system_equations[-2:], generic.system_equations[-2:], strict=True
+    ):
+        assert sp.simplify((closed_form_foc - generic_foc).subs(on_constraint)) == 0
 
 
 def test_minimize_and_maximize_on_same_equation_raises():

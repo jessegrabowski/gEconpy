@@ -566,11 +566,7 @@ class Block:
 
         constraints = self.constraints
         multipliers = self.multipliers
-        sub_dict = {}
-
-        if self.definitions is not None:
-            for eq in self.definitions.values():
-                sub_dict.update(_expand_definition_for_all_times(eq.lhs, eq.rhs))
+        sub_dict = self._definition_substitutions()
 
         obj_rhs = objective.rhs.subs(sub_dict)
         if is_minimization:
@@ -643,10 +639,18 @@ class Block:
         Subclasses with a closed-form constraint derivative add it to this term to form the first-order condition.
         """
         obj_idx, obj_eq = next(iter(self.objective.items()))
-        objective_rhs = obj_eq.rhs
+        objective_rhs = obj_eq.rhs.subs(self._definition_substitutions())
         if self.equation_flags.get(obj_idx, {}).get("minimize", False):
             objective_rhs = -objective_rhs
         return diff_through_time(objective_rhs, control, discount_factor)
+
+    def _definition_substitutions(self) -> dict[TimeAwareSymbol, sp.Expr]:
+        """Map every definition's left-hand side at t-1, t, and t+1 to its shifted right-hand side."""
+        sub_dict = {}
+        if self.definitions is not None:
+            for eq in self.definitions.values():
+                sub_dict.update(_expand_definition_for_all_times(eq.lhs, eq.rhs))
+        return sub_dict
 
     def _constraint_multiplier(self, idx: int) -> TimeAwareSymbol:
         """Return the multiplier on constraint ``idx``, which :meth:`solve_optimization` generates when unnamed."""

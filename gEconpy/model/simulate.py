@@ -30,7 +30,7 @@ class ShockSpec:
     size : float, ndarray, dict mapping str to float, or None
         Size of the shock applied to each shock in the model. Set only when ``mode`` is "size".
     orthogonalize : bool
-        If True, orthogonalize the shocks with a Cholesky decomposition of ``cov``.
+        If True, drop the correlations in ``cov`` and draw each shock independently with its own variance.
     """
 
     mode: str
@@ -86,8 +86,9 @@ def impulse_response_function(
         length ``n_shocks`` array for ``shock_size``, or a diagonal ``shock_cov``. A trajectory is never separated
         by default.
     orthogonalize_shocks : bool, optional
-        Orthogonalize correlated shocks in ``shock_cov`` with a Cholesky factor. Ignored for the other
-        specifications. Defaults to False.
+        Drop the correlations in ``shock_cov`` and draw each shock independently with the variance on the diagonal.
+        Uncorrelated shocks are separated into per-shock responses unless ``return_individual_shocks`` says
+        otherwise. Ignored for the other specifications. Defaults to False.
     random_seed : int, RandomState, or Generator, optional
         Seed for the draw taken when ``shock_cov`` is given. Defaults to None.
     **solve_model_kwargs
@@ -287,7 +288,7 @@ def _infer_shocks_are_individual(
         return size.ndim == 0 or size.shape == (n_shocks,)
 
     if shock_spec.mode == "cov":
-        return _is_diagonal(np.asarray(shock_spec.cov))
+        return shock_spec.orthogonalize or _is_diagonal(np.asarray(shock_spec.cov))
 
     return False
 
@@ -354,8 +355,11 @@ def _build_trajectory(
             Q = np.asarray(spec.cov, dtype=float)
             if Q.shape != (n_shocks, n_shocks):
                 raise ValueError(f"shock_cov must be ({n_shocks}, {n_shocks}); got {Q.shape}.")
-            L = np.linalg.cholesky(Q)
-            trajectory[0] = L @ rng.standard_normal(n_shocks)
+            standard_draw = rng.standard_normal(n_shocks)
+            if spec.orthogonalize:
+                trajectory[0] = np.sqrt(np.diag(Q)) * standard_draw
+            else:
+                trajectory[0] = np.linalg.cholesky(Q) @ standard_draw
 
         case "size":
             trajectory = np.zeros((simulation_length, n_shocks), dtype=float)

@@ -1203,26 +1203,24 @@ class DSGEStateSpace(PyMCStateSpace):
 
         if add_norm_check:
             # These are diagnostics only. Only the Potentials below reject draws.
-            n_vars, n_shocks = R.shape
+            # A, B, C, and D have columns in ``var_order`` while T and R were remapped to the user's order by
+            # ``_setup_policy_matrices``, so T, R, and the state mask are moved back into ``var_order`` here.
+            var_order = self.var_order
+            T_ordered = T[var_order][:, var_order]
+            R_ordered = R[var_order]
+
             tm1_grid = np.array([[eq.has(var.set_t(-1)) for var in self.variables] for eq in self.equations])
             t_grid = np.array([[eq.has(var.set_t(0)) for var in self.variables] for eq in self.equations])
+            state_var_mask = (np.any(tm1_grid, axis=0) & np.any(t_grid, axis=0))[var_order]
 
-            tm1_idx = np.any(tm1_grid, axis=0)
-            t_idx = np.any(t_grid, axis=0)
-
-            shock_idx = pt.arange(n_shocks)
-            state_var_mask = pt.bitwise_and(tm1_idx, t_idx)
-
-            QQ = R[:n_vars, :]
-            P = T[state_var_mask, :][:, state_var_mask]
-            Q = QQ[state_var_mask, :][:, shock_idx]
+            P = T_ordered[state_var_mask][:, state_var_mask]
+            Q = R_ordered[state_var_mask]
 
             A_prime = A[:, state_var_mask]
-            R_prime = T[:, state_var_mask]
-            S_prime = QQ[:, shock_idx]
+            R_prime = T_ordered[:, state_var_mask]
 
             pm.Deterministic("deterministic_norm", pt.linalg.norm(A_prime + B @ R_prime + C @ R_prime @ P))
-            pm.Deterministic("stochastic_norm", pt.linalg.norm(B @ S_prime + C @ R_prime @ Q + D))
+            pm.Deterministic("stochastic_norm", pt.linalg.norm(B @ R_ordered + C @ R_prime @ Q + D))
 
         if add_bk_check:
             pm.Deterministic("bk_satisfied", bk_satisfied)
