@@ -67,6 +67,32 @@ class TestSymbolDictionary:
         assert list(d.keys()) == [sp.Symbol("a"), sp.Symbol("b")]
         assert d.is_sympy
 
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("alpha", sp.Symbol("alpha")),
+            ("x_y_t", TimeAwareSymbol("x_y", 0)),
+            ("K_ss", TimeAwareSymbol("K", "ss")),
+            ("beta_tp1", TimeAwareSymbol("beta", 1)),
+            ("beta_tm1", TimeAwareSymbol("beta", -1)),
+        ],
+    )
+    def test_to_sympy_parses_time_suffix(self, name, expected):
+        d = SymbolDictionary({name: 1.0}).to_sympy()
+        (key,) = d.keys()
+        assert key == expected
+        assert type(key) is type(expected)
+
+    def test_to_sympy_overrides_keep_parameters_plain(self):
+        d = SymbolDictionary({"K_ss": 1.0, "alpha": 0.3}).to_sympy(
+            new_is_variable={"K_ss": False}, new_assumptions={"alpha": {"positive": True}}
+        )
+        K_ss, alpha = d.keys()
+
+        assert type(K_ss) is sp.Symbol
+        assert K_ss.name == "K_ss"
+        assert alpha.is_positive
+
     def test_string_key_with_time_suffix_becomes_time_aware(self, symbol_dict):
         d = symbol_dict.to_string()
         d["F_ss"] = 3
@@ -131,12 +157,18 @@ class TestSymbolDictionary:
         getattr(symbol_dict, method)(inplace=True)
         assert list(symbol_dict.to_string().keys()) == expected_keys
 
-    def test_sort_dictionary(self, symbol_dict):
-        d_sorted = symbol_dict.sort_keys()
-        assert list(d_sorted.keys()) == [A, C, alpha, r]
+    @pytest.mark.parametrize(
+        ("convert", "expected"),
+        [(lambda d: d, [A, C, alpha, r]), (lambda d: d.to_string(), ["A_tp1", "C_t", "alpha", "r_tm1"])],
+        ids=["sympy_mode", "string_mode"],
+    )
+    def test_sort_dictionary(self, symbol_dict, convert, expected):
+        d = convert(symbol_dict)
 
-        symbol_dict.sort_keys(inplace=True)
-        assert list(symbol_dict.keys()) == [A, C, alpha, r]
+        assert list(d.sort_keys().keys()) == expected
+
+        d.sort_keys(inplace=True)
+        assert list(d.keys()) == expected
 
     def test_sequential_pipe_from_empty_rejects_mixed_modes(self, symbol_dict):
         string_dict = SymbolDictionary({"A": 3, "B": 4})
@@ -191,6 +223,24 @@ class TestSymbolDictionary:
         d1 = SymbolDictionary({"A": 1, "B": 2})
         d1.update({"C": 3})
         assert d1 == {"A": 1, "B": 2, "C": 3}
+
+    def test_pipe_with_plain_dict(self):
+        merged = SymbolDictionary({C: 1}) | {A: 2}
+
+        assert isinstance(merged, SymbolDictionary)
+        assert merged == {C: 1, A: 2}
+        assert merged.is_sympy
+        assert merged._assumptions["A"]["negative"]
+
+    @pytest.mark.parametrize(
+        "merge", [lambda d: SymbolDictionary() | d, lambda d: d | SymbolDictionary()], ids=["empty_left", "empty_right"]
+    )
+    def test_pipe_with_empty_keeps_other_side(self, symbol_dict, merge):
+        merged = merge(symbol_dict)
+
+        assert merged == symbol_dict
+        assert merged.is_sympy
+        assert merged._assumptions == symbol_dict._assumptions
 
     def test_pickle_round_trip(self, symbol_dict):
         restored = pickle.loads(pickle.dumps(symbol_dict))

@@ -40,12 +40,21 @@ class TestDoglegStep:
         solver = SparseDogleg(delta0=0.1)
         jac = sp.csc_matrix(np.eye(2))
         res = np.array([10.0, 20.0])
-        p = solver._compute_dogleg_step(jac, res, jac.T @ res, delta=0.1)
-        np.testing.assert_allclose(np.linalg.norm(p), 0.1, atol=1e-10)
+        grad = jac.T @ res
+        p = solver._compute_dogleg_step(jac, res, grad, delta=0.1)
+        np.testing.assert_allclose(p, -0.1 * grad / np.linalg.norm(grad), atol=1e-10)
 
     def test_dogleg_interpolation(self):
         solver = SparseDogleg(delta0=1.5)
         jac = sp.csc_matrix(np.array([[2.0, 0.0], [0.0, 0.5]]))
         res = np.array([1.0, 1.0])
-        p = solver._compute_dogleg_step(jac, res, jac.T @ res, delta=1.0)
+        grad = jac.T @ res
+        p = solver._compute_dogleg_step(jac, res, grad, delta=1.0)
         np.testing.assert_allclose(np.linalg.norm(p), 1.0, atol=1e-8)
+
+        # The step sits on the segment from the Cauchy point to the Newton point, past the Cauchy point.
+        cauchy = -(grad @ grad) / ((jac @ grad) @ (jac @ grad)) * grad
+        newton = -res / np.array([2.0, 0.5])
+        tau = (p - cauchy) / (newton - cauchy)
+        np.testing.assert_allclose(tau[0], tau[1], atol=1e-8)
+        assert 0.0 < tau[0] < 1.0

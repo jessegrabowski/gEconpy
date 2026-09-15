@@ -25,13 +25,17 @@ class TestTimeAwareSymbol:
     def test_safe_name(self):
         assert x_tp1.safe_name == "x_tp1"
         assert x_tm1.safe_name == "x_tm1"
+        assert x_t.to_ss().safe_name == "x_ss"
+        assert TimeAwareSymbol("x", -12).safe_name == "x_tm12"
 
     def test_stepping(self):
         assert x_t.step_forward() == x_tp1
         assert x_t.step_backward() == x_tm1
         assert x_tp1.to_ss() == x_tm1.to_ss()
         assert x_t.to_ss().exit_ss() == x_t
+        assert x_tp1.exit_ss() is x_tp1
         assert x_tm1.set_t(1) == x_tp1
+        assert x_tm1.set_t("ss") == x_t.to_ss()
 
     def test_stepping_steady_state_is_identity(self):
         assert x_t.to_ss().step_forward() == x_t.to_ss()

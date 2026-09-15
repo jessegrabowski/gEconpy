@@ -235,6 +235,8 @@ class CommonSolverTests:
         fun, x0 = broyden_system
         result = sparse_root(fun, x0, solver=self.solver, progressbar=False)
         assert result.success
+        res, _ = fun(result.x)
+        np.testing.assert_allclose(res, 0.0, atol=1e-8)
 
     def test_pressure_network(self, pressure_network):
         fun, x0 = pressure_network

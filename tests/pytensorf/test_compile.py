@@ -27,7 +27,7 @@ def test_cache_hits():
     f2 = compile_pytensor_function([x], [z], mode="FAST_COMPILE")
 
     assert f1 is f2
-    assert compile_cache_info().hits >= 1
+    assert compile_cache_info().hits == 1
 
 
 def test_cache_miss_different_mode():
@@ -54,6 +54,19 @@ def test_cache_miss_after_graph_replace():
 
     np.testing.assert_allclose(f1(np.float64(1.0), np.float64(2.0)), [3.0])
     np.testing.assert_allclose(f2(np.float64(1.0), np.float64(2.0)), [np.exp(1.0) + 2.0])
+
+
+def test_givens_as_dict_and_list_share_a_cache_entry():
+    x = pt.dscalar("x")
+    y = pt.dscalar("y")
+    z = x + y
+
+    two = pt.constant(2.0, dtype="float64")
+    f_dict = compile_pytensor_function([x], [z], givens={y: two}, mode="FAST_COMPILE")
+    f_list = compile_pytensor_function([x], [z], givens=[(y, two)], mode="FAST_COMPILE")
+
+    assert f_dict is f_list
+    np.testing.assert_allclose(f_dict(np.float64(1.0)), [3.0])
 
 
 def test_clear_cache():
