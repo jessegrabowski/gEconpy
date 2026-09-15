@@ -69,12 +69,12 @@ class ASTToSympyConverter:
         Parameters
         ----------
         node : Node
-            An expression node or a :class:`~gEconpy.parser.ast.GCNEquation`.
+            An expression node or a :class:`~gEconpy.parser.ast.nodes.GCNEquation`.
 
         Returns
         -------
         expr : sp.Basic
-            The SymPy expression, or an :class:`sympy.Eq` for an equation node.
+            The SymPy expression, or an :class:`~sympy.core.relational.Equality` for an equation node.
         """
         match node:
             case Number():
@@ -157,14 +157,14 @@ def ast_to_sympy(node: Node, assumptions: dict[str, dict[str, bool]] | None = No
     Parameters
     ----------
     node : Node
-        An expression node or a :class:`~gEconpy.parser.ast.GCNEquation`.
+        An expression node or a :class:`~gEconpy.parser.ast.nodes.GCNEquation`.
     assumptions : dict mapping str to dict, optional
         SymPy assumptions per variable or parameter name. Defaults to no assumptions.
 
     Returns
     -------
     expr : sp.Basic
-        The SymPy expression, or an :class:`sympy.Eq` for an equation node.
+        The SymPy expression, or an :class:`~sympy.core.relational.Equality` for an equation node.
     """
     return ASTToSympyConverter(assumptions).convert(node)
 
@@ -189,7 +189,7 @@ def equation_to_sympy(
     equation : sp.Eq
         The SymPy equation.
     metadata : dict
-        The keys ``is_calibrating`` (bool), ``calibrating_parameter`` (:class:`sympy.Symbol` or None), and
+        The keys ``is_calibrating`` (bool), ``calibrating_parameter`` (:class:`~sympy.core.symbol.Symbol` or None), and
         ``lagrange_multiplier`` (:class:`~gEconpy.classes.time_aware_symbol.TimeAwareSymbol` or None).
     """
     assumptions = assumptions or {}
@@ -250,7 +250,9 @@ def block_to_sympy(
 
 def model_to_sympy(model: GCNModel) -> dict[str, dict[str, list[tuple[sp.Eq, dict[str, Any]]]]]:
     """
-    Convert every block in a model with :func:`block_to_sympy`, using the model's own assumptions.
+    Convert every block in a model with :func:`~gEconpy.parser.transform.to_sympy.block_to_sympy`.
+
+    The model's own assumptions are applied to every block.
 
     Parameters
     ----------
@@ -260,6 +262,6 @@ def model_to_sympy(model: GCNModel) -> dict[str, dict[str, list[tuple[sp.Eq, dic
     Returns
     -------
     equations : dict mapping str to dict
-        The result of :func:`block_to_sympy` for each block, keyed by block name.
+        The result of :func:`~gEconpy.parser.transform.to_sympy.block_to_sympy` for each block, keyed by block name.
     """
     return {block.name: block_to_sympy(block, model.assumptions) for block in model.blocks}

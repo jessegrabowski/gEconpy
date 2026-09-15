@@ -69,7 +69,7 @@ def real_eig(M: TensorLike) -> tuple[TensorVariable, TensorVariable]:
     ----------
     M : TensorVariable
         A real-valued square matrix of shape ``(n, n)``, or anything :func:`pytensor.tensor.as_tensor_variable`
-        accepts. Leading batch dimensions are supported through :class:`~pytensor.tensor.blockwise.Blockwise`.
+        accepts. Leading batch dimensions are supported through ``Blockwise``.
 
     Returns
     -------

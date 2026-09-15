@@ -54,7 +54,7 @@ class SparseDogleg:
     shrink_factor: float = 0.25
     grow_factor: float = 2.0
     max_reject: int = 50
-    linear_solver: Callable = spsolve
+    linear_solver: Callable = field(default_factory=lambda: spsolve)
 
     _delta: float = field(init=False, repr=False, default=0.0)
 

@@ -138,8 +138,8 @@ def sympy_to_pytensor(
         Sympytensor cache mapping cache keys to PyTensor variables. Pass the same cache to every conversion that
         should share variables. Default is a new empty cache.
     cse : bool, optional
-        Run :func:`sympy.cse` over the outputs before converting them. This shrinks the forward graph but inflates
-        gradient compilation, so enable it only for forward-only compiles. Default is False.
+        Run :func:`~sympy.simplify.cse_main.cse` over the outputs before converting them. This shrinks the forward
+        graph but inflates gradient compilation, so enable it only for forward-only compiles. Default is False.
 
     Returns
     -------
@@ -196,7 +196,7 @@ def build_symbolic_jacobians(
     shocks: list[TimeAwareSymbol] | None = None,
 ) -> list[TensorVariable]:
     """
-    Build several dense Jacobians by symbolic differentiation, sharing one :func:`sympy.cse` pass.
+    Build several dense Jacobians by symbolic differentiation, sharing one :func:`~sympy.simplify.cse_main.cse` pass.
 
     Parameters
     ----------
@@ -486,11 +486,12 @@ def _compile_without_ss_inputs(
 
 def _plant_cse_intermediates(expressions: list[sp.Basic], cache: dict) -> list[sp.Basic]:
     """
-    Run :func:`sympy.cse` over ``expressions`` and convert each intermediate into the cache.
+    Run :func:`~sympy.simplify.cse_main.cse` over ``expressions`` and convert each intermediate into the cache.
 
-    The intermediates get a dunder-prefixed name so that neither :func:`sympy.cse` nor the shared sympytensor cache can
-    confuse them with a model variable or parameter. Each is converted in topological order and planted in the cache
-    under sympytensor's key shape, so the reduced expressions resolve to the planted graphs when converted.
+    The intermediates get a dunder-prefixed name so that neither :func:`~sympy.simplify.cse_main.cse` nor the shared
+    sympytensor cache can confuse them with a model variable or parameter. Each is converted in topological order and
+    planted in the cache under sympytensor's key shape, so the reduced expressions resolve to the planted graphs when
+    converted.
     """
     substitutions, reduced = sp.cse(
         expressions, symbols=sp.numbered_symbols(_CSE_TEMPORARY_PREFIX), optimizations="basic"

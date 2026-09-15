@@ -146,6 +146,18 @@ numpydoc_xref_ignore = {
     "Matplotlib",
     "pymc",
     "pandas",
+    "arviz",
+    "preliz",
+    "matrix",
+    "expressions",
+    "distribution",
+    "and",
+    # Real classes whose projects publish no intersphinx entry for them: pymc's Transform base class,
+    # IPython's HTML, pyparsing's ParseBaseException and functools' lru_cache CacheInfo.
+    "Transform",
+    "HTML",
+    "ParseBaseException",
+    "CacheInfo",
 }
 
 # numpydoc_xref_param_type cross-references every word of a type field, so a class named bare or by its
@@ -185,22 +197,33 @@ numpydoc_xref_aliases = {
     "pd.DataFrame": "pandas.DataFrame",
     "DataFrame": "pandas.DataFrame",
     "pd.DatetimeIndex": "pandas.DatetimeIndex",
+    "DatetimeIndex": "pandas.DatetimeIndex",
     "xr.DataArray": "xarray.DataArray",
     "DataArray": "xarray.DataArray",
     "xr.Dataset": "xarray.Dataset",
+    "Dataset": "xarray.Dataset",
     "xr.DataTree": "xarray.DataTree",
+    "DataTree": "xarray.DataTree",
+    "InferenceData": "arviz.InferenceData",
     "sp.Expr": "sympy.core.expr.Expr",
     "sympy.Expr": "sympy.core.expr.Expr",
+    "Expr": "sympy.core.expr.Expr",
     "sp.Symbol": "sympy.core.symbol.Symbol",
     "sympy.Symbol": "sympy.core.symbol.Symbol",
     "Symbol": "sympy.core.symbol.Symbol",
     "sp.Eq": "sympy.core.relational.Eq",
     "sympy.Eq": "sympy.core.relational.Eq",
+    "Eq": "sympy.core.relational.Eq",
     "sp.Basic": "sympy.core.basic.Basic",
     "MutableDenseMatrix": "sympy.matrices.dense.MutableDenseMatrix",
+    "Matrix": "sympy.matrices.dense.Matrix",
     "Figure": "matplotlib.figure.Figure",
     "plt.Figure": "matplotlib.figure.Figure",
     "Colormap": "matplotlib.colors.Colormap",
+    "Axes": "matplotlib.axes.Axes",
+    "AxesImage": "matplotlib.image.AxesImage",
+    "Colorbar": "matplotlib.colorbar.Colorbar",
+    "Formatter": "matplotlib.ticker.Formatter",
     "GridSpec": "matplotlib.gridspec.GridSpec",
     "ArrayLike": "numpy.typing.ArrayLike",
     "np.random.Generator": "numpy.random.Generator",
@@ -220,6 +243,14 @@ nitpick_ignore_regex = [
     ("py:.*", r"preliz\..*"),
     ("py:.*", r"sympytensor\..*"),
     ("py:func", r"pytensor\.gradient\.grad_(undefined|not_implemented)"),
+]
+
+# Op subclasses override ``perform`` without a docstring, so autodoc inherits pytensor's, whose roles are
+# written relative to the pytensor namespace and cannot resolve from here.
+nitpick_ignore = [
+    ("py:attr", "node.inputs"),
+    ("py:attr", "node.outputs"),
+    ("py:meth", "Op.perform"),
 ]
 
 # -- MyST config  -------------------------------------------------

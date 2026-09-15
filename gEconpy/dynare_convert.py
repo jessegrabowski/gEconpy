@@ -33,8 +33,8 @@ def make_mod_file(
     linewidth : int, optional
         Maximum number of characters per line in the declaration blocks. Defaults to 100.
     use_cse : bool, optional
-        If True, rewrite the analytic steady state in terms of common sub-expressions found by :func:`sympy.cse`.
-        Defaults to True.
+        If True, rewrite the analytic steady state in terms of common sub-expressions found by
+        :func:`~sympy.simplify.cse_main.cse`. Defaults to True.
     out_path : str or Path, optional
         Path to write the generated file to. By default the file is returned as a string and nothing is written.
 
@@ -300,8 +300,8 @@ def write_steady_state(mod: "Model", use_cse: bool = True) -> str:
     mod : Model
         Model to export.
     use_cse : bool, optional
-        If True, rewrite the analytic steady state in terms of common sub-expressions found by :func:`sympy.cse`.
-        Defaults to True.
+        If True, rewrite the analytic steady state in terms of common sub-expressions found by
+        :func:`~sympy.simplify.cse_main.cse`. Defaults to True.
 
     Returns
     -------

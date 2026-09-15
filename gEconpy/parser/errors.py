@@ -27,7 +27,7 @@ _LSP_SEVERITY = {
 
 class GCNParseFailure(pp.ParseFatalException):
     """
-    Fatal pyparsing exception carrying an :class:`ErrorCode`, the offending text, and typo suggestions.
+    Fatal pyparsing exception carrying an :class:`~gEconpy.parser.error_catalog.ErrorCode`, text, and suggestions.
 
     pyparsing wraps and re-raises exceptions while backtracking, and only the message survives that wrapping. The
     structured data is therefore encoded into the message as ``message||GCN||CODE||GCN||found||GCN||s1,s2`` and

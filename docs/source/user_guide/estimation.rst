@@ -71,8 +71,9 @@ the filtered and smoothed states, and
 :meth:`~gEconpy.model.statespace.DSGEStateSpace.sample_autocorrelation_matrices` and the other post-estimation
 methods compute model moments under the posterior.
 
-A compact version of the whole sequence, from the test suite:
+A compact version of the sequence through the simulated data set, from the test suite. The ``pct_missing``
+argument blanks a fraction of the observations, which the Kalman filter imputes:
 
 .. literalinclude:: ../../../tests/model/test_statespace.py
    :language: python
-   :pyobject: test_constant_params_excluded_from_prior_samples
+   :pyobject: test_data_from_prior_drops_constant_params_and_blanks_requested_fraction

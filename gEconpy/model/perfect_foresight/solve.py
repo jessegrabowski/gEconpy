@@ -67,8 +67,8 @@ def solve_perfect_foresight(
     compile_kwargs : dict, optional
         Keyword arguments forwarded to :func:`pytensor.function` when compiling the model.
     solver : RootSolver, optional
-        The root-finding solver. See :mod:`gEconpy.solvers.sparse_root` for the available solvers. Defaults to
-        Newton's method with Armijo backtracking.
+        The root-finding solver. See :doc:`gEconpy.solvers.sparse_root </api/gEconpy.solvers.sparse_root>` for the
+        available solvers. Defaults to Newton's method with Armijo backtracking.
     steady_state_kwargs : dict, optional
         Keyword arguments forwarded to ``model.steady_state()``. ``verbose`` defaults to False.
 
@@ -215,7 +215,7 @@ def make_piecewise_x0(
     transition_periods: int = 1,
 ) -> pd.DataFrame:
     """
-    Build an initial guess for :func:`solve_perfect_foresight` that moves from one steady state to another.
+    Build a guess for :func:`~gEconpy.model.perfect_foresight.solve.solve_perfect_foresight` between two steady states.
 
     Parameters
     ----------

@@ -65,9 +65,11 @@ def impulse_response_function(
     model : Model
         DSGE model whose variables and shocks label the output.
     T : ndarray, optional
-        Transition matrix of the solved system. Computed with :meth:`Model.solve_model` when omitted.
+        Transition matrix of the solved system. Computed with :meth:`~gEconpy.model.model.Model.solve_model` when
+        omitted.
     R : ndarray, optional
-        Selection matrix of the solved system. Computed with :meth:`Model.solve_model` when omitted.
+        Selection matrix of the solved system. Computed with :meth:`~gEconpy.model.model.Model.solve_model` when
+        omitted.
     simulation_length : int, optional
         Number of periods to compute the response over. Ignored when ``shock_trajectory`` is given, because the
         trajectory sets the length. Defaults to 40.
@@ -92,7 +94,8 @@ def impulse_response_function(
     random_seed : int, RandomState, or Generator, optional
         Seed for the draw taken when ``shock_cov`` is given. Defaults to None.
     **solve_model_kwargs
-        Arguments forwarded to :meth:`Model.solve_model`. Ignored when ``T`` and ``R`` are provided.
+        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model`. Ignored when ``T`` and ``R`` are
+        provided.
 
     Returns
     -------
@@ -170,9 +173,11 @@ def simulate(
     model : Model
         DSGE model whose variables and shocks label the output.
     T : ndarray, optional
-        Transition matrix of the solved system. Computed with :meth:`Model.solve_model` when omitted.
+        Transition matrix of the solved system. Computed with :meth:`~gEconpy.model.model.Model.solve_model` when
+        omitted.
     R : ndarray, optional
-        Selection matrix of the solved system. Computed with :meth:`Model.solve_model` when omitted.
+        Selection matrix of the solved system. Computed with :meth:`~gEconpy.model.model.Model.solve_model` when
+        omitted.
     n_simulations : int, optional
         Number of trajectories to simulate. Defaults to 1.
     simulation_length : int, optional
@@ -187,7 +192,8 @@ def simulate(
     random_seed : int, RandomState, or Generator, optional
         Seed for the shock draws. Defaults to None.
     **solve_model_kwargs
-        Arguments forwarded to :meth:`Model.solve_model`. Ignored when ``T`` and ``R`` are provided.
+        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model`. Ignored when ``T`` and ``R`` are
+        provided.
 
     Returns
     -------

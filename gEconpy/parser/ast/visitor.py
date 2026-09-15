@@ -205,7 +205,7 @@ def collect_nodes_of_type[NodeT: Node](node: Node, node_type: type[NodeT]) -> se
     node : Node
         The root node to search.
     node_type : type
-        The node class to collect, such as :class:`~gEconpy.parser.ast.Variable`.
+        The node class to collect, such as :class:`~gEconpy.parser.ast.nodes.Variable`.
 
     Returns
     -------
