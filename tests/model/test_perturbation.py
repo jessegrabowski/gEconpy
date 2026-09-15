@@ -8,6 +8,7 @@ from numpy.testing import assert_allclose
 from pytensor.gradient import verify_grad
 from pytensor.graph.traversal import explicit_graph_inputs
 
+from gEconpy.model.build import model_from_gcn
 from gEconpy.model.perturbation import check_bk_condition_pt, linearize_model
 from gEconpy.model.timing import make_all_variable_time_combinations
 from gEconpy.pytensorf.compile import compile_pytensor_function
@@ -22,15 +23,15 @@ from tests._resources.cache_compiled_models import load_and_cache_model
 
 
 def _sympy_jacobians(variables, equations, shocks, not_loglin_variables=None):
-    """Compute Jacobian matrices via direct sympy differentiation (ground-truth reference).
+    """
+    Compute the Jacobians by direct sympy differentiation, as the reference for ``linearize_model``.
 
-    For each variable group (lags, current, leads, shocks), computes dF/dvar at steady state. For log-linearized
-    variables, the derivative is multiplied by the steady-state value (the T-matrix column).
+    For each variable group (lags, current, leads, shocks), differentiates every equation at the steady state. The
+    derivative of a log-linearized variable is multiplied by its steady-state value.
     """
     if not_loglin_variables is None:
         not_loglin_variables = []
     not_loglin_variables += [x.base_name for x in shocks]
-    # Variables declared negative cannot be log-linearized
     not_loglin_variables += [v.base_name for v in variables if v.assumptions0.get("negative", False)]
 
     lags, now, leads = make_all_variable_time_combinations(variables)
@@ -50,11 +51,7 @@ def _sympy_jacobians(variables, equations, shocks, not_loglin_variables=None):
 
 
 def _unpermute_abcd(matrices, eq_order, var_order):
-    """Undo the [eq_order rows, var_order cols] permutation applied by ``linearize_model``.
-
-    A/B/C have rows in ``eq_order`` and cols in ``var_order``; D has rows in ``eq_order``
-    and shock cols (no permutation). Returns matrices in original equation/variable order.
-    """
+    """Undo the row and column permutations applied by ``linearize_model``. D's shock columns carry no permutation."""
     inv_eq = np.argsort(eq_order)
     inv_var = np.argsort(var_order)
     A, B, C, D = matrices
@@ -66,7 +63,6 @@ def _unpermute_abcd(matrices, eq_order, var_order):
 
 
 def _compile_and_eval(mod, jacobians, ss_nodes):
-    """Compile a list of pytensor Jacobian graphs and evaluate at dummy SS values."""
     ss_names = {n.name for n in ss_nodes}
     param_inputs = [v for v in explicit_graph_inputs(jacobians) if v.name is not None and v.name not in ss_names]
 
@@ -161,8 +157,6 @@ class TestLinearizeModel:
 
 
 class TestSolvePolicyFunction:
-    """Verify that gensys and cycle reduction produce the same policy function, with correct state/jumper structure."""
-
     @pytest.mark.parametrize(
         "gcn_file, state_variables",
         [
@@ -204,6 +198,16 @@ class TestSolvePolicyFunction:
 
         assert_allclose(T_gensys, T_cr, atol=1e-8, rtol=1e-8)
         assert_allclose(R_gensys, R_cr, atol=1e-8, rtol=1e-8)
+
+    def test_cycle_reduction_reports_non_convergence(self):
+        mod = model_from_gcn("tests/_resources/test_gcns/pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
+        A, B, C, D = mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
+
+        T, R, result, _log_norm = solve_policy_function_with_cycle_reduction(A, B, C, D, 100, 1e-8, False)
+
+        assert T is None
+        assert R is None
+        assert result == "Iteration on all matrices failed to converge"
 
 
 class TestCycleReductionGradients:
@@ -297,8 +301,8 @@ class TestBKConditionGradients:
         bk_satisfied, _, _ = check_bk_condition_pt(A_pt, B_pt, C_pt, D_pt, lead_var_idx)
         potential = pt.switch(pt.eq(bk_satisfied, 0.0), -np.inf, 0.0)
 
-        # A genuinely-differentiable term keeps the inputs connected to the cost through
-        # something other than the disconnected BK path, mirroring the real likelihood.
+        # A differentiable term keeps the inputs connected to the cost outside the disconnected BK path, as the real
+        # likelihood does.
         cost = potential + (A_pt**2).sum() + (B_pt**2).sum() + (C_pt**2).sum()
 
         g = pt.grad(cost, [A_pt, B_pt, C_pt])
@@ -309,7 +313,7 @@ class TestBKConditionGradients:
         f = pytensor.function([A_pt, B_pt, C_pt, D_pt, *ps], hp, on_unused_input="ignore")
         hp_vals = f(A, B, C, D, np.ones_like(A), np.ones_like(B), np.ones_like(C))
 
-        # The BK potential is a step function, so the only contribution to the Hessian is
-        # from the smooth quadratic term: 2 * p for each connected input.
+        # The BK potential is a step function, so the only contribution to the Hessian comes from the quadratic term:
+        # 2 * p for each connected input.
         for hp_val, p_val in zip(hp_vals, [np.ones_like(A), np.ones_like(B), np.ones_like(C)], strict=True):
             assert_allclose(hp_val, 2.0 * p_val, atol=1e-8)

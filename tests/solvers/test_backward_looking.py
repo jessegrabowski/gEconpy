@@ -1,5 +1,3 @@
-"""Tests for backward-looking model workflows using the SARIMA(2,12) model."""
-
 import numpy as np
 import pytest
 
@@ -54,8 +52,8 @@ class TestBackwardLookingSolve:
         var_names = [v.base_name for v in model.variables]
         x = var_names.index("x")
 
-        # After time-index expansion: x[-1] -> x, x[-2] -> x__lag1,
-        # x[-12] -> x__lag11, x[-13] -> x__lag12, x[-14] -> x__lag13
+        # After time-index expansion: x[-1] -> x, x[-2] -> x__lag1, x[-12] -> x__lag11, x[-13] -> x__lag12, and
+        # x[-14] -> x__lag13.
         assert_allclose(T[x, x], rho_1, atol=1e-12)
         assert_allclose(T[x, var_names.index("x__lag1")], rho_2, atol=1e-12)
         assert_allclose(T[x, var_names.index("x__lag11")], rho_12, atol=1e-12)
@@ -71,7 +69,7 @@ class TestBackwardLookingIRF:
 
         irf = impulse_response_function(model, T, R, simulation_length=n_steps, shock_size=1.0)
 
-        # Convention: impact lands at t=0
+        # The shock impact lands at t = 0.
         expected = np.zeros((n_steps, n_vars))
         expected[0] = R.squeeze()
         for t in range(1, n_steps):
@@ -101,11 +99,11 @@ class TestBackwardLookingSimulation:
 
 class TestBackwardLookingMoments:
     def test_stationary_variance_matches_psd(self, sarima_solved):
-        """Verify Sigma[x,x] matches the variance from integrating the power spectral density."""
+        """Sigma[x, x] must match the variance obtained by integrating the power spectral density."""
         model, T, R = sarima_solved
         params = model.parameters()
         rho_1, rho_2, rho_12 = params["rho_1"], params["rho_2"], params["rho_12"]
-        sigma = 1.0  # shock std; not yet exposed via model.parameters()
+        sigma = 1.0
 
         # AR polynomial: (1 - rho_1*L - rho_2*L^2)(1 - rho_12*L^12) x_t = eps_t
         phi = np.zeros(14)
