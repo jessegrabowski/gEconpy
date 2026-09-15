@@ -6,6 +6,7 @@ from itertools import product
 from typing import Any, Literal, NamedTuple, cast
 
 import arviz_stats as azs
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ from matplotlib.colors import Colormap
 from matplotlib.dates import DateFormatter, YearLocator
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
+from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.lines import Line2D
 from matplotlib.text import Text
 from matplotlib.ticker import Formatter, StrMethodFormatter
@@ -132,22 +134,22 @@ def prepare_gridspec_figure(
     return gs, plot_locs
 
 
-def set_axis_cmap(axis: plt.Axes, cmap: str | None) -> None:
+def set_axis_cmap(axis: plt.Axes, cmap: str | Colormap | None) -> None:
     """
-    Set the color cycle of an axis from a named colormap.
+    Set the color cycle of an axis from a colormap.
 
     Parameters
     ----------
     axis : matplotlib Axes
         Axis whose property cycle is set.
-    cmap : str or None
-        Name of a matplotlib colormap, sampled at 20 evenly spaced points. If None, the axis reverts to the default
-        color cycle.
+    cmap : str, Colormap, or None
+        Name of a matplotlib colormap or a Colormap object, sampled at 20 evenly spaced points. If None, the axis
+        reverts to the default color cycle.
     """
     cycler = None
     if cmap is not None:
-        color = getattr(plt.cm, cmap)(np.linspace(0, 1, 20))
-        cycler = plt.cycler(color=color)
+        colormap = matplotlib.colormaps[cmap] if isinstance(cmap, str) else cmap
+        cycler = plt.cycler(color=colormap(np.linspace(0, 1, 20)))
     axis.set_prop_cycle(cycler)
 
 
@@ -924,9 +926,9 @@ def plot_heatmap(
     cbar.ax.set_ylabel(cbarlabel, rotation=-90, va="bottom")
 
     ax.set(
-        xticks=np.arange(n_rows),
+        xticks=np.arange(n_columns),
         xticklabels=data.columns,
-        yticks=np.arange(n_columns),
+        yticks=np.arange(n_rows),
         yticklabels=data.index,
     )
     ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
@@ -956,8 +958,8 @@ def annotate_heatmap(
     ----------
     im : AxesImage
         The heatmap image to annotate.
-    data : ndarray, optional
-        Values to write. Defaults to the image's own data.
+    data : array-like, optional
+        Values to write, with the same shape as the image. Defaults to the image's own data.
     valfmt : str or matplotlib Formatter, optional
         Format of the annotations. A string is used as a ``str.format`` template with the value bound to ``x``, for
         example "$ {x:.2f}". Defaults to "{x:.2f}".
@@ -973,8 +975,7 @@ def annotate_heatmap(
     texts : list of matplotlib Text
         The labels added to the heatmap, in row-major order.
     """
-    if not isinstance(data, list | np.ndarray):
-        data = im.get_array()
+    data = im.get_array() if data is None else np.asarray(data)
 
     threshold = im.norm(threshold) if threshold is not None else im.norm(data.max()) / 2.0
 
@@ -1043,7 +1044,8 @@ def plot_acf(
     dpi : int, optional
         Figure resolution in dots per inch. Defaults to 100.
     n_cols : int, optional
-        Number of columns in the panel grid. Defaults to 4.
+        Number of columns in the panel grid. Defaults to 4, or the number of panels if that is smaller. None is
+        treated as the default.
     mean_kwargs : dict, optional
         Keyword arguments forwarded to :meth:`matplotlib.axes.Axes.scatter` for the posterior-mean point, merged
         over the defaults ``{"s": 38, "zorder": 3}``. The per-model color is set automatically. Empty by default.
@@ -1124,7 +1126,7 @@ def plot_acf(
             raise ValueError(f"Cannot plot {missing}: not found in the provided autocorrelation tensor")
 
     n_plots = len(vars_to_plot)
-    n_cols = min(n_cols, n_plots)
+    n_cols = min(4 if n_cols is None else n_cols, n_plots)
     fig = plt.figure(figsize=figsize, dpi=dpi, layout="constrained")
     gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_plots, figure=fig)
     lags = diagonal.coords["lag"].values
@@ -1272,7 +1274,7 @@ def plot_corner(
         )
 
     engine = fig.get_layout_engine()
-    if engine is not None:
+    if isinstance(engine, ConstrainedLayoutEngine):
         engine.set(h_pad=0.0, w_pad=0.0, wspace=0.05, hspace=0.05)
 
     return fig

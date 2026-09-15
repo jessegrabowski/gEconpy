@@ -26,6 +26,7 @@ from gEconpy.model.statistics import (
     stationary_covariance_matrix,
 )
 from gEconpy.plotting import (
+    annotate_heatmap,
     plot_acf,
     plot_corner,
     plot_covariance_matrix,
@@ -42,6 +43,7 @@ from gEconpy.plotting import (
     plot_solvability_summary,
     plot_timeseries,
     prepare_gridspec_figure,
+    set_axis_cmap,
 )
 from tests._resources.cache_compiled_models import (
     load_and_cache_model,
@@ -417,6 +419,12 @@ def test_plot_eigenvalues(one_block_model, kwargs):
     assert isinstance(fig, Figure)
 
 
+def test_plot_eigenvalues_leaves_caller_kwargs_unchanged(one_block_model):
+    linearize_kwargs = dict(LINEARIZE_KW)
+    plot_eigenvalues(one_block_model, linearize_model_kwargs=linearize_kwargs, alpha=0.4)
+    assert linearize_kwargs == LINEARIZE_KW
+
+
 def test_plot_eigenvalues_scatter_point_count(one_block_model):
     fig = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW)
     scatter_points = fig.axes[0].findobj(PathCollection)[0].get_offsets().data
@@ -482,6 +490,28 @@ def test_plot_heatmap_returns_image_and_colorbar(cov_matrix):
     assert isinstance(cbar, Colorbar)
 
 
+def test_plot_heatmap_non_square_tick_labels():
+    data = pd.DataFrame(np.zeros((2, 3)), index=["a", "b"], columns=["x", "y", "z"])
+    im, _ = plot_heatmap(data)
+    assert [label.get_text() for label in im.axes.get_xticklabels()] == ["x", "y", "z"]
+    assert [label.get_text() for label in im.axes.get_yticklabels()] == ["a", "b"]
+
+
+@pytest.mark.parametrize("data", [[[1, 2], [3, 4]], pd.DataFrame([[1, 2], [3, 4]])], ids=["list", "dataframe"])
+def test_annotate_heatmap_uses_given_data(data):
+    im, _ = plot_heatmap(pd.DataFrame(np.zeros((2, 2))))
+    texts = annotate_heatmap(im, data=data, valfmt="{x:.0f}")
+    assert [text.get_text() for text in texts] == ["1", "2", "3", "4"]
+
+
+@pytest.mark.parametrize("cmap", ["viridis", plt.get_cmap("viridis")], ids=["name", "colormap"])
+def test_set_axis_cmap_accepts_name_and_colormap(cmap):
+    axis = plt.figure().add_subplot()
+    set_axis_cmap(axis, cmap)
+    first_color = axis.plot([0, 1])[0].get_color()
+    assert np.allclose(mcolors.to_rgba(first_color), plt.get_cmap("viridis")(0.0))
+
+
 @pytest.mark.parametrize("vars_to_plot", [["C", "K", "A"], ["C"]], ids=["three", "one"])
 def test_plot_acf_subset_titles(acf_data, vars_to_plot):
     fig = plot_acf(acf_data, vars_to_plot=vars_to_plot)
@@ -491,6 +521,11 @@ def test_plot_acf_subset_titles(acf_data, vars_to_plot):
 def test_plot_acf_defaults_plots_all_variables(acf_data, one_block_model):
     fig = plot_acf(acf_data)
     assert [ax.get_title() for ax in fig.axes] == [v.base_name for v in one_block_model.variables]
+
+
+def test_plot_acf_n_cols_none_uses_default(acf_data, one_block_model):
+    fig = plot_acf(acf_data, n_cols=None)
+    assert len(fig.axes) == len(one_block_model.variables)
 
 
 def test_plot_acf_bad_var_raises(acf_data):
@@ -597,6 +632,14 @@ def test_plot_corner_axis_labels(prior_idata):
     ax = fig.axes[2]
     assert ax.get_xlabel() == var_names[0]
     assert ax.get_ylabel() == var_names[1]
+
+
+@pytest.mark.parametrize("layout", ["tight", "constrained", "none"])
+def test_plot_corner_accepts_any_layout_engine(prior_idata, layout):
+    idata, _ = prior_idata
+    var_names = list(idata.prior.data_vars)[:2]
+    fig = plot_corner(idata, group="prior", var_names=var_names, figure_kwargs={"layout": layout})
+    assert len(fig.axes) == 4
 
 
 def test_plot_corner_bad_var_raises(prior_idata):
