@@ -7,8 +7,9 @@ from gEconpy.data import get_example_gcn
 from gEconpy.model.block import Block
 from gEconpy.model.block import registry as registry_mod
 from gEconpy.model.block.cobb_douglas import CobbDouglasBlock, _match_cobb_douglas_constraint
-from gEconpy.parser.loader import load_gcn_file
+from gEconpy.parser.loader import load_gcn_file, load_gcn_string
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
+from tests.conftest import parsed_var
 
 RBC_PATH = get_example_gcn("RBC")
 
@@ -124,3 +125,57 @@ class TestDetectionConservatism:
         assert match is not None
         assert match.productivity is None
         assert set(dict(match.inputs).keys()) == set(xs)
+
+
+FIRM_WITH_NON_INPUT_CONTROL = """
+block FIRM
+{
+    controls { K[], L[], B[]; };
+    objective { Pi[] = Y[] - r[] * K[] - w[] * L[] - B[] ^ 2 + q[] * B[]; };
+    constraints { Y[] = A[] * K[] ^ alpha * L[] ^ (1 - alpha) : mu[]; };
+    calibration { alpha = 0.35; };
+};
+"""
+
+FIRM_WITH_DEFINITION_AND_GENERATED_MULTIPLIER = """
+block FIRM
+{
+    definitions { cost[] = r[] * K[] + w[] * L[]; };
+    controls { K[], L[]; };
+    objective { Pi[] = Y[] - cost[]; };
+    constraints { Y[] = A[] * K[] ^ alpha * L[] ^ (1 - alpha); };
+    calibration { alpha = 0.35; };
+};
+"""
+
+
+def test_control_outside_the_production_function_falls_back_to_lagrangian_derivative():
+    """A control that is not a production input gets the generic chain-rule FOC, here d/dB of the objective."""
+    block = load_gcn_string(FIRM_WITH_NON_INPUT_CONTROL).block_dict["FIRM"]
+    assert isinstance(block, CobbDouglasBlock)
+
+    B, q = parsed_var("B", 0), parsed_var("q", 0)
+    assert sp.simplify(block.system_equations[-1] - (q - 2 * B)) == 0
+
+
+def test_constructing_without_matching_constraint_raises():
+    Y, r, w, Pi = sp.symbols("Y r w Pi")
+    with pytest.raises(RuntimeError, match="constructed without a matching Cobb-Douglas constraint"):
+        CobbDouglasBlock(
+            name="FIRM",
+            objective={0: sp.Eq(Pi, Y - r)},
+            constraints={1: sp.Eq(Y, r + w)},
+            controls=[Y],
+            multipliers={0: None, 1: None},
+            equation_flags={0: {}, 1: {}},
+        )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="_build_lagrangian stores a generated multiplier under its running index, not the constraint key",
+)
+def test_definition_with_generated_multiplier_solves():
+    block = load_gcn_string(FIRM_WITH_DEFINITION_AND_GENERATED_MULTIPLIER).block_dict["FIRM"]
+    assert isinstance(block, CobbDouglasBlock)
+    assert len(block.system_equations) == 4

@@ -36,7 +36,7 @@ def get_unsolved_block_from_string(gcn_string: str, block_name: str = "HOUSEHOLD
 
 @pytest.fixture
 def rng():
-    return np.random.default_rng()
+    return np.random.default_rng(0)
 
 
 _MISSING_CONTROLS = """
@@ -110,15 +110,67 @@ _VARIABLE_IN_DETERMINISTIC_PARAMETER = """
 """
 
 
+_NO_CONTINUATION_VALUE = """
+    block HOUSEHOLD
+    {
+        controls { C[]; };
+        objective { U[] = log(C[]) + beta * V[1]; };
+        constraints { C[] = w[]; };
+    };
+"""
+
+_SS_VARIABLE_WITHOUT_STEADY_STATE_BLOCK = """
+    block HOUSEHOLD
+    {
+        identities { Y[] = A[] * L[]; };
+        calibration
+        {
+            alpha = 0.5;
+            phi = Y[ss] ^ 2 + alpha;
+        };
+    };
+"""
+
+_SS_VARIABLE_WITHOUT_ANALYTIC_VALUE = """
+    block STEADY_STATE
+    {
+        identities { A[ss] = 1; };
+    };
+
+    block HOUSEHOLD
+    {
+        identities { Y[] = A[] * L[]; };
+        calibration
+        {
+            alpha = 0.5;
+            phi = Y[ss] ^ 2 + alpha;
+        };
+    };
+"""
+
+
 @pytest.mark.parametrize(
-    "gcn_string, exception",
+    "gcn_string, exception, match",
     [
-        (_MISSING_CONTROLS, OptimizationProblemNotDefinedException),
-        (_MISSING_OBJECTIVE, OptimizationProblemNotDefinedException),
-        (_MULTIPLE_OBJECTIVES, MultipleObjectiveFunctionsException),
-        (_CONTROL_NOT_FOUND, ControlVariableNotFoundException),
-        (_DYNAMIC_CALIBRATION, DynamicCalibratingEquationException),
-        (_VARIABLE_IN_DETERMINISTIC_PARAMETER, ValueError),
+        pytest.param(
+            _MISSING_CONTROLS,
+            OptimizationProblemNotDefinedException,
+            "has an objective component but no controls component",
+            marks=pytest.mark.xfail(strict=True, reason="The message names the present component as the missing one"),
+        ),
+        pytest.param(
+            _MISSING_OBJECTIVE,
+            OptimizationProblemNotDefinedException,
+            "has a controls component but no objective component",
+            marks=pytest.mark.xfail(strict=True, reason="The message names the present component as the missing one"),
+        ),
+        (_MULTIPLE_OBJECTIVES, MultipleObjectiveFunctionsException, "declares 2 objectives"),
+        (_CONTROL_NOT_FOUND, ControlVariableNotFoundException, "Control variable 'Z_t' in block HOUSEHOLD"),
+        (_DYNAMIC_CALIBRATION, DynamicCalibratingEquationException, "uses non-steady-state variables"),
+        (_VARIABLE_IN_DETERMINISTIC_PARAMETER, ValueError, "cannot be functions of variables"),
+        (_NO_CONTINUATION_VALUE, ValueError, "did not find the continuation value"),
+        (_SS_VARIABLE_WITHOUT_STEADY_STATE_BLOCK, ValueError, "no STEADY_STATE block with analytic solutions"),
+        (_SS_VARIABLE_WITHOUT_ANALYTIC_VALUE, ValueError, "without analytic solutions: Y_ss"),
     ],
     ids=[
         "missing-controls",
@@ -127,10 +179,13 @@ _VARIABLE_IN_DETERMINISTIC_PARAMETER = """
         "control-not-found",
         "dynamic-calibrating-equation",
         "variable-in-deterministic-parameter",
+        "objective-without-continuation-value",
+        "ss-variable-without-steady-state-block",
+        "ss-variable-without-analytic-value",
     ],
 )
-def test_malformed_block_raises(gcn_string, exception):
-    with pytest.raises(exception):
+def test_malformed_block_raises(gcn_string, exception, match):
+    with pytest.raises(exception, match=match):
         get_block_from_string(gcn_string)
 
 
@@ -572,7 +627,44 @@ class TestBlockFromSympy:
         assert block.constraints == constraints
 
         block.solve_optimization()
-        assert len(block.system_equations) > 0
+
+        foc_C = 1 / C - lambda_
+        foc_L = -1 + lambda_ * w
+        assert len(block.system_equations) == 4
+        assert all(
+            sp.simplify(foc - expected) == 0
+            for foc, expected in zip(block.system_equations[-2:], [foc_C, foc_L], strict=True)
+        )
+
+    def test_generated_multiplier_is_eliminated_by_simplification(self):
+        """An unnamed multiplier that a two-term FOC pins down is solved out and its slot reset to None."""
+        U = parsed_var("U", 0)
+        U_next = parsed_var("U", 1)
+        C = parsed_var("C", 0)
+        L = parsed_var("L", 0)
+        w = parsed_var("w", 0)
+        beta = parsed_symbol("beta")
+
+        block = Block(
+            name="HOUSEHOLD",
+            objective={0: sp.Eq(U, sp.log(C) - L + beta * U_next)},
+            constraints={1: sp.Eq(C, w * L)},
+            controls=[C, L],
+            multipliers={0: None, 1: None},
+            equation_flags={0: {}, 1: {}},
+        )
+        block.solve_optimization(try_simplify=False)
+        generated = block.multipliers[1]
+        assert generated.base_name == "lambda__H_1"
+        assert any(generated in eq.atoms() for eq in block.system_equations)
+
+        block.simplify_system_equations()
+
+        assert block.multipliers[1] is None
+        assert generated in block.eliminated_variables
+        assert not any(generated in eq.atoms() for eq in block.system_equations)
+        assert len(block.system_equations) == 3
+        assert sp.simplify(block.system_equations[-1] - (w / C - 1)) == 0
 
 
 def test_lagged_definition_produces_derivative_in_foc():

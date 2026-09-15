@@ -72,7 +72,7 @@ def test_statespace_matrices_agree_with_model(gcn_file):
     D_ss = D_ss[inv_eq]
     ss_matrices = [A_ss, B_ss, C_ss, D_ss]
 
-    for mod_matrix, ss_matrix in zip(mod_matrices, ss_matrices, strict=False):
+    for mod_matrix, ss_matrix in zip(mod_matrices, ss_matrices, strict=True):
         np.testing.assert_allclose(mod_matrix, ss_matrix, atol=1e-8, rtol=1e-8)
 
 
@@ -104,7 +104,7 @@ def test_backward_direct_solver_produces_finite_logp():
     ss_mod = load_and_cache_statespace("sarima2_12.gcn")
     ss_mod.configure(observed_states=["x"], solver="backward_direct", verbose=False)
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(0)
     data = pd.DataFrame(
         rng.normal(size=(100,)),
         columns=["x"],
@@ -136,8 +136,81 @@ def test_norm_check_is_zero_at_solution(rbc_statespace):
     np.testing.assert_allclose(norms, 0.0, atol=1e-12)
 
 
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"observed_states": ["NotAState"]}, "unknown to the model and cannot be set as observed: NotAState"),
+        ({"observed_states": ["Y"], "measurement_error": ["K"]}, "not observed, and cannot have measurement error: K"),
+        (
+            {"observed_states": ["Y"], "temporal_aggregation": {"K": "sum"}},
+            "temporal_aggregation variables are not in observed_states: K",
+        ),
+        (
+            {"observed_states": ["Y"], "temporal_aggregation": {"Y": "median"}},
+            "Invalid aggregation methods: Y='median'",
+        ),
+        (
+            {"observed_states": ["Y"], "temporal_aggregation": {"Y": "sum"}, "aggregation_period": 1},
+            "aggregation_period must be >= 2",
+        ),
+        (
+            {"observed_states": ["Y"], "ss_obs_intercept": ["K"]},
+            "ss_obs_intercept entries are not in observed_states: K",
+        ),
+        ({"observed_states": ["Y"], "constant_params": ["not_a_param"]}, "cannot be set as constant: not_a_param"),
+        ({"observed_states": ["Y"], "solver": "not_a_solver"}, "Unknown solver 'not_a_solver'"),
+        (
+            {"observed_states": ["Y", "K", "C"]},
+            "Stochastic singularity! You requested 3 observed timeseries, but there is only 1 source",
+        ),
+        ({"observed_states": ["Y", "K", "C"], "measurement_error": ["Y"]}, "there are only 2 sources"),
+    ],
+    ids=[
+        "unknown-observed-state",
+        "measurement-error-on-unobserved-state",
+        "aggregation-of-unobserved-state",
+        "unknown-aggregation-method",
+        "aggregation-period-below-two",
+        "ss-obs-intercept-on-unobserved-state",
+        "unknown-constant-param",
+        "unknown-solver",
+        "stochastic-singularity-one-source",
+        "stochastic-singularity-two-sources",
+    ],
+)
+def test_configure_rejects_inconsistent_arguments(rbc_statespace, kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        rbc_statespace.configure(verbose=False, **kwargs)
+
+
+def test_to_pymc_skips_excluded_and_constant_priors(rbc_statespace):
+    rbc_statespace.configure(observed_states=["Y"], constant_params=["beta"], solver="gensys", verbose=False)
+    assert {"alpha", "beta", "rho_A"} <= set(rbc_statespace.param_priors)
+
+    with pm.Model() as m:
+        rbc_statespace.to_pymc(exclude_priors=["alpha"])
+    rv_names = {rv.name for rv in m.free_RVs}
+
+    assert "rho_A" in rv_names
+    assert "alpha" not in rv_names
+    assert "beta" not in rv_names
+
+
+def test_full_shock_covariance_takes_one_matrix_parameter(rbc_statespace):
+    rbc_statespace.configure(observed_states=["Y"], full_shock_covariance=True, solver="gensys", verbose=False)
+
+    assert "state_cov" in rbc_statespace.param_names
+    assert "sigma_epsilon_A" not in rbc_statespace.param_names
+    assert rbc_statespace.param_dims["state_cov"] == ("shock", "shock_aux")
+
+    Q = rbc_statespace.ssm["state_cov"]
+    (state_cov_input,) = pm.pytensorf.inputvars([Q])
+    assert state_cov_input.name == "state_cov"
+    np.testing.assert_allclose(pytensor.function([state_cov_input], Q)(np.array([[0.04]])), [[0.04]])
+
+
 @pytest.mark.filterwarnings("ignore:Provided data contains missing values and will be automatically imputed")
-def test_constant_params_excluded_from_prior_samples():
+def test_data_from_prior_drops_constant_params_and_blanks_requested_fraction():
     ss_mod = statespace_from_gcn(TEST_GCNS / "rbc_linearized.gcn", verbose=False)
     ss_mod.configure(
         observed_states=["Y", "C", "L"],
@@ -153,12 +226,20 @@ def test_constant_params_excluded_from_prior_samples():
         for var_name in ss_mod.observed_states:
             pm.Gamma(f"error_sigma_{var_name}", alpha=2, beta=100)
 
-    true_params, data, _ = data_from_prior(statespace_mod=ss_mod, pymc_model=pm_mod, n_samples=5, random_seed=17031)
+    index = pd.date_range("1990-01-01", periods=40, freq="QS")
+    true_params, data, prior_idata = data_from_prior(
+        statespace_mod=ss_mod, pymc_model=pm_mod, index=index, n_samples=5, pct_missing=0.1, random_seed=17031
+    )
 
     assert isinstance(true_params, xr.Dataset)
-    assert data.shape[1] == 3
     assert "beta" not in true_params.data_vars
     assert "delta" not in true_params.data_vars
+    assert int(true_params["param_idx"]) in range(5)
+
+    assert list(data.columns) == ["Y", "C", "L"]
+    assert data.index.equals(index)
+    assert (data.isna().sum() == 4).all()
+    assert "unconditional_prior" in prior_idata.children
 
 
 def test_constant_params_auto_excludes_priorless_params():
@@ -201,7 +282,7 @@ def test_temporal_aggregation_sum_accumulates_over_window(rbc_statespace):
     k_orig = rbc_statespace._k_orig_states
     y_idx = rbc_statespace._orig_state_names.index("Y")
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(0)
     x = np.zeros(T.shape[0])
     x[:k_orig] = rng.normal(0, 0.1, size=k_orig)
 
@@ -260,7 +341,7 @@ def test_mixed_frequency_data_produces_finite_logp(rbc_statespace):
         verbose=False,
     )
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(0)
     n_quarters = 40
     hf_index = pd.date_range("2000-01-01", periods=n_quarters, freq="QS")
 
