@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 import sympy as sp
@@ -13,10 +11,7 @@ if TYPE_CHECKING:
 
 class GCNValidationError(ValueError):
     """
-    Base class for validation errors that support rich source location display.
-
-    This provides a consistent interface for errors that occur during model validation
-    (post-parsing) and can display the relevant source code with highlighted tokens.
+    Base class for model validation errors that display the offending source location.
 
     Parameters
     ----------
@@ -25,39 +20,23 @@ class GCNValidationError(ValueError):
     source : str, optional
         The full source code of the GCN file.
     location : ParseLocation, optional
-        The location of the problematic token in the source.
+        The location of the offending token in the source. Source context is shown only when both ``source`` and
+        ``location`` are given.
     annotation : str, optional
-        Short annotation to display under the caret (e.g., "undeclared variable").
+        Short annotation to display under the caret, for example "undeclared variable". Omitted by default.
     notes : list of str, optional
-        Additional notes/hints to display at the bottom.
+        Hints to display at the bottom of the message. Empty by default.
     filepath : str, optional
-        The file path to display in the error location.
-
-    Examples
-    --------
-    .. code-block:: python
-
-        from gEconpy.exceptions import GCNValidationError
-        from gEconpy.parser.errors import ParseLocation
-
-        loc = ParseLocation(line=5, column=12, end_column=15, source_line="    K_t[];")
-        err = GCNValidationError(
-            "Variable K_t not found in equations",
-            source=source_code,
-            location=loc,
-            annotation="undeclared control",
-            notes=["Check that the variable appears in constraints or objective"],
-        )
+        The file path to display in the error location. Defaults to ``<source>``.
     """
 
-    # Subclasses can override this for specific error codes
     error_code: str | None = None
 
     def __init__(
         self,
         message: str,
         source: str | None = None,
-        location: ParseLocation | None = None,
+        location: "ParseLocation | None" = None,
         annotation: str | None = None,
         notes: list[str] | None = None,
         filepath: str | None = None,
@@ -73,75 +52,54 @@ class GCNValidationError(ValueError):
         super().__init__(formatted_message)
 
     def _format_message(self) -> str:
-        """Format the error message with source context if available."""
         if self.source is None or self.location is None:
             return self.base_message
 
         return self._format_with_source()
 
     def _format_with_source(self) -> str:
-        """Format the error message in the style of parsing errors."""
         lines = self.source.splitlines()
         line = self.location.line
 
         if line < 1 or line > len(lines):
             return self.base_message
 
-        parts = []
-
-        # Error header: error[CODE]: message
-        if self.error_code:
-            parts.append(f"error[{self.error_code}]: {self.base_message}")
-        else:
-            parts.append(self.base_message)
-
-        # File location: --> file:line:column
+        header = f"error[{self.error_code}]: {self.base_message}" if self.error_code else self.base_message
         filepath = self.filepath or "<source>"
-        col = self.location.column or 1
-        parts.append(f"  --> {filepath}:{line}:{col}")
+        column = self.location.column or 1
+        parts = [header, f"  --> {filepath}:{line}:{column}", "     |"]
 
-        # Empty line with just pipe
-        parts.append("     |")
-
-        # Context lines (before, error line, after)
         start = max(0, line - 2)
         end = min(len(lines), line + 2)
-
-        # Calculate width needed for line numbers
         width = len(str(end))
 
         for i in range(start, end):
             line_num = i + 1
             line_content = lines[i].rstrip()
-            if line_content:
-                parts.append(f"  {line_num:>{width}} | {line_content}")
-            else:
-                parts.append(f"  {line_num:>{width}} |")
+            parts.append(f"  {line_num:>{width}} | {line_content}" if line_content else f"  {line_num:>{width}} |")
 
-            # Add caret and annotation under the error line
             if line_num == line and self.location.column is not None:
-                # Calculate pointer position
-                col_offset = self.location.column - 1
-                if self.location.end_column is not None:
-                    pointer_len = max(1, self.location.end_column - self.location.column)
-                else:
-                    pointer_len = 3  # Default to 3 carets
+                parts.append(self._caret_line(width))
 
-                padding = " " * (width + 5 + col_offset)  # 5 = "  " + " | "
-                caret = "^" * pointer_len
-
-                if self.annotation:
-                    parts.append(f"{padding}{caret} {self.annotation}")
-                else:
-                    parts.append(f"{padding}{caret}")
-
-        # Closing pipe
         parts.append("     |")
-
-        # Notes at the bottom
         parts.extend(f"   = note: {note}" for note in self.notes)
 
         return "\n".join(parts)
+
+    def _caret_line(self, width: int) -> str:
+        col_offset = self.location.column - 1
+        if self.location.end_column is not None:
+            pointer_len = max(1, self.location.end_column - self.location.column)
+        else:
+            pointer_len = 3
+
+        gutter_width = width + len("  ") + len(" | ")
+        padding = " " * (gutter_width + col_offset)
+        caret = "^" * pointer_len
+
+        if self.annotation:
+            return f"{padding}{caret} {self.annotation}"
+        return f"{padding}{caret}"
 
 
 class DynamicCalibratingEquationException(GCNValidationError):
@@ -154,7 +112,7 @@ class DynamicCalibratingEquationException(GCNValidationError):
         eq: sp.Add,
         block_name: str,
         source: str | None = None,
-        location: ParseLocation | None = None,
+        location: "ParseLocation | None" = None,
         filepath: str | None = None,
     ):
         self.eq = eq
@@ -184,8 +142,8 @@ class OptimizationProblemNotDefinedException(ValueError):
         not_missing = "objective" if missing == "controls" else "controls"
 
         message = (
-            f"Block {block_name} has a {missing} component but no {not_missing} component, verify whether"
-            f"or not this block has an optimization problem."
+            f"Block {block_name} has a {missing} component but no {not_missing} component. Add the missing "
+            f"component, or remove the {missing} if this block has no optimization problem."
         )
 
         super().__init__(message)
@@ -199,11 +157,10 @@ class MultipleObjectiveFunctionsException(ValueError):
 
         n_eqs = len(eqs)
 
-        message = f"Block {block_name} appears to have multiple objectives, excepted just one but found {n_eqs}:\n"
-        for eq in eqs:
-            message += str(eq) + "\n"
-        message += (
-            " Only one objective function is supported. Please manually simplify the objective to a single function."
+        listed_eqs = "\n".join(str(eq) for eq in eqs)
+        message = (
+            f"Block {block_name} declares {n_eqs} objectives, but only one is supported:\n{listed_eqs}\n"
+            "Simplify the objective to a single function."
         )
 
         super().__init__(message)
@@ -219,7 +176,7 @@ class ControlVariableNotFoundException(GCNValidationError):
         block_name: str,
         control: TimeAwareSymbol,
         source: str | None = None,
-        location: ParseLocation | None = None,
+        location: "ParseLocation | None" = None,
         filepath: str | None = None,
     ):
         self.block_name = block_name
@@ -260,8 +217,8 @@ class PerturbationSolutionNotFoundException(ValueError):
 
     def __init__(self):
         message = (
-            "This operation cannot be completed until the model has a solved perturbation solution. Please "
-            "call the .solve() method to solve for the policy function."
+            "This operation requires a perturbation solution. Call the .solve() method to solve for the policy "
+            "function."
         )
 
         super().__init__(message)
@@ -303,10 +260,10 @@ class InvalidDistributionException(ValueError):
 
     def __init__(self, variable, distribution_string):
         message = (
-            f'The distribution associated with "{variable}", defined as "{distribution_string}", appears to have '
-            f"a typo, please check the GCN file. Please also check that you have not supplied an initial "
-            f"parameter value to an exogenous shock distribution, as in epsilon[] ~ N(mu=0, sd=1) = 0.5. Shock "
-            f"distributions should NOT have an equals sign after the distribution definition."
+            f'The distribution for "{variable}", defined as "{distribution_string}", could not be parsed. Check '
+            f"the GCN file for a typo. Also check that no initial value follows an exogenous shock distribution, "
+            f"as in epsilon[] ~ N(mu=0, sd=1) = 0.5. Shock distributions must not have an equals sign after the "
+            f"distribution definition."
         )
 
         super().__init__(message)
@@ -317,8 +274,8 @@ class MultipleParameterDefinitionException(ValueError):
 
     def __init__(self, variable_name: str, d_name: str, param_name: str, result_list: list[str]) -> None:
         message = (
-            f'The {d_name} distribution associated with "{variable_name}" has multiple declarations for '
-            f"{param_name}. Please pass only one of: "
+            f'The {d_name} distribution for "{variable_name}" has multiple declarations for '
+            f"{param_name}. Pass only one of: "
         )
         message += ", ".join(result_list)
 
@@ -359,8 +316,8 @@ class ExtraParameterError(ValueError):
         n = len(extras)
         verb = "was" if n == 1 else "were"
         message = (
-            f"The following parameter{'s' if n > 1 else ''} {verb} were given initial values in calibration blocks but "
-            f"were not used in model equations: {', '.join([x.name for x in extras])} \n"
+            f"The following parameter{'s' if n > 1 else ''} {verb} given initial values in calibration blocks but "
+            f"{verb} not used in model equations: {', '.join([x.name for x in extras])} \n"
             f"Verify your model equations, or remove these parameters if they are not needed."
         )
 
@@ -374,8 +331,8 @@ class ExtraParameterWarning(UserWarning):
         n = len(extras)
         verb = "was" if n == 1 else "were"
         message = (
-            f"The following parameter{'s' if n > 1 else ''} {verb} were given initial values in calibration blocks but "
-            f"were not used in model equations: {', '.join([x.name for x in extras])} \n"
+            f"The following parameter{'s' if n > 1 else ''} {verb} given initial values in calibration blocks but "
+            f"{verb} not used in model equations: {', '.join([x.name for x in extras])} \n"
             f"Verify your model equations, or remove these parameters if they are not needed."
         )
 
@@ -392,10 +349,9 @@ class DuplicateParameterError(GCNValidationError):
         extras,
         block: str | None = None,
         source: str | None = None,
-        location: ParseLocation | None = None,
+        location: "ParseLocation | None" = None,
         filepath: str | None = None,
     ):
-        len(extras)
         param_names = ", ".join([x.name for x in extras])
         block_str = f"block {block}" if block else "calibration blocks"
 
