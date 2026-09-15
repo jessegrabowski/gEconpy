@@ -38,6 +38,14 @@ class CompositeDistribution:
         self.param_name_to_hyper_name = param_name_to_hyper_name
         self.fixed_params = fixed_params
 
-    def to_pymc(self, **kwargs):
+    def to_pymc(self, **kwargs) -> None:
+        """
+        Register a PyMC random variable for every hyper-parameter prior in the current model context.
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded to each prior's ``to_pymc`` method.
+        """
         for name, param_dist in self.hyper_param_dict.items():
             param_dist.to_pymc(name=self.param_name_to_hyper_name[name], **kwargs)

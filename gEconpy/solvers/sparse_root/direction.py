@@ -7,36 +7,51 @@ import scipy.sparse as sp
 
 from scipy.sparse.linalg import bicgstab, gmres, spsolve
 
+_KRYLOV_METHODS = {
+    "gmres": gmres,
+    "bicgstab": bicgstab,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class DirectionProposal:
+    """Search direction proposed by a direction strategy.
+
+    Attributes
+    ----------
+    direction : ndarray
+        Proposed step direction.
+    slope : float
+        Directional derivative of the merit function along ``direction``. Always negative.
+    kind : str
+        Label describing how the direction was computed, such as ``"newton"`` or ``"gradient_fallback"``.
+    """
+
     direction: np.ndarray
     slope: float
     kind: str
 
 
 class DirectionStrategy(Protocol):
+    """Strategy that proposes a search direction from the current residuals and Jacobian."""
+
     def compute(self, x: np.ndarray, res: np.ndarray, jac: sp.spmatrix) -> DirectionProposal: ...
 
 
 @dataclass
 class NewtonDirection:
-    """Direction strategy that solves the Newton system with the current Jacobian.
+    r"""Direction strategy that solves the Newton system with the current Jacobian.
 
-    Solves ``J dx = -r`` at every call. If the solve fails or returns non-finite values, the strategy falls
-    back to the steepest descent direction ``-J^T r``.
+    Solves :math:`J \, dx = -r` at every call. When the solve fails or returns non-finite values, the strategy falls
+    back to the steepest descent direction :math:`-J^T r`.
 
     Parameters
     ----------
-    linear_solver : callable or None
-        Sparse linear solver. Defaults to ``scipy.sparse.linalg.spsolve``.
+    linear_solver : callable, optional
+        Sparse linear solver called as ``linear_solver(A, b)``. Defaults to :func:`scipy.sparse.linalg.spsolve`.
     """
 
-    linear_solver: Callable | None = field(default=None)
-
-    def __post_init__(self):
-        if self.linear_solver is None:
-            self.linear_solver = spsolve
+    linear_solver: Callable = spsolve
 
     def compute(
         self,
@@ -52,7 +67,7 @@ class NewtonDirection:
             Current iterate. Unused, accepted for interface compatibility.
         res : ndarray
             Residuals at ``x``.
-        jac : ``sparse matrix``
+        jac : sparse matrix
             Jacobian at ``x``.
 
         Returns
@@ -60,52 +75,33 @@ class NewtonDirection:
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
-        try:
-            dx = self.linear_solver(jac, -res)
-            if not np.all(np.isfinite(dx)):
-                msg = "non-finite"
-                raise ValueError(msg)  # noqa: TRY301
-            kind = "newton"
-        except Exception:
-            dx = -(jac.T @ res)
-            kind = "gradient_fallback"
-
-        slope = float(np.dot(res, jac @ dx))
-        if slope >= 0:
-            dx = -dx
-            slope = -slope
-            kind = f"{kind}_flipped"
-
-        return DirectionProposal(direction=dx, slope=slope, kind=kind)
+        dx = try_linear_solve(self.linear_solver, jac, -res)
+        if dx is None:
+            return _descent_proposal(-(jac.T @ res), res, jac, kind="gradient_fallback")
+        return _descent_proposal(dx, res, jac, kind="newton")
 
 
 @dataclass
 class ChordDirection:
-    """Direction strategy that caches and reuses the Jacobian.
+    """Direction strategy that solves with a cached Jacobian, refreshing it every ``recompute_every`` calls.
 
-    Instead of solving with the current Jacobian every step, the Chord method
-    solves with a cached Jacobian, refreshing it every ``recompute_every`` calls.
     The residual is always current, so only the linear solve reuses old data.
 
     Parameters
     ----------
-    linear_solver : callable or None
-        Sparse linear solver. Defaults to ``spsolve``.
-    recompute_every : int
-        Number of direction computations between Jacobian refreshes.
+    linear_solver : callable, optional
+        Sparse linear solver called as ``linear_solver(A, b)``. Defaults to :func:`scipy.sparse.linalg.spsolve`.
+    recompute_every : int, optional
+        Number of direction computations between Jacobian refreshes. Defaults to 5.
     """
 
-    linear_solver: Callable | None = field(default=None)
+    linear_solver: Callable = spsolve
     recompute_every: int = 5
-    _cached_jac: sp.spmatrix = field(init=False, repr=False, default=None)
+    _cached_jac: sp.spmatrix | None = field(init=False, repr=False, default=None)
     _call_count: int = field(init=False, repr=False, default=0)
 
-    def __post_init__(self):
-        if self.linear_solver is None:
-            self.linear_solver = spsolve
-
-    def reset(self):
-        """Clear cached Jacobian. Called by the solver's ``init``."""
+    def reset(self) -> None:
+        """Discard the cached Jacobian so the next call refreshes it."""
         self._cached_jac = None
         self._call_count = 0
 
@@ -123,66 +119,42 @@ class ChordDirection:
             Current iterate. Unused, accepted for interface compatibility.
         res : ndarray
             Residuals at ``x``.
-        jac : ``sparse matrix``
-            Jacobian at ``x``.
+        jac : sparse matrix
+            Jacobian at ``x``. Used for the slope even when the cached Jacobian is used for the solve.
 
         Returns
         -------
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
-        # Refresh cache when needed
         if self._cached_jac is None or self._call_count % self.recompute_every == 0:
             self._cached_jac = jac
         self._call_count += 1
 
-        J = self._cached_jac
-
-        try:
-            dx = self.linear_solver(J, -res)
-            if not np.all(np.isfinite(dx)):
-                msg = "non-finite"
-                raise ValueError(msg)  # noqa: TRY301
-            kind = "chord"
-        except Exception:
-            dx = -(J.T @ res)
-            kind = "chord_gradient_fallback"
-
-        # Slope is computed with the *current* Jacobian for correct Armijo test
-        slope = float(np.dot(res, jac @ dx))
-        if slope >= 0:
-            dx = -dx
-            slope = -slope
-            kind = f"{kind}_flipped"
-
-        return DirectionProposal(direction=dx, slope=slope, kind=kind)
-
-
-_KRYLOV_METHODS = {
-    "gmres": gmres,
-    "bicgstab": bicgstab,
-}
+        cached_jac = self._cached_jac
+        dx = try_linear_solve(self.linear_solver, cached_jac, -res)
+        if dx is None:
+            return _descent_proposal(-(cached_jac.T @ res), res, jac, kind="chord_gradient_fallback")
+        return _descent_proposal(dx, res, jac, kind="chord")
 
 
 @dataclass
 class KrylovDirection:
-    """Direction via iterative Krylov solve with Eisenstat-Walker forcing.
+    r"""Direction strategy that solves the Newton system inexactly with a Krylov method.
 
-    Solves the Newton system ``J dx = -r`` approximately using GMRES or BiCGSTAB.
-    The tolerance for the iterative solve is ``eta_k * ||r_k||``, where ``eta_k`` is adapted with the
-    Eisenstat-Walker formula to tighten as the solver approaches the solution.
+    Solves :math:`J \, dx = -r` approximately using GMRES or BiCGSTAB with absolute tolerance
+    :math:`\eta_k \lVert r_k \rVert`. With Eisenstat-Walker forcing, :math:`\eta_k` tightens as the residual shrinks.
 
     Parameters
     ----------
-    krylov_method : str
-        Name of the Krylov method: ``"gmres"`` or ``"bicgstab"``.
-    eta_max : float
-        Upper bound on the forcing term.
-    eta_min : float
-        Lower bound on the forcing term.
-    eisenstat_walker : bool
-        Whether to adapt the forcing term. If ``False``, ``eta_max`` is used
-        throughout.
+    krylov_method : str, optional
+        Name of the Krylov method, ``"gmres"`` or ``"bicgstab"``. Defaults to ``"gmres"``.
+    eta_max : float, optional
+        Upper bound on the forcing term. Defaults to 0.9.
+    eta_min : float, optional
+        Lower bound on the forcing term. Defaults to 1e-6.
+    eisenstat_walker : bool, optional
+        Whether to adapt the forcing term. When ``False``, ``eta_max`` is used throughout. Defaults to ``True``.
     """
 
     krylov_method: str = "gmres"
@@ -194,8 +166,14 @@ class KrylovDirection:
     _prev_res_norm: float = field(init=False, repr=False, default=0.0)
     _prev_pred_norm: float = field(init=False, repr=False, default=0.0)
 
-    def reset(self):
-        """Clear adaptive state. Called by the solver's ``init``."""
+    def __post_init__(self):
+        if self.krylov_method not in _KRYLOV_METHODS:
+            raise ValueError(
+                f"Unknown Krylov method {self.krylov_method!r}. Pass one of {sorted(_KRYLOV_METHODS)} as krylov_method."
+            )
+
+    def reset(self) -> None:
+        """Restore the forcing term to ``eta_max`` and forget the previous residual."""
         self._eta = self.eta_max
         self._prev_res_norm = 0.0
         self._prev_pred_norm = 0.0
@@ -214,7 +192,7 @@ class KrylovDirection:
             Current iterate. Unused, accepted for interface compatibility.
         res : ndarray
             Residuals at ``x``.
-        jac : ``sparse matrix``
+        jac : sparse matrix
             Jacobian at ``x``.
 
         Returns
@@ -223,38 +201,67 @@ class KrylovDirection:
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
         res_norm = np.linalg.norm(res)
+        self._update_forcing_term(res_norm)
 
-        # Eisenstat-Walker forcing term adaptation
-        if self.eisenstat_walker and self._prev_res_norm > 0:
-            eta_new = abs(res_norm - self._prev_pred_norm) / self._prev_res_norm
-            # Safeguard: don't let eta decrease too fast
-            eta_safe = self._eta**2
-            self._eta = float(np.clip(max(eta_new, eta_safe), self.eta_min, self.eta_max))
+        krylov_solve = _KRYLOV_METHODS[self.krylov_method]
 
-        tol = self._eta * res_norm
+        def solve(A, b):
+            dx, info = krylov_solve(A, b, atol=self._eta * res_norm)
+            if info != 0:
+                raise ValueError(f"Krylov solve stopped with info={info}")
+            return dx
 
-        solver_fn = _KRYLOV_METHODS.get(self.krylov_method)
-        if solver_fn is None:
-            raise ValueError(f"Unknown Krylov method: {self.krylov_method!r}. Choose from {list(_KRYLOV_METHODS)}")
-
-        try:
-            dx, info = solver_fn(jac, -res, atol=tol)
-            if info != 0 or not np.all(np.isfinite(dx)):
-                raise ValueError("Krylov solve did not converge")  # noqa: TRY301
-            kind = f"krylov_{self.krylov_method}"
-        except Exception:
+        dx = try_linear_solve(solve, jac, -res)
+        kind = f"krylov_{self.krylov_method}"
+        if dx is None:
             dx = -(jac.T @ res)
-            kind = f"krylov_{self.krylov_method}_gradient_fallback"
+            kind = f"{kind}_gradient_fallback"
 
-        # Track for Eisenstat-Walker
-        Jdx = jac @ dx
         self._prev_res_norm = res_norm
-        self._prev_pred_norm = np.linalg.norm(res + Jdx)
+        self._prev_pred_norm = np.linalg.norm(res + jac @ dx)
 
-        slope = float(res @ Jdx)
-        if slope >= 0:
-            dx = -dx
-            slope = -slope
-            kind = f"{kind}_flipped"
+        return _descent_proposal(dx, res, jac, kind=kind)
 
-        return DirectionProposal(direction=dx, slope=slope, kind=kind)
+    def _update_forcing_term(self, res_norm: float) -> None:
+        if not self.eisenstat_walker or self._prev_res_norm == 0:
+            return
+        eta_new = abs(res_norm - self._prev_pred_norm) / self._prev_res_norm
+        # Squaring the previous forcing term bounds how fast eta may fall between iterations.
+        eta_floor = self._eta**2
+        self._eta = float(np.clip(max(eta_new, eta_floor), self.eta_min, self.eta_max))
+
+
+def try_linear_solve(linear_solver: Callable, A: sp.spmatrix, b: np.ndarray) -> np.ndarray | None:
+    """Solve ``A x = b`` and return ``None`` when the solver raises or produces non-finite values.
+
+    Parameters
+    ----------
+    linear_solver : callable
+        Solver called as ``linear_solver(A, b)``.
+    A : sparse matrix
+        System matrix.
+    b : ndarray
+        Right-hand side.
+
+    Returns
+    -------
+    x : ndarray or None
+        Solution, or ``None`` when the solve failed.
+    """
+    # The solver is user-supplied and may fail in any way. Under warnings-as-errors, scipy's MatrixRankWarning on a
+    # singular matrix also arrives here as an exception, so the catch stays broad.
+    try:
+        x = linear_solver(A, b)
+    except Exception:
+        return None
+    if not np.all(np.isfinite(x)):
+        return None
+    return x
+
+
+def _descent_proposal(dx: np.ndarray, res: np.ndarray, jac: sp.spmatrix, kind: str) -> DirectionProposal:
+    """Flip ``dx`` when it is not a descent direction for the merit function at the current Jacobian."""
+    slope = float(np.dot(res, jac @ dx))
+    if slope >= 0:
+        return DirectionProposal(direction=-dx, slope=-slope, kind=f"{kind}_flipped")
+    return DirectionProposal(direction=dx, slope=slope, kind=kind)

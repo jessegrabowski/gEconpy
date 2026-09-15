@@ -19,14 +19,16 @@ class RealEig(Op):
 
     def make_node(self, M):
         M = pt.as_tensor_variable(M)
-        out_shape = M.type.shape[0]
         if M.ndim != 2:
-            raise ValueError(f"RealEig requires a 2-d matrix, got ndim={M.ndim}")
-        outputs = [pt.vector(dtype=M.dtype, shape=(out_shape,)), pt.vector(dtype=M.dtype, shape=(out_shape,))]
+            raise ValueError(
+                f"RealEig requires a square matrix, but got an input with ndim={M.ndim}. Pass a 2-d tensor, or wrap "
+                "the Op in Blockwise for batched input."
+            )
+        n = M.type.shape[0]
+        outputs = [pt.vector(dtype=M.dtype, shape=(n,)), pt.vector(dtype=M.dtype, shape=(n,))]
         return Apply(self, [M], outputs)
 
     def perform(self, _node, inputs, outputs):
-        """Compute the real and imaginary parts of the eigenvalues of M, sorted by modulus."""
         (M,) = inputs
         eigvals = np.linalg.eig(M)[0]
         idx = np.argsort(np.abs(eigvals))
@@ -43,17 +45,13 @@ class RealEig(Op):
         if isinstance(g_imag.type, DisconnectedType):
             g_imag = pt.zeros_like(outputs[1])
 
-        # Recompute eigenvectors -- same strategy as JAX's eigvals VJP.
-        _eigvals, V = pt.linalg.eig(M)
+        # Recompute the eigenvectors on the graph, the same strategy as JAX's eigvals VJP, and sort them to match
+        # the modulus-ascending order that perform uses.
+        eigvals, V = pt.linalg.eig(M)
+        V = V[:, pt.argsort(pt.abs(eigvals))]
 
-        # Sort to match our modulus-ascending ordering in perform.
-        sort_idx = pt.argsort(pt.abs(_eigvals))
-        V = V[:, sort_idx]
-
-        # Complex gradient vector: g = g_bar_real - i * g_bar_imag
+        # M_bar = Re(V^{-T} diag(g) V^T) with the complex cotangent g = g_real - i * g_imag.
         g = g_real.astype("complex128") - 1j * g_imag.astype("complex128")
-
-        # VJP: M_bar = Re(V^{-T} diag(g) V^T)
         V_inv = pt.linalg.solve(V, pt.eye(M.shape[0], dtype="complex128"))
         M_bar = V_inv.T @ pt.diag(g) @ V.T
 
@@ -61,16 +59,16 @@ class RealEig(Op):
 
 
 def real_eig(M):
-    r"""Compute eigenvalues of a real matrix, returning real and imaginary parts separately.
+    """Compute eigenvalues of a real matrix, returning real and imaginary parts separately.
 
-    Unlike ``pytensor.tensor.linalg.eig``, the outputs are real-valued tensors, so reverse-mode
-    differentiation through both components works. Eigenvalues are sorted by ascending modulus.
+    The outputs are real-valued tensors, so reverse-mode differentiation through both components works, which
+    :func:`pytensor.tensor.linalg.eig` does not support. Eigenvalues are sorted by ascending modulus.
 
     Parameters
     ----------
     M : TensorVariable
-        A real-valued square matrix of shape ``(n, n)``. Anything accepted by ``pt.as_tensor_variable``
-        works.
+        A real-valued square matrix of shape ``(n, n)``, or anything :func:`pytensor.tensor.as_tensor_variable`
+        accepts. Leading batch dimensions are supported through :class:`~pytensor.tensor.blockwise.Blockwise`.
 
     Returns
     -------
@@ -81,6 +79,9 @@ def real_eig(M):
 
     Examples
     --------
+    Differentiate the sum of the real parts with respect to the matrix, which ``eig`` refuses because its output is
+    complex:
+
     .. code-block:: python
 
         import pytensor.tensor as pt

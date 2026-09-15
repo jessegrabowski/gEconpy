@@ -6,34 +6,38 @@ import scipy.sparse as sp
 
 from scipy.sparse.linalg import spsolve
 
-from gEconpy.solvers.sparse_root.base import IterationStats, RootFunction, SolverState, StepInfo, merit
+from gEconpy.solvers.sparse_root.base import RootFunction, SolverState, StepInfo, initial_state, merit
+from gEconpy.solvers.sparse_root.direction import try_linear_solve
+
+ZERO_CURVATURE_TOL = 1e-30
 
 
 @dataclass
 class SparseDogleg:
-    """Powell dogleg solver within a trust region.
+    r"""Powell dogleg solver within a trust region.
 
-    Computes both the Cauchy point (steepest descent with optimal step length)
-    and the Newton point. If the Newton step is within the trust region, take it.
-    If the Cauchy point is outside, scale the steepest descent direction to the
-    boundary. Otherwise, interpolate along the dogleg path.
+    Computes both the Cauchy point (steepest descent with optimal step length) and the Newton point. When the Newton
+    step lies inside the trust region it is taken as is. When even the Cauchy point lies outside, the steepest
+    descent direction is scaled to the boundary. Otherwise the step is the point on the segment from the Cauchy point
+    to the Newton point that meets the boundary.
 
     Parameters
     ----------
-    delta0 : float
-        Initial trust region radius.
-    delta_max : float
-        Maximum trust region radius.
-    eta : float
-        Minimum actual/predicted reduction ratio to accept a step.
-    shrink_factor : float
-        Factor to shrink ``Delta`` on a rejected step.
-    grow_factor : float
-        Factor to grow ``Delta`` on a very good step (``rho > 0.75``).
-    max_reject : int
-        Maximum consecutive rejected steps before reporting failure.
-    linear_solver : callable or None
-        Sparse linear solver for the Newton step. Defaults to ``spsolve``.
+    delta0 : float, optional
+        Initial trust region radius. Defaults to 1.0.
+    delta_max : float, optional
+        Maximum trust region radius. Defaults to 100.0.
+    eta : float, optional
+        Minimum actual-to-predicted reduction ratio to accept a step. Defaults to 0.1.
+    shrink_factor : float, optional
+        Factor applied to the radius on a rejected step. Defaults to 0.25.
+    grow_factor : float, optional
+        Factor applied to the radius when the ratio exceeds 0.75 and the step reached the boundary. Defaults to 2.0.
+    max_reject : int, optional
+        Maximum consecutive rejected steps before reporting failure. Defaults to 50.
+    linear_solver : callable, optional
+        Sparse linear solver for the Newton step, called as ``linear_solver(A, b)``. Defaults to
+        :func:`scipy.sparse.linalg.spsolve`.
     """
 
     delta0: float = 1.0
@@ -42,16 +46,12 @@ class SparseDogleg:
     shrink_factor: float = 0.25
     grow_factor: float = 2.0
     max_reject: int = 50
-    linear_solver: Callable = field(default=None)
+    linear_solver: Callable = spsolve
 
     _delta: float = field(init=False, repr=False, default=0.0)
 
-    def __post_init__(self):
-        if self.linear_solver is None:
-            self.linear_solver = spsolve
-
     def init(self, fun: RootFunction, x0: np.ndarray, args: tuple) -> SolverState:
-        """Evaluate ``fun`` at ``x0`` and build the initial solver state.
+        """Evaluate ``fun`` at ``x0``, reset the trust region radius, and build the initial solver state.
 
         Parameters
         ----------
@@ -68,61 +68,7 @@ class SparseDogleg:
             State holding the initial point, residuals, Jacobian, merit value and evaluation counts.
         """
         self._delta = self.delta0
-        x = np.asarray(x0, dtype=np.float64).copy()
-        res, jac = fun(x, *args)
-        return SolverState(x=x, res=res, jac=jac, phi=merit(res), stats=IterationStats(nfev=1, njev=1))
-
-    def _compute_dogleg_step(self, J: sp.spmatrix, r: np.ndarray, g: np.ndarray, delta: float) -> np.ndarray:  # noqa: PLR0911
-        """Compute the dogleg step within the trust region of radius ``delta``."""
-        Jg = J @ g
-
-        # Cauchy step: steepest descent with optimal step length
-        gTg = float(np.dot(g, g))
-        JgTJg = float(np.dot(Jg, Jg))
-
-        if JgTJg < 1e-30:
-            # Zero curvature along gradient
-            g_norm = np.linalg.norm(g)
-            if g_norm < 1e-30:
-                return np.zeros_like(r)
-            return -(delta / g_norm) * g
-
-        alpha_c = gTg / JgTJg
-        p_c = -alpha_c * g  # Cauchy point
-
-        # Newton step
-        try:
-            p_n = self.linear_solver(J, -r)
-            if not np.all(np.isfinite(p_n)):
-                raise ValueError("non-finite Newton step")  # noqa: TRY301
-        except Exception:
-            # Fall back to Cauchy point (clipped to trust region)
-            p_c_norm = np.linalg.norm(p_c)
-            if p_c_norm <= delta:
-                return p_c
-            return (delta / p_c_norm) * p_c
-
-        p_n_norm = np.linalg.norm(p_n)
-
-        # If Newton step is inside trust region, take it
-        if p_n_norm <= delta:
-            return p_n
-
-        p_c_norm = np.linalg.norm(p_c)
-
-        # If Cauchy point is outside trust region, scale gradient to boundary
-        if p_c_norm >= delta:
-            return (delta / p_c_norm) * p_c
-
-        # Dogleg: interpolate between Cauchy and Newton
-        # Find tau such that ||p_c + tau (p_n - p_c)|| = delta
-        diff = p_n - p_c
-        dd = np.dot(diff, diff)
-        cd = np.dot(p_c, diff)
-        cc = np.dot(p_c, p_c)
-        discriminant = cd * cd - dd * (cc - delta * delta)
-        tau = (-cd + np.sqrt(max(discriminant, 0.0))) / dd
-        return p_c + tau * diff
+        return initial_state(fun, x0, args)
 
     def step(self, fun: RootFunction, state: SolverState, args: tuple) -> tuple[SolverState, StepInfo]:
         """Take one dogleg iteration from ``state``.
@@ -143,56 +89,69 @@ class SparseDogleg:
         info : ~gEconpy.solvers.sparse_root.base.StepInfo
             Whether a step was accepted, the step taken, and a failure message when it was not.
         """
-        J = state.jac
-        r = state.res
-        g = J.T @ r
-
-        consecutive_rejects = 0
+        jac = state.jac
+        res = state.res
+        grad = jac.T @ res
         nfev = 0
 
-        while True:
-            p = self._compute_dogleg_step(J, r, g, self._delta)
+        for n_rejected in range(self.max_reject):
+            p = self._compute_dogleg_step(jac, res, grad, self._delta)
+            jac_p = jac @ p
+            predicted = -(float(grad @ p) + 0.5 * float(jac_p @ jac_p))
 
-            x_trial = state.x + p
-            res_trial, jac_trial = fun(x_trial, *args)
-            phi_trial = merit(res_trial)
-            nfev += 1
+            if predicted > 0:
+                x_trial = state.x + p
+                res_trial, jac_trial = fun(x_trial, *args)
+                phi_trial = merit(res_trial)
+                nfev += 1
 
-            # Predicted reduction from the linear model
-            Jp = J @ p
-            pred = -(float(g @ p) + 0.5 * float(Jp @ Jp))
+                rho = (state.phi - phi_trial) / predicted
+                if rho > self.eta:
+                    if rho > 0.75 and np.linalg.norm(p) > 0.9 * self._delta:
+                        self._delta = min(self.grow_factor * self._delta, self.delta_max)
+                    stats = state.stats.update(nit=1, nfev=nfev, njev=nfev, nsolve=1, nreject=n_rejected)
+                    new_state = SolverState(x=x_trial, res=res_trial, jac=jac_trial, phi=phi_trial, stats=stats)
+                    return new_state, StepInfo(accepted=True, step=p)
 
-            if pred <= 0:
-                self._delta *= self.shrink_factor
-                consecutive_rejects += 1
-                if consecutive_rejects >= self.max_reject:
-                    return state, StepInfo(
-                        accepted=False,
-                        step=np.zeros_like(state.x),
-                        message="fatal: dogleg predicted reduction non-positive",
-                    )
-                continue
-
-            actual = state.phi - phi_trial
-            rho = actual / pred
-
-            if rho > self.eta:
-                # Accept
-                if rho > 0.75 and np.linalg.norm(p) > 0.9 * self._delta:
-                    self._delta = min(self.grow_factor * self._delta, self.delta_max)
-                new_state = SolverState(
-                    x=x_trial,
-                    res=res_trial,
-                    jac=jac_trial,
-                    phi=phi_trial,
-                    stats=state.stats.update(nit=1, nfev=nfev, njev=nfev, nsolve=1, nreject=consecutive_rejects),
-                )
-                return new_state, StepInfo(accepted=True, step=p)
             self._delta *= self.shrink_factor
-            consecutive_rejects += 1
-            if consecutive_rejects >= self.max_reject:
-                return state, StepInfo(
-                    accepted=False,
-                    step=np.zeros_like(state.x),
-                    message="fatal: dogleg exceeded max rejected steps",
-                )
+
+        return state, StepInfo(
+            accepted=False,
+            step=np.zeros_like(state.x),
+            message=f"fatal: dogleg rejected {self.max_reject} consecutive steps",
+        )
+
+    def _compute_dogleg_step(self, jac: sp.spmatrix, res: np.ndarray, grad: np.ndarray, delta: float) -> np.ndarray:
+        jac_grad = jac @ grad
+        grad_sq = float(np.dot(grad, grad))
+        curvature = float(np.dot(jac_grad, jac_grad))
+
+        if curvature < ZERO_CURVATURE_TOL:
+            grad_norm = np.linalg.norm(grad)
+            if grad_norm < ZERO_CURVATURE_TOL:
+                return np.zeros_like(res)
+            return -(delta / grad_norm) * grad
+
+        cauchy = -(grad_sq / curvature) * grad
+        cauchy_norm = np.linalg.norm(cauchy)
+
+        newton = try_linear_solve(self.linear_solver, jac, -res)
+        if newton is None:
+            return cauchy if cauchy_norm <= delta else (delta / cauchy_norm) * cauchy
+
+        if np.linalg.norm(newton) <= delta:
+            return newton
+        if cauchy_norm >= delta:
+            return (delta / cauchy_norm) * cauchy
+        return _dogleg_boundary_point(cauchy, newton, delta)
+
+
+def _dogleg_boundary_point(cauchy: np.ndarray, newton: np.ndarray, delta: float) -> np.ndarray:
+    """Return the point on the segment from ``cauchy`` to ``newton`` whose norm equals ``delta``."""
+    diff = newton - cauchy
+    dd = np.dot(diff, diff)
+    cd = np.dot(cauchy, diff)
+    cc = np.dot(cauchy, cauchy)
+    discriminant = cd * cd - dd * (cc - delta * delta)
+    tau = (-cd + np.sqrt(max(discriminant, 0.0))) / dd
+    return cauchy + tau * diff

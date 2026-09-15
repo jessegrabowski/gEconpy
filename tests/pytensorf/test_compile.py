@@ -13,7 +13,7 @@ from gEconpy.pytensorf.compile import (
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    """Ensure each test starts with a fresh compile cache."""
+    """Start each test with a fresh compile cache."""
     clear_compile_cache()
     yield
     clear_compile_cache()

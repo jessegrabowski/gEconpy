@@ -13,6 +13,12 @@ gEconpy.solvers.sparse_root.direction
     KrylovDirection
     NewtonDirection
 
+.. rubric:: Functions
+
+.. autosummary::
+
+    try_linear_solve
+
 .. automodule:: gEconpy.solvers.sparse_root.direction
-    :members: ChordDirection, DirectionProposal, DirectionStrategy, KrylovDirection, NewtonDirection
+    :members: ChordDirection, DirectionProposal, DirectionStrategy, KrylovDirection, NewtonDirection, try_linear_solve
     :undoc-members:

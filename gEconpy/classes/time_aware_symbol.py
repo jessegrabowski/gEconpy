@@ -2,12 +2,10 @@ import sympy as sp
 
 from sympy.core.cache import cacheit
 
-# Domain defaults injected into every parsed Symbol unless the user's ``assumptions`` block overrides them.
-# ``real``: every DSGE quantity (variable, parameter, shock, multiplier) is real-valued. ``finite``: every DSGE
-# quantity is finite -- no extended-real +/-infinity. Together these give sympy enough type information to apply
-# simplifications it would otherwise refuse on bare Symbols. ``positive``, ``nonzero``, ``integer`` are intentionally
-# NOT defaulted: those are domain-specific (e.g. Lagrange multipliers can be negative, shocks are zero in steady
-# state) and stay opt-in via the ``assumptions`` block.
+# Domain defaults injected into every parsed Symbol unless the user's assumptions block overrides them. Every DSGE
+# quantity (variable, parameter, shock, multiplier) is real-valued and finite, and together these two facts give sympy
+# enough type information to apply simplifications it refuses on bare Symbols. positive, nonzero and integer are not
+# defaulted: Lagrange multipliers can be negative and shocks are zero in steady state, so those stay opt-in.
 DEFAULT_ASSUMPTIONS: dict[str, bool] = {"real": True, "finite": True}
 
 
@@ -32,9 +30,8 @@ class TimeAwareSymbol(sp.Symbol):
     """
     Subclass of :class:`~sympy.core.symbol.Symbol` with a time index.
 
-    A TimeAwareSymbol is identical to a :class:`~sympy.core.symbol.Symbol` in all respects, except that it has a
-    time index property that is used when determining equality and hashability. Two symbols with the same name,
-    assumptions, and time index evaluate to equal.
+    The time index enters equality and hashing, so two symbols compare equal only when their name, assumptions, and
+    time index all match. Everything else is inherited from :class:`~sympy.core.symbol.Symbol` unchanged.
 
     Parameters
     ----------
@@ -47,6 +44,7 @@ class TimeAwareSymbol(sp.Symbol):
 
     Examples
     --------
+    Two symbols with the same base name compare equal only when their time indexes match:
 
     .. code-block:: python
 
@@ -55,9 +53,9 @@ class TimeAwareSymbol(sp.Symbol):
         x1 = TimeAwareSymbol("x", time_index=1)
         x2 = TimeAwareSymbol("x", time_index=2)
 
-        print(x1 == x2)  # False, time indexes are different
-        print(x1 == x2.set_t(1))  # True, time indexes are the same
-        print(x1.step_forward() == x2)  # True, time indexes are the same
+        print(x1 == x2)  # False
+        print(x1 == x2.set_t(1))  # True
+        print(x1.step_forward() == x2)  # True
     """
 
     __slots__ = ("__dict__", "base_name", "time_index")
@@ -69,9 +67,6 @@ class TimeAwareSymbol(sp.Symbol):
         cls._sanitize(assumptions, cls)
 
         return TimeAwareSymbol.__xnew__(cls, name, time_index, **assumptions)
-
-    def __getnewargs__(self):
-        return self.name, self.time_index
 
     def _numpycode(self, *args, **kwargs):  # noqa: ARG002
         return self.safe_name
@@ -86,31 +81,13 @@ class TimeAwareSymbol(sp.Symbol):
         obj.safe_name = obj.name.replace("+", "p").replace("-", "m")
         return obj
 
-    def _determine_operator(self):
-        if self.time_index == "ss":
-            return ""
-        if self.time_index > 0:
-            operator = "+"
-        elif self.time_index < 0:
-            operator = "-"
-        else:
-            operator = ""
-        return operator
-
     def _create_name_from_time_index(self):
-        operator = self._determine_operator()
-        name = self.base_name
-        idx = self.time_index
-        idx = idx if isinstance(idx, str) else str(abs(idx))
-
-        if idx == "ss":
-            time_name = rf"{name}_{idx}"
-        elif idx == "0":
-            time_name = rf"{name}_t"
-        else:
-            time_name = rf"{name}_t{operator}{idx}"
-
-        return time_name
+        if self.time_index == "ss":
+            return f"{self.base_name}_ss"
+        if self.time_index == 0:
+            return f"{self.base_name}_t"
+        sign = "+" if self.time_index > 0 else "-"
+        return f"{self.base_name}_t{sign}{abs(self.time_index)}"
 
     def _hashable_content(self):
         return (*super()._hashable_content(), self.time_index)
@@ -150,8 +127,6 @@ class TimeAwareSymbol(sp.Symbol):
         """
         Set the time index to steady state.
 
-        Once in the steady state, :meth:`step_forward` and :meth:`step_backward` will not change the time index.
-
         Returns
         -------
         symbol : TimeAwareSymbol
@@ -183,12 +158,7 @@ class TimeAwareSymbol(sp.Symbol):
         -------
         symbol : TimeAwareSymbol
             A new symbol with the same base name and assumptions, at the requested time index.
-
-        Raises
-        ------
-        ValueError
-            If ``t`` is a string other than ``"ss"``.
         """
         if isinstance(t, str) and t != "ss":
-            raise ValueError("Time index must be an integer or 'ss'.")
+            raise ValueError(f"Time index must be an integer or 'ss', but got {t!r}.")
         return TimeAwareSymbol(self.base_name, t, **self.assumptions0)

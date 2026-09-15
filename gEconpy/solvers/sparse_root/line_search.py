@@ -2,13 +2,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from gEconpy.solvers.sparse_root.base import (
-    IterationStats,
-    RootFunction,
-    SolverState,
-    StepInfo,
-    merit,
-)
+from gEconpy.solvers.sparse_root.base import RootFunction, SolverState, StepInfo, initial_state
 from gEconpy.solvers.sparse_root.direction import (
     ChordDirection,
     DirectionStrategy,
@@ -24,26 +18,26 @@ from gEconpy.solvers.sparse_root.globalization import (
 
 @dataclass
 class LineSearchSolver:
-    """Generic line-search solver composing a direction strategy with a globalization strategy.
+    """Line-search solver composing a direction strategy with a globalization strategy.
 
     The named solvers :func:`NewtonArmijo`, :func:`Chord`, :func:`InexactNewtonKrylov` and
     :func:`NewtonNonmonotone` build instances of this class with different default strategies.
 
     Parameters
     ----------
-    direction : DirectionStrategy
-        Strategy for computing the search direction. Must implement ``compute(x, res, jac)``, returning a
-        direction proposal. Defaults to :class:`~gEconpy.solvers.sparse_root.direction.NewtonDirection`.
-    globalization : GlobalizationStrategy
-        Line search strategy. Must implement ``search(fun, x, phi, proposal, args)``, returning a line search
-        result. Defaults to :class:`~gEconpy.solvers.sparse_root.globalization.ArmijoBacktracking`.
+    direction : DirectionStrategy, optional
+        Strategy for computing the search direction, implementing ``compute(x, res, jac)``. Defaults to
+        :class:`~gEconpy.solvers.sparse_root.direction.NewtonDirection`.
+    globalization : GlobalizationStrategy, optional
+        Line search strategy, implementing ``search(fun, x, phi, proposal, args)``. Defaults to
+        :class:`~gEconpy.solvers.sparse_root.globalization.ArmijoBacktracking`.
     """
 
     direction: DirectionStrategy = field(default_factory=NewtonDirection)
     globalization: GlobalizationStrategy = field(default_factory=ArmijoBacktracking)
 
     def init(self, fun: RootFunction, x0: np.ndarray, args: tuple) -> SolverState:
-        """Evaluate ``fun`` at ``x0`` and build the initial solver state.
+        """Evaluate ``fun`` at ``x0``, reset the direction strategy, and build the initial solver state.
 
         Parameters
         ----------
@@ -59,13 +53,9 @@ class LineSearchSolver:
         state : ~gEconpy.solvers.sparse_root.base.SolverState
             State holding the initial point, residuals, Jacobian, merit value and evaluation counts.
         """
-        # Reset stateful direction strategies
         if hasattr(self.direction, "reset"):
             self.direction.reset()
-
-        x = np.asarray(x0, dtype=np.float64).copy()
-        res, jac = fun(x, *args)
-        return SolverState(x=x, res=res, jac=jac, phi=merit(res), stats=IterationStats(nfev=1, njev=1))
+        return initial_state(fun, x0, args)
 
     def step(self, fun: RootFunction, state: SolverState, args: tuple) -> tuple[SolverState, StepInfo]:
         """Take one line-search iteration from ``state``.
@@ -89,19 +79,18 @@ class LineSearchSolver:
         proposal = self.direction.compute(state.x, state.res, state.jac)
 
         try:
-            ls = self.globalization.search(fun, state.x, state.phi, proposal, args)
-        except RuntimeError as e:
-            return state, StepInfo(accepted=False, step=np.zeros_like(state.x), message=str(e))
+            accepted = self.globalization.search(fun, state.x, state.phi, proposal, args)
+        except RuntimeError as error:
+            return state, StepInfo(accepted=False, step=np.zeros_like(state.x), message=str(error))
 
-        step = ls.alpha * proposal.direction
         new_state = SolverState(
-            x=ls.x_new,
-            res=ls.res_new,
-            jac=ls.jac_new,
-            phi=ls.phi_new,
-            stats=state.stats.update(nit=1, nfev=ls.n_evals, njev=ls.n_evals, nsolve=1),
+            x=accepted.x_new,
+            res=accepted.res_new,
+            jac=accepted.jac_new,
+            phi=accepted.phi_new,
+            stats=state.stats.update(nit=1, nfev=accepted.n_evals, njev=accepted.n_evals, nsolve=1),
         )
-        return new_state, StepInfo(accepted=True, step=step)
+        return new_state, StepInfo(accepted=True, step=accepted.alpha * proposal.direction)
 
 
 def NewtonArmijo(
