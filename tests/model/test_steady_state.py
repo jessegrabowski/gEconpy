@@ -11,7 +11,9 @@ from scipy import optimize
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.model import Model, infer_variable_transform
+from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.steady_state import (
+    compile_known_ss,
     print_steady_state,
     propagate_steady_state_through_identities,
 )
@@ -159,6 +161,19 @@ def test_solve_ss_with_partial_user_solution():
     model_1 = load_and_cache_model("one_block_1.gcn")
     res = model_1.steady_state(verbose=False, progressbar=False)
     assert res.success
+
+
+def test_compile_known_ss_symbolic_keys_only_known_variables():
+    model = load_and_cache_model("rbc_2_block_partial_ss.gcn")
+    _, cache = compile_param_dict_func(model._param_dict, model._deterministic_dict, return_symbolic=True)
+    parameters = list(model._param_dict.to_sympy().keys()) + list(model._deterministic_dict.to_sympy().keys())
+
+    mapping, _ = compile_known_ss(
+        model._ss_solution_dict, model.variables, parameters, cache=cache, return_symbolic=True
+    )
+
+    known_names = [symbol.name for symbol in model._ss_solution_dict.to_sympy()]
+    assert [node.name for node in mapping] == known_names
 
 
 def test_wrong_user_solutions_raises():

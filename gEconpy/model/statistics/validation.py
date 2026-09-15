@@ -65,7 +65,8 @@ def check_steady_state(
     residuals = model.evaluate_residual(ss_dict, parameters)
     _log.warning("Steady state NOT successful. The following equations have non-zero residuals:")
 
-    for resid, eq in zip(residuals, model.equations, strict=False):
+    equations = model.equations + list(model._calib_dict.to_sympy().values())
+    for resid, eq in zip(residuals, equations, strict=True):
         if np.abs(resid) > _FLOAT_ZERO_TOL:
             _log.warning(eq)
             _log.warning(f"Residual: {resid:0.4f}")
@@ -131,12 +132,13 @@ def _maybe_linearize_model(
     verbose = linearize_model_kwargs.get("verbose", True)
     n_matrices = sum(x is not None for x in [A, B, C, D])
 
-    if 0 < n_matrices < 4 and verbose:
-        _log.warning(
-            f"Passing an incomplete subset of A, B, C, and D (you passed {n_matrices}) will still trigger "
-            f"``model.linearize_model`` (which might be expensive). Pass all to avoid this, or None to silence "
-            f"this warning."
-        )
+    if 0 < n_matrices < 4:
+        if verbose:
+            _log.warning(
+                f"Passing an incomplete subset of A, B, C, and D (you passed {n_matrices}) will still trigger "
+                f"``model.linearize_model`` (which might be expensive). Pass all to avoid this, or None to silence "
+                f"this warning."
+            )
         A = None
         B = None
         C = None
@@ -223,6 +225,7 @@ def _validate_shock_options(
 
     if shock_std is not None:
         if isinstance(shock_std, np.ndarray | list):
+            shock_std = np.asarray(shock_std, dtype=float)
             if len(shock_std) != n_shocks:
                 raise ValueError(
                     f"Length of shock_std ({len(shock_std)}) does not match the number of shocks ({n_shocks})"
