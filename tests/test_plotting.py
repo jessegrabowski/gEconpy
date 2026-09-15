@@ -1,7 +1,6 @@
 import warnings
 
 from types import SimpleNamespace
-from typing import Literal
 
 import arviz_base as azb
 import matplotlib.colors as mcolors
@@ -263,7 +262,7 @@ def prior_idata(pm_mod, ss_mod) -> tuple[xr.DataTree, pd.DataFrame]:
         conditional_prior = ss_mod.sample_conditional_prior(prior, progressbar=False)
         prior["conditional_prior"] = conditional_prior
 
-    return (prior, fake_data)
+    return prior, fake_data
 
 
 @pytest.mark.parametrize(
@@ -422,8 +421,8 @@ def test_plot_eigenvalues_scatter_point_count(one_block_model):
     fig = plot_eigenvalues(one_block_model, linearize_model_kwargs=LINEARIZE_KW)
     scatter_points = fig.axes[0].findobj(PathCollection)[0].get_offsets().data
     data = check_bk_condition(one_block_model, return_value="dataframe", verbose=False, steady_state_kwargs=SS_KW)
-    INF_CUTOFF = 1.5
-    n_finite = (data["Modulus"] < INF_CUTOFF).sum()
+    inf_cutoff = 1.5
+    n_finite = (data["Modulus"] < inf_cutoff).sum()
     assert n_finite == scatter_points.shape[0]
 
 
@@ -520,11 +519,7 @@ def test_plot_acf_multiple_models_legend_and_axes(posterior_acf):
 
 @pytest.mark.parametrize("kalman_output", ["predicted", "filtered", "smoothed"])
 @pytest.mark.parametrize("vars_to_plot", [["Y"], ["Y", "C"], ["Y", "C", "L"]])
-def test_plot_kalman_filter(
-    prior_idata,
-    kalman_output: Literal["predicted", "filtered", "smoothed"],
-    vars_to_plot,
-):
+def test_plot_kalman_filter(prior_idata, kalman_output, vars_to_plot):
     idata, fake_data = prior_idata
     fig = plot_kalman_filter(
         idata["conditional_prior"],

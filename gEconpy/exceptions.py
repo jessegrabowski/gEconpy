@@ -1,3 +1,4 @@
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
 import sympy as sp
@@ -76,7 +77,7 @@ class GCNValidationError(ValueError):
         for i in range(start, end):
             line_num = i + 1
             line_content = lines[i].rstrip()
-            parts.append(f"  {line_num:>{width}} | {line_content}" if line_content else f"  {line_num:>{width}} |")
+            parts.append(f"  {line_num:>{width}} | {line_content}".rstrip())
 
             if line_num == line and self.location.column is not None:
                 parts.append(self._caret_line(width))
@@ -223,7 +224,7 @@ class PerturbationSolutionNotFoundException(ValueError):
 class SteadyStateNotFoundError(ValueError):
     """Raised when the provided steady-state values leave non-zero residuals in some model equations."""
 
-    def __init__(self, equations):
+    def __init__(self, equations: list[str]):
         message = (
             "The provided steady-state values did not result in zero residuals for the following equations:\n"
             f"{', '.join(equations)}\n\nIf you used custom parameter values to compute the provided steady state, "
@@ -236,7 +237,7 @@ class SteadyStateNotFoundError(ValueError):
 class GensysFailedException(ValueError):
     """Raised when the gensys solver cannot return a unique stable solution."""
 
-    def __init__(self, eu):
+    def __init__(self, eu: list[int] | tuple[int, ...]):
         message = interpret_gensys_output(eu)
         super().__init__(message)
 
@@ -244,9 +245,8 @@ class GensysFailedException(ValueError):
 class VariableNotFoundException(ValueError):
     """Raised when a requested variable is not among the model variables."""
 
-    def __init__(self, variable):
-        var_name = variable.base_name
-        message = f"Variable {var_name} was not found among model variables."
+    def __init__(self, variable: TimeAwareSymbol):
+        message = f"Variable {variable.base_name} was not found among model variables."
 
         super().__init__(message)
 
@@ -254,7 +254,7 @@ class VariableNotFoundException(ValueError):
 class InvalidDistributionException(ValueError):
     """Raised when a distribution declaration in a GCN file cannot be interpreted."""
 
-    def __init__(self, variable, distribution_string):
+    def __init__(self, variable: str, distribution_string: str):
         message = (
             f'The distribution for "{variable}", defined as "{distribution_string}", could not be parsed. A shock '
             f"distribution takes no initial value, so remove any '= value' after it, as in "
@@ -270,9 +270,8 @@ class MultipleParameterDefinitionException(ValueError):
     def __init__(self, variable_name: str, d_name: str, param_name: str, result_list: list[str]) -> None:
         message = (
             f'The {d_name} distribution for "{variable_name}" has multiple declarations for '
-            f"{param_name}. Pass only one of: "
+            f"{param_name}. Pass only one of: {', '.join(result_list)}"
         )
-        message += ", ".join(result_list)
 
         super().__init__(message)
 
@@ -280,7 +279,7 @@ class MultipleParameterDefinitionException(ValueError):
 class InvalidParameterException(ValueError):
     """Raised when a distribution declaration passes a parameter the distribution does not accept."""
 
-    def __init__(self, dist_name, param_name, valid_params):
+    def __init__(self, dist_name: str, param_name: str, valid_params: list[str]):
         message = (
             f"Unknown parameter {param_name} passed to distribution {dist_name}. Valid "
             f"parameters for this distribution are: {', '.join(valid_params)}"
@@ -292,48 +291,42 @@ class InvalidParameterException(ValueError):
 class OrphanParameterError(ValueError):
     """Raised when a parameter appears in the model equations but in no calibration block."""
 
-    def __init__(self, orphans):
+    def __init__(self, orphans: Iterable[sp.Symbol]):
         orphans = set(orphans)
         n = len(orphans)
         verb = "was" if n == 1 else "were"
         message = (
             f"The following parameter{'s' if n > 1 else ''} {verb} found among model equations but did not appear in "
-            f"any calibration block: {', '.join([x.name for x in orphans])}"
+            f"any calibration block: {', '.join(x.name for x in orphans)}"
         )
 
         super().__init__(message)
+
+
+def _extra_parameter_message(extras: Sequence[sp.Symbol]) -> str:
+    n = len(extras)
+    verb = "was" if n == 1 else "were"
+    pronoun = "it" if n == 1 else "them"
+
+    return (
+        f"The following parameter{'s' if n > 1 else ''} {verb} given initial values in calibration blocks but "
+        f"{verb} not used in model equations: {', '.join(x.name for x in extras)}. Delete {pronoun} from the "
+        f"calibration block, or fix the equation that should use {pronoun}."
+    )
 
 
 class ExtraParameterError(ValueError):
     """Raised when a calibration block defines a parameter that no model equation uses."""
 
-    def __init__(self, extras):
-        n = len(extras)
-        verb = "was" if n == 1 else "were"
-        message = (
-            f"The following parameter{'s' if n > 1 else ''} {verb} given initial values in calibration blocks but "
-            f"{verb} not used in model equations: {', '.join([x.name for x in extras])}. Delete "
-            f"{'it' if n == 1 else 'them'} from the calibration block, or fix the equation that should use "
-            f"{'it' if n == 1 else 'them'}."
-        )
-
-        super().__init__(message)
+    def __init__(self, extras: Sequence[sp.Symbol]):
+        super().__init__(_extra_parameter_message(extras))
 
 
 class ExtraParameterWarning(UserWarning):
     """Warns that a calibration block defines a parameter that no model equation uses."""
 
-    def __init__(self, extras):
-        n = len(extras)
-        verb = "was" if n == 1 else "were"
-        message = (
-            f"The following parameter{'s' if n > 1 else ''} {verb} given initial values in calibration blocks but "
-            f"{verb} not used in model equations: {', '.join([x.name for x in extras])}. Delete "
-            f"{'it' if n == 1 else 'them'} from the calibration block, or fix the equation that should use "
-            f"{'it' if n == 1 else 'them'}."
-        )
-
-        super().__init__(message)
+    def __init__(self, extras: Sequence[sp.Symbol]):
+        super().__init__(_extra_parameter_message(extras))
 
 
 class DuplicateParameterError(GCNValidationError):
@@ -343,13 +336,13 @@ class DuplicateParameterError(GCNValidationError):
 
     def __init__(
         self,
-        extras,
+        extras: Iterable[sp.Symbol],
         block: str | None = None,
         source: str | None = None,
         location: "ParseLocation | None" = None,
         filepath: str | None = None,
     ):
-        param_names = ", ".join([x.name for x in extras])
+        param_names = ", ".join(x.name for x in extras)
         block_str = f"block {block}" if block else "calibration blocks"
 
         message = f"Duplicate parameter declaration in {block_str}"

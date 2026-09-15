@@ -1,4 +1,3 @@
-from functools import reduce
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,9 +22,9 @@ def make_mod_file(
 
     The file declares the variables, shocks, and parameters, writes the model equations, and adds a steady state
     block, a ``check`` command, a standard deviation of 0.01 for every shock, and a first-order ``stoch_simul``
-    command. When the
-    model has a complete analytic steady state the steady state block is a ``steady_state_model`` block. Otherwise
-    the numeric steady state is solved and written as an ``initval`` block. See [1]_ for the Dynare syntax.
+    command. When the model has a complete analytic steady state the steady state block is a ``steady_state_model``
+    block. Otherwise the numeric steady state is solved and written as an ``initval`` block. See [1]_ for the Dynare
+    syntax.
 
     Parameters
     ----------
@@ -168,16 +167,16 @@ class DynareCodePrinter(OctaveCodePrinter):
 
     def _print_TimeAwareSymbol(self, expr):
         name = expr.base_name
-        t = expr.time_index
+        time_index = expr.time_index
 
-        if t == "ss":
-            return f"{name}_{t}"
-        if t == 0:
-            return f"{name}"
-        if t > 0:
-            return f"{name}(+{t})"
+        if time_index == "ss":
+            return f"{name}_ss"
+        if time_index == 0:
+            return name
+        if time_index > 0:
+            return f"{name}(+{time_index})"
 
-        return f"{name}({t})"
+        return f"{name}({time_index})"
 
 
 def write_lines_from_list(items_to_write: list[str], linewidth: int = 100, line_start: str = "") -> str:
@@ -261,10 +260,10 @@ def write_parameter_declarations(mod: "Model", linewidth: int = 100) -> str:
 
 def find_ss_variables(mod: "Model") -> list[TimeAwareSymbol]:
     """Return the steady-state variables used by the model equations, sorted by base name."""
-    variables = reduce(lambda s, eq: s.union(set(eq.free_symbols)), mod.equations, set())
+    variables = set().union(*(eq.free_symbols for eq in mod.equations))
 
     return sorted(
-        [x for x in variables if isinstance(x, TimeAwareSymbol) and (x.time_index == "ss")],
+        (x for x in variables if isinstance(x, TimeAwareSymbol) and x.time_index == "ss"),
         key=lambda x: x.base_name,
     )
 
@@ -273,12 +272,15 @@ def write_model_equations(mod: "Model") -> str:
     """Write the Dynare ``model`` block, with a local definition for each steady-state value the equations use."""
     printer = DynareCodePrinter()
 
-    required_ss_values = find_ss_variables(mod)
-    defined_ss_values = [x.lhs for x in mod.steady_state_relationships]
+    required_ss_values = set(find_ss_variables(mod))
+    defined_ss_values = {eq.lhs for eq in mod.steady_state_relationships}
 
-    if all(ss_var in defined_ss_values for ss_var in required_ss_values):
-        ss_dict = {eq.lhs: eq.rhs for eq in mod.steady_state_relationships if eq.lhs in required_ss_values}
-        ss_dict = {k.name: printer.doprint(v) for k, v in ss_dict.items()}
+    if required_ss_values <= defined_ss_values:
+        ss_dict = {
+            eq.lhs.name: printer.doprint(eq.rhs)
+            for eq in mod.steady_state_relationships
+            if eq.lhs in required_ss_values
+        }
     else:
         ss_values = mod.steady_state(verbose=False, progressbar=False).to_sympy()
         ss_dict = {k.name: v for k, v in ss_values.items() if k in required_ss_values}
