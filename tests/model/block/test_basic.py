@@ -1,5 +1,4 @@
 import re
-import unittest
 
 import numpy as np
 import pytest
@@ -22,13 +21,11 @@ from tests.conftest import TEST_GCNS, parsed_symbol, parsed_symbols, parsed_var
 
 
 def get_block_from_string(gcn_string: str, block_name: str = "HOUSEHOLD") -> Block:
-    """Parse a GCN string and return the specified block (already solved)."""
     result = load_gcn_string(gcn_string)
     return result.block_dict[block_name]
 
 
 def get_unsolved_block_from_string(gcn_string: str, block_name: str = "HOUSEHOLD") -> Block:
-    """Parse a GCN string, build the block, but don't solve optimization."""
     result = preprocess(gcn_string, validate=True)
     for ast_block in result.ast.blocks:
         if ast_block.name == block_name:
@@ -41,156 +38,158 @@ def rng():
     return np.random.default_rng()
 
 
-class IncompleteBlockDefinitionTests(unittest.TestCase):
-    def test_raises_if_controls_missing(self):
-        test_file = """
-            block HOUSEHOLD
+_MISSING_CONTROLS = """
+    block HOUSEHOLD
+    {
+        objective
+        {
+            U[] = u[] + beta * E[][U[1]];
+        };
+    };
+"""
+
+_MISSING_OBJECTIVE = """
+    block HOUSEHOLD
+    {
+        controls
+        {
+            K[], I[], C[], L[];
+        };
+    };
+"""
+
+_MULTIPLE_OBJECTIVES = """
+    block HOUSEHOLD
+    {
+        objective
+        {
+            U[] = u[] + beta * E[][U[1]];
+            C[] = a[] + b[];
+        };
+        controls
+        {
+            K[], I[], C[], L[];
+        };
+    };
+"""
+
+_CONTROL_NOT_FOUND = """
+    block HOUSEHOLD
+    {
+        objective
+        {
+            U[] = u[] + beta * E[][U[1]];
+        };
+        controls
+        {
+            Z[];
+        };
+    };
+"""
+
+_DYNAMIC_CALIBRATION = """
+    block HOUSEHOLD
+    {
+        calibration
+        {
+            Y[ss] / K[] = 0.33 -> alpha;
+        };
+    };
+"""
+
+_VARIABLE_IN_DETERMINISTIC_PARAMETER = """
+    block HOUSEHOLD
+    {
+        calibration
+        {
+            beta = 0.99;
+            alpha = beta * Y[];
+        };
+    };
+"""
+
+
+@pytest.mark.parametrize(
+    "gcn_string, exception",
+    [
+        (_MISSING_CONTROLS, OptimizationProblemNotDefinedException),
+        (_MISSING_OBJECTIVE, OptimizationProblemNotDefinedException),
+        (_MULTIPLE_OBJECTIVES, MultipleObjectiveFunctionsException),
+        (_CONTROL_NOT_FOUND, ControlVariableNotFoundException),
+        (_DYNAMIC_CALIBRATION, DynamicCalibratingEquationException),
+        (_VARIABLE_IN_DETERMINISTIC_PARAMETER, ValueError),
+    ],
+    ids=[
+        "missing-controls",
+        "missing-objective",
+        "multiple-objectives",
+        "control-not-found",
+        "dynamic-calibrating-equation",
+        "variable-in-deterministic-parameter",
+    ],
+)
+def test_malformed_block_raises(gcn_string, exception):
+    with pytest.raises(exception):
+        get_block_from_string(gcn_string)
+
+
+def test_block_parser_handles_empty_block():
+    test_file = """
+        block HOUSEHOLD
+        {
+            definitions
             {
-                objective
-                {
-                    U[] = u[] + beta * E[][U[1]];
-                };
+
             };
-            """
-
-        with self.assertRaises(OptimizationProblemNotDefinedException):
-            get_block_from_string(test_file)
-
-    def test_raises_if_objective_missing(self):
-        test_file = """
-            block HOUSEHOLD
+            identities
             {
-                controls
-                {
-                    K[], I[], C[], L[];
-                };
+                Y[] = C[] + I[];
             };
-            """
+        };
+        """
+    block = get_block_from_string(test_file)
+    assert not block.definitions
 
-        with self.assertRaises(OptimizationProblemNotDefinedException):
-            get_block_from_string(test_file)
 
-    def test_raises_if_multiple_objective(self):
-        test_file = """
-            block HOUSEHOLD
+def test_lagrange_multiplier_in_objective_raises():
+    test_file = """
+        block HOUSEHOLD
+        {
+            definitions
             {
-                objective
-                {
-                    U[] = u[] + beta * E[][U[1]];
-                    C[] = a[] + b[];
-                };
-                controls
-                {
-                    K[], I[], C[], L[];
-                };
+                u[] = log(C[]);
             };
-            """
 
-        with self.assertRaises(MultipleObjectiveFunctionsException):
-            get_block_from_string(test_file)
-
-    def test_raises_if_controls_not_found(self):
-        test_file = """
-            block HOUSEHOLD
+            objective
             {
-                objective
-                {
-                    U[] = u[] + beta * E[][U[1]];
-                };
-                controls
-                {
-                    Z[];
-                };
+                U[] = u[] + beta * E[][U[1]] : lambda[];
             };
-            """
 
-        with self.assertRaises(ControlVariableNotFoundException):
-            get_block_from_string(test_file)
-
-    def test_block_parser_handles_empty_block(self):
-        test_file = """
-            block HOUSEHOLD
+            controls
             {
-                definitions
-                {
-
-                };
-                identities
-                {
-                    Y[] = C[] + I[];
-                };
+                C[], K[];
             };
-            """
-        block = get_block_from_string(test_file)
-        # Empty definitions should be None or an empty dict
-        self.assertTrue(block.definitions is None or len(block.definitions) == 0)
 
-    def test_non_ss_var_in_calibration_raises(self):
-        test_file = """
-            block HOUSEHOLD
+            constraints
             {
-                calibration
-                {
-                    Y[ss] / K[] = 0.33 -> alpha;
-                };
+                Y[] = K[-1] ^ alpha;
+                K[] = (1 - delta) * K[-1];
+                C[] = r[] * K[-1];
             };
-            """
 
-        self.assertRaises(DynamicCalibratingEquationException, get_block_from_string, test_file)
-
-    def test_function_of_variables_in_calibration_raises(self):
-        test_file = """
-            block HOUSEHOLD
+            calibration
             {
-                calibration
-                {
-                    beta = 0.99;
-                    alpha = beta * Y[];
-                };
+                alpha = 0.33;
+                delta = 0.035;
+                beta = 0.99;
             };
-            """
+        };
+        """
 
-        self.assertRaises(ValueError, get_block_from_string, test_file)
+    block = get_unsolved_block_from_string(test_file)
 
-    def test_lagrange_multiplier_in_objective(self):
-        test_file = """
-            block HOUSEHOLD
-            {
-                definitions
-                {
-                    u[] = log(C[]);
-                };
-
-                objective
-                {
-                    U[] = u[] + beta * E[][U[1]] : lambda[];
-                };
-
-                controls
-                {
-                    C[], K[];
-                };
-
-                constraints
-                {
-                    Y[] = K[-1] ^ alpha;
-                    K[] = (1 - delta) * K[-1];
-                    C[] = r[] * K[-1];
-                };
-
-                calibration
-                {
-                    alpha = 0.33;
-                    delta = 0.035;
-                    beta = 0.99;
-                };
-            };
-            """
-
-        block = get_unsolved_block_from_string(test_file)
-
-        with self.assertRaises(NotImplementedError):
-            block.solve_optimization()
+    with pytest.raises(NotImplementedError):
+        block.solve_optimization()
 
 
 def test_invalid_decorator_raises():
@@ -426,20 +425,12 @@ class TestBlockCases:
         epsilon = parsed_var("epsilon_A", 0)
         alpha, rho = parsed_symbols(["alpha", "rho_A"])
 
-        # Sample random values for all symbols EXCEPT Y, which is set
-        # consistently with the production constraint Y = A*K^alpha*L^(1-alpha).
-        # The chain-rule and closed-form FOCs only agree at points where the
-        # production residual is zero, so this constraint is required for the
-        # representation-agnostic numerical equivalence check below.
+        # The chain-rule FOCs of the general Block and the closed-form FOCs of CobbDouglasBlock only agree at points
+        # where the production residual is zero, so Y is computed from the constraint while the rest are sampled.
         rest_vars = [TC, K, L, A, A.step_backward(), P, r, w, alpha, rho, epsilon]
         sub_dict = dict(zip(rest_vars, rng.uniform(0.1, 1, size=len(rest_vars)), strict=False))
         sub_dict[Y] = float(sub_dict[A] * sub_dict[K] ** sub_dict[alpha] * sub_dict[L] ** (1 - sub_dict[alpha]))
 
-        # Hand-derived FOCs in the chain-rule representation (what the
-        # general Block.solve_optimization emits). The CobbDouglasBlock
-        # specialization emits the algebraically equivalent closed form
-        # (alpha*Y/K, (1-alpha)*Y/L). Either representation must produce
-        # the same numerical value at any point on the production manifold.
         dL_dK = -r + P * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
         dL_dL = -w + P * A * (1 - alpha) * K**alpha * L ** (-alpha)
 
@@ -464,17 +455,13 @@ class TestBlockCases:
         for key in block.param_dict:
             np.testing.assert_allclose(answer[key], block.param_dict.values_to_float()[key])
 
-        # Compare by name since params_to_calibrate may have different symbol assumptions
         assert [str(p) for p in block.params_to_calibrate] == ["alpha"]
 
-        # Get the actual symbols from the block for equation comparison
         actual_alpha = block.params_to_calibrate[0]
         actual_L_ss = next(s for s in block.calibrating_equations[0].free_symbols if str(s) == "L_ss")
         actual_K_ss = next(s for s in block.calibrating_equations[0].free_symbols if str(s) == "K_ss")
 
-        # GCN: L[ss] / K[ss] = 0.36 -> alpha
-        # Convention: alpha = RHS - LHS = 0.36 - L_ss/K_ss
-        # So: param - calib_eq = alpha - (0.36 - L_ss/K_ss) = alpha - 0.36 + L_ss/K_ss
+        # The GCN line ``L[ss] / K[ss] = 0.36 -> alpha`` stores alpha = 0.36 - L_ss / K_ss.
         calibrating_eqs = [actual_alpha - 0.36 + actual_L_ss / actual_K_ss]
 
         for i, eq in enumerate(calibrating_eqs):
@@ -506,13 +493,13 @@ class TestBlockCases:
         assert {x.base_name for x in block.shocks} == {"epsilon"}
 
 
-def test_block_with_exlcuded_equation():
+def test_block_with_excluded_equation():
     result = load_gcn_file(TEST_GCNS / "rbc_with_excluded.gcn")
     block = result.block_dict["HOUSEHOLD"]
     block.solve_optimization()
 
-    # 6 equations are 4 controls, 1 objective, 1 constraint (excluding the excluded equation)
-    assert len(block.system_equations) == 6
+    n_controls, n_objective, n_kept_constraints = 4, 1, 1
+    assert len(block.system_equations) == n_controls + n_objective + n_kept_constraints
 
 
 class TestBlockFromSympy:
@@ -553,7 +540,6 @@ class TestBlockFromSympy:
         loaded_block = get_block_from_string(test_file)
         loaded_block.solve_optimization()
 
-        # Create sympy objects for from_sympy constructor
         Y = parsed_var("Y", 0)
         C = parsed_var("C", 0)
         I = parsed_var("I", 0)
@@ -578,12 +564,10 @@ class TestBlockFromSympy:
         )
         new_block.solve_optimization()
 
-        # Compare key attributes
         assert loaded_block.name == new_block.name
         assert len(loaded_block.system_equations) == len(new_block.system_equations)
         assert {v.base_name for v in loaded_block.variables} == {v.base_name for v in new_block.variables}
 
-        # Compare parameters
         assert set(loaded_block.param_dict.keys()) == set(new_block.param_dict.keys())
         for key in loaded_block.param_dict:
             assert float(loaded_block.param_dict[key]) == float(new_block.param_dict[key])
@@ -600,8 +584,6 @@ class TestBlockFromSympy:
         objective = {0: sp.Eq(U, sp.log(C) - L + beta * U_next)}
         constraints = {1: sp.Eq(C, w * L)}
         controls = [C, L]
-        # Multipliers should map constraint indices to multiplier symbols
-        # Objective index (0) should map to None
         multipliers = {0: None, 1: lambda_}
         equation_flags = {0: {}, 1: {}}
 
@@ -619,13 +601,12 @@ class TestBlockFromSympy:
         assert block.objective == objective
         assert block.constraints == constraints
 
-        # Solve should work
         block.solve_optimization()
         assert len(block.system_equations) > 0
 
 
 def test_lagged_definition_produces_derivative_in_foc():
-    """Regression test for https://github.com/jessegrabowski/gEconpy/issues/74."""
+    """The bond Euler equation must carry the derivative of the lagged risk-premium definition."""
     result = load_gcn_file(TEST_GCNS / "debt_elastic_premium.gcn")
     block = result.block_dict["HOUSEHOLD"]
 
@@ -634,10 +615,6 @@ def test_lagged_definition_produces_derivative_in_foc():
         all_atoms |= eq.atoms()
 
     variables = sorted([a for a in all_atoms if isinstance(a, (TimeAwareSymbol, sp.Symbol))], key=str)
-    # sub_dict = dict(zip(variables, rng.uniform(0.1, 1, size=len(variables)), strict=False))
-
-    # bond euler: dL/dB_t = beta * lambda_{t+1} * R_star_t * Phi_B_t * (1 - phi_B * B_t / Y_t) - lambda_t
-    # where Phi_B_t = exp(-phi_B * (B_t / Y_t - B_bar))
     ns = {str(a): a for a in variables}
 
     B = ns["B_t"]
@@ -694,7 +671,6 @@ def test_ss_variable_in_calibration_resolves_to_deterministic_param():
 
 
 def test_minimize_tag_produces_correct_firm_focs(rng):
-    """The @minimize tag on a cost-minimization objective should yield the same FOCs as manual negation."""
     result = load_gcn_file(TEST_GCNS / "rbc_2_block_minimize.gcn")
     firm_block = result.block_dict["FIRM"]
 
@@ -709,14 +685,11 @@ def test_minimize_tag_produces_correct_firm_focs(rng):
     epsilon = parsed_var("epsilon_A", 0)
     alpha, rho = parsed_symbols(["alpha", "rho_A"])
 
-    # Sample Y consistently with the production constraint so the chain-rule
-    # and closed-form FOC representations agree numerically. See test_firm_FOC
-    # for the same rationale.
+    # Y is set consistently with the production constraint for the reason given in test_firm_FOC.
     rest_vars = [TC, K, L, A, A.step_backward(), P, r, w, alpha, rho, epsilon]
     sub_dict = dict(zip(rest_vars, rng.uniform(0.1, 1, size=len(rest_vars)), strict=False))
     sub_dict[Y] = float(sub_dict[A] * sub_dict[K] ** sub_dict[alpha] * sub_dict[L] ** (1 - sub_dict[alpha]))
 
-    # Hand-derived FOCs for min_{K,L} (r*K + w*L) s.t. Y = A*K^alpha*L^(1-alpha) : P
     expected_dL_dK = -r + P * A * alpha * K ** (alpha - 1) * L ** (1 - alpha)
     expected_dL_dL = -w + P * A * (1 - alpha) * K**alpha * L ** (-alpha)
 

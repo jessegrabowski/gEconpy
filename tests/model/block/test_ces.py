@@ -13,226 +13,166 @@ from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_red
 RBC_CES_PATH = get_example_gcn("RBC_with_CES")
 
 
+def canonical_ces(Y, A, x1, x2, alpha, psi):
+    s = (psi - 1) / psi
+    inner = alpha ** (1 / psi) * x1**s + (1 - alpha) ** (1 / psi) * x2**s
+    return sp.Eq(Y, A * inner ** (1 / s))
+
+
 class TestDispatchOnRBCWithCES:
     def test_firm_is_dispatched(self):
-        """RBC_with_CES's FIRM block has a canonical CES constraint — must dispatch."""
-        prims = load_gcn_file(RBC_CES_PATH, simplify_blocks=True)
-        firm = prims.block_dict["FIRM"]
-        assert isinstance(firm, CESBlock)
+        primitives = load_gcn_file(RBC_CES_PATH, simplify_blocks=True)
+        assert isinstance(primitives.block_dict["FIRM"], CESBlock)
 
-    def test_non_firm_blocks_fall_back(self):
-        """HOUSEHOLD and TECHNOLOGY_SHOCKS must NOT dispatch — they're not CES."""
-        prims = load_gcn_file(RBC_CES_PATH, simplify_blocks=True)
-        for name in ("HOUSEHOLD", "TECHNOLOGY_SHOCKS"):
-            blk = prims.block_dict[name]
-            assert type(blk) is Block, f"{name} should be base Block, got {type(blk).__name__}"
+    @pytest.mark.parametrize("name", ["HOUSEHOLD", "TECHNOLOGY_SHOCKS"])
+    def test_non_firm_blocks_fall_back(self, name):
+        primitives = load_gcn_file(RBC_CES_PATH, simplify_blocks=True)
+        assert type(primitives.block_dict[name]) is Block
 
 
-class TestPolicyEquivalence:
-    """The dispatched path must produce the same policy function as the general Block path, to machine epsilon."""
+def test_policy_equivalence(monkeypatch):
+    """The dispatched block must give the same policy function as the general Block, to machine epsilon."""
+    model = model_from_gcn(RBC_CES_PATH, verbose=False)
+    A, B, C, D = model.linearize_model(verbose=False)
+    T, R, _, _ = solve_policy_function_with_cycle_reduction(A, B, C, D, 1000, 1e-12, False)
 
-    def test_policy_equivalence(self, monkeypatch):
-        """Compute T, R with and without dispatch and compare element-wise."""
-        m = model_from_gcn(RBC_CES_PATH, verbose=False)
-        A, B, C, D = m.linearize_model(verbose=False)
-        T, R, _, _ = solve_policy_function_with_cycle_reduction(A, B, C, D, 1000, 1e-12, False)
+    monkeypatch.setattr(registry_mod, "_REGISTRY", [])
+    model_base = model_from_gcn(RBC_CES_PATH, verbose=False)
+    A_b, B_b, C_b, D_b = model_base.linearize_model(verbose=False)
+    T_b, R_b, _, _ = solve_policy_function_with_cycle_reduction(A_b, B_b, C_b, D_b, 1000, 1e-12, False)
 
-        monkeypatch.setattr(registry_mod, "_REGISTRY", [])
-        m_b = model_from_gcn(RBC_CES_PATH, verbose=False)
-        A_b, B_b, C_b, D_b = m_b.linearize_model(verbose=False)
-        T_b, R_b, _, _ = solve_policy_function_with_cycle_reduction(A_b, B_b, C_b, D_b, 1000, 1e-12, False)
-
-        assert np.max(np.abs(T - T_b)) < 1e-12, f"Transition matrix T differs: max |Δ| = {np.max(np.abs(T - T_b)):.3e}"
-        assert np.max(np.abs(R - R_b)) < 1e-12, f"Impact matrix R differs: max |Δ| = {np.max(np.abs(R - R_b)):.3e}"
+    assert np.max(np.abs(T - T_b)) < 1e-12
+    assert np.max(np.abs(R - R_b)) < 1e-12
 
 
 class TestDetectionConservatism:
-    """Detection must be conservative: false positives are bugs."""
+    """A false positive silently drops terms from the user's equations, so each near miss here must be rejected."""
 
     def test_rejects_no_constraint(self):
-        """No constraint → no match (CES requires a production constraint)."""
         assert _match_ces_constraint(None) is None
         assert _match_ces_constraint({}) is None
 
     def test_rejects_two_constraints(self):
-        """Multiple constraints → no match (CES has exactly one)."""
-        Y, A, x1, x2, alpha, psi = sp.symbols("Y A x1 x2 alpha psi")
-        s = (psi - 1) / psi
-        inner = alpha ** (1 / psi) * x1**s + (1 - alpha) ** (1 / psi) * x2**s
-        constraint = sp.Eq(Y, A * inner ** (1 / s))
+        constraint = canonical_ces(*sp.symbols("Y A x1 x2 alpha psi"))
         assert _match_ces_constraint({0: constraint, 1: constraint}) is None
 
     def test_rejects_cobb_douglas_constraint(self):
-        """A CD constraint Y = A * x1^a * x2^(1-a) is NOT CES — no inner sum, no outer Pow over Add."""
         Y, A, x1, x2, a1 = sp.symbols("Y A x1 x2 a1")
-        constraints = {0: sp.Eq(Y, A * x1**a1 * x2 ** (1 - a1))}
-        assert _match_ces_constraint(constraints) is None
+        assert _match_ces_constraint({0: sp.Eq(Y, A * x1**a1 * x2 ** (1 - a1))}) is None
+
+    def test_rejects_when_outer_exponent_is_not_reciprocal_of_inner(self):
+        Y, A, x1, x2, a, b = sp.symbols("Y A x1 x2 a b")
+        assert _match_ces_constraint({0: sp.Eq(Y, A * (x1**a + x2**a) ** b)}) is None
+
+    def test_rejects_extra_constant_factor(self):
+        Y, A, x1, x2, alpha, psi = sp.symbols("Y A x1 x2 alpha psi")
+        canonical = canonical_ces(Y, A, x1, x2, alpha, psi)
+        assert _match_ces_constraint({0: sp.Eq(Y, 2 * canonical.rhs)}) is None
 
     def test_accepts_canonical_two_input_form(self):
-        """The standard CES Y = A * (alpha^(1/psi) x1^s + (1-alpha)^(1/psi) x2^s)^(1/s) must match."""
         Y, A, x1, x2, alpha, psi = sp.symbols("Y A x1 x2 alpha psi")
-        s = (psi - 1) / psi
-        inner = alpha ** (1 / psi) * x1**s + (1 - alpha) ** (1 / psi) * x2**s
-        constraints = {7: sp.Eq(Y, A * inner ** (1 / s))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        assert m["Y"] == Y
-        assert m["A"] == A
-        assert m["idx"] == 7
-        assert sp.simplify(m["s"] - s) == 0
-        inputs = dict(m["inputs"])
-        assert set(inputs.keys()) == {x1, x2}
+        match = _match_ces_constraint({7: canonical_ces(Y, A, x1, x2, alpha, psi)})
+
+        assert match is not None
+        assert match.output == Y
+        assert match.productivity == A
+        assert match.idx == 7
+        assert sp.simplify(match.exponent - (psi - 1) / psi) == 0
+        assert set(dict(match.inputs).keys()) == {x1, x2}
 
     @pytest.mark.parametrize("k", [2, 3, 5])
     def test_accepts_arbitrary_arity(self, k):
-        """Arity-agnostic: Y = A * (sum_{i=1..k} share_i * x_i^s)^(1/s) must match for any k >= 2."""
         Y, A, psi = sp.symbols("Y A psi")
         xs = sp.symbols(f"x1:{k + 1}")
         shares = sp.symbols(f"alpha1:{k + 1}")
         s = (psi - 1) / psi
         inner = sum(share ** (1 / psi) * x**s for share, x in zip(shares, xs, strict=True))
-        constraints = {0: sp.Eq(Y, A * inner ** (1 / s))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None, f"k={k}: matcher returned None"
-        assert m["Y"] == Y
-        assert m["A"] == A
-        assert len(m["inputs"]) == k
-        recovered_inputs = {x for x, _ in m["inputs"]}
-        assert recovered_inputs == set(xs)
+        match = _match_ces_constraint({0: sp.Eq(Y, A * inner ** (1 / s))})
 
-    def test_rejects_when_outer_exp_inconsistent_with_inner(self):
-        """Y = A * (x1^a + x2^a)^b where a*b != 1 is not canonical CES — outer/inner exponents must reciprocate."""
-        Y, A, x1, x2, a, b = sp.symbols("Y A x1 x2 a b")
-        constraints = {0: sp.Eq(Y, A * (x1**a + x2**a) ** b)}
-        # a*b is symbolically (a*b), not 1, so the matcher must reject.
-        assert _match_ces_constraint(constraints) is None
-
-    def test_rejects_extra_constant_factor(self):
-        """Y = 2 * A * (...)^(1/s) has an extra numerical coefficient; not canonical CES."""
-        Y, A, x1, x2, alpha, psi = sp.symbols("Y A x1 x2 alpha psi")
-        s = (psi - 1) / psi
-        inner = alpha ** (1 / psi) * x1**s + (1 - alpha) ** (1 / psi) * x2**s
-        constraints = {0: sp.Eq(Y, 2 * A * inner ** (1 / s))}
-        assert _match_ces_constraint(constraints) is None
+        assert match is not None
+        assert match.output == Y
+        assert match.productivity == A
+        assert set(dict(match.inputs).keys()) == set(xs)
 
     def test_detect_requires_objective(self):
-        """An identity-only block must not dispatch even when the constraint matches CES shape."""
-        Y, A, x1, x2, alpha, psi = sp.symbols("Y A x1 x2 alpha psi")
-        s = (psi - 1) / psi
-        inner = alpha ** (1 / psi) * x1**s + (1 - alpha) ** (1 / psi) * x2**s
-        constraints = {0: sp.Eq(Y, A * inner ** (1 / s))}
+        constraints = {0: canonical_ces(*sp.symbols("Y A x1 x2 alpha psi"))}
         assert CESBlock.detect(constraints, objective=None, identities=None) is False
 
 
 class TestParameterizationVariants:
-    """The matcher must accept the various ``s`` and share spellings that show up across DSGE practice."""
+    """The matcher must accept the exponent and share spellings that appear across DSGE practice."""
 
     def test_direct_exponent_form(self):
-        """Direct-exponent parameterization with simple shares.
-
-        ``Y = A * (alpha * x1^rho + (1-alpha) * x2^rho)^(1/rho)``
-        """
         Y, A, x1, x2, alpha, rho = sp.symbols("Y A x1 x2 alpha rho")
-        constraints = {0: sp.Eq(Y, A * (alpha * x1**rho + (1 - alpha) * x2**rho) ** (1 / rho))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        assert sp.simplify(m["s"] - rho) == 0
-        shares = dict(m["inputs"])
-        assert shares[x1] == alpha
-        assert shares[x2] == 1 - alpha
+        match = _match_ces_constraint({0: sp.Eq(Y, A * (alpha * x1**rho + (1 - alpha) * x2**rho) ** (1 / rho))})
+
+        assert match is not None
+        assert sp.simplify(match.exponent - rho) == 0
+        assert dict(match.inputs) == {x1: alpha, x2: 1 - alpha}
 
     def test_acms_negative_exponent_form(self):
-        """``Y = A * (alpha * x1^(-rho) + (1-alpha) * x2^(-rho))^(-1/rho)`` — Arrow-Chenery-Minhas-Solow original."""
         Y, A, x1, x2, alpha, rho = sp.symbols("Y A x1 x2 alpha rho")
-        constraints = {0: sp.Eq(Y, A * (alpha * x1 ** (-rho) + (1 - alpha) * x2 ** (-rho)) ** (-1 / rho))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        # The matcher recovers s == -rho (or some algebraic equivalent).
-        assert sp.simplify(m["s"] + rho) == 0
+        rhs = A * (alpha * x1 ** (-rho) + (1 - alpha) * x2 ** (-rho)) ** (-1 / rho)
+        match = _match_ces_constraint({0: sp.Eq(Y, rhs)})
+
+        assert match is not None
+        assert sp.simplify(match.exponent + rho) == 0
 
     def test_sigma_parameterization(self):
-        """``Y = A * (sum share_i^(1/sigma) * x_i^((sigma-1)/sigma))^(sigma/(sigma-1))`` — sigma instead of psi."""
         Y, A, x1, x2, alpha, sigma = sp.symbols("Y A x1 x2 alpha sigma")
-        s = (sigma - 1) / sigma
-        inner = alpha ** (1 / sigma) * x1**s + (1 - alpha) ** (1 / sigma) * x2**s
-        constraints = {0: sp.Eq(Y, A * inner ** (1 / s))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        assert sp.simplify(m["s"] - s) == 0
+        match = _match_ces_constraint({0: canonical_ces(Y, A, x1, x2, alpha, sigma)})
+
+        assert match is not None
+        assert sp.simplify(match.exponent - (sigma - 1) / sigma) == 0
 
     def test_ratio_shares(self):
-        """Shares written as ratios: ``Y = A * (alpha/(1-alpha) * x1^rho + x2^rho)^(1/rho)``."""
         Y, A, x1, x2, alpha, rho = sp.symbols("Y A x1 x2 alpha rho")
         share1 = alpha / (1 - alpha)
-        constraints = {0: sp.Eq(Y, A * (share1 * x1**rho + x2**rho) ** (1 / rho))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        shares = dict(m["inputs"])
-        # share1 may be normalized differently by sympy; check algebraic equality.
-        assert sp.simplify(shares[x1] - alpha / (1 - alpha)) == 0
+        match = _match_ces_constraint({0: sp.Eq(Y, A * (share1 * x1**rho + x2**rho) ** (1 / rho))})
+
+        assert match is not None
+        shares = dict(match.inputs)
+        assert sp.simplify(shares[x1] - share1) == 0
         assert sp.simplify(shares[x2] - 1) == 0
 
-    def test_two_parameter_shares(self):
-        """Independent share parameters: ``Y = A * (alpha * x1^rho + beta * x2^rho)^(1/rho)``."""
-        Y, A, x1, x2, alpha, beta, rho = sp.symbols("Y A x1 x2 alpha beta rho")
-        constraints = {0: sp.Eq(Y, A * (alpha * x1**rho + beta * x2**rho) ** (1 / rho))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        shares = dict(m["inputs"])
-        assert shares[x1] == alpha
-        assert shares[x2] == beta
-
-    def test_numeric_shares(self):
-        """Calibrated numeric shares: ``Y = A * (0.3 * x1^rho + 0.7 * x2^rho)^(1/rho)``."""
+    @pytest.mark.parametrize(
+        "share1, share2",
+        [
+            (sp.Symbol("alpha"), sp.Symbol("beta")),
+            (sp.Rational(3, 10), sp.Rational(7, 10)),
+            (sp.S.One, sp.S.One),
+        ],
+        ids=["two-parameters", "numeric", "implicit-unit"],
+    )
+    def test_share_spellings(self, share1, share2):
         Y, A, x1, x2, rho = sp.symbols("Y A x1 x2 rho")
-        constraints = {0: sp.Eq(Y, A * (sp.Rational(3, 10) * x1**rho + sp.Rational(7, 10) * x2**rho) ** (1 / rho))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        shares = dict(m["inputs"])
-        assert shares[x1] == sp.Rational(3, 10)
-        assert shares[x2] == sp.Rational(7, 10)
+        match = _match_ces_constraint({0: sp.Eq(Y, A * (share1 * x1**rho + share2 * x2**rho) ** (1 / rho))})
 
-    def test_no_explicit_share_means_unit_share(self):
-        """``Y = A * (x1^rho + x2^rho)^(1/rho)`` — implicit unit shares."""
-        Y, A, x1, x2, rho = sp.symbols("Y A x1 x2 rho")
-        constraints = {0: sp.Eq(Y, A * (x1**rho + x2**rho) ** (1 / rho))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        shares = dict(m["inputs"])
-        assert shares[x1] == 1
-        assert shares[x2] == 1
+        assert match is not None
+        assert dict(match.inputs) == {x1: share1, x2: share2}
 
     def test_mixed_share_spellings(self):
-        """Mixed forms in one constraint: one input has alpha^(1/psi) share, the other has plain alpha."""
         Y, A, x1, x2, alpha, psi = sp.symbols("Y A x1 x2 alpha psi")
         s = (psi - 1) / psi
-        # Asymmetric — first share has the (1/psi) Pow form, second is plain.
         inner = alpha ** (1 / psi) * x1**s + (1 - alpha) * x2**s
-        constraints = {0: sp.Eq(Y, A * inner ** (1 / s))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        shares = dict(m["inputs"])
-        assert shares[x1] == alpha ** (1 / psi)
-        assert shares[x2] == 1 - alpha
+        match = _match_ces_constraint({0: sp.Eq(Y, A * inner ** (1 / s))})
+
+        assert match is not None
+        assert dict(match.inputs) == {x1: alpha ** (1 / psi), x2: 1 - alpha}
 
     def test_no_leading_productivity(self):
-        """``Y = (alpha * x1^rho + (1-alpha) * x2^rho)^(1/rho)`` — productivity absorbed into shares or set to 1."""
         Y, x1, x2, alpha, rho = sp.symbols("Y x1 x2 alpha rho")
-        constraints = {0: sp.Eq(Y, (alpha * x1**rho + (1 - alpha) * x2**rho) ** (1 / rho))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        assert m["A"] is None
-        assert sp.simplify(m["s"] - rho) == 0
-        shares = dict(m["inputs"])
-        assert shares[x1] == alpha
-        assert shares[x2] == 1 - alpha
+        match = _match_ces_constraint({0: sp.Eq(Y, (alpha * x1**rho + (1 - alpha) * x2**rho) ** (1 / rho))})
+
+        assert match is not None
+        assert match.productivity is None
+        assert sp.simplify(match.exponent - rho) == 0
+        assert dict(match.inputs) == {x1: alpha, x2: 1 - alpha}
 
     def test_no_leading_productivity_canonical_form(self):
-        """No-A in canonical (psi-1)/psi spelling: ``Y = (alpha^(1/psi) x1^s + (1-alpha)^(1/psi) x2^s)^(1/s)``."""
         Y, x1, x2, alpha, psi = sp.symbols("Y x1 x2 alpha psi")
-        s = (psi - 1) / psi
-        inner = alpha ** (1 / psi) * x1**s + (1 - alpha) ** (1 / psi) * x2**s
-        constraints = {0: sp.Eq(Y, inner ** (1 / s))}
-        m = _match_ces_constraint(constraints)
-        assert m is not None
-        assert m["A"] is None
+        canonical = canonical_ces(Y, sp.S.One, x1, x2, alpha, psi)
+        match = _match_ces_constraint({0: canonical})
+
+        assert match is not None
+        assert match.productivity is None

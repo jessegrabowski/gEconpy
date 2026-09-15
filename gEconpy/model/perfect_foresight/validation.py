@@ -11,26 +11,28 @@ def validate_perfect_foresight_inputs(
     param_names: list[str],
     simulation_length: int,
 ) -> None:
-    """Validate inputs to solve_perfect_foresight.
+    """
+    Check that every user-supplied name is known to the model and every path has the simulation length.
 
     Parameters
     ----------
-    initial_conditions : dict of str to float
-        Initial values for state variables at t=-1.
-    terminal_conditions : dict of str to float
-        Terminal values for state variables at t=T.
-    shocks : dict of str to ndarray or None
-        Shock paths over the simulation horizon.
-    param_paths : dict of str to float or ndarray, or None
-        Parameter overrides (scalar or time-varying).
+    initial_conditions : dict mapping str to float
+        Variable values at ``t = -1``, keyed by base name.
+    terminal_conditions : dict mapping str to float
+        Variable values at ``t = T``, keyed by base name.
+    shocks : dict mapping str to ndarray, optional
+        Shock paths over the horizon, keyed by shock name.
+    param_paths : dict mapping str to float or ndarray, optional
+        Parameter overrides, keyed by parameter name. A scalar holds for every period. An array gives one value
+        per period.
     var_names : list of str
-        Valid variable names from the model.
+        Variable names the model knows.
     shock_names : list of str
-        Valid shock names from the model.
+        Shock names the model knows.
     param_names : list of str
-        Valid parameter names from the model.
+        Parameter names the model knows.
     simulation_length : int
-        Number of time periods.
+        Number of periods.
     """
     var_set = set(var_names)
     shock_set = set(shock_names)

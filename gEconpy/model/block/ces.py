@@ -1,215 +1,46 @@
+from dataclasses import dataclass
+
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.block.basic import Block
+from gEconpy.model.block.cobb_douglas import _split_output_and_product, _symbols_are_distinct
 from gEconpy.model.block.registry import register_block
 from gEconpy.utilities import diff_through_time
 
 
-def _decompose_ces_outer(prod_term: sp.Expr) -> tuple[sp.Symbol | None, sp.Add, sp.Expr] | None:
-    r"""Decompose ``[A *] (inner_sum)^outer_exp`` into its three pieces.
-
-    Walks ``Mul.make_args`` and demands at most one bare ``Symbol`` (productivity ``A``, optional) and exactly one
-    ``Pow`` whose base is an ``Add`` (the inner CES bracket). The leading ``A`` is optional: many calibrated DSGE
-    models drop it (or absorb it into the shares), so :math:`Y = (\sum_i \text{share}_i \cdot x_i^s)^{1/s}` is a
-    legitimate form. Rejects anything else: extra constants, multiple Pows, Pow whose base is not an Add.
-
-    Parameters
-    ----------
-    prod_term : sympy.Expr
-        Expression assumed to take the form :math:`[A \cdot] (\sum_i \text{share}_i \cdot x_i^s)^{1/s}`.
-
-    Returns
-    -------
-    decomposition : tuple of (Symbol or None, Add, Expr) or None
-        ``(A, inner_sum, outer_exp)`` on success (``A`` is None when no leading productivity term is present),
-        None on rejection.
-    """
-    A = None
-    pow_factor = None
-    for f in sp.Mul.make_args(prod_term):
-        if isinstance(f, sp.Symbol):
-            if A is not None:
-                return None
-            A = f
-        elif isinstance(f, sp.Pow) and isinstance(f.args[0], sp.Add):
-            if pow_factor is not None:
-                return None
-            pow_factor = f
-        else:
-            return None
-    if pow_factor is None:
-        return None
-    inner_sum, outer_exp = pow_factor.args
-    return A, inner_sum, outer_exp
-
-
-def _decompose_ces_inner(
-    inner_sum: sp.Add, outer_exp: sp.Expr
-) -> tuple[sp.Expr, list[tuple[sp.Symbol, sp.Expr]]] | None:
-    r"""Decompose the CES inner bracket :math:`\sum_i \text{share}_i \cdot x_i^s`.
-
-    The defining algebraic property of CES is that the outer exponent is the reciprocal of the input exponent:
-    :math:`\text{outer\_exp} \cdot s = 1`. The matcher uses this identity to pick out which exponent in the inner sum
-    is the input exponent (versus, e.g., the share parameter's own exponent like :math:`\alpha^{1/\psi}`, which has a
-    different value).
-
-    Each addend must contain exactly one ``Pow`` whose base is a ``Symbol`` and whose exponent equals the chosen
-    :math:`s`; the remaining factors multiply to give the share coefficient. Returns None on any structural deviation.
-
-    Parameters
-    ----------
-    inner_sum : sympy.Add
-        The bracket expression.
-    outer_exp : sympy.Expr
-        The exponent applied to the bracket in the outer ``Pow``.
-
-    Returns
-    -------
-    decomposition : tuple of (Expr, list of (Symbol, Expr)) or None
-        ``(s, [(x_1, share_1), ..., (x_k, share_k)])`` on success, None on rejection.
-    """
-    candidate_exponents: list[sp.Expr] = []
-    for term in inner_sum.args:
-        for f in sp.Mul.make_args(term):
-            if isinstance(f, sp.Pow) and not any(sp.simplify(f.args[1] - c) == 0 for c in candidate_exponents):
-                candidate_exponents.append(f.args[1])
-
-    s_candidates = [c for c in candidate_exponents if sp.simplify(outer_exp * c - 1) == 0]
-    if len(s_candidates) != 1:
-        return None
-    s = s_candidates[0]
-
-    inputs: list[tuple[sp.Symbol, sp.Expr]] = []
-    for term in inner_sum.args:
-        x = None
-        share_factors = []
-        for f in sp.Mul.make_args(term):
-            if isinstance(f, sp.Pow) and sp.simplify(f.args[1] - s) == 0:
-                if x is not None:
-                    return None
-                if not isinstance(f.args[0], sp.Symbol):
-                    return None
-                x = f.args[0]
-            else:
-                share_factors.append(f)
-        if x is None:
-            return None
-        share = sp.Mul(*share_factors) if share_factors else sp.S.One
-        inputs.append((x, share))
-
-    bases = [x for x, _ in inputs]
-    if len(set(bases)) != len(bases):
-        return None
-
-    return s, inputs
-
-
-def _match_ces_constraint(constraints: dict[int, sp.Eq] | None) -> dict | None:
-    r"""Match a single CES production constraint of arbitrary input arity.
-
-    The general form is
-
-    .. math::
-
-        Y = A \cdot \left( \sum_{i=1}^{k} \text{share}_i \cdot x_i^s \right)^{1/s}
-
-    where :math:`s = (\psi - 1)/\psi` for an elasticity of substitution :math:`\psi`. The shares :math:`\text{share}_i`
-    are typically parameter expressions (e.g. :math:`\alpha^{1/\psi}` and :math:`(1-\alpha)^{1/\psi}` in the standard
-    two-input form), but the matcher accepts any sympy expression for the share -- the closed-form FOC identity does
-    not depend on the share's internal structure.
-
-    Match is conservative: requires exactly one constraint, the residual to decompose cleanly into
-    :math:`-Y + [A \cdot] (\text{inner})^{1/s}` (no extra additive terms, no extra multiplicative constants beyond the
-    optional leading productivity Symbol :math:`A`), the inner bracket to be a sum of terms each containing exactly
-    one ``Pow`` of a ``Symbol`` with a shared exponent :math:`s`, and the outer exponent to satisfy
-    :math:`\text{outer\_exp} \cdot s = 1` (the defining CES algebraic identity). The leading :math:`A` is optional;
-    when absent, the closed-form FOC drops the :math:`A^s` factor.
-
-    Parameters
-    ----------
-    constraints : dict mapping int to sympy.Eq, optional
-        Block constraints keyed by equation index, as held on a :class:`~gEconpy.model.block.basic.Block`.
-
-    Returns
-    -------
-    match : dict or None
-        On match, ``{"idx": int, "Y": Symbol, "A": Symbol, "s": Expr, "inputs": list of (Symbol, Expr)}``. Otherwise
-        None.
-    """
-    if not constraints or len(constraints) != 1:
-        return None
-    idx, eq = next(iter(constraints.items()))
-
-    # NOTE: do NOT call sp.expand on the residual. The CES outer Pow over a sum gets distributed in nasty ways
-    # (e.g. K^((psi-1)/psi) = K/K^(1/psi), which sp.expand pulls out across the bracket), destroying the structure
-    # the matcher relies on.
-    for residual in (eq.rhs - eq.lhs, eq.lhs - eq.rhs):
-        if not isinstance(residual, sp.Add) or len(residual.args) != 2:
-            continue
-
-        Y_sym = None
-        prod_term = None
-        for term in residual.args:
-            coeff, rest = term.as_coeff_Mul()
-            if coeff == -1 and isinstance(rest, sp.Symbol) and Y_sym is None:
-                Y_sym = rest
-            else:
-                prod_term = term
-
-        if Y_sym is None or prod_term is None:
-            continue
-
-        outer = _decompose_ces_outer(prod_term)
-        if outer is None:
-            continue
-        A, inner_sum, outer_exp = outer
-
-        inner = _decompose_ces_inner(inner_sum, outer_exp)
-        if inner is None:
-            continue
-        s, inputs = inner
-
-        all_syms = {Y_sym, *(x for x, _ in inputs)}
-        if A is not None:
-            all_syms.add(A)
-        expected_count = len(inputs) + (2 if A is not None else 1)
-        if len(all_syms) != expected_count:
-            continue
-
-        return {"idx": idx, "Y": Y_sym, "A": A, "s": s, "inputs": inputs}
-
-    return None
-
-
 @register_block
 class CESBlock(Block):
-    r"""A :class:`~gEconpy.model.block.basic.Block` with a CES production constraint of arbitrary input count.
+    r"""
+    A :class:`~gEconpy.model.block.basic.Block` whose single constraint is a CES production function.
 
-    The constraint takes the general form
+    The constraint has the form
 
     .. math::
 
-        Y = A \cdot \left( \sum_{i=1}^{k} \text{share}_i \cdot x_i^s \right)^{1/s}
+        Y = A \left( \sum_{i=1}^{k} \text{share}_i \, x_i^s \right)^{1/s}
 
-    where :math:`s = (\psi - 1)/\psi` is the input exponent (elasticity of substitution :math:`\psi` parameterizes
-    :math:`s`). The two-input form with :math:`\text{share}_1 = \alpha^{1/\psi}` and
-    :math:`\text{share}_2 = (1-\alpha)^{1/\psi}` is the standard parameterization in DSGE practice, but the matcher
-    accepts any share expressions. Cobb-Douglas is the :math:`\psi \to 1` limit; the matcher does not collapse to
-    Cobb-Douglas in that case (parameter values are runtime data, not structural).
+    for any :math:`k \geq 2`, where :math:`s = (\psi - 1)/\psi` for elasticity of substitution :math:`\psi`. The
+    productivity term :math:`A` is optional and the shares may be any sympy expressions. Cobb-Douglas is the
+    :math:`\psi \to 1` limit, and the matcher never collapses to it, because detection is structural and parameter
+    values are runtime data.
 
-    The first-order conditions for the constraint side are emitted in closed form via the identity
-    :math:`\partial Y / \partial x_i = \text{share}_i \cdot A^s \cdot (Y / x_i)^{1-s}`:
+    The first-order condition for each input uses the identity
+    :math:`\partial Y / \partial x_i = \text{share}_i \, A^s \, (Y / x_i)^{1-s}`:
 
     .. math::
 
         \frac{\partial \mathcal{L}}{\partial x_i}
             = \frac{\partial \text{obj}}{\partial x_i}
-              + \mu \cdot \text{share}_i \cdot A^s \cdot \left(\frac{Y}{x_i}\right)^{1-s}
+              + \mu \, \text{share}_i \, A^s \left(\frac{Y}{x_i}\right)^{1-s}
 
-    where :math:`\mu` is the Lagrange multiplier on the production constraint. The constraint itself is never
-    differentiated by :func:`~sympy.core.function.diff`, avoiding the chain-rule expansion that involves both the
-    inner-sum subgraph and the double-exponent :math:`\text{inner}^{1/s - 1}`.
+    where :math:`\mu` is the multiplier on the production constraint and the :math:`A^s` factor is dropped when the
+    constraint has no productivity term. The constraint itself is never passed to :func:`sympy.diff`, so the
+    chain-rule expansion through the inner sum and the double exponent :math:`\text{inner}^{1/s - 1}` never enters
+    the compiled graph.
+
+    The parser constructs this class through :func:`~gEconpy.model.block.registry.dispatch_block` whenever
+    :meth:`detect` matches. Its constructor takes the same arguments as :class:`~gEconpy.model.block.basic.Block`.
     """
 
     @classmethod
@@ -217,52 +48,60 @@ class CESBlock(Block):
         cls,
         constraints: dict[int, sp.Eq] | None,
         objective: dict[int, sp.Eq] | None,
-        identities: dict[int, sp.Eq] | None,  # noqa: ARG003 -- part of the dispatch contract; other subclasses use it
+        identities: dict[int, sp.Eq] | None,  # noqa: ARG003 -- part of the dispatch contract
     ) -> bool:
-        """Conservative match for a CES production block.
+        """
+        Report whether a block is a CES optimization problem.
 
-        The block must have an objective (it is an optimization, not an identity-only block) and exactly one
-        constraint whose residual matches the CES form via ``_match_ces_constraint``. The objective itself is not
-        constrained: the closed-form constraint derivative is exact regardless of what the firm is maximizing, so
-        ``_compute_foc`` simply differentiates the objective symbolically and adds the closed-form constraint
-        term.
+        The block must have an objective and exactly one constraint of the form
+        ``Y = [A *] (sum(share_i * x_i ** s)) ** (1 / s)``. The objective is unconstrained, because the closed-form
+        constraint derivative is exact whatever the block maximizes.
 
         Parameters
         ----------
         constraints : dict mapping int to sympy.Eq, optional
-            Block constraints keyed by equation index.
+            Block constraints, keyed by equation index.
         objective : dict mapping int to sympy.Eq, optional
-            Block objective keyed by equation index. Must be present.
+            Block objective, keyed by equation index.
         identities : dict mapping int to sympy.Eq, optional
-            Block identities. Not used for matching; accepted for interface compatibility with the registry.
+            Block identities. Unused, accepted so every registered subclass shares one signature.
 
         Returns
         -------
-        match : bool
-            True if the block is a canonical CES optimization. False otherwise; caller falls back to the general
-            :class:`~gEconpy.model.block.basic.Block` (or another more-specific subclass earlier in the registry).
+        matched : bool
+            True when the block should be constructed as a :class:`CESBlock`.
+
+        Examples
+        --------
+        The second call prints False because the objective is missing:
+
+        .. code-block:: python
+
+            import sympy as sp
+
+            from gEconpy.model.block.ces import CESBlock
+
+            Y, A, K, L, alpha, psi, Pi, r, w = sp.symbols("Y A K L alpha psi Pi r w")
+            s = (psi - 1) / psi
+            inner = alpha ** (1 / psi) * K**s + (1 - alpha) ** (1 / psi) * L**s
+            constraints = {0: sp.Eq(Y, A * inner ** (1 / s))}
+            objective = {1: sp.Eq(Pi, Y - r * K - w * L)}
+
+            print(CESBlock.detect(constraints, objective, identities=None))
+            print(CESBlock.detect(constraints, objective=None, identities=None))
         """
         if objective is None:
             return False
         return _match_ces_constraint(constraints) is not None
 
     def __init__(self, *args, **kwargs):
-        """
-        Initialize a CES block.
-
-        All arguments are passed through to :class:`~gEconpy.model.block.basic.Block`, which documents them.
-
-        Raises
-        ------
-        RuntimeError
-            If the block's constraints do not match the CES form. Reaching this state means the dispatcher chose the
-            wrong class.
-        """
+        """Construct the block. See :class:`~gEconpy.model.block.basic.Block` for the arguments."""
         super().__init__(*args, **kwargs)
-        self._ces_match = _match_ces_constraint(self.constraints)
-        if self._ces_match is None:
+        self._match = _match_ces_constraint(self.constraints)
+        if self._match is None:
             raise RuntimeError(
-                f"CESBlock {self.name!r} constructed without matching CES constraint. This is a dispatcher bug."
+                f"CESBlock {self.name!r} constructed without a matching CES constraint. Construct blocks through "
+                "dispatch_block, which only selects this class when detect matches."
             )
 
     def _compute_foc(
@@ -271,61 +110,186 @@ class CESBlock(Block):
         lagrange: sp.Expr,
         discount_factor: sp.Expr | int,
     ) -> sp.Expr:
-        r"""Closed-form first-order condition for a CES production constraint.
+        r"""
+        Compute the first-order condition for one control, in closed form when the control is a production input.
 
-        For the Lagrangian
-
-        .. math::
-
-            \mathcal{L} = \text{obj}
-                - \mu \cdot \left( Y - A \left( \sum_i \text{share}_i \cdot x_i^s \right)^{1/s} \right)
-
-        the first-order condition with respect to input :math:`x_i` reduces algebraically to
+        For an input :math:`x_i` the condition is
 
         .. math::
 
-            \frac{\partial \mathcal{L}}{\partial x_i}
-                = \frac{\partial \text{obj}}{\partial x_i}
-                  + \mu \cdot \text{share}_i \cdot A^s \cdot \left(\frac{Y}{x_i}\right)^{1-s}
+            \frac{\partial \text{obj}}{\partial x_i}
+              + \mu \, \text{share}_i \, A^s \left(\frac{Y}{x_i}\right)^{1-s}
 
-        The objective derivative is taken via :func:`diff_through_time` so multi-period objectives with continuation
-        values compose correctly. If ``control`` is not one of the production inputs, falls back to standard
-        differentiation of the full Lagrangian.
+        with the objective derivative taken by :func:`~gEconpy.utilities.diff_through_time`. Any other control
+        falls back to differentiating the full Lagrangian.
 
         Parameters
         ----------
         control : TimeAwareSymbol
             Control variable to differentiate against.
         lagrange : sympy.Expr
-            Full Lagrangian, used only for the fallback path.
+            Full Lagrangian, used only on the fallback path.
         discount_factor : sympy.Expr or int
-            Discount factor applied to forward time-shifted derivative terms.
+            Discount factor applied to forward-shifted derivative terms.
 
         Returns
         -------
         foc : sympy.Expr
             First-order condition residual.
         """
-        Y = self._ces_match["Y"]
-        A = self._ces_match["A"]
-        s = self._ces_match["s"]
-        mu = self.multipliers[self._ces_match["idx"]]
+        match = self._match
+        mu = self.multipliers[match.idx]
         if mu is None:
             raise RuntimeError(
-                f"CESBlock {self.name!r}: no multiplier for the production constraint. This is a base class bug."
+                f"CESBlock {self.name!r} has no multiplier on its production constraint. Call solve_optimization, "
+                "which generates one, before computing first-order conditions."
             )
 
         obj_idx, obj_eq = next(iter(self.objective.items()))
         objective_rhs = obj_eq.rhs
         if self.equation_flags.get(obj_idx, {}).get("minimize", False):
             objective_rhs = -objective_rhs
-        obj_term = diff_through_time(objective_rhs, control, discount_factor)
+        objective_term = diff_through_time(objective_rhs, control, discount_factor)
 
-        for x_i, share_i in self._ces_match["inputs"]:
-            if control == x_i:
-                # If the user wrote the constraint without a leading productivity ``A``, the closed-form FOC drops
-                # the ``A^s`` factor entirely.
-                productivity_factor = A**s if A is not None else sp.S.One
-                return obj_term + mu * share_i * productivity_factor * (Y / x_i) ** (1 - s)
+        productivity_factor = sp.S.One if match.productivity is None else match.productivity**match.exponent
+        for input_symbol, share in match.inputs:
+            if control == input_symbol:
+                marginal_product = share * productivity_factor * (match.output / input_symbol) ** (1 - match.exponent)
+                return objective_term + mu * marginal_product
 
         return diff_through_time(lagrange, control, discount_factor)
+
+
+@dataclass(frozen=True)
+class _CESMatch:
+    idx: int
+    output: sp.Symbol
+    productivity: sp.Symbol | None
+    exponent: sp.Expr
+    inputs: list[tuple[sp.Symbol, sp.Expr]]
+
+
+def _match_ces_constraint(constraints: dict[int, sp.Eq] | None) -> _CESMatch | None:
+    r"""
+    Match a single CES production constraint of any arity.
+
+    The match is conservative. It requires exactly one constraint whose residual is
+    :math:`-Y + [A] (\text{inner})^{1/s}` with no extra additive terms and no numeric coefficient, an inner bracket
+    that is a sum of terms each holding exactly one ``Pow`` of a distinct ``Symbol`` with the shared exponent
+    :math:`s`, an outer exponent satisfying :math:`\text{outer} \cdot s = 1`, and :math:`Y`, :math:`A`, and the
+    inputs all distinct.
+
+    Parameters
+    ----------
+    constraints : dict mapping int to sympy.Eq, optional
+        Block constraints, keyed by equation index.
+
+    Returns
+    -------
+    match : _CESMatch or None
+        The decomposed constraint, or None when the constraint does not have the form.
+    """
+    if not constraints or len(constraints) != 1:
+        return None
+    idx, eq = next(iter(constraints.items()))
+
+    # The residual is deliberately not expanded. sp.expand distributes the outer power across the bracket, for
+    # example rewriting K**((psi - 1)/psi) as K/K**(1/psi), and destroys the structure the matcher relies on.
+    for residual in (eq.rhs - eq.lhs, eq.lhs - eq.rhs):
+        split = _split_output_and_product(residual)
+        if split is None:
+            continue
+        output, product_term = split
+
+        outer = _decompose_ces_outer(product_term)
+        if outer is None:
+            continue
+        productivity, inner_sum, outer_exponent = outer
+
+        inner = _decompose_ces_inner(inner_sum, outer_exponent)
+        if inner is None:
+            continue
+        exponent, inputs = inner
+
+        if not _symbols_are_distinct(output, productivity, inputs):
+            continue
+
+        return _CESMatch(idx=idx, output=output, productivity=productivity, exponent=exponent, inputs=inputs)
+
+    return None
+
+
+def _decompose_ces_outer(product_term: sp.Expr) -> tuple[sp.Symbol | None, sp.Add, sp.Expr] | None:
+    """
+    Decompose ``[A *] (inner_sum) ** outer_exponent`` into the optional productivity symbol, the sum, and the exponent.
+
+    At most one bare ``Symbol`` is allowed and is taken as the productivity term. Exactly one ``Pow`` with an ``Add``
+    base is required. Any other factor rejects the expression.
+    """
+    productivity = None
+    pow_factor = None
+    for factor in sp.Mul.make_args(product_term):
+        if isinstance(factor, sp.Symbol):
+            if productivity is not None:
+                return None
+            productivity = factor
+        elif isinstance(factor, sp.Pow) and isinstance(factor.args[0], sp.Add):
+            if pow_factor is not None:
+                return None
+            pow_factor = factor
+        else:
+            return None
+    if pow_factor is None:
+        return None
+    inner_sum, outer_exponent = pow_factor.args
+    return productivity, inner_sum, outer_exponent
+
+
+def _decompose_ces_inner(
+    inner_sum: sp.Add, outer_exponent: sp.Expr
+) -> tuple[sp.Expr, list[tuple[sp.Symbol, sp.Expr]]] | None:
+    r"""
+    Decompose the CES bracket :math:`\sum_i \text{share}_i \, x_i^s` into the exponent and the input-share pairs.
+
+    The input exponent is the unique exponent in the bracket whose product with ``outer_exponent`` simplifies to 1.
+    That identity is what distinguishes it from exponents inside the shares, such as :math:`\alpha^{1/\psi}`. Each
+    addend must hold exactly one ``Pow`` of a ``Symbol`` with that exponent, and its remaining factors multiply to
+    the share.
+    """
+    candidate_exponents: list[sp.Expr] = []
+    for term in inner_sum.args:
+        for factor in sp.Mul.make_args(term):
+            if not isinstance(factor, sp.Pow):
+                continue
+            is_new = not any(sp.simplify(factor.args[1] - candidate) == 0 for candidate in candidate_exponents)
+            if is_new:
+                candidate_exponents.append(factor.args[1])
+
+    reciprocal_candidates = [c for c in candidate_exponents if sp.simplify(outer_exponent * c - 1) == 0]
+    if len(reciprocal_candidates) != 1:
+        return None
+    exponent = reciprocal_candidates[0]
+
+    inputs: list[tuple[sp.Symbol, sp.Expr]] = []
+    for term in inner_sum.args:
+        input_symbol = None
+        share_factors = []
+        for factor in sp.Mul.make_args(term):
+            if isinstance(factor, sp.Pow) and sp.simplify(factor.args[1] - exponent) == 0:
+                if input_symbol is not None:
+                    return None
+                if not isinstance(factor.args[0], sp.Symbol):
+                    return None
+                input_symbol = factor.args[0]
+            else:
+                share_factors.append(factor)
+        if input_symbol is None:
+            return None
+        share = sp.Mul(*share_factors) if share_factors else sp.S.One
+        inputs.append((input_symbol, share))
+
+    bases = [base for base, _ in inputs]
+    if len(set(bases)) != len(bases):
+        return None
+
+    return exponent, inputs
