@@ -162,7 +162,7 @@ class KrylovDirection:
     eta_min: float = 1e-6
     eisenstat_walker: bool = True
 
-    _eta: float = field(init=False, repr=False, default=0.9)
+    _eta: float = field(init=False, repr=False, default=0.0)
     _prev_res_norm: float = field(init=False, repr=False, default=0.0)
     _prev_pred_norm: float = field(init=False, repr=False, default=0.0)
 
@@ -171,6 +171,7 @@ class KrylovDirection:
             raise ValueError(
                 f"Unknown Krylov method {self.krylov_method!r}. Pass one of {sorted(_KRYLOV_METHODS)} as krylov_method."
             )
+        self._eta = self.eta_max
 
     def reset(self) -> None:
         """Restore the forcing term to ``eta_max`` and forget the previous residual."""

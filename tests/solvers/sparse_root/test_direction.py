@@ -88,6 +88,9 @@ class TestKrylovDirection:
 
         assert direction._eta == 0.3
 
+    def test_forcing_term_starts_at_eta_max(self):
+        assert KrylovDirection(eta_max=0.5)._eta == 0.5
+
     def test_fallback_on_bad_krylov(self):
         direction = KrylovDirection(krylov_method="gmres")
         direction.reset()

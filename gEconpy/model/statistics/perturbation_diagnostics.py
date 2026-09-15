@@ -46,6 +46,7 @@ _log = logging.getLogger(__name__)
 _SHARED: dict = {"model": None, "kwargs": {}}
 
 _NUMERICAL_ERRORS = (ValueError, ArithmeticError, LinAlgError, RuntimeError)
+_PERTURBATION_SOLVERS = ("cycle_reduction", "gensys")
 
 
 def summarize_perturbation_solution(
@@ -361,6 +362,9 @@ def solvability_check(
         results = solvability_check(model, samples, progressbar=False)
         failures = results["failure_step"].value_counts(dropna=False)
     """
+    if solver not in _PERTURBATION_SOLVERS:
+        raise ValueError(f"Unknown solver {solver!r}. Pass one of {', '.join(map(repr, _PERTURBATION_SOLVERS))}.")
+
     ss_kwargs = steady_state_kwargs or {}
     lin_kwargs = linearize_kwargs or {}
 
@@ -635,4 +639,4 @@ def _solve_perturbation(
     if effective_solver == "backward_direct":
         return solve_policy_function_with_backward_direct(A, B, C, D)
 
-    raise ValueError(f"Unknown solver {solver!r}. Pass 'cycle_reduction' or 'gensys'.")
+    raise ValueError(f"Unknown solver {solver!r}. Pass one of {', '.join(map(repr, _PERTURBATION_SOLVERS))}.")

@@ -444,7 +444,7 @@ def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7) -> l
     n = A.shape[0]
     idx_0 = pt.arange(n)
     idx_1 = idx_0 + n
-    norm = np.array(1e9, dtype="float64")
+    norm = np.array(1e9, dtype=A.dtype)
     step_num = pt.zeros((), dtype="int32")
     *_, A1_hat, norm, n_steps = pytensor.scan(
         step,

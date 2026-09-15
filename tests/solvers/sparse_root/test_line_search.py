@@ -72,6 +72,20 @@ class TestNewtonArmijoSpecific:
         np.testing.assert_allclose(result_plain.x, result_merit.x, rtol=1e-8)
         assert n_calls["merit"] < n_calls["plain"]
 
+    def test_merit_fun_counts_one_jacobian_per_step(self, quadratic_system):
+        fun, _, _ = quadratic_system
+
+        def merit_fun(x):
+            return fun(x)[0]
+
+        solver = NewtonArmijo(globalization=ArmijoBacktracking(c1=0.5, merit_fun=merit_fun))
+        state = solver.init(fun, np.array([100.0, 100.0]), ())
+        state, info = solver.step(fun, state, ())
+
+        assert info.accepted
+        assert state.stats.nfev > 2
+        assert state.stats.njev == 2
+
     def test_merit_fun_converges_correctly(self, trig_system):
         fun, x0, x_true = trig_system
 
