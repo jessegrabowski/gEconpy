@@ -20,6 +20,7 @@ from gEconpy.model.perturbation import (
 from gEconpy.model.timing import make_all_variable_time_combinations
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.cycle_reduction import (
+    cycle_reduction_numpy,
     cycle_reduction_pt,
     scan_cycle_reduction,
     solve_policy_function_with_cycle_reduction,
@@ -243,6 +244,19 @@ class TestSolvePolicyFunction:
 
         assert T is None
         assert R is None
+        assert result == "Iteration on all matrices failed to converge"
+
+    def test_diverging_iteration_reports_failure_without_arithmetic_warnings(self):
+        rng = np.random.default_rng(0)
+        n = 6
+        A0 = rng.normal(size=(n, n)) * 50
+        A1 = np.eye(n) * 1e-3
+        A2 = rng.normal(size=(n, n)) * 50
+
+        X, res, result, _log_norm = cycle_reduction_numpy(A0, A1, A2, max_iter=200, tol=1e-8)
+
+        assert X is None
+        assert res is None
         assert result == "Iteration on all matrices failed to converge"
 
 

@@ -82,23 +82,26 @@ def cycle_reduction_numpy(
     idx_0 = np.arange(n)
     idx_1 = idx_0 + n
 
-    for i in range(int(max_iter)):
-        tmp = np.vstack((A0, A2)) @ np.linalg.solve(A1, np.hstack((A0, A2)))
+    # A diverging iteration overflows to inf and then NaN before the norm check catches it. That is the expected
+    # failure signal, so the arithmetic warnings it raises are silenced and a non-finite norm ends the loop.
+    with np.errstate(over="ignore", invalid="ignore"):
+        for i in range(int(max_iter)):
+            tmp = np.vstack((A0, A2)) @ np.linalg.solve(A1, np.hstack((A0, A2)))
 
-        A1 = A1 - tmp[idx_0, :][:, idx_1] - tmp[idx_1, :][:, idx_0]
-        A0 = -tmp[idx_0, :][:, idx_0]
-        A2 = -tmp[idx_1, :][:, idx_1]
-        A1_hat = A1_hat - tmp[idx_1, :][:, idx_0]
+            A1 = A1 - tmp[idx_0, :][:, idx_1] - tmp[idx_1, :][:, idx_0]
+            A0 = -tmp[idx_0, :][:, idx_0]
+            A2 = -tmp[idx_1, :][:, idx_1]
+            A1_hat = A1_hat - tmp[idx_1, :][:, idx_0]
 
-        A0_L1_norm = np.linalg.norm(A0, ord=1)
-        if A0_L1_norm < tol:
-            A2_L1_norm = np.linalg.norm(A2, ord=1)
-            if A2_L1_norm < tol:
-                break
+            A0_L1_norm = np.linalg.norm(A0, ord=1)
+            if A0_L1_norm < tol:
+                A2_L1_norm = np.linalg.norm(A2, ord=1)
+                if A2_L1_norm < tol:
+                    break
 
-        elif np.isnan(A0_L1_norm) or i == (max_iter - 1):
-            log_norm = np.log(np.linalg.norm(A1, 1))
-            return None, None, _NOT_CONVERGED_MESSAGE, log_norm
+            elif not np.isfinite(A0_L1_norm) or i == (max_iter - 1):
+                log_norm = np.log(np.linalg.norm(A1, 1))
+                return None, None, _NOT_CONVERGED_MESSAGE, log_norm
 
     X = -np.linalg.solve(A1_hat, A0_initial)
     res = A0_initial + A1_initial @ X + A2_initial @ X @ X
