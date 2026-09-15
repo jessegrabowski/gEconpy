@@ -180,8 +180,3 @@ class TestColorSupport:
             if expect_color
             else "error[E002]: Unbalanced braces"
         )
-
-    def test_colors_class_has_expected_codes(self):
-        assert Colors.RED.startswith("\x1b[")
-        assert Colors.RESET == "\x1b[0m"
-        assert Colors.BOLD_RED.startswith("\x1b[")

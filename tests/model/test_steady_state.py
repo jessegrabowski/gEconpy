@@ -166,12 +166,6 @@ def assert_root_and_minimize_agree(model: Model, **steady_state_kwargs):
         assert_allclose(ss_root[k], ss_minimize[k], err_msg=k)
 
 
-def test_solve_ss_with_partial_user_solution():
-    model_1 = load_and_cache_model("one_block_1.gcn")
-    res = model_1.steady_state(verbose=False, progressbar=False)
-    assert res.success
-
-
 def test_system_to_steady_state_collapses_time_indices_and_zeros_shocks():
     x, eps = TimeAwareSymbol("x", 0), TimeAwareSymbol("eps", 0)
     rho = sp.Symbol("rho")

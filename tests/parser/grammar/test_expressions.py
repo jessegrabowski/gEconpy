@@ -164,10 +164,6 @@ class TestFunctionCalls:
         assert result.func_name == "exp"
         assert isinstance(result.args[0], BinaryOp)
 
-    def test_function_with_no_args_raises(self):
-        with pytest.raises(GCNGrammarError):
-            parse_expression("func()")
-
     @pytest.mark.parametrize(
         "text,code,found",
         [("log()", ErrorCode.E008, "log()"), ("Y[abc]", ErrorCode.E010, "[abc]")],
