@@ -8,7 +8,4 @@ error[E010]: Invalid time index '[abc]' for variable 'K'. Found '[abc]'
    7 |     };
    8 | };
      |
-   = note: Use Y[] for current period
-   = note: Use Y[-1] for lagged values
-   = note: Use Y[1] for lead values
-   = note: Use Y[ss] for steady state
+   = note: Write the time index as an integer or 'ss': Y[], Y[-1], Y[1], Y[ss]

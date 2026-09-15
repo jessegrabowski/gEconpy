@@ -11,7 +11,7 @@ from gEconpy.parser.ast import (
     Tag,
     Variable,
 )
-from gEconpy.parser.constants import PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
+from gEconpy.parser.constants import EQUATION_TAGS, PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNParseFailure, ParseLocation
 from gEconpy.parser.grammar.expressions import EXPR, _location_at, _parse_time_index
@@ -81,7 +81,7 @@ VARIABLE_REF = (
 
 VARIABLE_LIST = pp.DelimitedList(VARIABLE_REF)
 
-VALID_TAGS = frozenset(["exclude", "minimize", "maximize"])
+VALID_TAGS = frozenset(EQUATION_TAGS)
 
 
 def _parse_tag(s: str, loc: int, toks: pp.ParseResults) -> Tag:
@@ -343,8 +343,7 @@ def _missing_tilde_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
     raise GCNParseFailure(
         s,
         loc,
-        f"Used '=' instead of '~' for distribution prior on '{param_name}'. "
-        f"Use '{param_name} ~ {dist_or_wrapper}(...)' instead of '{param_name} = {dist_or_wrapper}(...)'",
+        f"A prior on '{param_name}' is declared with '='. Declare it with '~': '{param_name} ~ {dist_or_wrapper}(...)'",
         code=ErrorCode.E009,
         found="=",
     )

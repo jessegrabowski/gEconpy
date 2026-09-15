@@ -8,5 +8,4 @@ error[E012]: Missing '=' in equation
    7 |     };
    8 | };
      |
-   = note: Add '=' between LHS and RHS: Y[] = C[] + I[]
-   = note: Check if the equation was accidentally corrupted
+   = note: Separate the two sides with '=': Y[] = C[] + I[];

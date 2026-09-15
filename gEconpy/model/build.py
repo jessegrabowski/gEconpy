@@ -395,8 +395,9 @@ def build_report(
     else:
         message = (
             f"The model does not appear correctly specified, there are {n_eq} {_pluralize('equation', n_eq)} but "
-            f"{n_var} {_pluralize('variable', n_var)}. It will not be possible to solve this model. Please check "
-            f"the specification using available diagnostic tools, and check the GCN file for typos."
+            f"{n_var} {_pluralize('variable', n_var)}, so the model cannot be solved. Add or remove equations until "
+            f"the counts match, and check the GCN file for a misspelled variable name that the parser reads as a "
+            f"new variable."
         )
         warnings.warn(message, stacklevel=2)
 

@@ -6,6 +6,5 @@ error[E002]: Unbalanced braces. Found 'end of text'
    6 |
      | ^^^^^^^^^^^ unbalanced braces
      |
-   = note: Count opening and closing braces to find the mismatch
-   = note: Check indentation to find missing braces
-   = note: Use an editor with brace matching
+   = note: Close every block and every block component with '};'
+   = note: Remove the extra '{' or '}'

@@ -8,6 +8,5 @@ error[E001]: Missing semicolon. Found ''Y''
    7 |               * L[] ^ (1 - alpha)
    8 |         Z[] = X[];
      |
-   = note: Add ';' at the end of the statement
-   = note: Check that each equation ends with ';'
-   = note: Check that each block component ends with '};'
+   = note: End the statement with ';'
+   = note: End the block component with '};'

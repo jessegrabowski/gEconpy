@@ -9,5 +9,4 @@ error[E013]: Unknown component 'identites'. Found 'identites'
    6 |         Y[] = K[] * L[];
      |
    = note: Did you mean 'identities'?
-   = note: Check spelling of component name
-   = note: Valid components: definitions, controls, objective, constraints, identities, shocks, calibration
+   = note: Rename the component to one of: definitions, controls, objective, constraints, identities, shocks, calibration

@@ -8,5 +8,4 @@ error[E103]: Unknown distribution wrapper 'UnknownWrap'. Found 'UnknownWrap'
    5 |     };
    6 | };
      |
-   = note: Check spelling of wrapper name
-   = note: Valid wrappers: Truncated, Censored, MaxEnt
+   = note: Rename the wrapper to one of: maxent, Censored, Truncated, Hurdle
