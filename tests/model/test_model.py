@@ -1,7 +1,5 @@
 import re
 
-from importlib.util import find_spec
-
 import numdifftools as nd
 import numpy as np
 import pandas as pd
@@ -13,7 +11,6 @@ from numpy.testing import assert_allclose
 from pytensor.graph.traversal import explicit_graph_inputs
 
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import GensysFailedException
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import compile_for_scipy, make_cache_key
@@ -33,14 +30,25 @@ from gEconpy.model.statistics import (
     summarize_perturbation_solution,
 )
 from gEconpy.model.steady_state import _ss_residual_to_pytensor, build_minimize_graphs, build_root_graphs
+from gEconpy.utilities import safe_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
 from tests._resources.expected_matrices import expected_linearization_result
 from tests._resources.load_dynare import load_dynare_outputs
+from tests.conftest import TEST_GCNS
 
 
 @pytest.fixture
 def rng():
     return np.random.default_rng()
+
+
+def _model_without_analytic_steady_state(gcn_file):
+    """Build a fresh model and strip its analytic steady state so every variable must be solved numerically."""
+    model = model_from_gcn(TEST_GCNS / gcn_file, verbose=False, mode="FAST_RUN")
+    model._ss_solution_dict = SymbolDictionary()
+    model._f_ss = None
+    model._equation_tensors = None
+    return model
 
 
 @pytest.mark.parametrize(
@@ -55,13 +63,10 @@ def rng():
 def test_model_parameters(gcn_path: str):
     model = load_and_cache_model(gcn_path)
 
-    # Test default parameters
     params = model.parameters()
-
     assert all(params[k] == model._default_params[k] for k in model._default_params)
     assert all(isinstance(v, float) for v in params.values())
 
-    # Test parameter update
     old_params = model._default_params.copy()
     params = model.parameters(beta=0.5)
     assert params["beta"] == 0.5
@@ -70,15 +75,24 @@ def test_model_parameters(gcn_path: str):
 
 def test_deterministic_model_parameters():
     model = load_and_cache_model("one_block_2.gcn")
-    params = model.parameters()
 
-    # Test numeric expression in calibration block
+    params = model.parameters()
     assert_allclose(params["beta"], 1 / 1.01)
 
-    # Test deterministic relationship
     params = model.parameters(theta=0.9)
     assert params["theta"] == 0.9
     assert_allclose(params["zeta"], -np.log(0.9))
+
+
+def test_get_returns_symbols_and_names_a_close_match():
+    model = load_and_cache_model("one_block_1_ss.gcn")
+
+    assert model.get("K") == model.variables[[v.base_name for v in model.variables].index("K")]
+    assert model.get("K_ss") == model.get("K").to_ss()
+    assert model.get("alpha") in model.params
+
+    with pytest.raises(IndexError, match=re.escape("Did not find Kk among model objects. Did you mean K")):
+        model.get("Kk")
 
 
 def test_linear_model():
@@ -88,7 +102,7 @@ def test_linear_model():
     assert all(x == 0 for x in ss.values())
     assert ss.success
 
-    # The analytical "level" values from f_ss should be non-zero
+    # f_ss holds the level values of the underlying nonlinear model, which are not zero.
     assert not all(x == 0 for x in mod.f_ss(**mod.parameters()))
 
 
@@ -162,30 +176,23 @@ def test_linear_model():
     ],
     ids=["one_block", "open_rbc", "nk"],
 )
-def test_steady_state(gcn_file: str, expected_result: np.ndarray):
-    n = len(expected_result)
-
+def test_steady_state(gcn_file: str, expected_result: dict[str, float]):
     model = load_and_cache_model(gcn_file)
 
     params = model.parameters()
     ss_dict = model.f_ss(**params)
-    ss = np.array(np.r_[list(ss_dict.values())])
-    expected_ss = np.r_[[expected_result[var] for var in ss_dict.to_string()]]
+    ss = np.array(list(ss_dict.values()))
+    expected_ss = np.array([expected_result[var] for var in ss_dict.to_string()])
 
     assert_allclose(ss, expected_ss)
-    assert_allclose(model._evaluate_steady_state(), np.zeros(n), atol=1e-8)
+    assert_allclose(model._evaluate_steady_state(), np.zeros(len(expected_result)), atol=1e-8)
 
-    # Verify steady_state method works and agrees with f_ss
     ss_result = model.steady_state(verbose=False, progressbar=False)
     assert ss_result.success
 
 
 def _compile_ss_derivative_funcs(gcn_file):
-    """Build and FAST_COMPILE the SS residual/jacobian/error/gradient/hessian functions.
-
-    FAST_COMPILE skips C compilation: these graphs are evaluated only a handful of
-    times here, so the C-compile cost is pure overhead.
-    """
+    # These graphs are evaluated only a handful of times, so FAST_COMPILE avoids paying for C compilation.
     model = load_and_cache_model(gcn_file)
     ss_result = model.steady_state()
 
@@ -198,17 +205,14 @@ def _compile_ss_derivative_funcs(gcn_file):
         model._calib_dict,
     )
 
-    # Recover all SS variable nodes from the cache
     resid = pt.stack(equations)
-    all_vars = list(model._variables) + list(model._calib_dict.to_sympy().keys())
+    resid_inputs = set(explicit_graph_inputs(resid))
+    ss_symbols = [safe_to_ss(v) for v in list(model._variables) + list(model._calib_dict.to_sympy().keys())]
     ss_nodes = []
-    for v in all_vars:
-        ss_sym = v.to_ss() if hasattr(v, "to_ss") else v
-        ck = make_cache_key(ss_sym.name, type(ss_sym))
-        if ck in cache:
-            node = cache[ck]
-            if node in set(explicit_graph_inputs(resid)):
-                ss_nodes.append(node)
+    for symbol in ss_symbols:
+        node = cache.get(make_cache_key(symbol.name, type(symbol)))
+        if node is not None and node in resid_inputs:
+            ss_nodes.append(node)
 
     error_graph, grad_graph, hess_graph, _, _ = build_minimize_graphs(
         equations,
@@ -234,113 +238,92 @@ def _compile_ss_derivative_funcs(gcn_file):
 
 
 def test_ss_derivatives_match_numeric():
-    """Compiled SS gradient/hessian/jacobian match finite-difference references.
-
-    This verifies gEconpy's derivative-graph *construction*, which does not depend
-    on the model, so one small model is sufficient.
-    """
+    # Derivative-graph construction does not depend on the model, so one small model is enough.
     model, ss_result, f = _compile_ss_derivative_funcs("one_block_1_ss.gcn")
     params = model.parameters()
 
-    np.testing.assert_allclose(f["grad"](**ss_result, **params), 0.0, rtol=1e-12, atol=1e-12)
+    assert_allclose(f["grad"](**ss_result, **params), 0.0, rtol=1e-12, atol=1e-12)
 
     perturbed_point = {k: np.float64(0.8) for k in ss_result}
     test_point = np.array(list(perturbed_point.values()))
 
     def at(x):
-        return dict(zip(perturbed_point, x, strict=False))
+        return dict(zip(perturbed_point, x, strict=True))
 
     grad = np.asarray(f["grad"](**perturbed_point, **params))
     numeric_grad = nd.Gradient(lambda x: float(np.asarray(f["error"](**at(x), **params))))(test_point)
-    np.testing.assert_allclose(grad, numeric_grad, rtol=1e-8, atol=1e-8)
+    assert_allclose(grad, numeric_grad, rtol=1e-8, atol=1e-8)
 
     hess = np.asarray(f["hess"](**perturbed_point, **params))
     numeric_hess = nd.Hessian(lambda x: float(np.asarray(f["error"](**at(x), **params))))(test_point)
-    np.testing.assert_allclose(hess, numeric_hess, rtol=1e-8, atol=1e-8)
+    assert_allclose(hess, numeric_hess, rtol=1e-8, atol=1e-8)
 
     jac = np.asarray(f["jac"](**perturbed_point, **params))
     numeric_jac = nd.Jacobian(lambda x: np.asarray(f["resid"](**at(x), **params)).ravel())(test_point)
-    np.testing.assert_allclose(jac, numeric_jac, rtol=1e-8, atol=1e-8)
+    assert_allclose(jac, numeric_jac, rtol=1e-8, atol=1e-8)
 
 
 @pytest.mark.include_nk
 def test_ss_derivative_graphs_compile():
-    """The full NK model's SS derivative graphs build, compile, and evaluate finitely.
-
-    Numeric correctness of the construction is covered by
-    ``test_ss_derivatives_match_numeric``; this exercises the same pipeline on the
-    largest model to catch build/compile regressions on a hard case.
-    """
+    # Numeric correctness is covered by test_ss_derivatives_match_numeric. This runs the same pipeline on the largest
+    # model to catch build and compile regressions on a hard case.
     model, ss_result, f = _compile_ss_derivative_funcs("full_nk.gcn")
     params = model.parameters()
 
-    # The analytic gradient of the squared-residual error vanishes at the SS.
-    np.testing.assert_allclose(f["grad"](**ss_result, **params), 0.0, rtol=1e-12, atol=1e-12)
+    assert_allclose(f["grad"](**ss_result, **params), 0.0, rtol=1e-12, atol=1e-12)
 
     for name in ("resid", "jac", "hess"):
         assert np.all(np.isfinite(np.asarray(f[name](**ss_result, **params))))
 
 
-@pytest.mark.parametrize("how", ["root", "minimize"], ids=["root", "minimize"])
 @pytest.mark.parametrize(
-    "gcn_file",
-    [
-        "one_block_1_ss.gcn",
-        "open_rbc.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
-        "rbc_with_excluded.gcn",
-    ],
+    ("how", "optimizer_kwargs"),
+    [("root", {"maxiter": 50_000, "method": "hybr"}), ("minimize", {})],
+    ids=["root", "minimize"],
 )
-def test_numerical_steady_state(how: str, gcn_file: str):
-    # TODO: I was hitting errors when the models were reused, something about the fixed values was breaking stuff.
-    #  Need to track this bug down.
-    model = load_and_cache_model(gcn_file)
-    analytic_res = model.steady_state(verbose=False, progressbar=False)
-    analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
+@pytest.mark.parametrize(
+    ("gcn_file", "fixed_values"),
+    [
+        ("one_block_1_ss.gcn", None),
+        ("open_rbc.gcn", None),
+        ("rbc_with_excluded.gcn", None),
+        pytest.param(
+            "full_nk.gcn",
+            {
+                "shock_technology_ss": 1.0,
+                "shock_preference_ss": 1.0,
+                "pi_ss": 1.0,
+                "pi_star_ss": 1.0,
+                "pi_obj_ss": 1.0,
+            },
+            marks=pytest.mark.include_nk,
+        ),
+    ],
+    ids=["one_block_ss", "open_rbc", "rbc_with_excluded", "full_nk"],
+)
+def test_numerical_steady_state(how, optimizer_kwargs, gcn_file, fixed_values):
+    analytic_res = load_and_cache_model(gcn_file).steady_state(verbose=False, progressbar=False)
 
-    # Save and null out _f_ss to force numerical optimization path
-    f_ss = model.f_ss
-    model._f_ss = None
-
-    if gcn_file == "full_nk.gcn":
-        fixed_values = {
-            "shock_technology_ss": 1.0,
-            "shock_preference_ss": 1.0,
-            "pi_ss": 1.0,
-            "pi_star_ss": 1.0,
-            "pi_obj_ss": 1.0,
-        }
-    else:
-        fixed_values = None
-
+    model = _model_without_analytic_steady_state(gcn_file)
     numeric_res = model.steady_state(
         how=how,
         verbose=False,
-        use_hess=False,
-        use_hessp=False,
-        optimizer_kwargs={
-            "maxiter": 50_000,
-            "method": "hybr" if how == "root" else "L-BFGS-B",
-        },
+        optimizer_kwargs=optimizer_kwargs,
         fixed_values=fixed_values,
         progressbar=False,
     )
 
-    # Restore steady state function in the cached model
-    model._f_ss = f_ss
-
+    analytic_values = np.array([analytic_res[x.to_ss().name] for x in model.variables])
     numeric_values = np.array([numeric_res[x.to_ss().name] for x in model.variables])
-    errors = model.evaluate_residual(numeric_res, model.parameters())
+    residuals = model.evaluate_residual(numeric_res, model.parameters())
 
-    if how == "root":
-        assert_allclose(analytic_values, numeric_values, atol=1e-2)
-    elif how == "minimize":
-        assert_allclose(errors, np.zeros_like(errors), atol=1e-2)
+    assert numeric_res.success
+    assert_allclose(numeric_values, analytic_values, atol=1e-4)
+    assert_allclose(residuals, 0.0, atol=1e-6)
 
 
 def test_numerical_steady_state_with_calibrated_params():
-    file_path = "one_block_2_no_extra.gcn"
-    model = load_and_cache_model(file_path)
+    model = load_and_cache_model("one_block_2_no_extra.gcn")
 
     res = model.steady_state(
         how="minimize",
@@ -356,8 +339,7 @@ def test_numerical_steady_state_with_calibrated_params():
 
 
 def test_steady_state_with_parameter_updates(rng):
-    file_path = "rbc_2_block_ss.gcn"
-    model = load_and_cache_model(file_path)
+    model = load_and_cache_model("rbc_2_block_ss.gcn")
 
     delta = rng.beta(1, 1)
     beta = rng.beta(1, 1)
@@ -367,20 +349,13 @@ def test_steady_state_with_parameter_updates(rng):
 
 
 @pytest.mark.parametrize(
-    "partial_file, analytic_file",
+    "partial_file",
     [
-        (
-            "rbc_2_block_partial_ss.gcn",
-            "rbc_2_block_ss.gcn",
-        ),
-        pytest.param("full_nk_partial_ss.gcn", "full_nk.gcn", marks=pytest.mark.include_nk),
+        "rbc_2_block_partial_ss.gcn",
+        pytest.param("full_nk_partial_ss.gcn", marks=pytest.mark.include_nk),
     ],
 )
-def test_partially_analytical_steady_state(partial_file, analytic_file):
-    analytic_model = load_and_cache_model(analytic_file)
-    analytic_res = analytic_model.steady_state()
-    analytic_values = np.array(list(analytic_res.values()))
-
+def test_partially_analytical_steady_state(partial_file):
     partial_model = load_and_cache_model(partial_file)
     numeric_res = partial_model.steady_state(
         how="minimize",
@@ -392,15 +367,8 @@ def test_partially_analytical_steady_state(partial_file, analytic_file):
         use_jac=True,
     )
 
-    numeric_values = np.array(list(numeric_res.values()))
-
     resid = partial_model.evaluate_residual(numeric_res.to_string(), partial_model.parameters())
-
-    ATOL = RTOL = 1e-1
-    if partial_file == "Two_Block_RBC_w_Partial_Steady_State":
-        assert_allclose(analytic_values, numeric_values, atol=ATOL, rtol=RTOL)
-
-    assert_allclose(resid, 0, atol=ATOL, rtol=RTOL)
+    assert_allclose(resid, 0, atol=1e-1, rtol=1e-1)
 
 
 @pytest.mark.parametrize(
@@ -417,7 +385,7 @@ def test_linearize(gcn_file):
     steady_state_dict = model.steady_state()
     outputs = model.linearize_model(steady_state=steady_state_dict)
 
-    for mat_name, out in zip(["A", "B", "C", "D"], outputs, strict=False):
+    for mat_name, out in zip(["A", "B", "C", "D"], outputs, strict=True):
         expected_out = expected_linearization_result[gcn_file][mat_name]
         assert_allclose(out, expected_out, atol=1e-8, err_msg=f"{mat_name} failed")
 
@@ -427,7 +395,7 @@ def test_linearize_with_custom_params(rng):
     params = model.parameters(rho=0.5)
     assert params["rho"] == 0.5
 
-    # Use rho because d_shock_transiton/d_A = rho
+    # The technology process is A[t] = rho * A[t-1] + eps, so d(equation)/d(A[t-1]) is rho.
     rho = rng.beta(1, 1)
     A_idx = [x.base_name for x in model.variables].index("A")
     technology_eq_idx = next(i for i, eq in enumerate(model.equations) if model.shocks[0] in eq.atoms())
@@ -438,6 +406,14 @@ def test_linearize_with_custom_params(rng):
         steady_state_kwargs={"verbose": False, "progressbar": False},
     )
     assert A[technology_eq_idx, A_idx] == rho
+
+
+def test_linearize_steady_state_kwargs_override_verbose(caplog):
+    model = _model_without_analytic_steady_state("one_block_1_ss.gcn")
+
+    model.linearize_model(verbose=True, steady_state_kwargs={"verbose": False, "progressbar": False})
+
+    assert not any(message.startswith("Steady state") for message in caplog.messages)
 
 
 @pytest.mark.parametrize(
@@ -464,17 +440,15 @@ def test_symbolic_linearization_returns_pytensor_graphs(gcn_file):
 
 def test_symbolic_linearization_caches():
     model = load_and_cache_model("one_block_1_ss.gcn")
-    jac1, _ss1, _p1, _eo1, _vo1 = model.symbolic_linearization(verbose=False)
-    jac2, _ss2, _p2, _eo2, _vo2 = model.symbolic_linearization(verbose=False)
+    jac1, *_ = model.symbolic_linearization(verbose=False)
+    jac2, *_ = model.symbolic_linearization(verbose=False)
 
-    # Same objects on cache hit
-    for a, b in zip(jac1, jac2, strict=False):
+    for a, b in zip(jac1, jac2, strict=True):
         assert a is b
 
 
 def test_invalid_solver_raises():
-    file_path = "tests/_resources/test_gcns/one_block_1_ss.gcn"
-    model = model_from_gcn(file_path, verbose=False)
+    model = model_from_gcn(TEST_GCNS / "one_block_1_ss.gcn", verbose=False)
     model.steady_state(verbose=False, progressbar=False)
 
     with pytest.raises(NotImplementedError):
@@ -486,22 +460,19 @@ def test_invalid_solver_raises():
 
 
 def test_bad_failure_argument_raises():
-    file_path = "tests/_resources/test_gcns/pert_fails.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = model_from_gcn(TEST_GCNS / "pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='on_failure must be one of "error" or "ignore"'):
         model.solve_model(
             solver="gensys",
             on_failure="raise",
-            model_is_linear=True,  # TODO: This argument doesn't do anything yet
             steady_state_kwargs={"verbose": False, "progressbar": False},
             verbose=False,
         )
 
 
 def test_gensys_fails_to_solve():
-    file_path = "tests/_resources/test_gcns/pert_fails.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = model_from_gcn(TEST_GCNS / "pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
 
     with pytest.raises(GensysFailedException):
         model.solve_model(
@@ -513,8 +484,7 @@ def test_gensys_fails_to_solve():
 
 
 def test_outputs_after_gensys_failure(caplog):
-    file_path = "tests/_resources/test_gcns/pert_fails.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = model_from_gcn(TEST_GCNS / "pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
     T, R = model.solve_model(
         solver="gensys",
         on_failure="ignore",
@@ -522,8 +492,7 @@ def test_outputs_after_gensys_failure(caplog):
         steady_state_kwargs={"verbose": False, "progressbar": False},
     )
 
-    captured_message = caplog.messages[-1]
-    assert captured_message == (
+    assert caplog.messages[-1] == (
         "Gensys return codes: 1 0 2, with the following meaning:\nSolution exists, but is not unique."
     )
     assert T is None
@@ -542,8 +511,7 @@ def test_outputs_after_gensys_failure(caplog):
     ids=str,
 )
 def test_solve_matches_dynare(model_name, log_linearize):
-    gcn_file = model_name + ".gcn"
-    model = load_and_cache_model(gcn_file)
+    model = load_and_cache_model(model_name + ".gcn")
     T, R = model.solve_model(
         solver="gensys",
         verbose=False,
@@ -564,53 +532,43 @@ def test_solve_matches_dynare(model_name, log_linearize):
 
 
 def test_outputs_after_pert_success(caplog):
-    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = model_from_gcn(TEST_GCNS / "rbc_linearized.gcn", verbose=False, on_unused_parameters="ignore")
     model.solve_model(
         solver="gensys",
         verbose=True,
         steady_state_kwargs={"verbose": False, "progressbar": False},
     )
 
-    result_messages = caplog.messages[-2:]
-    expected_messages = [
+    assert caplog.messages[-2:] == [
         "Norm of deterministic part: 0.000000000",
         "Norm of stochastic part:    0.000000000",
     ]
 
-    for message, expected_message in zip(result_messages, expected_messages, strict=False):
-        assert message == expected_message
-
 
 def test_bad_argument_to_bk_condition_raises():
-    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("rbc_linearized.gcn")
 
     A, B, C, D = model.linearize_model()
-    with pytest.raises(ValueError, match='Unknown return type "invalid_argument"'):
+    with pytest.raises(ValueError, match='"invalid_argument"'):
         check_bk_condition(A, B, C, D, return_value="invalid_argument", verbose=False)
 
 
 def test_check_bk_condition():
-    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("rbc_linearized.gcn")
     A, B, C, D = model.linearize_model()
 
     bk_df = check_bk_condition(A, B, C, D, return_value="dataframe", verbose=False)
     assert isinstance(bk_df, pd.DataFrame)
-
     assert_allclose(
         bk_df["Modulus"].values,
         np.abs(bk_df["Real"].values + bk_df["Imaginary"].values * 1j),
     )
 
-    bk_res = check_bk_condition(A, B, C, D, return_value="bool", verbose=False)
-    assert bk_res
+    assert check_bk_condition(A, B, C, D, return_value="bool", verbose=False)
 
 
 def test_compute_bk_eigenvalues():
-    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("rbc_linearized.gcn")
     A, B, C, D = model.linearize_model()
 
     eigvals_real, eigvals_imag, n_forward = compute_bk_eigenvalues(A, B, C, D)
@@ -620,82 +578,65 @@ def test_compute_bk_eigenvalues():
 
     assert n_forward > 0
     assert n_forward == n_unstable
-
-    # Moduli should be sorted ascending
     assert np.all(np.diff(modulus) >= -1e-12)
 
 
 def test_compute_bk_eigenvalues_pt():
-    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("rbc_linearized.gcn")
     A_np, B_np, C_np, D_np = model.linearize_model()
 
     eigvals_real_np, eigvals_imag_np, _n_forward = compute_bk_eigenvalues(A_np, B_np, C_np, D_np)
-
-    # Derive lead_var_idx from C the same way _find_lead_variables does
     lead_var_idx = np.where(np.abs(C_np).sum(axis=0) > 1e-8)[0]
 
-    A_pt = pt.as_tensor_variable(A_np)
-    B_pt = pt.as_tensor_variable(B_np)
-    C_pt = pt.as_tensor_variable(C_np)
-    D_pt = pt.as_tensor_variable(D_np)
-
+    A_pt, B_pt, C_pt, D_pt = (pt.as_tensor_variable(M) for M in (A_np, B_np, C_np, D_np))
     re_pt, im_pt = compute_bk_eigenvalues_pt(A_pt, B_pt, C_pt, D_pt, lead_var_idx)
     re_val, im_val = re_pt.eval(), im_pt.eval()
 
-    # Moduli must agree between numpy (QZ) and pytensor (eig) versions
     modulus_np = np.sqrt(eigvals_real_np**2 + eigvals_imag_np**2)
     modulus_pt = np.sqrt(re_val**2 + im_val**2)
 
-    # The two methods (ordqz vs solve+eig) may differ in which eigenvalues they compute,
-    # but the count of unstable eigenvalues (modulus > 1) must agree.
+    # QZ and solve-plus-eig may return different infinite or spurious eigenvalues, but the count of unstable ones
+    # must agree.
     assert (modulus_np > 1).sum() == (modulus_pt > 1).sum()
 
 
 def test_eigenvalue_sensitivity():
-    """Verify eigenvalue_sensitivity returns eigenvalues consistent with compute_bk_eigenvalues."""
     model = load_and_cache_model("basic_rbc.gcn")
     A, B, C, D = model.linearize_model(verbose=False)
 
-    # Get eigenvalues from numpy reference
     re_np, im_np, _ = compute_bk_eigenvalues(A, B, C, D)
     mod_np = np.sqrt(re_np**2 + im_np**2)
 
-    # Get eigenvalues from sensitivity function
     ds = eigenvalue_sensitivity(model, verbose=False)
     mod_pt = ds.eigenvalues.sel(component="modulus").values
 
-    # Filter to finite eigenvalues and compare
     finite_np = mod_np[(mod_np > 1e-6) & (mod_np < 1e6)]
     finite_pt = mod_pt[(mod_pt > 1e-6) & (mod_pt < 1e6)]
 
-    # QZ (numpy reference) and solve+eig (sensitivity path) agree only to ~5 significant figures by
-    # construction, and the QZ ordering of the clustered eigenvalues wobbles run-to-run. rtol=1e-5 sits
-    # exactly on that boundary and flakes; do not tighten.
+    # QZ (numpy reference) and solve-plus-eig (sensitivity path) agree only to about 5 significant figures by
+    # construction, and the QZ ordering of the clustered eigenvalues wobbles run to run. rtol=1e-5 sits exactly on
+    # that boundary and flakes, so do not tighten.
     assert_allclose(np.sort(finite_np), np.sort(finite_pt), rtol=1e-4)
 
-    # Gradients should be non-trivial for at least some eigenvalue/parameter pairs
     grad_mags = np.sqrt(ds.gradients.sel(part="real").values ** 2 + ds.gradients.sel(part="imaginary").values ** 2)
     assert grad_mags.max() > 1e-10
 
 
 def test_summarize_perturbation_solution():
-    file_path = "tests/_resources/test_gcns/rbc_linearized.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
-    linear_system = [_A, _B, _C, _D] = model.linearize_model()
-    policy_function = [_T, _R] = model.solve_model(solver="gensys", verbose=False)
+    model = load_and_cache_model("rbc_linearized.gcn")
+    linear_system = model.linearize_model()
+    policy_function = model.solve_model(solver="gensys", verbose=False)
 
     res = summarize_perturbation_solution(linear_system, policy_function, model)
     matrix_names = ["A", "B", "C", "D", "T", "R"]
     assert isinstance(res, xr.Dataset)
     assert all(name in res.data_vars for name in matrix_names)
-    for matrix, name in zip([*linear_system, *policy_function], matrix_names, strict=False):
+    for matrix, name in zip([*linear_system, *policy_function], matrix_names, strict=True):
         assert_allclose(res[name].to_numpy(), matrix)
 
 
 def test_validate_shock_options():
-    file_path = "tests/_resources/test_gcns/full_nk.gcn"
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("full_nk.gcn")
     T, R = model.solve_model(solver="gensys", verbose=False)
 
     with pytest.raises(
@@ -717,8 +658,7 @@ def test_validate_shock_options():
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "If shock_std_dict is specified, it must give values for all shocks. "
-            "The following shocks were not found among the provided keys: lol :)"
+            "Unexpected shocks in shock_std_dict. The following names were not found among the model shocks: lol :)"
         ),
     ):
         stationary_covariance_matrix(model, T, R, shock_std_dict={"lol :)": 0.1})
@@ -731,20 +671,12 @@ def test_validate_shock_options():
 
 
 def test_build_Q_matrix(rng):
-    file_path = "tests/_resources/test_gcns/full_nk.gcn"
-
-    model = model_from_gcn(file_path, verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("full_nk.gcn")
     shocks = model.shocks
 
-    # From std
-    Q = build_Q_matrix(
-        model_shocks=shocks,
-        shock_std=10,
-    )
-
+    Q = build_Q_matrix(model_shocks=shocks, shock_std=10)
     assert_allclose(Q, np.eye(4) * 100)
 
-    # From dictionary
     Q = build_Q_matrix(
         model_shocks=shocks,
         shock_std_dict={
@@ -754,35 +686,13 @@ def test_build_Q_matrix(rng):
             "epsilon_preference": 0.4,
         },
     )
-    # shocks get stored alphabetically (capitals first)
+    # Shocks are stored in sorted order, capitals first.
     expected_Q = np.diag(np.array([0.1, 0.3, 0.2, 0.4]) ** 2)
     assert_allclose(Q, expected_Q)
 
-    # From cov
     L = rng.normal(size=(4, 4))
     cov = L @ L.T
-
-    Q = build_Q_matrix(
-        model_shocks=shocks,
-        shock_cov_matrix=cov,
-    )
-
-    assert_allclose(Q, cov)
-
-
-def test_build_Q_matrix_from_dict(rng):
-    file_path = "full_nk.gcn"
-    model = load_and_cache_model(file_path)
-    shocks = model.shocks
-
-    L = rng.normal(size=(4, 4))
-    cov = L @ L.T
-
-    Q = build_Q_matrix(
-        model_shocks=shocks,
-        shock_cov_matrix=cov,
-    )
-
+    Q = build_Q_matrix(model_shocks=shocks, shock_cov_matrix=cov)
     assert_allclose(Q, cov)
 
 
@@ -791,8 +701,7 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     T, _R = model.solve_model(solver="gensys", verbose=False)
 
     stationary_covariance_matrix(model, T, shock_std=0.1, verbose=False)
-    messages = caplog.messages
-    assert messages[-1].startswith("Passing only one of T or R will still trigger")
+    assert caplog.messages[-1].startswith("Passing only one of T or R will still trigger")
 
 
 @pytest.mark.parametrize(
@@ -816,8 +725,7 @@ def test_compute_stationary_covariance(caplog, gcn_file):
     assert_allclose(Sigma, Sigma.T, atol=1e-8)
     assert all(x > 0 for x in np.diagonal(Sigma))
 
-    # Check for PSD by getting the closest PSD matrix (setting negative eigenvalues to zero) then
-    # checking if the result is close to the original.
+    # Sigma is positive semidefinite when clipping its negative eigenvalues to zero leaves it unchanged.
     eigvals, eigvecs = np.linalg.eig(Sigma)
     eigvals = np.where(eigvals < 0, 0, eigvals)
     Sigma_psd = eigvecs @ np.diag(eigvals) @ eigvecs.T
@@ -843,7 +751,7 @@ def test_autocovariance_matrix(gcn_file, rng):
         atoms = eq.atoms()
         shock = next(x for x in atoms if x in shocks)
         if shock.base_name in ["epsilon_R", "epsilon_pi"]:
-            # These aren't a normal AR(1) shocks, so we skip them
+            # These shocks do not enter through an AR(1) process, so the decay check below does not apply.
             continue
 
         state = next(x for x in atoms if x in model.variables)
@@ -852,8 +760,7 @@ def test_autocovariance_matrix(gcn_file, rng):
         rho = next(x for x in atoms if x in model.params)
         rho_value = rng.beta(10, 1)
 
-        # The autocorrelation of the AR(1) states decay at rate rho ** t
-        # Other autocovarainces are more complex, but this one is easy to check
+        # The autocorrelation of an AR(1) state decays at rate rho ** t.
         autocorr = autocorrelation_matrix(
             model,
             shock_std=0.1,
@@ -895,24 +802,17 @@ def test_autocovariance_matrix_lag_zero_is_stationary_covariance(gcn_file):
     assert_allclose(autocov[0], Sigma, atol=1e-8, rtol=1e-8)
 
 
-def setup_cov_arguments(argument, n_shocks, model):
-    shock_std = None
-    shock_dict = None
-    shock_cov_matrix = None
-    if argument == "shock_std":
-        shock_std = 0.1
-    elif argument == "shock_std_dict":
-        shock_dict = {shock.base_name: 0.1 for shock in model.shocks}
-    elif argument == "shock_cov_matrix":
-        shock_cov_matrix = np.eye(n_shocks) * 0.1**2
+def _shock_covariance_arguments(argument, n_shocks, model):
+    shock_std = 0.1 if argument == "shock_std" else None
+    shock_std_dict = {shock.base_name: 0.1 for shock in model.shocks} if argument == "shock_std_dict" else None
+    shock_cov_matrix = np.eye(n_shocks) * 0.1**2 if argument == "shock_cov_matrix" else None
 
-    return shock_std, shock_dict, shock_cov_matrix
+    return shock_std, shock_std_dict, shock_cov_matrix
 
 
 @pytest.fixture
 def irf_inputs():
-    file_path = "one_block_1_ss_2shock.gcn"
-    model = load_and_cache_model(file_path)
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
     T, R = model.solve_model(solver="gensys", verbose=False)
     return model, T, R
 
@@ -944,18 +844,14 @@ class TestIRF:
 
         assert "time" in irf.coords
         assert "variable" in irf.coords
-
-        if return_individual_shocks:
-            assert "shock" in irf.coords
-            if isinstance(shock_size, dict):
-                assert set(irf.coords["shock"].values) == set(shock_size.keys())
-        else:
-            assert "shock" not in irf.coords
+        assert ("shock" in irf.coords) == return_individual_shocks
+        if return_individual_shocks and isinstance(shock_size, dict):
+            assert set(irf.coords["shock"].values) == set(shock_size.keys())
 
         assert len(irf.coords["time"]) == 1000
         assert len(irf.coords["variable"]) == n_variables
 
-        # After 1000 steps the shocks should have mostly died out
+        # After 1000 periods the responses have died out.
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
 
         n_test_shocks = 1 if isinstance(shock_size, float | int) else len(shock_size)
@@ -963,14 +859,13 @@ class TestIRF:
             assert not np.allclose(irf.sel(shock="epsilon_A").values, irf.sel(shock="epsilon_B").values)
 
     @pytest.mark.parametrize("return_individual_shocks", [True, False], ids=["individual_shocks", "joint_shocks"])
-    @pytest.mark.parametrize("n_shocks", [1, 2], ids=["single_shock", "two_shocks"])
-    def test_irf_from_trajectory(self, irf_inputs, return_individual_shocks, n_shocks):
+    @pytest.mark.parametrize("n_shocked", [1, 2], ids=["single_shock", "two_shocks"])
+    def test_irf_from_trajectory(self, irf_inputs, return_individual_shocks, n_shocked):
         model, T, R = irf_inputs
         n_variables, n_shocks = R.shape
 
         shock_trajectory = np.zeros((1000, n_shocks))
-        for i in range(n_shocks):
-            shock_trajectory[0, i] = 0.1
+        shock_trajectory[0, :n_shocked] = 0.1
 
         irf = impulse_response_function(
             model,
@@ -983,17 +878,13 @@ class TestIRF:
 
         assert "time" in irf.coords
         assert "variable" in irf.coords
-
-        if return_individual_shocks:
-            assert "shock" in irf.coords
-        else:
-            assert "shock" not in irf.coords
+        assert ("shock" in irf.coords) == return_individual_shocks
 
         assert len(irf.coords["time"]) == 1000
         assert len(irf.coords["variable"]) == n_variables
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
 
-        if (n_shocks == 2) and return_individual_shocks:
+        if return_individual_shocks:
             assert not np.allclose(irf.sel(shock="epsilon_A").values, irf.sel(shock="epsilon_B").values)
 
     def test_size_dict_limits_shock_axis(self, irf_inputs):
@@ -1035,7 +926,7 @@ def test_simulate(gcn_file, argument):
     n_simulations = 3000
     simulation_length = 2000
 
-    shock_std, shock_std_dict, shock_cov_matrix = setup_cov_arguments(argument, n_shocks, model)
+    shock_std, shock_std_dict, shock_cov_matrix = _shock_covariance_arguments(argument, n_shocks, model)
 
     data = simulate(
         model,
@@ -1050,8 +941,7 @@ def test_simulate(gcn_file, argument):
 
     assert data.shape == (n_simulations, simulation_length, n_variables)
 
-    # Check that the simulated covariance matrix is at least strong correlated with the stationary covariance matrix
-    # across many trajectories
+    # Across many trajectories the terminal-period sample covariance tracks the stationary covariance.
     Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1, return_df=False)
     sigma = np.cov(data.isel(time=-1).values.T)
 
@@ -1062,8 +952,7 @@ def test_simulate(gcn_file, argument):
 
 
 def test_objective_with_complex_discount_factor():
-    gcn_file = "rbc_firm_capital.gcn"
-    model = load_and_cache_model(gcn_file)
+    model = load_and_cache_model("rbc_firm_capital.gcn")
 
     ss_res = model.steady_state(verbose=False, how="minimize", optimizer_kwargs={"method": "Newton-CG"})
     assert ss_res.success
@@ -1075,13 +964,9 @@ def test_objective_with_complex_discount_factor():
     )
     assert bk_success
 
-    gcn_file = "rbc_firm_capital_comparison.gcn"
-    model_2 = load_and_cache_model(gcn_file)
-
+    model_2 = load_and_cache_model("rbc_firm_capital_comparison.gcn")
     ss_res_2 = model_2.steady_state(verbose=False)
     assert ss_res_2.success
 
-    assert_allclose(ss_res["Y_ss"], ss_res_2["Y_ss"], rtol=1e-8, atol=1e-8)
-    assert_allclose(ss_res["K_ss"], ss_res_2["K_ss"], rtol=1e-8, atol=1e-8)
-    assert_allclose(ss_res["L_ss"], ss_res_2["L_ss"], rtol=1e-8, atol=1e-8)
-    assert_allclose(ss_res["I_ss"], ss_res_2["I_ss"], rtol=1e-8, atol=1e-8)
+    for name in ["Y_ss", "K_ss", "L_ss", "I_ss"]:
+        assert_allclose(ss_res[name], ss_res_2[name], rtol=1e-8, atol=1e-8)

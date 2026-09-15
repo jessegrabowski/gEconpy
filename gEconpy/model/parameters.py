@@ -16,36 +16,35 @@ def compile_param_dict_func(
     mode: str | None = None,
 ) -> tuple[Callable, dict]:
     """
-    Compile a function to compute model parameters from given "free" parameters.
+    Compile a function that computes every model parameter from the free parameters.
 
-    Most model parameters are provided by the user as fixed values. We denote these are "free" parameters. Others are
-    functions of the free parameters, and need to be dynamically recomputed each time the free parameters change.
+    Free parameters are the ones the user supplies as fixed values. Deterministic parameters are functions of the
+    free parameters and are recomputed each time the free parameters change.
 
     Parameters
     ----------
     param_dict : SymbolDictionary
-        A dictionary of free parameters.
+        Free parameters and their default values.
     deterministic_dict : SymbolDictionary
-        A dictionary of deterministic parameters, with the keys being the parameters and the values being the
-        expressions to compute them.
+        Deterministic parameters, keyed by parameter symbol with the expression that computes each one as value.
     cache : dict, optional
-        A dictionary mapping from pytensor symbols to sympy expressions. Used to prevent duplicate mappings from
-        sympy symbol to pytensor symbol from being created. Default is a empty dictionary, implying no other functions
-        have been compiled yet.
+        Sympytensor cache mapping sympy symbols to pytensor variables, shared so that every graph built from the
+        same model maps a symbol to one pytensor variable. Default None starts an empty cache.
     return_symbolic : bool, optional
-        When true, return a symbolic graph representing the computation of parameter values
-        rather than a compiled pytensor function. Defaults to False.
-    mode : str or None, optional
-        Pytensor compilation mode (e.g. ``'JAX'``, ``'FAST_COMPILE'``).
-        Forwarded to the underlying compiler. Default is None.
+        If True, return the symbolic pytensor graph of the parameter values instead of a compiled function. Default
+        False.
+    mode : str, optional
+        Pytensor compilation mode, such as ``'JAX'`` or ``'FAST_COMPILE'``, forwarded to the compiler. Default None
+        uses the pytensor default.
 
     Returns
     -------
-    f : Callable
-        A function that takes the free parameters as keyword arguments and returns a dictionary of the computed
-        parameters.
+    f : callable
+        Function taking the free parameters as keyword arguments and returning a dictionary of every parameter
+        value. With ``return_symbolic`` this is instead a dictionary mapping pytensor output variables to their
+        graphs.
     cache : dict
-        A dictionary mapping from sympy symbols to pytensor symbols.
+        The sympytensor cache after compilation.
     """
     cache = {} if cache is None else cache
 

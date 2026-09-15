@@ -350,7 +350,7 @@ def postprocess_optimizer_res(
     res: OptimizeResult,
     res_dict: SteadyStateResults,
     f_resid: Callable[..., np.ndarray],
-    f_jac: Callable[..., np.ndarray],
+    f_grad: Callable[..., np.ndarray],
     tol: float = 1e-6,
     verbose: bool = True,
 ) -> SteadyStateResults:
@@ -368,7 +368,7 @@ def postprocess_optimizer_res(
         Steady-state values found by the optimizer, used to evaluate the residuals and the jacobian.
     f_resid : callable
         Function returning the system residuals given the steady-state values as keyword arguments.
-    f_jac : callable
+    f_grad : callable
         Function returning the system jacobian given the steady-state values as keyword arguments.
     tol : float, optional
         Threshold the sum of squared residuals, maximum absolute error, gradient L2 norm, and maximum absolute
@@ -384,7 +384,7 @@ def postprocess_optimizer_res(
     success = res.success
 
     f_x = np.r_[[x.ravel() for x in f_resid(**res_dict)]]
-    df_dx = f_jac(**res_dict)
+    df_dx = f_grad(**res_dict)
 
     sse = (f_x**2).sum()
     max_abs_error = np.max(np.abs(f_x))

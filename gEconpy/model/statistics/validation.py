@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 
 from typing import TYPE_CHECKING, cast
@@ -19,12 +17,66 @@ _log = logging.getLogger(__name__)
 _FLOAT_ZERO_TOL = 1e-8
 
 
+def check_steady_state(
+    model: "Model",
+    steady_state: SteadyStateResults | None = None,
+    steady_state_kwargs: dict | None = None,
+    **parameter_updates,
+) -> None:
+    """
+    Log whether the model's steady state is satisfied, and which equations have non-zero residuals if not.
+
+    Parameters
+    ----------
+    model : Model
+        Model whose steady state is checked.
+    steady_state : SteadyStateResults, optional
+        Steady state to check. Solved from ``model`` when None. Defaults to None.
+    steady_state_kwargs : dict, optional
+        Keyword arguments forwarded to :meth:`~gEconpy.model.model.Model.steady_state` when ``steady_state`` is
+        solved here. Defaults to None.
+    **parameter_updates
+        Parameter values overriding the model defaults.
+
+    Examples
+    --------
+    Confirm that a hand-modified steady state still satisfies the model equations. A steady state that does not
+    satisfy them raises :class:`~gEconpy.exceptions.SteadyStateNotFoundError` naming the violated equations:
+
+    .. code-block:: python
+
+        from gEconpy import check_steady_state, model_from_gcn
+        from gEconpy.data import get_example_gcn
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        steady_state = model.steady_state(verbose=False, progressbar=False)
+
+        check_steady_state(model, steady_state=steady_state)
+    """
+    if steady_state_kwargs is None:
+        steady_state_kwargs = {}
+
+    ss_dict = _maybe_solve_steady_state(model, steady_state, steady_state_kwargs, parameter_updates)
+    if ss_dict.success:
+        _log.warning("Steady state successfully found!")
+        return
+
+    parameters = model.parameters(**parameter_updates)
+    residuals = model.evaluate_residual(ss_dict, parameters)
+    _log.warning("Steady state NOT successful. The following equations have non-zero residuals:")
+
+    for resid, eq in zip(residuals, model.equations, strict=False):
+        if np.abs(resid) > _FLOAT_ZERO_TOL:
+            _log.warning(eq)
+            _log.warning(f"Residual: {resid:0.4f}")
+
+
 def _maybe_solve_steady_state(
-    model: Model,
-    steady_state: dict | None,
+    model: "Model",
+    steady_state: SteadyStateResults | None,
     steady_state_kwargs: dict | None,
     parameter_updates: dict | None,
-):
+) -> SteadyStateResults:
     if parameter_updates is None:
         parameter_updates = {}
     if steady_state is None:
@@ -46,7 +98,7 @@ def _maybe_solve_steady_state(
 
 
 def _maybe_linearize_model(
-    model: Model,
+    model: "Model",
     A: np.ndarray | None,
     B: np.ndarray | None,
     C: np.ndarray | None,
@@ -54,31 +106,32 @@ def _maybe_linearize_model(
     **linearize_model_kwargs,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Linearize a model if required, or return the provided matrices.
+    Return the linearized system, calling ``model.linearize_model`` only when any of A, B, C, and D is missing.
 
     Parameters
     ----------
-    model: Model
-        DSGE model
-    A: np.ndarray, optional
-        Jacobian w.r.t. variables at time t-1.
-    B: np.ndarray, optional
-        Jacobian w.r.t. variables at time t.
-    C: np.ndarray, optional
-        Jacobian w.r.t. variables at time t+1.
-    D: np.ndarray, optional
-        Jacobian w.r.t. stochastic innovations.
-    linearize_model_kwargs
-        Arguments forwarded to ``model.linearize_model``. Ignored if all of A, B, C, D are provided.
+    model : Model
+        DSGE model.
+    A : ndarray, optional
+        Jacobian of the system with respect to variables at t-1.
+    B : ndarray, optional
+        Jacobian of the system with respect to variables at t.
+    C : ndarray, optional
+        Jacobian of the system with respect to variables at t+1.
+    D : ndarray, optional
+        Jacobian of the system with respect to exogenous shocks.
+    **linearize_model_kwargs
+        Arguments forwarded to ``model.linearize_model``. Ignored when all of A, B, C, and D are provided.
 
     Returns
     -------
     linear_system : tuple of ndarray
+        The four Jacobians A, B, C, and D.
     """
     verbose = linearize_model_kwargs.get("verbose", True)
     n_matrices = sum(x is not None for x in [A, B, C, D])
 
-    if n_matrices < 4 and n_matrices > 0 and verbose:
+    if 0 < n_matrices < 4 and verbose:
         _log.warning(
             f"Passing an incomplete subset of A, B, C, and D (you passed {n_matrices}) will still trigger "
             f"``model.linearize_model`` (which might be expensive). Pass all to avoid this, or None to silence "
@@ -96,25 +149,28 @@ def _maybe_linearize_model(
 
 
 def _maybe_solve_model(
-    model: Model, T: np.ndarray | None, R: np.ndarray | None, **solve_model_kwargs
-) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
+    model: "Model", T: np.ndarray | None, R: np.ndarray | None, **solve_model_kwargs
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Solve for the linearized policy matrix of a model if required, or return the provided T and R.
+    Return the policy matrices, calling ``model.solve_model`` only when either of T and R is missing.
 
     Parameters
     ----------
-    model: Model
-        DSGE Model associated with T and R.
-    T: np.ndarray, optional
+    model : Model
+        DSGE model whose solution is T and R.
+    T : ndarray, optional
         Transition matrix.
-    R: np.ndarray, optional
+    R : ndarray, optional
         Selection matrix.
     **solve_model_kwargs
-        Arguments forwarded to ``solve_model``. Ignored if T and R are provided.
+        Arguments forwarded to ``model.solve_model``. Ignored when both T and R are provided.
 
     Returns
     -------
-    T, R : tuple of ndarray or tuple of None
+    T : ndarray
+        Transition matrix.
+    R : ndarray
+        Selection matrix.
     """
     n_matrices = sum(x is not None for x in [T, R])
     if n_matrices == 1:
@@ -136,10 +192,10 @@ def _validate_shock_options(
     shock_cov_matrix: np.ndarray | None,
     shock_std: float | np.ndarray | list | None,
     shocks: list[TimeAwareSymbol],
-):
+) -> None:
     n_shocks = len(shocks)
     n_provided = sum(x is not None for x in [shock_std_dict, shock_cov_matrix, shock_std])
-    if n_provided > 1 or n_provided == 0:
+    if n_provided != 1:
         raise ValueError(
             "Exactly one of shock_std_dict, shock_cov_matrix, or shock_std should be provided. You passed "
             f"{n_provided}."
@@ -152,17 +208,17 @@ def _validate_shock_options(
 
     if shock_std_dict is not None:
         shock_names = [x.base_name for x in shocks]
-        missing = [x for x in shock_std_dict if x not in shock_names]
-        extra = [x for x in shock_names if x not in shock_std_dict]
+        unknown = [x for x in shock_std_dict if x not in shock_names]
+        missing = [x for x in shock_names if x not in shock_std_dict]
+        if len(unknown) > 0:
+            raise ValueError(
+                f"Unexpected shocks in shock_std_dict. The following names were not found among the model shocks: "
+                f"{', '.join(unknown)}"
+            )
         if len(missing) > 0:
             raise ValueError(
                 f"If shock_std_dict is specified, it must give values for all shocks. The following shocks were not "
                 f"found among the provided keys: {', '.join(missing)}"
-            )
-        if len(extra) > 0:
-            raise ValueError(
-                f"Unexpected shocks in shock_std_dict. The following names were not found among the model shocks: "
-                f"{', '.join(extra)}"
             )
 
     if shock_std is not None:
@@ -177,50 +233,3 @@ def _validate_shock_options(
         elif isinstance(shock_std, int | float):
             if shock_std < 0:
                 raise ValueError("Shock standard deviation must be positive")
-
-
-def _validate_simulation_options(shock_size, shock_cov, shock_trajectory) -> None:
-    options = [shock_size, shock_cov, shock_trajectory]
-    n_options = sum(x is not None for x in options)
-
-    if n_options != 1:
-        raise ValueError("Specify exactly 1 of shock_size, shock_cov, or shock_trajectory")
-
-
-def check_steady_state(
-    model: Model,
-    steady_state: SteadyStateResults | None = None,
-    steady_state_kwargs: dict | None = None,
-    **parameter_updates,
-) -> None:
-    """
-    Log whether the model's steady state is satisfied, and which equations have non-zero residuals if not.
-
-    Parameters
-    ----------
-    model : Model
-        Model whose steady state is checked.
-    steady_state : SteadyStateResults, optional
-        Steady state to check. Solved from ``model`` when not given.
-    steady_state_kwargs : dict, optional
-        Keyword arguments forwarded to :meth:`~gEconpy.model.model.Model.steady_state` when ``steady_state`` is
-        solved here.
-    **parameter_updates
-        Parameter values overriding the model defaults.
-    """
-    if steady_state_kwargs is None:
-        steady_state_kwargs = {}
-
-    ss_dict = _maybe_solve_steady_state(model, steady_state, steady_state_kwargs, parameter_updates)
-    if ss_dict.success:
-        _log.warning("Steady state successfully found!")
-        return
-
-    parameters = model.parameters(**parameter_updates)
-    residuals = model.evaluate_residual(ss_dict, parameters)
-    _log.warning("Steady state NOT successful. The following equations have non-zero residuals:")
-
-    for resid, eq in zip(residuals, model.equations, strict=False):
-        if np.abs(resid) > _FLOAT_ZERO_TOL:
-            _log.warning(eq)
-            _log.warning(f"Residual: {resid:0.4f}")

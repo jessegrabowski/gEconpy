@@ -28,6 +28,50 @@ _log = logging.getLogger(__name__)
 ERROR_FUNCTIONS = Literal["squared", "mean_squared", "abs", "l2-norm"]
 
 
+def print_steady_state(ss_dict: SteadyStateResults) -> None:
+    """
+    Log a table of steady-state values, listing calibrated parameters after the variables.
+
+    Parameters
+    ----------
+    ss_dict : SteadyStateResults
+        Steady-state values to print. The table is prefixed with a warning when the results are not flagged as
+        successful.
+
+    Examples
+    --------
+    Solve the packaged RBC model for its steady state and print the result:
+
+    .. code-block:: python
+
+        import gEconpy as ge
+        from gEconpy.data import get_example_gcn
+
+        model = ge.model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        steady_state = model.steady_state(verbose=False, progressbar=False)
+        ge.print_steady_state(steady_state)
+    """
+    output = []
+    if not ss_dict.success:
+        output.append("Values come from the latest solver iteration but are NOT a valid steady state.")
+
+    name_width = max(len(name) for name in ss_dict) + 5
+
+    calibrated_outputs = []
+    for key, value in ss_dict.to_sympy().items():
+        line = f"{key.name:{name_width}}{value:>10.3f}"
+        if isinstance(key, TimeAwareSymbol):
+            output.append(line)
+        else:
+            calibrated_outputs.append(line)
+
+    if calibrated_outputs:
+        output.append("\n")
+        output.extend(calibrated_outputs)
+
+    _log.info("\n".join(output))
+
+
 def make_steady_state_shock_dict(shocks: list[TimeAwareSymbol]) -> SymbolDictionary:
     """
     Build a substitution dictionary setting every shock to zero in the steady state.
@@ -51,18 +95,176 @@ def system_to_steady_state(system: list[sp.Expr], shocks: list[TimeAwareSymbol])
 
     Parameters
     ----------
-    system : list of sp.Expr
-        Model equations, written in time-indexed variables.
+    system : list of sympy expression
+        Model equations in time-indexed variables.
     shocks : list of TimeAwareSymbol
         Model shocks, which are set to zero.
 
     Returns
     -------
-    system : list of sp.Expr
+    system : list of sympy expression
         Simplified steady-state equations.
     """
     shock_dict = make_steady_state_shock_dict(shocks)
     return [eq_to_ss(eq).subs(shock_dict).simplify() for eq in system]
+
+
+def simplify_provided_ss_equations(
+    ss_solution_dict: SymbolDictionary, variables: list[TimeAwareSymbol]
+) -> SymbolDictionary:
+    """
+    Substitute intermediate definitions out of the user-provided steady-state equations.
+
+    Parameters
+    ----------
+    ss_solution_dict : SymbolDictionary
+        Steady-state equations from the ``STEADY_STATE`` block.
+    variables : list of TimeAwareSymbol
+        Model variables.
+
+    Returns
+    -------
+    ss_solution_dict : SymbolDictionary
+        Steady-state equations keyed by model variables only.
+    """
+    if not ss_solution_dict:
+        return SymbolDictionary()
+
+    ss_variables = [variable.to_ss() for variable in variables]
+    ss_dict_sympy = ss_solution_dict.to_sympy()
+
+    intermediates = {key: value for key, value in ss_dict_sympy.items() if key not in ss_variables}
+    if not intermediates:
+        return ss_solution_dict
+
+    simplified = SymbolDictionary({key: value for key, value in ss_dict_sympy.items() if key in ss_variables})
+    flat_intermediates = flatten_substitution_dict(intermediates)
+    for variable, eq in simplified.items():
+        if hasattr(eq, "subs"):
+            simplified[variable] = eq.subs(flat_intermediates)
+
+    return simplified
+
+
+def propagate_steady_state_through_identities(
+    ss_solution_dict: SymbolDictionary,
+    steady_state_equations: list[sp.Expr],
+    variables: list[TimeAwareSymbol],
+    max_iterations: int = 100,
+) -> SymbolDictionary:
+    """
+    Extend the user-provided steady state by solving equations with a single remaining unknown.
+
+    Each pass substitutes the known values into every equation and solves those left with exactly one unknown. Passes
+    repeat until one makes no progress. A solution is accepted only if it is unique and simple: no conditionals, no
+    unevaluated integrals or derivatives, no complex numbers, and limited nesting depth.
+
+    Parameters
+    ----------
+    ss_solution_dict : SymbolDictionary
+        User-provided steady-state values.
+    steady_state_equations : list of sympy expression
+        Model equations in steady-state residual form, each equal to zero.
+    variables : list of TimeAwareSymbol
+        Model variables.
+    max_iterations : int, optional
+        Maximum number of passes over the equation system. Default is 100.
+
+    Returns
+    -------
+    ss_solution_dict : SymbolDictionary
+        The provided values plus every value that could be inferred.
+    """
+    ss_variables = {variable.to_ss() for variable in variables}
+    known = ss_solution_dict.to_sympy().copy() if ss_solution_dict else {}
+
+    for _ in range(max_iterations):
+        progress = False
+
+        for eq in steady_state_equations:
+            if not isinstance(eq, sp.Basic):
+                continue
+
+            unknowns = (eq.free_symbols & ss_variables) - set(known.keys())
+            if len(unknowns) != 1:
+                continue
+
+            unknown = next(iter(unknowns))
+            solution = _try_solve_for_unknown(eq, unknown, known, ss_variables)
+            if solution is None:
+                continue
+
+            known[unknown] = float(solution) if solution.is_number else solution
+            progress = True
+
+        if not progress:
+            break
+
+    return SymbolDictionary(known)
+
+
+def compile_known_ss(
+    ss_solution_dict: SymbolDictionary,
+    variables: list[TimeAwareSymbol | sp.Symbol],
+    parameters: list[sp.Symbol],
+    cache: dict | None,
+    return_symbolic: bool = False,
+    stack_return: bool | None = None,
+    **kwargs,
+):
+    """
+    Compile a function returning the analytic steady-state values as a function of the parameters.
+
+    Parameters
+    ----------
+    ss_solution_dict : SymbolDictionary
+        Known steady-state values, keyed by variable.
+    variables : list of TimeAwareSymbol or sympy Symbol
+        Model variables, which fix the order of the outputs.
+    parameters : list of sympy Symbol
+        Model parameters, which become the inputs of the compiled function.
+    cache : dict or None
+        Sympytensor cache mapping cache keys to PyTensor variables, or None for a new empty cache.
+    return_symbolic : bool, optional
+        Return a dictionary of PyTensor graphs instead of a compiled function. Default is False.
+    stack_return : bool, optional
+        Stack the outputs into a single array. Default is None, meaning the opposite of ``return_symbolic``.
+    **kwargs
+        Forwarded to :func:`~gEconpy.model.compile.compile_function`.
+
+    Returns
+    -------
+    f_ss : callable, dict, or None
+        Function mapping parameter values to steady-state values, or a dictionary from each variable's PyTensor node
+        to its steady-state graph when ``return_symbolic`` is True. None when ``ss_solution_dict`` is empty.
+    cache : dict
+        The cache, extended with every variable created during conversion.
+    """
+    cache = {} if cache is None else cache
+    if not ss_solution_dict:
+        return None, cache
+
+    ss_solution_dict = ss_solution_dict.to_sympy()
+    ss_variables = [safe_to_ss(variable) for variable in variables]
+    ordered_solutions = {
+        variable: ss_solution_dict[variable] for variable in ss_variables if variable in ss_solution_dict
+    }
+
+    if stack_return is None:
+        stack_return = not return_symbolic
+
+    f_ss, cache = compile_function(
+        parameters,
+        list(ordered_solutions.values()),
+        cache=cache,
+        stack_return=stack_return,
+        return_symbolic=return_symbolic,
+        **kwargs,
+    )
+    if return_symbolic:
+        return make_return_dict_and_update_cache(ss_variables, f_ss, cache, TimeAwareSymbol)
+
+    return dictionary_return_wrapper(f_ss, list(ordered_solutions.keys())), cache
 
 
 def pt_error_from_resid(
@@ -70,19 +272,20 @@ def pt_error_from_resid(
     func: ERROR_FUNCTIONS = "squared",
 ) -> TensorVariable:
     """
-    Build a pytensor scalar error graph from a stacked residual vector.
+    Reduce a residual vector to a scalar error.
 
     Parameters
     ----------
     resid : TensorVariable
         Stacked residual vector of shape ``(n_eq,)``.
     func : str, optional
-        Error metric. One of ``'squared'``, ``'mean_squared'``, ``'abs'``, or ``'l2-norm'``. Default is ``'squared'``.
+        Error metric. One of ``'squared'``, ``'mean_squared'``, ``'abs'``, or ``'l2-norm'``. Default is
+        ``'squared'``.
 
     Returns
     -------
     error : TensorVariable
-        Scalar error graph node.
+        Scalar error graph.
     """
     if func == "squared":
         return (resid**2).sum()
@@ -95,6 +298,102 @@ def pt_error_from_resid(
     raise NotImplementedError(f"Error function {func} not implemented, must be one of {ERROR_FUNCTIONS}")
 
 
+def build_root_graphs(
+    equations: list[TensorVariable],
+    ss_input_nodes: list[TensorVariable],
+    use_jac: bool = True,
+) -> tuple[TensorVariable, TensorVariable | None]:
+    """
+    Build the residual and Jacobian graphs that :func:`scipy.optimize.root` needs.
+
+    Parameters
+    ----------
+    equations : list of TensorVariable
+        Scalar equation graphs, each equal to zero at the steady state.
+    ss_input_nodes : list of TensorVariable
+        Scalar input node for each steady-state variable.
+    use_jac : bool, optional
+        Build the Jacobian graph. Default is True.
+
+    Returns
+    -------
+    resid : TensorVariable
+        Stacked residual vector of shape ``(n_eq,)``.
+    jac : TensorVariable or None
+        Jacobian of shape ``(n_eq, n_var)``, or None when ``use_jac`` is False.
+    """
+    resid = pt.stack(equations) if equations else pt.zeros(0)
+    if not use_jac:
+        return resid, None
+
+    if equations and ss_input_nodes:
+        jac = pt.stack(pt_jacobian(resid, ss_input_nodes), axis=1)
+    else:
+        jac = pt.zeros((len(equations), len(ss_input_nodes)))
+
+    return resid, jac
+
+
+def build_minimize_graphs(
+    equations: list[TensorVariable],
+    ss_input_nodes: list[TensorVariable],
+    error_func: ERROR_FUNCTIONS = "squared",
+    use_jac: bool = True,
+    use_hess: bool = False,
+    use_hessp: bool = True,
+) -> tuple[TensorVariable, TensorVariable | None, TensorVariable | None, TensorVariable | None, TensorVariable | None]:
+    """
+    Build the error and derivative graphs that :func:`scipy.optimize.minimize` needs.
+
+    Parameters
+    ----------
+    equations : list of TensorVariable
+        Scalar equation graphs, each equal to zero at the steady state.
+    ss_input_nodes : list of TensorVariable
+        Scalar input node for each steady-state variable.
+    error_func : str, optional
+        Error metric, see :func:`pt_error_from_resid`. Default is ``'squared'``.
+    use_jac : bool, optional
+        Build the gradient graph. Default is True.
+    use_hess : bool, optional
+        Build the full Hessian graph. Default is False.
+    use_hessp : bool, optional
+        Build the Hessian-vector product graph. Default is True.
+
+    Returns
+    -------
+    error : TensorVariable
+        Scalar error.
+    grad : TensorVariable or None
+        Gradient of shape ``(n_var,)``, or None when no derivative graph is requested.
+    hess : TensorVariable or None
+        Hessian of shape ``(n_var, n_var)``, or None when ``use_hess`` is False.
+    hessp_out : TensorVariable or None
+        Hessian-vector product of shape ``(n_var,)``, or None when ``use_hessp`` is False.
+    hessp_p : TensorVariable or None
+        Direction vector input of the Hessian-vector product, or None when ``use_hessp`` is False.
+    """
+    resid = pt.stack(equations) if equations else pt.zeros(0)
+    error = pt_error_from_resid(resid, error_func)
+
+    grad = None
+    if use_jac or use_hess or use_hessp:
+        grad = pt.stack(pt.grad(error, ss_input_nodes))
+
+    hess = None
+    if use_hess:
+        hess = pt.stack(pt_jacobian(grad, ss_input_nodes), axis=1)
+
+    hessp_out = None
+    hessp_p = None
+    if use_hessp:
+        hessp_p = pt.dvector("hess_eval_point")
+        directions = [hessp_p[i] for i in range(len(ss_input_nodes))]
+        hessp_out = pt.stack(hessian_vector_product(error, ss_input_nodes, directions))
+
+    return error, grad, hess, hessp_out, hessp_p
+
+
 def _ss_residual_to_pytensor(
     steady_state_equations: list[sp.Expr],
     ss_solution_dict: SymbolDictionary,
@@ -104,58 +403,52 @@ def _ss_residual_to_pytensor(
     calib_dict: SymbolDictionary,
     cache: dict | None = None,
 ) -> tuple[list[TensorVariable], dict]:
-    """Convert the steady-state residual system from sympy to a pytensor computation graph.
+    """
+    Convert the steady-state residual system from sympy to PyTensor graphs.
 
-    This is the single sympy-to-pytensor bridge for steady-state solving. The returned equation list is the only
-    thing derived from sympy; all downstream derivatives (Jacobian, gradient, Hessian, Hessian-vector product) are
-    built from it via pytensor autodiff in :func:`build_root_graphs` and :func:`build_minimize_graphs`.
-
-    The returned cache contains every sympy-to-pytensor mapping created during conversion, including parameter
-    nodes, deterministic parameter expressions, steady-state variable nodes, and known steady-state solution
-    subgraphs. Callers recover specific nodes by looking up ``(name, cls, ...)`` keys in the cache.
+    This is the only place the steady-state solvers touch sympy. Every derivative they need is built from the returned
+    equations by PyTensor autodiff in :func:`build_root_graphs` and :func:`build_minimize_graphs`. Callers recover
+    the parameter and variable nodes from the returned cache with :func:`~gEconpy.model.compile.make_cache_key`.
 
     Parameters
     ----------
-    steady_state_equations : list of sp.Expr
-        Steady-state equations in residual form (each expression equals zero).
+    steady_state_equations : list of sympy expression
+        Steady-state equations in residual form, each equal to zero.
     ss_solution_dict : SymbolDictionary
-        Analytically known steady-state solutions from the ``STEADY_STATE`` block and identity propagation.
+        Analytically known steady-state values, from the ``STEADY_STATE`` block and identity propagation.
     variables : list of TimeAwareSymbol
-        Model variables (without calibrated parameter symbols).
+        Model variables, without calibrated parameter symbols.
     param_dict : SymbolDictionary
         Free parameter names and default values.
     deterministic_dict : SymbolDictionary
-        Deterministic parameters defined as functions of free parameters.
+        Deterministic parameters defined as functions of the free parameters.
     calib_dict : SymbolDictionary
-        Calibration equations mapping calibrated parameter symbols to the steady-state expressions that pin them.
+        Calibrating equations mapping each calibrated parameter to the steady-state expression that pins it.
     cache : dict, optional
-        Existing sympytensor cache to extend. If None, a fresh cache is created. Passing an existing cache ensures
-        that pytensor nodes are shared across multiple graph-building calls.
+        Sympytensor cache to extend, so that PyTensor nodes are shared across graph-building calls. Default is a new
+        empty cache.
 
     Returns
     -------
     equations : list of TensorVariable
-        Individual scalar equation graphs, each equal to zero at the steady state.
+        Scalar equation graphs, each equal to zero at the steady state. Equations that no longer contain an unknown
+        after substituting the known steady-state values are dropped.
     cache : dict
-        Sympytensor cache mapping ``(name, assumptions, ...)`` tuples to pytensor nodes. Contains all parameter,
-        deterministic, steady-state variable, and known-solution nodes created during conversion.
+        The cache, extended with every parameter, deterministic parameter, steady-state variable, and known
+        steady-state graph created during conversion.
     """
     if cache is None:
         cache = {}
 
     compile_param_dict_func(param_dict, deterministic_dict, cache=cache, return_symbolic=True)
 
-    calib_eqs = list(calib_dict.to_sympy().values())
-    full_equations = steady_state_equations + calib_eqs
+    calib_symbols = calib_dict.to_sympy()
+    full_equations = steady_state_equations + list(calib_symbols.values())
 
-    parameters = list((param_dict | deterministic_dict).to_sympy().keys())
-    parameters = [x for x in parameters if x not in calib_dict.to_sympy()]
+    parameters = [param for param in (param_dict | deterministic_dict).to_sympy() if param not in calib_symbols]
+    ss_variables = [safe_to_ss(variable) for variable in [*variables, *calib_symbols.keys()]]
 
-    full_variables = list(variables) + list(calib_dict.to_sympy().keys())
-    ss_variables = [x.to_ss() if hasattr(x, "to_ss") else x for x in full_variables]
-
-    input_symbols = ss_variables + parameters
-    _input_pt, resid_pt, cache = sympy_to_pytensor(input_symbols, full_equations, cache)
+    _input_pt, resid_pt, cache = sympy_to_pytensor(ss_variables + parameters, full_equations, cache)
 
     if ss_solution_dict:
         resid_pt, cache = _substitute_and_filter(resid_pt, ss_solution_dict, ss_variables, parameters, cache)
@@ -173,318 +466,55 @@ def _substitute_and_filter(
     """
     Replace known steady-state variables in each equation and drop equations with no remaining unknowns.
 
-    After substitution, any equation that depends only on parameters (not on any unknown SS variable) is removed.
-    This keeps the system square when some variables are analytically known.
+    Dropping the equations that depend on parameters alone keeps the system square when some variables are
+    analytically known.
 
     Parameters
     ----------
     equations : list of TensorVariable
-        Individual scalar equation graphs, each equal to zero at the steady state.
+        Scalar equation graphs, each equal to zero at the steady state.
     ss_solution_dict : SymbolDictionary
-        Analytically known steady-state solutions.
-    ss_variables : list of sp.Symbol
+        Analytically known steady-state values.
+    ss_variables : list of sympy Symbol
         All steady-state variable symbols.
-    parameters : list of sp.Symbol
+    parameters : list of sympy Symbol
         Free parameter symbols.
     cache : dict
-        Sympytensor cache. **Mutated in place**.
+        Sympytensor cache, extended in place with the graphs of the known values.
 
     Returns
     -------
     filtered_equations : list of TensorVariable
-        Equations that still contain at least one unknown SS variable after substitution.
+        Equations that still contain at least one unknown after substitution.
     cache : dict
-        Updated cache.
+        The extended cache.
     """
-    ss_dict_sympy = ss_solution_dict.to_sympy()
-    known = {safe_to_ss(k): v for k, v in ss_dict_sympy.items() if safe_to_ss(k) in ss_variables}
-
+    known = {
+        safe_to_ss(symbol): expression
+        for symbol, expression in ss_solution_dict.to_sympy().items()
+        if safe_to_ss(symbol) in ss_variables
+    }
     if not known:
         return equations, cache
 
-    known_symbols = list(known.keys())
-    known_exprs = list(known.values())
-
-    _, known_pt, cache = sympy_to_pytensor(parameters, known_exprs, cache)
+    _, known_pt, cache = sympy_to_pytensor(parameters, list(known.values()), cache)
 
     replacements = {}
-    known_node_ids = set()
-    for sym, expr_pt in zip(known_symbols, known_pt, strict=True):
-        cache_key = make_cache_key(sym.name, type(sym))
+    for symbol, expression_pt in zip(known.keys(), known_pt, strict=True):
+        cache_key = make_cache_key(symbol.name, type(symbol))
         if cache_key in cache:
-            old_node = cache[cache_key]
-            replacements[old_node] = expr_pt
-            known_node_ids.add(id(old_node))
+            replacements[cache[cache_key]] = expression_pt
 
-    unknown_node_ids: set[int] = set()
-    for var in ss_variables:
-        cache_key = make_cache_key(var.name, type(var))
-        if cache_key in cache and id(cache[cache_key]) not in known_node_ids:
-            unknown_node_ids.add(id(cache[cache_key]))
+    unknown_nodes = set()
+    for variable in ss_variables:
+        cache_key = make_cache_key(variable.name, type(variable))
+        if cache_key in cache and cache[cache_key] not in replacements:
+            unknown_nodes.add(cache[cache_key])
 
     substituted = graph_replace(equations, replacements, strict=False)
-
-    filtered = []
-    for eq in substituted:
-        eq_inputs = explicit_graph_inputs(eq)
-        has_unknown = any(id(inp) in unknown_node_ids for inp in eq_inputs)
-        if has_unknown:
-            filtered.append(eq)
+    filtered = [eq for eq in substituted if any(inp in unknown_nodes for inp in explicit_graph_inputs(eq))]
 
     return filtered, cache
-
-
-def build_root_graphs(
-    equations: list[TensorVariable],
-    ss_input_nodes: list[TensorVariable],
-    use_jac: bool = True,
-) -> tuple[TensorVariable, TensorVariable | None]:
-    """
-    Build the pytensor graphs needed by ``scipy.optimize.root``.
-
-    The equations are stacked into a residual vector internally, and the Jacobian is built by pytensor autodiff.
-
-    Parameters
-    ----------
-    equations : list of TensorVariable
-        Individual scalar equation graphs, each equal to zero at the steady state.
-    ss_input_nodes : list of TensorVariable
-        Scalar input nodes for each steady-state variable.
-    use_jac : bool, optional
-        Whether to build the Jacobian graph. Default is True.
-
-    Returns
-    -------
-    resid : TensorVariable
-        Stacked residual vector of shape ``(n_eq,)``.
-    jac : TensorVariable or None
-        Jacobian of shape ``(n_eq, n_var)``, or None if ``use_jac`` is False.
-    """
-    resid = pt.stack(equations) if equations else pt.zeros(0)
-    jac = None
-    if use_jac:
-        if equations and ss_input_nodes:
-            jac = pt.stack(pt_jacobian(resid, ss_input_nodes), axis=1)
-        else:
-            jac = pt.zeros((len(equations), len(ss_input_nodes)))
-
-    return resid, jac
-
-
-def build_minimize_graphs(
-    equations: list[TensorVariable],
-    ss_input_nodes: list[TensorVariable],
-    error_func: ERROR_FUNCTIONS = "squared",
-    use_jac: bool = True,
-    use_hess: bool = False,
-    use_hessp: bool = True,
-) -> tuple[TensorVariable, TensorVariable | None, TensorVariable | None, TensorVariable | None, TensorVariable | None]:
-    """
-    Build the pytensor graphs needed by ``scipy.optimize.minimize``.
-
-    The equations are stacked into a residual vector and reduced to a scalar error. Only the requested derivative
-    graphs are constructed.
-
-    Parameters
-    ----------
-    equations : list of TensorVariable
-        Individual scalar equation graphs, each equal to zero at the steady state.
-    ss_input_nodes : list of TensorVariable
-        Scalar input nodes for each steady-state variable.
-    error_func : str, optional
-        Error metric. Default is ``'squared'``.
-    use_jac : bool, optional
-        Whether to build the gradient graph. Default is True.
-    use_hess : bool, optional
-        Whether to build the full Hessian graph. Default is False.
-    use_hessp : bool, optional
-        Whether to build the Hessian-vector product graph. Default is True.
-
-    Returns
-    -------
-    error : TensorVariable
-        Scalar error.
-    grad : TensorVariable or None
-        Gradient of shape ``(n_var,)``, or None if ``use_jac`` is False.
-    hess : TensorVariable or None
-        Hessian of shape ``(n_var, n_var)``, or None if ``use_hess`` is False.
-    hessp_out : TensorVariable or None
-        Hessian-vector product output of shape ``(n_var,)``, or None if ``use_hessp`` is False.
-    hessp_p : TensorVariable or None
-        Direction vector input for the Hessian-vector product, or None if ``use_hessp`` is False.
-    """
-    resid = pt.stack(equations) if equations else pt.zeros(0)
-    error = pt_error_from_resid(resid, error_func)
-
-    grad = None
-    if use_jac or use_hess or use_hessp:
-        grad_components = pt.grad(error, ss_input_nodes)
-        grad = pt.stack(grad_components)
-
-    hess = None
-    if use_hess:
-        hess = pt.stack(pt_jacobian(grad, ss_input_nodes), axis=1)
-
-    hessp_out = None
-    hessp_p = None
-    if use_hessp:
-        hessp_p = pt.dvector("hess_eval_point")
-        hessp_out = pt.stack(
-            hessian_vector_product(error, ss_input_nodes, [hessp_p[i] for i in range(len(ss_input_nodes))])
-        )
-
-    return error, grad, hess, hessp_out, hessp_p
-
-
-def compile_known_ss(
-    ss_solution_dict: SymbolDictionary,
-    variables: list[TimeAwareSymbol | sp.Symbol],
-    parameters: list[sp.Symbol],
-    cache: dict,
-    return_symbolic: bool = False,
-    stack_return: bool | None = None,
-    **kwargs,
-):
-    """
-    Compile a function returning the user-provided analytic steady-state solution.
-
-    Parameters
-    ----------
-    ss_solution_dict : SymbolDictionary
-        Known steady-state values, keyed by variable. If empty, no function is compiled.
-    variables : list of TimeAwareSymbol or sp.Symbol
-        Model variables, used to order the outputs of the compiled function.
-    parameters : list of sp.Symbol
-        Model parameters, which become the inputs of the compiled function.
-    cache : dict
-        Sympytensor cache mapping cache keys to pytensor nodes, shared across conversions.
-    return_symbolic : bool, optional
-        If True, return a symbolic pytensor graph instead of a compiled function. Default False.
-    stack_return : bool, optional
-        If True, stack the outputs into a single array. Defaults to the opposite of ``return_symbolic``.
-    **kwargs
-        Additional keyword arguments forwarded to :func:`~gEconpy.model.compile.compile_function`.
-
-    Returns
-    -------
-    f_ss : callable, dict, or None
-        Function mapping parameter values to steady-state values, or a dictionary of pytensor nodes if
-        ``return_symbolic`` is True. None if ``ss_solution_dict`` is empty.
-    cache : dict
-        Updated cache dictionary.
-    """
-
-    def to_ss(x):
-        if isinstance(x, TimeAwareSymbol):
-            return x.to_ss()
-        return x
-
-    cache = {} if cache is None else cache
-    if not ss_solution_dict:
-        return None, cache
-
-    ss_solution_dict = ss_solution_dict.to_sympy()
-    ss_variables = [to_ss(x) for x in variables]
-
-    sorted_solution_dict = {to_ss(k): ss_solution_dict[to_ss(k)] for k in ss_variables if k in ss_solution_dict}
-
-    output_vars, output_exprs = (
-        list(sorted_solution_dict.keys()),
-        list(sorted_solution_dict.values()),
-    )
-    if stack_return is None:
-        stack_return = bool(not return_symbolic)
-
-    f_ss, cache = compile_function(
-        parameters,
-        output_exprs,
-        cache=cache,
-        stack_return=stack_return,
-        return_symbolic=return_symbolic,
-        **kwargs,
-    )
-    if return_symbolic:
-        return make_return_dict_and_update_cache(ss_variables, f_ss, cache, TimeAwareSymbol)
-
-    return dictionary_return_wrapper(f_ss, output_vars), cache
-
-
-def print_steady_state(ss_dict: SteadyStateResults):
-    """
-    Log a table of steady-state values, listing calibrated parameters after the variables.
-
-    Parameters
-    ----------
-    ss_dict : SteadyStateResults
-        Steady-state values to print. A warning is included if the results are not flagged as successful.
-    """
-    output = []
-    if not ss_dict.success:
-        output.append("Values come from the latest solver iteration but are NOT a valid steady state.")
-
-    max_var_name = max(len(x) for x in list(ss_dict.keys())) + 5
-
-    calibrated_outputs = []
-    for key, value in ss_dict.to_sympy().items():
-        if isinstance(key, TimeAwareSymbol):
-            output.append(f"{key.name:{max_var_name}}{value:>10.3f}")
-        else:
-            calibrated_outputs.append(f"{key.name:{max_var_name}}{value:>10.3f}")
-
-    if len(calibrated_outputs) > 0:
-        output.append("\n")
-        output.extend(calibrated_outputs)
-
-    _log.info("\n".join(output))
-
-
-def simplify_provided_ss_equations(
-    ss_solution_dict: SymbolDictionary, variables: list[TimeAwareSymbol]
-) -> SymbolDictionary:
-    """
-    Substitute intermediate variables out of user-provided steady-state equations.
-
-    Parameters
-    ----------
-    ss_solution_dict : SymbolDictionary
-        User-provided steady-state equations from the STEADY_STATE block.
-    variables : list of TimeAwareSymbol
-        Model variables.
-
-    Returns
-    -------
-    SymbolDictionary
-        Steady-state equations containing only model variables.
-    """
-    if not ss_solution_dict:
-        return SymbolDictionary()
-
-    ss_variables = [x.to_ss() for x in variables]
-    ss_dict_sympy = ss_solution_dict.to_sympy()
-
-    extra_equations = SymbolDictionary({k: v for k, v in ss_dict_sympy.items() if k not in ss_variables})
-    if not extra_equations:
-        return ss_solution_dict
-
-    simplified = SymbolDictionary({k: v for k, v in ss_dict_sympy.items() if k in ss_variables})
-    flat_extras = flatten_substitution_dict(dict(extra_equations))
-    for var, eq in simplified.items():
-        if hasattr(eq, "subs"):
-            simplified[var] = eq.subs(flat_extras)
-
-    return simplified
-
-
-def _solution_is_simple(expr: sp.Expr, max_nesting_depth: int = 5) -> bool:
-    """Reject solutions with conditionals, unevaluated calculus, or excessive nesting."""
-    if expr.has(sp.Piecewise, sp.Integral, sp.Derivative, sp.I):
-        return False
-
-    def depth(e: sp.Basic, current: int = 0) -> int:
-        """Recursively compute the maximum depth of the Sympy expression tree."""
-        return current if not e.args else max(depth(arg, current + 1) for arg in e.args)
-
-    return depth(expr) <= max_nesting_depth
 
 
 def _try_solve_for_unknown(
@@ -493,12 +523,7 @@ def _try_solve_for_unknown(
     known_values: dict[sp.Symbol, sp.Expr],
     ss_variables: set[sp.Symbol],
 ) -> sp.Expr | None:
-    """
-    Attempt to solve a single equation for one unknown after substituting known values.
-
-    Returns the solution only if it is unique and passes simplicity checks.
-    Returns None if the equation cannot be solved or the solution is too complex.
-    """
+    """Solve ``eq`` for ``unknown`` after substituting the known values, or return None if no simple unique solution."""
     eq_substituted = eq.subs(known_values)
 
     remaining_ss_vars = eq_substituted.free_symbols & ss_variables
@@ -517,62 +542,12 @@ def _try_solve_for_unknown(
     return solution if _solution_is_simple(solution) else None
 
 
-def propagate_steady_state_through_identities(
-    ss_solution_dict: SymbolDictionary,
-    steady_state_equations: list[sp.Expr],
-    variables: list[TimeAwareSymbol],
-    max_iterations: int = 100,
-) -> SymbolDictionary:
-    """
-    Extend user-provided steady-state values by solving simple single-unknown equations.
+def _solution_is_simple(expr: sp.Expr, max_nesting_depth: int = 5) -> bool:
+    """Reject solutions with conditionals, unevaluated calculus, complex numbers, or deep nesting."""
+    if expr.has(sp.Piecewise, sp.Integral, sp.Derivative, sp.I):
+        return False
 
-    Iterates over the equation system, solving any equation that has exactly one unknown
-    after substituting currently-known values. Repeats until no further progress is made.
+    def depth(node: sp.Basic, current: int = 0) -> int:
+        return current if not node.args else max(depth(arg, current + 1) for arg in node.args)
 
-    The solver is conservative: it only accepts unique solutions that pass simplicity
-    checks (no conditionals, no complex numbers, limited nesting depth).
-
-    Parameters
-    ----------
-    ss_solution_dict : SymbolDictionary
-        User-provided steady-state values.
-    steady_state_equations : list of sp.Expr
-        Model equations in steady-state residual form (each expression equals zero).
-    variables : list of TimeAwareSymbol
-        Model variables.
-    max_iterations : int, default 100
-        Maximum number of passes over the equation system.
-
-    Returns
-    -------
-    SymbolDictionary
-        Original values plus any additional values that could be inferred.
-    """
-    # Use the actual SS symbols from variables to preserve assumptions
-    ss_variables = {x.to_ss() for x in variables}
-
-    # Start with a copy of the input, preserving symbol identity
-    result = ss_solution_dict.to_sympy().copy() if ss_solution_dict else {}
-
-    for _ in range(max_iterations):
-        progress = False
-
-        for eq in steady_state_equations:
-            if not isinstance(eq, sp.Basic):
-                continue
-
-            unknowns = (eq.free_symbols & ss_variables) - set(result.keys())
-            if len(unknowns) != 1:
-                continue
-
-            unknown = next(iter(unknowns))
-            solution = _try_solve_for_unknown(eq, unknown, result, ss_variables)
-
-            if solution is not None:
-                result[unknown] = float(solution) if solution.is_number else solution
-                progress = True
-
-        if not progress:
-            break
-
-    return SymbolDictionary(result)
+    return depth(expr) <= max_nesting_depth
