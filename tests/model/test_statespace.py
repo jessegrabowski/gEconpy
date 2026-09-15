@@ -25,12 +25,16 @@ def rbc_statespace():
     return statespace_from_gcn(TEST_GCNS / "rbc_linearized.gcn", verbose=False)
 
 
+def _evaluate_at(ss_mod, outputs, param_values):
+    """Compile ``outputs`` as a function of the statespace input parameters and evaluate it at ``param_values``."""
+    inputs = [v for v in ss_mod.input_parameters if v.name in param_values]
+    fn = pytensor.function(inputs, outputs, on_unused_input="ignore")
+    return fn(*[param_values[v.name] for v in inputs])
+
+
 def _eval_augmented_matrices(ss_mod):
-    inputs = pm.pytensorf.inputvars(ss_mod.linearized_system)
-    input_names = [x.name for x in inputs]
-    f = pytensor.function(inputs, [ss_mod.ssm["transition"], ss_mod.ssm["selection"]], on_unused_input="ignore")
-    param_dict = load_and_cache_model("rbc_linearized.gcn").parameters()
-    T, R = f(**{k: param_dict[k] for k in input_names})
+    param_values = load_and_cache_model("rbc_linearized.gcn").parameters()
+    T, R = _evaluate_at(ss_mod, [ss_mod.ssm["transition"], ss_mod.ssm["selection"]], param_values)
     Z = ss_mod._make_design_matrix()
     return T, R, Z
 
@@ -57,9 +61,8 @@ def test_statespace_matrices_agree_with_model(gcn_file):
     param_dict = model.parameters()
     ss_matrices = f(**{k: param_dict[k] for k in input_names})
 
-    # ``ss_mod.linearized_system`` rows are permuted by ``ss_mod.dr_order.eq_order`` and
-    # the variable axis (cols of A/B/C) by ``ss_mod.var_order``; ``model.linearize_model``
-    # un-permutes both before returning. Apply the same un-permutation here.
+    # ``ss_mod.linearized_system`` keeps the rows in ``model.eq_order`` and the columns of A, B, and C in
+    # ``ss_mod.var_order``, whereas ``model.linearize_model`` undoes both permutations before returning.
     inv_eq = np.argsort(model.eq_order)
     inv_var = ss_mod.inv_var_order
     A_ss, B_ss, C_ss, D_ss = ss_matrices
@@ -296,8 +299,12 @@ def test_multiple_aggregated_variables_produce_block_diagonal_structure(rbc_stat
     np.testing.assert_allclose(C, expected_C)
 
 
-@pytest.mark.parametrize("observation_position", ["first", "last"])
-def test_prepare_mixed_frequency_data_positions_values_correctly(observation_position):
+@pytest.mark.parametrize(
+    "observation_position, expected_rows",
+    [("first", [0, 4]), ("last", [3, 7])],
+    ids=["first", "last"],
+)
+def test_prepare_mixed_frequency_data_positions_values_correctly(observation_position, expected_rows):
     annual = pd.DataFrame(
         {"GDP": [100.0, 110.0], "R": [0.05, 0.04]},
         index=pd.to_datetime(["2020-01-01", "2021-01-01"]),
@@ -305,29 +312,27 @@ def test_prepare_mixed_frequency_data_positions_values_correctly(observation_pos
 
     quarterly = prepare_mixed_frequency_data(annual, high_freq="QS", observation_position=observation_position)
 
-    if observation_position == "last":
-        assert quarterly.shape == (8, 2)
-        np.testing.assert_array_equal(quarterly.iloc[3].values, [100.0, 0.05])
-        np.testing.assert_array_equal(quarterly.iloc[7].values, [110.0, 0.04])
-    else:
-        assert quarterly.loc["2020-01-01", "GDP"] == 100.0
-        assert quarterly.loc["2021-01-01", "GDP"] == 110.0
+    assert quarterly.shape == (expected_rows[-1] + 1, 2)
+    np.testing.assert_array_equal(quarterly.iloc[expected_rows].values, annual.values)
+    assert quarterly.drop(quarterly.index[expected_rows]).isna().all().all()
 
 
 @pytest.mark.parametrize(
-    "high_freq,aggregation_period,expected_len,value_position",
-    [("MS", 12, 12, "2020-12-01"), ("MS", 3, 6, "2020-03-01")],
+    "low_freq_dates, aggregation_period, expected_len, value_position",
+    [
+        (["2020-01-01"], 12, 12, "2020-12-01"),
+        (["2020-01-01", "2020-04-01"], 3, 6, "2020-03-01"),
+    ],
     ids=["monthly-to-annual", "monthly-to-quarterly"],
 )
-def test_prepare_mixed_frequency_data_various_periods(high_freq, aggregation_period, expected_len, value_position):
-    low_freq = pd.DataFrame({"GDP": [100.0]}, index=pd.to_datetime(["2020-01-01"]))
-    if aggregation_period == 3:
-        low_freq = pd.DataFrame({"GDP": [100.0, 110.0]}, index=pd.to_datetime(["2020-01-01", "2020-04-01"]))
-
-    result = prepare_mixed_frequency_data(
-        low_freq, high_freq=high_freq, aggregation_period=aggregation_period, observation_position="last"
+def test_prepare_mixed_frequency_data_various_periods(low_freq_dates, aggregation_period, expected_len, value_position):
+    low_freq = pd.DataFrame(
+        {"GDP": 100.0 + 10.0 * np.arange(len(low_freq_dates))}, index=pd.to_datetime(low_freq_dates)
     )
 
+    result = prepare_mixed_frequency_data(
+        low_freq, high_freq="MS", aggregation_period=aggregation_period, observation_position="last"
+    )
     assert len(result) == expected_len
     assert result.loc[value_position, "GDP"] == 100.0
 
@@ -373,12 +378,11 @@ def test_first_and_last_aggregation_use_direct_selector(rbc_statespace, method):
     np.testing.assert_allclose(Z[0], expected_row)
 
 
-# RBC with a non-trivial analytic steady state (Y_ss ≈ 3, etc.).
+# RBC with a non-trivial analytic steady state (Y_ss is about 3).
 NL_GCN = "rbc_2_block_ss.gcn"
 
-# Same RBC plus an OBSERVATION block carrying ``Y_obs = log(Y)`` and
-# ``dY_obs = log(Y) - log(Y[-1])`` as model identities — the "Dynare way" of
-# adding observed series, used as the observation-equation equivalence reference.
+# The same RBC plus an OBSERVATION block carrying ``Y_obs = log(Y)`` and ``dY_obs = log(Y) - log(Y[-1])`` as model
+# identities, the Dynare way of adding observed series. It is the reference for observation-equation equivalence.
 OBS_EQ_GCN = "rbc_2_block_obs_eq.gcn"
 
 
@@ -388,14 +392,7 @@ def rbc_nonlinear_ss():
 
 
 def _eval_obs_pieces(ss_mod, param_values):
-    """Compile and evaluate (obs_intercept, design) at the given parameter dict."""
-    inputs = [v for v in ss_mod.input_parameters if v.name in param_values]
-    fn = pytensor.function(
-        inputs,
-        [ss_mod.ssm["obs_intercept"], ss_mod.ssm["design"]],
-        on_unused_input="ignore",
-    )
-    return fn(*[param_values[v.name] for v in inputs])
+    return _evaluate_at(ss_mod, [ss_mod.ssm["obs_intercept"], ss_mod.ssm["design"]], param_values)
 
 
 def _model_ss_values(gcn_file):
@@ -455,19 +452,33 @@ def test_ss_obs_intercept_sum_aggregation_scales_intercept(rbc_nonlinear_ss):
 
 def test_ss_obs_intercept_default_is_zero(rbc_nonlinear_ss):
     """Omitting ``ss_obs_intercept`` leaves the framework's default zero obs_intercept in place."""
-    _model, _ = _model_ss_values("rbc_2_block_ss.gcn")
     rbc_nonlinear_ss.configure(
         observed_states=["Y"],
         measurement_error=["Y"],
         constant_params="auto",
         verbose=False,
     )
-    # obs_intercept slot is left at pymc_extras' default zero, so retrieving it
-    # via the public ssm getter returns the framework's default constant.
     d = rbc_nonlinear_ss.ssm["obs_intercept"]
-    # pytensor compiles it to a vector of zeros at the right shape:
     fn = pytensor.function([], d, on_unused_input="ignore")
     np.testing.assert_allclose(fn(), np.zeros(rbc_nonlinear_ss.k_endog))
+
+
+@pytest.mark.parametrize(
+    "measurement_error, expected_diagonal",
+    [(["Y", "K"], [0.25, 0.25]), (["K"], [0.0, 0.25]), (["Y"], [0.25, 0.0])],
+    ids=["all", "second_only", "first_only"],
+)
+def test_measurement_error_lands_on_its_observed_state(rbc_statespace, measurement_error, expected_diagonal):
+    rbc_statespace.configure(
+        observed_states=["Y", "K"],
+        measurement_error=measurement_error,
+        solver="gensys",
+        verbose=False,
+    )
+    H = rbc_statespace.ssm["obs_cov"]
+    sigmas = pm.pytensorf.inputvars([H])
+    fn = pytensor.function(sigmas, H)
+    np.testing.assert_allclose(fn(*[0.5] * len(sigmas)), np.diag(expected_diagonal))
 
 
 def test_ss_obs_intercept_unknown_state_raises(rbc_nonlinear_ss):
@@ -578,11 +589,11 @@ def test_observation_equations_produce_finite_logp(rbc_nonlinear_ss):
 
 
 def _obs_eq_logp(ss_mod, obs_name, data, point=None):
-    """Build the pymc statespace graph for ``ss_mod`` and return ``(logp, point)``.
+    """
+    Build the pymc statespace graph for ``ss_mod`` and return ``(logp, point)``.
 
-    The shock and measurement-error standard deviations get identical priors in
-    both representations, so reusing ``point`` across models evaluates the
-    log-likelihood at exactly the same parameter values.
+    The shock and measurement-error standard deviations get identical priors in both representations, so reusing
+    ``point`` across models evaluates the log-likelihood at exactly the same parameter values.
     """
     with pm.Model() as m:
         ss_mod.to_pymc()
@@ -602,14 +613,13 @@ def _obs_eq_logp(ss_mod, obs_name, data, point=None):
     ],
 )
 def test_observation_equation_matches_model_variable_equivalent(obs_name, obs_eq, ss_intercept):
-    """An observation equation gives the same Kalman likelihood as the "Dynare way".
+    """
+    An observation equation gives the same Kalman likelihood as the Dynare way.
 
-    The design-matrix feature linearizes ``obs_eq`` into ``Z`` (appending an
-    obs-lag block to ``T`` for any lagged terms). The reference gcn
-    ``rbc_2_block_obs_eq.gcn`` instead carries the series as a level-linearized
-    model identity observed through a plain selector. The two state-space
-    representations have different state dimensions but imply the same
-    distribution over the observable, so the log-likelihood must agree.
+    The observation equation linearizes ``obs_eq`` into ``Z`` and appends an observation-lag block to ``T`` for any
+    lagged terms. The reference gcn ``rbc_2_block_obs_eq.gcn`` carries the series as a level-linearized model
+    identity observed through a plain selector. The two representations have different state dimensions but
+    imply the same distribution over the observable, so the log-likelihoods agree.
     """
     rng = np.random.default_rng(0)
     n = 50
@@ -617,7 +627,6 @@ def test_observation_equation_matches_model_variable_equivalent(obs_name, obs_eq
     center = np.log(3.0) if ss_intercept else 0.0
     data = pd.DataFrame(center + rng.normal(scale=0.05, size=(n, 1)), index=idx, columns=[obs_name])
 
-    # Design-matrix way: observation equation on the plain model.
     dm = statespace_from_gcn(TEST_GCNS / NL_GCN, verbose=False)
     dm.configure(
         observed_states=[obs_name],
@@ -628,7 +637,6 @@ def test_observation_equation_matches_model_variable_equivalent(obs_name, obs_eq
     )
     logp_dm, point = _obs_eq_logp(dm, obs_name, data)
 
-    # Dynare way: the series is a level-linearized model variable, plain selector.
     dyn = statespace_from_gcn(TEST_GCNS / OBS_EQ_GCN, not_loglin_variables=["Y_obs", "dY_obs"], verbose=False)
     dyn.configure(
         observed_states=[obs_name],
@@ -639,17 +647,13 @@ def test_observation_equation_matches_model_variable_equivalent(obs_name, obs_eq
     )
     logp_dyn, _ = _obs_eq_logp(dyn, obs_name, data, point=point)
 
-    # The obs-equation representation carries a leaner state vector.
+    # The obs-equation representation has fewer states.
     assert dm.k_states < dyn.k_states
     np.testing.assert_allclose(logp_dm, logp_dyn, rtol=1e-7, atol=1e-7)
 
 
 def _build_expected_Z(ss_mod, per_period_coeffs, agg_method, agg_period):
-    """Broadcast per-period coefficients across the aggregation window.
-
-    Mirrors what ``_make_design_matrix`` should do. Returns a ``(k_endog,
-    k_states)`` numpy array with the obs-equation row populated.
-    """
+    """Broadcast per-period coefficients across the aggregation window into a ``(k_endog, k_states)`` array."""
     Z = np.zeros((ss_mod.k_endog, ss_mod.k_states))
     if agg_method == "sum":
         n_periods, weight = agg_period, 1.0
@@ -670,10 +674,6 @@ def _build_expected_Z(ss_mod, per_period_coeffs, agg_method, agg_period):
     return Z
 
 
-def _expected_intercept(base, agg_method, agg_period):
-    return agg_period * base if agg_method == "sum" else base
-
-
 def _ss_floats():
     ss = load_and_cache_model("rbc_2_block_ss.gcn").steady_state(verbose=False, progressbar=False)
     return {key.removesuffix("_ss"): float(val) for key, val in ss.items()}
@@ -683,12 +683,10 @@ def _params_at_calib():
     return load_and_cache_model("rbc_2_block_ss.gcn").parameters()
 
 
-# Each parametrize entry is (eq_string, coeffs_fn, intercept_fn, agg, period, expected_depths).
-# ``coeffs_fn(ss, params)`` returns the per-period linearized coefficients before any
-# aggregation broadcasting; ``intercept_fn(ss, params)`` returns the per-period
-# intercept. The test helper does the broadcasting and the scaling.
+# Each entry is (eq_string, coeffs_fn, intercept_fn, agg, period, expected_depths). ``coeffs_fn(ss, params)`` returns
+# the per-period linearized coefficients before any aggregation broadcasting and ``intercept_fn(ss, params)`` the
+# per-period intercept. The test does the broadcasting and the scaling.
 _BATTERY = [
-    # No aggregation, contemporaneous only
     pytest.param(
         "log(Y[])",
         lambda ss, p: {("Y", 0): 1.0},
@@ -746,7 +744,6 @@ _BATTERY = [
         {},
         id="steady_state_reference",
     ),
-    # No aggregation, with lags
     pytest.param(
         "log(Y[]) - log(Y[-1])",
         lambda ss, p: {("Y", 0): 1.0, ("Y", -1): -1.0},
@@ -792,7 +789,6 @@ _BATTERY = [
         {"Y": 1},
         id="bgp_growth_rate_with_trend",
     ),
-    # Aggregation broadcasting
     pytest.param(
         "log(Y[])",
         lambda ss, p: {("Y", 0): 1.0},
@@ -892,7 +888,6 @@ _BATTERY = [
         {"Y": 3},
         id="sum_agg_two_step_difference",
     ),
-    # first / last aggregation: no broadcasting
     pytest.param(
         "log(Y[]) - log(Y[-1])",
         lambda ss, p: {("Y", 0): 1.0, ("Y", -1): -1.0},
@@ -923,12 +918,7 @@ def test_observation_equation_Z_matches_analytical_expectation(
     period,
     depths,
 ):
-    """For a battery of obs equations, Z and the intercept match a hand-computed reference.
-
-    ``_build_expected_Z`` builds the reference from per-period linearized
-    coefficients, broadcast across the aggregation window the same way
-    ``_make_design_matrix`` does.
-    """
+    """Z and the intercept match a hand-computed reference for a battery of observation equations."""
     name = "y_obs"
     cfg = {
         "observed_states": [name],
@@ -952,7 +942,7 @@ def test_observation_equation_Z_matches_analytical_expectation(
     per_period_intercept = float(intercept_fn(ss, params))
 
     expected_Z = _build_expected_Z(ss_mod, per_period_coeffs, agg, period)
-    expected_d = _expected_intercept(per_period_intercept, agg, period)
+    expected_d = period * per_period_intercept if agg == "sum" else per_period_intercept
 
     d, Z = _eval_obs_pieces(ss_mod, params)
     np.testing.assert_allclose(Z, expected_Z, rtol=1e-10, atol=1e-12)
@@ -960,12 +950,12 @@ def test_observation_equation_Z_matches_analytical_expectation(
 
 
 def test_observation_equation_level_linearized_variable_coefficient():
-    r"""A level-linearized variable linearizes with the plain derivative — no ``v_ss`` chain-rule factor.
+    r"""
+    A level-linearized variable linearizes with the plain derivative and no ``v_ss`` chain-rule factor.
 
-    Every other obs-equation test uses log-linearized variables, where ``log(Y)`` has unit
-    coefficient. Here ``Y`` is level-linearized, so the state holds ``Y - Y_ss`` and the coefficient
-    of ``log(Y)`` is :math:`\\partial \\log Y / \\partial Y = 1 / Y_{ss}` — the ``else`` branch of
-    ``_linearize_observation_equation``.
+    Every other observation-equation test uses log-linearized variables, where ``log(Y)`` has unit coefficient. Here
+    ``Y`` is level-linearized, so the state holds ``Y - Y_ss`` and the coefficient of ``log(Y)`` is
+    :math:`\\partial \\log Y / \\partial Y = 1 / Y_{ss}`.
     """
     ss_mod = statespace_from_gcn(TEST_GCNS / NL_GCN, not_loglin_variables=["Y"], verbose=False)
     ss_mod.configure(
@@ -1044,7 +1034,7 @@ def test_multiple_obs_equations_different_variables_independent_chains():
     np.testing.assert_allclose(Z[1, ss_mod._obs_lag_column("C", -2)], -1.0)
     np.testing.assert_allclose(Z[1, ss_mod._obs_lag_column("C", -1)], 0.0)
 
-    # No cross-contamination: Y's lag slot doesn't appear in C's row, vice versa.
+    # Y's lag slots do not appear in C's row, and C's do not appear in Y's.
     np.testing.assert_allclose(Z[0, ss_mod._obs_lag_column("C", -1)], 0.0)
     np.testing.assert_allclose(Z[0, ss_mod._obs_lag_column("C", -2)], 0.0)
     np.testing.assert_allclose(Z[1, ss_mod._obs_lag_column("Y", -1)], 0.0)
@@ -1088,19 +1078,16 @@ def test_observation_equations_lag_states_have_zero_selection_rows():
         observation_equations={"Y_diff": "log(Y[]) - log(Y[-1])"},
         verbose=False,
     )
-    model = load_and_cache_model("rbc_2_block_ss.gcn")
-    inputs = [v for v in ss_mod.input_parameters if v.name in model.parameters()]
-    fn = pytensor.function(inputs, ss_mod.ssm["selection"], on_unused_input="ignore")
-    R_aug = fn(*[model.parameters()[v.name] for v in inputs])
+    R_aug = _evaluate_at(ss_mod, ss_mod.ssm["selection"], _params_at_calib())
     y_lag1 = ss_mod._obs_lag_starts["Y"]
     np.testing.assert_allclose(R_aug[y_lag1], 0.0)
 
 
 def test_observation_equations_lag_chain_propagates_correctly():
-    """Simulating the augmented dynamics: lag-k slot should hold the parent variable from k steps ago.
+    """
+    After simulating the augmented dynamics, the lag-k slot holds the parent variable from k steps ago.
 
-    Catches off-by-one errors in ``_append_obs_lag_block``'s ``F_lag`` /
-    ``C_lag`` construction that a static T-row inspection would miss.
+    A static inspection of the rows of T would miss an off-by-one error in the ``F_lag`` and ``C_lag`` blocks.
     """
     ss_mod = statespace_from_gcn(TEST_GCNS / NL_GCN, verbose=False)
     ss_mod.configure(
@@ -1110,11 +1097,7 @@ def test_observation_equations_lag_chain_propagates_correctly():
         observation_equations={"dlog_Y": "log(Y[]) - log(Y[-3])"},
         verbose=False,
     )
-    model = load_and_cache_model("rbc_2_block_ss.gcn")
-    inputs = [v for v in ss_mod.input_parameters if v.name in model.parameters()]
-    T_aug = pytensor.function(inputs, ss_mod.ssm["transition"], on_unused_input="ignore")(
-        *[model.parameters()[v.name] for v in inputs]
-    )
+    T_aug = _evaluate_at(ss_mod, ss_mod.ssm["transition"], _params_at_calib())
 
     rng = np.random.default_rng(0)
     x = np.zeros(T_aug.shape[0])
@@ -1126,7 +1109,6 @@ def test_observation_equations_lag_chain_propagates_correctly():
         x = T_aug @ x
         history_Y.append(x[y_orig])
 
-    # After 4 steps, lag-1/2/3 slots should hold Y from 1, 2, 3 steps ago.
     for k in range(1, 4):
         np.testing.assert_allclose(x[ss_mod._obs_lag_column("Y", -k)], history_Y[-1 - k], rtol=1e-10)
 
@@ -1142,20 +1124,18 @@ def test_observation_equation_simplifies_to_zero_produces_zero_row():
     )
     assert ss_mod._obs_lag_depths == {}
 
-    d, Z = _eval_obs_pieces(ss_mod, load_and_cache_model("rbc_2_block_ss.gcn").parameters())
+    d, Z = _eval_obs_pieces(ss_mod, _params_at_calib())
     np.testing.assert_allclose(d[0], 0.0, atol=1e-12)
     np.testing.assert_allclose(Z[0], 0.0, atol=1e-12)
 
 
 def test_observation_equations_carry_model_variable_assumptions():
-    """Obs equations on a model whose variables have ``positive`` assumptions linearize correctly.
+    """
+    Observation equations on a model whose variables carry ``positive`` assumptions linearize correctly.
 
-    Regression test for a bug where ``_parse_observation_equation`` called
-    ``ast_to_sympy`` without forwarding the model's per-variable assumptions.
-    Sympy equality includes assumptions, so the parsed ``v[]`` did not match
-    ``self.variables[i]`` and the linearization's ``xreplace`` silently left
-    the raw time-t symbol in place, leading to ``MissingInputError`` when the
-    Kalman likelihood was compiled.
+    Sympy equality includes assumptions, so a parsed ``v[]`` without the model's assumptions would not match
+    ``self.variables[i]`` and the linearization's ``xreplace`` would leave the raw time-t symbol in place. Evaluating
+    the intercept then fails with ``MissingInputError``.
     """
     ss_mod = statespace_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
     ss_mod.configure(
@@ -1165,27 +1145,18 @@ def test_observation_equations_carry_model_variable_assumptions():
         observation_equations={"Y_obs": "log(Y[])"},
         verbose=False,
     )
-    # Evaluating the intercept fails with MissingInputError if any TimeAwareSymbol
-    # at time t leaked through unsubstituted.
     model = load_and_cache_model("open_rbc.gcn")
-    inputs = [v for v in ss_mod.input_parameters if v.name in model.parameters()]
-    fn = pytensor.function(inputs, ss_mod.ssm["obs_intercept"], on_unused_input="ignore")
-    d = fn(*[model.parameters()[v.name] for v in inputs])
+    d = _evaluate_at(ss_mod, ss_mod.ssm["obs_intercept"], model.parameters())
     Y_ss = float(model.steady_state(verbose=False, progressbar=False)["Y_ss"])
     np.testing.assert_allclose(d[0], np.log(Y_ss), rtol=1e-10)
 
 
 def test_constant_params_baked_into_ss_obs_intercept():
-    """Constant params bake into the ``ss_obs_intercept`` SS-expression branch.
+    """
+    Constant parameters are baked into an intercept that comes from the ``ss_obs_intercept`` branch.
 
-    Parameters declared in ``constant_params`` are substituted as constants
-    when a variable's intercept comes from the ``ss_obs_intercept``
-    SS-expression branch (not from an obs equation).
-
-    Regression test for a bug where ``_make_obs_intercept`` read ``self.steady_state_mapping``
-    directly for ``ss_obs_intercept`` variables; those SS graphs are in free parameter placeholders
-    and the configure-time substitution only touched ``self._obs_equations``, leaving the SS-branch
-    parameters as free graph inputs.
+    That branch reads ``steady_state_mapping`` directly, which is in the free parameter placeholders, so it needs
+    its own constant substitution.
     """
     ss_mod = statespace_from_gcn(TEST_GCNS / "full_nk.gcn", verbose=False)
     ss_mod.configure(
@@ -1203,12 +1174,11 @@ def test_constant_params_baked_into_ss_obs_intercept():
 
 
 def test_constant_params_baked_into_observation_equations():
-    """A ``constant_params`` parameter inside an observation equation is baked in, not left a free input.
+    """
+    A ``constant_params`` parameter inside an observation equation is baked in and not left a free input.
 
-    Without the ``configure``-time ``graph_replace`` over ``self._obs_equations``, the parameter would
-    remain a free graph input and the Kalman likelihood compile would demand it as an unbound model
-    parameter. The battery's ``intercept_with_parameter`` case covers the baked value; this checks the
-    obs-equation branch specifically does not leak it.
+    A free input would have no PyMC variable to bind to when the Kalman likelihood is compiled. The battery's
+    ``intercept_with_parameter`` case covers the baked value.
     """
     ss_mod = statespace_from_gcn(TEST_GCNS / NL_GCN, verbose=False)
     ss_mod.configure(
@@ -1267,7 +1237,6 @@ def test_sample_autocorrelation_matrices_shape_and_normalization(autocorrelation
     assert latent.sizes["lag"] == 7
     assert float(np.abs(latent).max()) <= 1.0 + 1e-6
 
-    # The lag-0 autocorrelation is exactly 1 on the diagonal.
     diag0 = latent.isel(lag=0).mean(["chain", "draw"]).values
     np.testing.assert_allclose(np.diag(diag0), 1.0, atol=1e-6)
 
@@ -1280,7 +1249,7 @@ def test_sample_autocorrelation_matrices_shape_and_normalization(autocorrelation
 def test_sample_autocorrelation_lag_step_subsamples_lags(autocorrelation_setup):
     ss_mod, posterior = autocorrelation_setup
 
-    # ACF at lag_step=2, lag k equals ACF at lag_step=1, lag 2k (both are T^(2k) @ Sigma).
+    # Both lag k at lag_step=2 and lag 2k at lag_step=1 are T^(2k) @ Sigma.
     step_1 = ss_mod.sample_autocorrelation_matrices(posterior, n_lags=8).mean(["chain", "draw"])
     step_2 = ss_mod.sample_autocorrelation_matrices(posterior, n_lags=4, lag_step=2).mean(["chain", "draw"])
     np.testing.assert_allclose(step_2.values, step_1.isel(lag=slice(None, None, 2)).values, atol=1e-5)

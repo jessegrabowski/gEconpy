@@ -75,10 +75,9 @@ class DSGEStateSpace(PyMCStateSpace):
         verbose: bool = True,
     ):
         """
-        Create a :class:`pmx.statespace.PyMCStateSpace` model representing a linearized DSGE.
+        Create a :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace` model of a linearized DSGE.
 
-        Users should not create this class directly, and should instead use
-        :func:`~gEconpy.model.build.statespace_from_gcn` to compile a statespace model from a gcn file.
+        The public constructor is :func:`~gEconpy.model.build.statespace_from_gcn`.
 
         Parameters
         ----------
@@ -86,7 +85,7 @@ class DSGEStateSpace(PyMCStateSpace):
             Variables in the model.
         shocks : list of TimeAwareSymbol
             Shocks in the model.
-        equations : list of sp.Expr
+        equations : list of sympy expressions
             Equations in the model.
         param_dict : dict mapping str to float
             Default parameter values, as defined in the model file.
@@ -106,27 +105,27 @@ class DSGEStateSpace(PyMCStateSpace):
             model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with respect to exogenous
             shocks (D), each evaluated at the symbolic steady state.
         var_order : ndarray, optional
-            Variable column permutation applied when the system was linearized. The identity permutation is assumed
-            if not provided.
+            Variable column permutation applied when the system was linearized. Defaults to the identity
+            permutation.
         log_linearized_variables : list of str, optional
-            Base names of variables that were log-linearized when building ``linearized_system``. Used by
-            ``configure(ss_obs_intercept=...)`` to decide whether an observation intercept entry is
-            ``log(v_ss(p))`` (log-linearized) or ``v_ss(p)`` (level-linearized).
+            Base names of variables that were log-linearized when building ``linearized_system``. The
+            ``ss_obs_intercept`` option of :meth:`configure` uses it to decide whether an intercept entry is
+            ``log(v_ss(p))`` or ``v_ss(p)``. Defaults to no variables.
+        sympytensor_cache : dict, optional
+            Sympytensor cache mapping cache keys to pytensor nodes, shared with the graphs that built the model.
+            Defaults to a new, empty cache.
         filter_type : str, optional
-            Kalman filter implementation used for the likelihood. Default "standard".
+            Kalman filter implementation used for the likelihood. Defaults to "standard".
         mode : str, optional
-            PyTensor compilation mode for post-estimation sampling functions.
+            PyTensor compilation mode for post-estimation sampling functions. Defaults to None.
         cov_jitter : float, optional
-            Jitter added to the diagonal of covariance matrices inside the Kalman filter. Default is
+            Jitter added to the diagonal of covariance matrices inside the Kalman filter. Defaults to
             ``JITTER_DEFAULT`` from pymc-extras.
         missing_fill_value : float, optional
-            Sentinel that replaces missing observations before the filter runs. Default is ``MISSING_FILL`` from
+            Sentinel that replaces missing observations before the filter runs. Defaults to ``MISSING_FILL`` from
             pymc-extras.
-        sympytensor_cache : dict, optional
-            Sympytensor cache mapping cache keys to pytensor nodes, shared with the graphs that built the model. A
-            new cache is created if not provided.
         verbose : bool, optional
-            If True, show diagnostic messages. Default True.
+            If True, show diagnostic messages. Defaults to True.
         """
         self.variables = variables
         self.equations = equations
@@ -142,10 +141,9 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self.linearized_system = linearized_system
 
-        # Variable column permutation applied by ``linearize_model`` to expose A's and C's
-        # block-zero column structure. T/R returned by the solver have rows AND columns
-        # in this permuted order; the solver call site applies ``inv_var_order`` to put
-        # them back into the user's variable order before they reach the Kalman path.
+        # ``linearize_model`` permutes the variable columns to expose the block-zero structure of A and C. The solver
+        # returns T and R in that permuted order, and ``_setup_policy_matrices`` applies ``inv_var_order`` to put
+        # them back into the user's variable order before they reach the Kalman filter.
         if var_order is None:
             var_order = np.arange(len(variables))
         self.var_order = np.asarray(var_order, dtype=int)
@@ -167,7 +165,6 @@ class DSGEStateSpace(PyMCStateSpace):
         self._n_steps = None
         self._lead_var_idx: np.ndarray | None = None
 
-        # Mixed-frequency state augmentation
         self._temporal_aggregation: dict[str, str] = {}
         self._aggregation_period: int = 4
         self._k_orig_states: int = len(variables)
@@ -175,29 +172,19 @@ class DSGEStateSpace(PyMCStateSpace):
         self._log_linearized_variables: set[str] = set(log_linearized_variables or [])
         self._ss_obs_intercept_states: list[str] = []
 
-        # Shared sympytensor cache from ``statespace_from_gcn``. Reusing it lets
-        # subsequent sympy-to-pytensor conversions (observation equations)
-        # reference the same TensorVariables that key ``steady_state_mapping``
-        # and ``parameter_mapping``.
+        # Sharing the cache with ``statespace_from_gcn`` makes later sympy-to-pytensor conversions (the observation
+        # equations) resolve to the same TensorVariables that key ``steady_state_mapping`` and ``parameter_mapping``.
         self._sympytensor_cache: dict = sympytensor_cache if sympytensor_cache is not None else {}
 
-        # Linearized obs equations: maps obs-series name to
-        # ``(intercept_pt, {(var_base_name, lag): coeff_pt})``. Pytensor
-        # expressions in the input-parameter placeholders. Populated by
-        # ``configure`` when ``observation_equations`` is supplied.
+        # Linearized observation equations, keyed by observed-series name, as
+        # ``(intercept, {(variable_base_name, lag): coefficient})`` pytensor expressions in the input parameters.
         self._obs_equations: dict[str, tuple] = {}
-
-        # Per-variable lag depth required by any observation equation.
-        # Computed at ``configure`` time alongside the linearization.
         self._obs_lag_depths: dict[str, int] = {}
-
-        # Per-variable starting column of its obs-eq lag chain in the
-        # augmented state vector. Populated at ``configure`` time.
         self._obs_lag_starts: dict[str, int] = {}
 
         self.verbose = verbose
 
-        k_endog = 1  # to be updated later
+        k_endog = 1
         k_states = len(variables)
         k_posdef = len(shocks)
 
@@ -231,13 +218,11 @@ class DSGEStateSpace(PyMCStateSpace):
             T, R, n_steps = scan_cycle_reduction(A, B, C, D, **self._solver_kwargs)
             self._n_steps = n_steps
 
-        # Evaluate the policy-function residual in the solver's variable order. A, B, and C
-        # have columns in ``var_order``, and T shares that basis until it is remapped below;
-        # computing the residual after the remap would mix the two orderings and inflate it.
+        # A, B, and C have columns in ``var_order`` and T shares that basis until it is remapped below, so the
+        # residual has to be evaluated before the remap or the two orderings mix and inflate it.
         resid = pt.square(A + B @ T + C @ T @ T).sum()
 
-        # T comes back in the *permuted* variable order on both axes; R on its rows.
-        # Map back to the user's variable order so the Kalman filter sees user variables.
+        # T comes back in the permuted variable order on both axes and R on its rows.
         if not np.array_equal(self.var_order, np.arange(len(self.var_order))):
             inv = self.inv_var_order
             T = T[inv][:, inv]
@@ -261,153 +246,129 @@ class DSGEStateSpace(PyMCStateSpace):
         """Number of forward-looking variables."""
         return len(self.lead_var_idx)
 
-    def _setup_state_covariance(self):
-        """Build the ``state_cov`` SSM matrix and return it.
-
-        The returned matrix is also the one the Lyapunov solve for ``initial_state_cov``
-        consumes.
-        """
+    def _setup_state_covariance(self) -> pt.TensorVariable:
+        """Register the shock covariance parameters, store ``state_cov`` in ``ssm``, and return it."""
         if self.full_covariance:
             state_cov = self.make_and_register_variable("state_cov", shape=(self.k_posdef, self.k_posdef))
             Q = assume(state_cov, positive_definite=True)
             self.ssm["state_cov"] = Q
             return Q
 
-        # ``pt.diag(stack(...))`` is auto-tagged diagonal by AssumptionFeature, which propagates
-        # symmetric/PSD through the congruence rule (R Q R'), enabling cholesky-based solves and
-        # significant speedups in compile_dlogp for HMC sampling.
+        # AssumptionFeature tags ``pt.diag(stack(...))`` as diagonal and propagates symmetric/PSD through the
+        # congruence R Q R', so the compiled logp and its gradient can use Cholesky-based solves.
         sigmas = [self.make_and_register_variable(f"sigma_{shock.base_name}", shape=()) for shock in self.shocks]
         Q = pt.diag(pt.stack([s**2 for s in sigmas]))
         self.ssm["state_cov"] = Q
         return Q
 
-    def _make_design_matrix(self):
+    def _selector_columns(self, name: str) -> tuple[list[int], float]:
+        """
+        Locate the state columns an observed model variable loads on, with the weight each receives.
+
+        A directly observed variable loads on its own column with unit weight. A ``sum`` or ``mean`` aggregated
+        variable also loads on its cumulator slots, with weight :math:`1/s` for ``mean`` over an aggregation
+        period of :math:`s`.
+        """
+        columns = [self._orig_state_names.index(name)]
+        agg_method = self._temporal_aggregation.get(name)
+        if agg_method not in CUMULATOR_AGGREGATIONS:
+            return columns, 1.0
+
+        n_cum_lags = self._aggregation_period - 1
+        cum_start = self._k_orig_states + self._cumulator_variables.index(name) * n_cum_lags
+        columns += list(range(cum_start, cum_start + n_cum_lags))
+        weight = 1.0 / self._aggregation_period if agg_method == "mean" else 1.0
+        return columns, weight
+
+    def _make_design_matrix(self) -> np.ndarray | pt.TensorVariable:
         """
         Build the observation design matrix :math:`Z`.
 
-        For each observed state, fill the row with the linearized coefficients
-        from a user-supplied observation equation (parameter-dependent), or with
-        a selector entry (unit weight, or :math:`1/s` for ``mean`` aggregation)
-        on the state's column plus its cumulator slots if any. Returns the
-        constant numpy form when no observation equations are configured and a
-        pytensor matrix otherwise.
+        Each observed state either has a user-supplied observation equation, whose linearized coefficients depend
+        on the parameters, or is a plain selector of a model variable, weighted across its cumulator slots when
+        temporally aggregated.
 
         Returns
         -------
-        Z : ndarray or pt.TensorVariable
-            Constant ``(k_endog, k_states)`` array when every observed state
-            uses the selector form, or a pytensor matrix of the same shape when
-            any observation equation contributes parameter-dependent
-            coefficients.
+        Z : ndarray or TensorVariable
+            Constant ``(k_endog, k_states)`` array when every observed state is a selector, or a pytensor matrix of
+            the same shape when any observation equation contributes parameter-dependent coefficients.
         """
-        n_cum_lags = self._aggregation_period - 1
-        cumulator_vars = self._cumulator_variables
-
         if not self._obs_equations:
-            # Pure selector design -- keep the existing constant-numpy path.
             Z = np.zeros((self.k_endog, self.k_states))
             for i, name in enumerate(self.observed_states):
-                orig_idx = self._orig_state_names.index(name)
-                agg_method = self._temporal_aggregation.get(name)
-                if agg_method in CUMULATOR_AGGREGATIONS:
-                    agg_pos = cumulator_vars.index(name)
-                    cum_start = self._k_orig_states + agg_pos * n_cum_lags
-                    weight = 1.0 / self._aggregation_period if agg_method == "mean" else 1.0
-                    Z[i, orig_idx] = weight
-                    Z[i, cum_start : cum_start + n_cum_lags] = weight
-                else:
-                    Z[i, orig_idx] = 1.0
+                columns, weight = self._selector_columns(name)
+                Z[i, columns] = weight
             return Z
 
-        # At least one observation equation in play -- build Z symbolically.
-        # Use ``inc_subtensor`` for the obs-equation rows so that overlapping
-        # contributions from ``(lag, d)`` aggregation pairs accumulate
-        # (e.g. annual-summed quarterly log-differences telescope).
-        Z_sym = pt.zeros((self.k_endog, self.k_states), dtype=floatX)
+        Z = pt.zeros((self.k_endog, self.k_states), dtype=floatX)
         for i, name in enumerate(self.observed_states):
-            agg_method = self._temporal_aggregation.get(name)
+            if name not in self._obs_equations:
+                columns, weight = self._selector_columns(name)
+                Z = Z[i, columns].set(weight)
+                continue
 
-            if name in self._obs_equations:
-                _, coeffs = self._obs_equations[name]
-                if agg_method in CUMULATOR_AGGREGATIONS:
-                    n_periods = self._aggregation_period
-                    coeff_weight = 1.0 if agg_method == "sum" else 1.0 / n_periods
-                else:
-                    n_periods = 1
-                    coeff_weight = 1.0
-                for (vname, lag), coeff_pt in coeffs.items():
-                    for d in range(n_periods):
-                        effective_lag = lag - d
-                        col = (
-                            self._orig_state_names.index(vname)
-                            if effective_lag == 0
-                            else self._obs_lag_column(vname, effective_lag)
-                        )
-                        Z_sym = pt.inc_subtensor(Z_sym[i, col], coeff_weight * coeff_pt)
+            agg_method = self._temporal_aggregation.get(name)
+            if agg_method in CUMULATOR_AGGREGATIONS:
+                n_periods = self._aggregation_period
+                coeff_weight = 1.0 if agg_method == "sum" else 1.0 / n_periods
             else:
-                weight = 1.0 / self._aggregation_period if agg_method == "mean" else 1.0
-                orig_idx = self._orig_state_names.index(name)
-                Z_sym = pt.set_subtensor(Z_sym[i, orig_idx], weight)
-                if agg_method in CUMULATOR_AGGREGATIONS:
-                    agg_pos = cumulator_vars.index(name)
-                    cum_start = self._k_orig_states + agg_pos * n_cum_lags
-                    for k in range(n_cum_lags):
-                        Z_sym = pt.set_subtensor(Z_sym[i, cum_start + k], weight)
-        return Z_sym
+                n_periods = 1
+                coeff_weight = 1.0
+
+            # A coefficient at lag k broadcast across the aggregation window lands at effective lags k, k-1, ...,
+            # so ``inc_subtensor`` lets overlapping contributions accumulate (annual sums of quarterly
+            # log-differences telescope this way).
+            _, coeffs = self._obs_equations[name]
+            for (variable_name, lag), coeff in coeffs.items():
+                for d in range(n_periods):
+                    effective_lag = lag - d
+                    if effective_lag == 0:
+                        col = self._orig_state_names.index(variable_name)
+                    else:
+                        col = self._obs_lag_column(variable_name, effective_lag)
+                    Z = Z[i, col].inc(coeff_weight * coeff)
+        return Z
 
     def _make_obs_intercept(self) -> pt.TensorVariable:
         r"""
-        Build the observation-intercept vector :math:`d`.
+        Build the observation intercept vector :math:`d`.
 
-        For each observed state :math:`v`:
-
-        - If :math:`v` has a user-supplied observation equation, the entry is
-          the linearization's constant term -- for example
-          :math:`\log Y_{ss}(p) + \log Z_{ss}(p)` for the BGP growth-rate
-          observation.
-        - Else if :math:`v` is in ``self._ss_obs_intercept_states``, the entry
-          is :math:`\log v_{ss}(p)` (log-linearized) or :math:`v_{ss}(p)`
-          (level-linearized).
-        - Otherwise the entry is zero, appropriate when the data for that
-          series is already in deviation form (HP-cycled, demeaned, etc.).
-
-        Temporal aggregation: ``sum``-aggregated observations get the
-        per-period intercept multiplied by ``aggregation_period``; ``mean``,
-        ``first``, ``last``, and the default no-aggregation case keep the
-        single-period value.
+        An observed state with a user-supplied observation equation takes the linearization's constant term, for
+        example :math:`\log Y_{ss}(p) + \log Z_{ss}(p)` for a growth-rate observation. A state listed in
+        ``ss_obs_intercept`` takes :math:`\log v_{ss}(p)` when log-linearized and :math:`v_{ss}(p)` otherwise.
+        Every other state takes zero, which is the right intercept for data already in deviation form.
+        ``sum``-aggregated observations multiply the per-period intercept by the aggregation period.
 
         Returns
         -------
-        d : pt.TensorVariable
-            Length-``k_endog`` vector of intercepts in the model's input-
-            parameter graph.
+        d : TensorVariable
+            Vector of ``k_endog`` intercepts in the model's input parameters.
         """
-        ss_by_name = {k.name: v for k, v in self.steady_state_mapping.items()}
-        ss_set = set(self._ss_obs_intercept_states)
+        steady_state_by_name = {k.name: v for k, v in self.steady_state_mapping.items()}
+        ss_intercept_states = set(self._ss_obs_intercept_states)
+
         entries: list[pt.TensorVariable] = []
         for name in self.observed_states:
             if name in self._obs_equations:
-                intercept_pt, _ = self._obs_equations[name]
-                base = intercept_pt
-            elif name in ss_set:
+                per_period_intercept, _ = self._obs_equations[name]
+            elif name in ss_intercept_states:
                 ss_key = f"{name}_ss"
-                if ss_key not in ss_by_name:
+                if ss_key not in steady_state_by_name:
                     raise ValueError(
-                        f"ss_obs_intercept requested for {name!r}, but no symbolic steady state "
-                        f"is available for it. This usually means the variable was eliminated "
-                        f"by tryreduce or has no analytic SS."
+                        f"ss_obs_intercept requested for {name!r}, but no symbolic steady state is available for "
+                        f"it. Give {name!r} an analytic steady state in the GCN file, or remove it from tryreduce."
                     )
-                v_ss_expr = ss_by_name[ss_key]
-                base = pt.log(v_ss_expr) if name in self._log_linearized_variables else v_ss_expr
+                v_ss = steady_state_by_name[ss_key]
+                per_period_intercept = pt.log(v_ss) if name in self._log_linearized_variables else v_ss
             else:
                 entries.append(pt.zeros((), dtype=floatX))
                 continue
 
-            agg = self._temporal_aggregation.get(name)
-            if agg == "sum":
-                entries.append(self._aggregation_period * base)
+            if self._temporal_aggregation.get(name) == "sum":
+                entries.append(self._aggregation_period * per_period_intercept)
             else:
-                entries.append(base)
+                entries.append(per_period_intercept)
 
         return pt.stack(entries).astype(floatX)
 
@@ -415,118 +376,105 @@ class DSGEStateSpace(PyMCStateSpace):
         """
         Parse a GCN-syntax observation equation into a sympy expression in the model's namespace.
 
-        Accepts contemporaneous and lagged variable references (``v[]``,
-        ``v[-1]``, ...). Leads raise ``ValueError`` -- an observation cannot
-        depend on the future.
+        Contemporaneous and lagged variable references (``v[]``, ``v[-1]``, ...) are accepted. Leads raise, because
+        an observation cannot depend on the future.
 
         Parameters
         ----------
         name : str
-            Observed-series name the equation belongs to, used for error
-            messages.
+            Observed-series name the equation belongs to, used in error messages.
         expr_str : str
             GCN-syntax expression in terms of model variables and parameters.
 
         Returns
         -------
-        sym : sympy.Expr
-            Parsed expression with free symbols resolved against the model's
-            variable and parameter namespaces.
+        expression : sympy expression
+            Parsed expression whose free symbols are the model's own variable and parameter symbols.
         """
         ast = parse_expression(expr_str, context=f"observation_equations[{name!r}]")
-        # Carry the model variables' assumptions (positive, etc.) through to the
-        # parsed symbols. Sympy equality and hashing include assumptions, so
-        # without this the parsed TimeAwareSymbols would not compare equal to
-        # the model's, and the linearization's ``xreplace`` would silently
-        # leave them in place.
+
+        # Sympy equality and hashing include assumptions, so the parsed symbols must carry the model variables'
+        # assumptions or the linearization's ``xreplace`` silently leaves them in place.
         assumptions = {v.base_name: dict(v.assumptions0) for v in self.variables}
-        sym = ast_to_sympy(ast, assumptions=assumptions)
+        expression = ast_to_sympy(ast, assumptions=assumptions)
 
         var_names = {v.base_name for v in self.variables}
         param_names = set(self.param_dict) | set(self.hyper_param_dict)
 
-        for s in sym.free_symbols:
-            if isinstance(s, TimeAwareSymbol):
-                if s.time_index == "ss":
-                    continue
-                if s.time_index > 0:
+        for symbol in expression.free_symbols:
+            if not isinstance(symbol, TimeAwareSymbol):
+                if symbol.name not in param_names:
                     raise ValueError(
-                        f"Observation equation {name!r} contains a lead reference "
-                        f"{s}. Only contemporaneous and lagged model variables are "
-                        f"allowed."
+                        f"Observation equation {name!r} references unknown symbol {symbol.name!r}: not a model "
+                        f"variable, parameter, or hyperparameter."
                     )
-                if s.base_name not in var_names:
-                    raise ValueError(
-                        f"Observation equation {name!r} references unknown model "
-                        f"variable {s.base_name!r}. Known: {sorted(var_names)}"
-                    )
-            elif s.name not in param_names:
+                continue
+
+            if symbol.time_index == "ss":
+                continue
+            if symbol.time_index > 0:
                 raise ValueError(
-                    f"Observation equation {name!r} references unknown symbol "
-                    f"{s.name!r}: not a model variable, parameter, or hyperparameter."
+                    f"Observation equation {name!r} contains a lead reference {symbol}. Only contemporaneous and "
+                    f"lagged model variables are allowed."
                 )
-        return sym
+            if symbol.base_name not in var_names:
+                raise ValueError(
+                    f"Observation equation {name!r} references unknown model variable {symbol.base_name!r}. "
+                    f"Known: {sorted(var_names)}"
+                )
 
-    def _linearize_observation_equation(self, sym: sp.Expr) -> tuple[sp.Expr, dict[tuple[str, int], sp.Expr]]:
+        return expression
+
+    def _linearize_observation_equation(self, expression: sp.Expr) -> tuple[sp.Expr, dict[tuple[str, int], sp.Expr]]:
         r"""
-        First-order linearize an observation equation around the model's steady state.
+        Linearize an observation equation to first order around the model's steady state.
 
-        Each variable reference :math:`v_{t+k}` in ``sym`` (with :math:`k \le 0`)
-        is substituted with :math:`v_{ss} \exp(\tilde v_k)` (log-linearized
-        variables) or :math:`v_{ss} + \tilde v_k` (level-linearized variables),
-        where :math:`\tilde v_k` is a fresh dummy. The intercept is the value
-        at all :math:`\tilde v_k = 0`; the coefficient on each :math:`\tilde
-        v_k` is the first partial derivative there. The coefficient
-        corresponds to the contribution of :math:`v`'s deviation at lag
-        :math:`k` in the (augmented) state vector, so for a log-linearized
-        :math:`v` it equals
-        :math:`v_{ss}\, \partial g / \partial v_{t+k}\big|_{ss}` (chain rule).
+        Each variable reference :math:`v_{t+k}` in ``expression`` (with :math:`k \le 0`) is replaced by
+        :math:`v_{ss} \exp(\tilde v_k)` for a log-linearized variable and by :math:`v_{ss} + \tilde v_k` for a
+        level-linearized one, where :math:`\tilde v_k` is a fresh dummy. The intercept is the value at all
+        :math:`\tilde v_k = 0`, and the coefficient on each :math:`\tilde v_k` is the first partial derivative
+        there. For a log-linearized :math:`v` the chain rule makes that coefficient
+        :math:`v_{ss}\, \partial g / \partial v_{t+k}\big|_{ss}`.
 
         Parameters
         ----------
-        sym : sympy.Expr
-            Observation equation in raw (un-linearized) form, in the model's
-            symbol namespace.
+        expression : sympy expression
+            Observation equation in raw form, in the model's symbol namespace.
 
         Returns
         -------
-        intercept : sympy.Expr
-            Constant term :math:`g(x_{ss}, p)` in steady-state symbols and
-            parameters.
-        coeffs : dict mapping (str, int) to sympy.Expr
-            Maps each appearing ``(variable_base_name, time_index)`` pair to
-            its linear coefficient. ``time_index`` is ``0`` for contemporaneous
-            references and negative for lags.
+        intercept : sympy expression
+            Constant term :math:`g(x_{ss}, p)` in steady-state symbols and parameters.
+        coeffs : dict mapping (str, int) to sympy expression
+            Linear coefficient of each appearing ``(variable_base_name, time_index)`` pair, where ``time_index`` is
+            0 for contemporaneous references and negative for lags.
         """
         var_by_name = {v.base_name: v for v in self.variables}
         appearing = {
-            (s.base_name, s.time_index)
-            for s in sym.free_symbols
-            if isinstance(s, TimeAwareSymbol) and s.time_index != "ss"
+            (symbol.base_name, symbol.time_index)
+            for symbol in expression.free_symbols
+            if isinstance(symbol, TimeAwareSymbol) and symbol.time_index != "ss"
         }
 
-        forward: dict[TimeAwareSymbol, sp.Expr] = {}
-        tildes: dict[tuple[str, int], sp.Symbol] = {}
-        for vname, lag in appearing:
-            v = var_by_name[vname]
-            v_at_t = v.set_t(lag)
-            v_ss = v.set_t("ss")
+        deviation_form: dict[TimeAwareSymbol, sp.Expr] = {}
+        deviations: dict[tuple[str, int], sp.Symbol] = {}
+        for variable_name, lag in appearing:
+            variable = var_by_name[variable_name]
+            v_at_t = variable.set_t(lag)
+            v_ss = variable.set_t("ss")
             lag_tag = "0" if lag == 0 else f"m{-lag}"
-            v_tilde = sp.Symbol(f"_tilde_{vname}_{lag_tag}", real=True)
-            tildes[(vname, lag)] = v_tilde
-            if vname in self._log_linearized_variables:
-                forward[v_at_t] = v_ss * sp.exp(v_tilde)
+            deviation = sp.Symbol(f"_tilde_{variable_name}_{lag_tag}", real=True)
+            deviations[(variable_name, lag)] = deviation
+            if variable_name in self._log_linearized_variables:
+                deviation_form[v_at_t] = v_ss * sp.exp(deviation)
             else:
-                forward[v_at_t] = v_ss + v_tilde
+                deviation_form[v_at_t] = v_ss + deviation
 
-        g_sub = sym.xreplace(forward)
-        zero_subs = {tilde: sp.Integer(0) for tilde in tildes.values()}
+        g = expression.xreplace(deviation_form)
+        at_steady_state = {deviation: sp.Integer(0) for deviation in deviations.values()}
 
-        intercept = g_sub.xreplace(zero_subs)
-        coeffs: dict[tuple[str, int], sp.Expr] = {}
-        for key, tilde in tildes.items():
-            coeff = sp.diff(g_sub, tilde).xreplace(zero_subs)
-            coeffs[key] = coeff
+        intercept = g.xreplace(at_steady_state)
+        coeffs = {key: sp.diff(g, deviation).xreplace(at_steady_state) for key, deviation in deviations.items()}
 
         return intercept, coeffs
 
@@ -534,49 +482,37 @@ class DSGEStateSpace(PyMCStateSpace):
         self, intercept_sym: sp.Expr, coeffs_sym: dict[tuple[str, int], sp.Expr]
     ) -> tuple[pt.TensorVariable, dict[tuple[str, int], pt.TensorVariable]]:
         """
-        Convert the sympy linearization output to pytensor expressions in the model's input parameters.
+        Convert a linearized observation equation to pytensor expressions in the model's input parameters.
 
-        Uses ``self._sympytensor_cache`` so that the resulting TensorVariables
-        for steady-state symbols and parameters share identity with the
-        existing keys in ``self.steady_state_mapping`` and
-        ``self.parameter_mapping``. A subsequent ``graph_replace`` with
-        ``steady_state_mapping`` swaps each steady-state symbol for its
-        expression in input parameters.
+        ``self._sympytensor_cache`` makes the steady-state and parameter symbols resolve to the same TensorVariables
+        that key ``self.steady_state_mapping`` and ``self.parameter_mapping``, so a ``graph_replace`` with the
+        steady-state mapping then swaps each steady-state symbol for its expression in the input parameters.
 
         Parameters
         ----------
-        intercept_sym : sympy.Expr
+        intercept_sym : sympy expression
             Constant term of the linearization.
-        coeffs_sym : dict mapping (str, int) to sympy.Expr
+        coeffs_sym : dict mapping (str, int) to sympy expression
             Coefficient of each appearing ``(variable, lag)`` pair.
 
         Returns
         -------
-        intercept_pt : pt.TensorVariable
-            Pytensor scalar in input-parameter placeholders.
-        coeffs_pt : dict mapping (str, int) to pt.TensorVariable
-            Pytensor scalars in input-parameter placeholders, one per
-            ``(variable, lag)`` pair.
+        intercept : TensorVariable
+            Scalar intercept in the input parameters.
+        coeffs : dict mapping (str, int) to TensorVariable
+            Scalar coefficient in the input parameters, one per ``(variable, lag)`` pair.
         """
 
-        def to_tensor(sym_expr):
-            tv = as_tensor(sym_expr, self._sympytensor_cache)
-            # sympy integers (e.g. 0 or 1) come through as Python ints -- wrap.
-            if not isinstance(tv, pt.Variable):
-                tv = pt.as_tensor_variable(tv)
-            return tv
+        def to_tensor(sym_expr: sp.Expr) -> pt.TensorVariable:
+            # Sympy integer constants such as 0 or 1 come through as Python ints.
+            tensor = as_tensor(sym_expr, self._sympytensor_cache)
+            if not isinstance(tensor, pt.Variable):
+                tensor = pt.as_tensor_variable(tensor)
+            return pt.cast(graph_replace(tensor, self.steady_state_mapping, strict=False), floatX)
 
-        intercept_pt = to_tensor(intercept_sym)
-        coeffs_pt = {key: to_tensor(c_sym) for key, c_sym in coeffs_sym.items()}
-
-        # Substitute SS-tensor placeholders with their parameter-dependent
-        # expressions, then cast to floatX (sympy 0/1 come through as int constants).
-        ss_replace = dict(self.steady_state_mapping)
-        intercept_pt = pt.cast(graph_replace(intercept_pt, ss_replace, strict=False), floatX)
-        coeffs_pt = {
-            vname: pt.cast(graph_replace(c, ss_replace, strict=False), floatX) for vname, c in coeffs_pt.items()
-        }
-        return intercept_pt, coeffs_pt
+        intercept = to_tensor(intercept_sym)
+        coeffs = {key: to_tensor(coeff_sym) for key, coeff_sym in coeffs_sym.items()}
+        return intercept, coeffs
 
     @property
     def _n_cumulator_states(self) -> int:
@@ -584,10 +520,8 @@ class DSGEStateSpace(PyMCStateSpace):
 
     @property
     def _cumulator_variables(self) -> list[str]:
-        # Cumulator aggregation of an observation equation lives in the obs-eq
-        # lag block (since the obs-series name may not match a model variable);
-        # exclude those from this list so ``_augment_transition`` doesn't try
-        # to index them in the model-variable namespace.
+        # An aggregated observation equation stores its lags in the observation-lag block, because its series name
+        # need not be a model variable, so it is not a cumulator variable.
         return [
             var
             for var, method in self._temporal_aggregation.items()
@@ -615,7 +549,7 @@ class DSGEStateSpace(PyMCStateSpace):
         return [f"{var}_obs_lag{k}" for var, depth in self._obs_lag_depths.items() for k in range(1, depth + 1)]
 
     def _obs_lag_column(self, var_name: str, lag: int) -> int:
-        """Return the augmented-state column index for ``var_name`` lagged by ``-lag`` (lag<0)."""
+        """Return the augmented-state column holding ``var_name`` at negative time index ``lag``."""
         depth = -lag
         return self._obs_lag_starts[var_name] + (depth - 1)
 
@@ -629,19 +563,18 @@ class DSGEStateSpace(PyMCStateSpace):
                     [----|-----------------|
                     [ F  |  kron(I_n, C)   ]
 
-        where ``C`` is the ``(s-1) x (s-1)`` lower-shift companion matrix (constant, shared
-        by all aggregated variables), and ``F`` is a loading matrix with unit selectors that
-        copy each lagged variable value into the first cumulator position.
+        where ``C`` is the constant ``(s-1) x (s-1)`` lower-shift companion matrix shared by all aggregated
+        variables, and ``F`` holds unit selectors that copy each aggregated variable into the first cumulator slot.
 
         Parameters
         ----------
-        T : pt.TensorVariable
-            Original k_orig x k_orig transition matrix from the perturbation solution.
+        T : TensorVariable
+            Transition matrix of shape ``(k_orig, k_orig)`` from the perturbation solution.
 
         Returns
         -------
-        T_aug : pt.TensorVariable
-            Augmented (k_orig + n_cum) x (k_orig + n_cum) transition matrix.
+        T_aug : TensorVariable
+            Augmented transition matrix of shape ``(k_orig + n_cum, k_orig + n_cum)``.
         """
         cumulator_vars = self._cumulator_variables
         if not cumulator_vars:
@@ -662,9 +595,8 @@ class DSGEStateSpace(PyMCStateSpace):
         for agg_pos, orig_idx in enumerate(agg_indices):
             F = pt.set_subtensor(F[agg_pos * n_cum_lags, orig_idx], 1.0)
 
-        # Build via ``block`` so ``local_block_dot_to_block_of_dots`` can split
-        # downstream ``T_aug @ x`` into block-of-dots and drop the zero top-right
-        # block contribution entirely.
+        # ``block`` lets ``local_block_dot_to_block_of_dots`` split a downstream ``T_aug @ x`` into block products and
+        # drop the zero top-right block entirely.
         zero_block = pt.zeros((k_orig, n_cum), dtype=floatX)
         return block(
             [
@@ -675,25 +607,20 @@ class DSGEStateSpace(PyMCStateSpace):
 
     def _append_obs_lag_block(self, T_aug: pt.TensorVariable) -> pt.TensorVariable:
         """
-        Append shift-companion chains for variables referenced at non-zero lag in obs equations.
+        Append shift-companion chains for variables that observation equations reference at a lag.
 
-        For each variable :math:`v` with required lag depth :math:`d`, append
-        :math:`d` slots; slot 1 copies :math:`v` from the previous time step,
-        and each subsequent slot copies the prior slot. The first slot's row
-        of the augmented transition selects the column corresponding to
-        :math:`v`'s entry in the existing augmented state vector.
+        Each variable :math:`v` with required lag depth :math:`d` gets :math:`d` slots. Slot 1 copies :math:`v`
+        from the previous period and each later slot copies the slot before it.
 
         Parameters
         ----------
-        T_aug : pt.TensorVariable
-            Augmented transition matrix, with the cumulator block already
-            appended.
+        T_aug : TensorVariable
+            Augmented transition matrix with the cumulator block already appended.
 
         Returns
         -------
-        T_aug : pt.TensorVariable
-            Same matrix with the obs-eq lag block appended in the trailing
-            rows and columns.
+        T_aug : TensorVariable
+            The same matrix with the observation-lag block appended in the trailing rows and columns.
         """
         n_obs_lag = self._n_obs_lag_states
         if n_obs_lag == 0:
@@ -719,7 +646,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
     def _augment_selection(self, R: pt.TensorVariable) -> pt.TensorVariable:
         """
-        Augment the selection matrix with cumulator rows for temporally aggregated variables.
+        Append zero rows to the selection matrix for the cumulator and observation-lag states.
 
         The augmented matrix has the block form::
 
@@ -727,17 +654,17 @@ class DSGEStateSpace(PyMCStateSpace):
                     [---]
                     [ 0 ]
 
-        The cumulator rows are all zeros because cumulators are deterministic lag copies.
+        The extra rows are zero because the appended states are deterministic lag copies.
 
         Parameters
         ----------
-        R : pt.TensorVariable
-            Original k_orig x k_posdef selection matrix.
+        R : TensorVariable
+            Selection matrix of shape ``(k_orig, k_posdef)``.
 
         Returns
         -------
-        R_aug : pt.TensorVariable
-            Augmented (k_orig + n_cum) x k_posdef selection matrix.
+        R_aug : TensorVariable
+            Augmented selection matrix of shape ``(k_orig + n_extra, k_posdef)``.
         """
         n_extra = self._n_cumulator_states + self._n_obs_lag_states
         if n_extra == 0:
@@ -748,13 +675,11 @@ class DSGEStateSpace(PyMCStateSpace):
 
     def make_symbolic_graph(self):
         """
-        Build the symbolic statespace graph for the DSGE model.
+        Build the symbolic statespace matrices of the linearized DSGE model into ``ssm``.
 
-        This method constructs the PyTensor computational graph representing the linearized DSGE model
-        in state-space form. It sets up the transition and selection matrices from the perturbation
-        solution, configures the observation equation, and initializes state covariances.
-
-        The method should only be called after :meth:`configure` has been called.
+        The transition and selection matrices come from the perturbation solution, augmented with any cumulator
+        and observation-lag states. The design matrix, intercept, and covariances follow from the options passed
+        to :meth:`configure`, which has to run first.
         """
         if not self._configured:
             if self.verbose:
@@ -771,9 +696,8 @@ class DSGEStateSpace(PyMCStateSpace):
             self.linearized_system, constant_replacements, strict=False
         )
 
-        # Apply the same constant substitution to any cached obs-equation tensors so
-        # ``constant_params`` parameters are baked in there too (otherwise they would
-        # remain as free graph inputs and ``compile_logp`` would fail to bind them).
+        # Constants left as free inputs of the observation equations would have no PyMC variable to bind to when the
+        # logp is compiled.
         if constant_replacements and self._obs_equations:
             self._obs_equations = {
                 name: (
@@ -783,8 +707,7 @@ class DSGEStateSpace(PyMCStateSpace):
                 for name, (intercept_pt, coeffs_pt) in self._obs_equations.items()
             }
 
-        # A/B/C have columns in ``var_order`` (D's columns are shocks). Translate
-        # ``lead_var_idx`` from original variable positions to permuted positions.
+        # A, B, and C have columns in ``var_order``, so ``lead_var_idx`` has to move to the permuted positions.
         permuted_lead_var_idx = self.inv_var_order[self.lead_var_idx]
         self._bk_output = check_bk_condition_pt(A, B, C, D, lead_var_idx=permuted_lead_var_idx)
 
@@ -806,10 +729,8 @@ class DSGEStateSpace(PyMCStateSpace):
         self.ssm["design"] = self._make_design_matrix()
         if self._ss_obs_intercept_states or self._obs_equations:
             obs_intercept = self._make_obs_intercept()
-            # ``_make_obs_intercept`` reads ``self.steady_state_mapping`` directly for the
-            # ``ss_obs_intercept`` branch -- those SS expressions are in free parameter
-            # placeholders, so ``constant_params`` leaks unless we bake constants in
-            # here too.
+            # The ``ss_obs_intercept`` branch reads ``steady_state_mapping`` directly, which is in the free
+            # parameter placeholders, so the constants have to be substituted here as well.
             if constant_replacements:
                 obs_intercept = graph_replace(obs_intercept, constant_replacements, strict=False)
             self.ssm["obs_intercept"] = obs_intercept
@@ -818,22 +739,19 @@ class DSGEStateSpace(PyMCStateSpace):
 
         if self.measurement_error:
             sigmas = [self.make_and_register_variable(f"error_sigma_{state}", shape=()) for state in self.error_states]
-            variances = pt.stack([s**2 for s in sigmas])
-            if len(sigmas) == self.k_endog:
-                H = pt.diag(variances)
+            variances = pt.stack([sigma**2 for sigma in sigmas])
+            if list(self.error_states) == list(self.observed_states):
+                error_variances = variances
             else:
-                # Mirror the previous semantics: sigmas land at positions 0..len(error_states)-1
-                # of an (k_endog, k_endog) zero matrix.
-                diag_vec = pt.zeros((self.k_endog,))[: len(sigmas)].set(variances)
-                H = pt.diag(diag_vec)
-            self.ssm["obs_cov"] = H
+                error_positions = [self.observed_states.index(state) for state in self.error_states]
+                error_variances = pt.zeros((self.k_endog,), dtype=floatX)[error_positions].set(variances)
+            self.ssm["obs_cov"] = pt.diag(error_variances)
 
         self.ssm["initial_state"] = pt.zeros(self.k_states)
 
         method = "direct" if self.use_direct_lyapunov else "bilinear"
         P0 = pt.linalg.solve_discrete_lyapunov(T_aug, R_aug @ Q @ R_aug.T, method=method)
-        # The solve already propagates symmetry; deterministic cumulator/obs-lag copies make the
-        # stationary covariance singular, so only assert PD when no such augmentation is present.
+        # Deterministic cumulator and observation-lag copies make the stationary covariance singular.
         if self._n_cumulator_states == 0 and self._n_obs_lag_states == 0:
             P0 = assume(P0, positive_definite=True)
         self.ssm["initial_state_cov"] = P0
@@ -850,175 +768,173 @@ class DSGEStateSpace(PyMCStateSpace):
         observation_equations: dict[str, str] | None = None,
         solver: str = "gensys",
         mode: str | None = None,
-        verbose=True,
+        verbose: bool = True,
         max_iter: int = 50,
         tol: float = 1e-6,
         use_adjoint_gradients: bool = True,
         use_direct_lyapunov: bool = False,
-    ):
+    ) -> None:
         r"""
-        Configure the statespace model for estimation.
+        Choose the observed series, estimated parameters, and solver, then size the statespace model to match.
 
         Parameters
         ----------
         observed_states : list of str
-            Names of observed series, in data-column order. Each entry is either a
-            model variable's ``base_name`` or a key in ``observation_equations``.
+            Names of observed series, in data-column order. Each entry is either a model variable's ``base_name``
+            or a key in ``observation_equations``.
         measurement_error : list of str, optional
-            Observed states that have measurement error.
+            Observed states that have measurement error. Defaults to none.
         constant_params : list of str or "auto", optional
-            Parameters held constant (not estimated). ``"auto"`` freezes all parameters without priors.
-        full_shock_covariance : bool
-            If True, estimate a full shock covariance matrix instead of diagonal.
-        temporal_aggregation : dict of str to str, optional
-            Observed states that require temporal aggregation or explicit low-frequency timing.
-
-            - ``"sum"``: Flow variables like GDP (observed = sum of ``aggregation_period`` values).
-              Requires cumulator state augmentation.
-            - ``"mean"``: Rates or prices reported as period averages. Requires cumulator augmentation.
-            - ``"last"``: Point-in-time at end of aggregation window. No cumulator needed.
-              Equivalent to omitting the variable, but explicit about timing.
-            - ``"first"``: Point-in-time at start of aggregation window. No cumulator needed.
-              Data should have values at the first period of each window.
-
-            Variables NOT in this dict use a direct selector -- suitable for high-frequency
-            observations (no ``NaN`` in data) or low-frequency point-in-time observations.
-            The Kalman filter handles missing values automatically.
-        aggregation_period : int
-            Number of model periods per low-frequency observation. For example, 4 when fitting
-            a quarterly model with annual data, or 3 for a monthly model with quarterly data.
-            Default is 4.
+            Parameters held at their GCN values and excluded from estimation. ``"auto"`` freezes every parameter
+            without a prior. Defaults to none.
+        full_shock_covariance : bool, optional
+            Estimate a full shock covariance matrix. The default estimates only the diagonal. Defaults to False.
+        temporal_aggregation : dict mapping str to str, optional
+            Observed states that are aggregated over a low-frequency window, with the aggregation method.
+            ``"sum"`` observes the sum of ``aggregation_period`` model periods (flow variables such as GDP) and
+            ``"mean"`` observes their average (rates and prices reported as period averages). Both add cumulator
+            states. ``"last"`` and ``"first"`` observe the model variable at the end or start of the window, add
+            no states, and differ from omitting the variable only by making the timing explicit. States not in
+            this dict use a direct selector, which suits high-frequency series and low-frequency point-in-time
+            series alike, since the Kalman filter treats ``NaN`` as missing. Defaults to none.
+        aggregation_period : int, optional
+            Number of model periods per low-frequency observation, for example 4 for a quarterly model with
+            annual data or 3 for a monthly model with quarterly data. Defaults to 4.
         ss_obs_intercept : list of str, optional
-            Observed states for which to populate ``ssm["obs_intercept"]`` with a
-            parameter-dependent steady-state value, re-evaluated on every parameter draw.
-            For each entry, the intercept is :math:`\\log v_{ss}(p)` if the variable was
-            log-linearized when building the model and :math:`v_{ss}(p)` if it was
-            level-linearized. Observed states *not* in this list keep an
-            ``obs_intercept`` of zero -- appropriate when the data is already in deviation
-            form (HP-cycled, demeaned, etc.). Pass ``observed_states`` to enable per-draw
-            steady-state subtraction for every observed series. Default ``None`` (no
-            entries; ``obs_intercept`` left at zero).
+            Observed states whose ``obs_intercept`` entry is the parameter-dependent steady state, re-evaluated on
+            every draw. The entry is :math:`\log v_{ss}(p)` for a log-linearized variable and :math:`v_{ss}(p)`
+            for a level-linearized one. Every other observed state keeps an intercept of zero, which is right for
+            data already in deviation form. Pass ``observed_states`` to subtract the steady state from every
+            series. Defaults to none.
         observation_equations : dict mapping str to str, optional
-            Override map keyed by observed-series name (must be a subset of
-            ``observed_states``). Values are GCN-syntax expressions in model
-            variables and parameters, e.g. ``"log(Y[]) - log(Y[-1]) + log(Z[])"``.
-            Contemporaneous and lagged references are accepted; leads are not.
-            A name in this dict cannot also appear in ``ss_obs_intercept``.
-        solver : str
-            Perturbation solver to use.
+            GCN-syntax expressions in model variables and parameters, keyed by observed-series name, for example
+            ``"log(Y[]) - log(Y[-1]) + log(Z[])"``. Every key must appear in ``observed_states`` and none may
+            appear in ``ss_obs_intercept``, because an observation equation fixes its own intercept.
+            Contemporaneous and lagged references are accepted, leads are not. Defaults to none.
+        solver : str, optional
+            Perturbation solver, one of ``"gensys"``, ``"cycle_reduction"``, ``"scan_cycle_reduction"``, or
+            ``"backward_direct"``. Defaults to ``"gensys"``.
         mode : str, optional
-            PyTensor compilation mode.
-        verbose : bool
-            Print diagnostic messages.
-        max_iter : int
-            Maximum iterations for iterative solvers.
-        tol : float
-            Convergence tolerance for the solver.
-        use_adjoint_gradients : bool
-            Use adjoint gradients in ``scan_cycle_reduction``.
-        use_direct_lyapunov : bool
-            Use direct (rather than bilinear) Lyapunov solver.
+            PyTensor compilation mode for post-estimation sampling functions. Defaults to None.
+        verbose : bool, optional
+            Print diagnostic messages. Defaults to True.
+        max_iter : int, optional
+            Maximum iterations for the iterative solvers. Defaults to 50.
+        tol : float, optional
+            Convergence tolerance for the solver. Defaults to 1e-6.
+        use_adjoint_gradients : bool, optional
+            Differentiate ``scan_cycle_reduction`` with the adjoint method. Defaults to True.
+        use_direct_lyapunov : bool, optional
+            Solve the initial-state Lyapunov equation with the direct method. The default uses the bilinear method.
+            Defaults to False.
+
+        Examples
+        --------
+        With ``constant_params="auto"``, every parameter without a prior is frozen and the rest are estimated:
+
+        .. code-block:: python
+
+            from gEconpy import statespace_from_gcn
+            from gEconpy.data import get_example_gcn
+
+            ss_mod = statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
+            ss_mod.configure(
+                observed_states=["Y", "C"],
+                measurement_error=["Y", "C"],
+                constant_params="auto",
+                verbose=False,
+            )
+            print(ss_mod.param_names)
+
+        Summing ``Y`` over each year adds three cumulator states to a quarterly model, while ``C`` stays quarterly:
+
+        .. code-block:: python
+
+            from gEconpy import statespace_from_gcn
+            from gEconpy.data import get_example_gcn
+
+            ss_mod = statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
+            ss_mod.configure(
+                observed_states=["Y", "C"],
+                measurement_error=["Y", "C"],
+                temporal_aggregation={"Y": "sum"},
+                aggregation_period=4,
+                verbose=False,
+            )
+            print(ss_mod.state_names)
         """
-        # Set up observed states. Names with a user-supplied observation equation
-        # are allowed not to correspond to a model state.
         obs_eq_names = set(observation_equations or {})
         unknown_states = [x for x in observed_states if x not in self.state_names and x not in obs_eq_names]
-        if len(unknown_states) > 0:
+        if unknown_states:
             raise ValueError(
                 f"The following states are unknown to the model and cannot be set as observed: "
                 f"{', '.join(unknown_states)}"
             )
 
-        # Set up measurement errors
         if measurement_error is None:
             measurement_error = []
-        else:
-            unknown_states = [x for x in measurement_error if x not in observed_states]
-            if len(unknown_states) > 0:
-                raise ValueError(
-                    f"The following states are not observed, and cannot have measurement error: "
-                    f"{', '.join(unknown_states)}"
-                )
+        unobserved_error_states = [x for x in measurement_error if x not in observed_states]
+        if unobserved_error_states:
+            raise ValueError(
+                f"The following states are not observed, and cannot have measurement error: "
+                f"{', '.join(unobserved_error_states)}"
+            )
 
-        # Validate temporal_aggregation
         if temporal_aggregation is None:
             temporal_aggregation = {}
-        else:
-            unknown_vars = [x for x in temporal_aggregation if x not in observed_states]
-            if unknown_vars:
-                raise ValueError(
-                    f"The following temporal_aggregation variables are not in observed_states: "
-                    f"{', '.join(unknown_vars)}"
-                )
-            invalid_methods = [
-                (var, method) for var, method in temporal_aggregation.items() if method not in VALID_AGGREGATIONS
-            ]
-            if invalid_methods:
-                bad = ", ".join(f"{var}={method!r}" for var, method in invalid_methods)
-                raise ValueError(f"Invalid aggregation methods: {bad}. Must be 'sum', 'mean', 'first', or 'last'.")
-            has_cumulator_vars = any(m in CUMULATOR_AGGREGATIONS for m in temporal_aggregation.values())
-            if has_cumulator_vars and aggregation_period < 2:
-                raise ValueError(f"aggregation_period must be >= 2 for sum/mean aggregation, got {aggregation_period}")
+        self._validate_temporal_aggregation(temporal_aggregation, aggregation_period, observed_states)
 
-        # Validate ss_obs_intercept
         if ss_obs_intercept is None:
             ss_obs_intercept = []
-        else:
-            unknown_vars = [x for x in ss_obs_intercept if x not in observed_states]
-            if unknown_vars:
-                raise ValueError(
-                    f"The following ss_obs_intercept entries are not in observed_states: {', '.join(unknown_vars)}"
-                )
-            ss_unknown = [name for name in ss_obs_intercept if not any(v.base_name == name for v in self.variables)]
-            if ss_unknown:
-                raise ValueError(f"ss_obs_intercept references unknown model variables: {', '.join(ss_unknown)}")
+        unobserved_intercepts = [x for x in ss_obs_intercept if x not in observed_states]
+        if unobserved_intercepts:
+            raise ValueError(
+                f"The following ss_obs_intercept entries are not in observed_states: {', '.join(unobserved_intercepts)}"
+            )
+        unknown_intercepts = [name for name in ss_obs_intercept if name not in self._orig_state_names]
+        if unknown_intercepts:
+            raise ValueError(f"ss_obs_intercept references unknown model variables: {', '.join(unknown_intercepts)}")
 
-        # Validate observation_equations: keys subset of observed_states, no overlap
-        # with ss_obs_intercept. The per-equation symbol resolution happens below
-        # when we build the linearization (so we get a single error site).
         if observation_equations is None:
             observation_equations = {}
-        else:
-            unknown_keys = [k for k in observation_equations if k not in observed_states]
-            if unknown_keys:
-                raise ValueError(
-                    f"The following observation_equations entries are not in observed_states: {', '.join(unknown_keys)}"
-                )
-            overlap = set(observation_equations) & set(ss_obs_intercept)
-            if overlap:
-                raise ValueError(
-                    f"The following observed states appear in both observation_equations and "
-                    f"ss_obs_intercept: {', '.join(sorted(overlap))}. An observation equation "
-                    f"already determines its intercept; remove these names from one or the other."
-                )
-        # Validate constant params
+        unobserved_equations = [k for k in observation_equations if k not in observed_states]
+        if unobserved_equations:
+            raise ValueError(
+                f"The following observation_equations entries are not in observed_states: "
+                f"{', '.join(unobserved_equations)}"
+            )
+        overlap = set(observation_equations) & set(ss_obs_intercept)
+        if overlap:
+            raise ValueError(
+                f"The following observed states appear in both observation_equations and ss_obs_intercept: "
+                f"{', '.join(sorted(overlap))}. An observation equation already determines its intercept, so "
+                f"remove these names from one or the other."
+            )
+
         if constant_params is None:
             constant_params = []
         elif constant_params == "auto":
-            param_prior_names = set(self.param_priors.keys())
-            constant_params = [x.name for x in self.input_parameters if x.name not in param_prior_names]
+            constant_params = [x.name for x in self.input_parameters if x.name not in self.param_priors]
         else:
             input_param_names = [x.name for x in self.input_parameters]
             unknown_params = [x for x in constant_params if x not in input_param_names]
-            if len(unknown_params) > 0:
+            if unknown_params:
                 raise ValueError(
                     f"The following parameters are unknown to the model and cannot be set as constant: "
                     f"{', '.join(unknown_params)}"
                 )
 
-        # Validate solver argument
         if solver not in VALID_SOLVERS:
             raise ValueError(f"Unknown solver {solver!r}, expected one of {', '.join(repr(s) for s in VALID_SOLVERS)}")
 
-        # Check model is identified
         k_endog = len(observed_states)
-        model_df = len(measurement_error) + len(self.shock_names)
-        verb = "are" if model_df != 1 else "is"
-        suffix = "s" if model_df != 1 else ""
-        if k_endog > model_df:
+        n_stochastic_sources = len(measurement_error) + len(self.shock_names)
+        if k_endog > n_stochastic_sources:
+            verb = "are" if n_stochastic_sources != 1 else "is"
+            suffix = "s" if n_stochastic_sources != 1 else ""
             raise ValueError(
                 f"Stochastic singularity! You requested {k_endog} observed timeseries, but there {verb} "
-                f"only {model_df} source{suffix} of stochastic variation. "
+                f"only {n_stochastic_sources} source{suffix} of stochastic variation. "
                 f"\n\nReduce the number of observed timeseries, or add more sources of stochastic "
                 f"variation (by adding measurement error or structural shocks)"
             )
@@ -1030,11 +946,7 @@ class DSGEStateSpace(PyMCStateSpace):
         elif solver == "backward_direct":
             solver_kwargs = {}
         else:
-            solver_kwargs = {
-                "tol": tol,
-                "max_iter": max_iter,
-                "use_adjoint_gradients": use_adjoint_gradients,
-            }
+            solver_kwargs = {"tol": tol, "max_iter": max_iter, "use_adjoint_gradients": use_adjoint_gradients}
 
         self._obs_state_names = observed_states
         self.error_states = measurement_error
@@ -1044,28 +956,24 @@ class DSGEStateSpace(PyMCStateSpace):
         self._aggregation_period = aggregation_period
         self._ss_obs_intercept_states = ss_obs_intercept
 
-        # Parse + linearize observation equations now so any errors surface here
-        # at configure time rather than mid-graph-build.
+        # Parsing and linearizing here surfaces a malformed observation equation at configure time, before the graph
+        # build starts.
         self._obs_equations = {}
         for obs_name, expr_str in observation_equations.items():
-            sym = self._parse_observation_equation(obs_name, expr_str)
-            intercept_sym, coeffs_sym = self._linearize_observation_equation(sym)
-            intercept_pt, coeffs_pt = self._obs_eq_to_pytensor(intercept_sym, coeffs_sym)
-            self._obs_equations[obs_name] = (intercept_pt, coeffs_pt)
+            expression = self._parse_observation_equation(obs_name, expr_str)
+            intercept_sym, coeffs_sym = self._linearize_observation_equation(expression)
+            self._obs_equations[obs_name] = self._obs_eq_to_pytensor(intercept_sym, coeffs_sym)
 
-        # Per-variable lag depth required by each obs equation, including the
-        # ``aggregation_period - 1`` headroom needed to broadcast coefficients
-        # across the cumulator window when ``sum``/``mean`` aggregation is on.
-        # A reference at lag ``-k`` with sum/mean aggregation over ``s`` periods
-        # contributes at effective lags ``-k, -k-1, ..., -k-(s-1)``, so the
-        # deepest effective lag is ``k + (s-1)``.
+        # A reference at lag k in an observation equation aggregated over s periods contributes at effective lags
+        # k, k+1, ..., k+(s-1), so the lag chain needs s-1 extra slots of headroom.
         self._obs_lag_depths = {}
-        for obs_name, (_intercept_pt, coeffs_pt) in self._obs_equations.items():
-            broadcast = aggregation_period - 1 if temporal_aggregation.get(obs_name) in CUMULATOR_AGGREGATIONS else 0
-            for vname, lag in coeffs_pt:
-                depth_required = -lag + broadcast
+        for obs_name, (_intercept, coeffs) in self._obs_equations.items():
+            headroom = aggregation_period - 1 if temporal_aggregation.get(obs_name) in CUMULATOR_AGGREGATIONS else 0
+            for variable_name, lag in coeffs:
+                depth_required = -lag + headroom
                 if depth_required > 0:
-                    self._obs_lag_depths[vname] = max(self._obs_lag_depths.get(vname, 0), depth_required)
+                    current_depth = self._obs_lag_depths.get(variable_name, 0)
+                    self._obs_lag_depths[variable_name] = max(current_depth, depth_required)
 
         self.full_covariance = full_shock_covariance
         self.use_direct_lyapunov = use_direct_lyapunov
@@ -1073,24 +981,15 @@ class DSGEStateSpace(PyMCStateSpace):
         self._solver = solver
         self._solver_kwargs = solver_kwargs
 
-        # Cumulator-aggregated observed states that are also observation equations
-        # route their lag storage through the obs-eq lag block, not the cumulator
-        # block -- exclude them here to match ``_cumulator_variables``.
-        n_cumulator_vars = sum(
-            1
-            for name, method in temporal_aggregation.items()
-            if method in CUMULATOR_AGGREGATIONS and name not in self._obs_equations
-        )
-        n_cumulator = n_cumulator_vars * (aggregation_period - 1)
-        n_obs_lag = sum(self._obs_lag_depths.values())
+        n_cumulator = self._n_cumulator_states
+        n_obs_lag = self._n_obs_lag_states
         k_states_aug = self._k_orig_states + n_cumulator + n_obs_lag
 
-        # Fixed-order layout of the obs-eq lag block: each variable's slots run
-        # consecutively, in the dict's insertion order.
+        # Each variable's observation-lag slots run consecutively, in insertion order of ``_obs_lag_depths``.
         self._obs_lag_starts = {}
         offset = self._k_orig_states + n_cumulator
-        for vname, depth in self._obs_lag_depths.items():
-            self._obs_lag_starts[vname] = offset
+        for variable_name, depth in self._obs_lag_depths.items():
+            self._obs_lag_starts[variable_name] = offset
             offset += depth
 
         super().__init__(
@@ -1110,6 +1009,27 @@ class DSGEStateSpace(PyMCStateSpace):
                 self._tensor_variable_info = self._tensor_variable_info.add(
                     SymbolicVariable(name=variable.name, symbolic_variable=variable)
                 )
+
+    @staticmethod
+    def _validate_temporal_aggregation(
+        temporal_aggregation: dict[str, str], aggregation_period: int, observed_states: list[str]
+    ) -> None:
+        unobserved = [x for x in temporal_aggregation if x not in observed_states]
+        if unobserved:
+            raise ValueError(
+                f"The following temporal_aggregation variables are not in observed_states: {', '.join(unobserved)}"
+            )
+
+        invalid_methods = [
+            (var, method) for var, method in temporal_aggregation.items() if method not in VALID_AGGREGATIONS
+        ]
+        if invalid_methods:
+            bad = ", ".join(f"{var}={method!r}" for var, method in invalid_methods)
+            raise ValueError(f"Invalid aggregation methods: {bad}. Must be 'sum', 'mean', 'first', or 'last'.")
+
+        has_cumulator_vars = any(m in CUMULATOR_AGGREGATIONS for m in temporal_aggregation.values())
+        if has_cumulator_vars and aggregation_period < 2:
+            raise ValueError(f"aggregation_period must be >= 2 for sum/mean aggregation, got {aggregation_period}")
 
     def set_states(self) -> tuple[State, ...]:
         """
@@ -1137,7 +1057,6 @@ class DSGEStateSpace(PyMCStateSpace):
             Non-constant model parameters, followed by the shock covariance parameters and any measurement error
             parameters.
         """
-        # TODO: Extract information from assumptions and use them to denote constraints on the parameters
         constant_params = self.constant_parameters if self.constant_parameters is not None else []
         parameters = [Parameter(name=x.name, shape=()) for x in self.input_parameters if x.name not in constant_params]
 
@@ -1162,7 +1081,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         return tuple(parameters)
 
-    def set_shocks(self) -> tuple[Shock]:
+    def set_shocks(self) -> tuple[Shock, ...]:
         """
         List the shocks of the statespace model.
 
@@ -1185,7 +1104,7 @@ class DSGEStateSpace(PyMCStateSpace):
         return self.default_coords()
 
     @property
-    def param_dims(self):
+    def param_dims(self) -> dict[str, tuple[str, ...] | None]:
         """Dimension names of each model parameter, empty until the model is configured."""
         if not self._configured:
             return {}
@@ -1212,14 +1131,41 @@ class DSGEStateSpace(PyMCStateSpace):
             Observed data to fit against. Missing values are filled with ``missing_fill_value`` and marginalized
             by the filter.
         add_norm_check : bool, optional
-            Register the deterministic and stochastic recursion residual norms as Deterministics. Default True.
+            Register the deterministic and stochastic recursion residual norms as Deterministics. Defaults to True.
         add_bk_check : bool, optional
-            Register the Blanchard-Kahn indicator and a Potential that rejects draws violating it. Default False.
+            Register the Blanchard-Kahn indicator and a Potential that rejects draws violating it. Defaults to
+            False.
         add_solver_success_check : bool, optional
             Register the policy-function residual and a Potential that rejects draws where it exceeds
-            ``solver_tol``. Default False.
+            ``solver_tol``. Defaults to False.
         solver_tol : float, optional
-            Residual tolerance used by ``add_solver_success_check``. Default 1e-8.
+            Residual tolerance used by ``add_solver_success_check``. Defaults to 1e-8.
+
+        Examples
+        --------
+        With the GCN priors and the shock scale registered in the model context, the likelihood attaches to the
+        observed output:
+
+        .. code-block:: python
+
+            import numpy as np
+            import pandas as pd
+            import pymc as pm
+
+            from gEconpy import statespace_from_gcn
+            from gEconpy.data import get_example_gcn
+
+            ss_mod = statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
+            ss_mod.configure(observed_states=["Y"], constant_params="auto", verbose=False)
+
+            index = pd.date_range("2000-01-01", periods=40, freq="QS")
+            data = pd.DataFrame(np.random.default_rng(0).normal(scale=0.01, size=(40, 1)), index=index, columns=["Y"])
+
+            with pm.Model(coords=ss_mod.coords) as pm_mod:
+                ss_mod.to_pymc()
+                pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+                ss_mod.build_statespace_graph(data)
+                print(pm_mod.compile_logp()(pm_mod.initial_point()))
         """
         self._graph_checks = {
             "add_norm_check": add_norm_check,
@@ -1258,9 +1204,7 @@ class DSGEStateSpace(PyMCStateSpace):
         bk_satisfied, _n_forward, _n_gt_one = bk_output
 
         if add_norm_check:
-            # Diagnostics-only: expose the deterministic and stochastic recursion residuals
-            # as Deterministics for posterior inspection. No Potential is added because the
-            # solver-convergence check below already gates the logp.
+            # These are diagnostics only. Only the Potentials below reject draws.
             n_vars, n_shocks = R.shape
             tm1_grid = np.array([[eq.has(var.set_t(-1)) for var in self.variables] for eq in self.equations])
             t_grid = np.array([[eq.has(var.set_t(0)) for var in self.variables] for eq in self.equations])
@@ -1295,42 +1239,71 @@ class DSGEStateSpace(PyMCStateSpace):
 
     def sample_autocorrelation_matrices(
         self,
-        idata,
+        idata: xr.DataTree | xr.Dataset,
         n_lags: int = 10,
         observed: bool = False,
         lag_step: int = 1,
         compile_kwargs: dict | None = None,
     ) -> xr.DataArray:
         r"""
-        Posterior distribution of the model-implied autocorrelation matrices.
+        Compute the posterior distribution of the model-implied autocorrelation matrices.
 
-        For each posterior draw the stationary state covariance :math:`\Sigma` is found from the discrete Lyapunov
+        For each posterior draw the stationary state covariance :math:`\Sigma` solves the discrete Lyapunov
         equation :math:`\Sigma = T \Sigma T^\top + R Q R^\top`, and the autocorrelation at lag :math:`k` is
-        :math:`T^{k \cdot \texttt{lag\_step}} \Sigma`, normalized by the state standard deviations. The whole
-        calculation is built as a single PyTensor graph and evaluated across every draw at once with
-        :func:`pymc.compute_deterministics`, so there is no Python loop over samples.
+        :math:`T^{k \cdot \texttt{lag\_step}} \Sigma` normalized by the state standard deviations. The whole
+        calculation is one PyTensor graph evaluated across every draw at once with
+        :func:`pymc.compute_deterministics`.
 
         Parameters
         ----------
-        idata : arviz.InferenceData
-            Inference data whose ``posterior`` group holds draws of the model parameters.
-        n_lags : int
-            Number of non-zero lags to compute; the returned ``lag`` dimension has ``n_lags + 1`` entries. Default 10.
-        observed : bool
-            Return the autocorrelation of the *observed* series -- the design matrix applied to the state, with
-            measurement error included in the lag-0 variance -- instead of the latent states. Default False.
-        lag_step : int
-            Spacing between lags, in model periods. Use 1 for the model's native frequency. For an observable that is
-            a temporal aggregate (for example an annual series from a quarterly model), set this to the aggregation
-            period so successive lags are one observation apart. Default 1.
+        idata : DataTree or Dataset
+            Inference data whose ``posterior`` group holds draws of the model parameters, or that group itself.
+        n_lags : int, optional
+            Number of non-zero lags to compute. The returned ``lag`` dimension has ``n_lags + 1`` entries. Defaults
+            to 10.
+        observed : bool, optional
+            Return the autocorrelation of the observed series, with measurement error included in the lag-0
+            variance, in place of the latent states. Defaults to False.
+        lag_step : int, optional
+            Spacing between lags, in model periods. For an observable that is a temporal aggregate (for example an
+            annual series from a quarterly model), set this to the aggregation period so successive lags are one
+            observation apart. Defaults to 1.
         compile_kwargs : dict, optional
-            Passed through to :func:`pymc.compute_deterministics`.
+            Passed through to :func:`pymc.compute_deterministics`. Defaults to None.
 
         Returns
         -------
-        DataArray
+        autocorrelation : DataArray
             Autocorrelation matrices with dimensions ``(chain, draw, lag, state, state_aux)``, where the state
             dimensions are the observed states when ``observed`` is True and the latent states otherwise.
+
+        Examples
+        --------
+        With ``lag_step=4``, successive lags of a quarterly model are one year apart:
+
+        .. code-block:: python
+
+            import numpy as np
+            import pymc as pm
+            import xarray as xr
+
+            from gEconpy import statespace_from_gcn
+            from gEconpy.data import get_example_gcn
+
+            ss_mod = statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
+            ss_mod.configure(observed_states=["Y"], constant_params="auto", verbose=False)
+            with pm.Model(coords=ss_mod.coords):
+                ss_mod.to_pymc()
+                pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+                ss_mod.build_statespace_graph(np.full((40, 1), np.nan), add_norm_check=False)
+
+            calibration = {**ss_mod.param_dict, "sigma_epsilon_A": 0.01}
+            posterior = xr.Dataset(
+                {name: (("chain", "draw"), np.full((1, 4), calibration[name])) for name in ss_mod.param_names},
+                coords={"chain": [0], "draw": np.arange(4)},
+            )
+            acf = ss_mod.sample_autocorrelation_matrices(posterior, n_lags=4, lag_step=4)
+            print(acf.sel(state="Y", state_aux="Y").mean(["chain", "draw"]).values)
         """
         posterior = idata.posterior if hasattr(idata, "posterior") else idata
         state_dim = OBS_STATE_DIM if observed else ALL_STATE_DIM
@@ -1345,11 +1318,10 @@ class DSGEStateSpace(PyMCStateSpace):
             _, _, _, _, T, Z, R, H, Q = self.unpack_statespace()
 
             Sigma = pt.linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
-            # PD is unsafe when cumulator/obs-lag augmentation makes the stationary covariance singular.
+            # Deterministic cumulator and observation-lag copies make the stationary covariance singular.
             if self._n_cumulator_states == 0 and self._n_obs_lag_states == 0:
                 Sigma = assume(Sigma, positive_definite=True)
 
-            # Advance ``lag_step`` model periods per lag, then accumulate T^(k * lag_step) for k = 0 .. n_lags.
             T_step = T
             for _ in range(lag_step - 1):
                 T_step = T_step @ T
@@ -1365,7 +1337,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
             if observed:
                 autocov = (Z @ (T_powers @ Sigma)) @ Z.T
-                autocov_0 = Z @ Sigma @ Z.T + H  # observed lag-0 variance includes measurement error
+                autocov_0 = Z @ Sigma @ Z.T + H
             else:
                 autocov = T_powers @ Sigma
                 autocov_0 = Sigma
@@ -1379,14 +1351,33 @@ class DSGEStateSpace(PyMCStateSpace):
             posterior, var_names=[name], model=acf_model, compile_kwargs=compile_kwargs, progressbar=False
         )[name]
 
-    def to_pymc(self, exclude_priors: list[str] | None = None):
+    def to_pymc(self, exclude_priors: list[str] | None = None) -> None:
         """
         Add the model's parameter and shock priors to the active PyMC model context.
 
         Parameters
         ----------
         exclude_priors : list of str, optional
-            Names of priors to skip. Constant parameters are always skipped. No priors are excluded by default.
+            Names of priors to skip. Constant parameters are always skipped. Defaults to none.
+
+        Examples
+        --------
+        Excluding ``alpha`` leaves room for a hand-written prior under the same name:
+
+        .. code-block:: python
+
+            import pymc as pm
+
+            from gEconpy import statespace_from_gcn
+            from gEconpy.data import get_example_gcn
+
+            ss_mod = statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
+            ss_mod.configure(observed_states=["Y"], constant_params=["beta", "delta"], verbose=False)
+
+            with pm.Model(coords=ss_mod.coords) as pm_mod:
+                ss_mod.to_pymc(exclude_priors=["alpha"])
+                pm.Beta("alpha", alpha=20, beta=40)
+            print(sorted(rv.name for rv in pm_mod.free_RVs))
         """
         if exclude_priors is None:
             exclude_priors = []
@@ -1413,43 +1404,64 @@ def data_from_prior(
     n_samples: int = 500,
     pct_missing: float = 0,
     random_seed: np.random.Generator | int | None = None,
-    mvn_method: str = "svd",
+    mvn_method: Literal["cholesky", "eigh", "svd"] = "svd",
     build_statespace_kwargs: dict | None = None,
 ) -> tuple[xr.Dataset, pd.DataFrame, xr.DataTree]:
     """
-    Generate artificial data from prior predictive samples.
+    Generate an artificial dataset from one draw of the prior predictive distribution.
 
     The statespace graph is built into a copy of ``pymc_model``, so the caller's model is left untouched.
 
     Parameters
     ----------
     statespace_mod : DSGEStateSpace
-        Statespace model to generate data from. Must have been configured with the .configure method.
-    pymc_model : pm.Model
-        PyMC model with priors on expected DSGE parameters. It should **not** have a Kalman Filter added via
-        build_statespace_graph.
-    index : pd.DatetimeIndex, optional
-        Index to use for the generated data. If None, a quarterly index from 1980-01-01 to 2024-11-01 is used.
+        Statespace model to generate data from. Must already be configured with :meth:`DSGEStateSpace.configure`.
+    pymc_model : Model
+        PyMC model holding priors for the DSGE parameters, without a Kalman filter likelihood attached.
+    index : DatetimeIndex, optional
+        Index of the generated data. Defaults to a quarterly index from 1980-01-01 to 2024-11-01.
     n_samples : int, optional
-        Number of prior predictive samples to draw.
+        Number of prior predictive samples to draw. Defaults to 500.
     pct_missing : float, optional
-        Percentage of missing data to introduce into the generated data. Must be between 0 and 1.
-    random_seed : np.random.Generator or int, optional
-        Random number generator to use for sampling. If None, the default numpy random number generator is used.
+        Fraction of each column to blank out at random, between 0 and 1. Defaults to 0.
+    random_seed : Generator or int, optional
+        Seed for every random draw. Defaults to None.
     mvn_method : str, optional
-        Method to use for sampling from the multivariate normal distribution of the state transitions. Passed to
-        sample_unconditional_posterior.
+        Multivariate normal sampling method passed to
+        :meth:`~pymc_extras.statespace.core.statespace.PyMCStateSpace.sample_unconditional_prior`. Defaults to
+        ``"svd"``.
     build_statespace_kwargs : dict, optional
-        Additional keyword arguments passed to DSGEStateSpace.build_statespace_graph
+        Keyword arguments forwarded to :meth:`DSGEStateSpace.build_statespace_graph`. Defaults to None.
 
     Returns
     -------
-    true_parameters : xr.Dataset
-        True parameters used to generate the data.
-    data : pd.DataFrame
-        Generated data.
-    prior_idata : xr.DataTree
-        Draws from the prior predictive distribution, plus conditional prior predictive samples.
+    true_parameters : Dataset
+        Parameter values of the draw that generated the data, plus the draw index as ``param_idx``.
+    data : DataFrame
+        Generated observations, one column per observed state.
+    prior_idata : DataTree
+        Prior predictive draws, plus the unconditional prior trajectories under ``unconditional_prior``.
+
+    Examples
+    --------
+    With ``pct_missing=0.1``, a tenth of every series is blanked out at random:
+
+    .. code-block:: python
+
+        import pymc as pm
+
+        from gEconpy import data_from_prior, statespace_from_gcn
+        from gEconpy.data import get_example_gcn
+
+        ss_mod = statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
+        ss_mod.configure(observed_states=["Y"], constant_params="auto", verbose=False)
+
+        with pm.Model(coords=ss_mod.coords) as pm_mod:
+            ss_mod.to_pymc()
+            pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+
+        true_params, data, prior_idata = data_from_prior(ss_mod, pm_mod, n_samples=10, pct_missing=0.1, random_seed=0)
+        print(float(true_params["sigma_epsilon_A"]), data["Y"].isna().mean())
     """
     rng = np.random.default_rng(random_seed)
     if build_statespace_kwargs is None:
@@ -1460,9 +1472,7 @@ def data_from_prior(
     dummy_data = pd.DataFrame(np.nan, index=index, columns=statespace_mod.observed_states)
     dummy_data.index.freq = dummy_data.index.inferred_freq
 
-    # Copy the model so the original model is unchanged
     new_model = pymc_model.copy()
-
     with new_model:
         statespace_mod.build_statespace_graph(dummy_data, **build_statespace_kwargs)
 
@@ -1478,12 +1488,12 @@ def data_from_prior(
 
     prior_idata["unconditional_prior"] = prior_trajectories
 
-    idx = rng.choice(prior_idata.prior.coords["draw"].values)
+    draw_idx = rng.choice(prior_idata.prior.coords["draw"].values)
 
-    true_params = prior_idata.prior.isel(chain=0, draw=idx).to_dataset()
-    true_params["param_idx"] = idx
+    true_params = prior_idata.prior.isel(chain=0, draw=draw_idx).to_dataset()
+    true_params["param_idx"] = draw_idx
 
-    data = prior_trajectories.isel(chain=0, draw=idx).prior_observed
+    data = prior_trajectories.isel(chain=0, draw=draw_idx).prior_observed
     data = data.to_dataframe().drop(columns=["chain", "draw"]).unstack("observed_state").droplevel(axis=1, level=0)
 
     data.index.freq = data.index.inferred_freq
@@ -1503,66 +1513,65 @@ def prepare_mixed_frequency_data(
     observation_position: Literal["first", "last"] = "last",
 ) -> pd.DataFrame:
     """
-    Expand low-frequency data to a high-frequency index for mixed-frequency estimation.
+    Expand low-frequency data onto a high-frequency index for mixed-frequency estimation.
 
-    Each low-frequency value is placed at the first or last high-frequency period within its aggregation window, with
-    ``NaN`` at all other periods. The Kalman filter treats ``NaN`` entries as missing observations.
-
-    Flow and stock variables are placed identically. The distinction matters only in
-    :meth:`~gEconpy.model.statespace.DSGEStateSpace.configure`, where ``flow_variables`` triggers cumulator-state
-    augmentation so the observation equation sums over the window.
+    Each low-frequency value lands at the first or last high-frequency period of its aggregation window, with
+    ``NaN`` everywhere else. The Kalman filter treats the ``NaN`` entries as missing observations. Flow and stock
+    variables are placed identically. The ``temporal_aggregation`` option of :meth:`DSGEStateSpace.configure`
+    distinguishes them, where ``"sum"`` makes the observation equation sum over the window.
 
     Parameters
     ----------
     low_freq_data : DataFrame
-        Observed data at low frequency. The index should be a ``DatetimeIndex`` at the low-frequency periodicity, for
-        example annual. Each column corresponds to an observed variable.
+        Observed data at low frequency, one column per observed variable, indexed by a ``DatetimeIndex`` at the
+        low-frequency periodicity, for example annual.
     high_freq : str
-        Pandas frequency string for the high-frequency model periodicity, for example "QS" for quarterly.
+        Pandas frequency string of the model's periodicity, for example "QS" for quarterly.
     aggregation_period : int, optional
-        Number of high-frequency periods per low-frequency observation. Default 4, which is annual from quarterly.
+        Number of high-frequency periods per low-frequency observation. Defaults to 4, which is annual from
+        quarterly.
     observation_position : str, optional
         Whether the low-frequency observation corresponds to the "first" or "last" high-frequency period in each
-        window. Default "last".
+        window. Defaults to "last".
 
     Returns
     -------
-    result : DataFrame
+    high_freq_data : DataFrame
         High-frequency DataFrame with ``NaN`` at unobserved periods.
 
     Examples
     --------
+    The default ``observation_position="last"`` puts each annual value at the fourth quarter of its year:
+
     .. code-block:: python
 
         import pandas as pd
 
+        from gEconpy import prepare_mixed_frequency_data
+
         annual = pd.DataFrame(
-            {"GDP": [100, 110], "R": [0.05, 0.04]},
-            index=pd.to_datetime(["2020", "2021"]),
+            {"GDP": [100.0, 110.0], "R": [0.05, 0.04]},
+            index=pd.to_datetime(["2020-01-01", "2021-01-01"]),
         )
         quarterly = prepare_mixed_frequency_data(annual, high_freq="QS")
+        print(quarterly)
     """
     pos_idx = 0 if observation_position == "first" else aggregation_period - 1
 
-    all_columns = list(low_freq_data.columns)
     first_date = low_freq_data.index.min()
     hf_index = pd.date_range(start=first_date, periods=len(low_freq_data) * aggregation_period, freq=high_freq)
 
-    result = pd.DataFrame(np.nan, index=hf_index, columns=all_columns)
+    high_freq_data = pd.DataFrame(np.nan, index=hf_index, columns=list(low_freq_data.columns))
 
-    for _, row in low_freq_data.iterrows():
-        lf_date = row.name
-        window_periods = hf_index[(hf_index >= lf_date)][:aggregation_period]
-
+    for lf_date, row in low_freq_data.iterrows():
+        window_periods = hf_index[hf_index >= lf_date][:aggregation_period]
         if len(window_periods) <= pos_idx:
             continue
+        high_freq_data.loc[window_periods[pos_idx]] = row
 
-        result.loc[window_periods[pos_idx]] = row
-
-    # Trim trailing all-NaN rows beyond the last observation window
-    last_obs_idx = result.last_valid_index()
+    last_obs_idx = high_freq_data.last_valid_index()
     if last_obs_idx is not None:
-        result = result.loc[:last_obs_idx]
+        high_freq_data = high_freq_data.loc[:last_obs_idx]
 
-    result.index.freq = result.index.inferred_freq
-    return result
+    high_freq_data.index.freq = high_freq_data.index.inferred_freq
+    return high_freq_data

@@ -4,43 +4,63 @@ import pandas as pd
 from preliz.distributions.distributions import Distribution
 from scipy.stats import qmc
 
+QMC_ENGINES = {
+    "lhs": qmc.LatinHypercube,
+    "sobol": qmc.Sobol,
+    "halton": qmc.Halton,
+    "poisson_disk": qmc.PoissonDisk,
+}
+INVERSE_CDF_ENGINES = ("sobol", "halton", "lhs")
+
 
 def bounds_from_priors(
     priors: dict[str, Distribution],
     hdi_prob: float = 0.99,
 ) -> dict[str, tuple[float, float]]:
-    """Derive finite parameter bounds from preliz priors via HDI intervals.
+    """
+    Derive finite parameter bounds from the highest density interval of each prior.
 
-    Calls ``dist.hdi(hdi_prob)`` on each prior. This always returns finite
-    bounds, even for unbounded distributions (Normal, HalfNormal,
-    InverseGamma, etc.), making it safe to feed directly into QMC samplers
-    that require explicit bounds.
+    Unbounded distributions such as Normal, HalfNormal, and InverseGamma still yield finite bounds, so the result
+    can feed a quasi-Monte Carlo sampler directly.
 
     Parameters
     ----------
     priors : dict of str to Distribution
-        Mapping of parameter name to preliz distribution.
-    hdi_prob : float, default 0.99
-        Probability mass covered by the HDI. Defaults to 0.99, which excludes
-        extreme tails while keeping a generous range.
+        Mapping from parameter name to preliz distribution.
+    hdi_prob : float, optional
+        Probability mass the interval covers. Defaults to 0.99.
 
     Returns
     -------
     bounds : dict of str to tuple of float
-        ``{name: (lower, upper)}`` for each prior.
+        ``(lower, upper)`` interval for each prior, keyed by parameter name.
+
+    Examples
+    --------
+    The HalfNormal prior is unbounded above, and its 95 percent interval is still finite:
+
+    .. code-block:: python
+
+        import preliz as pz
+
+        from gEconpy import bounds_from_priors
+
+        priors = {"alpha": pz.Beta(mu=0.35, sigma=0.05), "sigma": pz.HalfNormal(sigma=1.0)}
+        bounds = bounds_from_priors(priors, hdi_prob=0.95)
+        print(bounds["alpha"], bounds["sigma"])
     """
-    results = {}
+    bounds = {}
 
     for name, dist in priors.items():
         try:
             with np.errstate(divide="ignore", invalid="ignore"):
-                low, upper = dist.hdi(hdi_prob)
+                lower, upper = dist.hdi(hdi_prob)
         except ValueError:
-            low = dist.ppf(1 - hdi_prob)
+            lower = dist.ppf(1 - hdi_prob)
             upper = dist.ppf(hdi_prob)
-        results[name] = (low, upper)
+        bounds[name] = (lower, upper)
 
-    return results
+    return bounds
 
 
 def sample_from_priors(
@@ -48,25 +68,40 @@ def sample_from_priors(
     n_samples: int,
     seed: int | np.random.Generator | None = None,
 ) -> pd.DataFrame:
-    """Draw ``n_samples`` from a dict of preliz distributions using ``.rvs()``.
+    """
+    Draw independent Monte Carlo samples from each prior.
 
     Parameters
     ----------
     priors : dict of str to Distribution
-        Mapping of parameter name to preliz distribution.
+        Mapping from parameter name to preliz distribution.
     n_samples : int
         Number of draws.
-    seed : int, Generator, or None
-        Random seed for reproducibility.
+    seed : int, Generator, or None, optional
+        Seed or generator for the random draws. Defaults to None, which draws fresh entropy from the OS.
 
     Returns
     -------
-    samples : pd.DataFrame
-        Shape ``(n_samples, n_params)``. Column names match ``priors`` keys.
+    samples : DataFrame
+        Draws of shape ``(n_samples, n_params)`` with one column per key of ``priors``.
+
+    Examples
+    --------
+    Each column holds independent draws from the matching prior:
+
+    .. code-block:: python
+
+        import preliz as pz
+
+        from gEconpy import sample_from_priors
+
+        priors = {"alpha": pz.Beta(mu=0.35, sigma=0.05), "rho_A": pz.Beta(mu=0.95, sigma=0.02)}
+        samples = sample_from_priors(priors, n_samples=100, seed=0)
+        print(samples.describe())
     """
     rng = np.random.default_rng(seed)
-    data = {name: dist.rvs(n_samples, random_state=rng) for name, dist in priors.items()}
-    return pd.DataFrame(data)
+    draws = {name: dist.rvs(n_samples, random_state=rng) for name, dist in priors.items()}
+    return pd.DataFrame(draws)
 
 
 def sample_uniform(
@@ -75,73 +110,55 @@ def sample_uniform(
     seed: int | np.random.Generator | None = None,
     method: str = "lhs",
 ) -> pd.DataFrame:
-    """Generate parameter samples within explicit bounds using QMC or random sampling.
+    """
+    Generate parameter samples that fill a box with uniform or quasi-Monte Carlo draws.
 
     Parameters
     ----------
     param_bounds : dict of str to tuple of float
-        ``{name: (lower, upper)}`` for each parameter.
+        ``(lower, upper)`` interval for each parameter, keyed by parameter name.
     n_samples : int
         Number of samples. Must be a power of 2 when ``method="sobol"``.
-    seed : int, Generator, or None
-        Random seed.
-    method : str, default ``"lhs"``
-        Sampling method. One of:
-
-        - ``"random"`` -- independent uniform draws.
-        - ``"lhs"`` -- Latin Hypercube Sampling.
-        - ``"sobol"`` -- Sobol sequence (scrambled). Requires ``n_samples`` to
-          be a power of 2.
-        - ``"halton"`` -- Halton sequence.
-        - ``"poisson_disk"`` -- Poisson disk sampling (best spatial uniformity
-          but slower).
+    seed : int, Generator, or None, optional
+        Seed for the sampler. A Generator is honored only by ``method="random"``, because the scipy QMC engines
+        accept integer seeds only. Defaults to None.
+    method : str, optional
+        Sampling scheme, one of ``"random"`` (independent uniform draws), ``"lhs"`` (Latin hypercube),
+        ``"sobol"`` (scrambled Sobol sequence), ``"halton"`` (scrambled Halton sequence), or ``"poisson_disk"``
+        (Poisson disk sampling, the most even coverage and the slowest). Defaults to ``"lhs"``.
 
     Returns
     -------
-    samples : pd.DataFrame
-        Shape ``(n_samples, n_params)``. Column names match ``param_bounds`` keys.
+    samples : DataFrame
+        Draws of shape ``(n_samples, n_params)`` with one column per key of ``param_bounds``.
 
-    Raises
-    ------
-    ValueError
-        If ``method="sobol"`` and ``n_samples`` is not a power of 2.
-    ValueError
-        If ``method`` is not recognized.
+    Examples
+    --------
+    A Sobol sample of 64 points, a power of 2, stays inside the box:
+
+    .. code-block:: python
+
+        from gEconpy import sample_uniform
+
+        bounds = {"alpha": (0.2, 0.5), "rho_A": (0.8, 0.99)}
+        samples = sample_uniform(bounds, n_samples=64, method="sobol", seed=0)
+        print(samples.min(), samples.max())
     """
     names = list(param_bounds.keys())
-    l_bounds = np.array([param_bounds[n][0] for n in names], dtype=float)
-    u_bounds = np.array([param_bounds[n][1] for n in names], dtype=float)
-    d = len(names)
-
-    if method == "sobol" and (n_samples & (n_samples - 1)) != 0:
-        raise ValueError(
-            f"Sobol sequences require n_samples to be a power of 2, got {n_samples}. "
-            f"Try n_samples={2 ** int(np.ceil(np.log2(n_samples)))}."
-        )
-
-    rng_seed = seed if isinstance(seed, (int, type(None))) else None
+    lower_bounds = np.array([param_bounds[name][0] for name in names], dtype=float)
+    upper_bounds = np.array([param_bounds[name][1] for name in names], dtype=float)
 
     if method == "random":
         rng = np.random.default_rng(seed)
-        unit_samples = rng.uniform(size=(n_samples, d))
-    elif method == "lhs":
-        sampler = qmc.LatinHypercube(d=d, seed=rng_seed)
-        unit_samples = sampler.random(n_samples)
-    elif method == "sobol":
-        sampler = qmc.Sobol(d=d, scramble=True, seed=rng_seed)
-        unit_samples = sampler.random(n_samples)
-    elif method == "halton":
-        sampler = qmc.Halton(d=d, scramble=True, seed=rng_seed)
-        unit_samples = sampler.random(n_samples)
-    elif method == "poisson_disk":
-        sampler = qmc.PoissonDisk(d=d, seed=rng_seed)
-        unit_samples = sampler.random(n_samples)
+        unit_samples = rng.uniform(size=(n_samples, len(names)))
+    elif method in QMC_ENGINES:
+        unit_samples = _unit_hypercube_samples(n_samples, d=len(names), seed=seed, method=method)
     else:
         raise ValueError(
             f"Unknown sampling method {method!r}. Choose from 'random', 'lhs', 'sobol', 'halton', 'poisson_disk'."
         )
 
-    scaled = qmc.scale(unit_samples, l_bounds, u_bounds)
+    scaled = qmc.scale(unit_samples, lower_bounds, upper_bounds)
     return pd.DataFrame(scaled, columns=names)
 
 
@@ -152,33 +169,43 @@ def sample_uniform_from_priors(
     method: str = "lhs",
     hdi_prob: float = 0.99,
 ) -> pd.DataFrame:
-    """QMC samples over prior HDI bounds -- space-filling *and* prior-informed.
+    """
+    Fill the box spanned by the priors' highest density intervals with quasi-Monte Carlo draws.
 
-    Computes ``bounds_from_priors(priors, hdi_prob)``, then delegates to
-    ``sample_uniform``.
-
-    This is the recommended default for solvability checks. The goal is spatial
-    coverage of the plausible parameter region, not density-weighted sampling.
-    QMC on a uniform hypercube gives better coverage than Monte Carlo draws from
-    the prior (which cluster near the mode).
+    For a solvability check, uniform coverage of the plausible region finds failure regions that draws from the
+    prior miss, because prior draws cluster near the mode.
 
     Parameters
     ----------
     priors : dict of str to Distribution
-        Mapping of parameter name to preliz distribution.
+        Mapping from parameter name to preliz distribution.
     n_samples : int
         Number of samples. Must be a power of 2 when ``method="sobol"``.
-    seed : int, Generator, or None
-        Random seed.
-    method : str, default ``"lhs"``
-        Passed to :func:`sample_uniform`. See its docs for valid values.
-    hdi_prob : float, default 0.99
-        HDI probability used to compute bounds. See :func:`bounds_from_priors`.
+    seed : int, Generator, or None, optional
+        Seed for the sampler, forwarded to :func:`sample_uniform`. Defaults to None.
+    method : str, optional
+        Sampling scheme, forwarded to :func:`sample_uniform`. Defaults to ``"lhs"``.
+    hdi_prob : float, optional
+        Probability mass of the interval used as the box for each parameter, forwarded to
+        :func:`bounds_from_priors`. Defaults to 0.99.
 
     Returns
     -------
-    samples : pd.DataFrame
-        Shape ``(n_samples, n_params)``. Column names match ``priors`` keys.
+    samples : DataFrame
+        Draws of shape ``(n_samples, n_params)`` with one column per key of ``priors``.
+
+    Examples
+    --------
+    The model's ``param_priors`` feed the sampler directly:
+
+    .. code-block:: python
+
+        from gEconpy import model_from_gcn, sample_uniform_from_priors
+        from gEconpy.data import get_example_gcn
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        samples = sample_uniform_from_priors(model.param_priors, n_samples=50, seed=0)
+        print(samples.head())
     """
     bounds = bounds_from_priors(priors, hdi_prob=hdi_prob)
     return sample_uniform(bounds, n_samples, seed=seed, method=method)
@@ -190,64 +217,71 @@ def sample_from_priors_qmc(
     seed: int | np.random.Generator | None = None,
     method: str = "sobol",
 ) -> pd.DataFrame:
-    """Quasi-random samples that respect prior shapes via inverse-CDF (``ppf``).
+    """
+    Draw quasi-random samples that follow each prior's shape through its inverse CDF.
 
-    Generates unit-hypercube draws via the chosen QMC engine, then applies
-    ``prior.ppf(u)`` column-by-column. This preserves the prior density shape
-    but gives poorer spatial coverage than :func:`sample_uniform_from_priors`
-    for the same ``n_samples``, because draws are still clustered near the
-    prior mode.
+    A quasi-Monte Carlo engine fills the unit hypercube, then each column passes through the matching prior's
+    ``ppf``. The draws keep the prior's density, so for the same ``n_samples`` they cover the tails less evenly
+    than :func:`sample_uniform_from_priors`.
 
     Parameters
     ----------
     priors : dict of str to Distribution
-        Mapping of parameter name to preliz distribution.
+        Mapping from parameter name to preliz distribution.
     n_samples : int
         Number of samples. Must be a power of 2 when ``method="sobol"``.
-    seed : int or None
-        Random seed. Note: ``np.random.Generator`` objects are not accepted here
-        because scipy QMC engines require integer seeds.
-    method : str, default ``"sobol"``
-        QMC engine. One of ``"sobol"``, ``"halton"``, ``"lhs"``.
+    seed : int or None, optional
+        Integer seed for the QMC engine. A ``numpy.random.Generator`` is ignored, because the scipy QMC engines
+        accept integer seeds only. Defaults to None.
+    method : str, optional
+        QMC engine, one of ``"sobol"``, ``"halton"``, or ``"lhs"``. Defaults to ``"sobol"``.
 
     Returns
     -------
-    samples : pd.DataFrame
-        Shape ``(n_samples, n_params)``. Column names match ``priors`` keys.
+    samples : DataFrame
+        Draws of shape ``(n_samples, n_params)`` with one column per key of ``priors``.
 
-    Raises
-    ------
-    ValueError
-        If ``method="sobol"`` and ``n_samples`` is not a power of 2.
+    Examples
+    --------
+    Each column follows its prior through the inverse CDF, so the sample means track the prior means:
+
+    .. code-block:: python
+
+        import preliz as pz
+
+        from gEconpy import sample_from_priors_qmc
+
+        priors = {"alpha": pz.Beta(mu=0.35, sigma=0.05), "sigma": pz.HalfNormal(sigma=1.0)}
+        samples = sample_from_priors_qmc(priors, n_samples=32, seed=0)
+        print(samples.mean())
     """
     names = list(priors.keys())
-    d = len(names)
-
-    if method == "sobol" and (n_samples & (n_samples - 1)) != 0:
-        raise ValueError(
-            f"Sobol sequences require n_samples to be a power of 2, got {n_samples}. "
-            f"Try n_samples={2 ** int(np.ceil(np.log2(n_samples)))}."
-        )
-
-    rng_seed = seed if isinstance(seed, (int, type(None))) else None
-
-    if method == "sobol":
-        sampler = qmc.Sobol(d=d, scramble=True, seed=rng_seed)
-    elif method == "halton":
-        sampler = qmc.Halton(d=d, scramble=True, seed=rng_seed)
-    elif method == "lhs":
-        sampler = qmc.LatinHypercube(d=d, seed=rng_seed)
-    else:
+    if method not in INVERSE_CDF_ENGINES:
         raise ValueError(f"Unknown method {method!r} for sample_from_priors_qmc. Choose from 'sobol', 'halton', 'lhs'.")
 
-    unit_samples = sampler.random(n_samples)
+    unit_samples = _unit_hypercube_samples(n_samples, d=len(names), seed=seed, method=method)
 
-    # Apply inverse-CDF column by column, clipping to avoid ppf(0) or ppf(1) = ±inf
+    # ppf(0) and ppf(1) are infinite for unbounded priors, so keep the draws strictly inside the unit interval.
     eps = np.finfo(float).eps
     unit_samples = np.clip(unit_samples, eps, 1 - eps)
 
-    data = {}
-    for i, name in enumerate(names):
-        data[name] = priors[name].ppf(unit_samples[:, i])
+    draws = {name: priors[name].ppf(unit_samples[:, i]) for i, name in enumerate(names)}
+    return pd.DataFrame(draws)
 
-    return pd.DataFrame(data)
+
+def _unit_hypercube_samples(
+    n_samples: int,
+    d: int,
+    seed: int | np.random.Generator | None,
+    method: str,
+) -> np.ndarray:
+    if method == "sobol" and (n_samples & (n_samples - 1)) != 0:
+        next_power_of_two = 2 ** int(np.ceil(np.log2(n_samples)))
+        raise ValueError(
+            f"Sobol sequences require n_samples to be a power of 2, got {n_samples}. Try n_samples={next_power_of_two}."
+        )
+
+    engine_kwargs = {"scramble": True} if method in ("sobol", "halton") else {}
+    engine_seed = seed if isinstance(seed, int | None) else None
+    sampler = QMC_ENGINES[method](d=d, seed=engine_seed, **engine_kwargs)
+    return sampler.random(n_samples)
