@@ -1945,14 +1945,14 @@ class Model:
         .. math::
            :nowrap:
 
-           \begin{align}
+           \begin{aligned}
            0 \approx {} &
            f_{x_+} (g_x(g_x \hat{x} + g_u u) + g_u \mathbb{E}_t[u_+]) +
            f_x (g_x \hat{x} + g_u u) + f_{x_-} \hat{x} + f_u u \\
            \approx {} &
            (f_{x_+} g_x g_x + f_x g_x + f_{x_-})\hat{x} +
            (f_{x_+} g_x g_u + f_x g_u + f_u) u
-           \end{align}
+           \end{aligned}
 
         For the system to be equal to zero, both coefficient matrices must be zero, which gives us two linear equations
         in the unknowns :math:`g_x` and :math:`g_u`:
@@ -1960,10 +1960,10 @@ class Model:
         .. math::
            :nowrap:
 
-           \begin{align}
+           \begin{aligned}
            (f_{x_+} g_x g_x + f_x g_x + f_{x_-}) \hat{x} &= 0 \\
            (f_{x_+} g_x g_u + f_x g_u + f_u) u &= 0
-           \end{align}
+           \end{aligned}
 
         Assuming :math:`g_x` has been solved for, the coefficient in the second equation can be directly solved for,
         giving:
@@ -1981,7 +1981,7 @@ class Model:
         .. math::
            :nowrap:
 
-           \begin{align}
+           \begin{aligned}
            \begin{bmatrix} 0 & f_{x_+} \\ I & 0 \end{bmatrix}
            \begin{bmatrix} g_x g_x \\ g_x \end{bmatrix} \hat{x}
            &=
@@ -1996,7 +1996,7 @@ class Model:
            TZ \begin{bmatrix} I \\ g_x \end{bmatrix} g_x \hat{x}
            &=
            SZ \begin{bmatrix} g_x \\ I \end{bmatrix} \hat{x}
-           \end{align}
+           \end{aligned}
 
         The last two lines use the QZ decomposition of the pencil :math:`<D, E>` into upper triangular matrix :math:`T`
         and quasi-upper triangular matrix :math:`S`, and the orthogonal matrices :math:`Z` and :math:`Q`. :math:`T` and

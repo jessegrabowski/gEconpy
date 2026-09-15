@@ -39,12 +39,12 @@ The block states the problem
 
 .. math::
 
-    \begin{align}
+    \begin{aligned}
         & \max_{C_t, L_t, I_t, K_t} U_t = \sum_{t=0}^\infty \beta^t \left ( \frac{C_t^{1 - \sigma_C}}{1 - \sigma_C} - \frac{L_t^{1 + \sigma_L}}{1 + \sigma_L} \right ) \\
         \text{subject to} & \\
         & C_t + I_t = r_t K_{t-1} + w_t L_t \\
         & K_t = (1 - \delta) K_{t-1} + I_t
-    \end{align}
+    \end{aligned}
 
 A block can hold seven components.
 
@@ -257,12 +257,12 @@ and differentiates it with respect to each control:
 
 .. math::
 
-    \begin{align}
+    \begin{aligned}
         & \frac{\partial \mathcal{L}}{\partial C_t} = 0 \Rightarrow C_t^{-\sigma_C} - \lambda_t = 0 \\
         & \frac{\partial \mathcal{L}}{\partial L_t} = 0 \Rightarrow -L_t^{\sigma_L} + \lambda_t w_t = 0 \\
         & \frac{\partial \mathcal{L}}{\partial I_t} = 0 \Rightarrow -\lambda_t + q_t = 0 \\
         & \frac{\partial \mathcal{L}}{\partial K_t} = 0 \Rightarrow -q_t + \beta \mathbb{E} \left [ \lambda_{t+1} r_{t+1} + q_{t+1} (1 - \delta) \right ] = 0
-    \end{align}
+    \end{aligned}
 
 Internally, gEconpy makes the substitutions from ``definitions`` first, then builds the Lagrangian as the objective's
 right-hand side minus each multiplier times its constraint written as ``lhs - rhs``. It negates an objective tagged
