@@ -120,8 +120,7 @@ def sample_uniform(
     n_samples : int
         Number of samples. Must be a power of 2 when ``method="sobol"``.
     seed : int, Generator, or None, optional
-        Seed for the sampler. A Generator is honored only by ``method="random"``, because the scipy QMC engines
-        accept integer seeds only. Defaults to None.
+        Seed for the sampler. Defaults to None.
     method : str, optional
         Sampling scheme, one of ``"random"`` (independent uniform draws), ``"lhs"`` (Latin hypercube),
         ``"sobol"`` (scrambled Sobol sequence), ``"halton"`` (scrambled Halton sequence), or ``"poisson_disk"``
@@ -230,9 +229,8 @@ def sample_from_priors_qmc(
         Mapping from parameter name to preliz distribution.
     n_samples : int
         Number of samples. Must be a power of 2 when ``method="sobol"``.
-    seed : int or None, optional
-        Integer seed for the QMC engine. A ``numpy.random.Generator`` is ignored, because the scipy QMC engines
-        accept integer seeds only. Defaults to None.
+    seed : int, Generator, or None, optional
+        Seed for the QMC engine. Defaults to None.
     method : str, optional
         QMC engine, one of ``"sobol"``, ``"halton"``, or ``"lhs"``. Defaults to ``"sobol"``.
 
@@ -282,6 +280,5 @@ def _unit_hypercube_samples(
         )
 
     engine_kwargs = {"scramble": True} if method in ("sobol", "halton") else {}
-    engine_seed = seed if isinstance(seed, int | None) else None
-    sampler = QMC_ENGINES[method](d=n_dims, seed=engine_seed, **engine_kwargs)
+    sampler = QMC_ENGINES[method](d=n_dims, seed=seed, **engine_kwargs)
     return sampler.random(n_samples)

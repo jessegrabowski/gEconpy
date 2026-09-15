@@ -177,6 +177,10 @@ class TestX0Dispatch:
         assert result.success
         mock_ss.assert_not_called()
 
+    def test_x0_dict_missing_variables_raises(self, rbc_model):
+        with pytest.raises(ValueError, match=r"missing values for: .*C"):
+            solve_perfect_foresight(rbc_model, simulation_length=10, x0={"K_ss": 3.0})
+
     def test_x0_array_with_full_conditions_skips_steady_state(self, rbc_model):
         ss_dict = rbc_model.steady_state(verbose=False)
         var_names = [v.base_name for v in rbc_model.variables]
@@ -392,6 +396,25 @@ class TestParamPaths:
 
         _, result = solve_perfect_foresight(rbc_model, simulation_length=T, param_paths={"delta": delta_path})
         assert result.success
+
+    @pytest.mark.parametrize("rho_0", [0.0, 1e-8], ids=["exact-zero", "near-zero"])
+    def test_zero_entry_at_first_period_keeps_jacobian_structure(self, rbc_model, rho_0):
+        """A Jacobian entry that is zero at t=0 but nonzero later must stay in the stacked sparsity pattern."""
+        T = 30
+        shock = np.zeros(T)
+        shock[0] = 0.05
+        rho_path = np.full(T, rbc_model.parameters()["rho"])
+        rho_path[0] = rho_0
+
+        _, result = solve_perfect_foresight(
+            rbc_model,
+            simulation_length=T,
+            shocks={"epsilon": shock},
+            param_paths={"rho": rho_path},
+        )
+
+        assert result.success
+        assert result.nit <= 5
 
     def test_boundary_ss_uses_param_paths(self, rbc_model):
         params = rbc_model.parameters()

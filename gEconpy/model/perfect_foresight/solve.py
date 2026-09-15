@@ -46,7 +46,8 @@ def solve_perfect_foresight(
         Number of periods, written ``T`` below.
     x0 : DataFrame, ndarray, dict, or None, optional
         Initial guess for the Newton solver. A dict is a steady-state dictionary as returned by
-        ``model.steady_state()``, tiled across every period and used in place of computing the steady state. A
+        ``model.steady_state()``, tiled across every period and used in place of computing the steady state. It
+        must hold a value for every model variable. A
         DataFrame has variable names as columns and periods as rows, and its columns are reindexed to the model's
         variable order. This is what :func:`make_piecewise_x0` returns. An ndarray of shape ``(T, n_vars)`` must
         already be in the model's variable order. Defaults to the steady state tiled across every period.
@@ -225,8 +226,8 @@ def make_piecewise_x0(
     simulation_length : int
         Total number of periods.
     var_names : list of str, optional
-        Variable names, fixing the column order. Defaults to the union of the keys of both dictionaries with the
-        ``_ss`` suffix stripped, sorted alphabetically.
+        Variable names, fixing the column order. Both dictionaries must hold a value for every name. Defaults to
+        the union of the keys of both dictionaries with the ``_ss`` suffix stripped, sorted alphabetically.
     transition_start : int, optional
         Period at which the transition begins. Defaults to ``simulation_length // 2``.
     transition_periods : int, optional
@@ -270,8 +271,13 @@ def _normalize_condition_keys(conditions: dict[str, float]) -> dict[str, float]:
 
 
 def _ss_dict_to_array(ss_dict: dict[str, float], var_names: list[str]) -> np.ndarray:
-    """Read steady-state values in ``var_names`` order, accepting suffixed or bare keys and defaulting to 1."""
-    return np.array([ss_dict.get(f"{name}_ss", ss_dict.get(name, 1.0)) for name in var_names])
+    """Read steady-state values in ``var_names`` order, accepting suffixed or bare keys."""
+    values = _normalize_condition_keys(ss_dict)
+    missing = [name for name in var_names if name not in values]
+    if missing:
+        raise ValueError(f"Steady-state dictionary is missing values for: {', '.join(missing)}")
+
+    return np.array([values[name] for name in var_names])
 
 
 def _infer_var_names_from_ss(*ss_dicts: dict[str, float]) -> list[str]:

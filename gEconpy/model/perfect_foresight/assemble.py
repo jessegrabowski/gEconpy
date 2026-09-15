@@ -31,11 +31,12 @@ def assemble_stacked_jacobian(
     jacobian : sparse.csc_matrix
         Block-tridiagonal matrix of shape ``(T * n_eq, T * n_vars)``.
     """
-    # The sparsity pattern is a property of the model, so the nonzero masks are read off the first period and reused.
-    first = period_jacobians[0]
-    rows_tm1, cols_tm1 = np.nonzero(first[:, :n_vars])
-    rows_t, cols_t = np.nonzero(first[:, n_vars : 2 * n_vars])
-    rows_tp1, cols_tp1 = np.nonzero(first[:, 2 * n_vars : 3 * n_vars])
+    # An entry can be exactly zero in one period (a parameter path or an initial guess passing through zero) and
+    # nonzero in another, so the shared sparsity pattern is the union of the nonzero masks over all periods.
+    nonzero_anywhere = np.any(np.stack(period_jacobians) != 0, axis=0)
+    rows_tm1, cols_tm1 = np.nonzero(nonzero_anywhere[:, :n_vars])
+    rows_t, cols_t = np.nonzero(nonzero_anywhere[:, n_vars : 2 * n_vars])
+    rows_tp1, cols_tp1 = np.nonzero(nonzero_anywhere[:, 2 * n_vars : 3 * n_vars])
 
     nnz_tm1 = len(rows_tm1)
     nnz_t = len(rows_t)

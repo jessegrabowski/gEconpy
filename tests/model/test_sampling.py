@@ -75,3 +75,10 @@ def test_sample_from_priors_qmc_produces_finite_values(method):
     df = sample_from_priors_qmc(PRIORS, n_samples=16, method=method)
     assert df.shape == (16, len(PRIORS))
     assert np.isfinite(df.values).all()
+
+
+@pytest.mark.parametrize("method", ["sobol", "halton", "lhs"])
+def test_sample_uniform_qmc_honors_generator_seed(method):
+    first = sample_uniform(BOUNDS, n_samples=8, seed=np.random.default_rng(0), method=method)
+    second = sample_uniform(BOUNDS, n_samples=8, seed=np.random.default_rng(0), method=method)
+    np.testing.assert_allclose(first.values, second.values)

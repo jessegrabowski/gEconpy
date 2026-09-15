@@ -119,6 +119,24 @@ def test_backward_direct_solver_produces_finite_logp():
 
 
 @pytest.mark.filterwarnings("ignore:Provided data contains missing values and will be automatically imputed")
+def test_norm_check_is_zero_at_solution(rbc_statespace):
+    """The residual norms must be computed in one variable ordering, so they vanish at the policy solution."""
+    assert not np.array_equal(rbc_statespace.var_order, np.arange(len(rbc_statespace.var_order)))
+    rbc_statespace.configure(observed_states=["Y"], solver="gensys", verbose=False)
+
+    with pm.Model() as m:
+        rbc_statespace.to_pymc()
+        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+        rbc_statespace.build_statespace_graph(np.full((40, 1), np.nan), add_norm_check=True)
+        norm_fn = m.compile_fn(
+            [m["deterministic_norm"], m["stochastic_norm"]], inputs=m.value_vars, on_unused_input="ignore"
+        )
+        norms = norm_fn(m.initial_point())
+
+    np.testing.assert_allclose(norms, 0.0, atol=1e-12)
+
+
+@pytest.mark.filterwarnings("ignore:Provided data contains missing values and will be automatically imputed")
 def test_constant_params_excluded_from_prior_samples():
     ss_mod = statespace_from_gcn(TEST_GCNS / "rbc_linearized.gcn", verbose=False)
     ss_mod.configure(
