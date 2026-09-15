@@ -25,7 +25,7 @@ BOUNDS: dict[str, tuple[float, float]] = {
 
 
 def test_bounds_from_priors_always_finite_and_ordered():
-    """Unbounded distributions (HalfNormal, InverseGamma) must still produce finite bounds."""
+    """Unbounded distributions (HalfNormal, InverseGamma) still produce finite bounds."""
     bounds = bounds_from_priors(PRIORS)
     for name, (lo, hi) in bounds.items():
         assert np.isfinite(lo) and np.isfinite(hi) and lo < hi, (
@@ -33,10 +33,12 @@ def test_bounds_from_priors_always_finite_and_ordered():
         )
 
 
-@pytest.mark.parametrize("method", ["random", "lhs", "sobol", "halton", "poisson_disk"])
-def test_sample_uniform_all_values_within_bounds(method):
-    # sobol requires power-of-2 n_samples
-    n = 32 if method == "sobol" else 50
+@pytest.mark.parametrize(
+    "method, n",
+    [("random", 50), ("lhs", 50), ("sobol", 32), ("halton", 50), ("poisson_disk", 50)],
+    ids=["random", "lhs", "sobol", "halton", "poisson_disk"],
+)
+def test_sample_uniform_all_values_within_bounds(method, n):
     df = sample_uniform(BOUNDS, n_samples=n, method=method)
     assert df.shape == (n, len(BOUNDS))
     for name, (lo, hi) in BOUNDS.items():
@@ -69,7 +71,7 @@ def test_sample_uniform_from_priors_respects_hdi_bounds():
 
 @pytest.mark.parametrize("method", ["sobol", "halton", "lhs"])
 def test_sample_from_priors_qmc_produces_finite_values(method):
-    """Ppf clipping at [eps, 1-eps] must prevent ±inf from unbounded priors."""
+    """Clipping the unit draws to [eps, 1 - eps] keeps the ppf of unbounded priors finite."""
     df = sample_from_priors_qmc(PRIORS, n_samples=16, method=method)
     assert df.shape == (16, len(PRIORS))
     assert np.isfinite(df.values).all()
