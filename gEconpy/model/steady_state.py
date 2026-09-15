@@ -262,7 +262,7 @@ def compile_known_ss(
         **kwargs,
     )
     if return_symbolic:
-        return make_return_dict_and_update_cache(ss_variables, f_ss, cache, TimeAwareSymbol)
+        return make_return_dict_and_update_cache(list(ordered_solutions.keys()), f_ss, cache, TimeAwareSymbol)
 
     return dictionary_return_wrapper(f_ss, list(ordered_solutions.keys())), cache
 

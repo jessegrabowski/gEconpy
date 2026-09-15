@@ -29,6 +29,7 @@ from gEconpy.model.statistics import (
     stationary_covariance_matrix,
     summarize_perturbation_solution,
 )
+from gEconpy.model.statistics.validation import _maybe_linearize_model
 from gEconpy.model.steady_state import _ss_residual_to_pytensor, build_minimize_graphs, build_root_graphs
 from gEconpy.utilities import safe_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
@@ -694,6 +695,25 @@ def test_build_Q_matrix(rng):
     cov = L @ L.T
     Q = build_Q_matrix(model_shocks=shocks, shock_cov_matrix=cov)
     assert_allclose(Q, cov)
+
+
+def test_build_Q_matrix_accepts_list_of_stds():
+    model = load_and_cache_model("full_nk.gcn")
+    stds = [0.1, 0.2, 0.3, 0.4]
+
+    Q = build_Q_matrix(model_shocks=model.shocks, shock_std=stds)
+    assert_allclose(Q, np.diag(np.array(stds) ** 2))
+
+
+def test_maybe_linearize_model_linearizes_partial_input_when_not_verbose(caplog):
+    model = load_and_cache_model("rbc_linearized.gcn")
+    A, B, _C, _D = model.linearize_model(verbose=False)
+
+    with caplog.at_level("WARNING"):
+        outputs = _maybe_linearize_model(model, A, B, None, None, verbose=False)
+
+    assert all(x is not None for x in outputs)
+    assert "incomplete subset" not in caplog.text
 
 
 def test_compute_stationary_covariance_warns_on_partial_specification(caplog):

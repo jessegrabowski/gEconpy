@@ -112,5 +112,19 @@ def test_check_steady_state_raises_on_wrong_steady_state(model_without_priors):
         check_steady_state(model_without_priors, steady_state=steady_state)
 
 
+def test_check_steady_state_reports_violated_calibrating_equation(monkeypatch, caplog):
+    model = load_and_cache_model("one_block_2_no_extra.gcn")
+    steady_state = model.steady_state(verbose=False, progressbar=False)
+    steady_state["L_ss"] = steady_state["L_ss"] * 2
+    steady_state.success = False
+    monkeypatch.setattr(model, "steady_state", lambda **_kwargs: steady_state)
+
+    with caplog.at_level("WARNING"):
+        check_steady_state(model)
+
+    calibrating_equation = next(iter(model._calib_dict.to_sympy().values()))
+    assert str(calibrating_equation) in caplog.text
+
+
 def test_statistics_exports_no_private_names():
     assert not [name for name in statistics.__all__ if name.startswith("_")]

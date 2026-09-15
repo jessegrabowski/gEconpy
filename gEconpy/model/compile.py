@@ -322,7 +322,7 @@ def make_return_dict_and_update_cache(
         cls = sp.Symbol
 
     out_dict = {}
-    for symbol, value in zip(input_symbols, output_tensors, strict=False):
+    for symbol, value in zip(input_symbols, output_tensors, strict=True):
         cache_key = make_cache_key(symbol.name, cls)
         if cache_key not in cache:
             cache[cache_key] = pt.scalar(name=symbol.name, dtype="floatX")
