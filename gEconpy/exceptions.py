@@ -137,11 +137,12 @@ class OptimizationProblemNotDefinedException(ValueError):
     def __init__(self, block_name: str, missing: str) -> None:
         self.block_name = block_name
         self.missing = missing
-        not_missing = "objective" if missing == "controls" else "controls"
+        present = "objective" if missing == "controls" else "controls"
+        article = "an" if present == "objective" else "a"
 
         message = (
-            f"Block {block_name} has a {missing} component but no {not_missing} component. Add the missing "
-            f"component, or remove the {missing} if this block has no optimization problem."
+            f"Block {block_name} has {article} {present} component but no {missing} component. Add the missing "
+            f"component, or remove the {present} if this block has no optimization problem."
         )
 
         super().__init__(message)

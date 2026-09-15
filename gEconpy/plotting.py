@@ -1356,7 +1356,8 @@ def plot_kalman_filter(
             conditional_prior, data, kalman_output="smoothed", group="prior", vars_to_plot=["Y", "C", "K"]
         )
     """
-    if kalman_output.lower() not in ["filtered", "predicted", "smoothed"]:
+    kalman_output = kalman_output.lower()
+    if kalman_output not in ["filtered", "predicted", "smoothed"]:
         raise ValueError(f'kalman_output must be one of "filtered", "predicted", "smoothed". Found {kalman_output}.')
 
     if fig is None:
@@ -1449,6 +1450,9 @@ def plot_priors(
     }
 
     if var_names is not None:
+        for name in var_names:
+            if name not in priors:
+                raise ValueError(f"Prior '{name}' not found. Available: {list(priors)}")
         priors = {name: priors[name] for name in var_names}
     n_params = len(priors)
 
@@ -2122,7 +2126,7 @@ def _draw_eigenvalue_panel(
     ax.set_xlabel("Real")
     ax.set_ylabel("Imaginary")
     perturbed_value = param_value * (1 + perturbation)
-    ax.set_title(f"{param_name}: {param_value:.4g} → {perturbed_value:.4g}")
+    ax.set_title(f"{param_name}: {param_value:.4g} -> {perturbed_value:.4g}")
     _style_panel(ax, alpha=0.5)
 
     if show_legend:
@@ -2380,17 +2384,23 @@ def _plot_offdiag_panel(
 
 
 __all__ = [
+    "annotate_heatmap",
     "plot_acf",
     "plot_corner",
     "plot_covariance_matrix",
+    "plot_eigenvalue_sensitivity",
     "plot_eigenvalues",
+    "plot_estimated_matrix",
+    "plot_heatmap",
     "plot_irf",
     "plot_kalman_filter",
     "plot_posterior_with_prior",
+    "plot_priors",
     "plot_simulation",
     "plot_solvability",
     "plot_solvability_summary",
     "plot_timeseries",
     "prepare_gridspec_figure",
+    "set_axis_cmap",
     "set_matplotlib_style",
 ]

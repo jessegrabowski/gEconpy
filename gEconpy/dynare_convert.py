@@ -203,7 +203,7 @@ def write_lines_from_list(items_to_write: list[str], linewidth: int = 100, line_
     for item in items_to_write:
         addition = f", {item}" if line != line_start else f" {item}"
 
-        if (len(line) + len(addition) + len(";")) > linewidth:
+        if line != line_start and (len(line) + len(addition) + len(";")) > linewidth:
             lines.append(line + ";")
             line = f"{line_start} {item}"
         else:

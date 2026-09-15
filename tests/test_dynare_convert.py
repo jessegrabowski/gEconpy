@@ -112,6 +112,12 @@ def test_write_lines_from_list_wraps_and_keeps_every_item(linewidth):
     assert (len(out.split("\n")) > 1) == (linewidth == 12)
 
 
+def test_write_lines_from_list_never_emits_empty_declaration():
+    out = write_lines_from_list(["a_very_long_name", "b"], linewidth=10, line_start="var")
+    assert _declared_names(out, "var") == ["a_very_long_name", "b"]
+    assert "var;" not in out.split("\n")
+
+
 def test_write_variable_declarations(model):
     out = write_variable_declarations(model)
     assert _declared_names(out, "var") == [x.base_name for x in model.variables]
