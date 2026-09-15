@@ -439,6 +439,18 @@ class TestParamPaths:
         assert_allclose(trajectory["C"].values + trajectory["K"].values, resources, rtol=1e-8)
         assert not np.allclose(trajectory["K"].values[T // 2 :], ss_initial["K_ss"])
 
+    def test_list_path_matches_array_path(self, rbc_model):
+        T = 20
+        delta_path = np.full(T, rbc_model.parameters()["delta"])
+        delta_path[T // 2 :] *= 1.5
+
+        traj_array, _ = solve_perfect_foresight(rbc_model, simulation_length=T, param_paths={"delta": delta_path})
+        traj_list, _ = solve_perfect_foresight(
+            rbc_model, simulation_length=T, param_paths={"delta": delta_path.tolist()}
+        )
+
+        assert_allclose(traj_list.values, traj_array.values)
+
     @pytest.mark.parametrize("rho_0", [0.0, 1e-8], ids=["exact-zero", "near-zero"])
     def test_zero_entry_at_first_period_keeps_jacobian_structure(self, rbc_model, rho_0):
         """A Jacobian entry that is zero at t=0 but nonzero later must stay in the stacked sparsity pattern."""

@@ -16,6 +16,7 @@ NO_INPUTS = {"initial_conditions": {}, "terminal_conditions": {}, "shocks": None
         ({"shocks": {"epsilon": np.ones(5)}}, "has length 5, expected 10"),
         ({"param_paths": {"not_a_param": 1.0}}, "Unknown parameters in param_paths"),
         ({"param_paths": {"alpha": np.ones(5)}}, r"param_paths\['alpha'\] has length 5, expected 10"),
+        ({"param_paths": {"alpha": [0.5] * 5}}, r"param_paths\['alpha'\] has length 5, expected 10"),
     ],
     ids=[
         "unknown-initial-variable",
@@ -24,6 +25,7 @@ NO_INPUTS = {"initial_conditions": {}, "terminal_conditions": {}, "shocks": None
         "wrong-shock-length",
         "unknown-parameter",
         "wrong-parameter-path-length",
+        "wrong-parameter-list-length",
     ],
 )
 def test_invalid_inputs_raise(overrides, match):

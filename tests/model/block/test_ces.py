@@ -228,10 +228,6 @@ def test_constructing_without_matching_constraint_raises():
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_build_lagrangian stores a generated multiplier under its running index, not the constraint key",
-)
 def test_definition_with_generated_multiplier_solves():
     block = load_gcn_string(FIRM_WITH_DEFINITION_AND_GENERATED_MULTIPLIER).block_dict["FIRM"]
     assert isinstance(block, CESBlock)

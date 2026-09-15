@@ -260,12 +260,10 @@ class Block:
 
         self.system_equations.append(set_equality_equals_zero(objective.subs(sub_dict)))
 
-        _, multipliers = unpack_keys_and_values(self.multipliers)
-
         discount_factor = self._get_discount_factor()
         lagrange = self._build_lagrangian()
 
-        if multipliers[obj_idx] is not None:
+        if self.multipliers.get(obj_idx) is not None:
             raise NotImplementedError(
                 "Lagrange multipliers on the objective equation are not supported. Rewrite the model to define the "
                 "stochastic discount factor directly."
@@ -579,7 +577,7 @@ class Block:
                 lm = multipliers[key]
             else:
                 lm = TimeAwareSymbol(f"lambda__{self.short_name}_{next_generated_index}", 0, **DEFAULT_ASSUMPTIONS)
-                self.multipliers[next_generated_index] = lm
+                self.multipliers[key] = lm
                 next_generated_index += 1
 
             lagrange = lagrange - lm * (constraint.lhs.subs(sub_dict) - constraint.rhs.subs(sub_dict))
@@ -612,7 +610,7 @@ class Block:
 
         if len(continuation_value) == 0:
             raise ValueError(
-                f"Block {self.name} did not find the continuation value of the current state value in the following"
+                f"Block {self.name} did not find the continuation value of the current state value in the following "
                 f"objective function: {objective}. Objectives should be written in the form "
                 f"``V[t] = f(x[t]) + b[t] * E[V[t+1]]``, where V[t] is the current state value, f(x[t]) is the "
                 f"instantaneous value function, and b[t] is the discount factor."
