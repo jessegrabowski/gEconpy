@@ -132,6 +132,14 @@ class TestNewtonNonmonotoneSpecific:
         res, _ = fun(result.x)
         np.testing.assert_allclose(res, 0.0, atol=1e-4)
 
+    def test_reused_solver_forgets_previous_merit_history(self, quadratic_system):
+        fun, x0, _ = quadratic_system
+        solver = NewtonNonmonotone()
+
+        sparse_root(fun, x0 * 100.0, solver=solver, progressbar=False)
+        solver.init(fun, x0, ())
+        assert len(solver.globalization._phi_history) == 0
+
 
 class TestCustomSolver(CommonSolverTests):
     solver = LineSearchSolver(

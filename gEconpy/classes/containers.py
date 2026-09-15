@@ -264,11 +264,20 @@ class SymbolDictionary(dict):
         self._record_keys([key])
 
     def copy(self) -> "SymbolDictionary":
-        """Return a shallow copy that shares the sympy flag, the assumptions and the variable flags."""
-        new_d = SymbolDictionary(super().copy())
+        """
+        Return a shallow copy of the same class that shares the sympy flag, the assumptions and the variable flags.
+
+        Subclass attributes such as ``SteadyStateResults.success`` are carried over.
+        """
+        new_d = type(self)(super().copy())
         new_d.is_sympy = self.is_sympy
         new_d._assumptions = self._assumptions
         new_d._is_variable = self._is_variable
+
+        base_attrs = {"is_sympy", "_assumptions", "_is_variable"}
+        for name, value in self.__dict__.items():
+            if name not in base_attrs:
+                setattr(new_d, name, value)
 
         return new_d
 

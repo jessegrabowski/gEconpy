@@ -97,29 +97,37 @@ class TimeAwareSymbol(sp.Symbol):
 
     def step_forward(self):
         """
-        Increment the time index by one.
+        Increment the time index by one. A steady-state symbol is returned unchanged.
 
         Returns
         -------
         symbol : TimeAwareSymbol
-            A new symbol with the same base name and assumptions, one period later.
+            A new symbol with the same base name and assumptions, one period later, or this symbol if it is at the
+            steady state.
         """
+        if self.time_index == "ss":
+            return self
         return TimeAwareSymbol(self.base_name, self.time_index + 1, **self.assumptions0)
 
     def step_backward(self):
         """
-        Decrement the time index by one.
+        Decrement the time index by one. A steady-state symbol is returned unchanged.
 
         Returns
         -------
         symbol : TimeAwareSymbol
-            A new symbol with the same base name and assumptions, one period earlier.
+            A new symbol with the same base name and assumptions, one period earlier, or this symbol if it is at the
+            steady state.
         """
+        if self.time_index == "ss":
+            return self
         return TimeAwareSymbol(self.base_name, self.time_index - 1, **self.assumptions0)
 
     def to_ss(self):
         """
         Set the time index to steady state.
+
+        A steady-state symbol has no time offset, so ``step_forward`` and ``step_backward`` return it unchanged.
 
         Returns
         -------

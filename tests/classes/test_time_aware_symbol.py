@@ -33,6 +33,10 @@ class TestTimeAwareSymbol:
         assert x_t.to_ss().exit_ss() == x_t
         assert x_tm1.set_t(1) == x_tp1
 
+    def test_stepping_steady_state_is_identity(self):
+        assert x_t.to_ss().step_forward() == x_t.to_ss()
+        assert x_t.to_ss().step_backward() == x_t.to_ss()
+
     def test_set_t_rejects_unknown_string(self):
         with pytest.raises(ValueError, match="integer or 'ss'"):
             x_t.set_t("foo")

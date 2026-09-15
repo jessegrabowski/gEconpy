@@ -85,6 +85,12 @@ class TestNonmonotoneBacktracking:
             nonmonotone._phi_history.append(float(i))
         assert len(nonmonotone._phi_history) == 3
 
+    def test_reset_clears_history(self):
+        nonmonotone = NonmonotoneBacktracking(memory=3)
+        nonmonotone._phi_history.append(1e7)
+        nonmonotone.reset()
+        assert len(nonmonotone._phi_history) == 0
+
     def test_accepts_step_armijo_rejects(self):
         x = np.array([0.1])
         proposal = DirectionProposal(direction=np.array([0.9]), slope=-0.01, kind="test")
