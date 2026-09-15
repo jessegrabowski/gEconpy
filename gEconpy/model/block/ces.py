@@ -138,24 +138,12 @@ class CESBlock(Block):
             First-order condition residual.
         """
         match = self._match
-        mu = self.multipliers[match.idx]
-        if mu is None:
-            raise RuntimeError(
-                f"CESBlock {self.name!r} has no multiplier on its production constraint. Call solve_optimization, "
-                "which generates one, before computing first-order conditions."
-            )
-
-        obj_idx, obj_eq = next(iter(self.objective.items()))
-        objective_rhs = obj_eq.rhs
-        if self.equation_flags.get(obj_idx, {}).get("minimize", False):
-            objective_rhs = -objective_rhs
-        objective_term = diff_through_time(objective_rhs, control, discount_factor)
-
         productivity_factor = sp.S.One if match.productivity is None else match.productivity**match.exponent
         for input_symbol, share in match.inputs:
             if control == input_symbol:
+                mu = self._constraint_multiplier(match.idx)
                 marginal_product = share * productivity_factor * (match.output / input_symbol) ** (1 - match.exponent)
-                return objective_term + mu * marginal_product
+                return self._objective_derivative(control, discount_factor) + mu * marginal_product
 
         return diff_through_time(lagrange, control, discount_factor)
 

@@ -412,8 +412,13 @@ class Block:
         self.definitions = {k: sp.Eq(v.lhs, v.rhs.subs(sub_dict)) for k, v in self.definitions.items()}
 
     def _get_variable_list(self) -> None:
-        """Collect every steady-state variable of the block into ``variables``, sorted by name."""
-        objective, constraints, identities, multipliers = [], [], [], []
+        """
+        Collect every steady-state variable of the block into ``variables``, sorted by name.
+
+        ``_consolidate_definitions`` has already resolved the definitions, so one ``subs`` pass exposes every
+        variable they introduce.
+        """
+        objective, constraints, identities = [], [], []
         sub_dict = {}
         if self.definitions is not None:
             _, definitions = unpack_keys_and_values(self.definitions)
@@ -428,14 +433,11 @@ class Block:
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
 
-        if self.multipliers is not None:
-            _, multipliers = unpack_keys_and_values(self.multipliers)
-            multipliers = [x for x in multipliers if x is not None]
+        multipliers = [x for x in self.multipliers.values() if x is not None]
 
         all_equations = [eq for eqs_list in [objective, constraints, identities] for eq in eqs_list]
-        flat_sub_dict = flatten_substitution_dict(sub_dict) if sub_dict else {}
         for eq in all_equations:
-            atoms = eq.subs(flat_sub_dict).atoms() if flat_sub_dict else eq.atoms()
+            atoms = eq.subs(sub_dict).atoms() if sub_dict else eq.atoms()
             variables = [x for x in atoms if isinstance(x, TimeAwareSymbol)]
             for variable in variables:
                 if variable.to_ss() not in self.variables:
@@ -466,17 +468,15 @@ class Block:
 
         for idx, eq in zip(eq_idxs, equations, strict=True):
             atoms = eq.atoms()
-            lhs, rhs = eq.lhs, eq.rhs
-            if not lhs.is_symbol:
+            param, rhs = eq.lhs, eq.rhs
+            if not param.is_symbol:
                 raise ValueError(
                     "Left-hand side of calibrating expressions should be the single parameter to be "
-                    f"computed. Found multiple arguments: {eq.lhs.args}"
+                    f"computed. Found multiple arguments: {param.args}"
                 )
 
-            param = eq.lhs
-
-            if eq.rhs.is_number:
-                value = eq.rhs.evalf()
+            if rhs.is_number:
+                value = rhs.evalf()
                 if param in self.param_dict:
                     duplicates.append(param)
                 else:
@@ -504,10 +504,10 @@ class Block:
                             f"of variables. Found:\n\n {eq} in {self.name}"
                         )
 
-                if eq.lhs in self.deterministic_dict:
-                    duplicates.append(lhs)
+                if param in self.deterministic_dict:
+                    duplicates.append(param)
                 else:
-                    self.deterministic_dict[lhs] = rhs.doit()
+                    self.deterministic_dict[param] = rhs.doit()
 
         if len(duplicates) > 0:
             location = self._symbol_locations.get(str(duplicates[0]))
@@ -548,19 +548,8 @@ class Block:
                 f"but no STEADY_STATE block with analytic solutions was found."
             )
 
-        ss_sympy = self._ss_solution_dict.to_sympy()
-        sub_dict = {}
-        missing = []
-        for var in ss_vars:
-            matched = False
-            for key, value in ss_sympy.items():
-                if hasattr(key, "name") and key.name == var.name:
-                    sub_dict[var] = value
-                    matched = True
-                    break
-            if not matched:
-                missing.append(var)
-
+        values_by_name = {key.name: value for key, value in self._ss_solution_dict.to_sympy().items()}
+        missing = [var for var in ss_vars if var.name not in values_by_name]
         if missing:
             names = ", ".join(str(v) for v in missing)
             raise ValueError(
@@ -568,12 +557,11 @@ class Block:
                 f"without analytic solutions: {names}. Provide analytic values in the STEADY_STATE block."
             )
 
-        return rhs.subs(sub_dict)
+        return rhs.subs({var: values_by_name[var.name] for var in ss_vars})
 
     def _build_lagrangian(self) -> sp.Add:
         """Build the Lagrangian of the block's optimization program, generating multipliers where none were named."""
-        objective = next(iter(self.objective.values()))
-        obj_key = next(iter(self.objective.keys()))
+        obj_key, objective = next(iter(self.objective.items()))
         is_minimization = self.equation_flags[obj_key].get("minimize", False)
 
         constraints = self.constraints
@@ -647,6 +635,28 @@ class Block:
         :func:`sympy.diff` produces.
         """
         return diff_through_time(lagrange, control, discount_factor)
+
+    def _objective_derivative(self, control: TimeAwareSymbol, discount_factor: sp.Expr | int) -> sp.Expr:
+        """
+        Differentiate the objective alone through time, with the sign flipped for a ``@minimize`` objective.
+
+        Subclasses with a closed-form constraint derivative add it to this term to form the first-order condition.
+        """
+        obj_idx, obj_eq = next(iter(self.objective.items()))
+        objective_rhs = obj_eq.rhs
+        if self.equation_flags.get(obj_idx, {}).get("minimize", False):
+            objective_rhs = -objective_rhs
+        return diff_through_time(objective_rhs, control, discount_factor)
+
+    def _constraint_multiplier(self, idx: int) -> TimeAwareSymbol:
+        """Return the multiplier on constraint ``idx``, which :meth:`solve_optimization` generates when unnamed."""
+        multiplier = self.multipliers[idx]
+        if multiplier is None:
+            raise RuntimeError(
+                f"{type(self).__name__} {self.name!r} has no multiplier on constraint {idx}. Call solve_optimization, "
+                "which generates one, before computing first-order conditions."
+            )
+        return multiplier
 
     def __html_repr__(self) -> str:
         """Render the block as a collapsible HTML section with one sub-section per component."""

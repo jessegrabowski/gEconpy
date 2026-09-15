@@ -51,7 +51,60 @@ CUMULATOR_AGGREGATIONS = ("sum", "mean")
 
 
 class DSGEStateSpace(PyMCStateSpace):
-    """Core class for estimating DSGE models using PyMC."""
+    """
+    A :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace` model of a linearized DSGE.
+
+    The public constructor is :func:`~gEconpy.model.build.statespace_from_gcn`. Call :meth:`configure` before
+    building the statespace graph.
+
+    Parameters
+    ----------
+    variables : list of TimeAwareSymbol
+        Variables in the model.
+    shocks : list of TimeAwareSymbol
+        Shocks in the model.
+    equations : list of sympy expressions
+        Equations in the model.
+    param_dict : dict mapping str to float
+        Default parameter values, as defined in the model file.
+    hyper_param_dict : dict mapping str to float
+        Default hyperparameter values, as defined in the model file.
+    param_priors : SymbolDictionary
+        Preliz parameter priors, keyed by parameter name.
+    shock_priors : SymbolDictionary
+        Preliz shock priors, keyed by shock name.
+    parameter_mapping : dict mapping TensorVariable to TensorVariable
+        Symbolic function mapping input parameters to the full vector of parameters, including deterministic
+        parameters.
+    steady_state_mapping : dict mapping TensorVariable to TensorVariable
+        Symbolic function mapping input parameters to the steady-state values of the model.
+    linearized_system : list of TensorVariable
+        Four symbolic expressions representing the linearized system of equations as partial jacobians of the
+        model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with respect to exogenous
+        shocks (D), each evaluated at the symbolic steady state.
+    var_order : ndarray, optional
+        Variable column permutation applied when the system was linearized. Defaults to the identity
+        permutation.
+    log_linearized_variables : list of str, optional
+        Base names of variables that were log-linearized when building ``linearized_system``. The
+        ``ss_obs_intercept`` option of :meth:`configure` uses it to decide whether an intercept entry is
+        ``log(v_ss(p))`` or ``v_ss(p)``. Defaults to no variables.
+    sympytensor_cache : dict, optional
+        Sympytensor cache mapping cache keys to pytensor nodes, shared with the graphs that built the model.
+        Defaults to a new, empty cache.
+    filter_type : str, optional
+        Kalman filter implementation used for the likelihood. Defaults to "standard".
+    mode : str, optional
+        PyTensor compilation mode for post-estimation sampling functions. Defaults to None.
+    cov_jitter : float, optional
+        Jitter added to the diagonal of covariance matrices inside the Kalman filter. Defaults to
+        ``JITTER_DEFAULT`` from pymc-extras.
+    missing_fill_value : float, optional
+        Sentinel that replaces missing observations before the filter runs. Defaults to ``MISSING_FILL`` from
+        pymc-extras.
+    verbose : bool, optional
+        If True, show diagnostic messages. Defaults to True.
+    """
 
     def __init__(
         self,
@@ -74,59 +127,6 @@ class DSGEStateSpace(PyMCStateSpace):
         missing_fill_value: float = MISSING_FILL,
         verbose: bool = True,
     ):
-        """
-        Create a :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace` model of a linearized DSGE.
-
-        The public constructor is :func:`~gEconpy.model.build.statespace_from_gcn`.
-
-        Parameters
-        ----------
-        variables : list of TimeAwareSymbol
-            Variables in the model.
-        shocks : list of TimeAwareSymbol
-            Shocks in the model.
-        equations : list of sympy expressions
-            Equations in the model.
-        param_dict : dict mapping str to float
-            Default parameter values, as defined in the model file.
-        hyper_param_dict : dict mapping str to float
-            Default hyperparameter values, as defined in the model file.
-        param_priors : SymbolDictionary
-            Preliz parameter priors, keyed by parameter name.
-        shock_priors : SymbolDictionary
-            Preliz shock priors, keyed by shock name.
-        parameter_mapping : dict mapping TensorVariable to TensorVariable
-            Symbolic function mapping input parameters to the full vector of parameters, including deterministic
-            parameters.
-        steady_state_mapping : dict mapping TensorVariable to TensorVariable
-            Symbolic function mapping input parameters to the steady-state values of the model.
-        linearized_system : list of TensorVariable
-            Four symbolic expressions representing the linearized system of equations as partial jacobians of the
-            model equations with respect to variables at time t+1 (A), t (B), t-1 (C), and with respect to exogenous
-            shocks (D), each evaluated at the symbolic steady state.
-        var_order : ndarray, optional
-            Variable column permutation applied when the system was linearized. Defaults to the identity
-            permutation.
-        log_linearized_variables : list of str, optional
-            Base names of variables that were log-linearized when building ``linearized_system``. The
-            ``ss_obs_intercept`` option of :meth:`configure` uses it to decide whether an intercept entry is
-            ``log(v_ss(p))`` or ``v_ss(p)``. Defaults to no variables.
-        sympytensor_cache : dict, optional
-            Sympytensor cache mapping cache keys to pytensor nodes, shared with the graphs that built the model.
-            Defaults to a new, empty cache.
-        filter_type : str, optional
-            Kalman filter implementation used for the likelihood. Defaults to "standard".
-        mode : str, optional
-            PyTensor compilation mode for post-estimation sampling functions. Defaults to None.
-        cov_jitter : float, optional
-            Jitter added to the diagonal of covariance matrices inside the Kalman filter. Defaults to
-            ``JITTER_DEFAULT`` from pymc-extras.
-        missing_fill_value : float, optional
-            Sentinel that replaces missing observations before the filter runs. Defaults to ``MISSING_FILL`` from
-            pymc-extras.
-        verbose : bool, optional
-            If True, show diagnostic messages. Defaults to True.
-        """
         self.variables = variables
         self.equations = equations
         self.shocks = shocks
@@ -234,10 +234,7 @@ class DSGEStateSpace(PyMCStateSpace):
     def lead_var_idx(self) -> np.ndarray:
         """Column indices of forward-looking variables (variables appearing at t+1 in any equation)."""
         if self._lead_var_idx is None:
-            idx = []
-            for i, v in enumerate(self.variables):
-                if any(eq.has(v.set_t(1)) for eq in self.equations):
-                    idx.append(i)
+            idx = [i for i, v in enumerate(self.variables) if any(eq.has(v.set_t(1)) for eq in self.equations)]
             self._lead_var_idx = np.array(idx, dtype=int)
         return self._lead_var_idx
 
@@ -1040,11 +1037,11 @@ class DSGEStateSpace(PyMCStateSpace):
         states : tuple
             Hidden model variables, cumulator states, observation lag states, and observed states, in that order.
         """
-        observed_states = self._obs_state_names if self._obs_state_names is not None else []
+        observed_names = self._obs_state_names if self._obs_state_names is not None else []
         hidden_states = [State(name=x.base_name, observed=False) for x in self.variables]
         cumulator_states = [State(name=name, observed=False) for name in self._cumulator_state_names]
         obs_lag_states = [State(name=name, observed=False) for name in self._obs_lag_state_names]
-        observed_states = [State(name=name, observed=True) for name in observed_states]
+        observed_states = [State(name=name, observed=True) for name in observed_names]
         return *hidden_states, *cumulator_states, *obs_lag_states, *observed_states
 
     def set_parameters(self) -> tuple[Parameter, ...]:
@@ -1057,8 +1054,9 @@ class DSGEStateSpace(PyMCStateSpace):
             Non-constant model parameters, followed by the shock covariance parameters and any measurement error
             parameters.
         """
-        constant_params = self.constant_parameters if self.constant_parameters is not None else []
-        parameters = [Parameter(name=x.name, shape=()) for x in self.input_parameters if x.name not in constant_params]
+        parameters = [
+            Parameter(name=x.name, shape=()) for x in self.input_parameters if x.name not in self.constant_parameters
+        ]
 
         if self.full_covariance:
             parameters += [
@@ -1322,9 +1320,7 @@ class DSGEStateSpace(PyMCStateSpace):
             if self._n_cumulator_states == 0 and self._n_obs_lag_states == 0:
                 Sigma = assume(Sigma, positive_definite=True)
 
-            T_step = T
-            for _ in range(lag_step - 1):
-                T_step = T_step @ T
+            T_step = pt.linalg.matrix_power(T, lag_step)
             eye = pt.eye(T.shape[0])
             powers = pytensor.scan(
                 lambda prev, mat: prev @ mat,
@@ -1382,8 +1378,7 @@ class DSGEStateSpace(PyMCStateSpace):
         if exclude_priors is None:
             exclude_priors = []
 
-        constant_params = self.constant_parameters if self.constant_parameters is not None else []
-        skip = set(exclude_priors) | set(constant_params)
+        skip = set(exclude_priors) | set(self.constant_parameters)
 
         with pm.modelcontext(None):
             for prior, dist in self.param_priors.items():
