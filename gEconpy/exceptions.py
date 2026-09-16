@@ -236,11 +236,22 @@ class SteadyStateNotFoundError(ValueError):
 
 
 class GensysFailedException(ValueError):
-    """Raised when the gensys solver cannot return a unique stable solution."""
+    """
+    Raised when a perturbation solver cannot return a unique stable solution.
 
-    def __init__(self, eu: list[int] | tuple[int, ...]):
-        message = interpret_gensys_output(eu)
-        super().__init__(message)
+    Parameters
+    ----------
+    eu : list of int, optional
+        Gensys existence and uniqueness codes, rendered through
+        :func:`~gEconpy.solvers.gensys.interpret_gensys_output`. Defaults to None, in which case ``message`` is used.
+    message : str, optional
+        Failure message from a solver that has no gensys codes, such as cycle reduction. Defaults to None.
+    """
+
+    def __init__(self, eu: list[int] | tuple[int, ...] | None = None, message: str | None = None):
+        if eu is not None:
+            message = interpret_gensys_output(eu)
+        super().__init__(message or "The perturbation solver did not return a unique stable solution.")
 
 
 class VariableNotFoundException(ValueError):

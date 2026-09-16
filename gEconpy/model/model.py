@@ -2097,7 +2097,7 @@ class Model:
         T, R, result, _log_norm = solve_policy_function_with_cycle_reduction(A, B, C, D, max_iter, tol, verbose)
         if T is None:
             if on_failure == "error":
-                raise GensysFailedException(result)
+                raise GensysFailedException(message=result)
             if verbose:
                 _log.info(result)
             return None, None
