@@ -297,6 +297,28 @@ geconpy = { path = ".", editable = true }
 [tool.pixi.feature.py312.dependencies]
 python = "3.12.*"
 
+# Everything the example notebooks import at runtime beyond the package itself, plus the tools that execute
+# them and keep the jupytext pairs in sync. No win-64: conda-forge has no jaxlib there, and flowjax needs jax.
+[tool.pixi.feature.notebooks]
+platforms = ["osx-arm64", "linux-64"]
+
+[tool.pixi.feature.notebooks.dependencies]
+arviz-plots = "*"
+arviz-stats = "*"
+flowjax = "*"
+ipykernel = "*"
+jupytext = "*"
+nbconvert = "*"
+nutpie = "*"
+preliz = "*"
+python-graphviz = "*"
+watermark = "*"
+xarray-einstats = "*"
+
+[tool.pixi.feature.notebooks.pypi-dependencies]
+kuznets = "*"
+time-series-transformers = "*"
+
 [tool.pixi.feature.py313.dependencies]
 python = "3.13.*"
 
@@ -304,6 +326,7 @@ python = "3.13.*"
 default = { features = ["dev", "docs", "py312"], solve-group = "py312" }
 docs = { features = ["docs", "py312"], solve-group = "py312" }
 py313 = { features = ["dev", "py313"] }
+notebooks = { features = ["dev", "docs", "notebooks", "py312"], solve-group = "py312" }
 
 [tool.pixi.tasks]
 # Extra arguments pass through, e.g. `pixi run test tests/model -m "not include_nk"`. The XML report goes
@@ -313,3 +336,5 @@ test = "python -m pytest -vv --cache-clear --cov=gEconpy --cov-report=xml:covera
 lint = "pre-commit run --all-files"
 docs-build = { cmd = "python -m sphinx -W --keep-going -b html source build/html", cwd = "docs" }
 docs-api = "python docs/generate_api.py"
+# Execute one example notebook in place, then write its jupytext pair: `pixi run -e notebooks nb-run notebooks/x.ipynb`.
+nb-run = { cmd = "python -m jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=5400 '{{ notebook }}' && python -m jupytext --quiet --sync '{{ notebook }}'", args = ["notebook"] }
