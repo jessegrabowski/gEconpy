@@ -260,7 +260,7 @@ lines-between-types = 1
 'docs/generate_api.py' = ["T201"]
 'tests/parser/test_expected_errors.py' = ["T201"]
 
-'docs/source/examples/*/*.ipynb' = [
+'notebooks/*/*.ipynb' = [
     'F821', # Notebooks uses direct assignment to globals, so ruff thinks variables are not declared
     'PLR2004', # Allow magic numbers in notebooks
     'PTH113', # TODO: fix pathlib usage in notebooks
