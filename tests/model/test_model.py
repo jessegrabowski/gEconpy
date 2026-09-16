@@ -526,12 +526,16 @@ def test_bad_failure_argument_raises():
         )
 
 
-def test_gensys_fails_to_solve():
+@pytest.mark.parametrize(
+    ("solver", "match"),
+    [("gensys", "Gensys return codes"), ("cycle_reduction", "^Iteration on all matrices failed to converge$")],
+)
+def test_unsolvable_model_raises_with_the_solver_message(solver, match):
     model = model_from_gcn(TEST_GCNS / "pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
 
-    with pytest.raises(GensysFailedException):
+    with pytest.raises(GensysFailedException, match=match):
         model.solve_model(
-            solver="gensys",
+            solver=solver,
             on_failure="error",
             verbose=False,
             steady_state_kwargs={"verbose": False, "progressbar": False},
