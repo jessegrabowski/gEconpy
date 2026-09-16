@@ -42,7 +42,7 @@ dependencies = [
     "pandas",
     "pytensor>=3.3.0",
     "pymc>=6.3.0",
-    "pymc_extras>=0.15.0",
+    "pymc_extras>=0.15.1",
     "preliz>=0.27.0",
     "pyparsing",
     "scipy",
