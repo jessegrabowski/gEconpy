@@ -58,9 +58,10 @@ folder_title_map = {
 
 def is_tracked_by_git(filepath):
     """Check if a file is tracked by git."""
+    # Git indexes a symlink as one entry and reports nothing for paths that run through it, so resolve first.
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", str(filepath)],
+            ["git", "ls-files", "--error-unmatch", str(Path(filepath).resolve())],
             capture_output=True,
             check=False,
         )
