@@ -41,4 +41,3 @@ dependencies:
   - sympytensor>=2.1.0
   - better-optimize>=0.4.2
   - xarray
-  - networkx
