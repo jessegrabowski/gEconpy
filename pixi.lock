@@ -14323,7 +14323,6 @@ packages:
   - pyparsing
   - pytensor>=3.3.0
   - scipy
-  - setuptools
   - sympy>=1.14.0
   - sympytensor>=2.1.0
   - xarray
