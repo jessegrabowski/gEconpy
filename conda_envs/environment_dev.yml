@@ -5,10 +5,10 @@ channels:
 dependencies:
 - python 3.12.*
 - python >=3.12
-- numpy *
-- numba *
-- pytensor >=3.3.2
-- pymc >=6.3.0
+- numpy <3
+- numba <1
+- pytensor >=3.3.2,<4
+- pymc >=6.3.0,<7
 - pip
 - pip:
   - pre-commit
@@ -17,7 +17,7 @@ dependencies:
   - pytest-env
   - numdifftools
   - jax
-  - ipython
+  - ipython<10
   - myst-nb
   - numpydoc
   - sphinx>=9.1.0
@@ -27,17 +27,17 @@ dependencies:
   - pydata-sphinx-theme
   - watermark
   - -e .
-  - matplotlib
-  - numba
-  - numpy
-  - pandas
-  - pytensor>=3.3.2
-  - pymc>=6.3.0
-  - pymc-extras>=0.15.1
-  - preliz>=0.27.0
-  - pyparsing
-  - scipy
-  - sympy>=1.14.0
-  - sympytensor>=2.1.0
-  - better-optimize>=0.4.2
-  - xarray
+  - matplotlib<4
+  - numba<1
+  - numpy<3
+  - pandas<4
+  - pytensor>=3.3.2, <4
+  - pymc>=6.3.0, <7
+  - pymc-extras>=0.15.1, <1
+  - preliz>=0.27.0, <1
+  - pyparsing<4
+  - scipy<2
+  - sympy>=1.14.0, <2
+  - sympytensor>=2.1.0, <3
+  - better-optimize>=0.4.2, <1
+  - xarray<2027
