@@ -14297,28 +14297,28 @@ packages:
 - pypi: ./
   name: geconpy
   requires_dist:
-  - better-optimize>=0.4.2
-  - ipython
-  - matplotlib
-  - numba
-  - numpy
-  - pandas
-  - preliz>=0.27.0
-  - pymc-extras>=0.15.1
-  - pymc>=6.3.0
-  - pyparsing
-  - pytensor>=3.3.2
-  - scipy
-  - sympy>=1.14.0
-  - sympytensor>=2.1.0
-  - xarray
+  - better-optimize>=0.4.2,<1
+  - ipython<10
+  - matplotlib<4
+  - numba<1
+  - numpy<3
+  - pandas<4
+  - preliz>=0.27.0,<1
+  - pymc-extras>=0.15.1,<1
+  - pymc>=6.3.0,<7
+  - pyparsing<4
+  - pytensor>=3.3.2,<4
+  - scipy<2
+  - sympy>=1.14.0,<2
+  - sympytensor>=2.1.0,<3
+  - xarray<2027
   - jax ; extra == 'dev'
   - numdifftools ; extra == 'dev'
   - pre-commit ; extra == 'dev'
   - pytest-cov>=7.1.0 ; extra == 'dev'
   - pytest-env ; extra == 'dev'
   - pytest>=9.0.3 ; extra == 'dev'
-  - ipython ; extra == 'docs'
+  - ipython<10 ; extra == 'docs'
   - myst-nb ; extra == 'docs'
   - numpydoc ; extra == 'docs'
   - pydata-sphinx-theme ; extra == 'docs'

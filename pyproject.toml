@@ -36,21 +36,21 @@ keywords = [
 ]
 
 dependencies = [
-    "matplotlib",
-    "numba",
-    "numpy",
-    "pandas",
-    "pytensor>=3.3.2",
-    "pymc>=6.3.0",
-    "pymc_extras>=0.15.1",
-    "preliz>=0.27.0",
-    "pyparsing",
-    "scipy",
-    "sympy>=1.14.0",
-    "sympytensor>=2.1.0",
-    "better-optimize>=0.4.2",
-    "ipython",
-    "xarray"
+    "matplotlib<4",
+    "numba<1",
+    "numpy<3",
+    "pandas<4",
+    "pytensor>=3.3.2,<4",
+    "pymc>=6.3.0,<7",
+    "pymc_extras>=0.15.1,<1",
+    "preliz>=0.27.0,<1",
+    "pyparsing<4",
+    "scipy<2",
+    "sympy>=1.14.0,<2",
+    "sympytensor>=2.1.0,<3",
+    "better-optimize>=0.4.2,<1",
+    "ipython<10",
+    "xarray<2027"
   ]
 
 # pixi turns these extras into features of the same name.
@@ -65,7 +65,7 @@ dev = [
 ]
 
 docs = [
-  "ipython",
+  "ipython<10",
   "myst-nb",
   "numpydoc",
   "sphinx>=9.1.0",
@@ -276,10 +276,10 @@ platforms = ["osx-arm64", "linux-64", "win-64"]
 
 # The compiled stack resolves from conda-forge.
 [tool.pixi.dependencies]
-numpy = "*"
-numba = "*"
-pytensor = ">=3.3.2"
-pymc = ">=6.3.0"
+numpy = "<3"
+numba = "<1"
+pytensor = ">=3.3.2,<4"
+pymc = ">=6.3.0,<7"
 
 # gxx 16.2.0 on conda-forge win-64 cannot link (ld cannot find dllcrt2.o);
 # see conda-forge/ctng-compilers-feedstock#229 and m2w64-sysroot-feedstock#23.
@@ -298,21 +298,21 @@ python = "3.12.*"
 platforms = ["osx-arm64", "linux-64"]
 
 [tool.pixi.feature.notebooks.dependencies]
-arviz-plots = "*"
-arviz-stats = "*"
-flowjax = "*"
-ipykernel = "*"
-jupytext = "*"
-nbconvert = "*"
-nutpie = "*"
-preliz = "*"
-python-graphviz = "*"
-watermark = "*"
-xarray-einstats = "*"
+arviz-plots = "<2"
+arviz-stats = "<2"
+flowjax = "<20"
+ipykernel = "<8"
+jupytext = "<2"
+nbconvert = "<8"
+nutpie = "<1"
+preliz = "<1"
+python-graphviz = "<1"
+watermark = "<3"
+xarray-einstats = "<1"
 
 [tool.pixi.feature.notebooks.pypi-dependencies]
-kuznets = "*"
-time-series-transformers = "*"
+kuznets = "<2"
+time-series-transformers = "<1"
 
 [tool.pixi.feature.py313.dependencies]
 python = "3.13.*"
