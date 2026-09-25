@@ -46,7 +46,6 @@ dependencies = [
     "preliz>=0.27.0",
     "pyparsing",
     "scipy",
-    "setuptools",
     "sympy>=1.14.0",
     "sympytensor>=2.1.0",
     "better-optimize>=0.4.2",
