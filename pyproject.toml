@@ -50,8 +50,7 @@ dependencies = [
     "sympytensor>=2.1.0",
     "better-optimize>=0.4.2",
     "ipython",
-    "xarray",
-    "networkx"
+    "xarray"
   ]
 
 # pixi turns these extras into features of the same name.
