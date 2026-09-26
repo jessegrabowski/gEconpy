@@ -661,6 +661,18 @@ def test_compute_bk_eigenvalues():
     assert np.all(np.diff(modulus) >= -1e-12)
 
 
+def test_infinite_eigenvalues_are_reported_as_infinite():
+    """A singular pencil has genuinely infinite eigenvalues, not large finite ones."""
+    model = load_and_cache_model("one_block_1.gcn")
+    A, B, C, D = model.linearize_model()
+
+    eigvals_real, eigvals_imag, _ = compute_bk_eigenvalues(A, B, C, D)
+    modulus = np.sqrt(eigvals_real**2 + eigvals_imag**2)
+
+    assert np.isinf(modulus).sum() == 1
+    assert modulus[np.isfinite(modulus)].max() < 1e3
+
+
 def test_compute_bk_eigenvalues_pt():
     model = load_and_cache_model("rbc_linearized.gcn")
     A_np, B_np, C_np, D_np = model.linearize_model()

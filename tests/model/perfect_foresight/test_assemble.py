@@ -3,7 +3,10 @@ import pytest
 
 from numpy.testing import assert_array_equal
 
-from gEconpy.model.perfect_foresight.assemble import assemble_stacked_jacobian
+from gEconpy.model.perfect_foresight.assemble import (
+    assemble_stacked_jacobian,
+    build_stacked_jacobian_layout,
+)
 
 
 def _dense_reference(period_jacobians, n_vars, n_eq, T):
@@ -25,7 +28,8 @@ def test_stacked_jacobian_matches_dense_block_tridiagonal(T, n_eq, n_vars):
     period_jacobians = [rng.normal(size=(n_eq, 3 * n_vars)) for _ in range(T)]
     dense_pattern = np.ones((n_eq, 3 * n_vars), dtype=bool)
 
-    stacked = assemble_stacked_jacobian(period_jacobians, dense_pattern, n_vars, n_eq, T)
+    layout = build_stacked_jacobian_layout(dense_pattern, n_vars, n_eq, T)
+    stacked = assemble_stacked_jacobian(period_jacobians, layout)
 
     assert stacked.shape == (T * n_eq, T * n_vars)
     assert_array_equal(stacked.toarray(), _dense_reference(period_jacobians, n_vars, n_eq, T))
@@ -38,7 +42,8 @@ def test_structurally_nonzero_entry_keeps_its_slot_when_zero_in_every_period():
     period_jacobians[:, 0, n_vars] = 0.0
     dense_pattern = np.ones((n_eq, 3 * n_vars), dtype=bool)
 
-    stacked = assemble_stacked_jacobian(period_jacobians, dense_pattern, n_vars, n_eq, T)
+    layout = build_stacked_jacobian_layout(dense_pattern, n_vars, n_eq, T)
+    stacked = assemble_stacked_jacobian(period_jacobians, layout)
 
     coo = stacked.tocoo()
     stored = set(zip(coo.row.tolist(), coo.col.tolist(), strict=True))
@@ -55,7 +60,8 @@ def test_structurally_zero_entries_are_left_out():
     pattern = np.ones((n_eq, 3 * n_vars), dtype=bool)
     pattern[1, n_vars] = False
 
-    stacked = assemble_stacked_jacobian(period_jacobians, pattern, n_vars, n_eq, T)
+    layout = build_stacked_jacobian_layout(pattern, n_vars, n_eq, T)
+    stacked = assemble_stacked_jacobian(period_jacobians, layout)
 
     periods = np.arange(T)
     expected = _dense_reference(period_jacobians, n_vars, n_eq, T)
@@ -68,7 +74,7 @@ def test_wrong_pattern_shape_is_rejected():
     n_vars, n_eq, T = 2, 2, 1
 
     with pytest.raises(ValueError, match="sparsity_pattern has shape"):
-        assemble_stacked_jacobian([np.ones((n_eq, 3 * n_vars))], np.ones((n_eq, n_vars), dtype=bool), n_vars, n_eq, T)
+        build_stacked_jacobian_layout(np.ones((n_eq, n_vars), dtype=bool), n_vars, n_eq, T)
 
 
 def test_pattern_with_an_empty_block_assembles():
@@ -79,7 +85,8 @@ def test_pattern_with_an_empty_block_assembles():
     pattern = np.ones((n_eq, 3 * n_vars), dtype=bool)
     pattern[:, 2 * n_vars :] = False
 
-    stacked = assemble_stacked_jacobian(period_jacobians, pattern, n_vars, n_eq, T)
+    layout = build_stacked_jacobian_layout(pattern, n_vars, n_eq, T)
+    stacked = assemble_stacked_jacobian(period_jacobians, layout)
 
     expected = _dense_reference(period_jacobians, n_vars, n_eq, T)
     for t in range(T - 1):

@@ -169,6 +169,77 @@ def ast_to_sympy(node: Node, assumptions: dict[str, dict[str, bool]] | None = No
     return ASTToSympyConverter(assumptions).convert(node)
 
 
+def _checked_eq(lhs: sp.Expr, rhs: sp.Expr, assumptions: dict[str, dict[str, bool]]) -> sp.Eq:
+    """
+    Build an equation, rejecting one SymPy settles from the declared assumptions alone.
+
+    Parameters
+    ----------
+    lhs, rhs : sympy expression
+        The two sides of the equation.
+    assumptions : dict mapping str to dict
+        SymPy assumptions per symbol name.
+
+    Returns
+    -------
+    equation : sp.Eq
+        The equation, when SymPy leaves it standing.
+
+    Raises
+    ------
+    ValueError
+        If SymPy settles the equation to a boolean, which drops both sides.
+    """
+    equation = sp.Eq(lhs, rhs)
+
+    # A settled equation evaluates to a boolean. This is the last point where the symbols are still
+    # available to name in the error.
+    if equation is sp.true or equation is sp.false:
+        raise ValueError(_contradictory_equation_message(lhs, rhs, equation, assumptions))
+
+    return cast(sp.Eq, equation)
+
+
+def _contradictory_equation_message(
+    lhs: sp.Expr,
+    rhs: sp.Expr,
+    verdict: sp.logic.boolalg.BooleanAtom,
+    assumptions: dict[str, dict[str, bool]],
+) -> str:
+    """
+    Explain an equation that SymPy settled from the declared assumptions alone.
+
+    Parameters
+    ----------
+    lhs, rhs : sympy expression
+        The two sides of the equation, before SymPy collapsed it.
+    verdict : sympy BooleanAtom
+        What the equation evaluated to.
+    assumptions : dict mapping str to dict
+        SymPy assumptions per symbol name.
+
+    Returns
+    -------
+    message : str
+        Error message naming the equation and the assumptions that decided it.
+    """
+    outcome = "always true" if verdict else "impossible"
+
+    declared = []
+    for name in sorted({str(symbol) for symbol in lhs.free_symbols | rhs.free_symbols}):
+        flags = sorted(flag for flag, holds in assumptions.get(name, {}).items() if holds)
+        if flags:
+            declared.append(f"{name} ({', '.join(flags)})")
+    if declared:
+        detail = f" Declared assumptions: {'; '.join(declared)}."
+        advice = "Either change the value or drop the conflicting assumption."
+    else:
+        detail = ""
+        advice = "Remove it or correct the value."
+
+    return f"The equation '{lhs} = {rhs}' is {outcome}, so it carries no information.{detail} {advice}"
+
+
 def equation_to_sympy(
     eq: GCNEquation, assumptions: dict[str, dict[str, bool]] | None = None
 ) -> tuple[sp.Eq, dict[str, Any]]:
@@ -196,7 +267,7 @@ def equation_to_sympy(
     converter = ASTToSympyConverter(assumptions)
     lhs = converter.convert_expr(eq.lhs)
     rhs = converter.convert_expr(eq.rhs)
-    sympy_eq = cast(sp.Eq, sp.Eq(lhs, rhs))
+    sympy_eq = _checked_eq(lhs, rhs, assumptions)
 
     metadata: dict[str, Any] = {
         "is_calibrating": eq.is_calibrating,

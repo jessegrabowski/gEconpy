@@ -19,7 +19,7 @@ from gEconpy.parser.ast import (
 from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.errors import ParseLocation
 from gEconpy.parser.transform.expand_time_indices import expand_block_time_indices
-from gEconpy.parser.transform.to_sympy import ASTToSympyConverter, ast_to_sympy
+from gEconpy.parser.transform.to_sympy import ASTToSympyConverter, _checked_eq, ast_to_sympy
 
 EQUATION_COMPONENTS = ("definitions", "objective", "constraints", "identities", "calibration")
 
@@ -181,9 +181,9 @@ def _equation_to_sympy(eq: GCNEquation, assumptions: dict[str, dict[str, bool]])
     if eq.calibrating_parameter:
         param_assumptions = merge_assumptions(assumptions.get(eq.calibrating_parameter))
         param = sp.Symbol(eq.calibrating_parameter, **param_assumptions)
-        return cast(sp.Eq, sp.Eq(param, rhs - lhs))
+        return _checked_eq(param, rhs - lhs, assumptions)
 
-    return cast(sp.Eq, sp.Eq(lhs, rhs))
+    return _checked_eq(lhs, rhs, assumptions)
 
 
 def _extract_flags(eq: GCNEquation) -> dict[str, bool]:
@@ -219,7 +219,7 @@ def _convert_calibration(
             param = sp.Symbol(item.parameter_name, **param_assumptions)
             converted.append(
                 _ConvertedEquation(
-                    equation=cast(sp.Eq, sp.Eq(param, sp.Float(item.initial_value))),
+                    equation=_checked_eq(param, sp.Float(item.initial_value), assumptions),
                     flags={"is_calibrating": False},
                     multiplier=None,
                 )

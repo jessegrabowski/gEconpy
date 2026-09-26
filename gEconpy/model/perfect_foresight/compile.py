@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 import pytensor
@@ -13,6 +14,10 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import build_symbolic_jacobian, make_cache_key
 from gEconpy.model.model import Model
+from gEconpy.model.perfect_foresight.assemble import (
+    StackedJacobianLayout,
+    build_stacked_jacobian_layout,
+)
 from gEconpy.model.timing import classify_variables_by_timing
 from gEconpy.utilities import safe_to_ss
 
@@ -64,6 +69,11 @@ class PerfectForesightProblem:
     def n_eq(self) -> int:
         """Number of model equations, which equals the number of variables."""
         return len(self.var_names)
+
+    @cached_property
+    def jacobian_layout(self) -> StackedJacobianLayout:
+        """Index arrays of the stacked Jacobian, resolved once and reused across Newton iterations."""
+        return build_stacked_jacobian_layout(self.jacobian_sparsity, self.n_vars, self.n_eq, self.T)
 
 
 def compile_perfect_foresight_problem(

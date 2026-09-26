@@ -402,9 +402,7 @@ def _compute_stacked_residuals_and_jacobian(
     period_outputs = _evaluate_periods(problem.f_resid_and_jac, y, y_initial, y_terminal, x, params, problem)
     residuals, jacobians = zip(*period_outputs, strict=True)
 
-    stacked_jacobian = assemble_stacked_jacobian(
-        jacobians, problem.jacobian_sparsity, problem.n_vars, problem.n_eq, problem.T
-    )
+    stacked_jacobian = assemble_stacked_jacobian(jacobians, problem.jacobian_layout)
     return np.concatenate(residuals), stacked_jacobian
 
 
