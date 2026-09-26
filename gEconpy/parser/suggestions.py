@@ -5,7 +5,6 @@ from gEconpy.parser.constants import (
     KNOWN_ASSUMPTIONS,
     KNOWN_COMPONENTS,
     KNOWN_DISTRIBUTIONS,
-    KNOWN_SPECIAL_BLOCKS,
     KNOWN_WRAPPERS,
 )
 
@@ -101,23 +100,6 @@ def suggest_block_component(name: str) -> list[str]:
         Known component names, most similar first.
     """
     return find_similar_names(name, KNOWN_COMPONENTS)
-
-
-def suggest_special_block(name: str) -> list[str]:
-    """
-    Suggest special block names resembling a misspelled one.
-
-    Parameters
-    ----------
-    name : str
-        The misspelled block name.
-
-    Returns
-    -------
-    suggestions : list of str
-        Known special block names, most similar first.
-    """
-    return find_similar_names(name, KNOWN_SPECIAL_BLOCKS)
 
 
 def suggest_assumption(name: str) -> list[str]:
