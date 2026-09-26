@@ -562,16 +562,16 @@ def check_bk_condition(
     n_unstable = int((modulus > 1).sum())
     satisfied = bool(n_lead_columns == n_unstable)
 
-    message = (
-        f"Model solution has {n_unstable} eigenvalues greater than one in modulus and {n_lead_columns} "
-        f"forward-looking variables.\nBlanchard-Kahn condition is{'' if satisfied else ' NOT'} satisfied."
+    counts = (
+        f"{n_unstable} eigenvalues outside the unit circle against {n_lead_columns} forward-looking variables "
+        f"(columns of the lead Jacobian that are nonzero at these parameters)"
     )
 
-    if not satisfied:
-        if n_unstable > n_lead_columns:
-            message += " No stable solution (more unstable eigenvalues than forward-looking variables)."
-        else:
-            message += " No unique solution (more forward-looking variables than unstable eigenvalues)."
+    if satisfied:
+        message = f"Blanchard-Kahn condition satisfied: {counts}."
+    else:
+        consequence = "no stable solution" if n_unstable > n_lead_columns else "no unique solution"
+        message = f"Blanchard-Kahn condition NOT satisfied: {counts}. The model has {consequence}."
 
     if not satisfied and on_failure == "raise":
         raise ValueError(message)

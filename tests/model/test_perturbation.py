@@ -398,7 +398,7 @@ class TestCheckBKCondition:
 
     def test_on_failure_raise_names_the_failure(self):
         A, B, C, D = self._system("pert_fails.gcn")
-        with pytest.raises(ValueError, match=r"NOT satisfied\. No unique solution"):
+        with pytest.raises(ValueError, match=r"NOT satisfied.*no unique solution"):
             check_bk_condition(A, B, C, D, on_failure="raise", return_value=None, verbose=False)
 
     def test_on_failure_raise_is_silent_when_satisfied(self):
