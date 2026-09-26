@@ -108,23 +108,6 @@ def validate_model(model: GCNModel) -> ErrorCollector:
     return errors
 
 
-def validate_equation(eq: GCNEquation) -> ErrorCollector:  # noqa: ARG001
-    """
-    Validate a single equation.
-
-    Parameters
-    ----------
-    eq : GCNEquation
-        The equation to validate.
-
-    Returns
-    -------
-    errors : ErrorCollector
-        Always empty. A GCNEquation carries no state that the parser can leave inconsistent.
-    """
-    return ErrorCollector()
-
-
 def check_undefined_variables(
     model: GCNModel,
     external_variables: set[str] | None = None,
