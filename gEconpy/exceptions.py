@@ -254,15 +254,6 @@ class GensysFailedException(ValueError):
         super().__init__(message or "The perturbation solver did not return a unique stable solution.")
 
 
-class VariableNotFoundException(ValueError):
-    """Raised when a requested variable is not among the model variables."""
-
-    def __init__(self, variable: TimeAwareSymbol):
-        message = f"Variable {variable.base_name} was not found among model variables."
-
-        super().__init__(message)
-
-
 class InvalidDistributionException(ValueError):
     """Raised when a distribution declaration in a GCN file cannot be interpreted."""
 
@@ -271,30 +262,6 @@ class InvalidDistributionException(ValueError):
             f'The distribution for "{variable}", defined as "{distribution_string}", could not be parsed. A shock '
             f"distribution takes no initial value, so remove any '= value' after it, as in "
             f"'epsilon[] ~ Normal(mu=0, sigma=1) = 0.5'."
-        )
-
-        super().__init__(message)
-
-
-class MultipleParameterDefinitionException(ValueError):
-    """Raised when a distribution declaration sets the same parameter more than once."""
-
-    def __init__(self, variable_name: str, d_name: str, param_name: str, result_list: list[str]) -> None:
-        message = (
-            f'The {d_name} distribution for "{variable_name}" has multiple declarations for '
-            f"{param_name}. Pass only one of: {', '.join(result_list)}"
-        )
-
-        super().__init__(message)
-
-
-class InvalidParameterException(ValueError):
-    """Raised when a distribution declaration passes a parameter the distribution does not accept."""
-
-    def __init__(self, dist_name: str, param_name: str, valid_params: list[str]):
-        message = (
-            f"Unknown parameter {param_name} passed to distribution {dist_name}. Valid "
-            f"parameters for this distribution are: {', '.join(valid_params)}"
         )
 
         super().__init__(message)

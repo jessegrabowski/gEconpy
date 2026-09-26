@@ -18,7 +18,6 @@ from gEconpy.parser.ast.validation import (
     check_undefined_variables,
     full_validation,
     validate_block,
-    validate_equation,
     validate_model,
 )
 from gEconpy.parser.errors import GCNParseError
@@ -130,12 +129,6 @@ class TestValidateModel:
         )
         errors = validate_model(model)
         assert not errors.has_errors
-
-
-class TestValidateEquation:
-    def test_returns_empty_collector(self):
-        eq = GCNEquation(lhs=Variable(name="Y"), rhs=Variable(name="C"), calibrating_parameter="alpha")
-        assert not list(validate_equation(eq))
 
 
 class TestCheckUndefinedVariables:

@@ -13,5 +13,3 @@ gEconpy.parser.transform
     to_distribution.ast_to_distribution_with_metadata
     to_distribution.distributions_from_model
     to_sympy.ast_to_sympy
-    to_sympy.equation_to_sympy
-    to_sympy.model_to_sympy

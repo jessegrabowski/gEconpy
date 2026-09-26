@@ -11,9 +11,8 @@ gEconpy.parser.ast.validation
     check_undefined_variables
     full_validation
     validate_block
-    validate_equation
     validate_model
 
 .. automodule:: gEconpy.parser.ast.validation
-    :members: check_undefined_parameters, check_undefined_variables, full_validation, validate_block, validate_equation, validate_model
+    :members: check_undefined_parameters, check_undefined_variables, full_validation, validate_block, validate_model
     :undoc-members:

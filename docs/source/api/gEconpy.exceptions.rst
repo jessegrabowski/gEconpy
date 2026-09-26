@@ -15,16 +15,13 @@ gEconpy.exceptions
     GCNValidationError
     GensysFailedException
     InvalidDistributionException
-    InvalidParameterException
     ModelUnknownParameterError
     MultipleObjectiveFunctionsException
-    MultipleParameterDefinitionException
     OptimizationProblemNotDefinedException
     OrphanParameterError
     PerturbationSolutionNotFoundException
     SteadyStateNotFoundError
-    VariableNotFoundException
 
 .. automodule:: gEconpy.exceptions
-    :members: ControlVariableNotFoundException, DuplicateParameterError, DynamicCalibratingEquationException, ExtraParameterError, ExtraParameterWarning, GCNValidationError, GensysFailedException, InvalidDistributionException, InvalidParameterException, ModelUnknownParameterError, MultipleObjectiveFunctionsException, MultipleParameterDefinitionException, OptimizationProblemNotDefinedException, OrphanParameterError, PerturbationSolutionNotFoundException, SteadyStateNotFoundError, VariableNotFoundException
+    :members: ControlVariableNotFoundException, DuplicateParameterError, DynamicCalibratingEquationException, ExtraParameterError, ExtraParameterWarning, GCNValidationError, GensysFailedException, InvalidDistributionException, ModelUnknownParameterError, MultipleObjectiveFunctionsException, OptimizationProblemNotDefinedException, OrphanParameterError, PerturbationSolutionNotFoundException, SteadyStateNotFoundError
     :undoc-members:

@@ -336,45 +336,6 @@ def interpret_gensys_output(eu: list[int] | tuple[int, ...]) -> str:
     return message.strip()
 
 
-def determine_n_unstable(
-    alpha: np.ndarray,
-    beta: np.ndarray,
-    div: float | None,
-    realsmall: float,
-) -> tuple[float, int, bool]:
-    """
-    Classify the generalized eigenvalues ``beta / alpha`` as stable or unstable.
-
-    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m.
-
-    Parameters
-    ----------
-    alpha : ndarray of complex
-        Diagonal of the triangular ``A`` factor from the QZ decomposition.
-    beta : ndarray of complex
-        Diagonal of the triangular ``B`` factor from the QZ decomposition.
-    div : float, optional
-        Modulus above which an eigenvalue counts as unstable. When None, the cutoff starts at 1.01 and shrinks toward 1
-        whenever an eigenvalue lies just outside the unit circle, so borderline roots are grouped consistently.
-    realsmall : float
-        Tolerance for detecting coincident near-zero diagonal entries.
-
-    Returns
-    -------
-    div : float
-        The stability cutoff after any adjustment.
-    n_unstable : int
-        Number of eigenvalues classified as unstable.
-    zxz : bool
-        True when the final pair of diagonal entries is coincident near-zero, which signals a non-unique or
-        non-existent solution.
-    """
-    compute_div = div is None
-    starting_div = 1.01 if compute_div else float(div)
-    div_out, n_unstable, zxz = _determine_n_unstable_core(alpha, beta, starting_div, compute_div, realsmall)
-    return float(div_out), int(n_unstable), bool(zxz)
-
-
 @numba_basic.numba_njit(final_function=True)
 def split_matrix_on_eigen_stability(A: np.ndarray, n_unstable: int) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -396,75 +357,6 @@ def split_matrix_on_eigen_stability(A: np.ndarray, n_unstable: int) -> tuple[np.
     """
     n = A.shape[0]
     return A[: n - n_unstable], A[n - n_unstable :]
-
-
-def build_u_v_d(
-    eta: np.ndarray, realsmall: float = EPSILON, invalid_system: bool = False
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute a thin SVD of ``eta`` and keep the components with non-negligible singular values.
-
-    Adapted from http://sims.princeton.edu/yftp/gensys/mfiles/gensys.m.
-
-    Parameters
-    ----------
-    eta : ndarray
-        Matrix to decompose.
-    realsmall : float, optional
-        Threshold below which singular values are treated as zero. Defaults to machine epsilon.
-    invalid_system : bool, optional
-        Return zero-sized outputs so downstream code can short-circuit an ill-posed system. Defaults to False.
-
-    Returns
-    -------
-    u_eta : ndarray
-        Left singular vectors of the retained components.
-    v_eta : ndarray
-        Right singular vectors of the retained components.
-    d_eta : ndarray of float
-        Retained singular values as a 1-D array.
-    big_ev : ndarray of int
-        Indices of the retained singular values in the full spectrum.
-    """
-    if invalid_system or eta.size == 0:
-        dtype = eta.dtype
-        u_eta = np.zeros((eta.shape[0], 0), dtype=dtype)
-        d_eta = np.zeros(0, dtype=np.float64)
-        v_eta = np.zeros((eta.shape[-1], 0), dtype=dtype)
-        big_ev = np.zeros(0, dtype=np.int64)
-        return u_eta, v_eta, d_eta, big_ev
-
-    u, s, vh, keep = _thin_svd_and_rank(eta, realsmall)
-    big_ev = np.flatnonzero(keep)
-    u_eta = u[:, big_ev]
-    v_eta = vh.conj().T[:, big_ev]
-    d_eta = s[big_ev]
-    return u_eta, v_eta, d_eta, big_ev
-
-
-@numba_basic.numba_njit(final_function=True)
-def _determine_n_unstable_core(
-    alpha: np.ndarray,
-    beta: np.ndarray,
-    div: float,
-    compute_div: bool,
-    realsmall: float,
-) -> tuple[float, int, bool]:
-    n_unstable = 0
-    zxz = False
-
-    for i in range(alpha.size):
-        abs_a = np.abs(alpha[i])
-        abs_b = np.abs(beta[i])
-        if compute_div and abs_a > 0:
-            divhat = abs_b / abs_a
-            if 1 + realsmall < divhat <= div:
-                div = 0.5 * (1 + divhat)
-        if abs_b > div * abs_a:
-            n_unstable += 1
-        zxz = (abs_a < realsmall) and (abs_b < realsmall)
-
-    return div, n_unstable, zxz
 
 
 @numba_basic.numba_njit(final_function=True)
