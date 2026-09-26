@@ -9,8 +9,6 @@ from gEconpy.parser.transform.to_distribution import (
 )
 from gEconpy.parser.transform.to_sympy import (
     ast_to_sympy,
-    equation_to_sympy,
-    model_to_sympy,
 )
 
 __all__ = [
@@ -18,8 +16,6 @@ __all__ = [
     "ast_to_distribution_with_metadata",
     "ast_to_sympy",
     "distributions_from_model",
-    "equation_to_sympy",
     "expand_block_time_indices",
     "expand_model_time_indices",
-    "model_to_sympy",
 ]

@@ -1,6 +1,6 @@
 from collections import defaultdict
 from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 import sympy as sp
 
@@ -9,9 +9,7 @@ from gEconpy.parser.ast import (
     BinaryOp,
     Expectation,
     FunctionCall,
-    GCNBlock,
     GCNEquation,
-    GCNModel,
     Node,
     Number,
     Operator,
@@ -238,101 +236,3 @@ def _contradictory_equation_message(
         advice = "Remove it or correct the value."
 
     return f"The equation '{lhs} = {rhs}' is {outcome}, so it carries no information.{detail} {advice}"
-
-
-def equation_to_sympy(
-    eq: GCNEquation, assumptions: dict[str, dict[str, bool]] | None = None
-) -> tuple[sp.Eq, dict[str, Any]]:
-    """
-    Convert an equation to SymPy and extract its calibrating parameter and Lagrange multiplier.
-
-    A calibrating equation ``lhs = rhs -> param`` is returned as ``Eq(param, lhs - rhs)``.
-
-    Parameters
-    ----------
-    eq : GCNEquation
-        The equation to convert.
-    assumptions : dict mapping str to dict, optional
-        SymPy assumptions per variable or parameter name. Defaults to no assumptions.
-
-    Returns
-    -------
-    equation : sp.Eq
-        The SymPy equation.
-    metadata : dict
-        The keys ``is_calibrating`` (bool), ``calibrating_parameter`` (:class:`~sympy.core.symbol.Symbol` or None), and
-        ``lagrange_multiplier`` (:class:`~gEconpy.classes.time_aware_symbol.TimeAwareSymbol` or None).
-    """
-    assumptions = assumptions or {}
-    converter = ASTToSympyConverter(assumptions)
-    lhs = converter.convert_expr(eq.lhs)
-    rhs = converter.convert_expr(eq.rhs)
-    sympy_eq = _checked_eq(lhs, rhs, assumptions)
-
-    metadata: dict[str, Any] = {
-        "is_calibrating": eq.is_calibrating,
-        "calibrating_parameter": None,
-        "lagrange_multiplier": None,
-    }
-
-    if eq.calibrating_parameter:
-        param_assumptions = merge_assumptions(assumptions.get(eq.calibrating_parameter))
-        param = sp.Symbol(eq.calibrating_parameter, **param_assumptions)
-        metadata["calibrating_parameter"] = param
-        sympy_eq = cast(sp.Eq, sp.Eq(param, lhs - rhs))
-
-    if eq.lagrange_multiplier:
-        mult_assumptions = merge_assumptions(assumptions.get(eq.lagrange_multiplier))
-        metadata["lagrange_multiplier"] = TimeAwareSymbol(eq.lagrange_multiplier, 0, **mult_assumptions)
-
-    return sympy_eq, metadata
-
-
-def block_to_sympy(
-    block: GCNBlock, assumptions: dict[str, dict[str, bool]] | None = None
-) -> dict[str, list[tuple[sp.Eq, dict[str, Any]]]]:
-    """
-    Convert every equation in a block with :func:`equation_to_sympy`, grouped by component.
-
-    Parameters
-    ----------
-    block : GCNBlock
-        The block to convert.
-    assumptions : dict mapping str to dict, optional
-        SymPy assumptions per variable or parameter name. Defaults to no assumptions.
-
-    Returns
-    -------
-    equations : dict mapping str to list
-        The keys ``definitions``, ``objective``, ``constraints``, ``identities``, and ``calibration``, each holding
-        the ``(equation, metadata)`` pairs of that component. Distribution declarations in the calibration
-        component are skipped.
-    """
-    return {
-        "definitions": [equation_to_sympy(eq, assumptions) for eq in block.definitions],
-        "objective": [equation_to_sympy(eq, assumptions) for eq in block.objective],
-        "constraints": [equation_to_sympy(eq, assumptions) for eq in block.constraints],
-        "identities": [equation_to_sympy(eq, assumptions) for eq in block.identities],
-        "calibration": [
-            equation_to_sympy(item, assumptions) for item in block.calibration if isinstance(item, GCNEquation)
-        ],
-    }
-
-
-def model_to_sympy(model: GCNModel) -> dict[str, dict[str, list[tuple[sp.Eq, dict[str, Any]]]]]:
-    """
-    Convert every block in a model with :func:`~gEconpy.parser.transform.to_sympy.block_to_sympy`.
-
-    The model's own assumptions are applied to every block.
-
-    Parameters
-    ----------
-    model : GCNModel
-        The model to convert.
-
-    Returns
-    -------
-    equations : dict mapping str to dict
-        The result of :func:`~gEconpy.parser.transform.to_sympy.block_to_sympy` for each block, keyed by block name.
-    """
-    return {block.name: block_to_sympy(block, model.assumptions) for block in model.blocks}

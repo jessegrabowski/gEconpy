@@ -73,12 +73,6 @@ class TestParseResult:
         assert simple_model.tryreduce == []
         assert simple_model.assumptions == {}
 
-    def test_sympy_equations_computed_once(self, simple_model):
-        equations = simple_model.sympy_equations
-        assert simple_model.sympy_equations is equations
-        assert set(equations["HOUSEHOLD"]) == {"definitions", "objective", "constraints", "identities", "calibration"}
-        assert len(equations["HOUSEHOLD"]["identities"]) == 1
-
     def test_distributions_computed_once(self, simple_model):
         distributions = simple_model.distributions
         assert simple_model.distributions is distributions

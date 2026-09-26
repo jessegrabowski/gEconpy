@@ -24,9 +24,6 @@ from gEconpy.parser.grammar.expressions import parse_expression
 from gEconpy.parser.transform.to_sympy import (
     ASTToSympyConverter,
     ast_to_sympy,
-    block_to_sympy,
-    equation_to_sympy,
-    model_to_sympy,
 )
 from tests.conftest import parsed_symbol, parsed_symbols, parsed_var
 
@@ -130,52 +127,6 @@ class TestConvertEquation:
         eq = GCNEquation(lhs=Variable(name="Y"), rhs=Variable(name="C"))
         assert ast_to_sympy(eq) == sp.Eq(parsed_var("Y", 0), parsed_var("C", 0))
 
-    def test_equation_to_sympy_with_metadata(self):
-        eq = GCNEquation(lhs=Variable(name="Y"), rhs=Variable(name="C"))
-        result, metadata = equation_to_sympy(eq)
-        assert result == sp.Eq(parsed_var("Y", 0), parsed_var("C", 0))
-        assert metadata == {"is_calibrating": False, "calibrating_parameter": None, "lagrange_multiplier": None}
-
-    def test_equation_with_lagrange(self):
-        eq = GCNEquation(lhs=Variable(name="C"), rhs=Variable(name="Y"), lagrange_multiplier="lambda")
-        _result, metadata = equation_to_sympy(eq)
-        assert metadata["lagrange_multiplier"] == parsed_var("lambda", 0)
-
-    def test_calibrating_equation(self):
-        eq = GCNEquation(lhs=Parameter(name="beta"), rhs=Number(value=0.99), calibrating_parameter="beta")
-        _result, metadata = equation_to_sympy(eq)
-        assert metadata["is_calibrating"] is True
-        assert metadata["calibrating_parameter"] == parsed_symbol("beta")
-
-    def test_assumptions_reach_multiplier_and_calibrating_parameter(self):
-        eq = GCNEquation(
-            lhs=Variable(name="C"),
-            rhs=Variable(name="Y"),
-            lagrange_multiplier="lambda",
-            calibrating_parameter="beta",
-        )
-        assumptions = {"lambda": {"positive": True}, "beta": {"negative": True}}
-        _result, metadata = equation_to_sympy(eq, assumptions)
-
-        assert metadata["lagrange_multiplier"].is_positive is True
-        assert metadata["calibrating_parameter"].is_negative is True
-
-    def test_calibrating_equation_rearrangement(self):
-        # L[ss] / K[ss] = 0.36 -> alpha  becomes  alpha = L[ss] / K[ss] - 0.36
-        eq = GCNEquation(
-            lhs=BinaryOp(
-                left=Variable(name="L", time_index=STEADY_STATE),
-                op=Operator.DIV,
-                right=Variable(name="K", time_index=STEADY_STATE),
-            ),
-            rhs=Number(value=0.36),
-            calibrating_parameter="alpha",
-        )
-        result, _metadata = equation_to_sympy(eq)
-
-        assert result.lhs == parsed_symbol("alpha")
-        assert result.rhs == parsed_var("L", "ss") / parsed_var("K", "ss") - sp.Float(0.36)
-
 
 class TestRealEquations:
     def test_definition_equation(self):
@@ -220,44 +171,6 @@ class TestRealEquations:
     def test_ar1_shock_process(self):
         result = ast_to_sympy(parse_expression("rho_A * A[-1] + epsilon_A[]"))
         assert result == parsed_symbol("rho_A") * parsed_var("A", -1) + parsed_var("epsilon_A", 0)
-
-
-class TestBlockToSympy:
-    def test_groups_equations_by_component_and_skips_distributions(self):
-        block = GCNBlock(
-            name="TEST",
-            identities=[
-                GCNEquation(
-                    lhs=Variable(name="Y"),
-                    rhs=BinaryOp(left=Variable(name="C"), op=Operator.ADD, right=Variable(name="I")),
-                )
-            ],
-            calibration=[
-                GCNEquation(lhs=Parameter(name="alpha"), rhs=Number(value=0.35)),
-                GCNDistribution(parameter_name="beta", dist_name="Beta", dist_kwargs={"alpha": 2, "beta": 5}),
-            ],
-        )
-
-        result = block_to_sympy(block)
-
-        assert set(result) == {"definitions", "objective", "constraints", "identities", "calibration"}
-        assert result["definitions"] == []
-        assert len(result["identities"]) == 1
-        assert len(result["calibration"]) == 1
-        assert result["identities"][0][0] == sp.Eq(parsed_var("Y", 0), parsed_var("C", 0) + parsed_var("I", 0))
-
-
-class TestModelToSympy:
-    def test_uses_model_assumptions(self):
-        block = GCNBlock(name="EQUILIBRIUM", identities=[GCNEquation(lhs=Variable(name="Y"), rhs=Variable(name="C"))])
-        model = GCNModel(blocks=[block], assumptions={"Y": {"positive": True}, "C": {"positive": True}})
-
-        result = model_to_sympy(model)
-
-        assert set(result) == {"EQUILIBRIUM"}
-        equation, _metadata = result["EQUILIBRIUM"]["identities"][0]
-        assert equation.lhs.is_positive is True
-        assert equation.rhs.is_positive is True
 
 
 class TestAssumptionsPropagation:

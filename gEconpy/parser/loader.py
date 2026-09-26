@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import sympy as sp
 
@@ -18,13 +18,10 @@ from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_me
 from gEconpy.parser.transform.to_sympy import (
     _checked_eq,
     ast_to_sympy,
-    equation_to_sympy,
 )
 from gEconpy.utilities import flatten_substitution_dict
 
 ParamDictName = Literal["param_dict", "deterministic_dict", "calib_dict"]
-
-_EQUATION_COMPONENTS = ("definitions", "objective", "constraints", "identities")
 
 
 @dataclass
@@ -170,33 +167,6 @@ def ast_model_to_primitives(
         assumptions=assumptions,
         block_dict=block_dict,
     )
-
-
-def ast_block_to_equations(
-    block: GCNBlock,
-    assumptions: dict[str, dict[str, bool]] | None = None,
-) -> dict[str, list[tuple[sp.Eq, dict[str, Any]]]]:
-    """
-    Convert the equations of a parsed block to SymPy, grouped by component.
-
-    Parameters
-    ----------
-    block : GCNBlock
-        The block to convert.
-    assumptions : dict mapping str to dict, optional
-        SymPy assumptions per symbol name. Defaults to no assumptions.
-
-    Returns
-    -------
-    equations : dict mapping str to list
-        For each of ``definitions``, ``objective``, ``constraints``, and ``identities``, a list of
-        ``(equation, metadata)`` pairs.
-    """
-    assumptions = assumptions or {}
-    return {
-        component: [equation_to_sympy(eq, assumptions) for eq in getattr(block, component)]
-        for component in _EQUATION_COMPONENTS
-    }
 
 
 def ast_block_to_calibration(

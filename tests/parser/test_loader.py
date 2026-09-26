@@ -7,7 +7,6 @@ from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.parser.ast import GCNBlock
 from gEconpy.parser.loader import (
     ast_block_to_calibration,
-    ast_block_to_equations,
     ast_block_to_variables_and_shocks,
     ast_model_to_primitives,
     load_gcn_file,
@@ -19,31 +18,6 @@ from tests.conftest import TEST_GCNS
 
 def parse_single_block(source: str) -> GCNBlock:
     return quick_parse(source).blocks[0]
-
-
-class TestAstBlockToEquations:
-    @pytest.mark.parametrize(
-        "component, body, n_equations",
-        [
-            ("identities", "Y[] = C[] + I[]; K[] = (1 - delta) * K[-1] + I[];", 2),
-            ("definitions", "u[] = log(C[]);", 1),
-            ("objective", "U[] = u[] + beta * E[][U[1]];", 1),
-            ("constraints", "C[] + K[] = Y[] : lambda[];", 1),
-        ],
-    )
-    def test_extracts_component(self, component, body, n_equations):
-        block = parse_single_block(f"block TEST {{ {component} {{ {body} }}; }};")
-        equations = ast_block_to_equations(block)
-
-        assert set(equations) == {"definitions", "objective", "constraints", "identities"}
-        assert len(equations[component]) == n_equations
-        assert all(isinstance(eq, sp.Eq) for eq, _metadata in equations[component])
-        assert all(len(equations[other]) == 0 for other in equations if other != component)
-
-    def test_constraint_metadata_records_lagrange_multiplier(self):
-        block = parse_single_block("block TEST { constraints { C[] + K[] = Y[] : lambda[]; }; };")
-        _eq, metadata = ast_block_to_equations(block)["constraints"][0]
-        assert metadata["lagrange_multiplier"] is not None
 
 
 class TestAstBlockToCalibration:

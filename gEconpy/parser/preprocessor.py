@@ -1,8 +1,6 @@
 from pathlib import Path
 from typing import Any
 
-import sympy as sp
-
 from preliz.distributions.distributions import Distribution
 
 from gEconpy.parser.ast import GCNBlock, GCNModel
@@ -10,7 +8,6 @@ from gEconpy.parser.ast.validation import full_validation
 from gEconpy.parser.errors import ErrorCollector
 from gEconpy.parser.grammar.gcn_file import parse_gcn
 from gEconpy.parser.transform.to_distribution import distributions_from_model
-from gEconpy.parser.transform.to_sympy import model_to_sympy
 
 
 class ParseResult:
@@ -37,7 +34,6 @@ class ParseResult:
         self.source = source
         self.filename = filename
         self._validation_errors: ErrorCollector | None = None
-        self._sympy_equations: dict[str, dict[str, list[tuple[sp.Eq, dict[str, Any]]]]] | None = None
         self._distributions: dict[str, tuple[Distribution, dict[str, Any]]] | None = None
 
     @property
@@ -51,13 +47,6 @@ class ParseResult:
     def has_errors(self) -> bool:
         """True if validation found at least one error-level issue. Warnings alone give False."""
         return self.validation_errors.has_errors
-
-    @property
-    def sympy_equations(self) -> dict[str, dict[str, list[tuple[sp.Eq, dict[str, Any]]]]]:
-        """The model equations as SymPy expressions, grouped by block and component, computed on first access."""
-        if self._sympy_equations is None:
-            self._sympy_equations = model_to_sympy(self.ast)
-        return self._sympy_equations
 
     @property
     def distributions(self) -> dict[str, tuple[Distribution, dict[str, Any]]]:
