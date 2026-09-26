@@ -1,10 +1,13 @@
+from collections.abc import Sequence
+
 import numpy as np
 
 from scipy import sparse
 
 
 def assemble_stacked_jacobian(
-    period_jacobians: list[np.ndarray],
+    period_jacobians: Sequence[np.ndarray],
+    sparsity_pattern: np.ndarray,
     n_vars: int,
     n_eq: int,
     T: int,
@@ -17,8 +20,11 @@ def assemble_stacked_jacobian(
 
     Parameters
     ----------
-    period_jacobians : list of ndarray
+    period_jacobians : sequence of ndarray
         T dense matrices, each of shape ``(n_eq, 3 * n_vars)``.
+    sparsity_pattern : ndarray of bool
+        Structural nonzero mask of one period's Jacobian, of shape ``(n_eq, 3 * n_vars)``, shared by every
+        period. A structurally nonzero entry that is numerically zero at this iterate keeps an explicit slot.
     n_vars : int
         Number of variables per period.
     n_eq : int
@@ -30,13 +36,22 @@ def assemble_stacked_jacobian(
     -------
     jacobian : sparse.csc_matrix
         Block-tridiagonal matrix of shape ``(T * n_eq, T * n_vars)``.
+
+    Raises
+    ------
+    ValueError
+        If ``sparsity_pattern`` does not have shape ``(n_eq, 3 * n_vars)``.
     """
-    # An entry can be exactly zero in one period (a parameter path or an initial guess passing through zero) and
-    # nonzero in another, so the shared sparsity pattern is the union of the nonzero masks over all periods.
-    nonzero_anywhere = np.any(np.stack(period_jacobians) != 0, axis=0)
-    rows_tm1, cols_tm1 = np.nonzero(nonzero_anywhere[:, :n_vars])
-    rows_t, cols_t = np.nonzero(nonzero_anywhere[:, n_vars : 2 * n_vars])
-    rows_tp1, cols_tp1 = np.nonzero(nonzero_anywhere[:, 2 * n_vars : 3 * n_vars])
+    # The caller supplies the pattern because reading it off ``period_jacobians`` cannot be made safe: an entry
+    # can pass through zero in every period at once (a steady-state initial guess, a parameter path crossing
+    # zero), and a pattern inferred from those values drops it, leaving Newton to step against a Jacobian that
+    # is wrong rather than approximate.
+    if sparsity_pattern.shape != (n_eq, 3 * n_vars):
+        raise ValueError(f"sparsity_pattern has shape {sparsity_pattern.shape}, expected {(n_eq, 3 * n_vars)}.")
+
+    rows_tm1, cols_tm1 = np.nonzero(sparsity_pattern[:, :n_vars])
+    rows_t, cols_t = np.nonzero(sparsity_pattern[:, n_vars : 2 * n_vars])
+    rows_tp1, cols_tp1 = np.nonzero(sparsity_pattern[:, 2 * n_vars : 3 * n_vars])
 
     nnz_tm1 = len(rows_tm1)
     nnz_t = len(rows_t)
