@@ -19,8 +19,8 @@ def _dense_reference(period_jacobians, n_vars, n_eq, T):
 
 
 @pytest.mark.parametrize("T", [1, 2, 5])
-def test_stacked_jacobian_matches_dense_block_tridiagonal(T):
-    n_vars, n_eq = 3, 3
+@pytest.mark.parametrize(("n_eq", "n_vars"), [(3, 3), (2, 4), (4, 2)], ids=["square", "wide", "tall"])
+def test_stacked_jacobian_matches_dense_block_tridiagonal(T, n_eq, n_vars):
     rng = np.random.default_rng(0)
     period_jacobians = [rng.normal(size=(n_eq, 3 * n_vars)) for _ in range(T)]
     dense_pattern = np.ones((n_eq, 3 * n_vars), dtype=bool)
