@@ -128,6 +128,13 @@ class TestConvertEquation:
         assert ast_to_sympy(eq) == sp.Eq(parsed_var("Y", 0), parsed_var("C", 0))
 
 
+class TestConvertEquationRejectsSettledEquations:
+    def test_contradictory_equation_raises_instead_of_returning_a_boolean(self):
+        eq = GCNEquation(lhs=Parameter(name="alpha"), rhs=Number(value=0))
+        with pytest.raises(ValueError, match=r"'alpha = 0' is impossible"):
+            ast_to_sympy(eq, {"alpha": {"positive": True}})
+
+
 class TestRealEquations:
     def test_definition_equation(self):
         result = ast_to_sympy(parse_expression("log(C[]) + log(L[])"))

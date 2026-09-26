@@ -145,7 +145,7 @@ class ASTToSympyConverter:
         return self.convert(node.expr)
 
     def _convert_equation(self, node: GCNEquation) -> sp.Eq:
-        return cast(sp.Eq, sp.Eq(self.convert_expr(node.lhs), self.convert_expr(node.rhs)))
+        return _checked_eq(self.convert_expr(node.lhs), self.convert_expr(node.rhs), self.assumptions)
 
 
 def ast_to_sympy(node: Node, assumptions: dict[str, dict[str, bool]] | None = None) -> sp.Basic:
