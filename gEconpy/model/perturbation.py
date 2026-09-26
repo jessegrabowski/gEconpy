@@ -429,8 +429,8 @@ def compute_bk_eigenvalues(
     A, B, C, D : ndarray
         Jacobian matrices of the linearized DSGE system.
     tol : float, optional
-        Threshold on the absolute column sums of ``C`` below which a lead column counts as empty, and the
-        amount added to the denominator when forming the generalized eigenvalues. Defaults to 1e-8.
+        Threshold on the absolute column sums of ``C`` below which a lead column counts as empty, and on the
+        pencil diagonal below which an eigenvalue counts as infinite. Defaults to 1e-8.
 
     Returns
     -------
@@ -446,9 +446,15 @@ def compute_bk_eigenvalues(
     G0, Gamma_1, _, _, _, lead_var_idx = _gensys_setup(A, B, C, D, tol)
     AA, BB, *_ = linalg.ordqz(-G0, Gamma_1, sort="ouc", output="complex")
 
-    eigenvalues = np.diag(BB) / (np.diag(AA) + tol)
-    idx = np.argsort(np.abs(eigenvalues))
-    eigenvalues = eigenvalues[idx]
+    # A zero on the diagonal of AA is an infinite generalized eigenvalue, not a large one. Nudging the
+    # denominator by tol instead would bias every eigenvalue, and would amplify rather than damp the ones where
+    # the diagonal sits near -tol.
+    alpha, beta = np.diag(AA), np.diag(BB)
+    finite = np.abs(alpha) > tol
+    eigenvalues = np.full(alpha.shape, np.inf, dtype=complex)
+    eigenvalues[finite] = beta[finite] / alpha[finite]
+
+    eigenvalues = eigenvalues[np.argsort(np.abs(eigenvalues))]
 
     return np.real(eigenvalues), np.imag(eigenvalues), int(lead_var_idx.size)
 
