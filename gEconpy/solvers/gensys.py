@@ -175,7 +175,7 @@ def solve_policy_function_with_gensys(
     C_f = np.ascontiguousarray(C, dtype=np.float64)
     D_f = np.ascontiguousarray(D, dtype=np.float64)
 
-    g0, g1, c, psi, pi = _gensys_setup(A_f, B_f, C_f, D_f, tol)
+    g0, g1, c, psi, pi, _ = _gensys_setup(A_f, B_f, C_f, D_f, tol)
     return gensys(g0, g1, c, psi, pi, tol=tol, return_all_matrices=return_all_matrices)
 
 
@@ -292,7 +292,7 @@ def numba_funcify_GensysWrapper(op, node, **kwargs):  # noqa: ARG001
         # Read n_vars at runtime: the static shape is None for inputs declared without a shape, and slicing with
         # None silently returns the full stacked block where the (n, n) policy function is wanted.
         n_vars = A.shape[0]
-        g0, g1, c, psi, pi = _gensys_setup(_prep(A), _prep(B), _prep(C), _prep(D), tol)
+        g0, g1, c, psi, pi, _ = _gensys_setup(_prep(A), _prep(B), _prep(C), _prep(D), tol)
         G_1, _C_out, _impact, _f_mat, _f_wt, _y_wt, _gev, eu, _loose = _gensys_core(g0, g1, c, psi, pi, tol)
 
         T = np.ascontiguousarray(G_1[:n_vars, :n_vars])
@@ -495,13 +495,13 @@ def _gensys_setup(
     C: np.ndarray,
     D: np.ndarray,
     tol: float = 1e-8,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Assemble the ``(g0, g1, c, psi, pi)`` quintuple expected by :func:`gensys` from the model Jacobians.
+    Assemble the ``(g0, g1, c, psi, pi)`` quintuple expected by :func:`gensys`, plus the lead variable indices.
 
-    A lead variable is a column of ``C`` with at least one entry larger than ``tol`` in absolute value. Each lead
-    variable gets an auxiliary equation and an expectational error, so the stacked system has ``n_eq + n_leads``
-    rows.
+    A lead variable is a column of ``C`` whose absolute column sum exceeds ``tol``. Each lead variable gets an
+    auxiliary equation and an expectational error, so the stacked system has ``n_eq + n_leads`` rows. This is
+    the only place that rule is applied, so callers needing the same set take it from here.
     """
     n_eq = A.shape[0]
     n_shocks = D.shape[1]
@@ -539,7 +539,7 @@ def _gensys_setup(
     G0 = -Gamma_0
     const = np.zeros((n_eq + n_leads, 1))
 
-    return G0, Gamma_1, const, Psi, Pi
+    return G0, Gamma_1, const, Psi, Pi, lead_var_idx
 
 
 @numba_basic.numba_njit(final_function=True)

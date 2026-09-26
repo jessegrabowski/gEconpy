@@ -440,16 +440,14 @@ def compute_bk_eigenvalues(
     n_forward : int
         Number of forward-looking variables, the columns of ``C`` with a nonzero entry.
     """
-    Gamma_0, Gamma_1, _, _, _ = _gensys_setup(A, B, C, D, tol)
-    AA, BB, *_ = linalg.ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
+    G0, Gamma_1, _, _, _, lead_var_idx = _gensys_setup(A, B, C, D, tol)
+    AA, BB, *_ = linalg.ordqz(-G0, Gamma_1, sort="ouc", output="complex")
 
     eigenvalues = np.diag(BB) / (np.diag(AA) + tol)
     idx = np.argsort(np.abs(eigenvalues))
     eigenvalues = eigenvalues[idx]
 
-    n_forward = (np.abs(C).sum(axis=0) > tol).sum().astype(int)
-
-    return np.real(eigenvalues), np.imag(eigenvalues), n_forward
+    return np.real(eigenvalues), np.imag(eigenvalues), int(lead_var_idx.size)
 
 
 def compute_bk_eigenvalues_pt(
