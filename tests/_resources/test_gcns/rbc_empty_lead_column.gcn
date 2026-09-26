@@ -1,0 +1,63 @@
+# An RBC whose news term ``chi * E[][Z[1]]`` is the only place Z appears at t+1. With the default chi = 0 the
+# lead Jacobian column for Z is all zeros, so anything that infers the forward-looking set from the numbers at
+# the default calibration drops Z. Raising chi makes that column nonzero without moving the steady state,
+# because Z is a mean-zero process.
+
+options
+{
+
+};
+
+assumptions
+{
+    positive
+    {
+        C[], K[], A[], alpha, beta, delta, gamma;
+    };
+};
+
+block HOUSEHOLD
+{
+    definitions
+    {
+        u[] = (C[] ^ (1 - gamma) - 1) / (1 - gamma);
+    };
+
+    controls
+    {
+        C[], K[];
+    };
+
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
+
+    constraints
+    {
+        C[] + K[] - (1 - delta) * K[-1] = A[] * K[-1] ^ alpha + chi * E[][Z[1]] : lambda[];
+    };
+
+    identities
+    {
+        log(A[]) = rho * log(A[-1]) + epsilon[];
+        Z[] = rho_Z * Z[-1] + epsilon_Z[];
+    };
+
+    shocks
+    {
+        epsilon[], epsilon_Z[];
+    };
+
+    calibration
+    {
+        alpha = 0.4;
+        beta = 0.99;
+        delta = 0.02;
+        rho = 0.95;
+        gamma = 1.5;
+        rho_Z = 0.5;
+        chi = 0;
+    };
+
+};

@@ -381,7 +381,6 @@ class Model:
         self._f_full_residual: Callable | None = None
 
         self._backward_variables: list[TimeAwareSymbol] | None = None
-        self._symbolic_forward_variables: list[TimeAwareSymbol] | None = None
         self._forward_variables: list[TimeAwareSymbol] | None = None
         self._lead_var_idx: np.ndarray | None = None
         self._dr_order: DROrder | None = None
@@ -480,40 +479,18 @@ class Model:
         return self._backward_variables
 
     @property
-    def symbolic_forward_variables(self) -> list[TimeAwareSymbol]:
-        """
-        Variables that appear at t+1 in at least one equation.
-
-        This is the syntactic notion of "forward-looking". The linearization can still assign a zero column in the
-        lead Jacobian to such a variable, so :attr:`forward_variables` is the set that Blanchard-Kahn counting uses.
-        """
-        if self._symbolic_forward_variables is None:
-            leads = {a.set_t(0) for eq in self._equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == 1}
-            self._symbolic_forward_variables = [v for v in self._variables if v in leads]
-        return self._symbolic_forward_variables
-
-    @property
     def forward_variables(self) -> list[TimeAwareSymbol]:
         """
-        Forward-looking (jump) variables.
+        Variables that appear at t+1 in at least one equation, the jump variables.
 
-        A variable is forward-looking when its column in the lead Jacobian ``C`` of
-        ``A x[t-1] + B x[t] + C x[t+1] + D eps = 0`` has an entry above 1e-8 in absolute value. The Blanchard-Kahn
-        condition requires the number of unstable eigenvalues to equal the length of this list.
-
-        The first access linearizes the model at the default parameters, solving the steady state if needed, and
-        caches the result. When that linearization fails, :attr:`symbolic_forward_variables` is used instead.
+        The Blanchard-Kahn condition requires the number of unstable eigenvalues to equal the length of this list.
         """
+        # Measuring this from the lead Jacobian instead would tie the set to the parameters it was measured at,
+        # and it is reused at every other parameter vector. Over-counting is safe: an all-zero lead column
+        # contributes an infinite generalized eigenvalue, adding one to both sides of the comparison.
         if self._forward_variables is None:
-            try:
-                _, _, C, _ = self.linearize_model(verbose=False)
-            except Exception:
-                # Linearization needs a steady state, which the default parameters may not admit. The syntactic set
-                # is the only answer available in that case.
-                self._forward_variables = list(self.symbolic_forward_variables)
-            else:
-                column_sums = np.abs(C).sum(axis=0)
-                self._forward_variables = [v for v, s in zip(self._variables, column_sums, strict=True) if s > 1e-8]
+            leads = {a.set_t(0) for eq in self._equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == 1}
+            self._forward_variables = [v for v in self._variables if v in leads]
         return self._forward_variables
 
     @property
@@ -525,11 +502,6 @@ class Model:
     def n_forward(self) -> int:
         """Number of forward-looking (jump) variables, the length of :attr:`forward_variables`."""
         return len(self.forward_variables)
-
-    @property
-    def n_symbolic_forward(self) -> int:
-        """Number of variables appearing at t+1 anywhere in the model equations."""
-        return len(self.symbolic_forward_variables)
 
     @property
     def lead_var_idx(self) -> np.ndarray:

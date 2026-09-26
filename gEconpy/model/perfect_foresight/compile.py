@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import numpy as np
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
@@ -28,6 +29,9 @@ class PerfectForesightProblem:
         called as ``f(y_tm1, y_t, y_tp1, [x_t,] *params)``, with ``x_t`` omitted when the model has no shocks.
     f_resid_only : callable or None
         Function with the same inputs returning only the residuals, or None when it was not compiled.
+    jacobian_sparsity : ndarray of bool
+        Structural nonzero mask of the single-period Jacobian, of shape ``(n_eq, 3 * n_vars)``. It is derived
+        from the equations, so it holds at every point the solver can visit.
     var_names : list of str
         Variable names, giving the column order of the stacked system.
     shock_names : list of str
@@ -40,6 +44,7 @@ class PerfectForesightProblem:
 
     f_resid_and_jac: Callable
     f_resid_only: Callable | None
+    jacobian_sparsity: np.ndarray
     var_names: list[str]
     shock_names: list[str]
     param_names: list[str]
@@ -92,6 +97,7 @@ def compile_perfect_foresight_problem(
     return PerfectForesightProblem(
         f_resid_and_jac=f_resid_and_jac,
         f_resid_only=f_resid_only,
+        jacobian_sparsity=graph.sparsity,
         var_names=graph.var_names,
         shock_names=graph.shock_names,
         param_names=graph.param_names,
@@ -104,6 +110,7 @@ class _SinglePeriodGraph:
     inputs: list[pt.TensorVariable]
     residuals: pt.TensorVariable
     jacobian: pt.TensorVariable
+    sparsity: np.ndarray
     var_names: list[str]
     shock_names: list[str]
     param_names: list[str]
@@ -153,6 +160,7 @@ def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
     # variable appears at that time index, so the vector replacement below lines up.
     jacobian_wrt = [v.set_t(-1) for v in vars_t] + list(vars_t) + [v.set_t(1) for v in vars_t]
     jacobian = build_symbolic_jacobian(equations, jacobian_wrt, cache, to_ss=False)
+    sparsity = _jacobian_sparsity(equations, jacobian_wrt)
     residuals = pt.stack(equations_pt)
 
     y_tm1 = pt.dvector("y_tm1", shape=(n_vars,))
@@ -180,10 +188,35 @@ def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
         inputs=inputs,
         residuals=residuals_vec,
         jacobian=jacobian_vec,
+        sparsity=sparsity,
         var_names=var_names,
         shock_names=[x.base_name for x in shocks_t],
         param_names=[p.name for p in params_in_equations],
     )
+
+
+def _jacobian_sparsity(equations: list[sp.Expr], wrt: list[TimeAwareSymbol]) -> np.ndarray:
+    """
+    Structural nonzero mask of ``d(equations)/d(wrt)``.
+
+    Parameters
+    ----------
+    equations : list of sympy expression
+        Equations to differentiate, one per row of the mask.
+    wrt : list of TimeAwareSymbol
+        Symbols to differentiate with respect to, one per column of the mask.
+
+    Returns
+    -------
+    sparsity : ndarray of bool
+        Mask of shape ``(len(equations), len(wrt))``, True wherever the derivative can be nonzero.
+    """
+    # Membership rather than differentiation: a symbol absent from an equation has an identically zero
+    # derivative there, so the mask is a superset of the true nonzero set at a fraction of the cost. The
+    # superset direction is the safe one, since a missing entry would silently corrupt the Newton step.
+    symbols_by_equation = [equation.free_symbols for equation in equations]
+
+    return np.array([[symbol in symbols for symbol in wrt] for symbols in symbols_by_equation], dtype=bool)
 
 
 def _substitute_steady_state_values(

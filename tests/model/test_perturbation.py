@@ -398,7 +398,14 @@ class TestCheckBKCondition:
 
     def test_on_failure_raise_names_the_failure(self):
         A, B, C, D = self._system("pert_fails.gcn")
-        with pytest.raises(ValueError, match=r"NOT satisfied\. No unique solution"):
+        with pytest.raises(ValueError, match=r"NOT satisfied.*no unique solution"):
+            check_bk_condition(A, B, C, D, on_failure="raise", return_value=None, verbose=False)
+
+    def test_message_names_the_missing_stable_solution(self):
+        """No shipped model reaches this branch, so the one-equation system is written out directly."""
+        A, B, C, D = np.array([[2.0]]), np.array([[1.0]]), np.array([[0.0]]), np.array([[1.0]])
+
+        with pytest.raises(ValueError, match=r"NOT satisfied.*no stable solution"):
             check_bk_condition(A, B, C, D, on_failure="raise", return_value=None, verbose=False)
 
     def test_on_failure_raise_is_silent_when_satisfied(self):

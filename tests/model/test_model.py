@@ -626,6 +626,27 @@ def test_check_bk_condition():
     assert check_bk_condition(A, B, C, D, return_value="bool", verbose=False)
 
 
+def test_forward_variable_set_is_structural_not_measured_at_default_parameters():
+    """``chi`` defaults to zero in this model, which empties the lead Jacobian column for Z without removing it."""
+    model = load_and_cache_model("rbc_empty_lead_column.gcn")
+    lead_set = set(model.lead_var_idx.tolist())
+
+    appears_at_lead = {
+        index
+        for index, variable in enumerate(model.variables)
+        if any(equation.has(variable.set_t(1)) for equation in model.equations)
+    }
+    assert lead_set == appears_at_lead
+
+    _, _, C_default, _ = model.linearize_model(verbose=False)
+    _, _, C_with_news, _ = model.linearize_model(verbose=False, chi=0.5)
+    measured_at_default = set(np.flatnonzero(np.abs(C_default).sum(axis=0) > 1e-8).tolist())
+    measured_with_news = set(np.flatnonzero(np.abs(C_with_news).sum(axis=0) > 1e-8).tolist())
+
+    assert measured_at_default < lead_set
+    assert measured_with_news == lead_set
+
+
 def test_compute_bk_eigenvalues():
     model = load_and_cache_model("rbc_linearized.gcn")
     A, B, C, D = model.linearize_model()

@@ -429,7 +429,8 @@ def compute_bk_eigenvalues(
     A, B, C, D : ndarray
         Jacobian matrices of the linearized DSGE system.
     tol : float, optional
-        Threshold for identifying forward-looking variables. Defaults to 1e-8.
+        Threshold on the absolute column sums of ``C`` below which a lead column counts as empty, and the
+        amount added to the denominator when forming the generalized eigenvalues. Defaults to 1e-8.
 
     Returns
     -------
@@ -437,19 +438,19 @@ def compute_bk_eigenvalues(
         Real parts of the eigenvalues, sorted by modulus.
     eigvals_imag : ndarray
         Imaginary parts of the eigenvalues, sorted by modulus.
-    n_forward : int
-        Number of forward-looking variables, the columns of ``C`` with a nonzero entry.
+    n_lead_columns : int
+        Number of columns of ``C`` whose absolute column sum exceeds ``tol``, the variables entering at ``t+1``
+        at these parameter values. It is smaller than :attr:`~gEconpy.model.model.Model.n_forward` when every
+        coefficient on some lead variable vanishes at the current parameterization.
     """
-    Gamma_0, Gamma_1, _, _, _ = _gensys_setup(A, B, C, D, tol)
-    AA, BB, *_ = linalg.ordqz(-Gamma_0, Gamma_1, sort="ouc", output="complex")
+    G0, Gamma_1, _, _, _, lead_var_idx = _gensys_setup(A, B, C, D, tol)
+    AA, BB, *_ = linalg.ordqz(-G0, Gamma_1, sort="ouc", output="complex")
 
     eigenvalues = np.diag(BB) / (np.diag(AA) + tol)
     idx = np.argsort(np.abs(eigenvalues))
     eigenvalues = eigenvalues[idx]
 
-    n_forward = (np.abs(C).sum(axis=0) > tol).sum().astype(int)
-
-    return np.real(eigenvalues), np.imag(eigenvalues), n_forward
+    return np.real(eigenvalues), np.imag(eigenvalues), int(lead_var_idx.size)
 
 
 def compute_bk_eigenvalues_pt(
@@ -470,8 +471,7 @@ def compute_bk_eigenvalues_pt(
     A, B, C, _D : TensorVariable
         Jacobian matrices of the linearized DSGE system. ``_D`` is unused.
     lead_var_idx : ndarray of int
-        Column indices of the forward-looking variables, the columns of ``C`` with a nonzero entry. Must be known at
-        graph-build time.
+        Column indices of the forward-looking variables. Must be known at graph-build time.
 
     Returns
     -------
@@ -557,21 +557,21 @@ def check_bk_condition(
     if return_value not in ["dataframe", "bool", None]:
         raise ValueError(f'Unknown return_value "{return_value}". Pass "dataframe", "bool", or None.')
 
-    eigvals_real, eigvals_imag, n_forward = compute_bk_eigenvalues(A, B, C, D, tol)
+    eigvals_real, eigvals_imag, n_lead_columns = compute_bk_eigenvalues(A, B, C, D, tol)
     modulus = np.sqrt(eigvals_real**2 + eigvals_imag**2)
     n_unstable = int((modulus > 1).sum())
-    satisfied = bool(n_forward == n_unstable)
+    satisfied = bool(n_lead_columns == n_unstable)
 
-    message = (
-        f"Model solution has {n_unstable} eigenvalues greater than one in modulus and {n_forward} "
-        f"forward-looking variables.\nBlanchard-Kahn condition is{'' if satisfied else ' NOT'} satisfied."
+    counts = (
+        f"{n_unstable} eigenvalues outside the unit circle against {n_lead_columns} forward-looking variables "
+        f"(columns of the lead Jacobian that are nonzero at these parameters)"
     )
 
-    if not satisfied:
-        if n_unstable > n_forward:
-            message += " No stable solution (more unstable eigenvalues than forward-looking variables)."
-        else:
-            message += " No unique solution (more forward-looking variables than unstable eigenvalues)."
+    if satisfied:
+        message = f"Blanchard-Kahn condition satisfied: {counts}."
+    else:
+        consequence = "no stable solution" if n_unstable > n_lead_columns else "no unique solution"
+        message = f"Blanchard-Kahn condition NOT satisfied: {counts}. The model has {consequence}."
 
     if not satisfied and on_failure == "raise":
         raise ValueError(message)
