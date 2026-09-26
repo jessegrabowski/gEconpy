@@ -15,7 +15,11 @@ from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
 from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_metadata
-from gEconpy.parser.transform.to_sympy import ast_to_sympy, equation_to_sympy
+from gEconpy.parser.transform.to_sympy import (
+    _checked_eq,
+    ast_to_sympy,
+    equation_to_sympy,
+)
 from gEconpy.utilities import flatten_substitution_dict
 
 ParamDictName = Literal["param_dict", "deterministic_dict", "calib_dict"]
@@ -354,7 +358,7 @@ def _extract_ss_solution_dict(model: GCNModel, assumptions: dict[str, dict[str, 
 def _equation_to_sympy_eq(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) -> sp.Eq:
     lhs = ast_to_sympy(eq.lhs, assumptions)
     rhs = ast_to_sympy(eq.rhs, assumptions)
-    return sp.Eq(lhs, rhs)
+    return _checked_eq(lhs, rhs, assumptions)
 
 
 def _extract_tryreduce(model: GCNModel, variables: list[TimeAwareSymbol]) -> list[TimeAwareSymbol]:

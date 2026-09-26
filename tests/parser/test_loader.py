@@ -136,6 +136,19 @@ class TestAstModelToPrimitives:
         with pytest.raises(DuplicateParameterError):
             ast_model_to_primitives(quick_parse(source))
 
+    def test_value_contradicting_an_assumption_names_the_conflict(self):
+        source = (
+            "assumptions { positive { alpha; }; }; "
+            "block A { calibration { alpha = 0; }; identities { C[] = alpha; }; };"
+        )
+        with pytest.raises(ValueError, match=r"'alpha = 0' is impossible.*alpha \(.*positive.*drop the conflicting"):
+            ast_model_to_primitives(quick_parse(source))
+
+    def test_self_referential_calibration_is_rejected(self):
+        source = "block A { calibration { alpha = alpha; }; identities { C[] = alpha; }; };"
+        with pytest.raises(ValueError, match=r"'alpha = alpha' is always true.*correct the value"):
+            ast_model_to_primitives(quick_parse(source))
+
     def test_shocks_not_in_variables(self):
         source = "block TEST { shocks { epsilon[]; }; identities { C[] = epsilon[]; }; };"
         primitives = ast_model_to_primitives(quick_parse(source))
