@@ -464,6 +464,39 @@ class GCNBlock:
 
 
 @dataclass
+class SymbolDeclaration:
+    """
+    One entry of the ``symbols`` block: everything declared about a single variable or parameter.
+
+    The declared bound is the canonical record of the symbol's support. Sign keywords such as ``positive = True``
+    are sugar that writes the same bound, and ``assumptions`` holds what sympy is told, which is derived from the
+    bound when no keyword says otherwise.
+
+    Parameters
+    ----------
+    symbol : str
+        Name of the variable or parameter, without a time index.
+    name : str, optional
+        Human-readable name, used as the caption in generated tables. Defaults to None.
+    latex : str, optional
+        LaTeX rendering, overriding whatever the printer would infer. Defaults to None.
+    source : str, optional
+        Provenance of a calibrated value, for the citation column of a calibration table. Defaults to None.
+    bounds : tuple of (float or None, float or None), optional
+        Lower and upper bound on the symbol's support, with None for unbounded. Defaults to (None, None).
+    assumptions : dict mapping str to bool, optional
+        SymPy assumptions to attach to the symbol. Defaults to an empty dict.
+    """
+
+    symbol: str
+    name: str | None = None
+    latex: str | None = None
+    source: str | None = None
+    bounds: tuple[float | None, float | None] = (None, None)
+    assumptions: dict[str, bool] = field(default_factory=dict)
+
+
+@dataclass
 class GCNModel:
     """
     The root of a parsed GCN file: its blocks and the ``options``, ``tryreduce``, and ``assumptions`` sections.
@@ -478,6 +511,8 @@ class GCNModel:
         Variable names listed in the ``tryreduce`` section. Defaults to an empty list.
     assumptions : dict mapping str to dict, optional
         SymPy assumptions per symbol name, as in ``{"C": {"positive": True}}``. Defaults to an empty dict.
+    symbols : dict mapping str to SymbolDeclaration, optional
+        Entries of the ``symbols`` section, keyed by symbol name. Defaults to an empty dict.
     filename : str, optional
         Path of the source file. Defaults to an empty string.
     """
@@ -486,6 +521,7 @@ class GCNModel:
     options: dict[str, str | bool] = field(default_factory=dict)
     tryreduce: list[str] = field(default_factory=list)
     assumptions: dict[str, dict[str, bool]] = field(default_factory=dict)
+    symbols: dict[str, SymbolDeclaration] = field(default_factory=dict)
     filename: str = ""
 
     def get_block(self, name: str) -> GCNBlock | None:
