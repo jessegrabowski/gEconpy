@@ -178,6 +178,7 @@ numpydoc_xref_aliases = {
     "GCNBlock": "gEconpy.parser.ast.nodes.GCNBlock",
     "GCNEquation": "gEconpy.parser.ast.nodes.GCNEquation",
     "GCNDistribution": "gEconpy.parser.ast.nodes.GCNDistribution",
+    "SymbolDeclaration": "gEconpy.parser.ast.nodes.SymbolDeclaration",
     "ErrorCollector": "gEconpy.parser.errors.ErrorCollector",
     "ParseLocation": "gEconpy.parser.errors.ParseLocation",
     "GCNParseError": "gEconpy.parser.errors.GCNParseError",
