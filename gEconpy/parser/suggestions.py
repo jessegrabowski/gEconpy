@@ -5,6 +5,7 @@ from gEconpy.parser.constants import (
     KNOWN_ASSUMPTIONS,
     KNOWN_COMPONENTS,
     KNOWN_DISTRIBUTIONS,
+    KNOWN_SYMBOL_FIELDS,
     KNOWN_WRAPPERS,
 )
 
@@ -49,6 +50,23 @@ def find_similar_names(
     similar.sort(key=lambda pair: (-pair[0], pair[1]))
 
     return [candidate for _, candidate in similar[:max_results]]
+
+
+def suggest_symbol_field(name: str) -> list[str]:
+    """
+    Suggest field names of a ``symbols`` entry resembling an unknown one.
+
+    Parameters
+    ----------
+    name : str
+        The unknown field name.
+
+    Returns
+    -------
+    suggestions : list of str
+        Similar field names, most similar first.
+    """
+    return find_similar_names(name, KNOWN_SYMBOL_FIELDS)
 
 
 def suggest_distribution(name: str) -> list[str]:
