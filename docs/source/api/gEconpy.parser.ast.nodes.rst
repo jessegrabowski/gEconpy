@@ -29,10 +29,11 @@ gEconpy.parser.ast.nodes
 
 .. autosummary::
 
+    assumptions_implied_by_bounds
     collect_nodes_of_type
     collect_parameter_names
     collect_variable_names
 
 .. automodule:: gEconpy.parser.ast.nodes
-    :members: BinaryOp, BlockComponent, Expectation, FunctionCall, GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node, Number, Operator, Parameter, SymbolDeclaration, Tag, TimeIndex, UnaryOp, Variable, collect_nodes_of_type, collect_parameter_names, collect_variable_names
+    :members: BinaryOp, BlockComponent, Expectation, FunctionCall, GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node, Number, Operator, Parameter, SymbolDeclaration, Tag, TimeIndex, UnaryOp, Variable, assumptions_implied_by_bounds, collect_nodes_of_type, collect_parameter_names, collect_variable_names
     :undoc-members:
