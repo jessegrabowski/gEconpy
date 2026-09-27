@@ -22,11 +22,26 @@ GCN_ASSUMPTIONS = [
     "negative",
     "nonpositive",
     "nonnegative",
+    "nonzero",
     "real",
     "integer",
     "finite",
     "unit_interval",
 ]
+
+# Assumptions that constrain a symbol's support. Each maps to the interval it implies, which is checked against any
+# bound declared alongside it. The remaining assumptions in GCN_ASSUMPTIONS say nothing about the support and are
+# passed to sympy untouched.
+SIGN_ASSUMPTION_INTERVALS: dict[str, tuple[float | None, float | None]] = {
+    "positive": (0.0, None),
+    "nonnegative": (0.0, None),
+    "negative": (None, 0.0),
+    "nonpositive": (None, 0.0),
+    "unit_interval": (0.0, 1.0),
+}
+
+SYMBOL_METADATA_FIELDS = ["name", "latex", "source"]
+SYMBOL_FIELDS = [*SYMBOL_METADATA_FIELDS, "bounds", *GCN_ASSUMPTIONS]
 
 DIST_TO_PARAM_NAMES = {
     "AsymmetricLaplace": ["kappa", "mu", "b", "q"],
@@ -92,3 +107,4 @@ KNOWN_DISTRIBUTIONS = frozenset(PRELIZ_DISTS)
 KNOWN_WRAPPERS = frozenset(PRELIZ_DIST_WRAPPERS)
 KNOWN_COMPONENTS = frozenset(name.lower() for name in BLOCK_COMPONENTS)
 KNOWN_ASSUMPTIONS = frozenset(GCN_ASSUMPTIONS)
+KNOWN_SYMBOL_FIELDS = frozenset(SYMBOL_FIELDS)
