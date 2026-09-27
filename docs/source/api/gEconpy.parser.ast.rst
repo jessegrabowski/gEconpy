@@ -19,6 +19,7 @@ gEconpy.parser.ast
     nodes.Number
     nodes.Operator
     nodes.Parameter
+    nodes.SymbolDeclaration
     nodes.Tag
     nodes.TimeIndex
     nodes.UnaryOp

@@ -1,0 +1,13 @@
+error[E017]: Declaration of 'alpha' has an empty support (0.0, 0.0). Found 'alpha'
+  --> E017_empty_support.gcn:4:5
+     |
+   2 | symbols
+   3 | {
+   4 |     alpha
+     |     ^^^^^ contradictory symbol declaration
+   5 |     {
+   6 |         positive = True;
+     |
+   = note: Delete the sign assumption and keep the bound, which says the same thing
+   = note: Widen the bound so it overlaps the interval the assumption implies
+   = note: Order the bound as (lower, upper)

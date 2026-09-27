@@ -1,0 +1,13 @@
+error[E017]: Bound (0.0, 1.0) on 'alpha' contradicts a sign assumption declared beside it. Found 'alpha'
+  --> E017_contradictory_bound.gcn:4:5
+     |
+   2 | symbols
+   3 | {
+   4 |     alpha
+     |     ^^^^^ contradictory symbol declaration
+   5 |     {
+   6 |         negative = True;
+     |
+   = note: Delete the sign assumption and keep the bound, which says the same thing
+   = note: Widen the bound so it overlaps the interval the assumption implies
+   = note: Order the bound as (lower, upper)

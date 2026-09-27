@@ -6,6 +6,8 @@ from gEconpy.parser.constants import (
     EQUATION_TAGS,
     GCN_ASSUMPTIONS,
     PRELIZ_DIST_WRAPPERS,
+    SIGN_ASSUMPTION_INTERVALS,
+    SYMBOL_FIELDS,
 )
 
 
@@ -36,6 +38,8 @@ _BLOCK_COMPONENT_NAMES = ", ".join(name.lower() for name in BLOCK_COMPONENTS)
 _EQUATION_TAG_NAMES = ", ".join(f"@{tag}" for tag in EQUATION_TAGS)
 _ASSUMPTION_NAMES = ", ".join(GCN_ASSUMPTIONS)
 _WRAPPER_NAMES = ", ".join(PRELIZ_DIST_WRAPPERS)
+_SYMBOL_FIELD_NAMES = ", ".join(SYMBOL_FIELDS)
+_SIGN_ASSUMPTION_NAMES = ", ".join(SIGN_ASSUMPTION_INTERVALS)
 
 
 class ErrorCode(Enum):
@@ -244,6 +248,51 @@ class ErrorCode(Enum):
             "Wrap the component in a block: block NAME { ... };",
             "Move the '};' that closes the block below the component",
         ),
+    )
+
+    E017 = ErrorInfo(
+        title="Contradictory symbol declaration",
+        explanation="The fields of a symbols entry leave the symbol no values to take.",
+        common_causes=(
+            "Declaring 'negative = True' alongside a positive bound",
+            "Declaring two sign assumptions that exclude each other",
+            "Writing the bounds in the wrong order, as in 'bounds = (1, 0)'",
+        ),
+        fixes=(
+            "Delete the sign assumption and keep the bound, which says the same thing",
+            "Widen the bound so it overlaps the interval the assumption implies",
+            "Order the bound as (lower, upper)",
+        ),
+    )
+
+    E018 = ErrorInfo(
+        title="Sign assumption set to False",
+        explanation=(
+            f"The sign assumptions ({_SIGN_ASSUMPTION_NAMES}) describe a support, so only True is meaningful. "
+            "Negating one states what the symbol is not, which is almost never what the author means."
+        ),
+        common_causes=("Writing 'positive = False' to mean 'nonpositive = True'",),
+        fixes=("Declare the complementary assumption instead", "Declare an explicit bound with 'bounds = (lo, hi)'"),
+    )
+
+    E019 = ErrorInfo(
+        title="Duplicate symbol declaration",
+        explanation="Each symbol is declared exactly once in the symbols block, so that the block is a symbol table.",
+        common_causes=(
+            "Declaring a bound in one entry and a name in another",
+            "Copying an entry and forgetting to rename the symbol",
+        ),
+        fixes=("Merge the two entries into one",),
+    )
+
+    E020 = ErrorInfo(
+        title="Unknown symbol field",
+        explanation=f"Fields of a symbols entry must be one of: {_SYMBOL_FIELD_NAMES}.",
+        common_causes=(
+            "Typo in a field name: 'bound' for 'bounds'",
+            "Using 'long_name' or 'description' instead of 'name'",
+        ),
+        fixes=(f"Rename the field to one of: {_SYMBOL_FIELD_NAMES}",),
     )
 
     E100 = ErrorInfo(

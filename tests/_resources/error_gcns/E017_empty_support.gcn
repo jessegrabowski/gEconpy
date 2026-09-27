@@ -1,0 +1,17 @@
+# Two sign assumptions that exclude each other
+symbols
+{
+    alpha
+    {
+        positive = True;
+        negative = True;
+    };
+};
+
+block FIRM
+{
+    identities
+    {
+        Y[] = alpha * K[-1];
+    };
+};

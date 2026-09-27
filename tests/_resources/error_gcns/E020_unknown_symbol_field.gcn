@@ -1,0 +1,16 @@
+# Dynare's field name instead of the GCN one
+symbols
+{
+    alpha
+    {
+        long_name = "Capital share of output";
+    };
+};
+
+block FIRM
+{
+    identities
+    {
+        Y[] = alpha * K[-1];
+    };
+};

@@ -7,25 +7,39 @@ from typing import Any
 import pyparsing as pp
 
 from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
-from gEconpy.parser.ast import Variable
-from gEconpy.parser.constants import GCN_ASSUMPTIONS, KNOWN_ASSUMPTIONS
+from gEconpy.parser.ast import SymbolDeclaration, Variable
+from gEconpy.parser.constants import (
+    GCN_ASSUMPTIONS,
+    KNOWN_ASSUMPTIONS,
+    KNOWN_SYMBOL_FIELDS,
+    SIGN_ASSUMPTION_INTERVALS,
+    SYMBOL_METADATA_FIELDS,
+)
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNParseFailure
 from gEconpy.parser.grammar.statements import VARIABLE_LIST, VARIABLE_REF
 from gEconpy.parser.grammar.tokens import (
+    COMMA,
     COMMENT,
     EQUALS,
+    EQUALS_LITERAL,
     IDENTIFIER,
     KW_ASSUMPTIONS,
     KW_FALSE,
+    KW_NONE,
     KW_OPTIONS,
+    KW_SYMBOLS,
     KW_TRUE,
     KW_TRYREDUCE,
     LBRACE,
+    LPAREN,
+    NUMBER,
     RBRACE,
+    RPAREN,
     SEMI,
+    STRING,
 )
-from gEconpy.parser.suggestions import suggest_assumption
+from gEconpy.parser.suggestions import suggest_assumption, suggest_symbol_field
 
 
 def parse_options(text: str) -> dict[str, bool | str]:
@@ -78,6 +92,23 @@ def parse_assumptions(text: str) -> dict[str, dict[str, bool]]:
         dictionary that supplies the package defaults for any name.
     """
     return _first_match(ASSUMPTIONS_BLOCK, text, default=defaultdict(DEFAULT_ASSUMPTIONS.copy))
+
+
+def parse_symbols(text: str) -> dict[str, SymbolDeclaration]:
+    """
+    Parse the ``symbols`` block of a GCN file.
+
+    Parameters
+    ----------
+    text : str
+        GCN text to scan for a symbols block.
+
+    Returns
+    -------
+    symbols : dict mapping str to SymbolDeclaration
+        One declaration per declared symbol. Empty if the text has no symbols block.
+    """
+    return _first_match(SYMBOLS_BLOCK, text, default={})
 
 
 def extract_special_block_content(text: str, block_name: str) -> str | None:
@@ -197,17 +228,225 @@ def _build_assumptions(tokens: pp.ParseResults) -> dict[str, dict[str, bool]]:
 ASSUMPTIONS_BLOCK.set_parse_action(_build_assumptions)
 ASSUMPTIONS_BLOCK.ignore(COMMENT)
 
-SPECIAL_BLOCK = OPTIONS_BLOCK | TRYREDUCE_BLOCK | ASSUMPTIONS_BLOCK
+SYMBOL_ITEM = VARIABLE_REF | IDENTIFIER.copy().set_parse_action(lambda t: t[0])
+
+BOUND_VALUE = KW_NONE.copy().set_parse_action(lambda _: [None]) | pp.Combine(
+    pp.Optional(pp.Literal("-")) + NUMBER
+).set_parse_action(lambda t: float(t[0]))
+BOUNDS_VALUE = (LPAREN - BOUND_VALUE - COMMA - BOUND_VALUE - RPAREN).set_parse_action(lambda t: [(t[0], t[1])])
+
+BOOL_VALUE = KW_TRUE.copy().set_parse_action(lambda _: True) | KW_FALSE.copy().set_parse_action(lambda _: False)
+
+_COMPLEMENTARY_ASSUMPTION = {
+    "positive": "nonpositive",
+    "nonpositive": "positive",
+    "negative": "nonnegative",
+    "nonnegative": "negative",
+}
+
+
+METADATA_FIELD = pp.Group(pp.one_of(SYMBOL_METADATA_FIELDS, caseless=True)("field") - EQUALS - STRING("value") - SEMI)
+BOUNDS_FIELD = pp.Group(pp.CaselessKeyword("bounds")("field") - EQUALS - BOUNDS_VALUE("value") - SEMI)
+
+
+def _reject_false_sign_assumption(s: str, loc: int, tokens: pp.ParseResults) -> None:
+    name = tokens[0].field.lower()
+    if tokens[0].value is False and name in SIGN_ASSUMPTION_INTERVALS:
+        raise GCNParseFailure(
+            s,
+            loc,
+            f"Sign assumption '{name}' set to False",
+            code=ErrorCode.E018,
+            found=name,
+            suggestions=[complement] if (complement := _COMPLEMENTARY_ASSUMPTION.get(name)) else [],
+        )
+
+
+ASSUMPTION_FIELD = pp.Group(
+    pp.one_of(GCN_ASSUMPTIONS, caseless=True)("field") - EQUALS - BOOL_VALUE("value") - SEMI
+).add_parse_action(_reject_false_sign_assumption)
+
+
+def _unknown_symbol_field_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
+    name = toks[0]
+    raise GCNParseFailure(
+        s,
+        loc,
+        f"Unknown symbol field '{name}'",
+        code=ErrorCode.E020,
+        found=name,
+        suggestions=suggest_symbol_field(name),
+    )
+
+
+UNKNOWN_SYMBOL_FIELD = (
+    (IDENTIFIER("unknown_field") + pp.FollowedBy(EQUALS_LITERAL))
+    .add_condition(lambda _s, _loc, toks: toks[0].lower() not in KNOWN_SYMBOL_FIELDS)
+    .set_parse_action(_unknown_symbol_field_fail)
+)
+
+SYMBOL_FIELD = METADATA_FIELD | BOUNDS_FIELD | ASSUMPTION_FIELD | UNKNOWN_SYMBOL_FIELD
+
+
+def _intersect(intervals: list[tuple[float | None, float | None]]) -> tuple[float | None, float | None]:
+    lowers = [lower for lower, _ in intervals if lower is not None]
+    uppers = [upper for _, upper in intervals if upper is not None]
+    return max(lowers, default=None), min(uppers, default=None)
+
+
+def _is_inhabited(bounds: tuple[float | None, float | None]) -> bool:
+    lower, upper = bounds
+    return (-float("inf") if lower is None else lower) < (float("inf") if upper is None else upper)
+
+
+def _implied_intervals(assumptions: dict[str, bool]) -> list[tuple[float | None, float | None]]:
+    return [
+        SIGN_ASSUMPTION_INTERVALS[key]
+        for key, holds in assumptions.items()
+        if holds and key in SIGN_ASSUMPTION_INTERVALS
+    ]
+
+
+def _derive_assumptions_from_bounds(bounds: tuple[float | None, float | None]) -> dict[str, bool]:
+    """
+    Read off the sympy predicates a declared bound implies.
+
+    Declared bounds are open, so a lower bound of zero gives ``positive`` rather than ``nonnegative``. The closed
+    predicates are only ever set by declaring them as keywords.
+    """
+    lower, upper = bounds
+    derived: dict[str, bool] = {}
+
+    if lower is not None and lower >= 0:
+        derived["positive"] = True
+    if upper is not None and upper <= 0:
+        derived["negative"] = True
+    if bounds == (0.0, 1.0):
+        derived["unit_interval"] = True
+
+    return derived
+
+
+def _collect_fields(
+    tokens: pp.ParseResults,
+) -> tuple[dict[str, str], tuple[float | None, float | None] | None, dict[str, bool]]:
+    """
+    Sort an entry's fields into metadata, a declared bound, and sympy assumptions.
+
+    Returns
+    -------
+    metadata : dict mapping str to str
+        The ``name``, ``latex`` and ``source`` fields that were given.
+    declared_bounds : tuple of (float or None, float or None), or None
+        The declared bound, or None when the entry has no ``bounds`` field.
+    assumptions : dict mapping str to bool
+        The assumption keywords that were given, before anything is derived from the bound.
+    """
+    metadata: dict[str, str] = {}
+    declared_bounds: tuple[float | None, float | None] | None = None
+    assumptions: dict[str, bool] = {}
+
+    for entry in tokens.fields:
+        field_name = entry.field.lower()
+        value = entry.value
+
+        if field_name in SYMBOL_METADATA_FIELDS:
+            metadata[field_name] = value
+        elif field_name == "bounds":
+            # pyparsing wraps a named multi-token expression, so the tuple the parse action built sits one level in.
+            declared_bounds = value[0] if isinstance(value, pp.ParseResults) else value
+        else:
+            assumptions[field_name] = value
+
+    return metadata, declared_bounds, assumptions
+
+
+def _build_symbol_entry(s: str, loc: int, tokens: pp.ParseResults) -> tuple[int, SymbolDeclaration]:
+    item = tokens[0].symbol
+    if isinstance(item, pp.ParseResults):
+        item = item[0]
+    symbol_name = item.name if isinstance(item, Variable) else str(item)
+
+    metadata, declared_bounds, assumptions = _collect_fields(tokens[0])
+    implied = _implied_intervals(assumptions)
+
+    if declared_bounds is not None:
+        for interval in implied:
+            if not _is_inhabited(_intersect([declared_bounds, interval])):
+                raise GCNParseFailure(
+                    s,
+                    loc,
+                    f"Bound {declared_bounds} on '{symbol_name}' contradicts a sign assumption declared beside it",
+                    code=ErrorCode.E017,
+                    found=symbol_name,
+                )
+        bounds = declared_bounds
+    else:
+        bounds = _intersect(implied)
+
+    if not _is_inhabited(bounds):
+        raise GCNParseFailure(
+            s,
+            loc,
+            f"Declaration of '{symbol_name}' has an empty support {bounds}",
+            code=ErrorCode.E017,
+            found=symbol_name,
+        )
+
+    # A unit_interval declared alongside a wider bound keeps the bound, so positivity has to be set here as well.
+    if assumptions.get("unit_interval"):
+        assumptions.setdefault("positive", True)
+
+    return loc, SymbolDeclaration(
+        symbol=symbol_name,
+        name=metadata.get("name"),
+        latex=metadata.get("latex"),
+        source=metadata.get("source"),
+        bounds=bounds,
+        assumptions={**DEFAULT_ASSUMPTIONS, **_derive_assumptions_from_bounds(bounds), **assumptions},
+    )
+
+
+SYMBOL_ENTRY = pp.Group(
+    SYMBOL_ITEM("symbol") - LBRACE - pp.ZeroOrMore(SYMBOL_FIELD)("fields") - RBRACE - SEMI
+).set_parse_action(_build_symbol_entry)
+
+SYMBOLS_BLOCK = KW_SYMBOLS.suppress() - LBRACE - pp.ZeroOrMore(SYMBOL_ENTRY)("entries") - RBRACE - SEMI
+
+
+def _build_symbols(s: str, _loc: int, tokens: pp.ParseResults) -> dict[str, SymbolDeclaration]:
+    declarations: dict[str, SymbolDeclaration] = {}
+
+    for entry_loc, declaration in tokens.entries:
+        if declaration.symbol in declarations:
+            raise GCNParseFailure(
+                s,
+                entry_loc,
+                f"Symbol '{declaration.symbol}' is declared more than once",
+                code=ErrorCode.E019,
+                found=declaration.symbol,
+            )
+        declarations[declaration.symbol] = declaration
+
+    return declarations
+
+
+SYMBOLS_BLOCK.set_parse_action(_build_symbols)
+SYMBOLS_BLOCK.ignore(COMMENT)
+
+SPECIAL_BLOCK = OPTIONS_BLOCK | TRYREDUCE_BLOCK | ASSUMPTIONS_BLOCK | SYMBOLS_BLOCK
 
 
 __all__ = [
     "ASSUMPTIONS_BLOCK",
     "OPTIONS_BLOCK",
     "SPECIAL_BLOCK",
+    "SYMBOLS_BLOCK",
     "TRYREDUCE_BLOCK",
     "extract_special_block_content",
     "parse_assumptions",
     "parse_options",
+    "parse_symbols",
     "parse_tryreduce",
     "remove_special_block",
 ]

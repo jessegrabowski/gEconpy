@@ -1,0 +1,21 @@
+# The same symbol declared in two entries
+symbols
+{
+    alpha
+    {
+        bounds = (0, 1);
+    };
+
+    alpha
+    {
+        name = "Capital share";
+    };
+};
+
+block FIRM
+{
+    identities
+    {
+        Y[] = alpha * K[-1];
+    };
+};

@@ -1,0 +1,12 @@
+error[E020]: Unknown symbol field 'long_name'. Found 'long_name'
+  --> E020_unknown_symbol_field.gcn:6:9
+     |
+   4 |     alpha
+   5 |     {
+   6 |         long_name = "Capital share of output";
+     |         ^^^^^^^^^ unknown symbol field
+   7 |     };
+   8 | };
+     |
+   = note: Did you mean 'name'?
+   = note: Rename the field to one of: name, latex, source, bounds, positive, negative, nonpositive, nonnegative, nonzero, real, integer, finite, unit_interval

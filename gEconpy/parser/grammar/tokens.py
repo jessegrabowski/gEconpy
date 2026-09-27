@@ -23,6 +23,9 @@ COMMENT = pp.python_style_comment
 
 IDENTIFIER = pp.Word(pp.alphas + "_", pp.alphanums + "_")
 
+# Contents are taken verbatim: there is no escape character, so a LaTeX fragment such as "\alpha" needs no doubling.
+STRING = pp.QuotedString('"')
+
 NUMBER_PATTERN = r"(?:\d+\.\d*|\d+|\.\d+)(?:[eE][+-]?\d+)?(?![.\w])"
 NUMBER = pp.Regex(NUMBER_PATTERN)
 
@@ -40,8 +43,10 @@ KW_CALIBRATION = pp.CaselessKeyword("calibration")
 KW_OPTIONS = pp.CaselessKeyword("options")
 KW_TRYREDUCE = pp.CaselessKeyword("tryreduce")
 KW_ASSUMPTIONS = pp.CaselessKeyword("assumptions")
+KW_SYMBOLS = pp.CaselessKeyword("symbols")
 KW_TRUE = pp.CaselessKeyword("TRUE")
 KW_FALSE = pp.CaselessKeyword("FALSE")
+KW_NONE = pp.CaselessKeyword("None")
 KW_E = pp.Keyword("E")
 
 __all__ = [
@@ -63,9 +68,11 @@ __all__ = [
     "KW_E",
     "KW_FALSE",
     "KW_IDENTITIES",
+    "KW_NONE",
     "KW_OBJECTIVE",
     "KW_OPTIONS",
     "KW_SHOCKS",
+    "KW_SYMBOLS",
     "KW_TRUE",
     "KW_TRYREDUCE",
     "LBRACE",
@@ -77,6 +84,7 @@ __all__ = [
     "RBRACKET",
     "RPAREN",
     "SEMI",
+    "STRING",
     "TILDE",
     "TIME_INDEX",
     "TIME_INDEX_CONTENT",
