@@ -1,0 +1,17 @@
+# Sign assumption and bound describe disjoint supports
+symbols
+{
+    alpha
+    {
+        negative = True;
+        bounds = (0, 1);
+    };
+};
+
+block FIRM
+{
+    identities
+    {
+        Y[] = alpha * K[-1];
+    };
+};

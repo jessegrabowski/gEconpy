@@ -10,6 +10,7 @@ from gEconpy.parser.grammar.blocks import MODEL_BLOCK
 from gEconpy.parser.grammar.special_blocks import (
     ASSUMPTIONS_BLOCK,
     OPTIONS_BLOCK,
+    SYMBOLS_BLOCK,
     TRYREDUCE_BLOCK,
 )
 from gEconpy.parser.grammar.tokens import COMMENT
@@ -64,6 +65,7 @@ SPECIAL_BLOCK = (
     _tagged(OPTIONS_BLOCK, "options")
     | _tagged(TRYREDUCE_BLOCK, "tryreduce")
     | _tagged(ASSUMPTIONS_BLOCK, "assumptions")
+    | _tagged(SYMBOLS_BLOCK, "symbols")
 )
 
 _COMPONENT_KEYWORD = pp.MatchFirst([pp.CaselessKeyword(kw) for kw in BLOCK_COMPONENTS])

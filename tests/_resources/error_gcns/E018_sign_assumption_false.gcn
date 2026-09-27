@@ -1,0 +1,16 @@
+# A sign assumption negated instead of using its complement
+symbols
+{
+    TC[]
+    {
+        positive = False;
+    };
+};
+
+block FIRM
+{
+    identities
+    {
+        TC[] = -Y[];
+    };
+};

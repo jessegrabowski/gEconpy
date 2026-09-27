@@ -69,6 +69,21 @@ class TestGCNFileWithSpecialBlocks:
         assert set(result.assumptions) == {"C", "K", "alpha"}
         assert all(result.assumptions[name]["positive"] is True for name in ("C", "K", "alpha"))
 
+    def test_symbols_block(self):
+        text = """
+        symbols {
+            alpha { name = "Capital share"; bounds = (0, 1); };
+            K[] { positive = True; };
+        };
+
+        block TEST { };
+        """
+        result = parse_gcn(text)
+        assert set(result.symbols) == {"alpha", "K"}
+        assert result.symbols["alpha"].name == "Capital share"
+        assert result.symbols["alpha"].bounds == (0.0, 1.0)
+        assert result.symbols["K"].assumptions["positive"] is True
+
     def test_all_special_blocks(self):
         text = """
         options { verbose = TRUE; };
@@ -79,12 +94,17 @@ class TestGCNFileWithSpecialBlocks:
             positive { C[]; };
         };
 
+        symbols {
+            alpha { bounds = (0, 1); };
+        };
+
         block TEST { };
         """
         result = parse_gcn(text)
         assert result.options["verbose"] is True
         assert result.tryreduce == ["U"]
         assert "C" in result.assumptions
+        assert result.symbols["alpha"].bounds == (0.0, 1.0)
 
 
 class TestGCNFileWithComponents:

@@ -3,7 +3,7 @@ from typing import Any
 
 from preliz.distributions.distributions import Distribution
 
-from gEconpy.parser.ast import GCNBlock, GCNModel
+from gEconpy.parser.ast import GCNBlock, GCNModel, SymbolDeclaration
 from gEconpy.parser.ast.validation import full_validation
 from gEconpy.parser.errors import ErrorCollector
 from gEconpy.parser.grammar.gcn_file import parse_gcn
@@ -82,6 +82,11 @@ class ParseResult:
     def assumptions(self) -> dict[str, dict[str, bool]]:
         """The SymPy assumptions declared per symbol name."""
         return self.ast.assumptions
+
+    @property
+    def symbols(self) -> dict[str, SymbolDeclaration]:
+        """The declarations of the ``symbols`` block, keyed by symbol name."""
+        return self.ast.symbols
 
     def validate(self, raise_on_error: bool = True) -> ErrorCollector:
         """

@@ -1,0 +1,11 @@
+error[E019]: Symbol 'alpha' is declared more than once. Found 'alpha'
+  --> E019_duplicate_symbol.gcn:9:5
+     |
+   7 |     };
+   8 |
+   9 |     alpha
+     |     ^^^^^ duplicate symbol declaration
+  10 |     {
+  11 |         name = "Capital share";
+     |
+   = note: Merge the two entries into one

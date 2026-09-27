@@ -1,0 +1,13 @@
+error[E018]: Sign assumption 'positive' set to False. Found 'positive'
+  --> E018_sign_assumption_false.gcn:6:9
+     |
+   4 |     TC[]
+   5 |     {
+   6 |         positive = False;
+     |         ^^^^^^^^ sign assumption set to false
+   7 |     };
+   8 | };
+     |
+   = note: Did you mean 'nonpositive'?
+   = note: Declare the complementary assumption instead
+   = note: Declare an explicit bound with 'bounds = (lo, hi)'
