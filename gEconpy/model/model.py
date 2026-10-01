@@ -362,6 +362,9 @@ class Model:
         default.
     error_func : str, optional
         Error metric for minimize-based steady-state solving. Default ``'squared'``.
+    symbols : dict mapping str to SymbolDeclaration, optional
+        Declarations from the GCN ``symbols`` block, keyed by symbol name. Their bounds take precedence over sign
+        assumptions when the steady-state solver reparametrizes. Default None, meaning no declarations.
     """
 
     def __init__(
@@ -377,10 +380,10 @@ class Model:
         deterministic_dict: SymbolDictionary,
         calib_dict: SymbolDictionary,
         priors: tuple,
-        symbols: dict[str, SymbolDeclaration] | None = None,
         is_linear: bool = False,
         mode: str | None = None,
         error_func: ERROR_FUNCTIONS = "squared",
+        symbols: dict[str, SymbolDeclaration] | None = None,
     ) -> None:
         self._variables = variables
         self._symbols = {} if symbols is None else symbols
