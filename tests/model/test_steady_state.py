@@ -516,14 +516,23 @@ def test_declared_bounds_choose_the_transform(monkeypatch):
         ({"x": (0.0, 1.0)}, None, 0.5),
         ({"x": (0.0, 1.0)}, {"x_ss": (2.0, 4.0)}, 3.0),
         ({}, {"x_ss": (2.0, 4.0)}, 3.0),
+        ({"x": (0.0, 1.0)}, {"x": (2.0, 4.0)}, 0.5),
     ],
-    ids=["declared_bound", "caller_bound_wins", "caller_bound_only"],
+    ids=["declared_bound", "caller_bound_wins", "caller_bound_only", "caller_bound_needs_the_steady_state_name"],
 )
 def test_steady_state_transforms_precedence(declared, user, expected_midpoint):
+    """A declared bound is keyed by base name and a caller bound by the steady-state name, which do not match."""
     variable = TimeAwareSymbol("x", "ss")
     transform = steady_state_transforms([variable], declared, user)[0]
 
     assert float(transform.backward(0.0).eval()) == pytest.approx(expected_midpoint)
+
+
+def test_declared_bounds_find_a_parameter_by_its_own_name():
+    """A calibrated parameter is a plain Symbol with no base name, so the declared bound is keyed by name."""
+    transform = steady_state_transforms([sp.Symbol("psi")], {"psi": (1.0, 3.0)}, {})[0]
+
+    assert float(transform.backward(0.0).eval()) == pytest.approx(2.0)
 
 
 def test_steady_state_transforms_fall_back_to_assumptions():
