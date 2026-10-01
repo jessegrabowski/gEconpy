@@ -489,6 +489,48 @@ def test_solver_does_not_pass_inferred_bounds_to_the_transform(monkeypatch):
     assert float(alpha_transform.backward(0.0).eval()) == pytest.approx(0.5)
 
 
+def test_declared_bounds_choose_the_transform(monkeypatch):
+    """A bound from the symbols block picks the transform even when the symbol carries no sign assumption."""
+    captured: list = []
+    original = model_module.transform_steady_state_system
+
+    def record(equations, ss_nodes, transforms):
+        captured.extend(transforms)
+        return original(equations, ss_nodes, transforms)
+
+    monkeypatch.setattr(model_module, "transform_steady_state_system", record)
+
+    model = load_and_cache_model("one_block_2_symbols.gcn")
+    alpha = next(v for v in model._vars_to_solve if getattr(v, "base_name", v.name) == "alpha")
+    assert "positive" not in alpha.assumptions0
+
+    model.steady_state(how="minimize", verbose=False, progressbar=False)
+
+    chosen = dict(zip(model._vars_to_solve, captured, strict=True))
+    assert float(chosen[alpha].backward(0.0).eval()) == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize(
+    "declared, user, expected_midpoint",
+    [
+        ({"x": (0.0, 1.0)}, None, 0.5),
+        ({"x": (0.0, 1.0)}, {"x_ss": (2.0, 4.0)}, 3.0),
+        ({}, {"x_ss": (2.0, 4.0)}, 3.0),
+    ],
+    ids=["declared_bound", "caller_bound_wins", "caller_bound_only"],
+)
+def test_steady_state_transforms_precedence(declared, user, expected_midpoint):
+    variable = TimeAwareSymbol("x", "ss")
+    transform = steady_state_transforms([variable], declared, user)[0]
+
+    assert float(transform.backward(0.0).eval()) == pytest.approx(expected_midpoint)
+
+
+def test_steady_state_transforms_fall_back_to_assumptions():
+    variable = TimeAwareSymbol("x", "ss", positive=True)
+    assert isinstance(steady_state_transforms([variable], {}, {})[0], type(log))
+
+
 def test_transform_steady_state_system_round_trips_and_preserves_residuals():
     x, y = pt.dscalars("x", "y")
     equations = [x - 2.0, y + x]

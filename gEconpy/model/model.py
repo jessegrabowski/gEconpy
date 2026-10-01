@@ -113,18 +113,21 @@ def infer_variable_transform(
 
 def steady_state_transforms(
     variables: Sequence[TimeAwareSymbol | sp.Symbol],
+    declared_bounds: dict[str, tuple[float | None, float | None]] | None = None,
     user_bounds: dict[str, tuple[float, float]] | None = None,
 ) -> list[Transform | None]:
     """
     Choose one transform per steady-state variable, preferring the most specific support available.
 
-    A bound passed by the caller wins. Otherwise the variable's own sympy assumptions decide, through
-    :func:`infer_variable_transform`.
+    A bound passed by the caller wins, then the bound the GCN ``symbols`` block declares for that symbol, then the
+    variable's own sympy assumptions through :func:`infer_variable_transform`.
 
     Parameters
     ----------
     variables : list of TimeAwareSymbol or Symbol
         The steady-state variables, in solve order.
+    declared_bounds : dict mapping str to tuple of (float or None, float or None), optional
+        Bounds declared in the ``symbols`` block, keyed by base name without a time index. Default None.
     user_bounds : dict mapping str to tuple of (float, float), optional
         Explicit bounds keyed by the steady-state symbol's name. Default None.
 
@@ -133,8 +136,15 @@ def steady_state_transforms(
     transforms : list of Transform or None
         One entry per variable, None where the variable is unconstrained.
     """
+    declared_bounds = {} if declared_bounds is None else declared_bounds
     user_bounds = {} if user_bounds is None else user_bounds
-    return [infer_variable_transform(variable, user_bounds.get(variable.name)) for variable in variables]
+
+    def bound_for(variable: TimeAwareSymbol | sp.Symbol) -> tuple[float | None, float | None] | None:
+        if variable.name in user_bounds:
+            return user_bounds[variable.name]
+        return declared_bounds.get(getattr(variable, "base_name", variable.name))
+
+    return [infer_variable_transform(variable, bound_for(variable)) for variable in variables]
 
 
 def transform_steady_state_system(
@@ -424,6 +434,14 @@ class Model:
         A time subscript identifies a variable as endogenous.
         """
         return self._variables
+
+    def _declared_bounds(self) -> dict[str, tuple[float | None, float | None]]:
+        """Bounds from the ``symbols`` block, keyed by base name, skipping symbols declared without one."""
+        return {
+            name: declaration.bounds
+            for name, declaration in self._symbols.items()
+            if declaration.bounds != (None, None)
+        }
 
     @property
     def symbols(self) -> dict[str, SymbolDeclaration]:
@@ -1937,7 +1955,7 @@ class Model:
             to_constrained = None
         else:
             method = requested_method or "trust-ncg"
-            transforms = steady_state_transforms(vars_to_solve, bounds)
+            transforms = steady_state_transforms(vars_to_solve, self._declared_bounds(), bounds)
             solve_equations, solve_nodes, to_unconstrained, to_constrained = transform_steady_state_system(
                 equations, ss_nodes, transforms
             )
