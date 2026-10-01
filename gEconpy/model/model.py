@@ -13,7 +13,7 @@ from better_optimize import minimize, root
 from preliz.distributions.distributions import Distribution
 from pymc.distributions.transforms import Interval, Transform, log, logodds
 from pytensor import tensor as pt
-from pytensor.graph.replace import clone_replace
+from pytensor.graph.replace import clone_replace, graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
@@ -35,6 +35,7 @@ from gEconpy.model.steady_state import (
     compile_known_ss,
     system_to_steady_state,
 )
+from gEconpy.parser.ast import SymbolDeclaration
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
@@ -110,6 +111,42 @@ def infer_variable_transform(
     return None
 
 
+def steady_state_transforms(
+    variables: Sequence[TimeAwareSymbol | sp.Symbol],
+    declared_bounds: dict[str, tuple[float | None, float | None]] | None = None,
+    user_bounds: dict[str, tuple[float, float]] | None = None,
+) -> list[Transform | None]:
+    """
+    Choose one transform per steady-state variable, preferring the most specific support available.
+
+    A bound passed by the caller wins, then the bound the GCN ``symbols`` block declares for that symbol, then the
+    variable's own sympy assumptions through :func:`infer_variable_transform`.
+
+    Parameters
+    ----------
+    variables : list of TimeAwareSymbol or Symbol
+        The steady-state variables, in solve order.
+    declared_bounds : dict mapping str to tuple of (float or None, float or None), optional
+        Bounds declared in the ``symbols`` block, keyed by base name without a time index. Default None.
+    user_bounds : dict mapping str to tuple of (float, float), optional
+        Explicit bounds keyed by the steady-state symbol's name. Default None.
+
+    Returns
+    -------
+    transforms : list of Transform or None
+        One entry per variable, None where the variable is unconstrained.
+    """
+    declared_bounds = {} if declared_bounds is None else declared_bounds
+    user_bounds = {} if user_bounds is None else user_bounds
+
+    def bound_for(variable: TimeAwareSymbol | sp.Symbol) -> tuple[float | None, float | None] | None:
+        if variable.name in user_bounds:
+            return user_bounds[variable.name]
+        return declared_bounds.get(getattr(variable, "base_name", variable.name))
+
+    return [infer_variable_transform(variable, bound_for(variable)) for variable in variables]
+
+
 def transform_steady_state_system(
     equations: Sequence[TensorVariable],
     ss_nodes: Sequence[TensorVariable],
@@ -155,7 +192,7 @@ def transform_steady_state_system(
         forward_exprs.append(x if transform is None else transform.forward(x))
         replace[ss_node] = x_of_y
 
-    transformed_equations = clone_replace(list(equations), replace=replace)
+    transformed_equations = graph_replace(list(equations), replace, strict=False)
     f_to_x = pytensor.function(y_nodes, backward_exprs, on_unused_input="ignore")
     f_to_y = pytensor.function(x_nodes, forward_exprs, on_unused_input="ignore")
 
@@ -325,6 +362,9 @@ class Model:
         default.
     error_func : str, optional
         Error metric for minimize-based steady-state solving. Default ``'squared'``.
+    symbols : dict mapping str to SymbolDeclaration, optional
+        Declarations from the GCN ``symbols`` block, keyed by symbol name. Their bounds take precedence over sign
+        assumptions when the steady-state solver reparametrizes. Default None, meaning no declarations.
     """
 
     def __init__(
@@ -343,8 +383,10 @@ class Model:
         is_linear: bool = False,
         mode: str | None = None,
         error_func: ERROR_FUNCTIONS = "squared",
+        symbols: dict[str, SymbolDeclaration] | None = None,
     ) -> None:
         self._variables = variables
+        self._symbols = {} if symbols is None else symbols
         self._shocks = shocks
         self._equations = equations
         self._params = list(param_dict.to_sympy().keys())
@@ -395,6 +437,19 @@ class Model:
         A time subscript identifies a variable as endogenous.
         """
         return self._variables
+
+    def _declared_bounds(self) -> dict[str, tuple[float | None, float | None]]:
+        """Bounds from the ``symbols`` block, keyed by base name, skipping symbols declared without one."""
+        return {
+            name: declaration.bounds
+            for name, declaration in self._symbols.items()
+            if declaration.bounds != (None, None)
+        }
+
+    @property
+    def symbols(self) -> dict[str, SymbolDeclaration]:
+        """Declarations from the GCN ``symbols`` block, keyed by symbol name. Empty when the file declares none."""
+        return self._symbols
 
     @property
     def shocks(self) -> list[TimeAwareSymbol]:
@@ -1884,8 +1939,8 @@ class Model:
         x0 = _initialize_x0(optimizer_kwargs, vars_to_solve, jitter_x0)
         tol = optimizer_kwargs.pop("tol", 1e-30)
 
-        bound_dict = {x.name: infer_variable_bounds(x) for x in vars_to_solve}
-        bound_dict.update({} if bounds is None else bounds)
+        box_bounds = {x.name: infer_variable_bounds(x) for x in vars_to_solve}
+        box_bounds.update({} if bounds is None else bounds)
 
         # Box-constrained solvers crawl an ill-conditioned interior-point central path on DSGE steady states, so they
         # run only when the caller names one and leaves ``prefer_transform`` off. Otherwise each bounded variable is
@@ -1899,11 +1954,11 @@ class Model:
             method = requested_method
             solve_equations, solve_nodes = equations, ss_nodes
             x0_solve = x0
-            bounds_arg = [bound_dict[x.name] for x in vars_to_solve]
+            bounds_arg = [box_bounds[x.name] for x in vars_to_solve]
             to_constrained = None
         else:
             method = requested_method or "trust-ncg"
-            transforms = [infer_variable_transform(v, bound_dict[v.name]) for v in vars_to_solve]
+            transforms = steady_state_transforms(vars_to_solve, self._declared_bounds(), bounds)
             solve_equations, solve_nodes, to_unconstrained, to_constrained = transform_steady_state_system(
                 equations, ss_nodes, transforms
             )

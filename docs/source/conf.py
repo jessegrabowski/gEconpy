@@ -158,6 +158,19 @@ numpydoc_xref_ignore = {
     "HTML",
     "ParseBaseException",
     "CacheInfo",
+    # Builtins, which numpydoc links to the CPython docs by default. Suppressing them needs an entry here and a
+    # self-alias below, because make_xref consults numpydoc_xref_aliases before it consults this set.
+    "bool",
+    "callable",
+    "dict",
+    "False",
+    "float",
+    "int",
+    "list",
+    "None",
+    "str",
+    "True",
+    "tuple",
 }
 
 # numpydoc_xref_param_type cross-references every word of a type field, so a class named bare or by its
@@ -232,6 +245,19 @@ numpydoc_xref_aliases = {
     "pm.Model": "pymc.model.core.Model",
     "OptimizeResult": "scipy.optimize.OptimizeResult",
     "sparse.csc_matrix": "scipy.sparse.csc_matrix",
+    # Render builtins as plain text. Nobody follows a link to learn what an int is, and linking them makes every
+    # docs build depend on docs.python.org serving its inventory.
+    "bool": "bool",
+    "callable": "callable",
+    "dict": "dict",
+    "False": "False",
+    "float": "float",
+    "int": "int",
+    "list": "list",
+    "None": "None",
+    "str": "str",
+    "True": "True",
+    "tuple": "tuple",
 }
 
 # A role naming a symbol that moved or was deleted otherwise renders as plain text with a green build.

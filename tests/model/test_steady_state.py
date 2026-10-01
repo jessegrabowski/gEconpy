@@ -12,10 +12,12 @@ from scipy import optimize
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.model import model as model_module
 from gEconpy.model.model import (
     Model,
     infer_variable_bounds,
     infer_variable_transform,
+    steady_state_transforms,
     transform_steady_state_system,
 )
 from gEconpy.model.parameters import compile_param_dict_func
@@ -460,6 +462,82 @@ def test_infer_variable_transform_waterfall(assumptions, user_bound, expected_ty
 )
 def test_infer_variable_bounds(assumptions, expected):
     assert infer_variable_bounds(TimeAwareSymbol("x", 0, **assumptions)) == expected
+
+
+def test_solver_does_not_pass_inferred_bounds_to_the_transform(monkeypatch):
+    """
+    The inferred box bounds guard the sign for box-constrained methods only.
+
+    Passing them as an explicit bound made every positive variable look bounded, so a ``unit_interval`` variable
+    was reparametrized under a shifted log instead of a logit.
+    """
+    captured: list = []
+    original = model_module.transform_steady_state_system
+
+    def record(equations, ss_nodes, transforms):
+        captured.extend(transforms)
+        return original(equations, ss_nodes, transforms)
+
+    monkeypatch.setattr(model_module, "transform_steady_state_system", record)
+
+    model = load_and_cache_model("one_block_2_no_extra.gcn")
+    model.steady_state(how="minimize", verbose=False, progressbar=False)
+
+    chosen = dict(zip(model._vars_to_solve, captured, strict=True))
+    alpha_transform = next(t for v, t in chosen.items() if getattr(v, "base_name", v.name) == "alpha")
+
+    assert float(alpha_transform.backward(0.0).eval()) == pytest.approx(0.5)
+
+
+def test_declared_bounds_choose_the_transform(monkeypatch):
+    """A bound from the symbols block picks the transform even when the symbol carries no sign assumption."""
+    captured: list = []
+    original = model_module.transform_steady_state_system
+
+    def record(equations, ss_nodes, transforms):
+        captured.extend(transforms)
+        return original(equations, ss_nodes, transforms)
+
+    monkeypatch.setattr(model_module, "transform_steady_state_system", record)
+
+    model = load_and_cache_model("one_block_2_symbols.gcn")
+    alpha = next(v for v in model._vars_to_solve if getattr(v, "base_name", v.name) == "alpha")
+    assert "positive" not in alpha.assumptions0
+
+    model.steady_state(how="minimize", verbose=False, progressbar=False)
+
+    chosen = dict(zip(model._vars_to_solve, captured, strict=True))
+    assert float(chosen[alpha].backward(0.0).eval()) == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize(
+    "declared, user, expected_midpoint",
+    [
+        ({"x": (0.0, 1.0)}, None, 0.5),
+        ({"x": (0.0, 1.0)}, {"x_ss": (2.0, 4.0)}, 3.0),
+        ({}, {"x_ss": (2.0, 4.0)}, 3.0),
+        ({"x": (0.0, 1.0)}, {"x": (2.0, 4.0)}, 0.5),
+    ],
+    ids=["declared_bound", "caller_bound_wins", "caller_bound_only", "caller_bound_needs_the_steady_state_name"],
+)
+def test_steady_state_transforms_precedence(declared, user, expected_midpoint):
+    """A declared bound is keyed by base name and a caller bound by the steady-state name, which do not match."""
+    variable = TimeAwareSymbol("x", "ss")
+    transform = steady_state_transforms([variable], declared, user)[0]
+
+    assert float(transform.backward(0.0).eval()) == pytest.approx(expected_midpoint)
+
+
+def test_declared_bounds_find_a_parameter_by_its_own_name():
+    """A calibrated parameter is a plain Symbol with no base name, so the declared bound is keyed by name."""
+    transform = steady_state_transforms([sp.Symbol("psi")], {"psi": (1.0, 3.0)}, {})[0]
+
+    assert float(transform.backward(0.0).eval()) == pytest.approx(2.0)
+
+
+def test_steady_state_transforms_fall_back_to_assumptions():
+    variable = TimeAwareSymbol("x", "ss", positive=True)
+    assert isinstance(steady_state_transforms([variable], {}, {})[0], type(log))
 
 
 def test_transform_steady_state_system_round_trips_and_preserves_residuals():
