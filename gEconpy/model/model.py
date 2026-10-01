@@ -13,7 +13,7 @@ from better_optimize import minimize, root
 from preliz.distributions.distributions import Distribution
 from pymc.distributions.transforms import Interval, Transform, log, logodds
 from pytensor import tensor as pt
-from pytensor.graph.replace import clone_replace
+from pytensor.graph.replace import clone_replace, graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
@@ -192,7 +192,7 @@ def transform_steady_state_system(
         forward_exprs.append(x if transform is None else transform.forward(x))
         replace[ss_node] = x_of_y
 
-    transformed_equations = clone_replace(list(equations), replace=replace)
+    transformed_equations = graph_replace(list(equations), replace, strict=False)
     f_to_x = pytensor.function(y_nodes, backward_exprs, on_unused_input="ignore")
     f_to_y = pytensor.function(x_nodes, forward_exprs, on_unused_input="ignore")
 
