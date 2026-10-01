@@ -496,6 +496,36 @@ class SymbolDeclaration:
     assumptions: dict[str, bool] = field(default_factory=dict)
 
 
+def assumptions_implied_by_bounds(bounds: tuple[float | None, float | None]) -> dict[str, bool]:
+    """
+    Read off the sympy predicates a declared bound implies.
+
+    Declared bounds are open, so a lower bound of zero gives ``positive`` rather than ``nonnegative``. The closed
+    predicates are only ever set by declaring them as keywords.
+
+    Parameters
+    ----------
+    bounds : tuple of (float or None, float or None)
+        Lower and upper bound on a symbol's support, with None for unbounded.
+
+    Returns
+    -------
+    assumptions : dict mapping str to bool
+        The predicates the bound implies. Empty when it implies none.
+    """
+    lower, upper = bounds
+    implied: dict[str, bool] = {}
+
+    if lower is not None and lower >= 0:
+        implied["positive"] = True
+    if upper is not None and upper <= 0:
+        implied["negative"] = True
+    if bounds == (0.0, 1.0):
+        implied["unit_interval"] = True
+
+    return implied
+
+
 @dataclass
 class GCNModel:
     """

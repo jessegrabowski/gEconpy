@@ -7,7 +7,7 @@ from typing import Any
 import pyparsing as pp
 
 from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
-from gEconpy.parser.ast import SymbolDeclaration, Variable
+from gEconpy.parser.ast import SymbolDeclaration, Variable, assumptions_implied_by_bounds
 from gEconpy.parser.constants import (
     GCN_ASSUMPTIONS,
     KNOWN_ASSUMPTIONS,
@@ -307,26 +307,6 @@ def _implied_intervals(assumptions: dict[str, bool]) -> list[tuple[float | None,
     ]
 
 
-def _derive_assumptions_from_bounds(bounds: tuple[float | None, float | None]) -> dict[str, bool]:
-    """
-    Read off the sympy predicates a declared bound implies.
-
-    Declared bounds are open, so a lower bound of zero gives ``positive`` rather than ``nonnegative``. The closed
-    predicates are only ever set by declaring them as keywords.
-    """
-    lower, upper = bounds
-    derived: dict[str, bool] = {}
-
-    if lower is not None and lower >= 0:
-        derived["positive"] = True
-    if upper is not None and upper <= 0:
-        derived["negative"] = True
-    if bounds == (0.0, 1.0):
-        derived["unit_interval"] = True
-
-    return derived
-
-
 def _collect_fields(
     tokens: pp.ParseResults,
 ) -> tuple[dict[str, str], tuple[float | None, float | None] | None, dict[str, bool]]:
@@ -403,7 +383,7 @@ def _build_symbol_entry(s: str, loc: int, tokens: pp.ParseResults) -> tuple[int,
         latex=metadata.get("latex"),
         source=metadata.get("source"),
         bounds=bounds,
-        assumptions={**DEFAULT_ASSUMPTIONS, **_derive_assumptions_from_bounds(bounds), **assumptions},
+        assumptions={**DEFAULT_ASSUMPTIONS, **assumptions_implied_by_bounds(bounds), **assumptions},
     )
 
 

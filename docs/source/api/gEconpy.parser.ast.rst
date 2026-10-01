@@ -24,6 +24,7 @@ gEconpy.parser.ast
     nodes.TimeIndex
     nodes.UnaryOp
     nodes.Variable
+    nodes.assumptions_implied_by_bounds
     nodes.collect_nodes_of_type
     nodes.collect_parameter_names
     nodes.collect_variable_names

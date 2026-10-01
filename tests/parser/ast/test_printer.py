@@ -289,6 +289,48 @@ class TestPrintModel:
         assert reparsed.blocks[0].constraints[1].tags == {Tag.EXCLUDE}
         assert reparsed.blocks[0].shock_distributions == model.blocks[0].shock_distributions
 
+    def test_printed_symbols_block_reparses_to_same_ast(self):
+        source = """
+        symbols
+        {
+            alpha { name = "Capital share"; latex = "\\alpha"; source = "Smets and Wouters (2007)"; bounds = (0, 1); };
+            K[] { positive = True; };
+            z { nonnegative = True; };
+            n { integer = True; real = False; };
+            psi { bounds = (1, None); };
+            bare { };
+        };
+
+        block TEST { identities { Y[] = alpha; }; };
+        """
+        model = quick_parse(source)
+        reparsed = quick_parse(print_model(model))
+
+        assert reparsed == model
+        assert reparsed.symbols["alpha"].latex == "\\alpha"
+        assert reparsed.symbols["bare"].bounds == (None, None)
+
+    def test_printed_symbols_omit_assumptions_the_bound_implies(self):
+        printed = print_model(quick_parse("symbols { alpha { bounds = (0, 1); }; }; block TEST { };"))
+
+        assert printed.startswith("symbols\n{\n    alpha\n    {\n        bounds = (0, 1);\n    };\n};")
+
+    def test_printed_sign_keyword_normalizes_to_its_bound(self):
+        printed = print_model(quick_parse("symbols { K[] { positive = True; }; }; block TEST { };"))
+
+        assert printed.startswith("symbols\n{\n    K\n    {\n        bounds = (0, None);\n    };\n};")
+
+    @pytest.mark.parametrize(
+        "declared",
+        ["(0, 1)", "(-1.5, 2.5)", "(0.001, None)", "(None, -2)", "(1e-3, 1000)"],
+        ids=["integral", "negative_float", "small_float", "negative_upper", "scientific"],
+    )
+    def test_printed_bounds_reparse_to_the_same_values(self, declared):
+        model = quick_parse(f"symbols {{ alpha {{ bounds = {declared}; }}; }}; block TEST {{ }};")
+        reparsed = quick_parse(print_model(model))
+
+        assert reparsed.symbols["alpha"].bounds == model.symbols["alpha"].bounds
+
 
 class TestRoundTrip:
     @pytest.mark.parametrize(

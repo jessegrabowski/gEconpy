@@ -1,6 +1,7 @@
 from collections import defaultdict
 from collections.abc import Iterable
 
+from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
 from gEconpy.parser.ast import (
     BinaryOp,
     Expectation,
@@ -11,8 +12,10 @@ from gEconpy.parser.ast import (
     GCNModel,
     Node,
     Operator,
+    SymbolDeclaration,
     UnaryOp,
     Variable,
+    assumptions_implied_by_bounds,
 )
 
 PRECEDENCE = {
@@ -136,7 +139,7 @@ def print_block(block: GCNBlock, indent: str = "    ") -> str:
 
 def print_model(model: GCNModel, indent: str = "    ") -> str:
     """
-    Render a model as GCN source text: its options, tryreduce, and assumptions sections, then every block.
+    Render a model as GCN source text: its options, tryreduce, assumptions, and symbols sections, then every block.
 
     Parameters
     ----------
@@ -172,12 +175,59 @@ def print_model(model: GCNModel, indent: str = "    ") -> str:
         lines.append("};")
         sections.append("\n".join(lines))
 
+    if model.symbols:
+        sections.append(_symbols_section(model.symbols, indent))
+
     sections.extend(print_block(block, indent) for block in model.blocks)
 
     return "\n\n".join(sections)
 
 
 print_ast = print_expression
+
+
+def _symbols_section(symbols: dict[str, SymbolDeclaration], indent: str) -> str:
+    lines = ["symbols", "{"]
+
+    for symbol, declaration in symbols.items():
+        fields = _symbol_fields(declaration)
+        if not fields:
+            lines.append(f"{indent}{symbol} {{ }};")
+            continue
+        lines.extend([f"{indent}{symbol}", f"{indent}{{"])
+        lines.extend(f"{indent}{indent}{field}" for field in fields)
+        lines.append(f"{indent}}};")
+
+    lines.append("};")
+    return "\n".join(lines)
+
+
+def _symbol_fields(declaration: SymbolDeclaration) -> list[str]:
+    """Render one ``symbols`` entry's fields, omitting every assumption the parser derives from the bound."""
+    fields = [
+        f'{field} = "{text}";'
+        for field in ("name", "latex", "source")
+        if (text := getattr(declaration, field)) is not None
+    ]
+
+    if declaration.bounds != (None, None):
+        lower, upper = (_print_bound(bound) for bound in declaration.bounds)
+        fields.append(f"bounds = ({lower}, {upper});")
+
+    implied = assumptions_implied_by_bounds(declaration.bounds)
+    fields.extend(
+        f"{assumption} = {holds};"
+        for assumption, holds in declaration.assumptions.items()
+        if DEFAULT_ASSUMPTIONS.get(assumption) != holds and implied.get(assumption) != holds
+    )
+
+    return fields
+
+
+def _print_bound(bound: float | None) -> str:
+    if bound is None:
+        return "None"
+    return str(int(bound)) if bound.is_integer() else str(bound)
 
 
 def _print_binary_op(left: Node, op: Operator, right: Node, parent_precedence: int) -> str:

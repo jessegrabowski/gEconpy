@@ -4,6 +4,7 @@
   "fileTypes": ["gcn"],
   "patterns": [
     { "include": "#comment" },
+    { "include": "#string" },
     { "include": "#block-declaration" },
     { "include": "#special-block-keyword" },
     { "include": "#component-keyword" },
@@ -17,6 +18,10 @@
     { "include": "#number" }
   ],
   "repository": {
+    "string": {
+      "name": "string.quoted.double.gcn",
+      "match": "\"[^\"]*\""
+    },
     "comment": {
       "name": "comment.line.number-sign.gcn",
       "match": "#.*$"
@@ -37,12 +42,12 @@
 
     "special-block-keyword": {
       "name": "keyword.control.gcn",
-      "match": "\\b(options|tryreduce|assumptions)\\b"
+      "match": "\\b(options|tryreduce|assumptions|symbols)\\b"
     },
 
     "assumption-keyword": {
       "name": "keyword.control.gcn",
-      "match": "\\b(positive|negative|nonpositive|nonnegative|real|integer|finite)\\b"
+      "match": "\\b(positive|negative|nonpositive|nonnegative|nonzero|real|integer|finite|unit_interval)\\b"
     },
 
     "tag": {
