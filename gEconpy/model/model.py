@@ -110,6 +110,32 @@ def infer_variable_transform(
     return None
 
 
+def steady_state_transforms(
+    variables: Sequence[TimeAwareSymbol | sp.Symbol],
+    user_bounds: dict[str, tuple[float, float]] | None = None,
+) -> list[Transform | None]:
+    """
+    Choose one transform per steady-state variable, preferring the most specific support available.
+
+    A bound passed by the caller wins. Otherwise the variable's own sympy assumptions decide, through
+    :func:`infer_variable_transform`.
+
+    Parameters
+    ----------
+    variables : list of TimeAwareSymbol or Symbol
+        The steady-state variables, in solve order.
+    user_bounds : dict mapping str to tuple of (float, float), optional
+        Explicit bounds keyed by the steady-state symbol's name. Default None.
+
+    Returns
+    -------
+    transforms : list of Transform or None
+        One entry per variable, None where the variable is unconstrained.
+    """
+    user_bounds = {} if user_bounds is None else user_bounds
+    return [infer_variable_transform(variable, user_bounds.get(variable.name)) for variable in variables]
+
+
 def transform_steady_state_system(
     equations: Sequence[TensorVariable],
     ss_nodes: Sequence[TensorVariable],
@@ -1903,7 +1929,7 @@ class Model:
             to_constrained = None
         else:
             method = requested_method or "trust-ncg"
-            transforms = [infer_variable_transform(v, bound_dict[v.name]) for v in vars_to_solve]
+            transforms = steady_state_transforms(vars_to_solve, bound_dict)
             solve_equations, solve_nodes, to_unconstrained, to_constrained = transform_steady_state_system(
                 equations, ss_nodes, transforms
             )

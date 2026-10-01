@@ -16,6 +16,7 @@ from gEconpy.model.model import (
     Model,
     infer_variable_bounds,
     infer_variable_transform,
+    steady_state_transforms,
     transform_steady_state_system,
 )
 from gEconpy.model.parameters import compile_param_dict_func
