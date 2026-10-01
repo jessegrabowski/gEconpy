@@ -306,3 +306,15 @@ def test_build_report(caplog):
 
     for line1, line2 in zip(expected_lines, found_lines, strict=True):
         assert line1 == line2
+
+
+def test_symbols_block_reaches_the_model():
+    model = model_from_gcn(TEST_GCNS / "one_block_2_symbols.gcn", verbose=False)
+
+    assert model.symbols["alpha"].name == "Capital share of output"
+    assert model.symbols["alpha"].bounds == (0.0, 1.0)
+    assert model.symbols["K"].bounds == (0.0, None)
+
+
+def test_model_without_a_symbols_block_has_no_declarations():
+    assert model_from_gcn(TEST_GCNS / "one_block_1.gcn", verbose=False).symbols == {}

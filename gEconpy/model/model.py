@@ -35,6 +35,7 @@ from gEconpy.model.steady_state import (
     compile_known_ss,
     system_to_steady_state,
 )
+from gEconpy.parser.ast import SymbolDeclaration
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
@@ -366,11 +367,13 @@ class Model:
         deterministic_dict: SymbolDictionary,
         calib_dict: SymbolDictionary,
         priors: tuple,
+        symbols: dict[str, SymbolDeclaration] | None = None,
         is_linear: bool = False,
         mode: str | None = None,
         error_func: ERROR_FUNCTIONS = "squared",
     ) -> None:
         self._variables = variables
+        self._symbols = {} if symbols is None else symbols
         self._shocks = shocks
         self._equations = equations
         self._params = list(param_dict.to_sympy().keys())
@@ -421,6 +424,11 @@ class Model:
         A time subscript identifies a variable as endogenous.
         """
         return self._variables
+
+    @property
+    def symbols(self) -> dict[str, SymbolDeclaration]:
+        """Declarations from the GCN ``symbols`` block, keyed by symbol name. Empty when the file declares none."""
+        return self._symbols
 
     @property
     def shocks(self) -> list[TimeAwareSymbol]:

@@ -10,7 +10,7 @@ from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, merge_assumptions
 from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.model.block import Block
-from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node
+from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node, SymbolDeclaration
 from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
@@ -57,6 +57,8 @@ class ModelPrimitives:
         Variables the ``tryreduce`` block marks for elimination.
     assumptions : dict mapping str to dict
         SymPy assumptions per symbol name.
+    symbols : dict mapping str to SymbolDeclaration
+        Declarations from the ``symbols`` block, keyed by symbol name.
     block_dict : dict mapping str to Block
         The solved blocks, keyed by block name.
     """
@@ -74,6 +76,7 @@ class ModelPrimitives:
     options: dict[str, str | bool]
     tryreduce: list[TimeAwareSymbol]
     assumptions: dict[str, dict[str, bool]]
+    symbols: dict[str, SymbolDeclaration]
     block_dict: dict[str, Block] = field(repr=False)
 
 
@@ -165,6 +168,7 @@ def ast_model_to_primitives(
         options=model.options,
         tryreduce=_extract_tryreduce(model, variables),
         assumptions=assumptions,
+        symbols=model.symbols,
         block_dict=block_dict,
     )
 

@@ -26,6 +26,7 @@ from gEconpy.model.steady_state import (
     system_to_steady_state,
 )
 from gEconpy.model.timing import natural_sort_key
+from gEconpy.parser.ast import SymbolDeclaration
 from gEconpy.parser.errors import GCNErrorCollection, GCNParseError
 from gEconpy.parser.formatting import ErrorFormatter
 from gEconpy.parser.loader import load_gcn_file
@@ -130,6 +131,7 @@ def model_from_gcn(
         deterministic_dict=primitives.deterministic_dict,
         calib_dict=primitives.calib_dict,
         priors=(primitives.param_priors, primitives.shock_priors),
+        symbols=primitives.symbols,
         is_linear=primitives.options.get("linear", False),
         mode=mode,
         error_func=error_function,
@@ -570,6 +572,7 @@ class _ModelPrimitives:
     param_priors: SymbolDictionary
     shock_priors: SymbolDictionary
     options: dict
+    symbols: dict[str, SymbolDeclaration]
 
 
 def _load_model_primitives(
@@ -697,6 +700,7 @@ def _derive_model_primitives(
         param_priors=param_priors,
         shock_priors=shock_priors,
         options=parsed.options,
+        symbols=parsed.symbols,
     )
 
 
