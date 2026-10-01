@@ -13,7 +13,12 @@ assumptions
 {
     positive
     {
-        Y[], C[], I[], K[], L[], A[], theta, beta, delta, tau, rho, alpha;
+        Y[], C[], I[], K[], L[], A[], theta, beta, delta, tau, rho;
+    };
+
+    unit_interval
+    {
+        alpha;
     };
 };
 

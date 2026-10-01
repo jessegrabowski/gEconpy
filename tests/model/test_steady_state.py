@@ -12,6 +12,7 @@ from scipy import optimize
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.model import model as model_module
 from gEconpy.model.model import (
     Model,
     infer_variable_bounds,
@@ -461,6 +462,31 @@ def test_infer_variable_transform_waterfall(assumptions, user_bound, expected_ty
 )
 def test_infer_variable_bounds(assumptions, expected):
     assert infer_variable_bounds(TimeAwareSymbol("x", 0, **assumptions)) == expected
+
+
+def test_solver_does_not_pass_inferred_bounds_to_the_transform(monkeypatch):
+    """
+    The inferred box bounds guard the sign for box-constrained methods only.
+
+    Passing them as an explicit bound made every positive variable look bounded, so a ``unit_interval`` variable
+    was reparametrized under a shifted log instead of a logit.
+    """
+    captured: list = []
+    original = model_module.transform_steady_state_system
+
+    def record(equations, ss_nodes, transforms):
+        captured.extend(transforms)
+        return original(equations, ss_nodes, transforms)
+
+    monkeypatch.setattr(model_module, "transform_steady_state_system", record)
+
+    model = load_and_cache_model("one_block_2_no_extra.gcn")
+    model.steady_state(how="minimize", verbose=False, progressbar=False)
+
+    chosen = dict(zip(model._vars_to_solve, captured, strict=True))
+    alpha_transform = next(t for v, t in chosen.items() if getattr(v, "base_name", v.name) == "alpha")
+
+    assert float(alpha_transform.backward(0.0).eval()) == pytest.approx(0.5)
 
 
 def test_transform_steady_state_system_round_trips_and_preserves_residuals():

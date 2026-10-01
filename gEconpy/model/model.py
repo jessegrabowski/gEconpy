@@ -1910,8 +1910,8 @@ class Model:
         x0 = _initialize_x0(optimizer_kwargs, vars_to_solve, jitter_x0)
         tol = optimizer_kwargs.pop("tol", 1e-30)
 
-        bound_dict = {x.name: infer_variable_bounds(x) for x in vars_to_solve}
-        bound_dict.update({} if bounds is None else bounds)
+        box_bounds = {x.name: infer_variable_bounds(x) for x in vars_to_solve}
+        box_bounds.update({} if bounds is None else bounds)
 
         # Box-constrained solvers crawl an ill-conditioned interior-point central path on DSGE steady states, so they
         # run only when the caller names one and leaves ``prefer_transform`` off. Otherwise each bounded variable is
@@ -1925,11 +1925,11 @@ class Model:
             method = requested_method
             solve_equations, solve_nodes = equations, ss_nodes
             x0_solve = x0
-            bounds_arg = [bound_dict[x.name] for x in vars_to_solve]
+            bounds_arg = [box_bounds[x.name] for x in vars_to_solve]
             to_constrained = None
         else:
             method = requested_method or "trust-ncg"
-            transforms = steady_state_transforms(vars_to_solve, bound_dict)
+            transforms = steady_state_transforms(vars_to_solve, bounds)
             solve_equations, solve_nodes, to_unconstrained, to_constrained = transform_steady_state_system(
                 equations, ss_nodes, transforms
             )
