@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS, TimeAwareSymbol
+from gEconpy.parser.ast import gcn_spelling
 from gEconpy.solvers.gensys import interpret_gensys_output
 
 if TYPE_CHECKING:
@@ -316,12 +317,8 @@ class DeprecatedAssumptionsBlockWarning(UserWarning):
 
 
 def _deprecated_assumptions_message(declarations: dict[str, dict[str, bool]]) -> str:
-    def spelling(key: str) -> str:
-        """Undo the time-t key a variable is stored under, so the suggestion reads as the author would write it."""
-        return f"{key[:-2]}[]" if key.endswith("_t") else key
-
     entries = "\n".join(
-        f"    {spelling(name)} {{ {' '.join(f'{keyword} = True;' for keyword in declared)} }};"
+        f"    {gcn_spelling(name)} {{ {' '.join(f'{keyword} = True;' for keyword in declared)} }};"
         for name, keywords in declarations.items()
         if (declared := sorted(k for k, v in keywords.items() if DEFAULT_ASSUMPTIONS.get(k) != v))
     )

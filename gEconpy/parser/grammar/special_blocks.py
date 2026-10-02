@@ -14,7 +14,7 @@ from gEconpy.parser.constants import (
     GCN_ASSUMPTIONS,
     KNOWN_ASSUMPTIONS,
     KNOWN_SYMBOL_FIELDS,
-    SIGN_ASSUMPTION_INTERVALS,
+    SIGN_ASSUMPTION_SUPPORTS,
     SYMBOL_METADATA_FIELDS,
 )
 from gEconpy.parser.error_catalog import ErrorCode
@@ -238,9 +238,9 @@ BOUND_VALUE = KW_NONE.copy().set_parse_action(lambda _: [None]) | pp.Combine(
     pp.Optional(pp.Literal("-")) + NUMBER
 ).set_parse_action(lambda t: float(t[0]))
 # A bracket says whether the endpoint belongs to the support, as it would in a written interval.
-OPEN_LOWER = pp.Literal("(").set_parse_action(lambda: False) | pp.Literal("[").set_parse_action(lambda: True)
-OPEN_UPPER = pp.Literal(")").set_parse_action(lambda: False) | pp.Literal("]").set_parse_action(lambda: True)
-BOUNDS_VALUE = (OPEN_LOWER - BOUND_VALUE - COMMA - BOUND_VALUE - OPEN_UPPER).set_parse_action(
+CLOSED_LOWER = pp.Literal("(").set_parse_action(lambda: False) | pp.Literal("[").set_parse_action(lambda: True)
+CLOSED_UPPER = pp.Literal(")").set_parse_action(lambda: False) | pp.Literal("]").set_parse_action(lambda: True)
+BOUNDS_VALUE = (CLOSED_LOWER - BOUND_VALUE - COMMA - BOUND_VALUE - CLOSED_UPPER).set_parse_action(
     lambda t: [((t[1], t[2]), (t[0], t[3]))]
 )
 
@@ -260,7 +260,7 @@ BOUNDS_FIELD = pp.Group(pp.CaselessKeyword("bounds")("field") - EQUALS - BOUNDS_
 
 def _reject_false_sign_assumption(s: str, loc: int, tokens: pp.ParseResults) -> None:
     name = tokens[0].field.lower()
-    if tokens[0].value is False and name in SIGN_ASSUMPTION_INTERVALS:
+    if tokens[0].value is False and name in SIGN_ASSUMPTION_SUPPORTS:
         raise GCNParseFailure(
             s,
             loc,
@@ -312,9 +312,7 @@ def _implied_supports(
     assumptions: dict[str, bool],
 ) -> list[tuple[tuple[float | None, float | None], tuple[bool, bool]]]:
     return [
-        SIGN_ASSUMPTION_INTERVALS[key]
-        for key, holds in assumptions.items()
-        if holds and key in SIGN_ASSUMPTION_INTERVALS
+        SIGN_ASSUMPTION_SUPPORTS[key] for key, holds in assumptions.items() if holds and key in SIGN_ASSUMPTION_SUPPORTS
     ]
 
 

@@ -522,6 +522,23 @@ def variable_key(base_name: str) -> str:
     return f"{base_name}_t"
 
 
+def gcn_spelling(key: str) -> str:
+    """
+    Render a storage key as the author would have written it in a GCN file.
+
+    Parameters
+    ----------
+    key : str
+        A storage key, as :func:`variable_key` produces for a variable.
+
+    Returns
+    -------
+    spelling : str
+        The GCN spelling, for example ``"beta[]"`` for the key ``"beta_t"``.
+    """
+    return f"{key[:-2]}[]" if key.endswith("_t") else key
+
+
 def assumptions_implied_by_bounds(
     bounds: tuple[float | None, float | None],
     closed: tuple[bool, bool] = (False, False),

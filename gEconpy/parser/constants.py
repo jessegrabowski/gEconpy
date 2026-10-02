@@ -32,7 +32,7 @@ GCN_ASSUMPTIONS = [
 # Assumptions that constrain a symbol's support. Each maps to the interval it implies, which is checked against any
 # bound declared alongside it. The remaining assumptions in GCN_ASSUMPTIONS say nothing about the support and are
 # passed to sympy untouched.
-SIGN_ASSUMPTION_INTERVALS: dict[str, tuple[tuple[float | None, float | None], tuple[bool, bool]]] = {
+SIGN_ASSUMPTION_SUPPORTS: dict[str, tuple[tuple[float | None, float | None], tuple[bool, bool]]] = {
     "positive": ((0.0, None), (False, False)),
     "nonnegative": ((0.0, None), (True, False)),
     "negative": ((None, 0.0), (False, False)),

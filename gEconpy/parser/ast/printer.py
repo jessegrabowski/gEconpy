@@ -212,8 +212,8 @@ def _symbol_fields(declaration: SymbolDeclaration) -> list[str]:
 
     if declaration.bounds != (None, None):
         lower, upper = (_print_bound(bound) for bound in declaration.bounds)
-        open_lower, open_upper = ("[" if declaration.closed[0] else "(", "]" if declaration.closed[1] else ")")
-        fields.append(f"bounds = {open_lower}{lower}, {upper}{open_upper};")
+        lower_bracket, upper_bracket = ("[" if declaration.closed[0] else "(", "]" if declaration.closed[1] else ")")
+        fields.append(f"bounds = {lower_bracket}{lower}, {upper}{upper_bracket};")
 
     implied = assumptions_implied_by_bounds(declaration.bounds, declaration.closed)
     fields.extend(
