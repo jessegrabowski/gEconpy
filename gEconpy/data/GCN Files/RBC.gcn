@@ -52,6 +52,10 @@ symbols
         bounds = (0, None);
     };
 
+    u[]
+    {
+        name = "Period utility";
+    };
     U[]
     {
         name = "Lifetime utility";

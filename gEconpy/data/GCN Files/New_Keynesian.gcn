@@ -1,27 +1,252 @@
 symbols
 {
-    shock_technology[] { positive = True; };
-    shock_preference[] { positive = True; };
-    pi[] { positive = True; };
-    pi_star[] { positive = True; };
-    pi_obj[] { positive = True; };
-    r[] { positive = True; };
-    r_G[] { positive = True; };
-    mc[] { positive = True; };
-    w[] { positive = True; };
-    w_star[] { positive = True; };
-    Y[] { positive = True; };
-    C[] { positive = True; };
-    I[] { positive = True; };
-    K[] { positive = True; };
-    L[] { positive = True; };
-    delta { positive = True; };
-    beta { positive = True; };
-    sigma_C { positive = True; };
-    sigma_L { positive = True; };
-    gamma_I { positive = True; };
-    phi_H { positive = True; };
+    Y[]
+    {
+        name = "Output";
+        bounds = (0, None);
+    };
+    C[]
+    {
+        name = "Consumption";
+        bounds = (0, None);
+    };
+    I[]
+    {
+        name = "Investment";
+        bounds = (0, None);
+    };
+    K[]
+    {
+        name = "Capital stock";
+        bounds = (0, None);
+    };
+    L[]
+    {
+        name = "Hours worked";
+        bounds = (0, None);
+    };
+    B[]
+    {
+        name = "Nominal bond holdings";
+    };
+    Div[]
+    {
+        name = "Dividends paid to households";
+    };
+    u[]
+    {
+        name = "Period utility";
+    };
+    U[]
+    {
+        name = "Lifetime utility";
+    };
+    TC[]
+    {
+        name = "Total factor cost";
+        bounds = (None, 0);
+    };
+
+    w[]
+    {
+        name = "Real wage";
+        bounds = (0, None);
+    };
+    w_star[]
+    {
+        name = "Reset real wage";
+        bounds = (0, None);
+    };
+    r[]
+    {
+        name = "Rental rate of capital";
+        bounds = (0, None);
+    };
+    r_G[]
+    {
+        name = "Gross nominal interest rate";
+        bounds = (0, None);
+    };
+    mc[]
+    {
+        name = "Real marginal cost";
+        bounds = (0, None);
+    };
+    q[]
+    {
+        name = "Shadow value of installed capital";
+        bounds = (0, None);
+    };
+    lambda[]
+    {
+        name = "Marginal utility of wealth";
+        bounds = (0, None);
+    };
+
+    pi[]
+    {
+        name = "Gross inflation";
+        bounds = (0, None);
+    };
+    pi_star[]
+    {
+        name = "Reset price inflation";
+        bounds = (0, None);
+    };
+    pi_obj[]
+    {
+        name = "Central bank inflation target";
+        bounds = (0, None);
+    };
+    pi_w[]
+    {
+        name = "Gross wage inflation";
+        bounds = (0, None);
+    };
+
+    LHS[]
+    {
+        name = "Price-setting recursion, numerator";
+    };
+    RHS[]
+    {
+        name = "Price-setting recursion, denominator";
+    };
+    LHS_w[]
+    {
+        name = "Wage-setting recursion, numerator";
+    };
+    RHS_w[]
+    {
+        name = "Wage-setting recursion, denominator";
+    };
+    L_d_star[]
+    {
+        name = "Labor demand at the reset wage";
+        bounds = (0, None);
+    };
+
+    shock_technology[]
+    {
+        name = "Technology level";
+        bounds = (0, None);
+    };
+    shock_preference[]
+    {
+        name = "Preference shifter";
+        bounds = (0, None);
+    };
+    epsilon_Y[]
+    {
+        name = "Technology innovation";
+    };
+    epsilon_preference[]
+    {
+        name = "Preference innovation";
+    };
+    epsilon_pi[]
+    {
+        name = "Inflation target innovation";
+    };
+    epsilon_R[]
+    {
+        name = "Monetary policy innovation";
+    };
+
+    alpha
+    {
+        name = "Capital share of output";
+        bounds = (0, 1);
+    };
+    beta
+    {
+        name = "Discount factor";
+        bounds = (0, 1);
+    };
+    delta
+    {
+        name = "Depreciation rate";
+        bounds = (0, 1);
+    };
+    sigma_C
+    {
+        name = "Inverse elasticity of intertemporal substitution";
+        bounds = (0, None);
+    };
+    sigma_L
+    {
+        name = "Inverse Frisch elasticity of labor supply";
+        bounds = (0, None);
+    };
+    phi_H
+    {
+        name = "Habit formation in consumption";
+        bounds = (0, 1);
+    };
+    gamma_I
+    {
+        name = "Investment adjustment cost";
+        bounds = (0, None);
+    };
+
+    eta_p
+    {
+        name = "Elasticity of substitution between goods";
+        bounds = (1, None);
+    };
+    eta_w
+    {
+        name = "Elasticity of substitution between labor types";
+        bounds = (1, None);
+    };
+    psi_p
+    {
+        name = "Calvo probability of keeping a price";
+        bounds = (0, 1);
+    };
+    psi_w
+    {
+        name = "Calvo probability of keeping a wage";
+        bounds = (0, 1);
+    };
+
+    phi_pi
+    {
+        name = "Taylor rule response to inflation";
+        bounds = (0, None);
+    };
+    phi_Y
+    {
+        name = "Taylor rule response to output";
+        bounds = (0, None);
+    };
+    phi_pi_obj
+    {
+        name = "Taylor rule response to the inflation target";
+        bounds = (0, None);
+    };
+    rho_r_G
+    {
+        name = "Interest rate smoothing";
+        bounds = (0, 1);
+    };
+    rho_pi_dot
+    {
+        name = "Inflation target persistence";
+        bounds = (0, 1);
+    };
+    rho_technology
+    {
+        name = "Technology shock persistence";
+        bounds = (0, 1);
+    };
+    rho_preference
+    {
+        name = "Preference shock persistence";
+        bounds = (0, 1);
+    };
 };
+
 
 tryreduce
 {

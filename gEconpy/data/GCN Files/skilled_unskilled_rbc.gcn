@@ -1,3 +1,185 @@
+symbols
+{
+    Y[]
+    {
+        name = "Output";
+        bounds = (0, None);
+    };
+    K[]
+    {
+        name = "Aggregate capital stock";
+        bounds = (0, None);
+    };
+    L[]
+    {
+        name = "Aggregate labor input";
+        bounds = (0, None);
+    };
+    A[]
+    {
+        name = "Total factor productivity";
+        bounds = (0, None);
+    };
+    P[]
+    {
+        name = "Price of the labor aggregate";
+        bounds = (0, None);
+    };
+    Div[]
+    {
+        name = "Dividends paid to households";
+    };
+    TC[]
+    {
+        name = "Total factor cost";
+        bounds = (None, 0);
+    };
+
+    C_s[]
+    {
+        name = "Consumption, skilled household";
+        bounds = (0, None);
+    };
+    L_s[]
+    {
+        name = "Hours worked, skilled household";
+        bounds = (0, None);
+    };
+    I_s[]
+    {
+        name = "Investment, skilled household";
+        bounds = (0, None);
+    };
+    K_s[]
+    {
+        name = "Capital stock, skilled household";
+        bounds = (0, None);
+    };
+    U_s[]
+    {
+        name = "Lifetime utility, skilled household";
+    };
+    u_s[]
+    {
+        name = "Period utility, skilled household";
+    };
+    r_s[]
+    {
+        name = "Rental rate, skilled capital";
+        bounds = (0, None);
+    };
+    w_s[]
+    {
+        name = "Real wage, skilled labor";
+        bounds = (0, None);
+    };
+
+    C_u[]
+    {
+        name = "Consumption, unskilled household";
+        bounds = (0, None);
+    };
+    L_u[]
+    {
+        name = "Hours worked, unskilled household";
+        bounds = (0, None);
+    };
+    I_u[]
+    {
+        name = "Investment, unskilled household";
+        bounds = (0, None);
+    };
+    K_u[]
+    {
+        name = "Capital stock, unskilled household";
+        bounds = (0, None);
+    };
+    U_u[]
+    {
+        name = "Lifetime utility, unskilled household";
+    };
+    u_u[]
+    {
+        name = "Period utility, unskilled household";
+    };
+    r_u[]
+    {
+        name = "Rental rate, unskilled capital";
+        bounds = (0, None);
+    };
+    w_u[]
+    {
+        name = "Real wage, unskilled labor";
+        bounds = (0, None);
+    };
+
+    epsilon_A[]
+    {
+        name = "Technology shock";
+    };
+
+    alpha
+    {
+        name = "Capital share of output";
+        bounds = (0, 1);
+    };
+    alpha_K
+    {
+        name = "Skilled share of the capital aggregate";
+        bounds = (0, 1);
+    };
+    alpha_L
+    {
+        name = "Skilled share of the labor aggregate";
+        bounds = (0, 1);
+    };
+    psi_L
+    {
+        name = "Elasticity of substitution between labor types";
+        bounds = (0, None);
+    };
+    s
+    {
+        name = "Elasticity of substitution between capital types";
+        bounds = (0, None);
+    };
+    beta_s
+    {
+        name = "Discount factor, skilled household";
+        bounds = (0, 1);
+    };
+    beta_u
+    {
+        name = "Discount factor, unskilled household";
+        bounds = (0, 1);
+    };
+    delta_s
+    {
+        name = "Depreciation rate, skilled capital";
+        bounds = (0, 1);
+    };
+    delta_u
+    {
+        name = "Depreciation rate, unskilled capital";
+        bounds = (0, 1);
+    };
+    Theta_s
+    {
+        name = "Labor disutility, skilled household";
+        bounds = (0, None);
+    };
+    Theta_u
+    {
+        name = "Labor disutility, unskilled household";
+        bounds = (0, None);
+    };
+    rho
+    {
+        name = "Technology shock persistence";
+        bounds = [0, 1);
+    };
+};
+
 block STEADY_STATE
 {
     identities

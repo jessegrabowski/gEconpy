@@ -1,3 +1,199 @@
+symbols
+{
+    Y[]
+    {
+        name = "Output";
+        bounds = (0, None);
+    };
+    C[]
+    {
+        name = "Consumption";
+        bounds = (0, None);
+    };
+    I[]
+    {
+        name = "Investment";
+        bounds = (0, None);
+    };
+    K[]
+    {
+        name = "Capital stock";
+        bounds = (0, None);
+    };
+    K_d[]
+    {
+        name = "Capital services demanded";
+        bounds = (0, None);
+    };
+    L[]
+    {
+        name = "Hours worked";
+        bounds = (0, None);
+    };
+    A[]
+    {
+        name = "Total factor productivity";
+        bounds = (0, None);
+    };
+    K_to_L[]
+    {
+        name = "Capital to labor ratio";
+        bounds = (0, None);
+    };
+
+    r[]
+    {
+        name = "Rental rate of capital";
+        bounds = (0, None);
+    };
+    w[]
+    {
+        name = "Real wage";
+        bounds = (0, None);
+    };
+    mc[]
+    {
+        name = "Marginal cost";
+        bounds = (0, None);
+    };
+    q[]
+    {
+        name = "Shadow value of installed capital";
+        bounds = (0, None);
+    };
+    lambda[]
+    {
+        name = "Marginal utility of wealth";
+        bounds = (0, None);
+    };
+    z[]
+    {
+        name = "Capital utilization rate";
+        bounds = (0, None);
+    };
+    Psi_z[]
+    {
+        name = "Utilization cost";
+    };
+
+    u[]
+    {
+        name = "Period utility";
+    };
+    U[]
+    {
+        name = "Lifetime utility";
+    };
+    TC[]
+    {
+        name = "Total factor cost";
+        bounds = (None, 0);
+    };
+
+    beta[]
+    {
+        name = "Stochastic discount factor";
+        bounds = (0, 1);
+    };
+    Theta[]
+    {
+        name = "Labor disutility shifter";
+        bounds = (0, None);
+    };
+    shock_I[]
+    {
+        name = "Investment efficiency shifter";
+        bounds = (0, None);
+    };
+    epsilon_A[]
+    {
+        name = "Technology shock";
+    };
+    epsilon_beta[]
+    {
+        name = "Discount factor shock";
+    };
+    epsilon_Theta[]
+    {
+        name = "Labor disutility shock";
+    };
+    epsilon_I[]
+    {
+        name = "Investment efficiency shock";
+    };
+
+    alpha
+    {
+        name = "Capital share of output";
+        bounds = (0, 1);
+    };
+    beta
+    {
+        name = "Mean discount factor";
+        bounds = (0, 1);
+    };
+    delta
+    {
+        name = "Depreciation rate";
+        bounds = (0, 1);
+    };
+    Theta
+    {
+        name = "Mean labor disutility";
+        bounds = (0, None);
+    };
+    sigma_C
+    {
+        name = "Inverse elasticity of intertemporal substitution";
+        bounds = (0, None);
+    };
+    sigma_L
+    {
+        name = "Inverse Frisch elasticity of labor supply";
+        bounds = (0, None);
+    };
+    phi_H
+    {
+        name = "Habit formation in consumption";
+        bounds = [0, 1);
+    };
+    gamma_I
+    {
+        name = "Investment adjustment cost";
+        bounds = [0, None);
+    };
+    psi_z
+    {
+        name = "Utilization cost level";
+        bounds = (0, None);
+    };
+    psi_z_1
+    {
+        name = "Utilization cost curvature";
+        bounds = (0, None);
+    };
+    rho_A
+    {
+        name = "Technology shock persistence";
+        bounds = [0, 1);
+    };
+    rho_beta
+    {
+        name = "Discount factor shock persistence";
+        bounds = [0, 1);
+    };
+    rho_Theta
+    {
+        name = "Labor disutility shock persistence";
+        bounds = [0, 1);
+    };
+    rho_I
+    {
+        name = "Investment efficiency shock persistence";
+        bounds = [0, 1);
+    };
+};
+
 tryreduce
 {
     U[], TC[], q[], K_d[];
