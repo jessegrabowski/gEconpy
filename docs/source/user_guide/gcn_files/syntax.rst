@@ -218,7 +218,7 @@ solver.
 Special blocks
 --------------
 
-Three blocks apply to the whole file and sit outside any agent's block.
+Four blocks apply to the whole file and sit outside any agent's block.
 
 ``tryreduce`` lists variables that gEconpy should try to eliminate from the system by substitution, which makes the
 model smaller before it is solved. The RBC model removes the two objective values, which nothing else depends on:
@@ -228,15 +228,45 @@ model smaller before it is solved. The RBC model removes the two objective value
    :start-at: tryreduce
    :end-at: };
 
-``assumptions`` declares sympy assumptions for named variables and parameters, grouped by assumption. The assumptions
-gEconpy accepts are ``positive``, ``negative``, ``nonpositive``, ``nonnegative``, ``real``, ``integer``, ``finite``,
-``rational`` and ``irrational``. A ``positive`` declaration lets gEconpy simplify a power of the variable or
-log-linearize it without a sign check:
+``symbols`` declares each variable and parameter once, giving it a readable name, a LaTeX rendering, a support, and
+a provenance for its calibrated value. Every field is optional:
 
-.. literalinclude:: ../../../../tests/_resources/test_gcns/open_rbc.gcn
-   :language: text
-   :start-at: assumptions
-   :end-before: block STEADY_STATE
+.. code-block:: text
+
+    symbols
+    {
+        K[]
+        {
+            name = "Capital stock";
+            bounds = (0, None);
+        };
+
+        alpha
+        {
+            name = "Capital share of output";
+            source = "Smets and Wouters (2007)";
+            bounds = (0, 1);
+        };
+    };
+
+``bounds`` is the canonical record of a symbol's support, written ``(lower, upper)`` with ``None`` for an unbounded
+side. Bounds are open, so ``(0, None)`` means strictly positive. A declared bound both attaches the matching sympy
+assumptions, which let gEconpy simplify a power or log-linearize without a sign check, and chooses the
+reparametrization the steady-state solver uses for that symbol.
+
+The sympy assumption keywords may be written directly as a shorthand for the bound they imply. ``positive = True`` is
+the same declaration as ``bounds = (0, None)``, and ``unit_interval = True`` the same as ``bounds = (0, 1)``. The
+keywords gEconpy accepts are ``positive``, ``negative``, ``nonpositive``, ``nonnegative``, ``nonzero``, ``real``,
+``integer``, ``finite`` and ``unit_interval``. Of these only the sign keywords describe a support; ``real`` and
+``finite`` hold for every symbol already, and ``integer`` and ``nonzero`` are facts sympy cannot derive from a bound.
+
+A variable and a parameter may share a name, as a time-varying discount factor ``beta[]`` alongside the level
+``beta`` it reverts to. They are different symbols and are declared separately. Declaring the same symbol twice, or
+giving it a bound and a sign keyword that exclude each other, is an error.
+
+``assumptions`` is the deprecated predecessor of ``symbols``. It groups names under each assumption rather than
+giving each symbol one entry, and it cannot tell a variable from a parameter of the same name. It still parses, and
+emits a warning naming the ``symbols`` block that replaces it.
 
 ``options`` holds file-level settings. ``linear = True;`` declares that the model is already linear, so gEconpy skips
 linearization. The gEcon output options, such as ``output logfile = TRUE;``, are accepted so that gEcon files parse and
