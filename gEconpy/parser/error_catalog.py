@@ -295,6 +295,13 @@ class ErrorCode(Enum):
         fixes=(f"Rename the field to one of: {_SYMBOL_FIELD_NAMES}",),
     )
 
+    E021 = ErrorInfo(
+        title="Closed bound on an unbounded side",
+        explanation="A bracket includes an endpoint, and an unbounded side has none to include.",
+        common_causes=("Writing '[None, 0)' or '(0, None]'",),
+        fixes=("Use a parenthesis on the unbounded side",),
+    )
+
     E100 = ErrorInfo(
         title="Duplicate block name",
         explanation="Each block must have a unique name within the model.",

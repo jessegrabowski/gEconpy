@@ -484,6 +484,9 @@ class SymbolDeclaration:
         Provenance of a calibrated value, for the citation column of a calibration table. Defaults to None.
     bounds : tuple of (float or None, float or None), optional
         Lower and upper bound on the symbol's support, with None for unbounded. Defaults to (None, None).
+    closed : tuple of (bool, bool), optional
+        Whether each end of ``bounds`` includes its endpoint, as the author's brackets wrote it. Defaults to
+        (False, False), both ends open.
     assumptions : dict mapping str to bool, optional
         SymPy assumptions to attach to the symbol. Defaults to an empty dict.
     """
@@ -493,6 +496,7 @@ class SymbolDeclaration:
     latex: str | None = None
     source: str | None = None
     bounds: tuple[float | None, float | None] = (None, None)
+    closed: tuple[bool, bool] = (False, False)
     assumptions: dict[str, bool] = field(default_factory=dict)
 
 
@@ -518,17 +522,22 @@ def variable_key(base_name: str) -> str:
     return f"{base_name}_t"
 
 
-def assumptions_implied_by_bounds(bounds: tuple[float | None, float | None]) -> dict[str, bool]:
+def assumptions_implied_by_bounds(
+    bounds: tuple[float | None, float | None],
+    closed: tuple[bool, bool] = (False, False),
+) -> dict[str, bool]:
     """
     Read off the sympy predicates a declared bound implies.
 
-    Declared bounds are open, so a lower bound of zero gives ``positive`` rather than ``nonnegative``. The closed
-    predicates are only ever set by declaring them as keywords.
+    A bracket decides which predicate an endpoint of zero gives: ``(0, None)`` is ``positive`` and ``[0, None)``
+    is ``nonnegative``.
 
     Parameters
     ----------
     bounds : tuple of (float or None, float or None)
         Lower and upper bound on a symbol's support, with None for unbounded.
+    closed : tuple of (bool, bool), optional
+        Whether each end includes its endpoint. Defaults to (False, False), both ends open.
 
     Returns
     -------
@@ -536,13 +545,14 @@ def assumptions_implied_by_bounds(bounds: tuple[float | None, float | None]) -> 
         The predicates the bound implies. Empty when it implies none.
     """
     lower, upper = bounds
+    lower_closed, upper_closed = closed
     implied: dict[str, bool] = {}
 
     if lower is not None and lower >= 0:
-        implied["positive"] = True
+        implied["nonnegative" if lower_closed else "positive"] = True
     if upper is not None and upper <= 0:
-        implied["negative"] = True
-    if bounds == (0.0, 1.0):
+        implied["nonpositive" if upper_closed else "negative"] = True
+    if bounds == (0.0, 1.0) and not any(closed):
         implied["unit_interval"] = True
 
     return implied

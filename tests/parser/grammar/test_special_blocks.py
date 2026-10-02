@@ -124,6 +124,34 @@ class TestAssumptionsBlock:
         result = ASSUMPTIONS_BLOCK.parse_string("assumptions { positive { C[]; }; };")[0]
         assert result["C_t"] == {**DEFAULT_ASSUMPTIONS, "positive": True}
 
+    @pytest.mark.parametrize(
+        "declared, expected",
+        [
+            ("(0, None)", {"positive"}),
+            ("[0, None)", {"nonnegative"}),
+            ("(None, 0)", {"negative"}),
+            ("(None, 0]", {"nonpositive"}),
+            ("(0, 1)", {"positive", "unit_interval"}),
+            ("[0, 1]", {"nonnegative"}),
+        ],
+        ids=["open_lower", "closed_lower", "open_upper", "closed_upper", "unit", "fully_closed"],
+    )
+    def test_brackets_choose_the_strict_or_closed_predicate(self, declared, expected):
+        """A bracket says whether the endpoint belongs to the support, exactly as a written interval would."""
+        result = parse_symbols_block(f"symbols {{ alpha {{ bounds = {declared}; }}; }};")
+        derived = {key for key, value in result["alpha"].assumptions.items() if value} - set(DEFAULT_ASSUMPTIONS)
+
+        assert derived == expected
+
+    @pytest.mark.parametrize(
+        "keyword, expected_closed",
+        [("positive", (False, False)), ("nonnegative", (True, False)), ("nonpositive", (False, True))],
+    )
+    def test_sign_keywords_agree_with_the_bracket_they_stand_for(self, keyword, expected_closed):
+        result = parse_symbols_block(f"symbols {{ alpha {{ {keyword} = True; }}; }};")
+
+        assert result["alpha"].closed == expected_closed
+
     def test_unit_interval_implies_positive(self):
         text = "assumptions { unit_interval { alpha; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
@@ -275,6 +303,7 @@ class TestSymbolsBlock:
             ("symbols { alpha { unit_interval = True; negative = True; }; };", ErrorCode.E017),
             ("symbols { alpha { bounds = (1, 0); }; };", ErrorCode.E017),
             ("symbols { alpha { bounds = (1, 1); }; };", ErrorCode.E017),
+            ("symbols { alpha { bounds = [None, 0); }; };", ErrorCode.E021),
             ("symbols { alpha { positive = False; }; };", ErrorCode.E018),
             ("symbols { alpha { unit_interval = False; }; };", ErrorCode.E018),
             ("symbols { alpha { }; alpha { }; };", ErrorCode.E019),
@@ -288,6 +317,7 @@ class TestSymbolsBlock:
             "unit_interval_excluded_by_sign",
             "bounds_inverted",
             "bounds_degenerate",
+            "closed_unbounded_side",
             "positive_false",
             "unit_interval_false",
             "duplicate_symbol",

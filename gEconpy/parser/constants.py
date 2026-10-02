@@ -32,12 +32,12 @@ GCN_ASSUMPTIONS = [
 # Assumptions that constrain a symbol's support. Each maps to the interval it implies, which is checked against any
 # bound declared alongside it. The remaining assumptions in GCN_ASSUMPTIONS say nothing about the support and are
 # passed to sympy untouched.
-SIGN_ASSUMPTION_INTERVALS: dict[str, tuple[float | None, float | None]] = {
-    "positive": (0.0, None),
-    "nonnegative": (0.0, None),
-    "negative": (None, 0.0),
-    "nonpositive": (None, 0.0),
-    "unit_interval": (0.0, 1.0),
+SIGN_ASSUMPTION_INTERVALS: dict[str, tuple[tuple[float | None, float | None], tuple[bool, bool]]] = {
+    "positive": ((0.0, None), (False, False)),
+    "nonnegative": ((0.0, None), (True, False)),
+    "negative": ((None, 0.0), (False, False)),
+    "nonpositive": ((None, 0.0), (False, True)),
+    "unit_interval": ((0.0, 1.0), (False, False)),
 }
 
 SYMBOL_METADATA_FIELDS = ["name", "latex", "source"]
