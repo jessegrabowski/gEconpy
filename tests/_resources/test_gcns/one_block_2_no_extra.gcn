@@ -9,17 +9,20 @@ tryreduce
     C[];
 };
 
-assumptions
+symbols
 {
-    positive
-    {
-        Y[], C[], I[], K[], L[], A[], theta, beta, delta, tau, rho;
-    };
-
-    unit_interval
-    {
-        alpha;
-    };
+    Y[] { positive = True; };
+    C[] { positive = True; };
+    I[] { positive = True; };
+    K[] { positive = True; };
+    L[] { positive = True; };
+    A[] { positive = True; };
+    theta { positive = True; };
+    beta { positive = True; };
+    delta { positive = True; };
+    tau { positive = True; };
+    rho { positive = True; };
+    alpha { unit_interval = True; };
 };
 
 block HOUSEHOLD

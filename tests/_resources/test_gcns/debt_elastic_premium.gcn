@@ -1,9 +1,8 @@
-assumptions
+symbols
 {
-    positive
-    {
-        Y[], w[], R_star[];
-    };
+    Y[] { positive = True; };
+    w[] { positive = True; };
+    R_star[] { positive = True; };
 };
 
 block HOUSEHOLD

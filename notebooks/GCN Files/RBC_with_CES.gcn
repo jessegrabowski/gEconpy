@@ -3,12 +3,22 @@ tryreduce
     U[], TC[];
 };
 
-assumptions
+symbols
 {
-    positive
-    {
-        A[], Y[], C[], K[], L[], w[], r[], mc[], beta, delta, sigma_C, sigma_L, alpha, psi;
-    };
+    A[] { positive = True; };
+    Y[] { positive = True; };
+    C[] { positive = True; };
+    K[] { positive = True; };
+    L[] { positive = True; };
+    w[] { positive = True; };
+    r[] { positive = True; };
+    mc[] { positive = True; };
+    beta { positive = True; };
+    delta { positive = True; };
+    sigma_C { positive = True; };
+    sigma_L { positive = True; };
+    alpha { positive = True; };
+    psi { positive = True; };
 };
 
 block STEADY_STATE

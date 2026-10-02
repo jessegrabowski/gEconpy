@@ -1,9 +1,12 @@
-assumptions
+symbols
 {
-    positive
-    {
-        A[], r[], N[], K[], Y[], I[], C[];
-    };
+    A[] { positive = True; };
+    r[] { positive = True; };
+    N[] { positive = True; };
+    K[] { positive = True; };
+    Y[] { positive = True; };
+    I[] { positive = True; };
+    C[] { positive = True; };
 };
 
 block STEADY_STATE

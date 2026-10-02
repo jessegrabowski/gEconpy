@@ -1,13 +1,21 @@
-assumptions
+symbols
 {
-    positive
-    {
-        Y[], K[], C_NR[], C_R[],
-        w[], r[],
-        L[], L_NR[], L_R[],
-        TFP[],
-        alpha, alpha_L, beta, sigma_C, sigma_L, delta;
-    };
+    Y[] { positive = True; };
+    K[] { positive = True; };
+    C_NR[] { positive = True; };
+    C_R[] { positive = True; };
+    w[] { positive = True; };
+    r[] { positive = True; };
+    L[] { positive = True; };
+    L_NR[] { positive = True; };
+    L_R[] { positive = True; };
+    TFP[] { positive = True; };
+    alpha { positive = True; };
+    alpha_L { positive = True; };
+    beta { positive = True; };
+    sigma_C { positive = True; };
+    sigma_L { positive = True; };
+    delta { positive = True; };
 };
 
 tryreduce

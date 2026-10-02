@@ -8,12 +8,15 @@ options
 
 };
 
-assumptions
+symbols
 {
-    positive
-    {
-        C[], K[], A[], alpha, beta, delta, gamma;
-    };
+    C[] { positive = True; };
+    K[] { positive = True; };
+    A[] { positive = True; };
+    alpha { positive = True; };
+    beta { positive = True; };
+    delta { positive = True; };
+    gamma { positive = True; };
 };
 
 block HOUSEHOLD
