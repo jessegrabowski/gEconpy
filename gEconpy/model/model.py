@@ -45,6 +45,10 @@ from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
 _log = logging.getLogger(__name__)
 
 STEADY_STATE_TOL = 1e-8
+
+# The gradient is the jacobian times the residual, so it inherits the jacobian's scale. Holding it to the
+# residual tolerance rejects correct answers for a model whose equations are steep at the steady state.
+STEADY_STATE_GRAD_TOL = 1e-6
 BOX_BOUND_METHODS = ("trust-constr", "L-BFGS-B", "powell")
 GRADIENT_REQUIRED_METHODS = ("trust-ncg", "trust-krylov", "trust-exact", "dogleg", "newton-cg")
 
@@ -946,6 +950,7 @@ class Model:
 
         optimizer_kwargs = {} if optimizer_kwargs is None else optimizer_kwargs
         tol = optimizer_kwargs.get("tol", STEADY_STATE_TOL)
+        grad_tol = optimizer_kwargs.get("grad_tol", STEADY_STATE_GRAD_TOL)
         param_dict = self.parameters(**updates)
         f_ss = self.f_ss
 
@@ -1012,6 +1017,7 @@ class Model:
             param_dict,
             fixed_values,
             tol,
+            grad_tol,
             verbose,
         )
 
@@ -2054,6 +2060,7 @@ class Model:
         param_dict: SymbolDictionary,
         fixed_values: dict[str, float] | None,
         tol: float,
+        grad_tol: float,
         verbose: bool,
     ) -> SteadyStateResults:
         """Assemble the steady-state dict from the optimizer result and run the convergence diagnostics."""
@@ -2080,6 +2087,7 @@ class Model:
             f_resid=f_resid,
             f_grad=f_grad,
             tol=tol,
+            grad_tol=grad_tol,
             verbose=verbose,
         )
 

@@ -343,6 +343,7 @@ def postprocess_optimizer_res(
     f_resid: Callable[..., np.ndarray],
     f_grad: Callable[..., np.ndarray],
     tol: float = 1e-6,
+    grad_tol: float = 1e-6,
     verbose: bool = True,
 ) -> SteadyStateResults:
     """
@@ -363,8 +364,12 @@ def postprocess_optimizer_res(
     f_grad : callable
         Function returning the system jacobian given the steady-state values as keyword arguments.
     tol : float, optional
-        Threshold the sum of squared residuals, maximum absolute error, gradient L2 norm, and maximum absolute
-        gradient must each fall below. Defaults to 1e-6.
+        Threshold the sum of squared residuals and the maximum absolute error must each fall below. Defaults to
+        1e-6.
+    grad_tol : float, optional
+        Threshold the gradient L2 norm and the maximum absolute gradient must each fall below. The gradient is
+        the jacobian times the residual, so it carries the jacobian's scale and a model written in steeper
+        equations reaches a larger gradient at an equally good root. Defaults to 1e-6.
     verbose : bool, optional
         If True, log a summary of the solution diagnostics. Defaults to True.
 
@@ -383,7 +388,9 @@ def postprocess_optimizer_res(
     grad_norm = np.linalg.norm(df_dx, ord=2)
     abs_max_grad = np.max(np.abs(df_dx))
 
-    numeric_success = all(condition < tol for condition in [sse, max_abs_error, grad_norm, abs_max_grad])
+    residuals_ok = all(condition < tol for condition in [sse, max_abs_error])
+    gradients_ok = all(condition < grad_tol for condition in [grad_norm, abs_max_grad])
+    numeric_success = residuals_ok and gradients_ok
 
     if numeric_success and not success:
         word = " IS "
@@ -402,8 +409,9 @@ def postprocess_optimizer_res(
     elif not numeric_success and success:
         line_1 += (
             ", although optimizer returned success = True.\n"
-            "The optimizer stopped at a point that does not satisfy the residual tolerance. Try a different "
-            "solution algorithm, a tighter solver-specific tolerance, or a better initial point."
+            "The optimizer stopped at a point that does not satisfy the "
+            f"{'residual' if not residuals_ok else 'gradient'} tolerance. Try a different solution algorithm, a "
+            "tighter solver-specific tolerance, or a better initial point."
         )
 
     msg = (
