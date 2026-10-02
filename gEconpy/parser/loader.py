@@ -140,7 +140,11 @@ def ast_model_to_primitives(
     primitives : ModelPrimitives
         The extracted primitives.
     """
+    # Both blocks describe the same thing, so they write into one store. A symbol declared in both takes its
+    # assumptions from ``symbols``.
     assumptions = dict(model.assumptions) if model.assumptions else {}
+    for name, declaration in model.symbols.items():
+        assumptions[name] = {**assumptions.get(name, {}), **declaration.assumptions}
 
     ss_solution_dict = _extract_ss_solution_dict(model, assumptions)
     block_dict = ast_model_to_block_dict(

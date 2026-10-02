@@ -313,7 +313,7 @@ def test_symbols_block_reaches_the_model():
 
     declarations = model._symbols.to_string()
     assert declarations["alpha"].name == "Capital share of output"
-    assert declarations["alpha"].bounds == (0.0, 1.0)
+    assert declarations["alpha"].bounds == (0.01, 0.99)
     assert declarations["K_t"].bounds == (0.0, None)
 
 

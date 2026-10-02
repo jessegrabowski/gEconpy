@@ -490,7 +490,13 @@ def test_solver_does_not_pass_inferred_bounds_to_the_transform(monkeypatch):
 
 
 def test_declared_bounds_choose_the_transform(monkeypatch):
-    """A bound from the symbols block picks the transform even when the symbol carries no sign assumption."""
+    """
+    A declared bound reaches the solver and outranks the assumption it implies.
+
+    ``alpha`` is declared on ``(0.01, 0.99)``, which implies ``positive``. Were the bound not reaching the solver,
+    that assumption would select a log transform, whose backward maps 0.0 to 1.0 rather than to the interval's
+    midpoint.
+    """
     captured: list = []
     original = model_module.transform_steady_state_system
 
@@ -502,7 +508,6 @@ def test_declared_bounds_choose_the_transform(monkeypatch):
 
     model = load_and_cache_model("one_block_2_symbols.gcn")
     alpha = next(v for v in model._vars_to_solve if getattr(v, "base_name", v.name) == "alpha")
-    assert "positive" not in alpha.assumptions0
 
     model.steady_state(how="minimize", verbose=False, progressbar=False)
 
