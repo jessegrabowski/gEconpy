@@ -84,16 +84,16 @@ class TestAssumptionsBlock:
     def test_single_assumption_single_variable(self):
         text = "assumptions { positive { C[]; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert "C" in result
-        assert result["C"]["positive"] is True
+        assert "C_t" in result
+        assert result["C_t"]["positive"] is True
 
     @pytest.mark.parametrize(
         "text,expected_names",
         [
-            ("assumptions { positive { C[], K[], L[]; }; };", ["C", "K", "L"]),
+            ("assumptions { positive { C[], K[], L[]; }; };", ["C_t", "K_t", "L_t"]),
             ("assumptions { positive { alpha, beta; }; };", ["alpha", "beta"]),
-            ("assumptions { positive { C[], alpha, K[], beta; }; };", ["C", "alpha", "K", "beta"]),
-            ("ASSUMPTIONS { positive { C[]; }; };", ["C"]),
+            ("assumptions { positive { C[], alpha, K[], beta; }; };", ["C_t", "alpha", "K_t", "beta"]),
+            ("ASSUMPTIONS { positive { C[]; }; };", ["C_t"]),
         ],
         ids=["variables", "parameters", "mixed", "uppercase_keyword"],
     )
@@ -108,21 +108,21 @@ class TestAssumptionsBlock:
             real { shock[]; };
         };"""
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert result["C"]["positive"] is True
-        assert result["K"]["positive"] is True
-        assert result["shock"]["real"] is True
+        assert result["C_t"]["positive"] is True
+        assert result["K_t"]["positive"] is True
+        assert result["shock_t"]["real"] is True
 
     def test_name_in_several_subblocks_accumulates_assumptions(self):
         text = "assumptions { positive { C[]; }; negative { K[]; }; unit_interval { C[]; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
         assert result == {
-            "C": {**DEFAULT_ASSUMPTIONS, "positive": True, "unit_interval": True},
-            "K": {**DEFAULT_ASSUMPTIONS, "negative": True},
+            "C_t": {**DEFAULT_ASSUMPTIONS, "positive": True, "unit_interval": True},
+            "K_t": {**DEFAULT_ASSUMPTIONS, "negative": True},
         }
 
     def test_listed_names_start_from_package_defaults(self):
         result = ASSUMPTIONS_BLOCK.parse_string("assumptions { positive { C[]; }; };")[0]
-        assert result["C"] == {**DEFAULT_ASSUMPTIONS, "positive": True}
+        assert result["C_t"] == {**DEFAULT_ASSUMPTIONS, "positive": True}
 
     def test_unit_interval_implies_positive(self):
         text = "assumptions { unit_interval { alpha; }; };"
@@ -133,7 +133,7 @@ class TestAssumptionsBlock:
     def test_case_insensitive_assumption(self):
         text = "assumptions { POSITIVE { C[]; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert result["C"]["positive"] is True
+        assert result["C_t"]["positive"] is True
 
     def test_empty_assumptions(self):
         text = "assumptions { };"
@@ -228,9 +228,12 @@ class TestSymbolsBlock:
         result = parse_symbols_block("symbols { alpha { positive = True; }; };")
         assert result["alpha"].assumptions == {**DEFAULT_ASSUMPTIONS, "positive": True}
 
-    def test_variable_and_parameter_keys_use_the_base_name(self):
-        result = parse_symbols_block("symbols { K[] { positive = True; }; beta { positive = True; }; };")
-        assert set(result) == {"K", "beta"}
+    def test_a_variable_and_a_parameter_of_one_name_are_separate_entries(self):
+        result = parse_symbols_block("symbols { beta[] { bounds = (0, 1); }; beta { bounds = (2, None); }; };")
+
+        assert set(result) == {"beta_t", "beta"}
+        assert result["beta_t"].assumptions["unit_interval"] is True
+        assert "unit_interval" not in result["beta"].assumptions
 
     def test_declared_bounds_win_over_keyword_bounds(self):
         result = parse_symbols_block("symbols { psi { positive = True; bounds = (1, None); }; };")
@@ -371,7 +374,7 @@ class TestParseAssumptionsFn:
         block HOUSEHOLD { };
         """
         result = parse_assumptions(text)
-        assert "C" in result
+        assert "C_t" in result
 
     def test_returns_default_when_no_assumptions(self):
         text = "block HOUSEHOLD { };"

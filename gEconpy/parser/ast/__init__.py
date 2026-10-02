@@ -24,6 +24,7 @@ from gEconpy.parser.ast.nodes import (
     collect_nodes_of_type,
     collect_parameter_names,
     collect_variable_names,
+    variable_key,
 )
 from gEconpy.parser.ast.visitor import NodeTransformer, NodeVisitor
 
@@ -55,4 +56,5 @@ __all__ = [
     "collect_nodes_of_type",
     "collect_parameter_names",
     "collect_variable_names",
+    "variable_key",
 ]

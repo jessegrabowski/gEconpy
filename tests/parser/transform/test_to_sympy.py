@@ -187,8 +187,12 @@ class TestAssumptionsPropagation:
         assert result.is_real is True
 
     def test_assumptions_on_variables(self):
-        result = ast_to_sympy(Variable(name="C", time_index=T), {"C": {"positive": True}})
+        result = ast_to_sympy(Variable(name="C", time_index=T), {"C_t": {"positive": True}})
         assert result.is_positive is True
+
+    def test_a_variable_does_not_take_a_parameter_assumption_of_the_same_name(self):
+        result = ast_to_sympy(Variable(name="C", time_index=T), {"C": {"positive": True}})
+        assert result.is_positive is None
 
     def test_no_assumptions_gives_none(self):
         result = ast_to_sympy(Parameter(name="x"))

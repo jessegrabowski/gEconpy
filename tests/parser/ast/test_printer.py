@@ -318,7 +318,7 @@ class TestPrintModel:
     def test_printed_sign_keyword_normalizes_to_its_bound(self):
         printed = print_model(quick_parse("symbols { K[] { positive = True; }; }; block TEST { };"))
 
-        assert printed.startswith("symbols\n{\n    K\n    {\n        bounds = (0, None);\n    };\n};")
+        assert printed.startswith("symbols\n{\n    K_t\n    {\n        bounds = (0, None);\n    };\n};")
 
     @pytest.mark.parametrize(
         "declared",

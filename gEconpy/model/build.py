@@ -131,7 +131,7 @@ def model_from_gcn(
         deterministic_dict=primitives.deterministic_dict,
         calib_dict=primitives.calib_dict,
         priors=(primitives.param_priors, primitives.shock_priors),
-        symbols=primitives.symbols,
+        symbols=_key_declarations_by_symbol(primitives),
         is_linear=primitives.options.get("linear", False),
         mode=mode,
         error_func=error_function,
@@ -701,6 +701,42 @@ def _derive_model_primitives(
         shock_priors=shock_priors,
         options=parsed.options,
         symbols=parsed.symbols,
+    )
+
+
+def _key_declarations_by_symbol(primitives: "_ModelPrimitives") -> SymbolDictionary:
+    """
+    Re-key the parsed declarations onto the model's own sympy symbols.
+
+    The parser keys a declaration by the symbol's name, so a variable ``beta_t`` and a parameter ``beta`` stay
+    apart. A declaration naming a symbol the model does not have is dropped.
+
+    Parameters
+    ----------
+    primitives : _ModelPrimitives
+        The assembled primitives, whose ``symbols`` are keyed by symbol name.
+
+    Returns
+    -------
+    declarations : SymbolDictionary
+        One entry per declared symbol, keyed by that symbol.
+    """
+    by_name = {symbol.name: symbol for symbol in (*primitives.variables, *primitives.shocks)}
+    by_name.update(
+        {
+            symbol.name: symbol
+            for store in (
+                primitives.param_dict,
+                primitives.hyper_param_dict,
+                primitives.deterministic_dict,
+                primitives.calib_dict,
+            )
+            for symbol in store.to_sympy()
+        }
+    )
+
+    return SymbolDictionary(
+        {by_name[key]: declaration for key, declaration in primitives.symbols.items() if key in by_name}
     )
 
 

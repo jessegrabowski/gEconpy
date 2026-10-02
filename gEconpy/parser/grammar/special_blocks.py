@@ -7,7 +7,7 @@ from typing import Any
 import pyparsing as pp
 
 from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
-from gEconpy.parser.ast import SymbolDeclaration, Variable, assumptions_implied_by_bounds
+from gEconpy.parser.ast import SymbolDeclaration, Variable, assumptions_implied_by_bounds, variable_key
 from gEconpy.parser.constants import (
     GCN_ASSUMPTIONS,
     KNOWN_ASSUMPTIONS,
@@ -214,7 +214,7 @@ def _build_assumptions(tokens: pp.ParseResults) -> dict[str, dict[str, bool]]:
     for subblock in tokens.subblocks:
         assumption_name = subblock.assumption.lower()
         for item in subblock.variables:
-            name = item.name if isinstance(item, Variable) else str(item)
+            name = variable_key(item.name) if isinstance(item, Variable) else str(item)
             assumption_kwargs[name][assumption_name] = True
             # ``unit_interval`` is not a sympy predicate. It sits inertly in ``assumptions0`` so the steady-state
             # solver can route the variable to a logit transform. Because it implies positivity, sympy's
@@ -345,7 +345,7 @@ def _build_symbol_entry(s: str, loc: int, tokens: pp.ParseResults) -> tuple[int,
     item = tokens[0].symbol
     if isinstance(item, pp.ParseResults):
         item = item[0]
-    symbol_name = item.name if isinstance(item, Variable) else str(item)
+    symbol_name = variable_key(item.name) if isinstance(item, Variable) else str(item)
 
     metadata, declared_bounds, assumptions = _collect_fields(tokens[0])
     implied = _implied_intervals(assumptions)

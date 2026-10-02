@@ -513,15 +513,15 @@ def test_declared_bounds_choose_the_transform(monkeypatch):
 @pytest.mark.parametrize(
     "declared, user, expected_midpoint",
     [
-        ({"x": (0.0, 1.0)}, None, 0.5),
-        ({"x": (0.0, 1.0)}, {"x_ss": (2.0, 4.0)}, 3.0),
+        ({"x_t": (0.0, 1.0)}, None, 0.5),
+        ({"x_t": (0.0, 1.0)}, {"x_ss": (2.0, 4.0)}, 3.0),
         ({}, {"x_ss": (2.0, 4.0)}, 3.0),
-        ({"x": (0.0, 1.0)}, {"x": (2.0, 4.0)}, 0.5),
+        ({"x_t": (0.0, 1.0)}, {"x": (2.0, 4.0)}, 0.5),
     ],
     ids=["declared_bound", "caller_bound_wins", "caller_bound_only", "caller_bound_needs_the_steady_state_name"],
 )
 def test_steady_state_transforms_precedence(declared, user, expected_midpoint):
-    """A declared bound is keyed by base name and a caller bound by the steady-state name, which do not match."""
+    """A declared bound is keyed by the variable's time-t name and a caller bound by the steady-state name."""
     variable = TimeAwareSymbol("x", "ss")
     transform = steady_state_transforms([variable], declared, user)[0]
 

@@ -496,6 +496,28 @@ class SymbolDeclaration:
     assumptions: dict[str, bool] = field(default_factory=dict)
 
 
+def variable_key(base_name: str) -> str:
+    """
+    Key under which a variable's declarations and assumptions are stored.
+
+    A model may use one name for both a variable and a parameter, as a time-varying discount factor ``beta[]``
+    alongside its steady-state level ``beta``. The two are different symbols, so the variable is keyed by the
+    time-``t`` name :class:`~gEconpy.classes.time_aware_symbol.TimeAwareSymbol` gives it and the parameter by its
+    bare name, which is the same convention :func:`~gEconpy.classes.containers.safe_string_to_sympy` reads back.
+
+    Parameters
+    ----------
+    base_name : str
+        Variable name without a time index.
+
+    Returns
+    -------
+    key : str
+        The storage key, for example ``"beta_t"``.
+    """
+    return f"{base_name}_t"
+
+
 def assumptions_implied_by_bounds(bounds: tuple[float | None, float | None]) -> dict[str, bool]:
     """
     Read off the sympy predicates a declared bound implies.

@@ -35,7 +35,7 @@ from gEconpy.model.steady_state import (
     compile_known_ss,
     system_to_steady_state,
 )
-from gEconpy.parser.ast import SymbolDeclaration
+from gEconpy.parser.ast import SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
@@ -127,7 +127,7 @@ def steady_state_transforms(
     variables : list of TimeAwareSymbol or Symbol
         The steady-state variables, in solve order.
     declared_bounds : dict mapping str to tuple of (float or None, float or None), optional
-        Bounds declared in the ``symbols`` block, keyed by base name without a time index. Default None.
+        Bounds declared in the ``symbols`` block, keyed by symbol name. Default None.
     user_bounds : dict mapping str to tuple of (float, float), optional
         Explicit bounds keyed by the steady-state symbol's name. Default None.
 
@@ -142,7 +142,8 @@ def steady_state_transforms(
     def bound_for(variable: TimeAwareSymbol | sp.Symbol) -> tuple[float | None, float | None] | None:
         if variable.name in user_bounds:
             return user_bounds[variable.name]
-        return declared_bounds.get(getattr(variable, "base_name", variable.name))
+        key = variable_key(variable.base_name) if isinstance(variable, TimeAwareSymbol) else variable.name
+        return declared_bounds.get(key)
 
     return [infer_variable_transform(variable, bound_for(variable)) for variable in variables]
 
@@ -386,6 +387,10 @@ class Model:
         symbols: dict[str, SymbolDeclaration] | None = None,
     ) -> None:
         self._variables = variables
+
+        # Kept private: its consumers are the steady-state solver and, later, the LaTeX printer and the
+        # generated tables. Keying by symbol rather than by name is what keeps a variable and a parameter of one
+        # name apart.
         self._symbols = {} if symbols is None else symbols
         self._shocks = shocks
         self._equations = equations
@@ -439,17 +444,12 @@ class Model:
         return self._variables
 
     def _declared_bounds(self) -> dict[str, tuple[float | None, float | None]]:
-        """Bounds from the ``symbols`` block, keyed by base name, skipping symbols declared without one."""
+        """Bounds from the ``symbols`` block, keyed by symbol name, skipping symbols declared without one."""
         return {
-            name: declaration.bounds
-            for name, declaration in self._symbols.items()
+            symbol.name: declaration.bounds
+            for symbol, declaration in self._symbols.items()
             if declaration.bounds != (None, None)
         }
-
-    @property
-    def symbols(self) -> dict[str, SymbolDeclaration]:
-        """Declarations from the GCN ``symbols`` block, keyed by symbol name. Empty when the file declares none."""
-        return self._symbols
 
     @property
     def shocks(self) -> list[TimeAwareSymbol]:
