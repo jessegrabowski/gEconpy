@@ -57,6 +57,7 @@ class TestGCNFileWithSpecialBlocks:
         result = parse_gcn(text)
         assert result.tryreduce == ["U", "TC"]
 
+    @pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
     def test_assumptions_block(self):
         text = """
         assumptions {
@@ -84,6 +85,7 @@ class TestGCNFileWithSpecialBlocks:
         assert result.symbols["alpha"].bounds == (0.0, 1.0)
         assert result.symbols["K_t"].assumptions["positive"] is True
 
+    @pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
     def test_all_special_blocks(self):
         text = """
         options { verbose = TRUE; };

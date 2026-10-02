@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 
 import sympy as sp
 
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS, TimeAwareSymbol
 from gEconpy.solvers.gensys import interpret_gensys_output
 
 if TYPE_CHECKING:
@@ -306,6 +306,29 @@ class ExtraParameterWarning(UserWarning):
 
     def __init__(self, extras: Sequence[sp.Symbol]):
         super().__init__(_extra_parameter_message(extras))
+
+
+class DeprecatedAssumptionsBlockWarning(UserWarning):
+    """Warns that a GCN file uses the ``assumptions`` block, which the ``symbols`` block replaces."""
+
+    def __init__(self, declarations: dict[str, dict[str, bool]]):
+        super().__init__(_deprecated_assumptions_message(declarations))
+
+
+def _deprecated_assumptions_message(declarations: dict[str, dict[str, bool]]) -> str:
+    def spelling(key: str) -> str:
+        """Undo the time-t key a variable is stored under, so the suggestion reads as the author would write it."""
+        return f"{key[:-2]}[]" if key.endswith("_t") else key
+
+    entries = "\n".join(
+        f"    {spelling(name)} {{ {' '.join(f'{keyword} = True;' for keyword in declared)} }};"
+        for name, keywords in declarations.items()
+        if (declared := sorted(k for k, v in keywords.items() if DEFAULT_ASSUMPTIONS.get(k) != v))
+    )
+    return (
+        "The assumptions block is deprecated and will be removed. Declare each symbol once in a symbols block "
+        f"instead:\n\nsymbols\n{{\n{entries}\n}};"
+    )
 
 
 class DuplicateParameterError(GCNValidationError):

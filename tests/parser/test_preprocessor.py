@@ -107,6 +107,7 @@ class TestPreprocessWithDistributions:
         assert set(preprocess(source).distributions) == {"alpha", "delta"}
 
 
+@pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
 def test_preprocess_full_model():
     source = """
     options

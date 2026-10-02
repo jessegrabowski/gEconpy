@@ -3,6 +3,7 @@ import pytest
 from pyparsing import ParseBaseException
 
 from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
+from gEconpy.exceptions import DeprecatedAssumptionsBlockWarning
 from gEconpy.parser.ast import SymbolDeclaration
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNParseFailure
@@ -80,6 +81,7 @@ class TestTryreduceBlock:
         assert TRYREDUCE_BLOCK.parse_string(text)[0] == expected
 
 
+@pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
 class TestAssumptionsBlock:
     def test_single_assumption_single_variable(self):
         text = "assumptions { positive { C[]; }; };"
@@ -162,6 +164,14 @@ class TestAssumptionsBlock:
         text = "assumptions { POSITIVE { C[]; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
         assert result["C_t"]["positive"] is True
+
+    def test_warns_and_names_the_symbols_replacement(self):
+        with pytest.warns(DeprecatedAssumptionsBlockWarning) as record:
+            ASSUMPTIONS_BLOCK.parse_string("assumptions { positive { C[]; }; unit_interval { alpha; }; };")
+
+        message = str(record[0].message)
+        assert "C[] { positive = True; };" in message
+        assert "alpha { positive = True; unit_interval = True; };" in message
 
     def test_empty_assumptions(self):
         text = "assumptions { };"
@@ -396,6 +406,7 @@ class TestParseTryreduceFn:
         assert result == []
 
 
+@pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
 class TestParseAssumptionsFn:
     def test_finds_assumptions_in_larger_text(self):
         text = """

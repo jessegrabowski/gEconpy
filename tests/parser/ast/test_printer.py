@@ -259,6 +259,7 @@ class TestPrintModel:
             ]
         )
 
+    @pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
     def test_printed_model_reparses_to_same_ast(self):
         source = """
         options { output logfile = TRUE; solver = gensys; };

@@ -110,6 +110,7 @@ class TestAstModelToPrimitives:
         with pytest.raises(DuplicateParameterError):
             ast_model_to_primitives(quick_parse(source))
 
+    @pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
     def test_value_contradicting_an_assumption_names_the_conflict(self):
         source = (
             "assumptions { positive { alpha; }; }; "

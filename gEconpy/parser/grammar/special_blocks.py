@@ -1,5 +1,6 @@
 import contextlib
 import re
+import warnings
 
 from collections import defaultdict
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 import pyparsing as pp
 
 from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
+from gEconpy.exceptions import DeprecatedAssumptionsBlockWarning
 from gEconpy.parser.ast import SymbolDeclaration, Variable, assumptions_implied_by_bounds, variable_key
 from gEconpy.parser.constants import (
     GCN_ASSUMPTIONS,
@@ -220,7 +222,11 @@ def _build_assumptions(tokens: pp.ParseResults) -> dict[str, dict[str, bool]]:
             if assumption_name == "unit_interval":
                 assumption_kwargs[name]["positive"] = True
 
-    return dict(assumption_kwargs)
+    declarations = dict(assumption_kwargs)
+    if declarations:
+        warnings.warn(DeprecatedAssumptionsBlockWarning(declarations), stacklevel=2)
+
+    return declarations
 
 
 ASSUMPTIONS_BLOCK.set_parse_action(_build_assumptions)
