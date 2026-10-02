@@ -16,6 +16,7 @@ from gEconpy.parser.ast import (
     Parameter,
     UnaryOp,
     Variable,
+    variable_key,
 )
 
 SYMPY_FUNCTIONS: dict[str, Callable[..., sp.Expr]] = {
@@ -121,7 +122,9 @@ class ASTToSympyConverter:
         return sp.Symbol(node.name, **merge_assumptions(self.assumptions.get(node.name)))
 
     def _convert_variable(self, node: Variable) -> TimeAwareSymbol:
-        return TimeAwareSymbol(node.name, node.time_index.value, **merge_assumptions(self.assumptions.get(node.name)))
+        return TimeAwareSymbol(
+            node.name, node.time_index.value, **merge_assumptions(self.assumptions.get(variable_key(node.name)))
+        )
 
     def _convert_binary_op(self, node: BinaryOp) -> sp.Expr:
         return OPERATOR_MAP[node.op](self.convert_expr(node.left), self.convert_expr(node.right))

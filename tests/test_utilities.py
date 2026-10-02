@@ -51,6 +51,35 @@ def _optimizer_check(success, resid_scale):
     return postprocess_optimizer_res(res, res_dict, f_resid, f_grad, tol=1e-6, verbose=False)
 
 
+def test_postprocess_optimizer_res_judges_gradients_on_their_own_tolerance():
+    """
+    A root with a tiny residual but a steep jacobian is still a root.
+
+    The gradient is the jacobian times the residual, so it carries the jacobian's scale. Holding it to the
+    residual tolerance rejects a correct answer for a model whose equations happen to be steep.
+    """
+
+    def f_resid(x_ss):
+        return np.array([1e-9 * x_ss])
+
+    def f_grad(x_ss):
+        return np.array([[1e-7 * x_ss]])
+
+    def verdict(grad_tol):
+        return postprocess_optimizer_res(
+            OptimizeResult(success=True, message="stub"),
+            SteadyStateResults({"x_ss": 1.0}),
+            f_resid,
+            f_grad,
+            tol=1e-8,
+            grad_tol=grad_tol,
+            verbose=False,
+        ).success
+
+    assert verdict(grad_tol=1e-6) is True
+    assert verdict(grad_tol=1e-8) is False
+
+
 @pytest.mark.parametrize(
     "optimizer_success, resid_scale, expected",
     [

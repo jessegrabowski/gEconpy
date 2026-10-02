@@ -1,3 +1,5 @@
+import textwrap
+
 import numpy as np
 import pytest
 import sympy as sp
@@ -17,6 +19,35 @@ RBC_PATH = get_example_gcn("RBC")
 class TestDispatchOnRBC:
     def test_firm_is_dispatched(self):
         primitives = load_gcn_file(RBC_PATH, simplify_blocks=True)
+        assert isinstance(primitives.block_dict["FIRM"], CobbDouglasBlock)
+
+    def test_dispatch_survives_positive_inputs(self):
+        """
+        A production function whose inputs are declared positive still matches.
+
+        ``sp.expand`` rewrites ``L ** (1 - alpha)`` as ``L * L ** (-alpha)`` when the base is positive, which
+        leaves two bare symbols in a monomial that allows one. Declaring a domain then silently cost the model
+        its closed-form first-order conditions.
+        """
+        source = textwrap.dedent("""
+            symbols
+            {
+                Y[] { positive = True; };
+                A[] { positive = True; };
+                K[] { positive = True; };
+                L[] { positive = True; };
+                alpha { bounds = (0, 1); };
+            };
+
+            block FIRM
+            {
+                controls { K[-1], L[]; };
+                objective { TC[] = -(r[] * K[-1] + w[] * L[]); };
+                constraints { Y[] = A[] * K[-1] ^ alpha * L[] ^ (1 - alpha) : mc[]; };
+            };
+        """)
+        primitives = load_gcn_string(source)
+
         assert isinstance(primitives.block_dict["FIRM"], CobbDouglasBlock)
 
     @pytest.mark.parametrize("name", ["HOUSEHOLD", "TECHNOLOGY_SHOCKS"])

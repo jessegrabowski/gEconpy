@@ -1,5 +1,6 @@
 import contextlib
 import re
+import warnings
 
 from collections import defaultdict
 from typing import Any
@@ -7,12 +8,13 @@ from typing import Any
 import pyparsing as pp
 
 from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
-from gEconpy.parser.ast import SymbolDeclaration, Variable, assumptions_implied_by_bounds
+from gEconpy.exceptions import DeprecatedAssumptionsBlockWarning
+from gEconpy.parser.ast import SymbolDeclaration, Variable, assumptions_implied_by_bounds, variable_key
 from gEconpy.parser.constants import (
     GCN_ASSUMPTIONS,
     KNOWN_ASSUMPTIONS,
     KNOWN_SYMBOL_FIELDS,
-    SIGN_ASSUMPTION_INTERVALS,
+    SIGN_ASSUMPTION_SUPPORTS,
     SYMBOL_METADATA_FIELDS,
 )
 from gEconpy.parser.error_catalog import ErrorCode
@@ -32,10 +34,8 @@ from gEconpy.parser.grammar.tokens import (
     KW_TRUE,
     KW_TRYREDUCE,
     LBRACE,
-    LPAREN,
     NUMBER,
     RBRACE,
-    RPAREN,
     SEMI,
     STRING,
 )
@@ -214,7 +214,7 @@ def _build_assumptions(tokens: pp.ParseResults) -> dict[str, dict[str, bool]]:
     for subblock in tokens.subblocks:
         assumption_name = subblock.assumption.lower()
         for item in subblock.variables:
-            name = item.name if isinstance(item, Variable) else str(item)
+            name = variable_key(item.name) if isinstance(item, Variable) else str(item)
             assumption_kwargs[name][assumption_name] = True
             # ``unit_interval`` is not a sympy predicate. It sits inertly in ``assumptions0`` so the steady-state
             # solver can route the variable to a logit transform. Because it implies positivity, sympy's
@@ -222,7 +222,11 @@ def _build_assumptions(tokens: pp.ParseResults) -> dict[str, dict[str, bool]]:
             if assumption_name == "unit_interval":
                 assumption_kwargs[name]["positive"] = True
 
-    return dict(assumption_kwargs)
+    declarations = dict(assumption_kwargs)
+    if declarations:
+        warnings.warn(DeprecatedAssumptionsBlockWarning(declarations), stacklevel=2)
+
+    return declarations
 
 
 ASSUMPTIONS_BLOCK.set_parse_action(_build_assumptions)
@@ -233,7 +237,12 @@ SYMBOL_ITEM = VARIABLE_REF | IDENTIFIER.copy().set_parse_action(lambda t: t[0])
 BOUND_VALUE = KW_NONE.copy().set_parse_action(lambda _: [None]) | pp.Combine(
     pp.Optional(pp.Literal("-")) + NUMBER
 ).set_parse_action(lambda t: float(t[0]))
-BOUNDS_VALUE = (LPAREN - BOUND_VALUE - COMMA - BOUND_VALUE - RPAREN).set_parse_action(lambda t: [(t[0], t[1])])
+# A bracket says whether the endpoint belongs to the support, as it would in a written interval.
+CLOSED_LOWER = pp.Literal("(").set_parse_action(lambda: False) | pp.Literal("[").set_parse_action(lambda: True)
+CLOSED_UPPER = pp.Literal(")").set_parse_action(lambda: False) | pp.Literal("]").set_parse_action(lambda: True)
+BOUNDS_VALUE = (CLOSED_LOWER - BOUND_VALUE - COMMA - BOUND_VALUE - CLOSED_UPPER).set_parse_action(
+    lambda t: [((t[1], t[2]), (t[0], t[3]))]
+)
 
 BOOL_VALUE = KW_TRUE.copy().set_parse_action(lambda _: True) | KW_FALSE.copy().set_parse_action(lambda _: False)
 
@@ -251,7 +260,7 @@ BOUNDS_FIELD = pp.Group(pp.CaselessKeyword("bounds")("field") - EQUALS - BOUNDS_
 
 def _reject_false_sign_assumption(s: str, loc: int, tokens: pp.ParseResults) -> None:
     name = tokens[0].field.lower()
-    if tokens[0].value is False and name in SIGN_ASSUMPTION_INTERVALS:
+    if tokens[0].value is False and name in SIGN_ASSUMPTION_SUPPORTS:
         raise GCNParseFailure(
             s,
             loc,
@@ -299,11 +308,11 @@ def _is_inhabited(bounds: tuple[float | None, float | None]) -> bool:
     return (-float("inf") if lower is None else lower) < (float("inf") if upper is None else upper)
 
 
-def _implied_intervals(assumptions: dict[str, bool]) -> list[tuple[float | None, float | None]]:
+def _implied_supports(
+    assumptions: dict[str, bool],
+) -> list[tuple[tuple[float | None, float | None], tuple[bool, bool]]]:
     return [
-        SIGN_ASSUMPTION_INTERVALS[key]
-        for key, holds in assumptions.items()
-        if holds and key in SIGN_ASSUMPTION_INTERVALS
+        SIGN_ASSUMPTION_SUPPORTS[key] for key, holds in assumptions.items() if holds and key in SIGN_ASSUMPTION_SUPPORTS
     ]
 
 
@@ -317,13 +326,14 @@ def _collect_fields(
     -------
     metadata : dict mapping str to str
         The ``name``, ``latex`` and ``source`` fields that were given.
-    declared_bounds : tuple of (float or None, float or None), or None
-        The declared bound, or None when the entry has no ``bounds`` field.
+    declared_bounds : tuple of (bounds, closed), or None
+        The declared bound and which of its ends include their endpoint, or None when the entry has no
+        ``bounds`` field.
     assumptions : dict mapping str to bool
         The assumption keywords that were given, before anything is derived from the bound.
     """
     metadata: dict[str, str] = {}
-    declared_bounds: tuple[float | None, float | None] | None = None
+    declared_bounds: tuple[tuple[float | None, float | None], tuple[bool, bool]] | None = None
     assumptions: dict[str, bool] = {}
 
     for entry in tokens.fields:
@@ -333,7 +343,7 @@ def _collect_fields(
         if field_name in SYMBOL_METADATA_FIELDS:
             metadata[field_name] = value
         elif field_name == "bounds":
-            # pyparsing wraps a named multi-token expression, so the tuple the parse action built sits one level in.
+            # pyparsing wraps a named multi-token expression, so the pair the parse action built sits one level in.
             declared_bounds = value[0] if isinstance(value, pp.ParseResults) else value
         else:
             assumptions[field_name] = value
@@ -345,24 +355,35 @@ def _build_symbol_entry(s: str, loc: int, tokens: pp.ParseResults) -> tuple[int,
     item = tokens[0].symbol
     if isinstance(item, pp.ParseResults):
         item = item[0]
-    symbol_name = item.name if isinstance(item, Variable) else str(item)
+    symbol_name = variable_key(item.name) if isinstance(item, Variable) else str(item)
 
-    metadata, declared_bounds, assumptions = _collect_fields(tokens[0])
-    implied = _implied_intervals(assumptions)
+    metadata, declared, assumptions = _collect_fields(tokens[0])
+    implied = _implied_supports(assumptions)
 
-    if declared_bounds is not None:
-        for interval in implied:
-            if not _is_inhabited(_intersect([declared_bounds, interval])):
+    if declared is not None:
+        bounds, closed = declared
+        if any(end is None and is_closed for end, is_closed in zip(bounds, closed, strict=True)):
+            raise GCNParseFailure(
+                s,
+                loc,
+                f"Bound on '{symbol_name}' closes a side that is unbounded",
+                code=ErrorCode.E021,
+                found=symbol_name,
+            )
+        for interval, _ in implied:
+            if not _is_inhabited(_intersect([bounds, interval])):
                 raise GCNParseFailure(
                     s,
                     loc,
-                    f"Bound {declared_bounds} on '{symbol_name}' contradicts a sign assumption declared beside it",
+                    f"Bound {bounds} on '{symbol_name}' contradicts a sign assumption declared beside it",
                     code=ErrorCode.E017,
                     found=symbol_name,
                 )
-        bounds = declared_bounds
+    elif implied:
+        bounds = _intersect([interval for interval, _ in implied])
+        closed = tuple(any(ends[side] for _, ends in implied) for side in (0, 1))
     else:
-        bounds = _intersect(implied)
+        bounds, closed = (None, None), (False, False)
 
     if not _is_inhabited(bounds):
         raise GCNParseFailure(
@@ -383,7 +404,8 @@ def _build_symbol_entry(s: str, loc: int, tokens: pp.ParseResults) -> tuple[int,
         latex=metadata.get("latex"),
         source=metadata.get("source"),
         bounds=bounds,
-        assumptions={**DEFAULT_ASSUMPTIONS, **assumptions_implied_by_bounds(bounds), **assumptions},
+        closed=closed,
+        assumptions={**DEFAULT_ASSUMPTIONS, **assumptions_implied_by_bounds(bounds, closed), **assumptions},
     )
 
 

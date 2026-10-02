@@ -110,6 +110,7 @@ class TestAstModelToPrimitives:
         with pytest.raises(DuplicateParameterError):
             ast_model_to_primitives(quick_parse(source))
 
+    @pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
     def test_value_contradicting_an_assumption_names_the_conflict(self):
         source = (
             "assumptions { positive { alpha; }; }; "
@@ -222,3 +223,56 @@ def test_load_gcn_file(gcn_path, n_equations, variables, shocks, parameters, try
     assert [s.base_name for s in primitives.shocks] == shocks
     assert list(primitives.param_dict) == parameters
     assert [v.base_name for v in primitives.tryreduce] == tryreduce
+
+
+def test_symbols_block_assumptions_reach_the_sympy_symbols():
+    """
+    A bound declared in a symbols block attaches to the symbol, not just to the declaration store.
+
+    Both blocks feed one assumptions store. Without the merge, migrating a file from ``assumptions`` to
+    ``symbols`` silently strips every sign fact and changes how the model simplifies and solves.
+    """
+    source = """
+        symbols
+        {
+            K[] { bounds = (0, None); };
+            alpha { bounds = (0, 1); };
+        };
+
+        block TEST
+        {
+            identities { Y[] = alpha * K[-1]; };
+            calibration { alpha = 0.35; };
+        };
+    """
+    primitives = load_gcn_string(source)
+
+    capital = next(v for v in primitives.variables if v.base_name == "K")
+    share = next(p for p in primitives.param_dict.to_sympy() if p.name == "alpha")
+
+    assert capital.is_positive is True
+    assert share.assumptions0["unit_interval"] is True
+
+
+def test_a_variable_and_a_parameter_of_one_name_keep_separate_assumptions():
+    """The old assumptions block collapsed both onto one key, so one silently overwrote the other."""
+    source = """
+        symbols
+        {
+            beta[] { bounds = (0, 1); };
+            beta { bounds = (2, None); };
+        };
+
+        block TEST
+        {
+            identities { Y[] = beta[] + beta; beta[] = 0.9 * beta[-1]; };
+            calibration { beta = 3.0; };
+        };
+    """
+    primitives = load_gcn_string(source)
+
+    discount_variable = next(v for v in primitives.variables if v.base_name == "beta")
+    discount_parameter = next(p for p in primitives.param_dict.to_sympy() if p.name == "beta")
+
+    assert discount_variable.assumptions0["unit_interval"] is True
+    assert "unit_interval" not in discount_parameter.assumptions0

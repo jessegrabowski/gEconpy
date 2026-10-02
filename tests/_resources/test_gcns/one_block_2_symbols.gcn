@@ -24,7 +24,7 @@ symbols
     tau   { positive = True; };
     rho   { positive = True; };
 
-    alpha { name = "Capital share of output"; bounds = (0, 1); };
+    alpha { name = "Capital share of output"; bounds = (0.01, 0.99); };
 };
 
 block HOUSEHOLD

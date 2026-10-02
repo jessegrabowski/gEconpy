@@ -1,12 +1,206 @@
-assumptions
+symbols
 {
-    positive
+    Y[]
     {
-        Y[], K[], C_NR[], C_R[],
-        w[], r[],
-        L[], L_NR[], L_R[],
-        TFP[],
-        alpha, alpha_L, beta, sigma_C, sigma_L, delta;
+        name = "Output";
+        bounds = (0, None);
+    };
+    C[]
+    {
+        name = "Aggregate consumption";
+        bounds = (0, None);
+    };
+    I[]
+    {
+        name = "Investment";
+        bounds = (0, None);
+    };
+    K[]
+    {
+        name = "Capital stock";
+        bounds = (0, None);
+    };
+    L[]
+    {
+        name = "Aggregate hours worked";
+        bounds = (0, None);
+    };
+    N[]
+    {
+        name = "Aggregate labor supply";
+        bounds = (0, None);
+    };
+    TFP[]
+    {
+        name = "Total factor productivity";
+        bounds = (0, None);
+    };
+
+    C_R[]
+    {
+        name = "Consumption, Ricardian household";
+        bounds = (0, None);
+    };
+    L_R[]
+    {
+        name = "Hours worked, Ricardian household";
+        bounds = (0, None);
+    };
+    U_R[]
+    {
+        name = "Lifetime utility, Ricardian household";
+    };
+    u_R[]
+    {
+        name = "Period utility, Ricardian household";
+    };
+    lambda_R[]
+    {
+        name = "Marginal utility of wealth, Ricardian household";
+        bounds = (0, None);
+    };
+
+    C_NR[]
+    {
+        name = "Consumption, non-Ricardian household";
+        bounds = (0, None);
+    };
+    L_NR[]
+    {
+        name = "Hours worked, non-Ricardian household";
+        bounds = (0, None);
+    };
+    U_NR[]
+    {
+        name = "Lifetime utility, non-Ricardian household";
+    };
+    u_NR[]
+    {
+        name = "Period utility, non-Ricardian household";
+    };
+    lambda_NR[]
+    {
+        name = "Marginal utility of wealth, non-Ricardian household";
+        bounds = (0, None);
+    };
+
+    r[]
+    {
+        name = "Rental rate of capital";
+        bounds = (0, None);
+    };
+    w[]
+    {
+        name = "Real wage";
+        bounds = (0, None);
+    };
+    mc[]
+    {
+        name = "Marginal cost";
+        bounds = (0, None);
+    };
+    q[]
+    {
+        name = "Shadow value of installed capital";
+        bounds = (0, None);
+    };
+    TC[]
+    {
+        name = "Total factor cost";
+        bounds = (None, 0);
+    };
+
+    Theta_R[]
+    {
+        name = "Labor disutility shifter, Ricardian household";
+        bounds = (0, None);
+    };
+    Theta_N[]
+    {
+        name = "Labor disutility shifter, aggregate";
+        bounds = (0, None);
+    };
+    shock_beta_R[]
+    {
+        name = "Discount factor shifter, Ricardian household";
+        bounds = (0, None);
+    };
+    epsilon_TFP[]
+    {
+        name = "Technology shock";
+    };
+    epsilon_beta_R[]
+    {
+        name = "Discount factor shock";
+    };
+    epsilon_Theta_R[]
+    {
+        name = "Ricardian labor disutility shock";
+    };
+    epsilon_Theta_N[]
+    {
+        name = "Aggregate labor disutility shock";
+    };
+
+    alpha
+    {
+        name = "Capital share of output";
+        bounds = (0, 1);
+    };
+    beta
+    {
+        name = "Discount factor";
+        bounds = (0, 1);
+    };
+    delta
+    {
+        name = "Depreciation rate";
+        bounds = (0, 1);
+    };
+    omega
+    {
+        name = "Population share of Ricardian households";
+        bounds = (0, 1);
+    };
+    Theta_R
+    {
+        name = "Mean labor disutility, Ricardian household";
+        bounds = (0, None);
+    };
+    Theta_N
+    {
+        name = "Mean labor disutility, aggregate";
+        bounds = (0, None);
+    };
+    sigma_R
+    {
+        name = "Inverse Frisch elasticity, Ricardian household";
+        bounds = (0, None);
+    };
+    sigma_N
+    {
+        name = "Inverse Frisch elasticity, aggregate";
+        bounds = (0, None);
+    };
+    rho_TFP
+    {
+        name = "Technology shock persistence";
+        bounds = [0, 1);
+    };
+    rho_beta_R
+    {
+        name = "Discount factor shock persistence";
+        bounds = [0, 1);
+    };
+    rho_Theta_R
+    {
+        name = "Ricardian labor disutility persistence";
+        bounds = [0, 1);
+    };
+    rho_Theta_N
+    {
+        name = "Aggregate labor disutility persistence";
+        bounds = [0, 1);
     };
 };
 

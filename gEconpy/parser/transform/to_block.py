@@ -15,6 +15,7 @@ from gEconpy.parser.ast import (
     Parameter,
     Tag,
     Variable,
+    variable_key,
 )
 from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.errors import ParseLocation
@@ -201,7 +202,7 @@ def _extract_flags(eq: GCNEquation) -> dict[str, bool]:
 def _extract_multiplier(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) -> TimeAwareSymbol | None:
     if not eq.lagrange_multiplier:
         return None
-    var_assumptions = merge_assumptions(assumptions.get(eq.lagrange_multiplier))
+    var_assumptions = merge_assumptions(assumptions.get(variable_key(eq.lagrange_multiplier)))
     return TimeAwareSymbol(eq.lagrange_multiplier, 0, **var_assumptions)
 
 

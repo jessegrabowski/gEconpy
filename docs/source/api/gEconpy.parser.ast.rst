@@ -28,5 +28,7 @@ gEconpy.parser.ast
     nodes.collect_nodes_of_type
     nodes.collect_parameter_names
     nodes.collect_variable_names
+    nodes.gcn_spelling
+    nodes.variable_key
     visitor.NodeTransformer
     visitor.NodeVisitor

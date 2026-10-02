@@ -59,7 +59,7 @@ def test_multipliers_and_tags_are_keyed_by_equation_number():
 
 
 def test_assumptions_apply_to_controls():
-    block = ast_block_to_block(quick_parse(SOURCE).blocks[0], assumptions={"C": {"positive": True}})
+    block = ast_block_to_block(quick_parse(SOURCE).blocks[0], assumptions={"C_t": {"positive": True}})
 
     C, K = block.controls
     assert (C.base_name, C.is_positive) == ("C", True)

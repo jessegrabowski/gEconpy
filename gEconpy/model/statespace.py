@@ -35,6 +35,7 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perturbation import check_bk_condition_pt
+from gEconpy.parser.ast import variable_key
 from gEconpy.parser.grammar.expressions import parse_expression
 from gEconpy.parser.transform.to_sympy import ast_to_sympy
 from gEconpy.pytensorf.block import block
@@ -392,7 +393,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         # Sympy equality and hashing include assumptions, so the parsed symbols must carry the model variables'
         # assumptions or the linearization's ``xreplace`` silently leaves them in place.
-        assumptions = {v.base_name: dict(v.assumptions0) for v in self.variables}
+        assumptions = {variable_key(v.base_name): dict(v.assumptions0) for v in self.variables}
         expression = ast_to_sympy(ast, assumptions=assumptions)
 
         var_names = {v.base_name for v in self.variables}

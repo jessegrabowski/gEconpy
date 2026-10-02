@@ -1,3 +1,196 @@
+symbols
+{
+    Y[]
+    {
+        name = "Output";
+        bounds = (0, None);
+    };
+    C[]
+    {
+        name = "Consumption";
+        bounds = (0, None);
+    };
+    I[]
+    {
+        name = "Private investment";
+        bounds = (0, None);
+    };
+    K[]
+    {
+        name = "Private capital stock";
+        bounds = (0, None);
+    };
+    L[]
+    {
+        name = "Hours worked";
+        bounds = (0, None);
+    };
+    N[]
+    {
+        name = "Leisure";
+        bounds = (0, None);
+    };
+    Div[]
+    {
+        name = "Dividends paid to households";
+    };
+    income[]
+    {
+        name = "Household income";
+    };
+    spending[]
+    {
+        name = "Household spending";
+    };
+
+    I_G[]
+    {
+        name = "Public investment";
+        bounds = (0, None);
+    };
+    K_G[]
+    {
+        name = "Public capital stock";
+        bounds = (0, None);
+    };
+    G_B[]
+    {
+        name = "Government consumption";
+        bounds = (0, None);
+    };
+    B[]
+    {
+        name = "Government debt";
+    };
+    TR[]
+    {
+        name = "Lump-sum transfers";
+    };
+    tau[]
+    {
+        name = "Distortionary tax rate";
+        bounds = [0, 1);
+    };
+    r_G[]
+    {
+        name = "Gross return on government debt";
+        bounds = (0, None);
+    };
+
+    r[]
+    {
+        name = "Rental rate of capital";
+        bounds = (0, None);
+    };
+    w[]
+    {
+        name = "Real wage";
+        bounds = (0, None);
+    };
+    mc[]
+    {
+        name = "Marginal cost";
+        bounds = (0, None);
+    };
+    lambda[]
+    {
+        name = "Marginal utility of wealth";
+        bounds = (0, None);
+    };
+    lambda_L[]
+    {
+        name = "Multiplier on the time constraint";
+    };
+    u[]
+    {
+        name = "Period utility";
+    };
+    U[]
+    {
+        name = "Lifetime utility";
+    };
+    TC[]
+    {
+        name = "Total factor cost";
+        bounds = (None, 0);
+    };
+
+    epsilon_IG[]
+    {
+        name = "Public investment shock";
+    };
+    epsilon_GB[]
+    {
+        name = "Government consumption shock";
+    };
+    epsilon_tau[]
+    {
+        name = "Tax rate shock";
+    };
+
+    A_bar
+    {
+        name = "Total factor productivity";
+        bounds = (0, None);
+    };
+    beta
+    {
+        name = "Discount factor";
+        bounds = (0, 1);
+    };
+    delta
+    {
+        name = "Depreciation rate";
+        bounds = (0, 1);
+    };
+    theta_K
+    {
+        name = "Capital share of output";
+        bounds = (0, 1);
+    };
+    theta_L
+    {
+        name = "Labor share of output";
+        bounds = (0, 1);
+    };
+    theta_G
+    {
+        name = "Public capital share of output";
+        bounds = [0, 1);
+    };
+
+    I_G_bar
+    {
+        name = "Steady-state public investment";
+        bounds = [0, None);
+    };
+    G_B_bar
+    {
+        name = "Steady-state government consumption";
+        bounds = [0, None);
+    };
+    tau_bar
+    {
+        name = "Steady-state tax rate";
+        bounds = [0, 1);
+    };
+    rho_I_G
+    {
+        name = "Public investment persistence";
+        bounds = [0, 1);
+    };
+    rho_G_B
+    {
+        name = "Government consumption persistence";
+        bounds = [0, 1);
+    };
+    rho_tau
+    {
+        name = "Tax rate persistence";
+        bounds = [0, 1);
+    };
+};
+
 block STEADY_STATE
 {
     identities

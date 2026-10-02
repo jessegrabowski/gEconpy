@@ -259,6 +259,7 @@ class TestPrintModel:
             ]
         )
 
+    @pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
     def test_printed_model_reparses_to_same_ast(self):
         source = """
         options { output logfile = TRUE; solver = gensys; };
@@ -315,10 +316,22 @@ class TestPrintModel:
 
         assert printed.startswith("symbols\n{\n    alpha\n    {\n        bounds = (0, 1);\n    };\n};")
 
+    @pytest.mark.parametrize(
+        "declared", ["[0, None)", "(None, 0]", "(0, 1)"], ids=["closed_lower", "closed_upper", "open"]
+    )
+    def test_printed_bounds_keep_their_brackets(self, declared):
+        """Dropping a bracket would reparse to a different predicate, turning nonnegative into positive."""
+        model = quick_parse(f"symbols {{ alpha {{ bounds = {declared}; }}; }}; block TEST {{ }};")
+        reparsed = quick_parse(print_model(model))
+
+        assert f"bounds = {declared};" in print_model(model)
+        assert reparsed.symbols["alpha"].closed == model.symbols["alpha"].closed
+        assert reparsed.symbols["alpha"].assumptions == model.symbols["alpha"].assumptions
+
     def test_printed_sign_keyword_normalizes_to_its_bound(self):
         printed = print_model(quick_parse("symbols { K[] { positive = True; }; }; block TEST { };"))
 
-        assert printed.startswith("symbols\n{\n    K\n    {\n        bounds = (0, None);\n    };\n};")
+        assert printed.startswith("symbols\n{\n    K_t\n    {\n        bounds = (0, None);\n    };\n};")
 
     @pytest.mark.parametrize(
         "declared",

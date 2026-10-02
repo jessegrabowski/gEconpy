@@ -3,6 +3,7 @@ import pytest
 from pyparsing import ParseBaseException
 
 from gEconpy.classes.time_aware_symbol import DEFAULT_ASSUMPTIONS
+from gEconpy.exceptions import DeprecatedAssumptionsBlockWarning
 from gEconpy.parser.ast import SymbolDeclaration
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNParseFailure
@@ -80,20 +81,21 @@ class TestTryreduceBlock:
         assert TRYREDUCE_BLOCK.parse_string(text)[0] == expected
 
 
+@pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
 class TestAssumptionsBlock:
     def test_single_assumption_single_variable(self):
         text = "assumptions { positive { C[]; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert "C" in result
-        assert result["C"]["positive"] is True
+        assert "C_t" in result
+        assert result["C_t"]["positive"] is True
 
     @pytest.mark.parametrize(
         "text,expected_names",
         [
-            ("assumptions { positive { C[], K[], L[]; }; };", ["C", "K", "L"]),
+            ("assumptions { positive { C[], K[], L[]; }; };", ["C_t", "K_t", "L_t"]),
             ("assumptions { positive { alpha, beta; }; };", ["alpha", "beta"]),
-            ("assumptions { positive { C[], alpha, K[], beta; }; };", ["C", "alpha", "K", "beta"]),
-            ("ASSUMPTIONS { positive { C[]; }; };", ["C"]),
+            ("assumptions { positive { C[], alpha, K[], beta; }; };", ["C_t", "alpha", "K_t", "beta"]),
+            ("ASSUMPTIONS { positive { C[]; }; };", ["C_t"]),
         ],
         ids=["variables", "parameters", "mixed", "uppercase_keyword"],
     )
@@ -108,21 +110,49 @@ class TestAssumptionsBlock:
             real { shock[]; };
         };"""
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert result["C"]["positive"] is True
-        assert result["K"]["positive"] is True
-        assert result["shock"]["real"] is True
+        assert result["C_t"]["positive"] is True
+        assert result["K_t"]["positive"] is True
+        assert result["shock_t"]["real"] is True
 
     def test_name_in_several_subblocks_accumulates_assumptions(self):
         text = "assumptions { positive { C[]; }; negative { K[]; }; unit_interval { C[]; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
         assert result == {
-            "C": {**DEFAULT_ASSUMPTIONS, "positive": True, "unit_interval": True},
-            "K": {**DEFAULT_ASSUMPTIONS, "negative": True},
+            "C_t": {**DEFAULT_ASSUMPTIONS, "positive": True, "unit_interval": True},
+            "K_t": {**DEFAULT_ASSUMPTIONS, "negative": True},
         }
 
     def test_listed_names_start_from_package_defaults(self):
         result = ASSUMPTIONS_BLOCK.parse_string("assumptions { positive { C[]; }; };")[0]
-        assert result["C"] == {**DEFAULT_ASSUMPTIONS, "positive": True}
+        assert result["C_t"] == {**DEFAULT_ASSUMPTIONS, "positive": True}
+
+    @pytest.mark.parametrize(
+        "declared, expected",
+        [
+            ("(0, None)", {"positive"}),
+            ("[0, None)", {"nonnegative"}),
+            ("(None, 0)", {"negative"}),
+            ("(None, 0]", {"nonpositive"}),
+            ("(0, 1)", {"positive", "unit_interval"}),
+            ("[0, 1]", {"nonnegative"}),
+        ],
+        ids=["open_lower", "closed_lower", "open_upper", "closed_upper", "unit", "fully_closed"],
+    )
+    def test_brackets_choose_the_strict_or_closed_predicate(self, declared, expected):
+        """A bracket says whether the endpoint belongs to the support, exactly as a written interval would."""
+        result = parse_symbols_block(f"symbols {{ alpha {{ bounds = {declared}; }}; }};")
+        derived = {key for key, value in result["alpha"].assumptions.items() if value} - set(DEFAULT_ASSUMPTIONS)
+
+        assert derived == expected
+
+    @pytest.mark.parametrize(
+        "keyword, expected_closed",
+        [("positive", (False, False)), ("nonnegative", (True, False)), ("nonpositive", (False, True))],
+    )
+    def test_sign_keywords_agree_with_the_bracket_they_stand_for(self, keyword, expected_closed):
+        result = parse_symbols_block(f"symbols {{ alpha {{ {keyword} = True; }}; }};")
+
+        assert result["alpha"].closed == expected_closed
 
     def test_unit_interval_implies_positive(self):
         text = "assumptions { unit_interval { alpha; }; };"
@@ -133,7 +163,15 @@ class TestAssumptionsBlock:
     def test_case_insensitive_assumption(self):
         text = "assumptions { POSITIVE { C[]; }; };"
         result = ASSUMPTIONS_BLOCK.parse_string(text)[0]
-        assert result["C"]["positive"] is True
+        assert result["C_t"]["positive"] is True
+
+    def test_warns_and_names_the_symbols_replacement(self):
+        with pytest.warns(DeprecatedAssumptionsBlockWarning) as record:
+            ASSUMPTIONS_BLOCK.parse_string("assumptions { positive { C[]; }; unit_interval { alpha; }; };")
+
+        message = str(record[0].message)
+        assert "C[] { positive = True; };" in message
+        assert "alpha { positive = True; unit_interval = True; };" in message
 
     def test_empty_assumptions(self):
         text = "assumptions { };"
@@ -228,9 +266,12 @@ class TestSymbolsBlock:
         result = parse_symbols_block("symbols { alpha { positive = True; }; };")
         assert result["alpha"].assumptions == {**DEFAULT_ASSUMPTIONS, "positive": True}
 
-    def test_variable_and_parameter_keys_use_the_base_name(self):
-        result = parse_symbols_block("symbols { K[] { positive = True; }; beta { positive = True; }; };")
-        assert set(result) == {"K", "beta"}
+    def test_a_variable_and_a_parameter_of_one_name_are_separate_entries(self):
+        result = parse_symbols_block("symbols { beta[] { bounds = (0, 1); }; beta { bounds = (2, None); }; };")
+
+        assert set(result) == {"beta_t", "beta"}
+        assert result["beta_t"].assumptions["unit_interval"] is True
+        assert "unit_interval" not in result["beta"].assumptions
 
     def test_declared_bounds_win_over_keyword_bounds(self):
         result = parse_symbols_block("symbols { psi { positive = True; bounds = (1, None); }; };")
@@ -272,6 +313,7 @@ class TestSymbolsBlock:
             ("symbols { alpha { unit_interval = True; negative = True; }; };", ErrorCode.E017),
             ("symbols { alpha { bounds = (1, 0); }; };", ErrorCode.E017),
             ("symbols { alpha { bounds = (1, 1); }; };", ErrorCode.E017),
+            ("symbols { alpha { bounds = [None, 0); }; };", ErrorCode.E021),
             ("symbols { alpha { positive = False; }; };", ErrorCode.E018),
             ("symbols { alpha { unit_interval = False; }; };", ErrorCode.E018),
             ("symbols { alpha { }; alpha { }; };", ErrorCode.E019),
@@ -285,6 +327,7 @@ class TestSymbolsBlock:
             "unit_interval_excluded_by_sign",
             "bounds_inverted",
             "bounds_degenerate",
+            "closed_unbounded_side",
             "positive_false",
             "unit_interval_false",
             "duplicate_symbol",
@@ -363,6 +406,7 @@ class TestParseTryreduceFn:
         assert result == []
 
 
+@pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
 class TestParseAssumptionsFn:
     def test_finds_assumptions_in_larger_text(self):
         text = """
@@ -371,7 +415,7 @@ class TestParseAssumptionsFn:
         block HOUSEHOLD { };
         """
         result = parse_assumptions(text)
-        assert "C" in result
+        assert "C_t" in result
 
     def test_returns_default_when_no_assumptions(self):
         text = "block HOUSEHOLD { };"

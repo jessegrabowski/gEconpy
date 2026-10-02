@@ -107,6 +107,7 @@ class TestPreprocessWithDistributions:
         assert set(preprocess(source).distributions) == {"alpha", "delta"}
 
 
+@pytest.mark.filterwarnings("ignore::gEconpy.exceptions.DeprecatedAssumptionsBlockWarning")
 def test_preprocess_full_model():
     source = """
     options
@@ -169,7 +170,7 @@ def test_preprocess_full_model():
 
     assert result.options["output logfile"] is True
     assert result.tryreduce == ["U"]
-    assert set(result.assumptions) == {"C", "K"}
+    assert set(result.assumptions) == {"C_t", "K_t"}
     assert len(result.blocks) == 1
 
     block = result.blocks[0]

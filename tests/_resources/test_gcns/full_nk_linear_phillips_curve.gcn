@@ -3,14 +3,29 @@ tryreduce
     U[], TC[];
 };
 
-assumptions
+symbols
 {
-    positive
-    {
-        shock_technology[], shock_preference[], pi[], pi_star[], pi_obj[], r[], r_G[], mc[], w[], w_star[],
-        Y[], C[], I[], K[], L[],
-        delta, beta, sigma_C, sigma_L, gamma_I, phi_H;
-    };
+    shock_technology[] { positive = True; };
+    shock_preference[] { positive = True; };
+    pi[] { positive = True; };
+    pi_star[] { positive = True; };
+    pi_obj[] { positive = True; };
+    r[] { positive = True; };
+    r_G[] { positive = True; };
+    mc[] { positive = True; };
+    w[] { positive = True; };
+    w_star[] { positive = True; };
+    Y[] { positive = True; };
+    C[] { positive = True; };
+    I[] { positive = True; };
+    K[] { positive = True; };
+    L[] { positive = True; };
+    delta { positive = True; };
+    beta { positive = True; };
+    sigma_C { positive = True; };
+    sigma_L { positive = True; };
+    gamma_I { positive = True; };
+    phi_H { positive = True; };
 };
 
 block STEADY_STATE

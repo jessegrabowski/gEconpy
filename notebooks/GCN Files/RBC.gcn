@@ -1,3 +1,109 @@
+symbols
+{
+    Y[]
+    {
+        name = "Output";
+        bounds = (0, None);
+    };
+    C[]
+    {
+        name = "Consumption";
+        bounds = (0, None);
+    };
+    I[]
+    {
+        name = "Investment";
+        bounds = (0, None);
+    };
+    K[]
+    {
+        name = "Capital stock";
+        bounds = (0, None);
+    };
+    L[]
+    {
+        name = "Hours worked";
+        bounds = (0, None);
+    };
+    A[]
+    {
+        name = "Total factor productivity";
+        bounds = (0, None);
+    };
+
+    r[]
+    {
+        name = "Rental rate of capital";
+        bounds = (0, None);
+    };
+    w[]
+    {
+        name = "Real wage";
+        bounds = (0, None);
+    };
+    mc[]
+    {
+        name = "Marginal cost";
+        bounds = (0, None);
+    };
+    lambda[]
+    {
+        name = "Marginal utility of wealth";
+        bounds = (0, None);
+    };
+
+    u[]
+    {
+        name = "Period utility";
+    };
+    U[]
+    {
+        name = "Lifetime utility";
+    };
+    TC[]
+    {
+        name = "Total factor cost";
+        bounds = (None, 0);
+    };
+
+    epsilon_A[]
+    {
+        name = "Technology shock";
+    };
+
+    alpha
+    {
+        name = "Capital share of output";
+        bounds = (0, 1);
+    };
+    beta
+    {
+        name = "Discount factor";
+        bounds = (0, 1);
+    };
+    delta
+    {
+        name = "Depreciation rate";
+        bounds = (0, 1);
+    };
+    rho_A
+    {
+        name = "Technology shock persistence";
+        bounds = (0, 1);
+    };
+    sigma_C
+    {
+        name = "Inverse elasticity of intertemporal substitution";
+        bounds = (0, None);
+    };
+    sigma_L
+    {
+        name = "Inverse Frisch elasticity of labor supply";
+        bounds = (0, None);
+    };
+};
+
+
 tryreduce
 {
     U[], TC[];

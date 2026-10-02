@@ -170,7 +170,9 @@ def _match_cobb_douglas_constraint(constraints: dict[int, sp.Eq] | None) -> _Cob
     idx, eq = next(iter(constraints.items()))
 
     for raw_residual in (eq.rhs - eq.lhs, eq.lhs - eq.rhs):
-        residual = sp.expand(raw_residual)
+        # Only the additive split matters here. A plain expand() also rewrites powers, and for a positive base it
+        # splits L ** (1 - alpha) into L * L ** (-alpha), which leaves two bare symbols where the monomial allows one.
+        residual = sp.expand(raw_residual, power_exp=False, power_base=False)
         split = _split_output_and_product(residual)
         if split is None:
             continue
