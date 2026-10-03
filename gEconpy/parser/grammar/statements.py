@@ -182,7 +182,7 @@ def _missing_lhs_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
     )
 
 
-MISSING_LHS = (pp.ZeroOrMore(TAG) + pp.FollowedBy(pp.Literal("="))).set_parse_action(_missing_lhs_fail)
+MISSING_LHS = (pp.ZeroOrMore(ANY_TAG) + pp.FollowedBy(pp.Literal("="))).set_parse_action(_missing_lhs_fail)
 
 
 def _missing_rhs_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
@@ -196,7 +196,7 @@ def _missing_rhs_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
 
 
 MISSING_RHS = (
-    pp.ZeroOrMore(TAG) + EXPR("lhs") + pp.Suppress(pp.Literal("=")) + pp.FollowedBy(pp.Regex(r"\s*[;:]"))
+    pp.ZeroOrMore(ANY_TAG) + EXPR("lhs") + pp.Suppress(pp.Literal("=")) + pp.FollowedBy(pp.Regex(r"\s*[;:]"))
 ).set_parse_action(_missing_rhs_fail)
 
 
@@ -211,7 +211,7 @@ def _missing_equals_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
 
 
 MISSING_EQUALS = (
-    pp.ZeroOrMore(TAG) + EXPR("expr") + ~pp.FollowedBy(pp.Regex(r"\s*=")) + pp.FollowedBy(SEMI)
+    pp.ZeroOrMore(ANY_TAG) + EXPR("expr") + ~pp.FollowedBy(pp.Regex(r"\s*=")) + pp.FollowedBy(SEMI)
 ).set_parse_action(_missing_equals_fail)
 
 
@@ -242,7 +242,7 @@ _UNMATCHED_CLOSE = pp.Regex(r"[)\]]").copy().set_parse_action(_unmatched_close_f
 _BRACE_BEFORE_SEMICOLON = pp.Literal("}").copy().set_parse_action(_brace_before_semicolon_fail)
 
 _VALID_EQUATION = (
-    pp.ZeroOrMore(TAG)("tags")
+    pp.ZeroOrMore(ANY_TAG)("tags")
     + EXPR("lhs")
     + pp.Suppress(pp.Literal("="))
     + EXPR("rhs")
@@ -282,7 +282,8 @@ def _equation_end(s: str, loc: int, terminator: str, fallback: tuple[int, int]) 
 
 
 def _build_equation(s: str, loc: int, tokens: pp.ParseResults) -> GCNEquation:
-    tags = frozenset(tokens.tags) if tokens.tags else frozenset()
+    tags = frozenset(tag for tag in tokens.tags if isinstance(tag, Tag))
+    annotations = dict(pair for pair in tokens.tags if not isinstance(pair, Tag))
     lagrange_name = tokens.lagrange[0] if tokens.lagrange else None
     calibrating_param = tokens.calibrating[0] if tokens.calibrating else None
 
@@ -308,6 +309,7 @@ def _build_equation(s: str, loc: int, tokens: pp.ParseResults) -> GCNEquation:
         lagrange_multiplier=lagrange_name,
         calibrating_parameter=calibrating_param,
         tags=tags,
+        annotations=annotations,
         location=location,
     )
 

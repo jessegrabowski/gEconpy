@@ -1,4 +1,5 @@
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from typing import Self, cast
 
@@ -286,7 +287,8 @@ class GCNEquation(Node):
     A model equation ``lhs = rhs``.
 
     A constraint may name a Lagrange multiplier, a calibration equation may name the parameter it calibrates with
-    ``-> param``, and any equation may carry tags such as ``@exclude``.
+    ``-> param``, and any equation may carry tags. A tag is either a flag such as ``@exclude``, which lands in
+    ``tags``, or a key-value pair such as ``@name = "Euler equation"``, which lands in ``annotations``.
     """
 
     lhs: Node
@@ -294,16 +296,15 @@ class GCNEquation(Node):
     lagrange_multiplier: str | None = None
     calibrating_parameter: str | None = None
     tags: frozenset[Tag] = field(default_factory=frozenset)
+    annotations: Mapping[str, str] = field(default_factory=dict)
+
+    def __hash__(self) -> int:
+        # ``annotations`` is a dict, so the generated hash would raise. Equal equations carry equal annotations,
+        # so leaving them out keeps hashes consistent with ``__eq__``.
+        return hash((self.lhs, self.rhs, self.lagrange_multiplier, self.calibrating_parameter, self.tags))
 
     def with_location(self, location: ParseLocation) -> Self:
-        return type(self)(
-            lhs=self.lhs,
-            rhs=self.rhs,
-            lagrange_multiplier=self.lagrange_multiplier,
-            calibrating_parameter=self.calibrating_parameter,
-            tags=self.tags,
-            location=location,
-        )
+        return replace(self, location=location)
 
     def with_tags(self, tags: frozenset[Tag]) -> Self:
         """
@@ -319,14 +320,12 @@ class GCNEquation(Node):
         equation : GCNEquation
             The tagged equation.
         """
-        return type(self)(
-            lhs=self.lhs,
-            rhs=self.rhs,
-            lagrange_multiplier=self.lagrange_multiplier,
-            calibrating_parameter=self.calibrating_parameter,
-            tags=tags,
-            location=self.location,
-        )
+        return replace(self, tags=tags)
+
+    @property
+    def declared_name(self) -> str | None:
+        """The caption the author wrote with ``@name``, or None when they wrote none."""
+        return self.annotations.get("name")
 
     def has_tag(self, tag: Tag) -> bool:
         return tag in self.tags
