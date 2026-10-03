@@ -317,6 +317,24 @@ class TestPrintModel:
         assert "    K[]\n" in printed
         assert reparsed.symbols["K_t"].assumptions == model.symbols["K_t"].assumptions
 
+    @pytest.mark.parametrize(
+        "tags",
+        [
+            '@name = "Law of motion of capital"',
+            '@exclude @name = "Law of motion"',
+            '@name = "Budget constraint: C + I = Y"',
+            '@name = ""',
+        ],
+        ids=["name_only", "flag_and_pair", "punctuation_in_name", "empty_string"],
+    )
+    def test_printed_equation_tags_reparse_to_the_same_ast(self, tags):
+        model = quick_parse(f"block TEST {{ identities {{ {tags} K[] = I[]; }}; }};")
+
+        printed = print_model(model)
+
+        assert quick_parse(printed) == model
+        assert tags in printed
+
     def test_printed_symbols_omit_assumptions_the_bound_implies(self):
         printed = print_model(quick_parse("symbols { alpha { bounds = (0, 1); }; }; block TEST { };"))
 

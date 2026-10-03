@@ -80,6 +80,7 @@ def print_equation(eq: GCNEquation) -> str:
         The equation in GCN syntax, without the trailing semicolon.
     """
     tags = "".join(f"{tag} " for tag in sorted(eq.tags, key=lambda tag: tag.value))
+    tags += "".join(f'@{key} = "{value}" ' for key, value in eq.annotations.items())
     text = f"{tags}{print_expression(eq.lhs)} = {print_expression(eq.rhs)}"
 
     if eq.lagrange_multiplier:
