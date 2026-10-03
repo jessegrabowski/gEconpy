@@ -10,6 +10,8 @@ from gEconpy.parser.ast import (
     Variable,
     collect_parameter_names,
     collect_variable_names,
+    gcn_spelling,
+    variable_key,
 )
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import (
@@ -17,6 +19,7 @@ from gEconpy.parser.errors import (
     GCNSemanticError,
     Severity,
 )
+from gEconpy.parser.suggestions import find_similar_names
 
 
 def validate_block(block: GCNBlock) -> ErrorCollector:
@@ -182,13 +185,56 @@ def check_undefined_parameters(
     return errors
 
 
+def check_declared_symbols_exist(model: GCNModel) -> ErrorCollector:
+    """
+    Report symbols entries that name a variable or parameter no block uses.
+
+    A declaration the model cannot match is dropped when the model is built, so a misspelled entry silently stops
+    applying its bounds and metadata.
+
+    Parameters
+    ----------
+    model : GCNModel
+        The model to check.
+
+    Returns
+    -------
+    errors : ErrorCollector
+        One error per unmatched declaration, in sorted name order.
+    """
+    errors = ErrorCollector()
+
+    known = set()
+    for block in model.blocks:
+        known |= {variable_key(name) for name in _defined_variable_names(block)}
+        known |= set(_calibrated_parameter_names(block))
+        for eq in block.all_equations():
+            for side in (eq.lhs, eq.rhs):
+                known |= {variable_key(name) for name in collect_variable_names(side)}
+                known |= collect_parameter_names(side)
+
+    for declared in sorted(set(model.symbols) - known):
+        errors.add(
+            GCNSemanticError(
+                f"Symbol '{gcn_spelling(declared)}' is declared but the model has no such variable or parameter",
+                code=ErrorCode.E022,
+                suggestions=[gcn_spelling(name) for name in find_similar_names(declared, known)],
+            )
+        )
+
+    return errors
+
+
 def full_validation(
     model: GCNModel,
     external_variables: set[str] | None = None,
     external_parameters: set[str] | None = None,
 ) -> ErrorCollector:
     """
-    Run :func:`validate_model`, :func:`check_undefined_variables`, and :func:`check_undefined_parameters`.
+    Run every validation check and collect their errors and warnings together.
+
+    The checks are :func:`validate_model`, :func:`check_undefined_variables`,
+    :func:`check_undefined_parameters`, and :func:`check_declared_symbols_exist`.
 
     Parameters
     ----------
@@ -202,7 +248,7 @@ def full_validation(
     Returns
     -------
     errors : ErrorCollector
-        All errors and warnings from the three checks, in that order.
+        All errors and warnings from the four checks, in that order.
     """
     errors = ErrorCollector()
 
@@ -210,6 +256,7 @@ def full_validation(
         validate_model(model),
         check_undefined_variables(model, external_variables),
         check_undefined_parameters(model, external_parameters),
+        check_declared_symbols_exist(model),
     ):
         for error in check_errors:
             errors.add(error)

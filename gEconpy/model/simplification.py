@@ -5,6 +5,7 @@ import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.utilities import (
+    drop_equations,
     expand_subs_for_all_times,
     make_all_var_time_combos,
     substitute_all_equations,
@@ -17,9 +18,10 @@ _MAX_ATOMS_IN_CONSTANT_EQUATION = 3
 def simplify_tryreduce(
     try_reduce_vars: list[TimeAwareSymbol],
     equations: list[sp.Expr],
+    equation_ids: list[str],
     variables: list[TimeAwareSymbol],
     tryreduce_sub_dict: dict[TimeAwareSymbol, sp.Expr] | None = None,
-) -> tuple[list[sp.Expr], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
+) -> tuple[list[sp.Expr], list[str], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     """
     Eliminate the variables listed in the ``tryreduce`` block of a GCN file where doing so is safe.
 
@@ -34,6 +36,8 @@ def simplify_tryreduce(
         Variables to try to eliminate.
     equations : list of sympy expression
         Model equations.
+    equation_ids : list of str
+        The id of each equation, in the same order.
     variables : list of TimeAwareSymbol
         All variables in the system.
     tryreduce_sub_dict : dict, optional
@@ -44,6 +48,8 @@ def simplify_tryreduce(
     -------
     reduced_equations : list of sympy expression
         Equations that remain after elimination.
+    reduced_ids : list of str
+        The id of each remaining equation, in the same order.
     reduced_variables : list of TimeAwareSymbol
         Variables that remain in the system.
     eliminated_vars : list of TimeAwareSymbol
@@ -52,7 +58,7 @@ def simplify_tryreduce(
     n_equations = len(equations)
     n_variables = len(variables)
     if not _check_system_is_square("Simplification via a tryreduce block", n_equations, n_variables):
-        return equations, variables, []
+        return equations, equation_ids, variables, []
 
     if tryreduce_sub_dict is None:
         tryreduce_sub_dict = {}
@@ -70,7 +76,9 @@ def simplify_tryreduce(
 
     isolated_variables = np.array(variables)[occurrence_matrix.sum(axis=0) == 1]
     to_remove = set(isolated_variables).intersection(set(try_reduce_vars))
-    reduced_equations = [eq for eq in equations if not any(var in eq.atoms() for var in to_remove)]
+    reduced_equations, reduced_ids = drop_equations(
+        equations, equation_ids, lambda eq: not any(var in eq.atoms() for var in to_remove)
+    )
 
     for reduction_variable in try_reduce_vars:
         if reduction_variable not in tryreduce_sub_dict:
@@ -82,15 +90,15 @@ def simplify_tryreduce(
         all_time_indices = make_all_var_time_combos([reduction_variable])
         variable_remains = any(sym in eq.atoms() for eq in candidate for sym in all_time_indices)
         if candidate.count(0) == 1 and not variable_remains:
-            reduced_equations = [eq for eq in candidate if eq != 0]
+            reduced_equations, reduced_ids = drop_equations(candidate, reduced_ids, lambda eq: eq != 0)
 
     reduced_variables, eliminated_vars = reduce_variable_list(reduced_equations, variables)
-    return reduced_equations, reduced_variables, eliminated_vars
+    return reduced_equations, reduced_ids, reduced_variables, eliminated_vars
 
 
 def simplify_constants(
-    equations: list[sp.Expr], variables: list[TimeAwareSymbol]
-) -> tuple[list[sp.Expr], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
+    equations: list[sp.Expr], equation_ids: list[str], variables: list[TimeAwareSymbol]
+) -> tuple[list[sp.Expr], list[str], list[TimeAwareSymbol], list[TimeAwareSymbol]]:
     """
     Substitute away variables that an equation pins to a constant.
 
@@ -102,6 +110,8 @@ def simplify_constants(
     ----------
     equations : list of sympy expression
         Model equations.
+    equation_ids : list of str
+        The id of each equation, in the same order.
     variables : list of TimeAwareSymbol
         All variables in the system.
 
@@ -109,13 +119,15 @@ def simplify_constants(
     -------
     reduced_equations : list of sympy expression
         Equations that remain after substitution.
+    reduced_ids : list of str
+        The id of each remaining equation, in the same order.
     reduced_variables : list of TimeAwareSymbol
         Variables that remain in the system.
     eliminated_vars : list of TimeAwareSymbol
         Variables that were removed.
     """
     if not _check_system_is_square("Removal of constant variables", len(equations), len(variables)):
-        return equations, variables, []
+        return equations, equation_ids, variables, []
 
     reduce_dict = {}
     for eq in equations:
@@ -129,10 +141,11 @@ def simplify_constants(
         solution = sp.solve(eq, equation_variables[0], dict=True)[0]
         reduce_dict.update(expand_subs_for_all_times(solution))
 
-    reduced_equations = [eq for eq in substitute_all_equations(equations, reduce_dict) if eq != 0]
+    substituted = substitute_all_equations(equations, reduce_dict)
+    reduced_equations, reduced_ids = drop_equations(substituted, equation_ids, lambda eq: eq != 0)
     reduced_variables, eliminated_vars = reduce_variable_list(reduced_equations, variables)
 
-    return reduced_equations, reduced_variables, eliminated_vars
+    return reduced_equations, reduced_ids, reduced_variables, eliminated_vars
 
 
 def reduce_variable_list(

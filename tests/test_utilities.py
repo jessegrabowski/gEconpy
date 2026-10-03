@@ -5,7 +5,7 @@ import sympy as sp
 from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults
-from gEconpy.utilities import flatten_substitution_dict, postprocess_optimizer_res
+from gEconpy.utilities import drop_equations, flatten_substitution_dict, postprocess_optimizer_res
 
 
 def test_flatten_substitution_dict_resolves_chained_values():
@@ -93,3 +93,21 @@ def test_postprocess_optimizer_res_judges_gradients_on_their_own_tolerance():
 def test_postprocess_optimizer_res_success_requires_numeric_check(optimizer_success, resid_scale, expected):
     res_dict = _optimizer_check(success=optimizer_success, resid_scale=resid_scale)
     assert res_dict.success == expected
+
+
+def test_drop_equations_keeps_equations_and_ids_in_lockstep():
+    x, y, z = sp.symbols("x y z")
+
+    equations, equation_ids = drop_equations(
+        [x, sp.Integer(0), y, sp.Integer(0), z], ["a", "b", "c", "d", "e"], lambda eq: eq != 0
+    )
+
+    assert equations == [x, y, z]
+    assert equation_ids == ["a", "c", "e"]
+
+
+def test_drop_equations_rejects_a_length_mismatch():
+    x, y = sp.symbols("x y")
+
+    with pytest.raises(ValueError, match="argument 2 is shorter"):
+        drop_equations([x, y], ["a"], lambda _: True)

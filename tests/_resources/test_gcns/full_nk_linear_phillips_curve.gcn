@@ -8,13 +8,11 @@ symbols
     shock_technology[] { positive = True; };
     shock_preference[] { positive = True; };
     pi[] { positive = True; };
-    pi_star[] { positive = True; };
     pi_obj[] { positive = True; };
     r[] { positive = True; };
     r_G[] { positive = True; };
     mc[] { positive = True; };
     w[] { positive = True; };
-    w_star[] { positive = True; };
     Y[] { positive = True; };
     C[] { positive = True; };
     I[] { positive = True; };

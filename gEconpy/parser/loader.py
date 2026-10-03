@@ -11,6 +11,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, merge_assumptions
 from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.model.block import Block
 from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node, SymbolDeclaration
+from gEconpy.parser.ast.validation import check_declared_symbols_exist
 from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
@@ -64,6 +65,8 @@ class ModelPrimitives:
     """
 
     equations: list[sp.Expr]
+    equation_ids: list[str]
+    source_ast: GCNModel
     variables: list[TimeAwareSymbol]
     shocks: list[TimeAwareSymbol]
     param_dict: SymbolDictionary
@@ -140,6 +143,10 @@ def ast_model_to_primitives(
     primitives : ModelPrimitives
         The extracted primitives.
     """
+    # A declaration the model cannot match is dropped further down, so it has to be caught before its bounds and
+    # metadata silently stop applying.
+    check_declared_symbols_exist(model).raise_first()
+
     # Both blocks describe the same thing, so they write into one store. A symbol declared in both takes its
     # assumptions from ``symbols``.
     assumptions = dict(model.assumptions) if model.assumptions else {}
@@ -160,6 +167,8 @@ def ast_model_to_primitives(
 
     return ModelPrimitives(
         equations=_block_dict_to_equation_list(block_dict),
+        equation_ids=_block_dict_to_equation_ids(block_dict),
+        source_ast=model,
         variables=variables,
         shocks=shocks,
         param_dict=_block_dict_to_param_dict(block_dict, "param_dict"),
@@ -268,6 +277,10 @@ def _time_aware_symbols(nodes: Sequence[Node], assumptions: dict[str, dict[str, 
 
 def _block_dict_to_equation_list(block_dict: dict[str, Block]) -> list[sp.Expr]:
     return [eq for block in block_dict.values() for eq in block.system_equations]
+
+
+def _block_dict_to_equation_ids(block_dict: dict[str, Block]) -> list[str]:
+    return [eq_id for block in block_dict.values() for eq_id in block.system_equation_ids]
 
 
 def _block_dict_to_param_dict(block_dict: dict[str, Block], dict_name: ParamDictName) -> SymbolDictionary:

@@ -1,6 +1,6 @@
 import logging
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -215,6 +215,34 @@ def diff_through_time(eq: sp.Expr, dx: TimeAwareSymbol, discount_factor: sp.Expr
         eq = step_equation_forward(eq) * discount_factor
         discount_factor = step_equation_forward(discount_factor)
     return total
+
+
+def drop_equations(
+    equations: Sequence[sp.Expr],
+    equation_ids: Sequence[str],
+    keep: Callable[[sp.Expr], bool],
+) -> tuple[list[sp.Expr], list[str]]:
+    """
+    Filter equations and their ids together.
+
+    Parameters
+    ----------
+    equations : list of sympy expression
+        Equations to filter.
+    equation_ids : list of str
+        The id of each equation, in the same order.
+    keep : callable
+        Predicate returning True for an equation to keep.
+
+    Returns
+    -------
+    kept_equations : list of sympy expression
+        The equations the predicate kept.
+    kept_ids : list of str
+        Their ids, in the same order.
+    """
+    kept = [(eq, eq_id) for eq, eq_id in zip(equations, equation_ids, strict=True) if keep(eq)]
+    return [eq for eq, _ in kept], [eq_id for _, eq_id in kept]
 
 
 def substitute_all_equations(

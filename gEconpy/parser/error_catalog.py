@@ -302,6 +302,21 @@ class ErrorCode(Enum):
         fixes=("Use a parenthesis on the unbounded side",),
     )
 
+    E022 = ErrorInfo(
+        title="Declaration of an unknown symbol",
+        explanation="Every symbols entry must name a variable or parameter the model actually uses.",
+        common_causes=(
+            "Typo in the declared name, so the declaration applies to nothing",
+            "Writing a variable without its time index: 'K' instead of 'K[]'",
+            "Leaving a declaration behind after renaming or deleting the symbol",
+        ),
+        fixes=(
+            "Correct the spelling to match the symbol used in the blocks",
+            "Add the time index brackets if the symbol is a variable",
+            "Delete the declaration if the symbol is gone",
+        ),
+    )
+
     E100 = ErrorInfo(
         title="Duplicate block name",
         explanation="Each block must have a unique name within the model.",
