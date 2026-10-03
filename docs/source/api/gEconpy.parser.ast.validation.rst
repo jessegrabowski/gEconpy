@@ -7,6 +7,7 @@ gEconpy.parser.ast.validation
 
 .. autosummary::
 
+    check_declared_symbols_exist
     check_undefined_parameters
     check_undefined_variables
     full_validation
@@ -14,5 +15,5 @@ gEconpy.parser.ast.validation
     validate_model
 
 .. automodule:: gEconpy.parser.ast.validation
-    :members: check_undefined_parameters, check_undefined_variables, full_validation, validate_block, validate_model
+    :members: check_declared_symbols_exist, check_undefined_parameters, check_undefined_variables, full_validation, validate_block, validate_model
     :undoc-members:

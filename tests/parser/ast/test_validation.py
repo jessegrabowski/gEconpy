@@ -1,5 +1,7 @@
 from collections.abc import Iterable
 
+import pytest
+
 from gEconpy.parser.ast import (
     STEADY_STATE,
     T_MINUS_1,
@@ -14,13 +16,16 @@ from gEconpy.parser.ast import (
     Variable,
 )
 from gEconpy.parser.ast.validation import (
+    check_declared_symbols_exist,
     check_undefined_parameters,
     check_undefined_variables,
     full_validation,
     validate_block,
     validate_model,
 )
-from gEconpy.parser.errors import GCNParseError
+from gEconpy.parser.errors import GCNParseError, GCNSemanticError
+from gEconpy.parser.loader import load_gcn_string
+from gEconpy.parser.preprocessor import quick_parse
 
 
 def _messages(errors: Iterable[GCNParseError]) -> list[str]:
@@ -282,6 +287,51 @@ class TestFullValidation:
             "Variable 'X' is used but not defined",
             "Parameter 'beta' is used but not calibrated",
         ]
+
+
+class TestDeclaredSymbolsExist:
+    @pytest.mark.parametrize(
+        "declared", ["Kapital[]", "alpa", "K"], ids=["misspelled_variable", "misspelled_parameter", "no_time_index"]
+    )
+    def test_declaration_naming_an_unknown_symbol_is_an_error(self, declared):
+        block = "block TEST { identities { Y[] = alpha * K[]; }; };"
+        source = f"symbols {{ {declared} {{ bounds = (0, None); }}; }}; {block}"
+
+        errors = list(check_declared_symbols_exist(quick_parse(source)))
+
+        assert len(errors) == 1
+        assert str(errors[0]).startswith(
+            f"[E022] Symbol '{declared}' is declared but the model has no such variable or parameter"
+        )
+
+    def test_the_error_suggests_the_name_the_author_meant(self):
+        source = "symbols { alpa { bounds = (0, 1); }; }; block TEST { identities { Y[] = alpha * K[]; }; };"
+
+        assert next(iter(check_declared_symbols_exist(quick_parse(source)))).suggestions == ["alpha"]
+
+    def test_a_declaration_matching_a_used_symbol_passes(self):
+        source = """
+        symbols { K[] { bounds = (0, None); }; alpha { bounds = (0, 1); }; };
+        block TEST { identities { Y[] = alpha * K[]; }; };
+        """
+
+        assert not list(check_declared_symbols_exist(quick_parse(source)))
+
+    def test_a_variable_eliminated_by_tryreduce_still_counts_as_declared(self):
+        """Tryreduce drops the variable from the solved system, but the author wrote it, so it stays declared."""
+        source = """
+        symbols { U[] { name = "Lifetime utility"; }; };
+        tryreduce { U[]; };
+        block TEST { identities { U[] = 1; }; };
+        """
+
+        assert not list(check_declared_symbols_exist(quick_parse(source)))
+
+    def test_loading_a_model_raises_on_an_unmatched_declaration(self):
+        source = "symbols { alpa { bounds = (0, 1); }; }; block TEST { identities { Y[] = alpha * K[]; }; };"
+
+        with pytest.raises(GCNSemanticError, match="'alpa' is declared but the model has no such"):
+            load_gcn_string(source)
 
 
 class TestDistributionValidation:
