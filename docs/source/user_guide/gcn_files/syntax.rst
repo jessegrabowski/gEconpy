@@ -197,6 +197,43 @@ it from the system. Its multiplier is still created and remains a model variable
    :dedent:
 
 
+Naming an equation
+------------------
+
+A table or a figure needs a caption for each equation, and the generated one is often not what a paper calls it.
+The ``@name`` tag gives an equation the caption it should print under:
+
+.. code-block:: text
+
+   constraints
+   {
+       @name = "Budget constraint"
+       C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
+   };
+
+A first-order condition has no source text of its own, since gEconpy derives it. Its caption therefore attaches to
+the control it comes from, and the tag is spelled ``@foc_name`` to say which of the two it names:
+
+.. code-block:: text
+
+   controls
+   {
+       @foc_name = "Consumption Euler equation"
+       C[];
+
+       L[], K[];
+   };
+
+A tag applies to the entry it sits above, and an entry ends at its semicolon. ``L[], K[];`` above is one untagged
+entry holding two controls. A ``@foc_name`` above a comma-separated list is an error, because several controls
+produce several conditions and one caption cannot say which it means.
+
+Neither tag is required. An unannotated first-order condition takes a caption built from its block and the
+``name`` its control declares in the ``symbols`` block, so ``C[]`` declared as
+``name = "Consumption"`` inside ``block HOUSEHOLD`` prints as *Household first-order condition for Consumption*.
+A control with no declared name falls back to the identifier the author wrote.
+
+
 The steady state block
 ----------------------
 
