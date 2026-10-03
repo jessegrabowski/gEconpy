@@ -49,6 +49,27 @@ class TestModelBlockWithComponents:
         assert len(result.controls) == 3
         assert [v.name for v in result.controls] == ["C", "L", "K"]
 
+    def test_block_carries_the_foc_names_from_its_controls(self):
+        """The controls component returns a pair, so a block that drops the second half loses every caption."""
+        text = """block TEST {
+            controls {
+                @foc_name = "Consumption Euler equation"
+                C[];
+
+                L[], K[];
+            };
+        };"""
+
+        result = MODEL_BLOCK.parse_string(text)[0]
+
+        assert [v.name for v in result.controls] == ["C", "L", "K"]
+        assert result.foc_names == {"C": "Consumption Euler equation"}
+
+    def test_block_without_control_tags_has_no_foc_names(self):
+        text = "block TEST { controls { C[], L[]; }; };"
+
+        assert MODEL_BLOCK.parse_string(text)[0].foc_names == {}
+
     def test_block_with_calibration(self):
         text = """block TEST {
             calibration {

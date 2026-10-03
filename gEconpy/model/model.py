@@ -373,6 +373,9 @@ class Model:
     equation_ids : list of str, optional
         The id of each equation, naming the block and component it was derived from. Indexes both ``equations``
         and the steady-state system, which are the same length and order. Default None.
+    equation_labels : dict mapping str to str, optional
+        The caption an author wrote for an equation, keyed by equation id. Only the equations they labeled
+        appear. Default None, meaning none were labeled.
     source_ast : GCNModel, optional
         The parsed GCN file, kept so an error about a derived equation can name the authored one. Default None,
         as for a model built without a file.
@@ -396,10 +399,12 @@ class Model:
         error_func: ERROR_FUNCTIONS = "squared",
         symbols: dict[str, SymbolDeclaration] | None = None,
         equation_ids: list[str] | None = None,
+        equation_labels: dict[str, str] | None = None,
         source_ast: GCNModel | None = None,
     ) -> None:
         self._variables = variables
         self._equation_ids = [] if equation_ids is None else equation_ids
+        self._equation_labels = {} if equation_labels is None else equation_labels
         self._source_ast = source_ast
 
         # Kept private: its consumers are the steady-state solver and, later, the LaTeX printer and the
@@ -464,6 +469,46 @@ class Model:
             for symbol, declaration in self._symbols.items()
             if declaration.bounds != (None, None)
         }
+
+    def equation_label(self, equation_id: str) -> str | None:
+        """
+        Caption for one equation, as a table or a figure would print it.
+
+        An author's ``@name`` or ``@foc_name`` wins. Failing that, a first-order condition gets a caption built
+        from its block and the control it came from, so an unannotated model still labels the equations most
+        papers tabulate.
+
+        Parameters
+        ----------
+        equation_id : str
+            The id of the equation, as it appears in ``equation_ids``.
+
+        Returns
+        -------
+        label : str or None
+            The caption, or None when there is no authored one and none can be derived.
+        """
+        authored = self._equation_labels.get(equation_id)
+        if authored is not None:
+            return authored
+
+        # Ids are built in Block.solve_optimization as "{block}.{component}.{suffix}", and
+        # test_ids_name_the_block_and_component_they_came_from pins that format.
+        block_name, _, remainder = equation_id.partition(".")
+        component, _, control = remainder.partition(".")
+        if component != "foc":
+            return None
+
+        block_words = block_name.replace("_", " ").lower()
+        return f"{block_words.capitalize()} first-order condition for {self._symbol_caption(control)}"
+
+    def _symbol_caption(self, base_name: str) -> str:
+        """Return a variable's declared ``name``, falling back to the identifier the author wrote."""
+        key = variable_key(base_name)
+        for symbol, declaration in self._symbols.items():
+            if symbol.name == key:
+                return declaration.name or base_name
+        return base_name
 
     @property
     def shocks(self) -> list[TimeAwareSymbol]:

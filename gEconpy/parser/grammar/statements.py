@@ -12,7 +12,13 @@ from gEconpy.parser.ast import (
     Tag,
     Variable,
 )
-from gEconpy.parser.constants import EQUATION_TAGS, PRELIZ_DIST_WRAPPERS, PRELIZ_DISTS
+from gEconpy.parser.constants import (
+    CONTROL_TAGS,
+    EQUATION_TAGS,
+    PRELIZ_DIST_WRAPPERS,
+    PRELIZ_DISTS,
+    VALUE_TAGS,
+)
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNParseFailure, ParseLocation
 from gEconpy.parser.grammar.expressions import EXPR, location_at, parse_time_index
@@ -24,9 +30,11 @@ from gEconpy.parser.grammar.tokens import (
     IDENTIFIER,
     LBRACKET,
     LPAREN,
+    NUMBER,
     RBRACKET,
     RPAREN,
     SEMI,
+    STRING,
     TILDE,
     TIME_INDEX_CONTENT,
 )
@@ -82,24 +90,96 @@ VARIABLE_REF = (
 
 VARIABLE_LIST = pp.DelimitedList(VARIABLE_REF)
 
-VALID_TAGS = frozenset(EQUATION_TAGS)
+VALID_FLAG_TAGS = frozenset(EQUATION_TAGS)
+VALID_EQUATION_VALUE_TAGS = frozenset(VALUE_TAGS)
+VALID_CONTROL_TAGS = frozenset(CONTROL_TAGS)
+
+TAG_NAME = pp.Combine(pp.Literal("@") + IDENTIFIER)
+
+# Only a quoted string is a legal value. The unquoted branches and the surrounding Optional exist so that a
+# malformed value reaches the parse action and gets a catalogued error rather than a raw pyparsing "Expected".
+_TAG_VALUE = STRING("quoted") | NUMBER | IDENTIFIER
+
+
+def _bad_tag(s: str, loc: int, tag_text: str, message: str, code: ErrorCode) -> GCNParseFailure:
+    return GCNParseFailure(s, loc, message, code=code, found=tag_text)
 
 
 def _parse_tag(s: str, loc: int, toks: pp.ParseResults) -> Tag:
     tag_text = toks[0]
-    tag_name = tag_text[1:]
-    if tag_name.lower() not in VALID_TAGS:
-        raise GCNParseFailure(
-            s,
-            loc,
-            f"Unknown tag '{tag_text}'",
-            code=ErrorCode.E014,
-            found=tag_text,
-        )
+    tag_name = tag_text[1:].lower()
+
+    if tag_name in VALID_EQUATION_VALUE_TAGS:
+        message = f"Tag '{tag_text}' takes a value, as in '{tag_text} = \"...\"'"
+        raise _bad_tag(s, loc, tag_text, message, ErrorCode.E014)
+    if tag_name not in VALID_FLAG_TAGS:
+        raise _bad_tag(s, loc, tag_text, f"Unknown tag '{tag_text}'", ErrorCode.E014)
+
     return Tag.from_string(tag_name)
 
 
-TAG = pp.Combine(pp.Literal("@") + IDENTIFIER).set_parse_action(_parse_tag)
+def _value_tag(
+    valid_names: frozenset[str],
+    code: ErrorCode,
+    flag_names: frozenset[str] = frozenset(),
+) -> pp.ParserElement:
+    """
+    Build a grammar element for ``@tag = "value"``.
+
+    Parameters
+    ----------
+    valid_names : frozenset of str
+        Tag names this element accepts, without the leading ``@``.
+    code : ErrorCode
+        The catalog code for a malformed tag in this position.
+    flag_names : frozenset of str, optional
+        Tag names that stand alone in this position, reported as taking no value. Defaults to none.
+
+    Returns
+    -------
+    element : pyparsing.ParserElement
+        An element parsing to a ``(name, value)`` pair.
+    """
+
+    def parse(s: str, loc: int, toks: pp.ParseResults) -> tuple[str, str]:
+        tag_text = toks[0]
+        tag_name = tag_text[1:].lower()
+
+        if tag_name in flag_names:
+            raise _bad_tag(s, loc, tag_text, f"Tag '{tag_text}' stands alone and takes no value", code)
+        if tag_name not in valid_names:
+            raise _bad_tag(s, loc, tag_text, f"Unknown tag '{tag_text}'", code)
+        if len(toks) == 1:
+            raise _bad_tag(s, loc, tag_text, f"Tag '{tag_text}' is missing its value", code)
+        if "quoted" not in toks:
+            raise _bad_tag(
+                s, loc, tag_text, f"Tag '{tag_text}' takes a quoted string, as in '{tag_text} = \"...\"'", code
+            )
+
+        return tag_name, toks[1]
+
+    return (TAG_NAME + pp.Suppress(pp.Literal("=")) + pp.Optional(_TAG_VALUE)).set_parse_action(parse)
+
+
+def _bare_control_tag_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
+    tag_text = toks[0]
+    message = f"Tag '{tag_text}' takes a value, as in '{tag_text} = \"...\"'"
+    raise _bad_tag(s, loc, tag_text, message, ErrorCode.E024)
+
+
+VALUE_TAG = _value_tag(VALID_EQUATION_VALUE_TAGS, ErrorCode.E014, flag_names=VALID_FLAG_TAGS)
+
+# No tag stands alone in a controls block, so a bare one is caught here rather than falling through to a raw
+# "Expected '}'" from the variable list that follows it.
+_BARE_CONTROL_TAG = (TAG_NAME + ~pp.FollowedBy(pp.Literal("="))).set_parse_action(_bare_control_tag_fail)
+
+CONTROL_TAG = _value_tag(VALID_CONTROL_TAGS, ErrorCode.E024) | _BARE_CONTROL_TAG
+
+# A tag followed by '=' carries a value and one that is not stands alone. An equation's left-hand side never
+# starts with '@', so this lookahead separates the two without backtracking into the equation.
+TAG = (TAG_NAME + ~pp.FollowedBy(pp.Literal("="))).set_parse_action(_parse_tag)
+
+ANY_TAG = VALUE_TAG | TAG
 
 LAGRANGE_MULT = COLON + IDENTIFIER("name") + LBRACKET + pp.Optional(TIME_INDEX_CONTENT, default="") + RBRACKET
 
@@ -116,7 +196,7 @@ def _missing_lhs_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
     )
 
 
-MISSING_LHS = (pp.ZeroOrMore(TAG) + pp.FollowedBy(pp.Literal("="))).set_parse_action(_missing_lhs_fail)
+MISSING_LHS = (pp.ZeroOrMore(ANY_TAG) + pp.FollowedBy(pp.Literal("="))).set_parse_action(_missing_lhs_fail)
 
 
 def _missing_rhs_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
@@ -130,7 +210,7 @@ def _missing_rhs_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
 
 
 MISSING_RHS = (
-    pp.ZeroOrMore(TAG) + EXPR("lhs") + pp.Suppress(pp.Literal("=")) + pp.FollowedBy(pp.Regex(r"\s*[;:]"))
+    pp.ZeroOrMore(ANY_TAG) + EXPR("lhs") + pp.Suppress(pp.Literal("=")) + pp.FollowedBy(pp.Regex(r"\s*[;:]"))
 ).set_parse_action(_missing_rhs_fail)
 
 
@@ -145,7 +225,7 @@ def _missing_equals_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
 
 
 MISSING_EQUALS = (
-    pp.ZeroOrMore(TAG) + EXPR("expr") + ~pp.FollowedBy(pp.Regex(r"\s*=")) + pp.FollowedBy(SEMI)
+    pp.ZeroOrMore(ANY_TAG) + EXPR("expr") + ~pp.FollowedBy(pp.Regex(r"\s*=")) + pp.FollowedBy(SEMI)
 ).set_parse_action(_missing_equals_fail)
 
 
@@ -176,7 +256,7 @@ _UNMATCHED_CLOSE = pp.Regex(r"[)\]]").copy().set_parse_action(_unmatched_close_f
 _BRACE_BEFORE_SEMICOLON = pp.Literal("}").copy().set_parse_action(_brace_before_semicolon_fail)
 
 _VALID_EQUATION = (
-    pp.ZeroOrMore(TAG)("tags")
+    pp.ZeroOrMore(ANY_TAG)("tags")
     + EXPR("lhs")
     + pp.Suppress(pp.Literal("="))
     + EXPR("rhs")
@@ -216,7 +296,8 @@ def _equation_end(s: str, loc: int, terminator: str, fallback: tuple[int, int]) 
 
 
 def _build_equation(s: str, loc: int, tokens: pp.ParseResults) -> GCNEquation:
-    tags = frozenset(tokens.tags) if tokens.tags else frozenset()
+    tags = frozenset(tag for tag in tokens.tags if isinstance(tag, Tag))
+    annotations = dict(pair for pair in tokens.tags if not isinstance(pair, Tag))
     lagrange_name = tokens.lagrange[0] if tokens.lagrange else None
     calibrating_param = tokens.calibrating[0] if tokens.calibrating else None
 
@@ -242,6 +323,7 @@ def _build_equation(s: str, loc: int, tokens: pp.ParseResults) -> GCNEquation:
         lagrange_multiplier=lagrange_name,
         calibrating_parameter=calibrating_param,
         tags=tags,
+        annotations=annotations,
         location=location,
     )
 

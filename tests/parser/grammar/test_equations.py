@@ -11,7 +11,10 @@ from gEconpy.parser.ast import (
     Tag,
     Variable,
 )
+from gEconpy.parser.error_catalog import ErrorCode
+from gEconpy.parser.errors import GCNParseFailure
 from gEconpy.parser.grammar import parse_equation
+from gEconpy.parser.grammar.statements import ANY_TAG
 
 
 class TestSimpleEquations:
@@ -272,6 +275,126 @@ class TestEquationTags:
         eq = parse_equation("@exclude @minimize TC[] = w[] * L[];")
         assert eq.tags == frozenset({Tag.EXCLUDE, Tag.MINIMIZE})
         assert eq.lhs == Variable(name="TC")
+
+
+class TestValueTags:
+    @pytest.mark.parametrize(
+        "source, expected",
+        [
+            ('@name = "Law of motion of capital"', ("name", "Law of motion of capital")),
+            ('@NAME = "Euler equation"', ("name", "Euler equation")),
+            ('@name = "Budget constraint: C + I = Y"', ("name", "Budget constraint: C + I = Y")),
+            (r'@name = "\alpha share"', ("name", r"\alpha share")),
+            ('@name = ""', ("name", "")),
+        ],
+        ids=["string_value", "case_insensitive", "punctuation", "no_escaping_needed", "empty_string"],
+    )
+    def test_a_value_tag_parses_to_its_name_and_value(self, source, expected):
+        assert ANY_TAG.parse_string(source, parse_all=True)[0] == expected
+
+    def test_a_flag_tag_still_parses_to_its_enum(self):
+        assert ANY_TAG.parse_string("@exclude", parse_all=True)[0] == Tag.EXCLUDE
+
+    @pytest.mark.parametrize(
+        "source, message",
+        [
+            ("@name = lom_k", "takes a quoted string"),
+            ("@name = 5", "takes a quoted string"),
+            ("@name = 1.5e3", "takes a quoted string"),
+            ("@name =", "is missing its value"),
+            ('@exclude = "x"', "stands alone and takes no value"),
+            ("@name", "takes a value"),
+            ('@bogus = "x"', "Unknown tag"),
+            ("@id = lom_k", "Unknown tag"),
+        ],
+        ids=[
+            "unquoted_value",
+            "integer_value",
+            "scientific_value",
+            "missing_value",
+            "flag_with_value",
+            "value_tag_bare",
+            "unknown_value_tag",
+            "id_is_not_a_tag",
+        ],
+    )
+    def test_a_malformed_tag_is_rejected_with_a_catalogued_error(self, source, message):
+        """A raw pyparsing message would skip the framed source excerpt every other GCN error gets."""
+        with pytest.raises(GCNParseFailure, match=message) as excinfo:
+            ANY_TAG.parse_string(source, parse_all=True)
+
+        assert excinfo.value.error_code == ErrorCode.E014
+
+
+class TestEquationAnnotations:
+    def test_a_flag_and_a_pair_on_one_equation_land_in_separate_fields(self):
+        eq = parse_equation('@exclude @name = "Law of motion" K[] = (1 - delta) * K[-1] + I[];')
+
+        assert eq.tags == frozenset({Tag.EXCLUDE})
+        assert eq.annotations == {"name": "Law of motion"}
+        assert eq.is_excluded
+
+    def test_an_equation_without_tags_annotates_to_nothing(self):
+        eq = parse_equation("Y[] = C[];")
+
+        assert eq.annotations == {}
+        assert eq.declared_name is None
+
+    @pytest.mark.parametrize(
+        "source, multiplier, calibrating, expected_name",
+        [
+            ('@name = "Budget constraint" C[] + I[] = w[] * L[] : lambda[];', "lambda", None, "Budget constraint"),
+            ('@name = "Capital share" alpha = K[] / Y[] -> alpha;', None, "alpha", "Capital share"),
+            ('@name = "Budget" @exclude C[] = Y[] : lambda[];', "lambda", None, "Budget"),
+        ],
+        ids=["with_multiplier", "with_calibrating_parameter", "pair_flag_and_multiplier"],
+    )
+    def test_a_pair_coexists_with_the_multiplier_and_calibration_suffixes(
+        self, source, multiplier, calibrating, expected_name
+    ):
+        eq = parse_equation(source)
+
+        assert eq.lagrange_multiplier == multiplier
+        assert eq.calibrating_parameter == calibrating
+        assert eq.declared_name == expected_name
+
+    @pytest.mark.parametrize(
+        "source",
+        ["@name = 5 K[] = I[];", "@name = K[] = I[];", "@name = lom K[] = I[];"],
+        ids=["number", "equation_runs_on", "bare_word"],
+    )
+    def test_a_malformed_tag_fails_the_whole_equation_rather_than_backtracking(self, source):
+        """Pyparsing backtracks out of a failed alternative, so a non-fatal error here would parse as no tag."""
+        with pytest.raises(GCNParseFailure, match="quoted string") as excinfo:
+            parse_equation(source)
+
+        assert excinfo.value.error_code == ErrorCode.E014
+
+    def test_a_pair_on_its_own_line_reads_the_same(self):
+        eq = parse_equation('@name = "Euler equation"\nC[] = Y[];')
+
+        assert eq.annotations == {"name": "Euler equation"}
+
+    def test_a_later_pair_replaces_an_earlier_one_of_the_same_name(self):
+        eq = parse_equation('@name = "first" @name = "second" Y[] = C[];')
+
+        assert eq.declared_name == "second"
+
+    def test_an_annotated_equation_is_still_hashable(self):
+        """A dict field makes the generated hash raise, and GCNEquation is a public node a caller may put in a set."""
+        annotated = parse_equation('@name = "x" Y[] = C[];')
+        same = parse_equation('@name = "x" Y[] = C[];')
+        bare = parse_equation("Y[] = C[];")
+
+        assert hash(annotated) == hash(same)
+        assert len({annotated, same, bare}) == 2
+
+    def test_with_tags_keeps_the_annotations(self):
+        """with_location and with_tags rebuild the node, so a new field has to survive both."""
+        eq = parse_equation('@name = "Law of motion" K[] = I[];')
+
+        assert eq.with_tags(frozenset({Tag.EXCLUDE})).annotations == {"name": "Law of motion"}
+        assert eq.with_location(eq.location).annotations == {"name": "Law of motion"}
 
 
 class TestEquationLocation:

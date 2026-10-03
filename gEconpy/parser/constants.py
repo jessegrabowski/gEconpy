@@ -5,6 +5,12 @@ from sympy.abc import _clash1, _clash2
 LOCAL_DICT = {letter: sp.Symbol(letter) for letter in (*_clash1, *_clash2)}
 
 EQUATION_TAGS = ["exclude", "minimize", "maximize"]
+
+# Tags that take a quoted string rather than standing alone. Their values are captions, so they are prose.
+# Equations take ``name``. A control takes ``foc_name``, which names the first-order condition the control
+# produces rather than the control itself, since the derived equation has no source text of its own to tag.
+VALUE_TAGS = ["name"]
+CONTROL_TAGS = ["foc_name"]
 STEADY_STATE_NAMES = ["STEADY_STATE", "SS", "STEADYSTATE", "STEADY"]
 STEADY_STATE_BLOCK_KEYS = frozenset(name.replace("_", "") for name in STEADY_STATE_NAMES)
 BLOCK_COMPONENTS = [

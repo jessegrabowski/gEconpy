@@ -1,0 +1,14 @@
+# Error: Invalid control tag (@foc_name written without its quoted value)
+block TEST
+{
+    controls
+    {
+        @foc_name
+        C[];
+    };
+
+    objective
+    {
+        U[] = C[];
+    };
+};

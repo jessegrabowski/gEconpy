@@ -3,11 +3,13 @@ from enum import Enum
 
 from gEconpy.parser.constants import (
     BLOCK_COMPONENTS,
+    CONTROL_TAGS,
     EQUATION_TAGS,
     GCN_ASSUMPTIONS,
     PRELIZ_DIST_WRAPPERS,
     SIGN_ASSUMPTION_SUPPORTS,
     SYMBOL_FIELDS,
+    VALUE_TAGS,
 )
 
 
@@ -36,6 +38,8 @@ class ErrorInfo:
 
 _BLOCK_COMPONENT_NAMES = ", ".join(name.lower() for name in BLOCK_COMPONENTS)
 _EQUATION_TAG_NAMES = ", ".join(f"@{tag}" for tag in EQUATION_TAGS)
+_EQUATION_VALUE_TAG_NAMES = ", ".join(f'@{tag} = "..."' for tag in VALUE_TAGS)
+_CONTROL_TAG_NAMES = ", ".join(f'@{tag} = "..."' for tag in CONTROL_TAGS)
 _ASSUMPTION_NAMES = ", ".join(GCN_ASSUMPTIONS)
 _WRAPPER_NAMES = ", ".join(PRELIZ_DIST_WRAPPERS)
 _SYMBOL_FIELD_NAMES = ", ".join(SYMBOL_FIELDS)
@@ -223,10 +227,20 @@ class ErrorCode(Enum):
     )
 
     E014 = ErrorInfo(
-        title="Unknown equation tag",
-        explanation=f"Equation tags must be one of: {_EQUATION_TAG_NAMES}.",
-        common_causes=("Typo in tag name",),
-        fixes=(f"Rename the tag to one of: {_EQUATION_TAG_NAMES}",),
+        title="Invalid equation tag",
+        explanation=(
+            f"An equation takes the standalone tags {_EQUATION_TAG_NAMES} and the value tags "
+            f"{_EQUATION_VALUE_TAG_NAMES}."
+        ),
+        common_causes=(
+            "Typo in a tag name",
+            "Giving a standalone tag a value, or leaving a value tag without one",
+            "Using a control tag such as '@foc_name' on an equation",
+        ),
+        fixes=(
+            f"Write a standalone tag as one of: {_EQUATION_TAG_NAMES}",
+            f"Write a value tag as one of: {_EQUATION_VALUE_TAG_NAMES}",
+        ),
     )
 
     E015 = ErrorInfo(
@@ -314,6 +328,24 @@ class ErrorCode(Enum):
             "Correct the spelling to match the symbol used in the blocks",
             "Add the time index brackets if the symbol is a variable",
             "Delete the declaration if the symbol is gone",
+        ),
+    )
+
+    E024 = ErrorInfo(
+        title="Invalid control tag",
+        explanation=(
+            f"A control takes the value tags {_CONTROL_TAG_NAMES}, which name the first-order condition that "
+            "control produces. One tag names one first-order condition, so it applies to a single control."
+        ),
+        common_causes=(
+            "Typo in a tag name",
+            "Leaving off the quoted value",
+            "Tagging a comma-separated list of controls, which produces one condition per control",
+            "Using an equation tag such as '@name' on a control",
+        ),
+        fixes=(
+            f"Write the tag as one of: {_CONTROL_TAG_NAMES}",
+            "Give each tagged control its own entry, ending in a semicolon",
         ),
     )
 

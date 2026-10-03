@@ -133,6 +133,7 @@ def model_from_gcn(
         priors=(primitives.param_priors, primitives.shock_priors),
         symbols=_key_declarations_by_symbol(primitives),
         equation_ids=primitives.equation_ids,
+        equation_labels=primitives.equation_labels,
         source_ast=primitives.source_ast,
         is_linear=primitives.options.get("linear", False),
         mode=mode,
@@ -576,6 +577,7 @@ class _ModelPrimitives:
     options: dict
     symbols: dict[str, SymbolDeclaration]
     equation_ids: list[str]
+    equation_labels: dict[str, str]
     source_ast: GCNModel | None
 
 
@@ -707,6 +709,7 @@ def _derive_model_primitives(
         options=parsed.options,
         symbols=parsed.symbols,
         equation_ids=equation_ids,
+        equation_labels=parsed.equation_labels,
         source_ast=parsed.source_ast,
     )
 

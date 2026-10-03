@@ -1,0 +1,12 @@
+error[E024]: '@foc_name' names one first-order condition, so it cannot tag 2 controls at once. Found 'C'
+  --> E024_foc_tag_on_many_controls.gcn:6:9
+     |
+   4 |     controls
+   5 |     {
+   6 |         @foc_name = "Euler equation"
+     |         ^ invalid control tag
+   7 |         C[], L[];
+   8 |     };
+     |
+   = note: Write the tag as one of: @foc_name = "..."
+   = note: Give each tagged control its own entry, ending in a semicolon
