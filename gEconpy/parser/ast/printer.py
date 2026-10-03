@@ -128,7 +128,7 @@ def print_block(block: GCNBlock, indent: str = "    ") -> str:
     lines = [f"block {block.name}", "{"]
 
     lines.extend(_component_lines("definitions", (print_equation(eq) for eq in block.definitions), indent))
-    lines.extend(_component_lines("controls", _variable_list(block.controls), indent))
+    lines.extend(_component_lines("controls", _control_lines(block), indent))
     lines.extend(_component_lines("objective", (print_equation(eq) for eq in block.objective), indent))
     lines.extend(_component_lines("constraints", (print_equation(eq) for eq in block.constraints), indent))
     lines.extend(_component_lines("identities", (print_equation(eq) for eq in block.identities), indent))
@@ -266,6 +266,26 @@ def _variable_list(variables: list[Variable]) -> list[str]:
     if not variables:
         return []
     return [", ".join(print_expression(v) for v in variables)]
+
+
+def _control_lines(block: GCNBlock) -> list[str]:
+    lines: list[str] = []
+    untagged: list[Variable] = []
+
+    # Walked in the order the author wrote them, because a tagged control needs an entry of its own and grouping
+    # the tagged ones together would reorder ``controls`` and stop the model round-tripping.
+    for control in block.controls:
+        caption = block.foc_names.get(control.name)
+        if caption is None:
+            untagged.append(control)
+            continue
+
+        lines.extend(_variable_list(untagged))
+        untagged.clear()
+        lines.append(f'@foc_name = "{caption}" {print_expression(control)}')
+
+    lines.extend(_variable_list(untagged))
+    return lines
 
 
 def _shock_lines(block: GCNBlock) -> list[str]:

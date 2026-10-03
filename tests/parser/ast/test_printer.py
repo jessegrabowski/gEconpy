@@ -335,6 +335,27 @@ class TestPrintModel:
         assert quick_parse(printed) == model
         assert tags in printed
 
+    @pytest.mark.parametrize(
+        "controls_text",
+        [
+            '@foc_name = "Consumption Euler equation" C[]; L[];',
+            'L[], K[]; @foc_name = "Consumption Euler equation" C[];',
+            '@foc_name = "A" C[]; @foc_name = "B" L[];',
+            "C[], L[], K[];",
+            '@foc_name = "Capital demand" K[-1];',
+        ],
+        ids=["tagged_first", "tagged_last", "all_tagged", "none_tagged", "time_index"],
+    )
+    def test_printed_control_tags_reparse_to_the_same_ast(self, controls_text):
+        """A tagged control needs its own entry, so printing must not reorder the controls to group them."""
+        model = quick_parse(f"block H {{ controls {{ {controls_text} }}; objective {{ U[] = C[]; }}; }};")
+
+        reparsed = quick_parse(print_model(model))
+
+        assert reparsed == model
+        assert reparsed.blocks[0].foc_names == model.blocks[0].foc_names
+        assert [v.name for v in reparsed.blocks[0].controls] == [v.name for v in model.blocks[0].controls]
+
     def test_printed_symbols_omit_assumptions_the_bound_implies(self):
         printed = print_model(quick_parse("symbols { alpha { bounds = (0, 1); }; }; block TEST { };"))
 
