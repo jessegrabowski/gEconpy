@@ -373,6 +373,9 @@ class Model:
     equation_ids : list of str, optional
         The id of each equation, naming the block and component it was derived from. Indexes both ``equations``
         and the steady-state system, which are the same length and order. Default None.
+    equation_labels : dict mapping str to str, optional
+        The caption an author wrote for an equation, keyed by equation id. Only the equations they labeled
+        appear. Default None, meaning none were labeled.
     source_ast : GCNModel, optional
         The parsed GCN file, kept so an error about a derived equation can name the authored one. Default None,
         as for a model built without a file.
@@ -396,10 +399,12 @@ class Model:
         error_func: ERROR_FUNCTIONS = "squared",
         symbols: dict[str, SymbolDeclaration] | None = None,
         equation_ids: list[str] | None = None,
+        equation_labels: dict[str, str] | None = None,
         source_ast: GCNModel | None = None,
     ) -> None:
         self._variables = variables
         self._equation_ids = [] if equation_ids is None else equation_ids
+        self._equation_labels = {} if equation_labels is None else equation_labels
         self._source_ast = source_ast
 
         # Kept private: its consumers are the steady-state solver and, later, the LaTeX printer and the

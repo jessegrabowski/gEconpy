@@ -46,6 +46,8 @@ def dispatch_block(
     shocks: list[TimeAwareSymbol] | None = None,
     multipliers: dict[int, TimeAwareSymbol | None] | None = None,
     equation_flags: dict[int, dict[str, bool]] | None = None,
+    declared_names: dict[int, str] | None = None,
+    foc_names: dict[str, str] | None = None,
     source: str | None = None,
     symbol_locations: dict[str, ParseLocation] | None = None,
     ss_solution_dict: SymbolDictionary | None = None,
@@ -82,6 +84,10 @@ def dispatch_block(
         The Lagrange multiplier on each constraint, keyed by constraint index.
     equation_flags : dict mapping int to dict, optional
         The flag dictionary of each equation, keyed by equation number.
+    declared_names : dict mapping int to str, optional
+        Captions from an equation's ``@name``, keyed by equation number.
+    foc_names : dict mapping str to str, optional
+        Captions from a control's ``@foc_name``, keyed by control base name.
     source : str, optional
         The source code of the GCN file, for error reporting.
     symbol_locations : dict mapping str to ParseLocation, optional
@@ -106,6 +112,8 @@ def dispatch_block(
         "shocks": shocks,
         "multipliers": multipliers,
         "equation_flags": equation_flags,
+        "declared_names": declared_names,
+        "foc_names": foc_names,
         "source": source,
         "symbol_locations": symbol_locations,
         "ss_solution_dict": ss_solution_dict,

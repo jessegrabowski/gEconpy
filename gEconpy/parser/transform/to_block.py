@@ -116,6 +116,7 @@ def ast_block_to_block(
     components: dict[str, dict[int, sp.Eq] | None] = {}
     equation_flags: dict[int, dict[str, bool]] = {}
     multipliers: dict[int, TimeAwareSymbol | None] = {}
+    declared_names: dict[int, str] = {}
     eq_num = 0
     for name in EQUATION_COMPONENTS:
         equations = converted[name]
@@ -128,6 +129,8 @@ def ast_block_to_block(
             numbered[eq_num] = item.equation
             equation_flags[eq_num] = item.flags
             multipliers[eq_num] = item.multiplier
+            if item.declared_name is not None:
+                declared_names[eq_num] = item.declared_name
             eq_num += 1
         components[name] = numbered
 
@@ -142,6 +145,8 @@ def ast_block_to_block(
         shocks=[_variable_to_symbol(v, assumptions) for v in ast_block.shocks] or None,
         multipliers=multipliers,
         equation_flags=equation_flags,
+        declared_names=declared_names,
+        foc_names=dict(ast_block.foc_names),
         source=source,
         symbol_locations=symbol_locations,
         ss_solution_dict=ss_solution_dict,
@@ -154,6 +159,7 @@ class _ConvertedEquation:
     equation: sp.Eq
     flags: dict[str, bool]
     multiplier: TimeAwareSymbol | None
+    declared_name: str | None = None
 
 
 def _variable_to_symbol(var: Variable, assumptions: dict[str, dict[str, bool]]) -> TimeAwareSymbol:
@@ -169,6 +175,7 @@ def _convert_equation(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) 
         equation=_equation_to_sympy(eq, assumptions),
         flags=_extract_flags(eq),
         multiplier=_extract_multiplier(eq, assumptions),
+        declared_name=eq.declared_name,
     )
 
 

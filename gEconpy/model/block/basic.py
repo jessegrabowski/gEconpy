@@ -112,6 +112,8 @@ class Block:
         shocks: list[TimeAwareSymbol] | None = None,
         multipliers: dict[int, TimeAwareSymbol | None] | None = None,
         equation_flags: dict[int, dict[str, bool]] | None = None,
+        declared_names: dict[int, str] | None = None,
+        foc_names: dict[str, str] | None = None,
         source: str | None = None,
         symbol_locations: dict[str, ParseLocation] | None = None,
         ss_solution_dict: SymbolDictionary | None = None,
@@ -137,6 +139,12 @@ class Block:
         self.multipliers = multipliers or {}
         self.eliminated_variables: list[sp.Symbol] = []
         self.equation_flags = equation_flags or {}
+        self.declared_names = declared_names or {}
+        self.foc_names = foc_names or {}
+
+        # Keyed by equation id rather than by position, so a caption follows its equation through multiplier
+        # elimination and tryreduce substitution the way the id itself does.
+        self.equation_labels: dict[str, str] = {}
 
         self._source = source
         self._symbol_locations = symbol_locations or {}
@@ -239,23 +247,24 @@ class Block:
 
         self.system_equations = []
         self.system_equation_ids = []
+        self.equation_labels = {}
 
         if self.definitions is not None:
             _, definitions = unpack_keys_and_values(self.definitions)
             sub_dict = {eq.lhs: eq.rhs for eq in definitions}
 
         if self.identities is not None:
-            _, identities = unpack_keys_and_values(self.identities)
-            for position, eq in enumerate(identities):
+            eq_idx, identities = unpack_keys_and_values(self.identities)
+            for position, (idx, eq) in enumerate(zip(eq_idx, identities, strict=True)):
                 self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
-                self.system_equation_ids.append(f"{self.name}.identities.{position}")
+                self._record_equation(f"{self.name}.identities.{position}", self.declared_names.get(idx))
 
         if self.constraints is not None:
             eq_idx, constraints = unpack_keys_and_values(self.constraints)
             for position, (idx, eq) in enumerate(zip(eq_idx, constraints, strict=True)):
                 if not self.equation_flags[idx].get("exclude", False):
                     self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
-                    self.system_equation_ids.append(f"{self.name}.constraints.{position}")
+                    self._record_equation(f"{self.name}.constraints.{position}", self.declared_names.get(idx))
 
         if self.controls is None and self.objective is None:
             return
@@ -264,7 +273,7 @@ class Block:
         obj_idx, objective = obj_idx[0], objective[0]
 
         self.system_equations.append(set_equality_equals_zero(objective.subs(sub_dict)))
-        self.system_equation_ids.append(f"{self.name}.objective")
+        self._record_equation(f"{self.name}.objective", self.declared_names.get(obj_idx))
 
         discount_factor = self._get_discount_factor()
         lagrange = self._build_lagrangian()
@@ -278,12 +287,17 @@ class Block:
         for control in self.controls:
             foc = self._compute_foc(control, lagrange, discount_factor)
             self.system_equations.append(foc.powsimp())
-            self.system_equation_ids.append(f"{self.name}.foc.{control.base_name}")
+            self._record_equation(f"{self.name}.foc.{control.base_name}", self.foc_names.get(control.base_name))
 
         if try_simplify:
             self.simplify_system_equations()
 
         self._get_variable_list()
+
+    def _record_equation(self, equation_id: str, label: str | None) -> None:
+        self.system_equation_ids.append(equation_id)
+        if label is not None:
+            self.equation_labels[equation_id] = label
 
     def simplify_system_equations(self) -> None:
         """

@@ -66,6 +66,7 @@ class ModelPrimitives:
 
     equations: list[sp.Expr]
     equation_ids: list[str]
+    equation_labels: dict[str, str]
     source_ast: GCNModel
     variables: list[TimeAwareSymbol]
     shocks: list[TimeAwareSymbol]
@@ -168,6 +169,7 @@ def ast_model_to_primitives(
     return ModelPrimitives(
         equations=_block_dict_to_equation_list(block_dict),
         equation_ids=_block_dict_to_equation_ids(block_dict),
+        equation_labels=_block_dict_to_equation_labels(block_dict),
         source_ast=model,
         variables=variables,
         shocks=shocks,
@@ -281,6 +283,13 @@ def _block_dict_to_equation_list(block_dict: dict[str, Block]) -> list[sp.Expr]:
 
 def _block_dict_to_equation_ids(block_dict: dict[str, Block]) -> list[str]:
     return [eq_id for block in block_dict.values() for eq_id in block.system_equation_ids]
+
+
+def _block_dict_to_equation_labels(block_dict: dict[str, Block]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for block in block_dict.values():
+        labels.update(block.equation_labels)
+    return labels
 
 
 def _block_dict_to_param_dict(block_dict: dict[str, Block], dict_name: ParamDictName) -> SymbolDictionary:
