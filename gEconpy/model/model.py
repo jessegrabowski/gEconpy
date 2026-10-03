@@ -1809,8 +1809,25 @@ class Model:
         result = SteadyStateResults(ss_dict.to_sympy()).to_string()
         result.success = success
         if not success:
-            _log.warning(f"Steady State was not found. Sum of square residuals: {np.square(residual).sum()}")
+            _log.warning(
+                f"Steady State was not found. Sum of square residuals: {np.square(residual).sum()}"
+                f"{self._worst_residual_note(residual)}"
+            )
         return result
+
+    def _worst_residual_note(self, residual: np.ndarray) -> str:
+        """
+        Name the equation with the largest residual, so a failure points at a line the author wrote.
+
+        The steady-state system is one equation per model equation in the same order, so an equation id indexes
+        both. Returns an empty string for a model built without ids.
+        """
+        residual = np.asarray(residual).ravel()
+        if len(self._equation_ids) != len(residual):
+            return ""
+
+        worst = int(np.argmax(np.abs(residual)))
+        return f". Largest residual {residual[worst]:.3e} in {self._equation_ids[worst]}"
 
     def _provided_steady_state_values(
         self,
