@@ -1,3 +1,5 @@
+import re
+
 import pyparsing as pp
 import pytest
 
@@ -8,6 +10,7 @@ from gEconpy.parser.ast import (
     Parameter,
     T,
 )
+from gEconpy.parser.errors import GCNParseError, GCNParseFailure
 from gEconpy.parser.grammar.components import (
     CALIBRATION,
     COMPONENT,
@@ -18,6 +21,7 @@ from gEconpy.parser.grammar.components import (
     OBJECTIVE,
     SHOCKS,
 )
+from gEconpy.parser.preprocessor import quick_parse
 
 
 class TestDefinitions:
@@ -54,23 +58,107 @@ class TestDefinitions:
 class TestControls:
     def test_single_control(self):
         text = "controls { C[]; };"
-        name, variables = CONTROLS.parse_string(text)[0]
+        name, (variables, foc_names) = CONTROLS.parse_string(text)[0]
         assert name == "controls"
         assert len(variables) == 1
+        assert foc_names == {}
         assert variables[0].name == "C"
 
     def test_multiple_controls(self):
         text = "controls { C[], L[], I[], K[]; };"
-        name, variables = CONTROLS.parse_string(text)[0]
+        name, (variables, foc_names) = CONTROLS.parse_string(text)[0]
         assert name == "controls"
         assert len(variables) == 4
+        assert foc_names == {}
         assert [v.name for v in variables] == ["C", "L", "I", "K"]
 
     def test_controls_with_time_index(self):
         text = "controls { K[-1], L[]; };"
-        _name, variables = CONTROLS.parse_string(text)[0]
+        _name, (variables, _foc_names) = CONTROLS.parse_string(text)[0]
         assert variables[0].time_index == T_MINUS_1
         assert variables[1].time_index == T
+
+
+class TestTaggedControls:
+    @pytest.mark.parametrize(
+        "text, expected_names",
+        [
+            ("controls { C[], L[], K[]; };", ["C", "L", "K"]),
+            ("controls { C[]; L[]; K[]; };", ["C", "L", "K"]),
+            ("controls { C[], L[]; K[]; };", ["C", "L", "K"]),
+            ("controls { };", []),
+        ],
+        ids=["one_comma_list", "one_per_line", "mixed", "empty"],
+    )
+    def test_the_untagged_spellings_all_parse_to_the_same_controls(self, text, expected_names):
+        """Every .gcn file in the repo uses the single comma-list spelling, which must keep parsing unchanged."""
+        _name, (variables, foc_names) = CONTROLS.parse_string(text)[0]
+
+        assert [v.name for v in variables] == expected_names
+        assert foc_names == {}
+
+    def test_a_tagged_entry_records_the_foc_name_against_its_control(self):
+        text = """controls
+        {
+            @foc_name = "Consumption Euler equation"
+            C[];
+
+            @foc_name = "Investment Euler equation"
+            I[];
+
+            L[], K[];
+        };"""
+
+        _name, (variables, foc_names) = CONTROLS.parse_string(text)[0]
+
+        assert [v.name for v in variables] == ["C", "I", "L", "K"]
+        assert foc_names == {"C": "Consumption Euler equation", "I": "Investment Euler equation"}
+
+    def test_a_tagged_control_keeps_its_time_index(self):
+        text = 'controls { @foc_name = "Capital demand" K[-1]; };'
+
+        _name, (variables, foc_names) = CONTROLS.parse_string(text)[0]
+
+        assert variables[0].time_index == T_MINUS_1
+        assert foc_names == {"K": "Capital demand"}
+
+    @pytest.mark.parametrize(
+        "controls_text, count",
+        [('@foc_name = "x" C[], L[];', 2), ('@foc_name = "x" C[], L[], K[];', 3)],
+        ids=["two_controls", "three_controls"],
+    )
+    def test_a_foc_tag_on_a_multi_control_entry_is_rejected(self, controls_text, count):
+        """Several controls produce several first-order conditions, so one name cannot say which it means."""
+        source = f"block H {{ controls {{ {controls_text} }}; objective {{ U[] = C[]; }}; }};"
+
+        with pytest.raises(GCNParseError, match=f"cannot tag {count} controls") as excinfo:
+            quick_parse(source)
+
+        assert str(excinfo.value).startswith("[E024]")
+
+    @pytest.mark.parametrize(
+        "controls_text, message",
+        [
+            ('@name = "x" C[];', "Unknown tag '@name'"),
+            ("@foc_name C[];", "takes a value"),
+            ("@foc_name = C[];", "takes a quoted string"),
+            ("@foc_name = 5 C[];", "takes a quoted string"),
+        ],
+        ids=["equation_tag_here", "bare_foc_name", "missing_quotes", "number"],
+    )
+    def test_a_malformed_control_tag_reaches_the_user_as_a_catalogued_error(self, controls_text, message):
+        """
+        Parsed through a whole file, which is where the code is decoded back out of the message.
+
+        A control tag is E024 rather than the equation tags' E014, so the advice names '@foc_name' instead of
+        telling the author to rename it to '@exclude'.
+        """
+        source = f"block H {{ controls {{ {controls_text} }}; objective {{ U[] = C[]; }}; }};"
+
+        with pytest.raises(GCNParseError, match=re.escape(message)) as excinfo:
+            quick_parse(source)
+
+        assert str(excinfo.value).startswith("[E024]")
 
 
 class TestObjective:

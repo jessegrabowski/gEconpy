@@ -1,0 +1,14 @@
+# Error: Invalid control tag (@foc_name names one FOC, so it cannot tag a list of controls)
+block TEST
+{
+    controls
+    {
+        @foc_name = "Euler equation"
+        C[], L[];
+    };
+
+    objective
+    {
+        U[] = C[];
+    };
+};

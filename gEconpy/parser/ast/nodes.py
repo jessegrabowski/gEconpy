@@ -441,6 +441,7 @@ class GCNBlock:
     identities: list[GCNEquation] = field(default_factory=list)
     shocks: list[Variable] = field(default_factory=list)
     shock_distributions: list[GCNDistribution] = field(default_factory=list)
+    foc_names: Mapping[str, str] = field(default_factory=dict)
     calibration: list[GCNEquation | GCNDistribution] = field(default_factory=list)
     location: ParseLocation | None = field(default=None, compare=False, repr=False)
 

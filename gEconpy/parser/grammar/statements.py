@@ -13,6 +13,7 @@ from gEconpy.parser.ast import (
     Variable,
 )
 from gEconpy.parser.constants import (
+    CONTROL_TAGS,
     EQUATION_TAGS,
     PRELIZ_DIST_WRAPPERS,
     PRELIZ_DISTS,
@@ -91,6 +92,7 @@ VARIABLE_LIST = pp.DelimitedList(VARIABLE_REF)
 
 VALID_FLAG_TAGS = frozenset(EQUATION_TAGS)
 VALID_EQUATION_VALUE_TAGS = frozenset(VALUE_TAGS)
+VALID_CONTROL_TAGS = frozenset(CONTROL_TAGS)
 
 TAG_NAME = pp.Combine(pp.Literal("@") + IDENTIFIER)
 
@@ -159,7 +161,19 @@ def _value_tag(
     return (TAG_NAME + pp.Suppress(pp.Literal("=")) + pp.Optional(_TAG_VALUE)).set_parse_action(parse)
 
 
+def _bare_control_tag_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
+    tag_text = toks[0]
+    message = f"Tag '{tag_text}' takes a value, as in '{tag_text} = \"...\"'"
+    raise _bad_tag(s, loc, tag_text, message, ErrorCode.E024)
+
+
 VALUE_TAG = _value_tag(VALID_EQUATION_VALUE_TAGS, ErrorCode.E014, flag_names=VALID_FLAG_TAGS)
+
+# No tag stands alone in a controls block, so a bare one is caught here rather than falling through to a raw
+# "Expected '}'" from the variable list that follows it.
+_BARE_CONTROL_TAG = (TAG_NAME + ~pp.FollowedBy(pp.Literal("="))).set_parse_action(_bare_control_tag_fail)
+
+CONTROL_TAG = _value_tag(VALID_CONTROL_TAGS, ErrorCode.E024) | _BARE_CONTROL_TAG
 
 # A tag followed by '=' carries a value and one that is not stands alone. An equation's left-hand side never
 # starts with '@', so this lookahead separates the two without backtracking into the equation.

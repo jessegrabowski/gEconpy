@@ -56,6 +56,8 @@ def _build_block(tokens: pp.ParseResults) -> GCNBlock:
     for component_name, content in tokens.components:
         if component_name == "shocks":
             block.shocks, block.shock_distributions = content
+        elif component_name == "controls":
+            block.controls, block.foc_names = content
         else:
             setattr(block, component_name, content)
 
