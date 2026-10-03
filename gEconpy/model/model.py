@@ -859,6 +859,7 @@ class Model:
         use_hessp: bool = True,
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
+        grad_tol: float = STEADY_STATE_GRAD_TOL,
         verbose: bool = True,
         bounds: dict[str, tuple[float, float]] | None = None,
         prefer_transform: bool = False,
@@ -905,7 +906,12 @@ class Model:
             Keyword arguments passed to :func:`scipy.optimize.root` or :func:`scipy.optimize.minimize`, depending on
             ``how``. ``'method'`` selects the algorithm and defaults to ``'hybr'`` for ``'root'`` and
             ``'trust-ncg'`` for ``'minimize'``. ``'maxiter'`` caps the iterations, defaults to 5000, and is renamed
-            to the argument the chosen method expects (``'hybr'`` takes ``maxfev``). Default None.
+            to the argument the chosen method expects (``'hybr'`` takes ``maxfev``). ``'tol'`` sets the residual
+            tolerance of the convergence check. Default None.
+        grad_tol : float, optional
+            Tolerance on the gradient of the squared error at the solution. The gradient carries the Jacobian's
+            scale, so a system whose residuals are at tolerance can still show a gradient orders of magnitude
+            larger, and judging both against one number reports a converged solve as a failure. Default 1e-6.
         verbose : bool, optional
             Log a convergence report. Default True.
         bounds : dict, optional
@@ -960,7 +966,6 @@ class Model:
 
         optimizer_kwargs = {} if optimizer_kwargs is None else optimizer_kwargs
         tol = optimizer_kwargs.get("tol", STEADY_STATE_TOL)
-        grad_tol = optimizer_kwargs.get("grad_tol", STEADY_STATE_GRAD_TOL)
         param_dict = self.parameters(**updates)
         f_ss = self.f_ss
 

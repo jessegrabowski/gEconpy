@@ -515,6 +515,22 @@ def test_declared_bounds_choose_the_transform(monkeypatch):
     assert float(chosen[alpha].backward(0.0).eval()) == pytest.approx(0.5)
 
 
+def test_grad_tol_is_a_named_argument_and_never_reaches_the_optimizer():
+    """
+    A gradient tolerance changes the verdict without touching the solve.
+
+    Passed through ``optimizer_kwargs`` it would splat into scipy and raise, which the optimizer wrapper swallows
+    into an unchanged x0 and a bare "steady state not found".
+    """
+    model = load_and_cache_model("one_block_1.gcn")
+
+    loose = model.steady_state(how="minimize", grad_tol=1e-2, verbose=False, progressbar=False)
+    tight = model.steady_state(how="minimize", grad_tol=1e-20, verbose=False, progressbar=False)
+
+    assert loose.success
+    assert not tight.success
+
+
 @pytest.mark.parametrize(
     "declared, user, expected_midpoint",
     [
