@@ -1,6 +1,7 @@
 import pytest
 
 from gEconpy import model_from_gcn
+from gEconpy.data import get_example_gcn
 from gEconpy.parser.loader import load_gcn_string
 from tests.conftest import TEST_GCNS
 
@@ -69,3 +70,42 @@ def test_a_control_caption_lands_on_the_derived_condition_not_the_control():
         "HOUSEHOLD.constraints.0": "Budget constraint",
         "HOUSEHOLD.foc.C": "Consumption Euler equation",
     }
+
+
+class TestGeneratedCaptions:
+    def test_an_unannotated_first_order_condition_gets_a_caption_from_its_block_and_symbol(self):
+        """The default is what most models print, since nobody annotates every control."""
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+
+        assert model.equation_label("HOUSEHOLD.foc.C") == "Household first-order condition for Consumption"
+        assert model.equation_label("FIRM.foc.L") == "Firm first-order condition for Hours worked"
+
+    def test_a_multi_word_block_name_reads_as_a_sentence(self):
+        """An underscore is a word break, and only the first word is capitalized."""
+        model = model_from_gcn(get_example_gcn("RBC_two_household"), verbose=False)
+
+        label = model.equation_label("RICARDIAN_HOUSEHOLD.foc.C_R")
+
+        assert label.startswith("Ricardian household first-order condition for ")
+
+    def test_a_symbol_without_a_declared_name_falls_back_to_its_identifier(self):
+        model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+
+        assert model.equation_label("HOUSEHOLD.foc.C") == "Household first-order condition for C"
+
+    @pytest.mark.parametrize(
+        "equation_id",
+        ["HOUSEHOLD.identities.0", "HOUSEHOLD.constraints.0", "HOUSEHOLD.objective"],
+        ids=["identity", "constraint", "objective"],
+    )
+    def test_nothing_is_derived_for_an_equation_the_author_wrote(self, equation_id):
+        """An authored equation has source text to label, so inventing a caption for it would be guessing."""
+        model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+
+        assert model.equation_label(equation_id) is None
+
+    def test_an_authored_caption_beats_the_generated_one(self, labelled_model_path):
+        model = model_from_gcn(labelled_model_path, verbose=False)
+
+        assert model.equation_label("HOUSEHOLD.foc.C") == "Consumption Euler equation"
+        assert model.equation_label("HOUSEHOLD.foc.L") == "Household first-order condition for L"

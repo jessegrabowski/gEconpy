@@ -470,6 +470,46 @@ class Model:
             if declaration.bounds != (None, None)
         }
 
+    def equation_label(self, equation_id: str) -> str | None:
+        """
+        Caption for one equation, as a table or a figure would print it.
+
+        An author's ``@name`` or ``@foc_name`` wins. Failing that, a first-order condition gets a caption built
+        from its block and the control it came from, so an unannotated model still labels the equations most
+        papers tabulate.
+
+        Parameters
+        ----------
+        equation_id : str
+            The id of the equation, as it appears in ``equation_ids``.
+
+        Returns
+        -------
+        label : str or None
+            The caption, or None when there is no authored one and none can be derived.
+        """
+        authored = self._equation_labels.get(equation_id)
+        if authored is not None:
+            return authored
+
+        # Ids are built in Block.solve_optimization as "{block}.{component}.{suffix}", and
+        # test_ids_name_the_block_and_component_they_came_from pins that format.
+        block_name, _, remainder = equation_id.partition(".")
+        component, _, control = remainder.partition(".")
+        if component != "foc":
+            return None
+
+        block_words = block_name.replace("_", " ").lower()
+        return f"{block_words.capitalize()} first-order condition for {self._symbol_caption(control)}"
+
+    def _symbol_caption(self, base_name: str) -> str:
+        """Return a variable's declared ``name``, falling back to the identifier the author wrote."""
+        key = variable_key(base_name)
+        for symbol, declaration in self._symbols.items():
+            if symbol.name == key:
+                return declaration.name or base_name
+        return base_name
+
     @property
     def shocks(self) -> list[TimeAwareSymbol]:
         """
