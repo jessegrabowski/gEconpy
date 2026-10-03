@@ -35,7 +35,7 @@ from gEconpy.model.steady_state import (
     compile_known_ss,
     system_to_steady_state,
 )
-from gEconpy.parser.ast import SymbolDeclaration, variable_key
+from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
@@ -373,6 +373,9 @@ class Model:
     equation_ids : list of str, optional
         The id of each equation, naming the block and component it was derived from. Indexes both ``equations``
         and the steady-state system, which are the same length and order. Default None.
+    source_ast : GCNModel, optional
+        The parsed GCN file, kept so an error about a derived equation can name the authored one. Default None,
+        as for a model built without a file.
     """
 
     def __init__(
@@ -393,9 +396,11 @@ class Model:
         error_func: ERROR_FUNCTIONS = "squared",
         symbols: dict[str, SymbolDeclaration] | None = None,
         equation_ids: list[str] | None = None,
+        source_ast: GCNModel | None = None,
     ) -> None:
         self._variables = variables
         self._equation_ids = [] if equation_ids is None else equation_ids
+        self._source_ast = source_ast
 
         # Kept private: its consumers are the steady-state solver and, later, the LaTeX printer and the
         # generated tables. Keying by symbol rather than by name is what keeps a variable and a parameter of one

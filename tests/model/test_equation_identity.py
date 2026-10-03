@@ -1,5 +1,6 @@
 import pytest
 
+from gEconpy import model_from_gcn
 from gEconpy.parser.loader import load_gcn_file, load_gcn_string
 from tests._resources.cache_compiled_models import load_and_cache_model
 from tests.conftest import TEST_GCNS
@@ -63,3 +64,14 @@ def test_ids_index_the_steady_state_system_too():
 
     assert len(model._equation_ids) == len(model._equations)
     assert len(model._equation_ids) == len(model._steady_state_equations)
+
+
+def test_the_parsed_file_reaches_the_model():
+    model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+
+    assert model._source_ast.block_names() == [
+        "STEADY_STATE",
+        "HOUSEHOLD",
+        "TECHNOLOGY_SHOCKS",
+        "EQULIBRIUM",
+    ]
