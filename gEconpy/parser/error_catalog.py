@@ -8,6 +8,7 @@ from gEconpy.parser.constants import (
     PRELIZ_DIST_WRAPPERS,
     SIGN_ASSUMPTION_SUPPORTS,
     SYMBOL_FIELDS,
+    VALUE_TAGS,
 )
 
 
@@ -36,6 +37,7 @@ class ErrorInfo:
 
 _BLOCK_COMPONENT_NAMES = ", ".join(name.lower() for name in BLOCK_COMPONENTS)
 _EQUATION_TAG_NAMES = ", ".join(f"@{tag}" for tag in EQUATION_TAGS)
+_EQUATION_VALUE_TAG_NAMES = ", ".join(f'@{tag} = "..."' for tag in VALUE_TAGS)
 _ASSUMPTION_NAMES = ", ".join(GCN_ASSUMPTIONS)
 _WRAPPER_NAMES = ", ".join(PRELIZ_DIST_WRAPPERS)
 _SYMBOL_FIELD_NAMES = ", ".join(SYMBOL_FIELDS)
@@ -223,10 +225,19 @@ class ErrorCode(Enum):
     )
 
     E014 = ErrorInfo(
-        title="Unknown equation tag",
-        explanation=f"Equation tags must be one of: {_EQUATION_TAG_NAMES}.",
-        common_causes=("Typo in tag name",),
-        fixes=(f"Rename the tag to one of: {_EQUATION_TAG_NAMES}",),
+        title="Invalid equation tag",
+        explanation=(
+            f"An equation takes the standalone tags {_EQUATION_TAG_NAMES} and the value tags "
+            f"{_EQUATION_VALUE_TAG_NAMES}."
+        ),
+        common_causes=(
+            "Typo in a tag name",
+            "Giving a standalone tag a value, or leaving a value tag without one",
+        ),
+        fixes=(
+            f"Write a standalone tag as one of: {_EQUATION_TAG_NAMES}",
+            f"Write a value tag as one of: {_EQUATION_VALUE_TAG_NAMES}",
+        ),
     )
 
     E015 = ErrorInfo(

@@ -11,7 +11,10 @@ from gEconpy.parser.ast import (
     Tag,
     Variable,
 )
+from gEconpy.parser.error_catalog import ErrorCode
+from gEconpy.parser.errors import GCNParseFailure
 from gEconpy.parser.grammar import parse_equation
+from gEconpy.parser.grammar.statements import ANY_TAG
 
 
 class TestSimpleEquations:
@@ -272,6 +275,55 @@ class TestEquationTags:
         eq = parse_equation("@exclude @minimize TC[] = w[] * L[];")
         assert eq.tags == frozenset({Tag.EXCLUDE, Tag.MINIMIZE})
         assert eq.lhs == Variable(name="TC")
+
+
+class TestValueTags:
+    @pytest.mark.parametrize(
+        "source, expected",
+        [
+            ('@name = "Law of motion of capital"', ("name", "Law of motion of capital")),
+            ('@NAME = "Euler equation"', ("name", "Euler equation")),
+            ('@name = "Budget constraint: C + I = Y"', ("name", "Budget constraint: C + I = Y")),
+            (r'@name = "\alpha share"', ("name", r"\alpha share")),
+            ('@name = ""', ("name", "")),
+        ],
+        ids=["string_value", "case_insensitive", "punctuation", "no_escaping_needed", "empty_string"],
+    )
+    def test_a_value_tag_parses_to_its_name_and_value(self, source, expected):
+        assert ANY_TAG.parse_string(source, parse_all=True)[0] == expected
+
+    def test_a_flag_tag_still_parses_to_its_enum(self):
+        assert ANY_TAG.parse_string("@exclude", parse_all=True)[0] == Tag.EXCLUDE
+
+    @pytest.mark.parametrize(
+        "source, message",
+        [
+            ("@name = lom_k", "takes a quoted string"),
+            ("@name = 5", "takes a quoted string"),
+            ("@name = 1.5e3", "takes a quoted string"),
+            ("@name =", "is missing its value"),
+            ('@exclude = "x"', "stands alone and takes no value"),
+            ("@name", "takes a value"),
+            ('@bogus = "x"', "Unknown tag"),
+            ("@id = lom_k", "Unknown tag"),
+        ],
+        ids=[
+            "unquoted_value",
+            "integer_value",
+            "scientific_value",
+            "missing_value",
+            "flag_with_value",
+            "value_tag_bare",
+            "unknown_value_tag",
+            "id_is_not_a_tag",
+        ],
+    )
+    def test_a_malformed_tag_is_rejected_with_a_catalogued_error(self, source, message):
+        """A raw pyparsing message would skip the framed source excerpt every other GCN error gets."""
+        with pytest.raises(GCNParseFailure, match=message) as excinfo:
+            ANY_TAG.parse_string(source, parse_all=True)
+
+        assert excinfo.value.error_code == ErrorCode.E014
 
 
 class TestEquationLocation:
