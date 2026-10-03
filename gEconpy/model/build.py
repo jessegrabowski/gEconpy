@@ -132,6 +132,7 @@ def model_from_gcn(
         calib_dict=primitives.calib_dict,
         priors=(primitives.param_priors, primitives.shock_priors),
         symbols=_key_declarations_by_symbol(primitives),
+        equation_ids=primitives.equation_ids,
         is_linear=primitives.options.get("linear", False),
         mode=mode,
         error_func=error_function,
@@ -573,6 +574,7 @@ class _ModelPrimitives:
     shock_priors: SymbolDictionary
     options: dict
     symbols: dict[str, SymbolDeclaration]
+    equation_ids: list[str]
 
 
 def _load_model_primitives(
@@ -618,9 +620,10 @@ def _derive_model_primitives(
     """
     parsed = load_gcn_file(gcn_path, simplify_blocks=simplify_blocks)
 
-    equations, variables, reduced_vars, singletons = _apply_simplifications(
+    equations, equation_ids, variables, reduced_vars, singletons = _apply_simplifications(
         try_reduce_vars=parsed.tryreduce,
         equations=parsed.equations,
+        equation_ids=parsed.equation_ids,
         variables=parsed.variables,
         tryreduce_sub_dict=_block_dict_to_sub_dict(parsed.block_dict),
         use_tryreduce=simplify_tryreduce,
@@ -701,6 +704,7 @@ def _derive_model_primitives(
         shock_priors=shock_priors,
         options=parsed.options,
         symbols=parsed.symbols,
+        equation_ids=equation_ids,
     )
 
 
@@ -803,23 +807,24 @@ def _block_dict_to_sub_dict(block_dict: dict) -> dict[sp.Expr, sp.Expr]:
 def _apply_simplifications(
     try_reduce_vars: list[TimeAwareSymbol],
     equations: list[sp.Expr],
+    equation_ids: list[str],
     variables: list[TimeAwareSymbol],
     tryreduce_sub_dict: dict[sp.Expr, sp.Expr],
     use_tryreduce: bool,
     use_constants: bool,
-) -> tuple[list[sp.Expr], list[TimeAwareSymbol], list[TimeAwareSymbol] | None, list[TimeAwareSymbol] | None]:
+) -> tuple[list[sp.Expr], list[str], list[TimeAwareSymbol], list[TimeAwareSymbol] | None, list[TimeAwareSymbol] | None]:
     eliminated_variables = None
     singletons = None
 
     if use_tryreduce:
-        equations, variables, eliminated_variables = simplify_tryreduce(
-            try_reduce_vars, equations, variables, tryreduce_sub_dict
+        equations, equation_ids, variables, eliminated_variables = simplify_tryreduce(
+            try_reduce_vars, equations, equation_ids, variables, tryreduce_sub_dict
         )
 
     if use_constants:
-        equations, variables, singletons = simplify_constants(equations, variables)
+        equations, equation_ids, variables, singletons = simplify_constants(equations, equation_ids, variables)
 
-    return equations, variables, eliminated_variables, singletons
+    return equations, equation_ids, variables, eliminated_variables, singletons
 
 
 def _resolve_deterministic_params(

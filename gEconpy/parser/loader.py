@@ -64,6 +64,7 @@ class ModelPrimitives:
     """
 
     equations: list[sp.Expr]
+    equation_ids: list[str]
     variables: list[TimeAwareSymbol]
     shocks: list[TimeAwareSymbol]
     param_dict: SymbolDictionary
@@ -160,6 +161,7 @@ def ast_model_to_primitives(
 
     return ModelPrimitives(
         equations=_block_dict_to_equation_list(block_dict),
+        equation_ids=_block_dict_to_equation_ids(block_dict),
         variables=variables,
         shocks=shocks,
         param_dict=_block_dict_to_param_dict(block_dict, "param_dict"),
@@ -268,6 +270,10 @@ def _time_aware_symbols(nodes: Sequence[Node], assumptions: dict[str, dict[str, 
 
 def _block_dict_to_equation_list(block_dict: dict[str, Block]) -> list[sp.Expr]:
     return [eq for block in block_dict.values() for eq in block.system_equations]
+
+
+def _block_dict_to_equation_ids(block_dict: dict[str, Block]) -> list[str]:
+    return [eq_id for block in block_dict.values() for eq_id in block.system_equation_ids]
 
 
 def _block_dict_to_param_dict(block_dict: dict[str, Block], dict_name: ParamDictName) -> SymbolDictionary:

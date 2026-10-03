@@ -12,6 +12,7 @@ from gEconpy.exceptions import (
 from gEconpy.parser.errors import ParseLocation
 from gEconpy.utilities import (
     diff_through_time,
+    drop_equations,
     expand_subs_for_all_times,
     flatten_substitution_dict,
     set_equality_equals_zero,
@@ -132,6 +133,7 @@ class Block:
         self.deterministic_dict: SymbolDictionary[str, float] = SymbolDictionary()
 
         self.system_equations: list[sp.Expr] = []
+        self.system_equation_ids: list[str] = []
         self.multipliers = multipliers or {}
         self.eliminated_variables: list[sp.Symbol] = []
         self.equation_flags = equation_flags or {}
@@ -236,6 +238,7 @@ class Block:
         sub_dict = {}
 
         self.system_equations = []
+        self.system_equation_ids = []
 
         if self.definitions is not None:
             _, definitions = unpack_keys_and_values(self.definitions)
@@ -243,14 +246,16 @@ class Block:
 
         if self.identities is not None:
             _, identities = unpack_keys_and_values(self.identities)
-            for eq in identities:
+            for position, eq in enumerate(identities):
                 self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
+                self.system_equation_ids.append(f"{self.name}.identities.{position}")
 
         if self.constraints is not None:
             eq_idx, constraints = unpack_keys_and_values(self.constraints)
-            for idx, eq in zip(eq_idx, constraints, strict=True):
+            for position, (idx, eq) in enumerate(zip(eq_idx, constraints, strict=True)):
                 if not self.equation_flags[idx].get("exclude", False):
                     self.system_equations.append(set_equality_equals_zero(eq.subs(sub_dict)))
+                    self.system_equation_ids.append(f"{self.name}.constraints.{position}")
 
         if self.controls is None and self.objective is None:
             return
@@ -259,6 +264,7 @@ class Block:
         obj_idx, objective = obj_idx[0], objective[0]
 
         self.system_equations.append(set_equality_equals_zero(objective.subs(sub_dict)))
+        self.system_equation_ids.append(f"{self.name}.objective")
 
         discount_factor = self._get_discount_factor()
         lagrange = self._build_lagrangian()
@@ -272,6 +278,7 @@ class Block:
         for control in self.controls:
             foc = self._compute_foc(control, lagrange, discount_factor)
             self.system_equations.append(foc.powsimp())
+            self.system_equation_ids.append(f"{self.name}.foc.{control.base_name}")
 
         if try_simplify:
             self.simplify_system_equations()
@@ -333,10 +340,10 @@ class Block:
                     simplified_system = [eq.subs(sub_dict) for eq in simplified_system]
                     break
 
-        simplified_system = [eq for eq in simplified_system if eq != 0]
-        simplified_system = [sp.powsimp(eq) for eq in simplified_system]
-
-        self.system_equations = simplified_system
+        kept_equations, self.system_equation_ids = drop_equations(
+            simplified_system, self.system_equation_ids, lambda eq: eq != 0
+        )
+        self.system_equations = [sp.powsimp(eq) for eq in kept_equations]
         self.eliminated_variables = eliminated_variables
 
         for key, value in self.multipliers.items():

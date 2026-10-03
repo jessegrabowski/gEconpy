@@ -105,6 +105,7 @@ def system_to_steady_state(system: list[sp.Expr], shocks: list[TimeAwareSymbol])
     system : list of sympy expression
         Simplified steady-state equations.
     """
+    # One steady-state equation per dynamic equation, in the same order, so an equation id indexes both lists.
     shock_dict = make_steady_state_shock_dict(shocks)
     return [eq_to_ss(eq).subs(shock_dict).simplify() for eq in system]
 

@@ -370,6 +370,9 @@ class Model:
     symbols : dict mapping str to SymbolDeclaration, optional
         Declarations from the GCN ``symbols`` block, keyed by symbol name. Their bounds take precedence over sign
         assumptions when the steady-state solver reparametrizes. Default None, meaning no declarations.
+    equation_ids : list of str, optional
+        The id of each equation, naming the block and component it was derived from. Indexes both ``equations``
+        and the steady-state system, which are the same length and order. Default None.
     """
 
     def __init__(
@@ -389,8 +392,10 @@ class Model:
         mode: str | None = None,
         error_func: ERROR_FUNCTIONS = "squared",
         symbols: dict[str, SymbolDeclaration] | None = None,
+        equation_ids: list[str] | None = None,
     ) -> None:
         self._variables = variables
+        self._equation_ids = [] if equation_ids is None else equation_ids
 
         # Kept private: its consumers are the steady-state solver and, later, the LaTeX printer and the
         # generated tables. Keying by symbol rather than by name is what keeps a variable and a parameter of one
