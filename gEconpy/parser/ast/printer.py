@@ -16,6 +16,7 @@ from gEconpy.parser.ast import (
     UnaryOp,
     Variable,
     assumptions_implied_by_bounds,
+    gcn_spelling,
 )
 
 PRECEDENCE = {
@@ -190,11 +191,12 @@ def _symbols_section(symbols: dict[str, SymbolDeclaration], indent: str) -> str:
     lines = ["symbols", "{"]
 
     for symbol, declaration in symbols.items():
+        spelling = gcn_spelling(symbol)
         fields = _symbol_fields(declaration)
         if not fields:
-            lines.append(f"{indent}{symbol} {{ }};")
+            lines.append(f"{indent}{spelling} {{ }};")
             continue
-        lines.extend([f"{indent}{symbol}", f"{indent}{{"])
+        lines.extend([f"{indent}{spelling}", f"{indent}{{"])
         lines.extend(f"{indent}{indent}{field}" for field in fields)
         lines.append(f"{indent}}};")
 

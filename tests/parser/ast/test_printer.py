@@ -302,14 +302,20 @@ class TestPrintModel:
             bare { };
         };
 
-        block TEST { identities { Y[] = alpha; }; };
+        block TEST { identities { Y[] = alpha * K[]; }; };
         """
         model = quick_parse(source)
-        reparsed = quick_parse(print_model(model))
+        printed = print_model(model)
+        reparsed = quick_parse(printed)
 
         assert reparsed == model
         assert reparsed.symbols["alpha"].latex == "\\alpha"
         assert reparsed.symbols["bare"].bounds == (None, None)
+
+        # A variable stored under "K_t" must print as the spelling its equations use, or the declaration reparses
+        # as a separate parameter and silently stops applying to K[].
+        assert "    K[]\n" in printed
+        assert reparsed.symbols["K_t"].assumptions == model.symbols["K_t"].assumptions
 
     def test_printed_symbols_omit_assumptions_the_bound_implies(self):
         printed = print_model(quick_parse("symbols { alpha { bounds = (0, 1); }; }; block TEST { };"))
@@ -331,7 +337,7 @@ class TestPrintModel:
     def test_printed_sign_keyword_normalizes_to_its_bound(self):
         printed = print_model(quick_parse("symbols { K[] { positive = True; }; }; block TEST { };"))
 
-        assert printed.startswith("symbols\n{\n    K_t\n    {\n        bounds = (0, None);\n    };\n};")
+        assert printed.startswith("symbols\n{\n    K[]\n    {\n        bounds = (0, None);\n    };\n};")
 
     @pytest.mark.parametrize(
         "declared",
