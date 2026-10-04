@@ -87,14 +87,40 @@ def render_latex(symbol: "TimeAwareSymbol", stem_override: str | None = None) ->
     latex : str
         The rendered symbol, without surrounding math delimiters.
     """
-    stem, _, remainder = symbol.base_name.partition("_")
+    return render_name_latex(symbol.base_name, stem_override=stem_override, time_subscript=symbol._time_subscript())
+
+
+def render_name_latex(name: str, stem_override: str | None = None, time_subscript: str | None = None) -> str:
+    """
+    Render a symbol name as LaTeX, by the same rules whether or not it carries a time index.
+
+    A parameter is a plain :class:`~sympy.core.symbol.Symbol` and would otherwise go through sympy's default
+    printer, so a multi-letter name like ``mc`` would read as a product.
+
+    Parameters
+    ----------
+    name : str
+        The symbol's name, without a time index.
+    stem_override : str, optional
+        LaTeX for the stem, replacing what would be inferred. It is braced before the subscripts compose onto
+        it. Defaults to inferring the stem.
+    time_subscript : str, optional
+        A trailing subscript for the time index. Defaults to none, as for a parameter.
+
+    Returns
+    -------
+    latex : str
+        The rendered name, without surrounding math delimiters.
+    """
+    stem, _, remainder = name.partition("_")
     rendered_stem = _latex_stem(stem) if stem_override is None else f"{{{stem_override}}}"
 
     # Every underscore separates a subscript, and each one is a name in its own right: ``epsilon_beta`` is a
     # greek letter subscripted by another, not by the four letters ``beta``.
-    subscripts = [_latex_stem(part) for part in remainder.split("_") if part]
-    parts = [*subscripts, symbol._time_subscript()]
-    return f"{rendered_stem}_{{{','.join(parts)}}}"
+    parts = [_latex_stem(part) for part in remainder.split("_") if part]
+    if time_subscript:
+        parts.append(time_subscript)
+    return f"{rendered_stem}_{{{','.join(parts)}}}" if parts else rendered_stem
 
 
 def _latex_stem(stem: str) -> str:
