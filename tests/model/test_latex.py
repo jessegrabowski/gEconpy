@@ -8,7 +8,12 @@ import sympy as sp
 from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.data import get_example_gcn
-from gEconpy.model.latex import authored_sides, definition_sides_latex, wrap_leads_in_expectations
+from gEconpy.model.latex import (
+    authored_sides,
+    block_heading,
+    definition_sides_latex,
+    wrap_leads_in_expectations,
+)
 from tests.conftest import TEST_GCNS
 
 GOLDEN = Path(__file__).parent.parent / "_resources" / "RBC_equations.tex"
@@ -205,3 +210,37 @@ class TestToLatex:
     def test_a_definition_the_solver_substituted_away_is_still_printed(self, rbc):
         """An authored equation names it, so without the row the system has more unknowns than equations."""
         assert rbc.to_latex().splitlines()[1].startswith("u_{t} &=")
+
+
+class TestBlockHeading:
+    @pytest.mark.parametrize(
+        "name, expected",
+        [
+            ("HOUSEHOLD", "Household"),
+            ("TECHNOLOGY_SHOCKS", "Technology shocks"),
+            ("VAR_SYSTEM", "Var system"),
+        ],
+        ids=["one_word", "two_words", "acronym_is_lost"],
+    )
+    def test_an_all_caps_name_is_lowered_and_sentence_cased(self, name, expected):
+        """
+        The back-compat path for files written before block names took their own casing.
+
+        Every fixture in the repo is mixed case now, so nothing else exercises this. An all-caps name carries
+        no case information, which is why the acronym in VAR_SYSTEM cannot survive.
+        """
+        assert block_heading(name) == expected
+
+    @pytest.mark.parametrize(
+        "name, expected",
+        [
+            ("Household", "Household"),
+            ("Ricardian_Household", "Ricardian Household"),
+            ("VAR_System", "VAR System"),
+            ("SARIMA_2_12", "Sarima 2 12"),
+        ],
+        ids=["one_word", "two_words", "acronym_survives", "digits_all_caps"],
+    )
+    def test_a_name_the_author_cased_is_left_alone(self, name, expected):
+        """``SARIMA_2_12`` reads badly and is here to pin that: an all-caps name cannot say it is an acronym."""
+        assert block_heading(name) == expected

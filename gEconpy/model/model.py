@@ -24,7 +24,7 @@ from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
-from gEconpy.model.latex import definition_sides_latex, equation_sides_latex
+from gEconpy.model.latex import block_heading, definition_sides_latex, equation_sides_latex
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import check_perturbation_solution, make_not_loglin_flags
 from gEconpy.model.perturbation import linearize_model as _linearize_model
@@ -501,8 +501,7 @@ class Model:
         if component != "foc":
             return None
 
-        block_words = block_name.replace("_", " ").lower()
-        return f"{block_words.capitalize()} first-order condition for {self._symbol_caption(control)}"
+        return f"{block_heading(block_name)} first-order condition for {self._symbol_caption(control)}"
 
     def to_latex(self, expectations: bool = True) -> str:
         r"""

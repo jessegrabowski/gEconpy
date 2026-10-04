@@ -237,3 +237,26 @@ def definition_sides_latex(
         for block in source_ast.blocks
         for equation in block.definitions
     ]
+
+
+def block_heading(block_name: str) -> str:
+    """
+    Render a block's identifier as prose, for a section heading or a generated caption.
+
+    An underscore is a word break. A name written in all caps carries no case information, so it is lowered and
+    its first word capitalized: ``TECHNOLOGY_SHOCKS`` reads as "Technology shocks". Any other name is the
+    author's own casing and is left alone, so ``Ricardian_Household`` reads as "Ricardian Household" and an
+    acronym survives.
+
+    Parameters
+    ----------
+    block_name : str
+        The block identifier as the author wrote it.
+
+    Returns
+    -------
+    heading : str
+        The identifier as prose.
+    """
+    words = " ".join(block_name.split("_"))
+    return words.lower().capitalize() if block_name.isupper() else words
