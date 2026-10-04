@@ -107,8 +107,12 @@ def get_css() -> str:
 
 
 def generate_html(blocks: list[Block]) -> HTML:
-    """
-    Render model blocks as collapsible HTML with MathJax-typeset equations.
+    r"""
+    Render model blocks as collapsible HTML with equations in ``\[...\]`` delimiters.
+
+    Nothing typesets the equations here, because every frontend that displays ``text/html`` output already
+    does. JupyterLab, the classic notebook and ``nbconvert`` each run their own typesetter over HTML output,
+    and a Sphinx page typesets any subtree whose class it lists in ``processHtmlClass``.
 
     Parameters
     ----------
@@ -120,38 +124,16 @@ def generate_html(blocks: list[Block]) -> HTML:
     html : HTML
         An IPython display object holding the rendered model.
     """
-    html_parts = []
-    html_parts.append("""
-    <script>
-      if (typeof window.MathJax === 'undefined') {
-        var mathjaxScript = document.createElement('script');
-        mathjaxScript.type = 'text/javascript';
-        mathjaxScript.async = true;
-        mathjaxScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS_HTML';
-        document.head.appendChild(mathjaxScript);
-      }
-    </script>
-    """)
-    html_parts.append(get_css())
+    html_parts = [get_css()]
 
+    # The ``math`` class is load-bearing in Sphinx, not decoration. A myst-nb page carries ``tex2jax_ignore``
+    # on its top-level section, and MathJax re-enters only a subtree whose class Sphinx lists in
+    # ``processHtmlClass``, where ``math`` is one of four.
     html_parts.append("<div id='model-container' class='math model-container-subclass'>")
     html_parts.append("<div class='model-blocks'>")
     html_parts.extend([block.__html_repr__() for block in blocks])
     html_parts.append("</div>")
     html_parts.append("</div>")
-
-    html_parts.append("""
-    <script>
-      function reprocessMath() {
-        if (window.MathJax && window.MathJax.Hub) {
-          MathJax.Hub.Queue(["Typeset", MathJax.Hub, document.getElementById("model-container")]);
-        } else {
-          setTimeout(reprocessMath, 100);
-        }
-      }
-      reprocessMath();
-    </script>
-    """)
 
     return HTML("\n".join(html_parts))
 
