@@ -13,8 +13,9 @@ gEconpy.model.latex
 
 .. autosummary::
 
+    authored_sides
     wrap_leads_in_expectations
 
 .. automodule:: gEconpy.model.latex
-    :members: ConditionalExpectation, wrap_leads_in_expectations
+    :members: ConditionalExpectation, authored_sides, wrap_leads_in_expectations
     :undoc-members:
