@@ -92,8 +92,9 @@ class TestAuthoredForm:
 
 
 class TestOverrides:
+    @staticmethod
     @pytest.fixture(scope="class")
-    def overridden(self, tmp_path_factory):
+    def overridden(tmp_path_factory):
         source = """
         symbols
         {
