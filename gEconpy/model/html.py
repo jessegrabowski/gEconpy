@@ -196,10 +196,9 @@ def _document(body: str) -> str:
     return f"{get_css()}\n<div class='ge-model math'>\n<div class='model-blocks'>{body}</div>\n</div>"
 
 
-def _section(title: str, body: str, open_by_default: bool = False) -> str:
-    attribute = " open" if open_by_default else ""
+def _section(title: str, body: str) -> str:
     return (
-        f"<details class='block-info'{attribute}><summary class='block-title'>{escape(title)}</summary>"
+        f"<details class='block-info'><summary class='block-title'>{escape(title)}</summary>"
         f"<div class='block-content'>{body}</div></details>"
     )
 
@@ -358,7 +357,6 @@ def render_model(model: "Model", source_ast: GCNModel | None = None) -> str:
         _section(
             f"Variables ({len(model.variables)})",
             _table(_symbol_rows(model.variables, declarations, overrides), ("Symbol", "Description")),
-            open_by_default=True,
         ),
         _section(
             f"Shocks ({len(model.shocks)})",

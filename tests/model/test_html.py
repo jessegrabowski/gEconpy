@@ -103,6 +103,10 @@ class TestModelRepr:
         assert r"{\mathcal{Y}}_{t}" in variables
         assert r"{\mathcal{Y}}_{t}" in equations
 
+    def test_every_section_starts_collapsed(self, rbc):
+        """A section that opens itself costs the reader a click to close and buries the blocks below it."""
+        assert not re.findall(r"<details[^>]*\bopen\b", rbc._repr_html_())
+
     def test_a_prior_reaches_the_parameter_table(self, rbc):
         assert "Beta(alpha=" in rbc._repr_html_()
 
