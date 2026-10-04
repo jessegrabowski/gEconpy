@@ -17,6 +17,7 @@ from pytensor.graph.replace import clone_replace, graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
+from sympy.printing.latex import latex_escape
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
@@ -533,7 +534,8 @@ class Model:
                 expectations=expectations,
             )
             label = self.equation_label(equation_id)
-            tag = rf" \tag{{\text{{{label}}}}}" if label else ""
+            # A caption is free-form prose, and an unescaped % would comment out the row terminator.
+            tag = rf" \tag{{\text{{{latex_escape(label)}}}}}" if label else ""
             rows.append(rf"{left} &= {right}{tag}")
 
         body = " \\\\\n".join(rows)

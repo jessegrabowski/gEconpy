@@ -128,6 +128,18 @@ class TestOverrides:
 
 
 class TestToLatex:
+    def test_a_caption_with_tex_specials_is_escaped(self, tmp_path):
+        """An unescaped % comments out the row terminator and silently swallows the next equation."""
+        path = tmp_path / "specials.gcn"
+        path.write_text(
+            "symbols { Y[] { }; A[] { }; };\n"
+            'block H { identities { @name = "C_t & 100% of firms" Y[] = A[]; A[] = 1; }; };\n'
+        )
+
+        rendered = model_from_gcn(path, verbose=False).to_latex()
+
+        assert r"\tag{\text{C\_t \& 100\% of firms}}" in rendered
+
     def test_an_authored_objective_renders_with_its_own_sides(self):
         """RBC reduces its objective away, so the one authored component to survive elsewhere needs its own model."""
         model = model_from_gcn(TEST_GCNS / "rbc_with_excluded.gcn", verbose=False)
