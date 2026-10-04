@@ -162,7 +162,7 @@ class TimeAwareSymbol(sp.Symbol):
 
     def _latex(self, printer=None):
         """
-        Render as LaTeX, so :func:`sympy.latex` prints a whole equation correctly without further help.
+        Render as LaTeX, so ``sympy.latex`` prints a whole equation correctly without further help.
 
         Sympy calls this before it consults its own ``symbol_names`` setting, so the setting is read here or it
         would never reach a time-aware symbol.

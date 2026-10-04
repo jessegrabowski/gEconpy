@@ -137,7 +137,7 @@ def symbol_names_for(expression: sp.Expr, overrides: dict[str, str]) -> dict[sp.
     Returns
     -------
     symbol_names : dict mapping sympy.Symbol to str
-        One entry per symbol of ``expression`` carrying an override, as :func:`sympy.latex` takes them.
+        One entry per symbol of ``expression`` carrying an override, as ``sympy.latex`` takes them.
     """
     if not overrides:
         return {}
