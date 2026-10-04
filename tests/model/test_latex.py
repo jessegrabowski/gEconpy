@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 import sympy as sp
 
@@ -5,6 +7,9 @@ from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.data import get_example_gcn
 from gEconpy.model.latex import authored_sides, wrap_leads_in_expectations
+from tests.conftest import TEST_GCNS
+
+GOLDEN = Path(__file__).parent.parent / "_resources" / "RBC_equations.tex"
 
 
 @pytest.fixture(scope="module")
@@ -82,3 +87,71 @@ class TestAuthoredForm:
 
     def test_a_model_built_without_a_file_recovers_nothing(self):
         assert authored_sides(None, "HOUSEHOLD.constraints.0") is None
+
+
+class TestOverrides:
+    @pytest.fixture(scope="class")
+    def overridden(self, tmp_path_factory):
+        source = """
+        symbols
+        {
+            mc[] { latex = "\\mathcal{M}"; bounds = (0, None); };
+            Y[]  { bounds = (0, None); };
+            alpha { latex = "\\alpha^{\\star}"; bounds = (0, 1); };
+        };
+
+        block H
+        {
+            identities { mc[] = alpha * Y[]; Y[] = 1; };
+            calibration { alpha = 0.3; };
+        };
+        """
+        path = tmp_path_factory.mktemp("latex") / "overridden.gcn"
+        path.write_text(source)
+        return model_from_gcn(path, verbose=False)
+
+    def test_an_override_reaches_an_authored_equation(self, overridden):
+        """
+        An authored equation is rebuilt from the AST without the declared assumptions.
+
+        Sympy caches on name and assumptions, so those symbols are different objects from the solved system's.
+        Resolving overrides by identity drops every one of them on any model that declares bounds, which is
+        every shipped example.
+        """
+        rendered = overridden.to_latex()
+
+        assert r"\mathcal{M}_{t}" in rendered
+        assert r"\alpha^{\star}" in rendered
+
+    def test_a_symbol_without_an_override_still_infers_its_own(self, overridden):
+        assert "Y_{t}" in overridden.to_latex()
+
+
+class TestToLatex:
+    def test_an_authored_objective_renders_with_its_own_sides(self):
+        """RBC reduces its objective away, so the one authored component to survive elsewhere needs its own model."""
+        model = model_from_gcn(TEST_GCNS / "rbc_with_excluded.gcn", verbose=False)
+
+        left, right = authored_sides(model._source_ast, "HOUSEHOLD.objective")
+
+        assert sp.latex(left) == "U_{t}"
+        assert r"\mathbb{E}_t" in sp.latex(wrap_leads_in_expectations(right))
+
+    def test_the_rendered_system_matches_the_golden_file(self, rbc):
+        """
+        One small model, checked whole, so a regression in any rule shows as a diff.
+
+        The per-rule tests in tests/classes/test_latex.py are the real coverage. Read the diff before
+        regenerating this.
+        """
+        assert rbc.to_latex() + "\n" == GOLDEN.read_text()
+
+    def test_turning_expectations_off_drops_the_operator(self, rbc):
+        assert r"\mathbb{E}_t" in rbc.to_latex()
+        assert r"\mathbb{E}_t" not in rbc.to_latex(expectations=False)
+
+    def test_every_equation_becomes_one_row(self, rbc):
+        rows = rbc.to_latex().splitlines()[1:-1]
+
+        assert len(rows) == len(rbc._equation_ids)
+        assert all("&=" in row for row in rows)

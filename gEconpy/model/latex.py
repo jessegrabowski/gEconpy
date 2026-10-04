@@ -1,7 +1,7 @@
 import sympy as sp
 
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.parser.ast import GCNModel
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
+from gEconpy.parser.ast import GCNModel, variable_key
 from gEconpy.parser.transform.to_sympy import ast_to_sympy
 
 
@@ -103,3 +103,81 @@ def authored_sides(source_ast: GCNModel | None, equation_id: str) -> tuple[sp.Ex
 
     equation = equations[index]
     return ast_to_sympy(equation.lhs), ast_to_sympy(equation.rhs)
+
+
+def symbol_names_for(expression: sp.Expr, overrides: dict[str, str]) -> dict[sp.Symbol, str]:
+    """
+    Resolve declared LaTeX overrides against the symbols of one expression.
+
+    Sympy caches a symbol on its name and assumptions, so the same variable is a different object once it is
+    rebuilt without them. Matching on the storage name rather than on identity is what lets an override survive
+    crossing from the parsed file to the solved system.
+
+    Parameters
+    ----------
+    expression : sympy expression
+        The expression about to be rendered.
+    overrides : dict mapping str to str
+        Declared LaTeX, keyed by the symbol's storage name.
+
+    Returns
+    -------
+    symbol_names : dict mapping sympy.Symbol to str
+        One entry per symbol of ``expression`` carrying an override, as :func:`sympy.latex` takes them.
+    """
+    if not overrides:
+        return {}
+
+    resolved = {}
+    for symbol in expression.atoms(sp.Symbol):
+        if isinstance(symbol, TimeAwareSymbol):
+            override = overrides.get(variable_key(symbol.base_name))
+            if override is not None:
+                resolved[symbol] = render_latex(symbol, stem_override=override)
+        elif symbol.name in overrides:
+            resolved[symbol] = overrides[symbol.name]
+    return resolved
+
+
+def equation_sides_latex(
+    source_ast: GCNModel | None,
+    equation_id: str,
+    expression: sp.Expr,
+    overrides: dict[str, str] | None = None,
+    expectations: bool = True,
+) -> tuple[str, str]:
+    """
+    Render one equation as a left and a right side.
+
+    Parameters
+    ----------
+    source_ast : GCNModel, optional
+        The parsed file, used to recover an authored equation's own two sides. None for a model built without one.
+    equation_id : str
+        The id of the equation.
+    expression : sympy expression
+        The equation as the solved system holds it, used when there is no authored form.
+    overrides : dict mapping str to str, optional
+        Declared LaTeX, keyed by the symbol's storage name. Defaults to none.
+    expectations : bool, optional
+        Wrap lead-carrying terms in a conditional expectation. Defaults to True.
+
+    Returns
+    -------
+    left : str
+        The left side. A derived equation's residual.
+    right : str
+        The right side, which is ``0`` for a derived equation.
+    """
+    sides = authored_sides(source_ast, equation_id)
+    left, right = (expression, sp.Integer(0)) if sides is None else sides
+
+    if expectations:
+        left, right = wrap_leads_in_expectations(left), wrap_leads_in_expectations(right)
+
+    # Resolved against the sides actually being rendered, which are rebuilt symbols for an authored equation.
+    names = overrides or {}
+    return (
+        sp.latex(left, symbol_names=symbol_names_for(left, names)),
+        sp.latex(right, symbol_names=symbol_names_for(right, names)),
+    )

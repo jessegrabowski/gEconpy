@@ -14,8 +14,10 @@ gEconpy.model.latex
 .. autosummary::
 
     authored_sides
+    equation_sides_latex
+    symbol_names_for
     wrap_leads_in_expectations
 
 .. automodule:: gEconpy.model.latex
-    :members: ConditionalExpectation, authored_sides, wrap_leads_in_expectations
+    :members: ConditionalExpectation, authored_sides, equation_sides_latex, symbol_names_for, wrap_leads_in_expectations
     :undoc-members:
