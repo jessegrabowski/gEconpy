@@ -10,6 +10,7 @@ gEconpy
     dynare_convert.make_mod_file
     model.build.model_from_gcn
     model.build.statespace_from_gcn
+    model.html.print_gcn_file
     model.perfect_foresight.solve.solve_perfect_foresight
     model.sampling.bounds_from_priors
     model.sampling.sample_from_priors
@@ -31,7 +32,6 @@ gEconpy
     model.statistics.perturbation_diagnostics.summarize_perturbation_solution
     model.statistics.validation.check_steady_state
     model.steady_state.print_steady_state
-    parser.html.print_gcn_file
 
 .. rubric:: Submodules
 
@@ -52,6 +52,7 @@ gEconpy
     gEconpy.model.block.registry <gEconpy.model.block.registry>
     gEconpy.model.build <gEconpy.model.build>
     gEconpy.model.compile <gEconpy.model.compile>
+    gEconpy.model.html <gEconpy.model.html>
     gEconpy.model.latex <gEconpy.model.latex>
     gEconpy.model.model <gEconpy.model.model>
     gEconpy.model.parameters <gEconpy.model.parameters>
@@ -88,7 +89,6 @@ gEconpy
     gEconpy.parser.grammar.gcn_file <gEconpy.parser.grammar.gcn_file>
     gEconpy.parser.grammar.special_blocks <gEconpy.parser.grammar.special_blocks>
     gEconpy.parser.grammar.statements <gEconpy.parser.grammar.statements>
-    gEconpy.parser.html <gEconpy.parser.html>
     gEconpy.parser.loader <gEconpy.parser.loader>
     gEconpy.parser.preprocessor <gEconpy.parser.preprocessor>
     gEconpy.parser.suggestions <gEconpy.parser.suggestions>

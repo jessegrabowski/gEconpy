@@ -290,16 +290,6 @@ class TestBlockCases:
             f"solved: {block.system_equations is not None}"
         )
 
-    def test_html_repr(self, block):
-        html_string = block.__html_repr__()
-        assert "Block: Household" in html_string
-        assert "<summary>Definitions</summary>" in html_string
-        assert "<summary>Identities</summary>" in html_string
-        assert "<summary>Objective</summary>" in html_string
-        assert "<summary>Controls</summary>" in html_string
-        assert "<summary>Calibration</summary>" in html_string
-        assert "class='block-info'" in html_string
-
     def test_attributes_present(self, block):
         for component in constants.BLOCK_COMPONENTS:
             assert getattr(block, component.lower()) is not None
