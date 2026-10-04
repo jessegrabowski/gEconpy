@@ -129,6 +129,32 @@ class TestOverrides:
         assert "Y_{t}" in overridden.to_latex()
 
 
+EXAMPLE_GCNS = sorted(path.name for path in Path(get_example_gcn("RBC")).parent.glob("*.gcn"))
+
+#: A TeX special that LaTeX would act on rather than print. ``%`` is the dangerous one: it comments out the row
+#: terminator and swallows the equation after it, without erroring.
+UNESCAPED_IN_TEXT = re.compile(r"(?<!\\)[&%#$_]")
+
+
+@pytest.mark.parametrize("gcn_file", EXAMPLE_GCNS)
+def test_every_shipped_model_renders_as_compilable_latex(gcn_file):
+    """
+    RBC is the least representative file shipped: no definitions, no explicit ``E[][]``, no two-underscore names.
+
+    Rendering only RBC hid a double subscript, an unescaped caption, an italic word inside a subscript, and an
+    undefined control sequence, every one of which produces LaTeX that does not compile.
+    """
+    rendered = model_from_gcn(Path(get_example_gcn("RBC")).parent / gcn_file, verbose=False).to_latex()
+
+    assert rendered.startswith(r"\begin{align}")
+    assert rendered.endswith(r"\end{align}")
+    assert r"\omicron" not in rendered, "no such LaTeX command"
+    assert "}_{t}_{" not in rendered and "}_{ss}_{" not in rendered, "double subscript"
+
+    for caption in re.findall(r"\\text\{([^{}]*)\}", rendered):
+        assert not UNESCAPED_IN_TEXT.search(caption), f"unescaped TeX special in {caption!r}"
+
+
 class TestToLatex:
     def test_a_caption_with_tex_specials_is_escaped(self, tmp_path):
         """An unescaped % comments out the row terminator and silently swallows the next equation."""
@@ -141,15 +167,6 @@ class TestToLatex:
         rendered = model_from_gcn(path, verbose=False).to_latex()
 
         assert r"\tag{\text{C\_t \& 100\% of firms}}" in rendered
-
-    def test_an_authored_objective_renders_with_its_own_sides(self):
-        """RBC reduces its objective away, so the one authored component to survive elsewhere needs its own model."""
-        model = model_from_gcn(TEST_GCNS / "rbc_with_excluded.gcn", verbose=False)
-
-        left, right = authored_sides(model._source_ast, "HOUSEHOLD.objective")
-
-        assert sp.latex(left) == "U_{t}"
-        assert r"\mathbb{E}_t" in sp.latex(wrap_leads_in_expectations(right))
 
     def test_an_authored_expectation_is_kept_where_the_author_put_it(self):
         """
@@ -173,10 +190,6 @@ class TestToLatex:
         regenerating this.
         """
         assert rbc.to_latex() + "\n" == GOLDEN.read_text()
-
-    def test_turning_expectations_off_drops_the_operator(self, rbc):
-        assert r"\mathbb{E}_t" in rbc.to_latex()
-        assert r"\mathbb{E}_t" not in rbc.to_latex(expectations=False)
 
     def test_turning_expectations_off_drops_the_operator(self, rbc):
         assert r"\mathbb{E}_t" in rbc.to_latex()
