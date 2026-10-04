@@ -388,6 +388,36 @@ Block names also form the first part of an equation's id, so ``block Household``
 ``Household.foc.C`` in error messages and tables.
 
 
+Publication tables
+------------------
+
+:meth:`~gEconpy.model.model.Model.equation_table` and
+:meth:`~gEconpy.model.model.Model.calibration_table` return the two tables a paper needs, as data:
+
+.. code-block:: python
+
+    from gEconpy import model_from_gcn
+    from gEconpy.data import get_example_gcn
+
+    model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+    print(model.calibration_table().to_latex())
+    model.equation_table().to_frame()
+
+The equation table renders as an ``align`` environment and uses ``\intertext`` for its headings, and the
+expectation operator renders as ``\mathbb{E}``, so the document needs ``amsmath`` and ``amssymb``. A
+caption becomes a ``\tag``, which replaces the equation number, so a tagged equation cannot be
+cross-referenced with ``\ref``.
+
+Each table builds its rows once and renders them on demand, so ``to_latex`` and ``to_frame`` cannot disagree
+about what is in the table. The equation table carries a row per equation with its block, its id, its caption
+and its two rendered sides, and groups the rows under a heading per block. The calibration table carries a row
+per parameter with its symbol, the ``name`` and ``source`` it declares, its value and its prior.
+
+A calibrated parameter is solved for rather than set, so its value is empty. A column that is empty for every
+row is dropped from the LaTeX, so a model that declares no ``source`` does not print a blank citation column.
+``to_frame`` keeps every column, because it is data rather than a printed table.
+
+
 The complete RBC file
 ---------------------
 
