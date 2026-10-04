@@ -120,7 +120,7 @@ class TestOverrides:
         """
         rendered = overridden.to_latex()
 
-        assert r"\mathcal{M}_{t}" in rendered
+        assert r"{\mathcal{M}}_{t}" in rendered
         assert r"\alpha^{\star}" in rendered
 
     def test_a_symbol_without_an_override_still_infers_its_own(self, overridden):

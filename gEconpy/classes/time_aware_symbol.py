@@ -78,8 +78,9 @@ def render_latex(symbol: "TimeAwareSymbol", stem_override: str | None = None) ->
     symbol : TimeAwareSymbol
         The symbol to render.
     stem_override : str, optional
-        LaTeX for the stem, from a ``symbols`` block ``latex`` field, replacing what would be inferred. The
-        subscripts and time index still compose onto it. Defaults to inferring the stem.
+        LaTeX for the stem, from a ``symbols`` block ``latex`` field, replacing what would be inferred. It is
+        braced before the subscripts compose onto it, so an override that carries its own subscript does not
+        produce a double subscript. Defaults to inferring the stem.
 
     Returns
     -------
@@ -87,7 +88,7 @@ def render_latex(symbol: "TimeAwareSymbol", stem_override: str | None = None) ->
         The rendered symbol, without surrounding math delimiters.
     """
     stem, _, remainder = symbol.base_name.partition("_")
-    rendered_stem = _latex_stem(stem) if stem_override is None else stem_override
+    rendered_stem = _latex_stem(stem) if stem_override is None else f"{{{stem_override}}}"
 
     # Every underscore separates a subscript, and each one is a name in its own right: ``epsilon_beta`` is a
     # greek letter subscripted by another, not by the four letters ``beta``.

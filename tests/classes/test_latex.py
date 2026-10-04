@@ -92,12 +92,16 @@ class TestOverride:
     def test_an_override_replaces_the_stem_and_keeps_the_subscripts(self):
         symbol = TimeAwareSymbol("mc", -1)
 
-        assert render_latex(symbol, stem_override=r"\mathcal{M}") == r"\mathcal{M}_{t-1}"
+        assert render_latex(symbol, stem_override=r"\mathcal{M}") == r"{\mathcal{M}}_{t-1}"
 
     def test_an_override_composes_with_a_declared_subscript(self):
         symbol = TimeAwareSymbol("sigma_C", 1)
 
-        assert render_latex(symbol, stem_override=r"\varsigma") == r"\varsigma_{C,t+1}"
+        assert render_latex(symbol, stem_override=r"\varsigma") == r"{\varsigma}_{C,t+1}"
+
+    def test_an_override_carrying_its_own_subscript_is_braced(self):
+        """Appending the time subscript to a subscripted override is a hard LaTeX "Double subscript" error."""
+        assert render_latex(TimeAwareSymbol("mc", 0), stem_override=r"\mathcal{M}_{x}") == r"{\mathcal{M}_{x}}_{t}"
 
     def test_sympys_symbol_names_setting_reaches_a_time_aware_symbol(self):
         """Sympy dispatches to ``_latex`` before ``_print_Symbol``, so the setting only works if _latex reads it."""
