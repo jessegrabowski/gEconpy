@@ -636,23 +636,32 @@ def test_steady_state_matches_analytic_w_calibrated_params():
         "alpha": res.root,
     }
 
+    # From the default x0 the minimizer can land in a different basin depending on the platform's floating
+    # point, and alpha solves close to its lower bound, so seed it from the root solution.
+    root_ss_dict = model_2.steady_state(how="root", verbose=False, progressbar=False)
+    assert root_ss_dict.success
+
+    x0 = np.array([float(root_ss_dict[v.name]) for v in model_2._vars_to_solve])
     numerical_ss_dict = model_2.steady_state(
         verbose=False,
         progressbar=False,
         how="minimize",
         use_jac=True,
         bounds={"alpha": (0.05, 0.7)},
-        optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 50_000}},
+        optimizer_kwargs={"method": "trust-constr", "options": {"maxiter": 50_000}, "x0": x0},
     )
     assert numerical_ss_dict.success
 
     assert_allclose(numerical_ss_dict["L_ss"] / numerical_ss_dict["K_ss"], 0.36)
 
+    # The loop below walks model variables, and alpha is a calibrated parameter, so it needs its own assertion.
+    assert_allclose(numerical_ss_dict["alpha"], answer_dict["alpha"])
+
     ss_vars = [x.to_ss() for x in model_2.variables]
     for k in ss_vars:
         answer = float(answer_dict[k.name].subs(all_params))
-        # trust-constr stops at its own gtol and xtol, so the numerical steady state matches the analytic one only to
-        # about 1e-6.
+        # trust-constr stops on its own xtol rather than at a root, so the numerical steady state matches the
+        # analytic one to about 1e-9 here and the tolerance leaves room for the platform's arithmetic.
         assert_allclose(answer, numerical_ss_dict[k.name], rtol=1e-6, err_msg=k.name)
 
 
