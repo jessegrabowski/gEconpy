@@ -7,8 +7,23 @@ from sympy.printing.latex import latex_escape
 from gEconpy.model.latex import block_heading
 
 
-def _format_value(value: float | None) -> str:
-    """Render a parameter value, keeping scientific notation inside math mode so it does not print literally."""
+def _format_value(value: float | None, math: tuple[str, str] = ("$", "$")) -> str:
+    """
+    Render a parameter value, keeping scientific notation inside math mode so it does not print literally.
+
+    Parameters
+    ----------
+    value : float, optional
+        The value, or None for a parameter the model solves for.
+    math : tuple of (str, str), optional
+        Opening and closing math delimiters for scientific notation. Defaults to a LaTeX document's ``$``,
+        which an HTML renderer must override because no notebook frontend recognizes it.
+
+    Returns
+    -------
+    rendered : str
+        The value, empty for None.
+    """
     if value is None:
         return ""
 
@@ -17,7 +32,8 @@ def _format_value(value: float | None) -> str:
         return rendered
 
     mantissa, _, exponent = rendered.partition("e")
-    return rf"${mantissa} \times 10^{{{int(exponent)}}}$"
+    opening, closing = math
+    return rf"{opening}{mantissa} \times 10^{{{int(exponent)}}}{closing}"
 
 
 @dataclass(frozen=True)
