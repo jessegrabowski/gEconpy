@@ -681,44 +681,6 @@ class Block:
             )
         return multiplier
 
-    def __html_repr__(self) -> str:
-        """Render the block as a collapsible HTML section with one sub-section per component."""
-        html_parts = []
-        html_parts.append(f"<details class='block-info'><summary class='block-title'>Block: {self.name}</summary>")
-        html_parts.append("<div class='block-content'>")
-        prop_names = [
-            "definitions",
-            "controls",
-            "objective",
-            "constraints",
-            "identities",
-            "shocks",
-            "calibration",
-        ]
-        properties = {}
-        for prop in prop_names:
-            value = getattr(self, prop)
-            if value is None:
-                continue
-            if isinstance(value, list):
-                properties[prop.title()] = [sp.Set([sp.cancel(x) for x in value])]
-            elif isinstance(value, dict):
-                properties[prop.title()] = [sp.cancel(x) for x in value.values()]
-            else:
-                raise TypeError(f"Unexpected type for property {prop}")
-
-        for prop_label, prop in properties.items():
-            html_parts.append(f"<details class='property-details'><summary>{prop_label}</summary>")
-            for item in prop:
-                latex_repr = f"\\[{sp.latex(item)}\\]"
-                html_parts.append(f"<p>{latex_repr}</p>")
-            html_parts.append("</details>")
-
-        html_parts.append("</div>")
-        html_parts.append("</details>")
-
-        return "\n".join(html_parts)
-
 
 def _expand_definition_for_all_times(
     lhs: TimeAwareSymbol,

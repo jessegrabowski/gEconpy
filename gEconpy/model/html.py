@@ -1,9 +1,13 @@
+from html import escape
 from pathlib import Path
 
 from IPython.core.display_functions import display
 from IPython.display import HTML
 
-from gEconpy.model.block import Block
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
+from gEconpy.model.latex import authored_equation_latex, block_heading
+from gEconpy.parser.ast import SymbolDeclaration, variable_key
+from gEconpy.parser.ast.nodes import GCNBlock, GCNDistribution, GCNEquation
 from gEconpy.parser.loader import load_gcn_file
 
 
@@ -85,86 +89,48 @@ def get_css() -> str:
             background-color: var(--ge-background-color-hover);
         }
         .ge-model details.block-info > summary.block-title::before {
-            content: "\\25BA";
+            content: "\25BA";
             display: inline-block;
             margin-right: 0.5em;
             transition: transform 0.2s ease;
         }
         .ge-model details.block-info[open] > summary.block-title::before {
-            content: "\\25BC";
+            content: "\25BC";
         }
         .ge-model .block-content {
             margin: 0;
             padding: 0;
         }
-        .ge-model details.property-details {
-            margin: 0;
-            padding: 0 0 0 1em;
-            border: none;
-        }
-        .ge-model details.property-details > summary {
-            font-weight: bold;
-            cursor: pointer;
-            padding: 8px;
-            background-color: var(--ge-background-color-section);
-            border-bottom: 1px solid var(--ge-border-color);
-            list-style: none;
-        }
-        .ge-model details.property-details > summary:hover {
-            background-color: var(--ge-background-color-hover);
-        }
-        .ge-model details.property-details > summary::before {
-            content: "\\25BA";
-            display: inline-block;
-            margin-right: 0.5em;
-            transition: transform 0.2s ease;
-        }
-        .ge-model details.property-details[open] > summary::before {
-            content: "\\25BC";
-        }
         .ge-model .block-content p {
             margin: 0;
             padding: 5px 10px;
+        }
+        .ge-model p.ge-subject-to,
+        .ge-model p.ge-component {
+            font-style: italic;
+            padding: 5px 10px 0 10px;
+        }
+        .ge-model p.ge-declaration {
+            font-family: monospace;
+        }
+        .ge-model p.ge-subject-to,
+        .ge-model p.ge-component {
+            font-style: italic;
+            padding: 5px 10px 0 10px;
+        }
+        .ge-model p.ge-declaration {
+            font-family: monospace;
         }
     </style>
     """
 
 
-def generate_html(blocks: list[Block]) -> HTML:
-    r"""
-    Render model blocks as collapsible HTML with equations in ``\[...\]`` delimiters.
-
-    Nothing typesets the equations here, because every frontend that displays ``text/html`` output already
-    does. JupyterLab, the classic notebook and ``nbconvert`` each run their own typesetter over HTML output,
-    and a Sphinx page typesets any subtree whose class it lists in ``processHtmlClass``.
-
-    Parameters
-    ----------
-    blocks : list of Block
-        Blocks to render, in display order.
-
-    Returns
-    -------
-    html : HTML
-        An IPython display object holding the rendered model.
-    """
-    html_parts = [get_css()]
-
-    # The ``math`` class is load-bearing in Sphinx, not decoration. A myst-nb page carries ``tex2jax_ignore``
-    # on its top-level section, and MathJax re-enters only a subtree whose class Sphinx lists in
-    # ``processHtmlClass``, where ``math`` is one of four.
-    html_parts.append("<div class='ge-model math'>")
-    html_parts.append("<div class='model-blocks'>")
-    html_parts.extend([block.__html_repr__() for block in blocks])
-    html_parts.append("</div>")
-    html_parts.append("</div>")
-
-    return HTML("\n".join(html_parts))
-
-
 def print_gcn_file(gcn_path: str | Path) -> None:
     """
     Display the blocks of a GCN file as collapsible HTML in a notebook.
+
+    Each block shows the program its author wrote, which is what a built model's own representation shows.
+    Nothing is solved, so a first-order condition does not appear.
 
     Parameters
     ----------
@@ -182,5 +148,124 @@ def print_gcn_file(gcn_path: str | Path) -> None:
 
         ge.print_gcn_file(get_example_gcn("RBC"))
     """
-    primitives = load_gcn_file(gcn_path, simplify_blocks=False)
-    display(generate_html(list(primitives.block_dict.values())))
+    display(HTML(render_gcn_file(gcn_path)))
+
+
+def render_gcn_file(gcn_path: str | Path) -> str:
+    """
+    Render the blocks of a GCN file as HTML, without building the model.
+
+    Parameters
+    ----------
+    gcn_path : str or Path
+        Path to the GCN file.
+
+    Returns
+    -------
+    html : str
+        The rendered blocks, including the stylesheet.
+    """
+    source_ast = load_gcn_file(gcn_path, simplify_blocks=False).source_ast
+    overrides = _declared_latex(source_ast.symbols)
+    return _document("".join(_block_section(block, overrides) for block in source_ast.blocks))
+
+
+def _document(body: str) -> str:
+    # The ``math`` class is load-bearing in Sphinx, not decoration. A myst-nb page carries ``tex2jax_ignore``
+    # on its top-level section, and MathJax re-enters only a subtree whose class Sphinx lists in
+    # ``processHtmlClass``, where ``math`` is one of four.
+    return f"{get_css()}\n<div class='ge-model math'>\n<div class='model-blocks'>{body}</div>\n</div>"
+
+
+def _section(title: str, body: str, open_by_default: bool = False) -> str:
+    attribute = " open" if open_by_default else ""
+    return (
+        f"<details class='block-info'{attribute}><summary class='block-title'>{escape(title)}</summary>"
+        f"<div class='block-content'>{body}</div></details>"
+    )
+
+
+def _math(latex: str) -> str:
+    return f"<p>\\[{latex}\\]</p>"
+
+
+def _symbol_latex(symbol: TimeAwareSymbol, overrides: dict[str, str]) -> str:
+    return render_latex(symbol, stem_override=overrides.get(variable_key(symbol.base_name)))
+
+
+def _declared_latex(declarations: dict[str, SymbolDeclaration]) -> dict[str, str]:
+    return {name: declaration.latex for name, declaration in declarations.items() if declaration.latex}
+
+
+def _problem_latex(block: GCNBlock, overrides: dict[str, str]) -> list[str]:
+    r"""
+    Render a block's optimization problem as a ``\max`` or ``\min`` over its controls.
+
+    The author wrote an objective and a list of controls, which is a program. Printing the two under separate
+    headings makes the reader reassemble it.
+    """
+    objective = block.objective[0]
+    operator = r"\min" if objective.is_minimize else r"\max"
+    controls = ", ".join(
+        _symbol_latex(TimeAwareSymbol(control.name, control.time_index.value), overrides) for control in block.controls
+    )
+    left, right = authored_equation_latex(objective, overrides)
+
+    lines = [_math(rf"{operator}_{{{controls}}} \quad {left} = {right}")]
+    if block.constraints:
+        lines.append("<p class='ge-subject-to'>subject to</p>")
+        lines.extend(_math(_constraint_latex(eq, overrides)) for eq in block.constraints)
+    return lines
+
+
+def _constraint_latex(equation: GCNEquation, overrides: dict[str, str]) -> str:
+    """Render a constraint with its named multiplier, which is part of the program the author wrote."""
+    body = " = ".join(authored_equation_latex(equation, overrides))
+    if equation.lagrange_multiplier is None:
+        return body
+
+    multiplier = _symbol_latex(TimeAwareSymbol(equation.lagrange_multiplier, 0), overrides)
+    return rf"{body} \quad ({multiplier})"
+
+
+def _labeled(label: str, entries: list[str]) -> list[str]:
+    return [f"<p class='ge-component'>{label}</p>", *entries] if entries else []
+
+
+def _equation_html(equation: GCNEquation, overrides: dict[str, str]) -> str:
+    return _math(" = ".join(authored_equation_latex(equation, overrides)))
+
+
+def _calibration_html(entries: list[GCNEquation | GCNDistribution], overrides: dict[str, str]) -> list[str]:
+    """Render a calibration entry as the author wrote it, which for a prior is a declaration rather than math."""
+    return [
+        f"<p class='ge-declaration'>{escape(str(entry))}</p>"
+        if isinstance(entry, GCNDistribution)
+        else _equation_html(entry, overrides)
+        for entry in entries
+    ]
+
+
+def _block_section(block: GCNBlock, overrides: dict[str, str]) -> str:
+    """
+    Render one authored block, with its components in the order a ``.gcn`` file writes them.
+
+    A definition is written before the objective that uses it, so it prints before the program rather than
+    after it.
+    """
+    if block.has_optimization_problem():
+        parts = [
+            *_labeled("Definitions", [_equation_html(eq, overrides) for eq in block.definitions]),
+            *_problem_latex(block, overrides),
+            *_labeled("Identities", [_equation_html(eq, overrides) for eq in block.identities]),
+        ]
+    else:
+        parts = [_equation_html(eq, overrides) for eq in block.all_equations()]
+
+    shocks = [
+        _math(_symbol_latex(TimeAwareSymbol(shock.name, shock.time_index.value), overrides)) for shock in block.shocks
+    ]
+    parts.extend(_labeled("Shocks", shocks))
+    parts.extend(_labeled("Calibration", _calibration_html(block.calibration, overrides)))
+
+    return _section(block_heading(block.name), "".join(parts))

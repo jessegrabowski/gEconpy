@@ -7,10 +7,10 @@ gEconpy.model.html
 
 .. autosummary::
 
-    generate_html
     get_css
     print_gcn_file
+    render_gcn_file
 
 .. automodule:: gEconpy.model.html
-    :members: generate_html, get_css, print_gcn_file
+    :members: get_css, print_gcn_file, render_gcn_file
     :undoc-members:
