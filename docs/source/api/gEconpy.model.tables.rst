@@ -7,9 +7,11 @@ gEconpy.model.tables
 
 .. autosummary::
 
+    CalibrationTable
     EquationRow
     EquationTable
+    ParameterRow
 
 .. automodule:: gEconpy.model.tables
-    :members: EquationRow, EquationTable
+    :members: CalibrationTable, EquationRow, EquationTable, ParameterRow
     :undoc-members:

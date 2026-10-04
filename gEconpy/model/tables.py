@@ -1,10 +1,23 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 
 import pandas as pd
 
 from sympy.printing.latex import latex_escape
 
 from gEconpy.model.latex import block_heading
+
+
+def _format_value(value: float | None) -> str:
+    """Render a parameter value, keeping scientific notation inside math mode so it does not print literally."""
+    if value is None:
+        return ""
+
+    rendered = f"{value:g}"
+    if "e" not in rendered:
+        return rendered
+
+    mantissa, _, exponent = rendered.partition("e")
+    return rf"${mantissa} \times 10^{{{int(exponent)}}}$"
 
 
 @dataclass(frozen=True)
@@ -86,3 +99,72 @@ class EquationTable:
             text if is_heading or index == last_row else text + r" \\" for index, (is_heading, text) in enumerate(lines)
         )
         return f"\\begin{{align}}\n{body}\n\\end{{align}}"
+
+
+@dataclass(frozen=True)
+class ParameterRow:
+    """One parameter of a model, with everything a calibration table prints about it."""
+
+    symbol: str
+    description: str | None
+    value: float | None
+    prior: str | None
+    source: str | None
+
+
+@dataclass(frozen=True)
+class CalibrationTable:
+    """
+    A model's parameters as table data, rendered on demand.
+
+    The rows are built once and each renderer reads them, so LaTeX and a dataframe cannot drift apart.
+    """
+
+    rows: tuple[ParameterRow, ...] | list[ParameterRow]
+
+    def to_frame(self) -> pd.DataFrame:
+        """
+        Return the table as a dataframe, one row per parameter.
+
+        Returns
+        -------
+        frame : pandas.DataFrame
+            Columns ``symbol``, ``description``, ``value``, ``prior`` and ``source``.
+        """
+        return pd.DataFrame([asdict(row) for row in self.rows], columns=[field.name for field in fields(ParameterRow)])
+
+    def to_latex(self) -> str:
+        r"""
+        Render the table as a LaTeX ``tabular``.
+
+        A column whose every entry is empty is dropped, so a model that declares no ``source`` does not print an
+        empty citation column.
+
+        Returns
+        -------
+        latex : str
+            The tabular, ready to paste into a document.
+        """
+        if not self.rows:
+            return ""
+
+        # Prose columns wrap; a symbol or a number does not need to.
+        columns = [
+            ("Parameter", "l", lambda row: f"${row.symbol}$"),
+            ("Description", r"p{0.3\linewidth}", lambda row: latex_escape(row.description or "")),
+            ("Value", "l", lambda row: _format_value(row.value)),
+            ("Prior", r"p{0.25\linewidth}", lambda row: latex_escape(row.prior or "")),
+            ("Source", r"p{0.2\linewidth}", lambda row: latex_escape(row.source or "")),
+        ]
+        rendered = {heading: [render(row) for row in self.rows] for heading, _, render in columns}
+        kept = [(heading, alignment) for heading, alignment, _ in columns if any(rendered[heading])]
+
+        header = " & ".join(rf"\textbf{{{heading}}}" for heading, _ in kept)
+        body = " \\\\\n".join(
+            " & ".join(rendered[heading][index] for heading, _ in kept) for index in range(len(self.rows))
+        )
+        alignment = "".join(column for _, column in kept)
+        return (
+            f"\\begin{{tabular}}{{{alignment}}}\n\\hline\n{header} \\\\\n\\hline\n"
+            f"{body} \\\\\n\\hline\n\\end{{tabular}}"
+        )

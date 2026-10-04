@@ -21,7 +21,7 @@ from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_name_latex
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
 from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex
@@ -37,7 +37,7 @@ from gEconpy.model.steady_state import (
     compile_known_ss,
     system_to_steady_state,
 )
-from gEconpy.model.tables import EquationRow, EquationTable
+from gEconpy.model.tables import CalibrationTable, EquationRow, EquationTable, ParameterRow
 from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
@@ -563,6 +563,49 @@ class Model:
                 )
 
         return EquationTable(rows=rows)
+
+    def calibration_table(self) -> CalibrationTable:
+        """
+        Build the model's parameters as table data, for a paper's calibration table.
+
+        Each row carries the parameter's rendered symbol, its declared ``name`` and ``source``, its value and
+        its prior. A calibrated parameter is solved for rather than set, so it has no value, and nor does a
+        shock's standard deviation, which is estimated.
+
+        Returns
+        -------
+        table : CalibrationTable
+            The rows, renderable as LaTeX or as a dataframe.
+        """
+        overrides = self._latex_overrides()
+        declarations = self._declarations_by_name()
+        values = self.parameters().to_string()
+        priors = self.param_priors.to_string()
+
+        # A shock's standard deviation is a hyper-parameter of its prior, not a model parameter, so it reaches
+        # neither of the dicts above. An estimated model's prior table is the one place it must appear.
+        hyper_priors = {
+            hyper_name: str(distribution.hyper_param_dict[param_name])
+            for distribution in self.shock_priors.values()
+            for param_name, hyper_name in getattr(distribution, "param_name_to_hyper_name", {}).items()
+            if param_name in getattr(distribution, "hyper_param_dict", {})
+        }
+        priors = {**priors, **hyper_priors}
+
+        calibrated = [parameter.name for parameter in self.calibrated_params if parameter.name not in values]
+        names = [*values, *calibrated, *(name for name in hyper_priors if name not in values)]
+        return CalibrationTable(
+            rows=[
+                ParameterRow(
+                    symbol=render_name_latex(name, stem_override=overrides.get(name)),
+                    description=declarations[name].name if name in declarations else None,
+                    value=None if name not in values else float(values[name]),
+                    prior=None if name not in priors else str(priors[name]),
+                    source=declarations[name].source if name in declarations else None,
+                )
+                for name in names
+            ]
+        )
 
     def to_latex(self, expectations: bool = True) -> str:
         r"""
