@@ -17,12 +17,12 @@ def get_css() -> str:
     Returns
     -------
     css : str
-        A ``<style>`` element scoped to the model container.
+        A ``<style>`` element scoped to the ``ge-model`` class.
     """
     return r"""
     <style>
-        /* Scope all styles under the #model-container */
-        #model-container {
+        /* Scope all styles under .ge-model */
+        .ge-model {
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
             font-size: 12px;
             color: #333;
@@ -30,26 +30,26 @@ def get_css() -> str:
             padding: 0;
         }
 
-        #model-container.math {
+        .ge-model.math {
             width: 100%;
             display: block;
         }
 
-        #model-container .model-blocks {
+        .ge-model .model-blocks {
             padding: 0;
         }
-        #model-container .model-blocks > details.block-info {
+        .ge-model .model-blocks > details.block-info {
             border: none;
             padding: 0;
             margin: 0;
         }
-        #model-container .model-blocks > details.block-info:not(:last-child) {
+        .ge-model .model-blocks > details.block-info:not(:last-child) {
             border-bottom: 1px solid #ddd;
         }
-        #model-container .model-blocks > details {
+        .ge-model .model-blocks > details {
             background-color: #f9f9f9;
         }
-        #model-container details.block-info > summary.block-title {
+        .ge-model details.block-info > summary.block-title {
             font-weight: bold;
             cursor: pointer;
             padding: 10px;
@@ -57,28 +57,28 @@ def get_css() -> str:
             list-style: none;
             margin: 0;
         }
-        #model-container details.block-info > summary.block-title:hover {
+        .ge-model details.block-info > summary.block-title:hover {
             background-color: #e9e9e9;
         }
-        #model-container details.block-info > summary.block-title::before {
+        .ge-model details.block-info > summary.block-title::before {
             content: "►";
             display: inline-block;
             margin-right: 0.5em;
             transition: transform 0.2s ease;
         }
-        #model-container details.block-info[open] > summary.block-title::before {
+        .ge-model details.block-info[open] > summary.block-title::before {
             content: "▼";
         }
-        #model-container .block-content {
+        .ge-model .block-content {
             margin: 0;
             padding: 0;
         }
-        #model-container details.property-details {
+        .ge-model details.property-details {
             margin: 0;
             padding: 0 0 0 1em;
             border: none;
         }
-        #model-container details.property-details > summary {
+        .ge-model details.property-details > summary {
             font-weight: bold;
             cursor: pointer;
             padding: 8px;
@@ -86,19 +86,19 @@ def get_css() -> str:
             border-bottom: 1px solid #ddd;
             list-style: none;
         }
-        #model-container details.property-details > summary:hover {
+        .ge-model details.property-details > summary:hover {
             background-color: #e9e9e9;
         }
-        #model-container details.property-details > summary::before {
+        .ge-model details.property-details > summary::before {
             content: "►";
             display: inline-block;
             margin-right: 0.5em;
             transition: transform 0.2s ease;
         }
-        #model-container details.property-details[open] > summary::before {
+        .ge-model details.property-details[open] > summary::before {
             content: "▼";
         }
-        #model-container .block-content p {
+        .ge-model .block-content p {
             margin: 0;
             padding: 5px 10px;
         }
@@ -129,7 +129,7 @@ def generate_html(blocks: list[Block]) -> HTML:
     # The ``math`` class is load-bearing in Sphinx, not decoration. A myst-nb page carries ``tex2jax_ignore``
     # on its top-level section, and MathJax re-enters only a subtree whose class Sphinx lists in
     # ``processHtmlClass``, where ``math`` is one of four.
-    html_parts.append("<div id='model-container' class='math model-container-subclass'>")
+    html_parts.append("<div class='ge-model math'>")
     html_parts.append("<div class='model-blocks'>")
     html_parts.extend([block.__html_repr__() for block in blocks])
     html_parts.append("</div>")
