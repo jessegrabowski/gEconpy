@@ -13,6 +13,7 @@ gEconpy.model.latex
 
 .. autosummary::
 
+    authored_equation_latex
     authored_sides
     block_heading
     definition_rows
@@ -21,5 +22,5 @@ gEconpy.model.latex
     wrap_leads_in_expectations
 
 .. automodule:: gEconpy.model.latex
-    :members: ConditionalExpectation, authored_sides, block_heading, definition_rows, equation_sides_latex, symbol_names_for, wrap_leads_in_expectations
+    :members: ConditionalExpectation, authored_equation_latex, authored_sides, block_heading, definition_rows, equation_sides_latex, symbol_names_for, wrap_leads_in_expectations
     :undoc-members:

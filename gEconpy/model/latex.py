@@ -2,7 +2,7 @@ import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
 from gEconpy.parser.ast import GCNModel, variable_key
-from gEconpy.parser.ast.nodes import Expectation
+from gEconpy.parser.ast.nodes import Expectation, GCNEquation
 from gEconpy.parser.transform.to_sympy import ASTToSympyConverter
 
 
@@ -202,6 +202,34 @@ def _wrap_unless_authored(side: sp.Expr) -> sp.Expr:
     return side if side.has(ConditionalExpectation) else wrap_leads_in_expectations(side)
 
 
+def authored_equation_latex(equation: GCNEquation, overrides: dict[str, str] | None = None) -> tuple[str, str]:
+    """
+    Render one authored equation as a left and a right side, exactly as its author wrote it.
+
+    Parameters
+    ----------
+    equation : GCNEquation
+        The parsed equation.
+    overrides : dict mapping str to str, optional
+        Declared LaTeX, keyed by the symbol's storage name. Defaults to none.
+
+    Returns
+    -------
+    left : str
+        The rendered left side.
+    right : str
+        The rendered right side.
+    """
+    converter = _PrintingConverter()
+    names = overrides or {}
+    left = converter.convert_expr(equation.lhs)
+    right = converter.convert_expr(equation.rhs)
+    return (
+        sp.latex(left, symbol_names=symbol_names_for(left, names)),
+        sp.latex(right, symbol_names=symbol_names_for(right, names)),
+    )
+
+
 def definition_rows(source_ast: GCNModel | None, overrides: dict[str, str] | None = None) -> list[tuple[str, str, str]]:
     """
     Recover every ``definitions`` entry, in source order.
@@ -225,14 +253,8 @@ def definition_rows(source_ast: GCNModel | None, overrides: dict[str, str] | Non
     if source_ast is None:
         return []
 
-    converter = _PrintingConverter()
-    names = overrides or {}
     return [
-        (
-            block.name,
-            sp.latex(left := converter.convert_expr(equation.lhs), symbol_names=symbol_names_for(left, names)),
-            sp.latex(right := converter.convert_expr(equation.rhs), symbol_names=symbol_names_for(right, names)),
-        )
+        (block.name, *authored_equation_latex(equation, overrides))
         for block in source_ast.blocks
         for equation in block.definitions
     ]
