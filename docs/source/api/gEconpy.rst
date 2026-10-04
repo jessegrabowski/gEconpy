@@ -52,6 +52,7 @@ gEconpy
     gEconpy.model.block.registry <gEconpy.model.block.registry>
     gEconpy.model.build <gEconpy.model.build>
     gEconpy.model.compile <gEconpy.model.compile>
+    gEconpy.model.latex <gEconpy.model.latex>
     gEconpy.model.model <gEconpy.model.model>
     gEconpy.model.parameters <gEconpy.model.parameters>
     gEconpy.model.perfect_foresight <gEconpy.model.perfect_foresight>

@@ -252,6 +252,8 @@ verify. A partial steady state is fine: the equations given are used, and the re
 solver.
 
 
+.. _special-blocks:
+
 Special blocks
 --------------
 
@@ -338,6 +340,36 @@ right-hand side minus each multiplier times its constraint written as ``lhs - rh
 \partial \mathcal{L}_{t+2} / \partial x_t + \ldots`, and the sum stops at the first term that is identically zero.
 The first-order conditions, the objectives, the constraints not tagged ``@exclude``, and the identities together form
 the model's system of equations.
+
+
+Rendering the model as LaTeX
+----------------------------
+
+:meth:`~gEconpy.model.model.Model.to_latex` renders the whole system as an ``align`` environment:
+
+.. code-block:: python
+
+    from gEconpy import model_from_gcn
+    from gEconpy.data import get_example_gcn
+
+    model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+    print(model.to_latex())
+
+An unannotated file already produces usable output. A symbol's name becomes a greek letter when it names one, so
+``alpha`` renders as :math:`\alpha` and ``epsilon_A`` as :math:`\varepsilon_{A,t}`, which is the convention in the
+macro literature. An underscore separates the stem from a subscript, and the time index joins it. A name longer
+than one character that is not greek is wrapped in ``\text{}``, so ``mc`` renders as :math:`\text{mc}_t` instead of
+reading as a product of :math:`m` and :math:`c`. The ``latex`` field of a :ref:`symbols entry <special-blocks>` overrides
+the stem for the cases this cannot infer, and the subscript and time index still compose onto it.
+
+An equation you wrote keeps the two sides you wrote. A first-order condition has no source text, so it prints as
+its residual equal to zero. Labels from ``@name`` and ``@foc_name`` become ``\tag``, and an unlabeled first-order
+condition takes the caption generated from its block and control.
+
+The parser drops the expectation operator, because first-order perturbation is certainty equivalent, so no stored
+equation carries one. Every lead came from under an expectation, so ``to_latex`` puts it back: a term containing a
+lead variable renders under :math:`\mathbb{E}_t`. Pass ``expectations=False`` for a perfect-foresight model, where
+leads are deterministic and the operator would be wrong.
 
 
 The complete RBC file

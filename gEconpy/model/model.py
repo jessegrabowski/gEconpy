@@ -17,12 +17,14 @@ from pytensor.graph.replace import clone_replace, graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
+from sympy.printing.latex import latex_escape
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
+from gEconpy.model.latex import definition_sides_latex, equation_sides_latex
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import check_perturbation_solution, make_not_loglin_flags
 from gEconpy.model.perturbation import linearize_model as _linearize_model
@@ -501,6 +503,55 @@ class Model:
 
         block_words = block_name.replace("_", " ").lower()
         return f"{block_words.capitalize()} first-order condition for {self._symbol_caption(control)}"
+
+    def to_latex(self, expectations: bool = True) -> str:
+        r"""
+        Render the model's equations as a LaTeX ``align`` environment.
+
+        An equation the author wrote keeps the two sides they wrote. A first-order condition has no authored
+        form, so it prints as its residual equal to zero. A row carrying a label gets it as a ``\tag``.
+
+        Parameters
+        ----------
+        expectations : bool, optional
+            Wrap lead-carrying terms in :math:`\mathbb{E}_t`. Every lead came from under an expectation the
+            parser discards, so this recovers how the equation is conventionally written. Turn it off for a
+            perfect-foresight model, where leads are deterministic. Defaults to True.
+
+        Returns
+        -------
+        latex : str
+            The environment, ready to paste into a document.
+        """
+        overrides = self._latex_overrides()
+        rows = []
+
+        # First, because the solver substitutes them away and the equations below still name them.
+        rows.extend(rf"{left} &= {right}" for left, right in definition_sides_latex(self._source_ast, overrides))
+
+        for equation_id, expression in zip(self._equation_ids, self._equations, strict=True):
+            left, right = equation_sides_latex(
+                self._source_ast,
+                equation_id,
+                expression,
+                overrides=overrides,
+                expectations=expectations,
+            )
+            label = self.equation_label(equation_id)
+            # A caption is free-form prose, and an unescaped % would comment out the row terminator.
+            tag = rf" \tag{{\text{{{latex_escape(label)}}}}}" if label else ""
+            rows.append(rf"{left} &= {right}{tag}")
+
+        body = " \\\\\n".join(rows)
+        return f"\\begin{{align}}\n{body}\n\\end{{align}}"
+
+    def _latex_overrides(self) -> dict[str, str]:
+        """Return the ``symbols`` block's declared LaTeX, keyed by each symbol's storage name."""
+        return {
+            symbol.name: declaration.latex
+            for symbol, declaration in self._symbols.items()
+            if declaration.latex is not None
+        }
 
     def _symbol_caption(self, base_name: str) -> str:
         """Return a variable's declared ``name``, falling back to the identifier the author wrote."""
