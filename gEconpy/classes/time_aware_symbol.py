@@ -1,5 +1,6 @@
 import sympy as sp
 
+from sympy.core.alphabets import greeks
 from sympy.core.cache import cacheit
 
 # Domain defaults injected into every parsed Symbol unless the user's assumptions block overrides them. Every DSGE
@@ -24,6 +25,52 @@ def merge_assumptions(user_assumptions: dict[str, bool] | None) -> dict[str, boo
         The merged assumptions. User values win on conflict.
     """
     return {**DEFAULT_ASSUMPTIONS, **(user_assumptions or {})}
+
+
+# ``epsilon`` is the one name whose conventional macro rendering is not the plain letter: the shock literature
+# writes \varepsilon throughout.
+_GREEK_COMMANDS = {name: f"\\{name}" for name in greeks} | {"epsilon": "\\varepsilon"}
+
+# The rest have no uppercase command, because their capital is an ordinary Latin letter.
+_UPPERCASE_GREEK = frozenset(
+    ("gamma", "delta", "theta", "lambda", "xi", "pi", "sigma", "upsilon", "phi", "psi", "omega")
+)
+
+
+def render_latex(symbol: "TimeAwareSymbol", stem_override: str | None = None) -> str:
+    r"""
+    Render one time-aware symbol as LaTeX.
+
+    The stem becomes a greek letter when it names one, and is wrapped in ``\\text{}`` when it is longer than one
+    character so a multi-letter name does not read as a product. Anything after the first underscore is a
+    subscript, and the time index joins it.
+
+    Parameters
+    ----------
+    symbol : TimeAwareSymbol
+        The symbol to render.
+    stem_override : str, optional
+        LaTeX for the stem, from a ``symbols`` block ``latex`` field, replacing what would be inferred. The
+        subscript and time index still compose onto it. Defaults to inferring the stem.
+
+    Returns
+    -------
+    latex : str
+        The rendered symbol, without surrounding math delimiters.
+    """
+    stem, _, subscript = symbol.base_name.partition("_")
+    rendered_stem = _latex_stem(stem) if stem_override is None else stem_override
+    parts = [part for part in (subscript, symbol._time_subscript()) if part]
+    return f"{rendered_stem}_{{{','.join(parts)}}}"
+
+
+def _latex_stem(stem: str) -> str:
+    lowered = stem.lower()
+    if stem[:1].isupper() and lowered in _UPPERCASE_GREEK:
+        return f"\\{lowered.capitalize()}"
+    if lowered in _GREEK_COMMANDS and not stem[:1].isupper():
+        return _GREEK_COMMANDS[lowered]
+    return stem if len(stem) == 1 else f"\\text{{{stem}}}"
 
 
 class TimeAwareSymbol(sp.Symbol):
@@ -80,6 +127,24 @@ class TimeAwareSymbol(sp.Symbol):
         obj.name = obj._create_name_from_time_index()
         obj.safe_name = obj.name.replace("+", "p").replace("-", "m")
         return obj
+
+    def _latex(self, printer=None):
+        """
+        Render as LaTeX, so :func:`sympy.latex` prints a whole equation correctly without further help.
+
+        Sympy calls this before it consults its own ``symbol_names`` setting, so the setting is read here or it
+        would never reach a time-aware symbol.
+        """
+        override = printer._settings.get("symbol_names", {}).get(self) if printer is not None else None
+        return override if override is not None else render_latex(self)
+
+    def _time_subscript(self) -> str:
+        if self.time_index == "ss":
+            return "ss"
+        if self.time_index == 0:
+            return "t"
+        sign = "+" if self.time_index > 0 else "-"
+        return f"t{sign}{abs(self.time_index)}"
 
     def _create_name_from_time_index(self):
         if self.time_index == "ss":
