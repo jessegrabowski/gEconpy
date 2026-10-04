@@ -1,14 +1,26 @@
+from collections.abc import Sequence
 from html import escape
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import sympy as sp
 
 from IPython.core.display_functions import display
 from IPython.display import HTML
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
 from gEconpy.model.latex import authored_equation_latex, block_heading
-from gEconpy.parser.ast import SymbolDeclaration, variable_key
+from gEconpy.model.tables import _format_value
+from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.parser.ast.nodes import GCNBlock, GCNDistribution, GCNEquation
 from gEconpy.parser.loader import load_gcn_file
+
+if TYPE_CHECKING:
+    from gEconpy.model.model import Model
+
+# Captions the fallback steady-state section, which only a model with no parsed file renders. It differs from
+# an authored block's heading, which ``block_heading`` builds from the name the author wrote.
+SOLVED_STEADY_STATE_TITLE = "Steady state"
 
 
 def get_css() -> str:
@@ -113,13 +125,20 @@ def get_css() -> str:
         .ge-model p.ge-declaration {
             font-family: monospace;
         }
-        .ge-model p.ge-subject-to,
-        .ge-model p.ge-component {
-            font-style: italic;
-            padding: 5px 10px 0 10px;
+        .ge-model table.ge-table {
+            border-collapse: collapse;
+            margin: 5px 10px;
         }
-        .ge-model p.ge-declaration {
-            font-family: monospace;
+        .ge-model table.ge-table th {
+            text-align: left;
+            font-weight: bold;
+            padding: 4px 12px 4px 0;
+            border-bottom: 1px solid var(--ge-border-color);
+        }
+        .ge-model table.ge-table td {
+            text-align: left;
+            padding: 4px 12px 4px 0;
+            vertical-align: top;
         }
     </style>
     """
@@ -189,12 +208,32 @@ def _math(latex: str) -> str:
     return f"<p>\\[{latex}\\]</p>"
 
 
+def _table(rows: Sequence[tuple[str, ...]], headers: tuple[str, ...]) -> str:
+    """Render a table whose cells are already HTML, because every one of them holds either math or escaped prose."""
+    head = "".join(f"<th>{escape(name)}</th>" for name in headers)
+    body = "".join("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows)
+    return f"<table class='ge-table'><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+
 def _symbol_latex(symbol: TimeAwareSymbol, overrides: dict[str, str]) -> str:
     return render_latex(symbol, stem_override=overrides.get(variable_key(symbol.base_name)))
 
 
 def _declared_latex(declarations: dict[str, SymbolDeclaration]) -> dict[str, str]:
     return {name: declaration.latex for name, declaration in declarations.items() if declaration.latex}
+
+
+def _symbol_rows(
+    symbols: Sequence[TimeAwareSymbol],
+    declarations: dict[str, SymbolDeclaration],
+    overrides: dict[str, str],
+) -> list[tuple[str, str]]:
+    rows = []
+    for symbol in symbols:
+        declaration = declarations.get(variable_key(symbol.base_name))
+        caption = escape(declaration.name) if declaration is not None and declaration.name else ""
+        rows.append((f"\\({_symbol_latex(symbol, overrides)}\\)", caption))
+    return rows
 
 
 def _problem_latex(block: GCNBlock, overrides: dict[str, str]) -> list[str]:
@@ -269,3 +308,75 @@ def _block_section(block: GCNBlock, overrides: dict[str, str]) -> str:
     parts.extend(_labeled("Calibration", _calibration_html(block.calibration, overrides)))
 
     return _section(block_heading(block.name), "".join(parts))
+
+
+def _calibration_section(model: "Model") -> str:
+    """Reuse the calibration table's rows, so the notebook view and a paper's table cannot disagree."""
+    rows = model.calibration_table().rows
+    cells = [
+        (
+            f"\\({row.symbol}\\)",
+            escape(row.description or ""),
+            _format_value(row.value, math=(r"\(", r"\)")),
+            escape(row.prior or ""),
+            escape(row.source or ""),
+        )
+        for row in rows
+    ]
+    # Counted from the rows, because ``calibration_table`` adds calibrated parameters and shock
+    # hyper-parameters that ``model.params`` does not hold.
+    return _section(f"Parameters ({len(rows)})", _table(cells, ("Symbol", "Description", "Value", "Prior", "Source")))
+
+
+def render_model(model: "Model", source_ast: GCNModel | None = None) -> str:
+    r"""
+    Render a built model as HTML: its flattened system, then the blocks its author wrote.
+
+    The two halves come from two sources and neither is derived twice. Variables, parameters, shocks and
+    their declared captions come from the model. The block structure comes from the parsed file, because the
+    solved blocks hold post-simplification equations and would show the author something they did not write.
+
+    Parameters
+    ----------
+    model : Model
+        The built model.
+    source_ast : GCNModel, optional
+        The parsed file, which supplies the block sections. A model built without one renders the symbol
+        tables alone, since they come from the model itself.
+
+    Returns
+    -------
+    html : str
+        The rendered representation, including its stylesheet.
+    """
+    # Taken from the model rather than from ``source_ast``, which may be absent. Otherwise a model built
+    # without a parsed file would blank every variable caption while the parameter table, which goes through
+    # ``calibration_table``, kept its descriptions.
+    declarations = model._declarations_by_name()
+    overrides = model._latex_overrides()
+    sections = [
+        _section(
+            f"Variables ({len(model.variables)})",
+            _table(_symbol_rows(model.variables, declarations, overrides), ("Symbol", "Description")),
+            open_by_default=True,
+        ),
+        _section(
+            f"Shocks ({len(model.shocks)})",
+            _table(_symbol_rows(model.shocks, declarations, overrides), ("Symbol", "Description")),
+        ),
+        _calibration_section(model),
+    ]
+
+    if source_ast is not None:
+        # The authored steady-state block renders here too, in the form its author wrote rather than the
+        # substituted form ``steady_state_relationships`` holds.
+        sections.extend(_block_section(block, overrides) for block in source_ast.blocks)
+    elif model.steady_state_relationships:
+        sections.append(
+            _section(
+                SOLVED_STEADY_STATE_TITLE,
+                "".join(_math(f"{sp.latex(eq.lhs)} = {sp.latex(eq.rhs)}") for eq in model.steady_state_relationships),
+            )
+        )
+
+    return _document("".join(sections))

@@ -637,6 +637,24 @@ class Model:
         """
         return self.equation_table(expectations=expectations).to_latex()
 
+    def _repr_html_(self) -> str:
+        """
+        Render the model for a notebook: its variables, shocks and parameters, then the blocks its author wrote.
+
+        Jupyter calls this when a model is the value of a cell, so no function call is needed. A model built
+        without a parsed file shows the flattened half alone, because there are no authored blocks to show.
+
+        Returns
+        -------
+        html : str
+            The rendered representation, including its stylesheet.
+        """
+        # Deferred: the renderer type-imports this module, and importing it back at module scope makes
+        # ``gEconpy.model`` fragile to any new import in the modules the renderer reaches.
+        from gEconpy.model.html import render_model  # noqa: PLC0415
+
+        return render_model(self, self._source_ast)
+
     def _latex_overrides(self) -> dict[str, str]:
         """Return the ``symbols`` block's declared LaTeX, keyed by each symbol's storage name."""
         return {
