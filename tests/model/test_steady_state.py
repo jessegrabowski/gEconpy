@@ -654,6 +654,9 @@ def test_steady_state_matches_analytic_w_calibrated_params():
 
     assert_allclose(numerical_ss_dict["L_ss"] / numerical_ss_dict["K_ss"], 0.36)
 
+    # The loop below walks model variables, and alpha is a calibrated parameter, so it needs its own assertion.
+    assert_allclose(numerical_ss_dict["alpha"], answer_dict["alpha"])
+
     ss_vars = [x.to_ss() for x in model_2.variables]
     for k in ss_vars:
         answer = float(answer_dict[k.name].subs(all_params))
