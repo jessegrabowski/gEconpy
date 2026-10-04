@@ -418,6 +418,37 @@ row is dropped from the LaTeX, so a model that declares no ``source`` does not p
 ``to_frame`` keeps every column, because it is data rather than a printed table.
 
 
+The notebook representation
+---------------------------
+
+A model is its own representation in a notebook, so looking at it is enough:
+
+.. code-block:: python
+
+    from gEconpy import model_from_gcn
+    from gEconpy.data import get_example_gcn
+
+    model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+    model
+
+The view has two halves from two sources. The variables, shocks and parameters come from the built model, with
+each symbol's ``name`` as its description and its prior and value beside it. The blocks come from the parsed
+file, so each one shows the program its author wrote: the objective under a ``max`` or ``min`` over the
+controls, the constraints beneath it with any named multiplier, and the definitions and identities after. The
+solved blocks hold post-simplification equations and would show something nobody wrote.
+
+A model built without a parsed file has no authored blocks, so it shows the first half alone and its steady
+state in the substituted form the solver holds.
+
+Nothing typesets the mathematics here. Every frontend that displays HTML output already runs its own
+typesetter over it, and a Sphinx page does so for any subtree whose class it lists in ``processHtmlClass``.
+Every color is a CSS variable taken from the JupyterLab theme, so the view follows a dark theme instead of
+rendering dark on dark.
+
+:func:`~gEconpy.model.html.print_gcn_file` shows the same block view for a file that has not been built yet.
+Nothing is solved, so it has no symbol tables and no first-order conditions.
+
+
 The complete RBC file
 ---------------------
 
