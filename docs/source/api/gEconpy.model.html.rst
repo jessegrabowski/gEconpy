@@ -1,7 +1,7 @@
-gEconpy.parser.html
-===================
+gEconpy.model.html
+==================
 
-.. currentmodule:: gEconpy.parser.html
+.. currentmodule:: gEconpy.model.html
 
 .. rubric:: Functions
 
@@ -11,6 +11,6 @@ gEconpy.parser.html
     get_css
     print_gcn_file
 
-.. automodule:: gEconpy.parser.html
+.. automodule:: gEconpy.model.html
     :members: generate_html, get_css, print_gcn_file
     :undoc-members:

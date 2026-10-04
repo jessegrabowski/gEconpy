@@ -36,6 +36,7 @@ import gEconpy.pytensorf.real_eig  # noqa: F401
 from gEconpy import classes, data, parser, plotting, solvers, utilities
 from gEconpy.dynare_convert import make_mod_file
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
+from gEconpy.model.html import print_gcn_file
 from gEconpy.model.perfect_foresight.solve import solve_perfect_foresight
 from gEconpy.model.sampling import (
     bounds_from_priors,
@@ -59,7 +60,6 @@ from gEconpy.model.statistics import (
     summarize_perturbation_solution,
 )
 from gEconpy.model.steady_state import print_steady_state
-from gEconpy.parser.html import print_gcn_file
 
 _log = _logging.getLogger(__name__)
 if not _log.handlers and not _logging.root.handlers:
