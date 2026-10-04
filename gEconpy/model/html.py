@@ -12,7 +12,10 @@ def get_css() -> str:
     Build the stylesheet for the HTML representation of a model.
 
     The layout follows the xarray HTML representation: each block is a collapsible container with an unbroken
-    background.
+    background. Every color is a ``--ge-*`` variable derived from the JupyterLab ``--jp-*`` variable of the
+    same role, with a pydata-sphinx-theme ``--pst-*`` variable and then a literal as fallbacks, so the
+    representation tracks the active theme instead of assuming a light one. The variables are defined on the
+    container rather than on ``:root``, so a rendered model writes nothing at document scope.
 
     Returns
     -------
@@ -21,11 +24,32 @@ def get_css() -> str:
     """
     return r"""
     <style>
-        /* Scope all styles under .ge-model */
+        .ge-model {
+            --ge-font-color: var(--jp-content-font-color0, var(--pst-color-text-base, rgba(0, 0, 0, 0.8)));
+            --ge-border-color: var(--jp-border-color2, var(--pst-color-border, rgba(0, 0, 0, 0.13)));
+            --ge-background-color: var(--jp-layout-color0, var(--pst-color-on-background, white));
+            --ge-background-color-section: var(--jp-layout-color1, var(--pst-color-surface, #f9f9f9));
+            --ge-background-color-hover: var(--jp-layout-color2, var(--pst-color-panel-background, #e9e9e9));
+        }
+
+        html[theme="dark"] .ge-model,
+        html[data-theme="dark"] .ge-model,
+        body[data-theme="dark"] .ge-model,
+        body[data-jp-theme-light="false"] .ge-model,
+        body.vscode-dark .ge-model {
+            --ge-font-color: var(--jp-content-font-color0, var(--pst-color-text-base, rgba(255, 255, 255, 0.8)));
+            --ge-border-color: var(--jp-border-color2, var(--pst-color-border, rgba(255, 255, 255, 0.13)));
+            --ge-background-color: var(--jp-layout-color0, var(--pst-color-on-background, #111111));
+            --ge-background-color-section: var(--jp-layout-color1, var(--pst-color-surface, #1a1a1a));
+            --ge-background-color-hover: var(--jp-layout-color2, var(--pst-color-panel-background, #262626));
+        }
+
+        /* Layout. Every color below is one of the variables above, never a literal. */
         .ge-model {
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
             font-size: 12px;
-            color: #333;
+            color: var(--ge-font-color);
+            background-color: var(--ge-background-color);
             margin: 0;
             padding: 0;
         }
@@ -44,10 +68,10 @@ def get_css() -> str:
             margin: 0;
         }
         .ge-model .model-blocks > details.block-info:not(:last-child) {
-            border-bottom: 1px solid #ddd;
+            border-bottom: 1px solid var(--ge-border-color);
         }
         .ge-model .model-blocks > details {
-            background-color: #f9f9f9;
+            background-color: var(--ge-background-color-section);
         }
         .ge-model details.block-info > summary.block-title {
             font-weight: bold;
@@ -58,16 +82,16 @@ def get_css() -> str:
             margin: 0;
         }
         .ge-model details.block-info > summary.block-title:hover {
-            background-color: #e9e9e9;
+            background-color: var(--ge-background-color-hover);
         }
         .ge-model details.block-info > summary.block-title::before {
-            content: "►";
+            content: "\\25BA";
             display: inline-block;
             margin-right: 0.5em;
             transition: transform 0.2s ease;
         }
         .ge-model details.block-info[open] > summary.block-title::before {
-            content: "▼";
+            content: "\\25BC";
         }
         .ge-model .block-content {
             margin: 0;
@@ -82,21 +106,21 @@ def get_css() -> str:
             font-weight: bold;
             cursor: pointer;
             padding: 8px;
-            background-color: #f9f9f9;
-            border-bottom: 1px solid #ddd;
+            background-color: var(--ge-background-color-section);
+            border-bottom: 1px solid var(--ge-border-color);
             list-style: none;
         }
         .ge-model details.property-details > summary:hover {
-            background-color: #e9e9e9;
+            background-color: var(--ge-background-color-hover);
         }
         .ge-model details.property-details > summary::before {
-            content: "►";
+            content: "\\25BA";
             display: inline-block;
             margin-right: 0.5em;
             transition: transform 0.2s ease;
         }
         .ge-model details.property-details[open] > summary::before {
-            content: "▼";
+            content: "\\25BC";
         }
         .ge-model .block-content p {
             margin: 0;
