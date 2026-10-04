@@ -1,6 +1,5 @@
 import sympy as sp
 
-from sympy.core.alphabets import greeks
 from sympy.core.cache import cacheit
 
 # Domain defaults injected into every parsed Symbol unless the user's assumptions block overrides them. Every DSGE
@@ -27,13 +26,42 @@ def merge_assumptions(user_assumptions: dict[str, bool] | None) -> dict[str, boo
     return {**DEFAULT_ASSUMPTIONS, **(user_assumptions or {})}
 
 
-# ``epsilon`` is the one name whose conventional macro rendering is not the plain letter: the shock literature
-# writes \varepsilon throughout.
-_GREEK_COMMANDS = {name: f"\\{name}" for name in greeks} | {"epsilon": "\\varepsilon"}
+# Curated rather than derived from ``sympy.core.alphabets.greeks``, which includes ``omicron``. There is no
+# ``\omicron`` command in LaTeX or amsmath, so a derived table emits an undefined control sequence. ``epsilon``
+# is the one name whose conventional macro rendering is not the plain letter: the shock literature writes
+# ``\varepsilon`` throughout.
+_LOWERCASE_GREEK = (
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "zeta",
+    "eta",
+    "theta",
+    "iota",
+    "kappa",
+    "lambda",
+    "mu",
+    "nu",
+    "xi",
+    "pi",
+    "rho",
+    "sigma",
+    "tau",
+    "upsilon",
+    "phi",
+    "chi",
+    "psi",
+    "omega",
+)
 
-# The rest have no uppercase command, because their capital is an ordinary Latin letter.
-_UPPERCASE_GREEK = frozenset(
-    ("gamma", "delta", "theta", "lambda", "xi", "pi", "sigma", "upsilon", "phi", "psi", "omega")
+# The capital of every other greek letter is an ordinary Latin letter, so it has no command either.
+_UPPERCASE_GREEK = ("Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma", "Upsilon", "Phi", "Psi", "Omega")
+
+_GREEK_COMMANDS = (
+    {name: f"\\{name}" for name in _LOWERCASE_GREEK}
+    | {name: f"\\{name}" for name in _UPPERCASE_GREEK}
+    | {"epsilon": "\\varepsilon"}
 )
 
 
@@ -51,25 +79,28 @@ def render_latex(symbol: "TimeAwareSymbol", stem_override: str | None = None) ->
         The symbol to render.
     stem_override : str, optional
         LaTeX for the stem, from a ``symbols`` block ``latex`` field, replacing what would be inferred. The
-        subscript and time index still compose onto it. Defaults to inferring the stem.
+        subscripts and time index still compose onto it. Defaults to inferring the stem.
 
     Returns
     -------
     latex : str
         The rendered symbol, without surrounding math delimiters.
     """
-    stem, _, subscript = symbol.base_name.partition("_")
+    stem, _, remainder = symbol.base_name.partition("_")
     rendered_stem = _latex_stem(stem) if stem_override is None else stem_override
-    parts = [part for part in (subscript, symbol._time_subscript()) if part]
+
+    # Every underscore separates a subscript, and each one is a name in its own right: ``epsilon_beta`` is a
+    # greek letter subscripted by another, not by the four letters ``beta``.
+    subscripts = [_latex_stem(part) for part in remainder.split("_") if part]
+    parts = [*subscripts, symbol._time_subscript()]
     return f"{rendered_stem}_{{{','.join(parts)}}}"
 
 
 def _latex_stem(stem: str) -> str:
-    lowered = stem.lower()
-    if stem[:1].isupper() and lowered in _UPPERCASE_GREEK:
-        return f"\\{lowered.capitalize()}"
-    if lowered in _GREEK_COMMANDS and not stem[:1].isupper():
-        return _GREEK_COMMANDS[lowered]
+    if stem.istitle() and stem in _GREEK_COMMANDS:
+        return _GREEK_COMMANDS[stem]
+    if stem.islower() and stem in _GREEK_COMMANDS:
+        return _GREEK_COMMANDS[stem]
     return stem if len(stem) == 1 else f"\\text{{{stem}}}"
 
 

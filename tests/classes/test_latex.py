@@ -52,6 +52,24 @@ class TestStemInference:
     def test_a_multi_letter_name_is_wrapped_so_it_does_not_read_as_a_product(self, name, expected):
         assert sp.latex(TimeAwareSymbol(name, 0)) == expected
 
+    @pytest.mark.parametrize(
+        "name, expected",
+        [
+            ("epsilon_beta", r"\varepsilon_{\beta,t}"),
+            ("shock_preference", r"\text{shock}_{\text{preference},t}"),
+            ("mc_hat_x", r"\text{mc}_{\text{hat},x,t}"),
+        ],
+        ids=["greek_subscript", "word_subscript", "two_underscores"],
+    )
+    def test_each_subscript_is_rendered_by_the_same_rules_as_the_stem(self, name, expected):
+        """Passing the tail through verbatim leaves a word italic and nests a second underscore."""
+        assert sp.latex(TimeAwareSymbol(name, 0)) == expected
+
+    @pytest.mark.parametrize("name", ["omicron", "LAMBDA", "Epsilon"], ids=["no_command", "all_caps", "no_capital"])
+    def test_a_name_with_no_greek_command_falls_back_to_text(self, name):
+        r"""There is no \\omicron in LaTeX, and an all-caps name is an acronym rather than a capital letter."""
+        assert sp.latex(TimeAwareSymbol(name, 0)) == rf"\text{{{name}}}_{{t}}"
+
     @pytest.mark.parametrize("name", ["K", "C", "Y"], ids=["capital", "consumption", "output"])
     def test_a_single_letter_name_is_left_alone(self, name):
         assert sp.latex(TimeAwareSymbol(name, 0)) == rf"{name}_{{t}}"
