@@ -1,5 +1,5 @@
 # Error: Misspelled component name (identites instead of identities)
-block FIRM
+block Firm
 {
     identites
     {

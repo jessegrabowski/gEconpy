@@ -23,9 +23,9 @@ def canonical_ces(Y, A, x1, x2, alpha, psi):
 class TestDispatchOnRBCWithCES:
     def test_firm_is_dispatched(self):
         primitives = load_gcn_file(RBC_CES_PATH, simplify_blocks=True)
-        assert isinstance(primitives.block_dict["FIRM"], CESBlock)
+        assert isinstance(primitives.block_dict["Firm"], CESBlock)
 
-    @pytest.mark.parametrize("name", ["HOUSEHOLD", "TECHNOLOGY_SHOCKS"])
+    @pytest.mark.parametrize("name", ["Household", "Technology_Shocks"])
     def test_non_firm_blocks_fall_back(self, name):
         primitives = load_gcn_file(RBC_CES_PATH, simplify_blocks=True)
         assert type(primitives.block_dict[name]) is Block
@@ -185,7 +185,7 @@ CES_CONSTRAINT = (
 )
 
 FIRM_WITH_NON_INPUT_CONTROL = f"""
-block FIRM
+block Firm
 {{
     controls {{ K[], L[], B[]; }};
     objective {{ Pi[] = Y[] - r[] * K[] - w[] * L[] - B[] ^ 2 + q[] * B[]; }};
@@ -195,7 +195,7 @@ block FIRM
 """
 
 FIRM_WITH_DEFINITION_AND_GENERATED_MULTIPLIER = f"""
-block FIRM
+block Firm
 {{
     definitions {{ cost[] = r[] * K[] + w[] * L[]; }};
     controls {{ K[], L[]; }};
@@ -208,7 +208,7 @@ block FIRM
 
 def test_control_outside_the_production_function_falls_back_to_lagrangian_derivative():
     """A control that is not a production input gets the generic chain-rule FOC, here d/dB of the objective."""
-    block = load_gcn_string(FIRM_WITH_NON_INPUT_CONTROL).block_dict["FIRM"]
+    block = load_gcn_string(FIRM_WITH_NON_INPUT_CONTROL).block_dict["Firm"]
     assert isinstance(block, CESBlock)
 
     B, q = parsed_var("B", 0), parsed_var("q", 0)
@@ -219,7 +219,7 @@ def test_constructing_without_matching_constraint_raises():
     Y, r, w, Pi = sp.symbols("Y r w Pi")
     with pytest.raises(RuntimeError, match="constructed without a matching CES constraint"):
         CESBlock(
-            name="FIRM",
+            name="Firm",
             objective={0: sp.Eq(Pi, Y - r)},
             constraints={1: sp.Eq(Y, r + w)},
             controls=[Y],
@@ -229,6 +229,6 @@ def test_constructing_without_matching_constraint_raises():
 
 
 def test_definition_with_generated_multiplier_solves():
-    block = load_gcn_string(FIRM_WITH_DEFINITION_AND_GENERATED_MULTIPLIER).block_dict["FIRM"]
+    block = load_gcn_string(FIRM_WITH_DEFINITION_AND_GENERATED_MULTIPLIER).block_dict["Firm"]
     assert isinstance(block, CESBlock)
     assert len(block.system_equations) == 4

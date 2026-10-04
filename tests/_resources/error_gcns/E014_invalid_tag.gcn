@@ -1,5 +1,5 @@
 # Error: Invalid equation tag (@invalid instead of @exclude)
-block TEST
+block Test
 {
     identities
     {

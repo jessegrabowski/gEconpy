@@ -1,4 +1,4 @@
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -23,7 +23,7 @@ block STEADY_STATE
 };
 
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {
@@ -74,7 +74,7 @@ block HOUSEHOLD
 };
 
 
-block TECHNOLOGY_SHOCKS
+block Technology_Shocks
 {
     identities
     {
@@ -93,7 +93,7 @@ block TECHNOLOGY_SHOCKS
     };
 };
 
-block EQULIBRIUM
+block Equlibrium
 {
     identities
     {

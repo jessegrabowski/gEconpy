@@ -1,4 +1,4 @@
-error[V003]: Duplicate parameter declaration in block HOUSEHOLD
+error[V003]: Duplicate parameter declaration in block Household
   --> <source>:24:9
      |
   23 |         beta = 0.99;

@@ -1,5 +1,5 @@
 # Error: Completely invalid component name
-block HOUSEHOLD
+block Household
 {
     foobar
     {

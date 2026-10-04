@@ -49,7 +49,7 @@ def test_build_warns_if_model_not_defined(
 
 def test_missing_parameters_raises(tmp_path):
     gcn_source = """
-                block HOUSEHOLD
+                block Household
                 {
                     definitions
                     {

@@ -366,12 +366,12 @@ class TestParseSymbolsFn:
         text = """
         symbols { alpha { name = "Capital share"; }; };
 
-        block HOUSEHOLD { };
+        block Household { };
         """
         assert parse_symbols(text)["alpha"].name == "Capital share"
 
     def test_returns_empty_when_no_symbols(self):
-        assert parse_symbols("block HOUSEHOLD { };") == {}
+        assert parse_symbols("block Household { };") == {}
 
 
 class TestParseOptionsFn:
@@ -379,13 +379,13 @@ class TestParseOptionsFn:
         text = """
         options { verbose = TRUE; };
 
-        block HOUSEHOLD { };
+        block Household { };
         """
         result = parse_options(text)
         assert result["verbose"] is True
 
     def test_returns_empty_when_no_options(self):
-        text = "block HOUSEHOLD { };"
+        text = "block Household { };"
         result = parse_options(text)
         assert result == {}
 
@@ -395,13 +395,13 @@ class TestParseTryreduceFn:
         text = """
         tryreduce { U[], TC[]; };
 
-        block HOUSEHOLD { };
+        block Household { };
         """
         result = parse_tryreduce(text)
         assert result == ["U", "TC"]
 
     def test_returns_empty_when_no_tryreduce(self):
-        text = "block HOUSEHOLD { };"
+        text = "block Household { };"
         result = parse_tryreduce(text)
         assert result == []
 
@@ -412,27 +412,27 @@ class TestParseAssumptionsFn:
         text = """
         assumptions { positive { C[]; }; };
 
-        block HOUSEHOLD { };
+        block Household { };
         """
         result = parse_assumptions(text)
         assert "C_t" in result
 
     def test_returns_default_when_no_assumptions(self):
-        text = "block HOUSEHOLD { };"
+        text = "block Household { };"
         result = parse_assumptions(text)
         assert result["anything"] == DEFAULT_ASSUMPTIONS
 
 
 class TestSpecialBlockText:
     def test_extract_block_text(self):
-        text = "options { verbose = TRUE; };\nblock HOUSEHOLD { };"
+        text = "options { verbose = TRUE; };\nblock Household { };"
         assert extract_special_block_content(text, "options") == "options { verbose = TRUE; };"
         assert extract_special_block_content(text, "OPTIONS") == "options { verbose = TRUE; };"
         assert extract_special_block_content(text, "tryreduce") is None
 
     def test_remove_block_text(self):
-        text = "options { verbose = TRUE; };\nblock HOUSEHOLD { };"
-        assert remove_special_block(text, "options") == "\nblock HOUSEHOLD { };"
+        text = "options { verbose = TRUE; };\nblock Household { };"
+        assert remove_special_block(text, "options") == "\nblock Household { };"
         assert remove_special_block(text, "tryreduce") == text
 
 

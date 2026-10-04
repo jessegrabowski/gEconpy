@@ -4,7 +4,7 @@ options
 };
 
 
-block STEADY_STATE
+block Steady_State
 {
     identities
     {

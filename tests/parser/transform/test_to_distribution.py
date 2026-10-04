@@ -172,7 +172,7 @@ class TestDistributionsFromModel:
         model = GCNModel(
             blocks=[
                 GCNBlock(
-                    name="HOUSEHOLD",
+                    name="Household",
                     calibration=[
                         GCNDistribution(
                             parameter_name="beta",
@@ -183,7 +183,7 @@ class TestDistributionsFromModel:
                     ],
                 ),
                 GCNBlock(
-                    name="FIRM",
+                    name="Firm",
                     calibration=[
                         GCNDistribution(
                             parameter_name="alpha",

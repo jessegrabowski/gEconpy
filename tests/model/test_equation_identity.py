@@ -15,7 +15,7 @@ symbols
     beta { bounds = (0, 1); };
 };
 
-block HOUSEHOLD
+block Household
 {
     controls { C[], L[]; };
     objective { U[] = log(C[]) - L[] + beta * E[][U[1]]; };
@@ -26,14 +26,14 @@ block HOUSEHOLD
 
 
 def test_ids_name_the_block_and_component_they_came_from():
-    block = load_gcn_string(SOURCE).block_dict["HOUSEHOLD"]
+    block = load_gcn_string(SOURCE).block_dict["Household"]
 
     assert block.system_equation_ids == [
-        "HOUSEHOLD.identities.0",
-        "HOUSEHOLD.constraints.0",
-        "HOUSEHOLD.objective",
-        "HOUSEHOLD.foc.C",
-        "HOUSEHOLD.foc.L",
+        "Household.identities.0",
+        "Household.constraints.0",
+        "Household.objective",
+        "Household.foc.C",
+        "Household.foc.L",
     ]
 
 
@@ -48,8 +48,8 @@ def test_every_equation_keeps_a_unique_id_through_the_pipeline(gcn_file):
 
 def test_multiplier_elimination_drops_the_id_of_the_equation_it_removes():
     """Eliminating a generated multiplier reduces the investment FOC to zero, and its id must go with it."""
-    unsimplified = load_gcn_file(TEST_GCNS / "one_block_2.gcn", simplify_blocks=False).block_dict["HOUSEHOLD"]
-    simplified = load_gcn_file(TEST_GCNS / "one_block_2.gcn", simplify_blocks=True).block_dict["HOUSEHOLD"]
+    unsimplified = load_gcn_file(TEST_GCNS / "one_block_2.gcn", simplify_blocks=False).block_dict["Household"]
+    simplified = load_gcn_file(TEST_GCNS / "one_block_2.gcn", simplify_blocks=True).block_dict["Household"]
 
     dropped = set(unsimplified.system_equation_ids) - set(simplified.system_equation_ids)
 
@@ -89,8 +89,8 @@ def test_the_parsed_file_reaches_the_model():
     model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
 
     assert model._source_ast.block_names() == [
-        "STEADY_STATE",
-        "HOUSEHOLD",
-        "TECHNOLOGY_SHOCKS",
-        "EQULIBRIUM",
+        "Steady_State",
+        "Household",
+        "Technology_Shocks",
+        "Equlibrium",
     ]

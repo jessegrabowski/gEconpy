@@ -4,7 +4,7 @@ tryreduce
 };
 
 
-block STEADY_STATE
+block Steady_State
 {
     definitions
     {
@@ -49,7 +49,7 @@ block STEADY_STATE
     };
 };
 
-block HOUSEHOLD
+block Household
 {
 
     definitions
@@ -91,7 +91,7 @@ block HOUSEHOLD
 
 };
 
-block INTERMEDIATE_FIRM
+block Intermediate_Firm
 {
     objective
     {
@@ -127,7 +127,7 @@ block INTERMEDIATE_FIRM
 
 };
 
-block FINAL_GOODS
+block Final_Goods
 {
     identities
     {
@@ -162,7 +162,7 @@ block FINAL_GOODS
     };
 };
 
-block GOVERNMENT
+block Government
 {
     identities
     {
@@ -197,7 +197,7 @@ block GOVERNMENT
     };
 };
 
-block EQULIBRIUM
+block Equlibrium
 {
     identities
     {

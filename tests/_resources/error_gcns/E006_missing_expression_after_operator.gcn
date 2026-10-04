@@ -1,5 +1,5 @@
 # Error: Missing expression after + operator
-block MARKET
+block Market
 {
     identities
     {

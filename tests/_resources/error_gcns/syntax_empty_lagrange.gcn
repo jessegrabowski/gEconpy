@@ -1,5 +1,5 @@
 # Error: Colon not followed by multiplier name
-block HOUSEHOLD
+block Household
 {
     constraints
     {

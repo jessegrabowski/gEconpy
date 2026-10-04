@@ -253,7 +253,7 @@ tryreduce
     U[], TC[], Div[];
 };
 
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -320,7 +320,7 @@ block STEADY_STATE
 };
 
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {
@@ -363,7 +363,7 @@ block HOUSEHOLD
     };
 };
 
-block WAGE_SETTING
+block Wage_Setting
 {
     definitions
     {
@@ -396,7 +396,7 @@ block WAGE_SETTING
     };
 };
 
-block WAGE_EVOLUTION
+block Wage_Evolution
 {
     identities
     {
@@ -406,7 +406,7 @@ block WAGE_EVOLUTION
 };
 
 
-block PREFERENCE_SHOCKS
+block Preference_Shocks
 {
     identities
     {
@@ -425,7 +425,7 @@ block PREFERENCE_SHOCKS
 };
 
 
-block FIRM
+block Firm
 {
     controls
     {
@@ -455,7 +455,7 @@ block FIRM
 };
 
 
-block TECHNOLOGY_SHOCKS
+block Technology_Shocks
 {
     identities
     {
@@ -472,7 +472,7 @@ block TECHNOLOGY_SHOCKS
 };
 
 
-block FIRM_PRICE_SETTING_PROBLEM
+block Firm_Price_Setting_Problem
 {
     identities
     {
@@ -495,7 +495,7 @@ block FIRM_PRICE_SETTING_PROBLEM
 };
 
 
-block PRICE_EVOLUTION
+block Price_Evolution
 {
     identities
     {
@@ -505,7 +505,7 @@ block PRICE_EVOLUTION
 };
 
 
-block MONETARY_POLICY
+block Monetary_Policy
 {
     identities
     {
@@ -536,7 +536,7 @@ block MONETARY_POLICY
 };
 
 
-block EQUILIBRIUM
+block Equilibrium
 {
     identities
     {

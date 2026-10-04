@@ -1,5 +1,5 @@
 # Error: Double equals sign in equation
-block MARKET
+block Market
 {
     identities
     {

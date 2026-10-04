@@ -191,7 +191,7 @@ symbols
     };
 };
 
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -223,7 +223,7 @@ block STEADY_STATE
     };
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {
@@ -258,7 +258,7 @@ block HOUSEHOLD
 };
 
 
-block FIRM
+block Firm
 {
     objective
     {
@@ -289,7 +289,7 @@ block FIRM
     };
 };
 
-block FISCAL_AUTHORITY
+block Fiscal_Authority
 {
     definitions
     {

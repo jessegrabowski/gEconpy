@@ -143,13 +143,13 @@ class TestPrintBlock:
 
     def test_block_with_controls_and_shocks_on_one_line_each(self):
         block = GCNBlock(
-            name="HOUSEHOLD",
+            name="Household",
             controls=[Variable(name="C"), Variable(name="K", time_index=T_MINUS_1)],
             shocks=[Variable(name="epsilon")],
         )
         assert print_block(block, indent="  ") == "\n".join(
             [
-                "block HOUSEHOLD",
+                "block Household",
                 "{",
                 "  controls",
                 "  {",
@@ -244,7 +244,7 @@ class TestPrintModel:
 
     def test_full_model(self):
         block = GCNBlock(
-            name="HOUSEHOLD",
+            name="Household",
             controls=[Variable(name="C")],
             objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))],
             constraints=[GCNEquation(lhs=Variable(name="C"), rhs=Variable(name="Y"), lagrange_multiplier="lambda")],
@@ -266,7 +266,7 @@ class TestPrintModel:
         tryreduce { U[], u[]; };
         assumptions { positive { C[], K[], alpha; }; };
 
-        block HOUSEHOLD
+        block Household
         {
             definitions { u[] = log(C[]); };
             controls { C[], K[]; };

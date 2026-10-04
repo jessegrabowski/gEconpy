@@ -26,7 +26,7 @@ symbols
     phi_H { positive = True; };
 };
 
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -82,7 +82,7 @@ block STEADY_STATE
 };
 
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {
@@ -125,7 +125,7 @@ block HOUSEHOLD
     };
 };
 
-block WAGE_SETTING
+block Wage_Setting
 {
     identities
     {
@@ -143,7 +143,7 @@ block WAGE_SETTING
     };
 };
 
-block PREFERENCE_SHOCKS
+block Preference_Shocks
 {
     identities
     {
@@ -162,7 +162,7 @@ block PREFERENCE_SHOCKS
 };
 
 
-block FIRM
+block Firm
 {
     controls
     {
@@ -192,7 +192,7 @@ block FIRM
 };
 
 
-block TECHNOLOGY_SHOCKS
+block Technology_Shocks
 {
     identities
     {
@@ -209,7 +209,7 @@ block TECHNOLOGY_SHOCKS
 };
 
 
-block FIRM_PRICE_SETTING_PROBLEM
+block Firm_Price_Setting_Problem
 {
     identities
     {
@@ -223,7 +223,7 @@ block FIRM_PRICE_SETTING_PROBLEM
     };
 };
 
-block MONETARY_POLICY
+block Monetary_Policy
 {
     identities
     {
@@ -254,7 +254,7 @@ block MONETARY_POLICY
 };
 
 
-block EQUILIBRIUM
+block Equilibrium
 {
     identities
     {

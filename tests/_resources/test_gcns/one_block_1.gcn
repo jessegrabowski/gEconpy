@@ -3,7 +3,7 @@ options
 
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {

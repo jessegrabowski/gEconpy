@@ -180,7 +180,7 @@ symbols
     };
 };
 
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -191,7 +191,7 @@ block STEADY_STATE
     };
 };
 
-block SKILLED_HOUSEHOLD
+block Skilled_Household
 {
     definitions
     {
@@ -223,7 +223,7 @@ block SKILLED_HOUSEHOLD
     };
 };
 
-block UNSKILLED_HOUSEHOLD
+block Unskilled_Household
 {
     definitions
     {
@@ -255,7 +255,7 @@ block UNSKILLED_HOUSEHOLD
 };
 
 
-block FIRM
+block Firm
 {
     objective
     {
@@ -297,7 +297,7 @@ block FIRM
     };
 };
 
-block TECHNOLOGY
+block Technology
 {
     identities
     {

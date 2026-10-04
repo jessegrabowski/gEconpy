@@ -3,7 +3,7 @@ options
     linear = True;
 };
 
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -21,7 +21,7 @@ block STEADY_STATE
     };
 };
 
-block MODEL
+block Model
 {
     identities
     {

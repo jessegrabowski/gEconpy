@@ -131,7 +131,7 @@ tryreduce
 };
 
 
-block STEADY_STATE
+block Steady_State
 {
     definitions
     {
@@ -162,7 +162,7 @@ block STEADY_STATE
 
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {
@@ -196,7 +196,7 @@ block HOUSEHOLD
     };
 };
 
-block FIRM
+block Firm
 {
     controls
     {
@@ -228,7 +228,7 @@ block FIRM
     };
 };
 
-block TECHNOLOGY_SHOCKS
+block Technology_Shocks
 {
     identities
     {

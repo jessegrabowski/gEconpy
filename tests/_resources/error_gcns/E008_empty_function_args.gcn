@@ -1,5 +1,5 @@
 # Error: Empty function arguments
-block PRODUCTION
+block Production
 {
     identities
     {

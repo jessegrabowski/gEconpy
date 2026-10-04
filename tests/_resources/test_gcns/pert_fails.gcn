@@ -1,4 +1,4 @@
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -14,7 +14,7 @@ block STEADY_STATE
     };
 };
 
-block SYSTEM_EQUATIONS
+block System_Equations
 {
     identities
     {

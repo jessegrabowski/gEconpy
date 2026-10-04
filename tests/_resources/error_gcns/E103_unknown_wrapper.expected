@@ -1,7 +1,7 @@
 error[E103]: Unknown distribution wrapper 'UnknownWrap'. Found 'UnknownWrap'
   --> E103_unknown_wrapper.gcn:4:16
      |
-   2 | block HOUSEHOLD {
+   2 | block Household {
    3 |     calibration {
    4 |         alpha ~ UnknownWrap(Beta(a=1, b=2)) = 0.5;
      |                ^^^^^^^^^^^ unknown wrapper

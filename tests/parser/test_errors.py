@@ -127,8 +127,8 @@ class TestGCNParseError:
         assert expected in str(GCNParseError("Unknown variable", suggestions=suggestions))
 
     def test_message_with_context(self):
-        msg = str(GCNParseError("Missing semicolon", context="block HOUSEHOLD"))
-        assert msg == "Missing semicolon\n  in block HOUSEHOLD"
+        msg = str(GCNParseError("Missing semicolon", context="block Household"))
+        assert msg == "Missing semicolon\n  in block Household"
 
     def test_message_with_code(self):
         assert str(GCNParseError("Missing semicolon", code=ErrorCode.E001)) == "[E001] Missing semicolon"
@@ -165,7 +165,7 @@ class TestGCNParseError:
         loc = ParseLocation(line=5, column=3)
 
         relocated = error.with_location(loc)
-        recontextualized = error.with_context("block FIRM")
+        recontextualized = error.with_context("block Firm")
 
         assert error.location is None
         assert error.context == ""
@@ -174,7 +174,7 @@ class TestGCNParseError:
         assert relocated.message == error.message
         assert relocated.notes == error.notes
         assert relocated.annotation == error.annotation
-        assert recontextualized.context == "block FIRM"
+        assert recontextualized.context == "block Firm"
         assert recontextualized.message == error.message
 
 
@@ -196,8 +196,8 @@ class TestGCNGrammarError:
         assert str(error) == f"[E000] {expected}"
 
     def test_grammar_error_with_context(self):
-        msg = str(GCNGrammarError("Missing semicolon", expected=";", context="block HOUSEHOLD"))
-        assert "in block HOUSEHOLD" in msg
+        msg = str(GCNGrammarError("Missing semicolon", expected=";", context="block Household"))
+        assert "in block Household" in msg
 
 
 class TestGCNSemanticError:

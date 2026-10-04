@@ -132,7 +132,7 @@ class TestTimeIndex:
 
 
 class TestKeywords:
-    @pytest.mark.parametrize("variant", ["block", "BLOCK", "Block", "BLoCK"])
+    @pytest.mark.parametrize("variant", ["block", "Block", "Block", "BLoCK"])
     def test_block_keyword_is_case_insensitive(self, variant):
         result = KW_BLOCK.parse_string(variant)
         assert result[0].lower() == "block"

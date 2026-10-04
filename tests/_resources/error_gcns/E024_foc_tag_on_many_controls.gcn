@@ -1,5 +1,5 @@
 # Error: Invalid control tag (@foc_name names one FOC, so it cannot tag a list of controls)
-block TEST
+block Test
 {
     controls
     {

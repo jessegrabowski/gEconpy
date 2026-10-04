@@ -209,7 +209,7 @@ tryreduce
     U_NR[], U_R[], TC[];
 };
 
-block STEADY_STATE
+block Steady_State
 {
     definitions
     {
@@ -245,7 +245,7 @@ block STEADY_STATE
     };
 };
 
-block RICARDIAN_HOUSEHOLD
+block Ricardian_Household
 {
     definitions
     {
@@ -292,7 +292,7 @@ block RICARDIAN_HOUSEHOLD
     };
 };
 
-block NON_RICARDIAN_HOUSEHOLD
+block Non_Ricardian_Household
 {
     definitions
     {
@@ -334,7 +334,7 @@ block NON_RICARDIAN_HOUSEHOLD
 };
 
 
-block FIRM
+block Firm
 {
     controls
     {
@@ -372,7 +372,7 @@ block FIRM
     };
 };
 
-block EQULIBRIUM
+block Equlibrium
 {
     identities
     {

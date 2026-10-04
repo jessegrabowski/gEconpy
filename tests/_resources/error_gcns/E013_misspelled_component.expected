@@ -1,7 +1,7 @@
 error[E013]: Unknown component 'identites'. Found 'identites'
   --> E013_misspelled_component.gcn:4:5
      |
-   2 | block FIRM
+   2 | block Firm
    3 | {
    4 |     identites
      |     ^^^^^^^^^ unknown block component

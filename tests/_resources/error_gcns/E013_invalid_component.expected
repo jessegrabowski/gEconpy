@@ -1,7 +1,7 @@
 error[E013]: Unknown component 'foobar'. Found 'foobar'
   --> E013_invalid_component.gcn:4:5
      |
-   2 | block HOUSEHOLD
+   2 | block Household
    3 | {
    4 |     foobar
      |     ^^^^^^ unknown block component

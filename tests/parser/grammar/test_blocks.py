@@ -13,16 +13,16 @@ class TestModelBlockBasic:
         assert result.name == "TEST"
 
     def test_block_name_preserved(self):
-        text = "block HOUSEHOLD { };"
+        text = "block Household { };"
         result = MODEL_BLOCK.parse_string(text)[0]
-        assert result.name == "HOUSEHOLD"
+        assert result.name == "Household"
 
     def test_block_without_trailing_semicolon_raises(self):
         text = "block TEST { }"
         with pytest.raises(pp.ParseBaseException, match="Expected ';'"):
             MODEL_BLOCK.parse_string(text)
 
-    @pytest.mark.parametrize("text", ["BLOCK TEST { };", "Block TEST { };"])
+    @pytest.mark.parametrize("text", ["Block TEST { };", "Block TEST { };"])
     def test_block_case_insensitive_keyword(self, text):
         result = MODEL_BLOCK.parse_string(text)[0]
         assert result.name == "TEST"
@@ -106,7 +106,7 @@ class TestModelBlockWithComponents:
 
 class TestHouseholdBlock:
     def test_full_household_block(self):
-        text = """block HOUSEHOLD
+        text = """block Household
         {
             definitions
             {
@@ -140,7 +140,7 @@ class TestHouseholdBlock:
 
         result = MODEL_BLOCK.parse_string(text)[0]
 
-        assert result.name == "HOUSEHOLD"
+        assert result.name == "Household"
         assert len(result.definitions) == 1
         assert len(result.controls) == 4
         assert len(result.objective) == 1
@@ -153,7 +153,7 @@ class TestHouseholdBlock:
 
 class TestFirmBlock:
     def test_firm_block(self):
-        text = """block FIRM
+        text = """block Firm
         {
             controls
             {
@@ -184,7 +184,7 @@ class TestFirmBlock:
 
         result = MODEL_BLOCK.parse_string(text)[0]
 
-        assert result.name == "FIRM"
+        assert result.name == "Firm"
         assert len(result.controls) == 2
         assert len(result.objective) == 1
         assert len(result.constraints) == 1
@@ -195,7 +195,7 @@ class TestFirmBlock:
 
 class TestSteadyStateBlock:
     def test_steady_state_block(self):
-        text = """block STEADY_STATE
+        text = """block Steady_State
         {
             identities
             {
@@ -207,13 +207,13 @@ class TestSteadyStateBlock:
 
         result = MODEL_BLOCK.parse_string(text)[0]
 
-        assert result.name == "STEADY_STATE"
+        assert result.name == "Steady_State"
         assert len(result.identities) == 3
 
 
 class TestShocksBlock:
     def test_technology_shocks_block(self):
-        text = """block TECHNOLOGY_SHOCKS
+        text = """block Technology_Shocks
         {
             identities
             {
@@ -233,7 +233,7 @@ class TestShocksBlock:
 
         result = MODEL_BLOCK.parse_string(text)[0]
 
-        assert result.name == "TECHNOLOGY_SHOCKS"
+        assert result.name == "Technology_Shocks"
         assert len(result.identities) == 1
         assert len(result.shocks) == 1
         assert result.shocks[0].name == "epsilon_A"

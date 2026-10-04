@@ -11,7 +11,7 @@ A GCN file
 A GCN file lists the agents in the model as blocks. Each block gives the agent's objective, controls and constraints,
 and gEconpy derives the first-order conditions itself. A block for an exogenous process holds the law of motion and
 the shock. Parameters get fixed values, priors with starting values, or calibrating equations, and an optional
-``STEADY_STATE`` block gives whatever part of the steady state you can write down. The format and every component are
+``Steady_State`` block gives whatever part of the steady state you can write down. The format and every component are
 covered in :doc:`/user_guide/gcn_files/syntax`, using the RBC model shipped with the package.
 
 From a file to a model

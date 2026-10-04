@@ -1,7 +1,7 @@
 # Test file for ControlVariableNotFoundException
 # Control variable K[] is declared but not used in any equations
 
-block HOUSEHOLD {
+block Household {
     controls {
         K[];
     };

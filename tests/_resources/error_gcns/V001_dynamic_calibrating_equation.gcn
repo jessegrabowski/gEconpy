@@ -1,7 +1,7 @@
 # Test file for DynamicCalibratingEquationException
 # Calibrating equation uses non-steady-state time index
 
-block HOUSEHOLD {
+block Household {
     definitions {
         u[] = C[] ^ (1 - sigma) / (1 - sigma);
     };

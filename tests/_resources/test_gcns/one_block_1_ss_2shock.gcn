@@ -1,4 +1,4 @@
-block STEADY_STATE
+block Steady_State
 {
     definitions
     {
@@ -24,7 +24,7 @@ block STEADY_STATE
     };
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {
