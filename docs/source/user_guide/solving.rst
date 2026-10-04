@@ -11,7 +11,7 @@ Steady state
 
 :meth:`~gEconpy.model.model.Model.steady_state` returns a :class:`~gEconpy.classes.containers.SteadyStateResults`
 mapping every variable to its steady-state value, with a ``success`` flag. gEconpy takes whatever the GCN file's
-``STEADY_STATE`` block provides as given and solves numerically for the remaining variables. The ``how`` argument
+``Steady_State`` block provides as given and solves numerically for the remaining variables. The ``how`` argument
 selects the method. The default ``"analytic"`` uses the block alone when it is complete and falls back to
 a numerical solve otherwise, ``"root"`` solves the residual system directly, and ``"minimize"`` minimizes the
 squared residuals, which is more forgiving of a poor starting point. Keyword arguments beyond those

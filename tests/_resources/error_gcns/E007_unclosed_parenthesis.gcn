@@ -1,5 +1,5 @@
 # Error: Unclosed parenthesis in function call
-block UTILITY
+block Utility
 {
     identities
     {

@@ -564,7 +564,7 @@ class Block:
         if not self._ss_solution_dict:
             raise ValueError(
                 f"Calibration expression {eq} in {self.name} references steady-state variables "
-                f"but no STEADY_STATE block with analytic solutions was found."
+                f"but no Steady_State block with analytic solutions was found."
             )
 
         values_by_name = {key.name: value for key, value in self._ss_solution_dict.to_sympy().items()}
@@ -573,7 +573,7 @@ class Block:
             names = ", ".join(str(v) for v in missing)
             raise ValueError(
                 f"Calibration expression {eq} in {self.name} references steady-state variables "
-                f"without analytic solutions: {names}. Provide analytic values in the STEADY_STATE block."
+                f"without analytic solutions: {names}. Provide analytic values in the Steady_State block."
             )
 
         return rhs.subs({var: values_by_name[var.name] for var in ss_vars})

@@ -3,7 +3,7 @@ options
     linear = True;
 };
 
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -12,7 +12,7 @@ block STEADY_STATE
     };
 };
 
-block VAR_SYSTEM
+block VAR_System
 {
     identities
     {

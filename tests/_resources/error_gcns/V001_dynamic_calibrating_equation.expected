@@ -1,4 +1,4 @@
-error[V001]: Calibrating equation in block HOUSEHOLD uses non-steady-state variables
+error[V001]: Calibrating equation in block Household uses non-steady-state variables
   --> <source>:26:9
      |
   25 |         # This is wrong - should use K[ss] not K[]

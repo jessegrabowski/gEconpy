@@ -21,12 +21,12 @@ from gEconpy.utilities import set_equality_equals_zero, unpack_keys_and_values
 from tests.conftest import TEST_GCNS, parsed_symbol, parsed_symbols, parsed_var
 
 
-def get_block_from_string(gcn_string: str, block_name: str = "HOUSEHOLD") -> Block:
+def get_block_from_string(gcn_string: str, block_name: str = "Household") -> Block:
     result = load_gcn_string(gcn_string)
     return result.block_dict[block_name]
 
 
-def get_unsolved_block_from_string(gcn_string: str, block_name: str = "HOUSEHOLD") -> Block:
+def get_unsolved_block_from_string(gcn_string: str, block_name: str = "Household") -> Block:
     result = preprocess(gcn_string, validate=True)
     for ast_block in result.ast.blocks:
         if ast_block.name == block_name:
@@ -40,7 +40,7 @@ def rng():
 
 
 _MISSING_CONTROLS = """
-    block HOUSEHOLD
+    block Household
     {
         objective
         {
@@ -50,7 +50,7 @@ _MISSING_CONTROLS = """
 """
 
 _MISSING_OBJECTIVE = """
-    block HOUSEHOLD
+    block Household
     {
         controls
         {
@@ -60,7 +60,7 @@ _MISSING_OBJECTIVE = """
 """
 
 _MULTIPLE_OBJECTIVES = """
-    block HOUSEHOLD
+    block Household
     {
         objective
         {
@@ -75,7 +75,7 @@ _MULTIPLE_OBJECTIVES = """
 """
 
 _CONTROL_NOT_FOUND = """
-    block HOUSEHOLD
+    block Household
     {
         objective
         {
@@ -89,7 +89,7 @@ _CONTROL_NOT_FOUND = """
 """
 
 _DYNAMIC_CALIBRATION = """
-    block HOUSEHOLD
+    block Household
     {
         calibration
         {
@@ -99,7 +99,7 @@ _DYNAMIC_CALIBRATION = """
 """
 
 _VARIABLE_IN_DETERMINISTIC_PARAMETER = """
-    block HOUSEHOLD
+    block Household
     {
         calibration
         {
@@ -111,7 +111,7 @@ _VARIABLE_IN_DETERMINISTIC_PARAMETER = """
 
 
 _NO_CONTINUATION_VALUE = """
-    block HOUSEHOLD
+    block Household
     {
         controls { C[]; };
         objective { U[] = log(C[]) + beta * V[1]; };
@@ -120,7 +120,7 @@ _NO_CONTINUATION_VALUE = """
 """
 
 _SS_VARIABLE_WITHOUT_STEADY_STATE_BLOCK = """
-    block HOUSEHOLD
+    block Household
     {
         identities { Y[] = A[] * L[]; };
         calibration
@@ -132,12 +132,12 @@ _SS_VARIABLE_WITHOUT_STEADY_STATE_BLOCK = """
 """
 
 _SS_VARIABLE_WITHOUT_ANALYTIC_VALUE = """
-    block STEADY_STATE
+    block Steady_State
     {
         identities { A[ss] = 1; };
     };
 
-    block HOUSEHOLD
+    block Household
     {
         identities { Y[] = A[] * L[]; };
         calibration
@@ -163,7 +163,7 @@ _SS_VARIABLE_WITHOUT_ANALYTIC_VALUE = """
             "has a controls component but no objective component",
         ),
         (_MULTIPLE_OBJECTIVES, MultipleObjectiveFunctionsException, "declares 2 objectives"),
-        (_CONTROL_NOT_FOUND, ControlVariableNotFoundException, "Control variable 'Z_t' in block HOUSEHOLD"),
+        (_CONTROL_NOT_FOUND, ControlVariableNotFoundException, "Control variable 'Z_t' in block Household"),
         (_DYNAMIC_CALIBRATION, DynamicCalibratingEquationException, "uses non-steady-state variables"),
         (_VARIABLE_IN_DETERMINISTIC_PARAMETER, ValueError, "cannot be functions of variables"),
         (
@@ -171,7 +171,7 @@ _SS_VARIABLE_WITHOUT_ANALYTIC_VALUE = """
             ValueError,
             "continuation value of the current state value in the following objective",
         ),
-        (_SS_VARIABLE_WITHOUT_STEADY_STATE_BLOCK, ValueError, "no STEADY_STATE block with analytic solutions"),
+        (_SS_VARIABLE_WITHOUT_STEADY_STATE_BLOCK, ValueError, "no Steady_State block with analytic solutions"),
         (_SS_VARIABLE_WITHOUT_ANALYTIC_VALUE, ValueError, "without analytic solutions: Y_ss"),
     ],
     ids=[
@@ -193,7 +193,7 @@ def test_malformed_block_raises(gcn_string, exception, match):
 
 def test_block_parser_handles_empty_block():
     test_file = """
-        block HOUSEHOLD
+        block Household
         {
             definitions
             {
@@ -211,7 +211,7 @@ def test_block_parser_handles_empty_block():
 
 def test_lagrange_multiplier_in_objective_raises():
     test_file = """
-        block HOUSEHOLD
+        block Household
         {
             definitions
             {
@@ -252,7 +252,7 @@ def test_lagrange_multiplier_in_objective_raises():
 
 def test_invalid_decorator_raises():
     test_file = """
-        block HOUSEHOLD
+        block Household
         {
             objective
             {
@@ -270,7 +270,7 @@ def test_invalid_decorator_raises():
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Equation Eq(U_t, beta*U_t+1 + u_t) in objective block of HOUSEHOLD has an invalid decorator: exclude."
+            "Equation Eq(U_t, beta*U_t+1 + u_t) in objective block of Household has an invalid decorator: exclude."
         ),
     ):
         get_block_from_string(test_file)
@@ -279,7 +279,7 @@ def test_invalid_decorator_raises():
 @pytest.fixture
 def block():
     result = load_gcn_file(TEST_GCNS / "one_block_2.gcn")
-    return result.block_dict["HOUSEHOLD"]
+    return result.block_dict["Household"]
 
 
 class TestBlockCases:
@@ -292,7 +292,7 @@ class TestBlockCases:
 
     def test_html_repr(self, block):
         html_string = block.__html_repr__()
-        assert "Block: HOUSEHOLD" in html_string
+        assert "Block: Household" in html_string
         assert "<summary>Definitions</summary>" in html_string
         assert "<summary>Identities</summary>" in html_string
         assert "<summary>Objective</summary>" in html_string
@@ -459,7 +459,7 @@ class TestBlockCases:
 
     def test_firm_block_lagrange_parsing(self):
         result = load_gcn_file(TEST_GCNS / "rbc_2_block.gcn")
-        block = result.block_dict["FIRM"]
+        block = result.block_dict["Firm"]
 
         Y = parsed_var("Y", 0)
         K = parsed_var("K", -1)
@@ -531,7 +531,7 @@ class TestBlockCases:
 
 def test_block_with_excluded_equation():
     result = load_gcn_file(TEST_GCNS / "rbc_with_excluded.gcn")
-    block = result.block_dict["HOUSEHOLD"]
+    block = result.block_dict["Household"]
     block.solve_optimization()
 
     n_controls, n_objective, n_kept_constraints = 4, 1, 1
@@ -558,7 +558,7 @@ class TestBlockFromSympy:
 
     def test_from_sympy_matches_dict_constructor(self):
         test_file = """
-            block HOUSEHOLD
+            block Household
             {
                 identities
                 {
@@ -593,7 +593,7 @@ class TestBlockFromSympy:
         equation_flags = {0: {}, 1: {}, 2: {"is_calibrating": False}}
 
         new_block = Block(
-            name="HOUSEHOLD",
+            name="Household",
             identities=identities,
             calibration=calibration,
             equation_flags=equation_flags,
@@ -624,7 +624,7 @@ class TestBlockFromSympy:
         equation_flags = {0: {}, 1: {}}
 
         block = Block(
-            name="HOUSEHOLD",
+            name="Household",
             objective=objective,
             constraints=constraints,
             controls=controls,
@@ -657,7 +657,7 @@ class TestBlockFromSympy:
         beta = parsed_symbol("beta")
 
         block = Block(
-            name="HOUSEHOLD",
+            name="Household",
             objective={0: sp.Eq(U, sp.log(C) - L + beta * U_next)},
             constraints={1: sp.Eq(C, w * L)},
             controls=[C, L],
@@ -681,7 +681,7 @@ class TestBlockFromSympy:
 def test_lagged_definition_produces_derivative_in_foc():
     """The bond Euler equation must carry the derivative of the lagged risk-premium definition."""
     result = load_gcn_file(TEST_GCNS / "debt_elastic_premium.gcn")
-    block = result.block_dict["HOUSEHOLD"]
+    block = result.block_dict["Household"]
 
     all_atoms = set()
     for eq in block.system_equations:
@@ -709,7 +709,7 @@ def test_lagged_definition_produces_derivative_in_foc():
 
 def test_ss_variable_in_calibration_resolves_to_deterministic_param():
     gcn = """
-    block STEADY_STATE
+    block Steady_State
     {
         identities
         {
@@ -717,7 +717,7 @@ def test_ss_variable_in_calibration_resolves_to_deterministic_param():
         };
     };
 
-    block HOUSEHOLD
+    block Household
     {
         identities
         {
@@ -733,7 +733,7 @@ def test_ss_variable_in_calibration_resolves_to_deterministic_param():
     };
     """
     result = load_gcn_string(gcn)
-    block = result.block_dict["HOUSEHOLD"]
+    block = result.block_dict["Household"]
 
     alpha = parsed_symbol("alpha")
     Y_bar = parsed_symbol("Y_bar")
@@ -750,7 +750,7 @@ def test_ss_variable_in_calibration_resolves_to_deterministic_param():
 )
 def test_firm_focs_match_closed_form(gcn_file, rng):
     result = load_gcn_file(TEST_GCNS / gcn_file)
-    firm_block = result.block_dict["FIRM"]
+    firm_block = result.block_dict["Firm"]
 
     Y = parsed_var("Y", 0)
     TC = parsed_var("TC", 0)
@@ -781,7 +781,7 @@ def test_firm_focs_match_closed_form(gcn_file, rng):
 
 
 FIRM_WITH_COST_DEFINITION = """
-block FIRM
+block Firm
 {
     definitions
     {
@@ -813,7 +813,7 @@ block FIRM
 
 def test_closed_form_focs_substitute_definitions():
     """The closed-form FOC must see the cost written in a definition, as the generic Lagrangian does."""
-    closed_form = get_unsolved_block_from_string(FIRM_WITH_COST_DEFINITION, block_name="FIRM")
+    closed_form = get_unsolved_block_from_string(FIRM_WITH_COST_DEFINITION, block_name="Firm")
     assert isinstance(closed_form, CobbDouglasBlock)
 
     generic = Block(
@@ -841,7 +841,7 @@ def test_closed_form_focs_substitute_definitions():
 
 def test_minimize_and_maximize_on_same_equation_raises():
     gcn = """
-    block FIRM
+    block Firm
     {
         controls { L[]; };
         objective

@@ -1,7 +1,7 @@
 error[E102]: Unknown distribution 'UnknownDist'. Found 'UnknownDist'
   --> E102_unknown_distribution.gcn:4:16
      |
-   2 | block HOUSEHOLD {
+   2 | block Household {
    3 |     calibration {
    4 |         alpha ~ UnknownDist(a=1, b=2) = 0.5;
      |                ^^^^^^^^^^^ unknown distribution

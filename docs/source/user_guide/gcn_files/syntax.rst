@@ -32,8 +32,8 @@ The household block of the RBC model uses every component an optimization block 
 
 .. literalinclude:: ../../../../gEconpy/data/GCN Files/RBC.gcn
    :language: text
-   :start-at: block HOUSEHOLD
-   :end-before: block FIRM
+   :start-at: block Household
+   :end-before: block Firm
 
 The block states the problem
 
@@ -118,8 +118,8 @@ by negating the objective, which is what gEcon requires:
 
 .. literalinclude:: ../../../../gEconpy/data/GCN Files/RBC.gcn
    :language: text
-   :start-at: block FIRM
-   :end-before: block TECHNOLOGY_SHOCKS
+   :start-at: block Firm
+   :end-before: block Technology_Shocks
 
 The ``@minimize`` tag is clearer. gEconpy negates the objective internally before forming the
 Lagrangian, so the first-order conditions are those of the minimization program, and the variable keeps a positive
@@ -128,7 +128,7 @@ tag:
 
 .. literalinclude:: ../../../../tests/_resources/test_gcns/rbc_2_block_minimize.gcn
    :language: text
-   :start-at: block FIRM
+   :start-at: block Firm
 
 An explicit ``@maximize`` tag is accepted and is the default when no tag is present.
 
@@ -137,7 +137,7 @@ law of motion, a shock, and the persistence parameter:
 
 .. literalinclude:: ../../../../gEconpy/data/GCN Files/RBC.gcn
    :language: text
-   :start-at: block TECHNOLOGY_SHOCKS
+   :start-at: block Technology_Shocks
 
 This is :math:`\log A_t = \rho_A \log A_{t-1} + \epsilon_{A,t}`.
 
@@ -230,22 +230,22 @@ produce several conditions and one caption cannot say which it means.
 
 Neither tag is required. An unannotated first-order condition takes a caption built from its block and the
 ``name`` its control declares in the ``symbols`` block, so ``C[]`` declared as
-``name = "Consumption"`` inside ``block HOUSEHOLD`` prints as *Household first-order condition for Consumption*.
+``name = "Consumption"`` inside ``block Household`` prints as *Household first-order condition for Consumption*.
 A control with no declared name falls back to the identifier the author wrote.
 
 
 The steady state block
 ----------------------
 
-A block named ``STEADY_STATE`` (or ``SS``, ``STEADYSTATE``, ``STEADY``) holds analytical steady-state relationships.
+A block named ``Steady_State`` (or ``SS``, ``SteadyState``, ``STEADY``) holds analytical steady-state relationships.
 It can go anywhere in the file, because the file is not read top to bottom, and it may contain ``definitions`` and
 ``identities`` only. Any variable or parameter of the model can be used in it. The RBC model gives its complete
 steady state:
 
 .. literalinclude:: ../../../../gEconpy/data/GCN Files/RBC.gcn
    :language: text
-   :start-at: block STEADY_STATE
-   :end-before: block HOUSEHOLD
+   :start-at: block Steady_State
+   :end-before: block Household
 
 The equations are taken as given and are not checked. If a steady state cannot be found, they are the first thing to
 verify. A partial steady state is fine: the equations given are used, and the remaining variables go to the numerical
@@ -370,6 +370,52 @@ The parser drops the expectation operator, because first-order perturbation is c
 equation carries one. Every lead came from under an expectation, so ``to_latex`` puts it back: a term containing a
 lead variable renders under :math:`\mathbb{E}_t`. Pass ``expectations=False`` for a perfect-foresight model, where
 leads are deterministic and the operator would be wrong.
+
+
+Naming a block
+--------------
+
+A block name is an identifier, and its casing is yours. ``block Household`` and ``block Ricardian_Household``
+both work, an underscore reads as a word break, and the name becomes a section heading in a generated table.
+
+Write a name in all caps and gEconpy lowercases it before capitalizing the first word, because an all-caps name
+carries no case information to preserve. ``HOUSEHOLD`` reads as "Household" and ``TECHNOLOGY_SHOCKS`` as
+"Technology shocks", which keeps files written in the older convention rendering sensibly. The cost is that an
+acronym cannot survive: ``VAR_SYSTEM`` reads as "Var system". Case the name yourself and it is left alone, so
+``VAR_System`` reads as "VAR System".
+
+Block names also form the first part of an equation's id, so ``block Household`` gives ids like
+``Household.foc.C`` in error messages and tables.
+
+
+Publication tables
+------------------
+
+:meth:`~gEconpy.model.model.Model.equation_table` and
+:meth:`~gEconpy.model.model.Model.calibration_table` return the two tables a paper needs, as data:
+
+.. code-block:: python
+
+    from gEconpy import model_from_gcn
+    from gEconpy.data import get_example_gcn
+
+    model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+    print(model.calibration_table().to_latex())
+    model.equation_table().to_frame()
+
+The equation table renders as an ``align`` environment and uses ``\intertext`` for its headings, and the
+expectation operator renders as ``\mathbb{E}``, so the document needs ``amsmath`` and ``amssymb``. A
+caption becomes a ``\tag``, which replaces the equation number, so a tagged equation cannot be
+cross-referenced with ``\ref``.
+
+Each table builds its rows once and renders them on demand, so ``to_latex`` and ``to_frame`` cannot disagree
+about what is in the table. The equation table carries a row per equation with its block, its id, its caption
+and its two rendered sides, and groups the rows under a heading per block. The calibration table carries a row
+per parameter with its symbol, the ``name`` and ``source`` it declares, its value and its prior.
+
+A calibrated parameter is solved for rather than set, so its value is empty. A column that is empty for every
+row is dropped from the LaTeX, so a model that declares no ``source`` does not print a blank citation column.
+``to_frame`` keeps every column, because it is data rather than a printed table.
 
 
 The complete RBC file

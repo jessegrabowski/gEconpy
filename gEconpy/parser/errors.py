@@ -358,7 +358,7 @@ class GCNParseError(Exception):
         Parameters
         ----------
         context : str
-            Where the error was found, such as ``"block HOUSEHOLD"``.
+            Where the error was found, such as ``"block Household"``.
 
         Returns
         -------

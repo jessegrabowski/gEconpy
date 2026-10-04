@@ -255,7 +255,7 @@ def statespace_from_gcn(
     if steady_state_mapping is None or len(steady_state_mapping) != len(variables):
         raise NotImplementedError(
             "DSGEStateSpace requires an analytic steady state for every variable. Add the missing steady-state "
-            "expressions to the STEADY_STATE block of the GCN file, or use model_from_gcn to solve the steady state "
+            "expressions to the Steady_State block of the GCN file, or use model_from_gcn to solve the steady state "
             "numerically."
         )
 

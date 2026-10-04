@@ -201,13 +201,13 @@ class TestGrammarErrors:
     )
     def test_structural_failure_maps_to_catalog_code(self, text, code, message, found, column):
         with pytest.raises(GCNGrammarError) as exc_info:
-            parse_expression(text, context="objective of HOUSEHOLD")
+            parse_expression(text, context="objective of Household")
 
         error = exc_info.value
         assert error.code == code
         assert error.message == message
         assert error.found == found
-        assert error.context == "objective of HOUSEHOLD"
+        assert error.context == "objective of Household"
         assert (error.location.line, error.location.column) == (1, column)
         assert error.location.source_line == text
 

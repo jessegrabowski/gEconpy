@@ -18,9 +18,9 @@ class TestQuickParse:
             quick_parse("")
 
     def test_simple_block(self):
-        model = quick_parse("block HOUSEHOLD { identities { Y[] = C[]; }; };")
+        model = quick_parse("block Household { identities { Y[] = C[]; }; };")
         assert len(model.blocks) == 1
-        assert model.blocks[0].name == "HOUSEHOLD"
+        assert model.blocks[0].name == "Household"
 
     def test_with_options(self):
         model = quick_parse("options { output logfile = TRUE; }; block TEST { identities { X[] = 1; }; };")
@@ -56,7 +56,7 @@ class TestParseResult:
     @pytest.fixture
     def simple_model(self):
         source = """
-        block HOUSEHOLD
+        block Household
         {
             controls { C[], K[]; };
             objective { U[] = log(C[]); };
@@ -68,7 +68,7 @@ class TestParseResult:
         return preprocess(source)
 
     def test_ast_accessors(self, simple_model):
-        assert [block.name for block in simple_model.blocks] == ["HOUSEHOLD"]
+        assert [block.name for block in simple_model.blocks] == ["Household"]
         assert simple_model.options == {}
         assert simple_model.tryreduce == []
         assert simple_model.assumptions == {}
@@ -125,7 +125,7 @@ def test_preprocess_full_model():
         positive { C[], K[]; };
     };
 
-    block HOUSEHOLD
+    block Household
     {
         definitions
         {
@@ -185,7 +185,7 @@ def test_preprocess_full_model():
 
 @pytest.mark.parametrize(
     "filename, block_names",
-    [("one_block_1.gcn", ["HOUSEHOLD"]), ("basic_rbc.gcn", ["HOUSEHOLD", "FIRM", "TECHNOLOGY_SHOCKS"])],
+    [("one_block_1.gcn", ["Household"]), ("basic_rbc.gcn", ["Household", "Firm", "Technology_Shocks"])],
 )
 def test_preprocess_file(filename, block_names):
     gcn_path = TEST_GCNS / filename

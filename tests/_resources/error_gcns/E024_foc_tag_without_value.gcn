@@ -1,5 +1,5 @@
 # Error: Invalid control tag (@foc_name written without its quoted value)
-block TEST
+block Test
 {
     controls
     {

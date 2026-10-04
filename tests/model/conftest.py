@@ -4,7 +4,7 @@ import pytest
 @pytest.fixture
 def gcn_file_1():
     return """
-                block HOUSEHOLD
+                block Household
                 {
                     definitions
                     {

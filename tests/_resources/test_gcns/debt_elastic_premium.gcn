@@ -5,7 +5,7 @@ symbols
     R_star[] { positive = True; };
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {

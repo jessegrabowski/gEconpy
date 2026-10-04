@@ -27,7 +27,7 @@ symbols
     alpha { name = "Capital share of output"; bounds = (0.01, 0.99); };
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {

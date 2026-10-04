@@ -1,5 +1,5 @@
 # Error: Unopened parenthesis (extra closing paren)
-block UTILITY
+block Utility
 {
     identities
     {

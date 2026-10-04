@@ -3,7 +3,7 @@ options
     linear = True;
 };
 
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -15,7 +15,7 @@ block STEADY_STATE
     };
 };
 
-block NEW_KEYNESIAN
+block New_Keynesian
 {
     identities
     {

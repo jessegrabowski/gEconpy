@@ -15,7 +15,8 @@ gEconpy.classes.time_aware_symbol
 
     merge_assumptions
     render_latex
+    render_name_latex
 
 .. automodule:: gEconpy.classes.time_aware_symbol
-    :members: TimeAwareSymbol, merge_assumptions, render_latex
+    :members: TimeAwareSymbol, merge_assumptions, render_latex, render_name_latex
     :undoc-members:

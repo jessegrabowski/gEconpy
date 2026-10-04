@@ -3,7 +3,7 @@ tryreduce
     Pi[], U[], TC[];
 };
 
-block STEADYSTATE
+block SteadyState
 {
     definitions
     {
@@ -34,7 +34,7 @@ block STEADYSTATE
     };
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {
@@ -66,7 +66,7 @@ block HOUSEHOLD
 };
 
 
-block FIRM
+block Firm
 {
     controls
     {

@@ -1,7 +1,7 @@
 import pytest
 import sympy as sp
 
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex, render_name_latex
 
 
 class TestTimeSubscript:
@@ -116,3 +116,31 @@ class TestOverride:
 
         assert r"\mathcal{M}_{t}" in rendered
         assert r"\text{Div}_{t}" in rendered
+
+
+class TestRenderNameLatex:
+    """A parameter is a plain Symbol, so sympy's default printer is what these rules replace."""
+
+    @pytest.mark.parametrize(
+        "name, expected, sympy_default",
+        [
+            ("mc", r"\text{mc}", "mc"),
+            ("epsilon", r"\varepsilon", r"\epsilon"),
+            ("Div", r"\text{Div}", "Div"),
+            ("epsilon_A", r"\varepsilon_{A}", r"\epsilon_{A}"),
+        ],
+        ids=["multi_letter", "varepsilon", "capitalized_word", "greek_with_subscript"],
+    )
+    def test_a_name_sympy_renders_differently(self, name, expected, sympy_default):
+        assert sp.latex(sp.Symbol(name)) == sympy_default, "sympy changed; this case no longer discriminates"
+        assert render_name_latex(name) == expected
+
+    @pytest.mark.parametrize("name", ["alpha", "sigma_C", "rho_A"], ids=["greek", "subscript", "subscript_caps"])
+    def test_a_name_sympy_already_renders_correctly_is_unchanged(self, name):
+        assert render_name_latex(name) == sp.latex(sp.Symbol(name))
+
+    def test_a_name_with_no_subscript_gets_no_empty_braces(self):
+        assert render_name_latex("alpha") == r"\alpha"
+
+    def test_an_override_replaces_the_stem_here_too(self):
+        assert render_name_latex("mc", stem_override=r"\mathcal{M}") == r"{\mathcal{M}}"

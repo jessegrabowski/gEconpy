@@ -1,4 +1,4 @@
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -7,7 +7,7 @@ block STEADY_STATE
     };
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {
@@ -38,7 +38,7 @@ block HOUSEHOLD
 };
 
 
-block FIRM
+block Firm
 {
     controls
     {

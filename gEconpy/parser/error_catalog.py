@@ -103,7 +103,7 @@ class ErrorCode(Enum):
             "Forgot to name the block",
             "Typo in 'block' keyword",
         ),
-        fixes=("Name the block: block HOUSEHOLD { ... };",),
+        fixes=("Name the block: block Household { ... };",),
     )
 
     E004 = ErrorInfo(

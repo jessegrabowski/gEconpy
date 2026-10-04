@@ -82,7 +82,7 @@ class TestValidateBlock:
 
     def test_valid_optimization_block_no_errors(self):
         block = GCNBlock(
-            name="HOUSEHOLD",
+            name="Household",
             controls=[Variable(name="C")],
             objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))],
             constraints=[GCNEquation(lhs=Variable(name="C"), rhs=Variable(name="Y"))],
@@ -97,37 +97,37 @@ class TestValidateModel:
         assert not errors.has_errors
 
     def test_duplicate_block_names(self):
-        model = GCNModel(blocks=[GCNBlock(name="HOUSEHOLD"), GCNBlock(name="HOUSEHOLD")])
+        model = GCNModel(blocks=[GCNBlock(name="Household"), GCNBlock(name="Household")])
         errors = validate_model(model)
         assert errors.has_errors
-        assert _messages(errors) == ["[E100] Duplicate block name: HOUSEHOLD"]
+        assert _messages(errors) == ["[E100] Duplicate block name: Household"]
 
     def test_parameter_defined_in_multiple_blocks(self):
         model = GCNModel(
             blocks=[
                 GCNBlock(
-                    name="HOUSEHOLD",
+                    name="Household",
                     calibration=[GCNEquation(lhs=Parameter(name="alpha"), rhs=Number(value=0.3))],
                 ),
                 GCNBlock(
-                    name="FIRM",
+                    name="Firm",
                     calibration=[GCNEquation(lhs=Parameter(name="alpha"), rhs=Number(value=0.35))],
                 ),
             ]
         )
         errors = validate_model(model)
         assert errors.has_errors
-        assert _messages(errors) == ["[E101] Parameter 'alpha' defined in multiple blocks: HOUSEHOLD, FIRM"]
+        assert _messages(errors) == ["[E101] Parameter 'alpha' defined in multiple blocks: Household, Firm"]
 
     def test_valid_multi_block_model(self):
         model = GCNModel(
             blocks=[
                 GCNBlock(
-                    name="HOUSEHOLD",
+                    name="Household",
                     calibration=[GCNEquation(lhs=Parameter(name="beta"), rhs=Number(value=0.99))],
                 ),
                 GCNBlock(
-                    name="FIRM",
+                    name="Firm",
                     calibration=[GCNEquation(lhs=Parameter(name="alpha"), rhs=Number(value=0.35))],
                 ),
             ]
@@ -239,7 +239,7 @@ class TestCheckUndefinedParameters:
 class TestFullValidation:
     def test_complete_valid_model(self):
         block = GCNBlock(
-            name="HOUSEHOLD",
+            name="Household",
             controls=[Variable(name="C"), Variable(name="K")],
             objective=[GCNEquation(lhs=Variable(name="U"), rhs=Variable(name="u"))],
             constraints=[

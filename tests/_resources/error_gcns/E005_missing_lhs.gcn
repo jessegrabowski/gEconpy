@@ -1,5 +1,5 @@
 # Error: Missing left-hand side of equation
-block FIRM
+block Firm
 {
     identities
     {

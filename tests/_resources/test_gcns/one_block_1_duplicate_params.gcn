@@ -3,7 +3,7 @@ options
 
 };
 
-block STEADY_STATE
+block Steady_State
 {
     identities
     {
@@ -11,7 +11,7 @@ block STEADY_STATE
     };
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {

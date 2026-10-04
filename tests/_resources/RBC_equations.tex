@@ -1,12 +1,15 @@
 \begin{align}
+\intertext{\textbf{Household}}
 u_{t} &= \frac{C_{t}^{1 - \sigma_{C}}}{1 - \sigma_{C}} - \frac{L_{t}^{\sigma_{L} + 1}}{\sigma_{L} + 1} \\
 C_{t} + I_{t} &= K_{t-1} r_{t} + L_{t} w_{t} \\
 K_{t} &= I_{t} + K_{t-1} \left(1 - \delta\right) \\
 - \lambda_{t} + C_{t}^{- \sigma_{C}} &= 0 \tag{\text{Household first-order condition for Consumption}} \\
 - L_{t}^{\sigma_{L}} + \lambda_{t} w_{t} &= 0 \tag{\text{Household first-order condition for Hours worked}} \\
 \beta \mathbb{E}_t\left[\lambda_{t+1} r_{t+1} - \lambda_{t+1} \left(\delta - 1\right)\right] - \lambda_{t} &= 0 \tag{\text{Household first-order condition for Capital stock}} \\
+\intertext{\textbf{Firm}}
 Y_{t} &= A_{t} K_{t-1}^{\alpha} L_{t}^{1 - \alpha} \\
 \frac{\alpha Y_{t}}{K_{t-1}} - r_{t} &= 0 \tag{\text{Firm first-order condition for Capital stock}} \\
 - w_{t} + \frac{Y_{t} \left(1 - \alpha\right)}{L_{t}} &= 0 \tag{\text{Firm first-order condition for Hours worked}} \\
+\intertext{\textbf{Technology Shocks}}
 \log{\left(A_{t} \right)} &= \rho_{A} \log{\left(A_{t-1} \right)} + \varepsilon_{A,t}
 \end{align}

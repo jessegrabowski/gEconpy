@@ -19,7 +19,7 @@ symbols
     gamma { positive = True; };
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {

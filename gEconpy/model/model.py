@@ -1,6 +1,7 @@
 import difflib
 import logging
 
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from typing import Literal, NamedTuple
@@ -17,14 +18,13 @@ from pytensor.graph.replace import clone_replace, graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
-from sympy.printing.latex import latex_escape
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_name_latex
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
-from gEconpy.model.latex import definition_sides_latex, equation_sides_latex
+from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import check_perturbation_solution, make_not_loglin_flags
 from gEconpy.model.perturbation import linearize_model as _linearize_model
@@ -37,6 +37,7 @@ from gEconpy.model.steady_state import (
     compile_known_ss,
     system_to_steady_state,
 )
+from gEconpy.model.tables import CalibrationTable, EquationRow, EquationTable, ParameterRow
 from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
@@ -501,15 +502,126 @@ class Model:
         if component != "foc":
             return None
 
-        block_words = block_name.replace("_", " ").lower()
-        return f"{block_words.capitalize()} first-order condition for {self._symbol_caption(control)}"
+        return f"{block_heading(block_name)} first-order condition for {self._symbol_caption(control)}"
+
+    def equation_table(self, expectations: bool = True) -> EquationTable:
+        r"""
+        Build the model's equations as table data, for a paper's equation table.
+
+        Each row carries the block it came from, its id, its caption and its two rendered sides. A
+        ``definitions`` entry is a row too, because the solver substitutes it away and the equations that
+        follow still name it.
+
+        Parameters
+        ----------
+        expectations : bool, optional
+            Wrap lead-carrying terms in :math:`\mathbb{E}_t`, except where the author wrote the operator
+            themselves. Defaults to True.
+
+        Returns
+        -------
+        table : EquationTable
+            The rows, renderable as LaTeX or as a dataframe.
+        """
+        overrides = self._latex_overrides()
+
+        definitions: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        for block_name, left, right in definition_rows(self._source_ast, overrides):
+            definitions[block_name].append((left, right))
+
+        equations: dict[str, list[tuple[str, sp.Expr]]] = defaultdict(list)
+        for equation_id, expression in zip(self._equation_ids, self._equations, strict=True):
+            equations[equation_id.partition(".")[0]].append((equation_id, expression))
+
+        # A block's definitions belong under its own heading, so the table is walked block by block rather than
+        # definitions-then-equations. Source order, falling back to the ids for a model built without a file.
+        authored = [block.name for block in self._source_ast.blocks] if self._source_ast else []
+        block_order = list(dict.fromkeys([*authored, *definitions, *equations]))
+
+        rows = []
+        for block_name in block_order:
+            rows.extend(
+                EquationRow(block=block_name, equation_id=None, label=None, left=left, right=right)
+                for left, right in definitions[block_name]
+            )
+            for equation_id, expression in equations[block_name]:
+                left, right = equation_sides_latex(
+                    self._source_ast,
+                    equation_id,
+                    expression,
+                    overrides=overrides,
+                    expectations=expectations,
+                )
+                rows.append(
+                    EquationRow(
+                        block=block_name,
+                        equation_id=equation_id,
+                        label=self.equation_label(equation_id),
+                        left=left,
+                        right=right,
+                    )
+                )
+
+        return EquationTable(rows=rows)
+
+    def calibration_table(self) -> CalibrationTable:
+        """
+        Build the model's parameters as table data, for a paper's calibration table.
+
+        Each row carries the parameter's rendered symbol, its declared ``name`` and ``source``, its value and
+        its prior. A calibrated parameter is solved for rather than set, so it has no value, and nor does a
+        shock's standard deviation, which is estimated.
+
+        Returns
+        -------
+        table : CalibrationTable
+            The rows, renderable as LaTeX or as a dataframe.
+        """
+        overrides = self._latex_overrides()
+        declarations = self._declarations_by_name()
+        values = self.parameters().to_string()
+        priors = self.param_priors.to_string()
+
+        # A shock's standard deviation is a hyper-parameter of its prior, not a model parameter, so it reaches
+        # neither of the dicts above. An estimated model's prior table is the one place it must appear.
+        hyper_priors = {
+            hyper_name: str(distribution.hyper_param_dict[param_name])
+            for distribution in self.shock_priors.values()
+            for param_name, hyper_name in getattr(distribution, "param_name_to_hyper_name", {}).items()
+            if param_name in getattr(distribution, "hyper_param_dict", {})
+        }
+        priors = {**priors, **hyper_priors}
+
+        calibrated = [parameter.name for parameter in self.calibrated_params if parameter.name not in values]
+        names = [*values, *calibrated, *(name for name in hyper_priors if name not in values)]
+        return CalibrationTable(
+            rows=[
+                ParameterRow(
+                    symbol=render_name_latex(name, stem_override=overrides.get(name)),
+                    description=declarations[name].name if name in declarations else None,
+                    value=None if name not in values else float(values[name]),
+                    prior=None if name not in priors else str(priors[name]),
+                    source=declarations[name].source if name in declarations else None,
+                )
+                for name in names
+            ]
+        )
 
     def to_latex(self, expectations: bool = True) -> str:
         r"""
         Render the model's equations as a LaTeX ``align`` environment.
 
         An equation the author wrote keeps the two sides they wrote. A first-order condition has no authored
-        form, so it prints as its residual equal to zero. A row carrying a label gets it as a ``\tag``.
+        form, so it prints as its residual equal to zero. Every ``definitions`` entry prints under its own
+        block's heading, because the solver substitutes them away and the authored equations still name them.
+        A variable the simplifier eliminated is the remaining gap: its defining equation is no longer in the
+        system, so an authored equation naming it prints with that symbol undefined.
+
+        Rows are grouped under a heading per block, written with ``\intertext``, and the expectation operator
+        renders as ``\mathbb{E}``, so the document needs ``amsmath`` and ``amssymb``. A caption becomes a
+        ``\tag``, which replaces the equation number and so stops the equation being cross-referenced.
+
+        Equivalent to ``model.equation_table(expectations).to_latex()``.
 
         Parameters
         ----------
@@ -523,27 +635,7 @@ class Model:
         latex : str
             The environment, ready to paste into a document.
         """
-        overrides = self._latex_overrides()
-        rows = []
-
-        # First, because the solver substitutes them away and the equations below still name them.
-        rows.extend(rf"{left} &= {right}" for left, right in definition_sides_latex(self._source_ast, overrides))
-
-        for equation_id, expression in zip(self._equation_ids, self._equations, strict=True):
-            left, right = equation_sides_latex(
-                self._source_ast,
-                equation_id,
-                expression,
-                overrides=overrides,
-                expectations=expectations,
-            )
-            label = self.equation_label(equation_id)
-            # A caption is free-form prose, and an unescaped % would comment out the row terminator.
-            tag = rf" \tag{{\text{{{latex_escape(label)}}}}}" if label else ""
-            rows.append(rf"{left} &= {right}{tag}")
-
-        body = " \\\\\n".join(rows)
-        return f"\\begin{{align}}\n{body}\n\\end{{align}}"
+        return self.equation_table(expectations=expectations).to_latex()
 
     def _latex_overrides(self) -> dict[str, str]:
         """Return the ``symbols`` block's declared LaTeX, keyed by each symbol's storage name."""
@@ -555,11 +647,12 @@ class Model:
 
     def _symbol_caption(self, base_name: str) -> str:
         """Return a variable's declared ``name``, falling back to the identifier the author wrote."""
-        key = variable_key(base_name)
-        for symbol, declaration in self._symbols.items():
-            if symbol.name == key:
-                return declaration.name or base_name
-        return base_name
+        declaration = self._declarations_by_name().get(variable_key(base_name))
+        return (declaration.name if declaration else None) or base_name
+
+    def _declarations_by_name(self) -> dict[str, SymbolDeclaration]:
+        """Return the declarations keyed by storage name, which is how every consumer looks them up."""
+        return {symbol.name: declaration for symbol, declaration in self._symbols.items()}
 
     @property
     def shocks(self) -> list[TimeAwareSymbol]:

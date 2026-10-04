@@ -7,7 +7,7 @@ symbols
     };
 };
 
-block FIRM
+block Firm
 {
     identities
     {

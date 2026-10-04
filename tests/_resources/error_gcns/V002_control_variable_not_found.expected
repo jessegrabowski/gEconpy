@@ -1,4 +1,4 @@
-error[V002]: Control variable 'K_t' in block HOUSEHOLD not found in equations
+error[V002]: Control variable 'K_t' in block Household not found in equations
   --> <source>:6:9
      |
   5 |     controls {

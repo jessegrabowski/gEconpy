@@ -263,7 +263,7 @@ def _substitute_steady_state_values(
         raise ValueError(
             f"Perfect foresight simulation requires all steady-state variables to have analytic "
             f"solutions, but the following do not: {names}. Provide analytic steady-state values "
-            f"in the STEADY_STATE block of your GCN file."
+            f"in the Steady_State block of your GCN file."
         )
 
     return [eq.subs(sub_dict) for eq in equations]

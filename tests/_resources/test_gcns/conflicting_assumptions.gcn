@@ -6,7 +6,7 @@ assumptions
     };
 };
 
-block BLOCK
+block Block
 {
     identities
     {

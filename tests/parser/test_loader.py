@@ -68,7 +68,7 @@ class TestAstBlockToVariablesAndShocks:
 class TestAstModelToPrimitives:
     def test_full_model(self):
         source = """
-        block HOUSEHOLD
+        block Household
         {
             controls { C[], K[]; };
             objective { U[] = log(C[]) + beta * E[][U[1]]; };
@@ -82,7 +82,7 @@ class TestAstModelToPrimitives:
             };
         };
 
-        block FIRM
+        block Firm
         {
             identities
             {
@@ -103,7 +103,7 @@ class TestAstModelToPrimitives:
         assert [v.base_name for v in primitives.variables] == ["A", "C", "K", "U", "Y", "lambda"]
         assert [s.base_name for s in primitives.shocks] == ["epsilon"]
         assert set(primitives.param_dict) == {"alpha", "beta", "rho"}
-        assert set(primitives.block_dict) == {"HOUSEHOLD", "FIRM"}
+        assert set(primitives.block_dict) == {"Household", "Firm"}
 
     def test_same_parameter_calibrated_in_two_blocks_raises(self):
         source = "block A { calibration { alpha = 0.3; }; }; block B { calibration { alpha = 0.4; }; };"
@@ -139,7 +139,7 @@ class TestAstModelToPrimitives:
 
     def test_steady_state_definitions_are_substituted_into_identities(self):
         source = """
-        block STEADY_STATE { definitions { a = 2; }; identities { C[ss] = a * 3; K[ss] = C[ss] + 1; }; };
+        block Steady_State { definitions { a = 2; }; identities { C[ss] = a * 3; K[ss] = C[ss] + 1; }; };
         block TEST { identities { C[] = 1; K[] = 2; }; };
         """
         primitives = ast_model_to_primitives(quick_parse(source))
@@ -166,7 +166,7 @@ class TestAstModelToPrimitives:
         assert composite.param_name_to_hyper_name == {"sigma": "sigma_eps"}
         assert composite.hyper_param_dict["sigma"] is primitives.distributions["sigma_eps"]
 
-    @pytest.mark.parametrize("ss_name", ["STEADY_STATE", "STEADYSTATE", "SS", "STEADY"])
+    @pytest.mark.parametrize("ss_name", ["Steady_State", "SteadyState", "SS", "STEADY"])
     def test_every_steady_state_block_name_is_consumed_not_solved(self, ss_name):
         source = f"""
         block {ss_name} {{ identities {{ C[ss] = 1; }}; }};

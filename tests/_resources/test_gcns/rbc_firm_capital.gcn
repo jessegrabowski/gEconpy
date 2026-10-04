@@ -3,7 +3,7 @@ tryreduce
     Pi[], U[];
 };
 
-block STEADYSTATE
+block SteadyState
 {
 
     definitions
@@ -31,7 +31,7 @@ block STEADYSTATE
     };
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {
@@ -61,7 +61,7 @@ block HOUSEHOLD
     };
 };
 
-block FIRM
+block Firm
 {
     definitions
     {
@@ -102,7 +102,7 @@ block FIRM
     };
 };
 
-block EQUILIBRIUM
+block Equilibrium
 {
     identities
     {

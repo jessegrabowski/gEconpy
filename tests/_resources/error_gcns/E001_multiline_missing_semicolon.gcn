@@ -1,5 +1,5 @@
 # Error: Missing semicolon in multi-line equation
-block PRODUCTION
+block Production
 {
     identities
     {

@@ -8,7 +8,7 @@ tryreduce
 
 };
 
-block HOUSEHOLD
+block Household
 {
     definitions
     {

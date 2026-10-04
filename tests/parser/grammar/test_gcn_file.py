@@ -18,13 +18,13 @@ class TestGCNFileBasic:
 
     def test_multiple_empty_blocks(self):
         text = """
-        block HOUSEHOLD { };
-        block FIRM { };
+        block Household { };
+        block Firm { };
         """
         result = parse_gcn(text)
         assert len(result.blocks) == 2
-        assert result.blocks[0].name == "HOUSEHOLD"
-        assert result.blocks[1].name == "FIRM"
+        assert result.blocks[0].name == "Household"
+        assert result.blocks[1].name == "Firm"
 
     def test_filename_preserved(self):
         text = "block TEST { };"
@@ -112,7 +112,7 @@ class TestGCNFileWithSpecialBlocks:
 class TestGCNFileWithComponents:
     def test_block_with_identities(self):
         text = """
-        block EQUILIBRIUM {
+        block Equilibrium {
             identities {
                 Y[] = C[] + I[];
             };
@@ -141,14 +141,14 @@ class TestSimpleRBCModel:
             U[], TC[];
         };
 
-        block STEADY_STATE {
+        block Steady_State {
             identities {
                 A[ss] = 1;
                 r[ss] = 1 / beta - (1 - delta);
             };
         };
 
-        block HOUSEHOLD {
+        block Household {
             definitions {
                 u[] = C[] ^ (1 - sigma_C) / (1 - sigma_C);
             };
@@ -172,7 +172,7 @@ class TestSimpleRBCModel:
             };
         };
 
-        block FIRM {
+        block Firm {
             controls {
                 K[-1], L[];
             };
@@ -206,17 +206,17 @@ class TestSimpleRBCModel:
         """
         result = parse_gcn(text)
 
-        assert result.block_names() == ["STEADY_STATE", "HOUSEHOLD", "FIRM", "SHOCKS"]
+        assert result.block_names() == ["Steady_State", "Household", "Firm", "SHOCKS"]
         assert result.tryreduce == ["U", "TC"]
 
-        household = result.get_block("HOUSEHOLD")
+        household = result.get_block("Household")
         assert len(household.definitions) == 1
         assert len(household.controls) == 4
         assert len(household.objective) == 1
         assert len(household.constraints) == 2
         assert len(household.calibration) == 2
 
-        firm = result.get_block("FIRM")
+        firm = result.get_block("Firm")
         assert len(firm.controls) == 2
         assert firm.constraints[0].lagrange_multiplier == "mc"
 
@@ -252,22 +252,22 @@ class TestGCNFileWithComments:
 class TestGCNModelMethods:
     def test_get_block(self):
         text = """
-        block HOUSEHOLD { };
-        block FIRM { };
+        block Household { };
+        block Firm { };
         """
         result = parse_gcn(text)
-        assert result.get_block("HOUSEHOLD") is not None
-        assert result.get_block("FIRM") is not None
+        assert result.get_block("Household") is not None
+        assert result.get_block("Firm") is not None
         assert result.get_block("NONEXISTENT") is None
 
     def test_block_names(self):
         text = """
-        block HOUSEHOLD { };
-        block FIRM { };
+        block Household { };
+        block Firm { };
         block SHOCKS { };
         """
         result = parse_gcn(text)
-        assert result.block_names() == ["HOUSEHOLD", "FIRM", "SHOCKS"]
+        assert result.block_names() == ["Household", "Firm", "SHOCKS"]
 
     def test_all_equations(self):
         text = """
@@ -462,9 +462,9 @@ class TestParseGCNFiles:
     @pytest.mark.parametrize(
         "gcn_path,expected_blocks",
         [
-            (TEST_GCNS / "one_block_1.gcn", ["HOUSEHOLD"]),
-            (TEST_GCNS / "basic_rbc.gcn", ["HOUSEHOLD", "FIRM", "TECHNOLOGY_SHOCKS"]),
-            (get_example_gcn("RBC"), ["STEADY_STATE", "HOUSEHOLD", "FIRM", "TECHNOLOGY_SHOCKS"]),
+            (TEST_GCNS / "one_block_1.gcn", ["Household"]),
+            (TEST_GCNS / "basic_rbc.gcn", ["Household", "Firm", "Technology_Shocks"]),
+            (get_example_gcn("RBC"), ["Steady_State", "Household", "Firm", "Technology_Shocks"]),
         ],
         ids=["one_block_1", "basic_rbc", "RBC"],
     )

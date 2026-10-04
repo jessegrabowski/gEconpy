@@ -8,7 +8,7 @@ import sympy as sp
 from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.data import get_example_gcn
-from gEconpy.model.latex import authored_sides, definition_sides_latex, wrap_leads_in_expectations
+from gEconpy.model.latex import authored_sides, block_heading, definition_rows, wrap_leads_in_expectations
 from tests.conftest import TEST_GCNS
 
 GOLDEN = Path(__file__).parent.parent / "_resources" / "RBC_equations.tex"
@@ -52,8 +52,8 @@ class TestAuthoredForm:
     @pytest.mark.parametrize(
         "equation_id, expected",
         [
-            ("HOUSEHOLD.constraints.0", r"C_{t} + I_{t} = K_{t-1} r_{t} + L_{t} w_{t}"),
-            ("FIRM.constraints.0", r"Y_{t} = A_{t} K_{t-1}^{\alpha} L_{t}^{1 - \alpha}"),
+            ("Household.constraints.0", r"C_{t} + I_{t} = K_{t-1} r_{t} + L_{t} w_{t}"),
+            ("Firm.constraints.0", r"Y_{t} = A_{t} K_{t-1}^{\alpha} L_{t}^{1 - \alpha}"),
         ],
         ids=["budget_constraint", "production_function"],
     )
@@ -62,22 +62,22 @@ class TestAuthoredForm:
 
         assert f"{sp.latex(left)} = {sp.latex(right)}" == expected
 
-    @pytest.mark.parametrize("equation_id", ["HOUSEHOLD.foc.C", "FIRM.foc.L"], ids=["consumption", "labor"])
+    @pytest.mark.parametrize("equation_id", ["Household.foc.C", "Firm.foc.L"], ids=["consumption", "labor"])
     def test_a_derived_condition_has_no_authored_form(self, rbc, equation_id):
         """It exists only as a first-order condition, so there is nothing in the file to recover."""
         assert authored_sides(rbc._source_ast, equation_id) is None
 
     def test_an_objective_resolves_without_a_position(self, rbc):
         """A block has one objective, so its id carries no position the way a constraint's does."""
-        assert authored_sides(rbc._source_ast, "FIRM.objective") is not None
+        assert authored_sides(rbc._source_ast, "Firm.objective") is not None
 
     @pytest.mark.parametrize(
         "equation_id",
         [
-            "TECHNOLOGY_SHOCKS.identities.-1",
-            "TECHNOLOGY_SHOCKS.identities.abc",
-            "TECHNOLOGY_SHOCKS.identities.",
-            "TECHNOLOGY_SHOCKS.identities.99",
+            "Technology_Shocks.identities.-1",
+            "Technology_Shocks.identities.abc",
+            "Technology_Shocks.identities.",
+            "Technology_Shocks.identities.99",
             "NO_SUCH_BLOCK.identities.0",
             "nonsense",
         ],
@@ -88,7 +88,7 @@ class TestAuthoredForm:
         assert authored_sides(rbc._source_ast, equation_id) is None
 
     def test_a_model_built_without_a_file_recovers_nothing(self):
-        assert authored_sides(None, "HOUSEHOLD.constraints.0") is None
+        assert authored_sides(None, "Household.constraints.0") is None
 
 
 class TestOverrides:
@@ -197,11 +197,49 @@ class TestToLatex:
         assert r"\mathbb{E}_t" not in rbc.to_latex(expectations=False)
 
     def test_every_equation_and_definition_becomes_one_row(self, rbc):
-        rows = rbc.to_latex().splitlines()[1:-1]
+        lines = rbc.to_latex().splitlines()[1:-1]
+        rows = [line for line in lines if not line.startswith(r"\intertext")]
 
-        assert len(rows) == len(definition_sides_latex(rbc._source_ast)) + len(rbc._equation_ids)
+        assert len(rows) == len(definition_rows(rbc._source_ast)) + len(rbc._equation_ids)
         assert all("&=" in row for row in rows)
 
     def test_a_definition_the_solver_substituted_away_is_still_printed(self, rbc):
         """An authored equation names it, so without the row the system has more unknowns than equations."""
-        assert rbc.to_latex().splitlines()[1].startswith("u_{t} &=")
+        rendered = rbc.to_latex()
+        definition = next(line for line in rendered.splitlines() if line.startswith("u_{t} &="))
+
+        assert rendered.index(definition) < rendered.index("C_{t} + I_{t} &=")
+
+
+class TestBlockHeading:
+    @pytest.mark.parametrize(
+        "name, expected",
+        [
+            ("HOUSEHOLD", "Household"),
+            ("TECHNOLOGY_SHOCKS", "Technology shocks"),
+            ("VAR_SYSTEM", "Var system"),
+        ],
+        ids=["one_word", "two_words", "acronym_is_lost"],
+    )
+    def test_an_all_caps_name_is_lowered_and_sentence_cased(self, name, expected):
+        """
+        The back-compat path for files written before block names took their own casing.
+
+        Every fixture in the repo is mixed case now, so nothing else exercises this. An all-caps name carries
+        no case information, which is why the acronym in VAR_SYSTEM cannot survive.
+        """
+        assert block_heading(name) == expected
+
+    @pytest.mark.parametrize(
+        "name, expected",
+        [
+            ("Household", "Household"),
+            ("Ricardian_Household", "Ricardian Household"),
+            ("VAR_System", "VAR System"),
+            ("SARIMA_2_12", "Sarima 2 12"),
+        ],
+        ids=["one_word", "two_words", "acronym_survives", "digits_all_caps"],
+    )
+    def test_a_name_the_author_cased_is_left_alone(self, name, expected):
+        """``SARIMA_2_12`` reads badly and is here to pin that: an all-caps name cannot say it is an acronym."""
+        assert block_heading(name) == expected

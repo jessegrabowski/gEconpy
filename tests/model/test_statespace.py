@@ -480,7 +480,7 @@ def test_first_and_last_aggregation_use_direct_selector(rbc_statespace, method):
 # RBC with a non-trivial analytic steady state (Y_ss is about 3).
 NL_GCN = "rbc_2_block_ss.gcn"
 
-# The same RBC plus an OBSERVATION block carrying ``Y_obs = log(Y)`` and ``dY_obs = log(Y) - log(Y[-1])`` as model
+# The same RBC plus an Observation block carrying ``Y_obs = log(Y)`` and ``dY_obs = log(Y) - log(Y[-1])`` as model
 # identities, the Dynare way of adding observed series. It is the reference for observation-equation equivalence.
 OBS_EQ_GCN = "rbc_2_block_obs_eq.gcn"
 
