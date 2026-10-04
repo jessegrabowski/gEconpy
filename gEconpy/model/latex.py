@@ -2,7 +2,8 @@ import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
 from gEconpy.parser.ast import GCNModel, variable_key
-from gEconpy.parser.transform.to_sympy import ast_to_sympy
+from gEconpy.parser.ast.nodes import Expectation
+from gEconpy.parser.transform.to_sympy import ASTToSympyConverter
 
 
 class ConditionalExpectation(sp.Function):
@@ -51,6 +52,18 @@ def wrap_leads_in_expectations(expression: sp.Expr) -> sp.Expr:
         terms.append(term if with_leads == 1 else without_leads * ConditionalExpectation(with_leads))
 
     return sp.Add(*terms)
+
+
+class _PrintingConverter(ASTToSympyConverter):
+    """
+    Converts an authored equation while keeping its expectation operator.
+
+    The solver path drops the operator, because first-order perturbation is certainty equivalent. A printed
+    equation should show where the author put it.
+    """
+
+    def _convert_expectation(self, node: Expectation) -> sp.Basic:
+        return ConditionalExpectation(self.convert(node.expr))
 
 
 _AUTHORED_COMPONENTS = ("identities", "constraints", "objective")
@@ -102,7 +115,8 @@ def authored_sides(source_ast: GCNModel | None, equation_id: str) -> tuple[sp.Ex
         return None
 
     equation = equations[index]
-    return ast_to_sympy(equation.lhs), ast_to_sympy(equation.rhs)
+    converter = _PrintingConverter()
+    return converter.convert_expr(equation.lhs), converter.convert_expr(equation.rhs)
 
 
 def symbol_names_for(expression: sp.Expr, overrides: dict[str, str]) -> dict[sp.Symbol, str]:
@@ -173,7 +187,8 @@ def equation_sides_latex(
     left, right = (expression, sp.Integer(0)) if sides is None else sides
 
     if expectations:
-        left, right = wrap_leads_in_expectations(left), wrap_leads_in_expectations(right)
+        # A side the author already wrote an operator on is left alone, since they said where it belongs.
+        left, right = _wrap_unless_authored(left), _wrap_unless_authored(right)
 
     # Resolved against the sides actually being rendered, which are rebuilt symbols for an authored equation.
     names = overrides or {}
@@ -181,3 +196,7 @@ def equation_sides_latex(
         sp.latex(left, symbol_names=symbol_names_for(left, names)),
         sp.latex(right, symbol_names=symbol_names_for(right, names)),
     )
+
+
+def _wrap_unless_authored(side: sp.Expr) -> sp.Expr:
+    return side if side.has(ConditionalExpectation) else wrap_leads_in_expectations(side)

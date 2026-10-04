@@ -1,3 +1,5 @@
+import re
+
 from pathlib import Path
 
 import pytest
@@ -148,6 +150,20 @@ class TestToLatex:
 
         assert sp.latex(left) == "U_{t}"
         assert r"\mathbb{E}_t" in sp.latex(wrap_leads_in_expectations(right))
+
+    def test_an_authored_expectation_is_kept_where_the_author_put_it(self):
+        """
+        ``Three_Equation_NK.gcn`` writes ``E[][pi[1]]`` around one lead.
+
+        Discarding that and re-deriving the placement at Add-term granularity produced an operator enclosing
+        ``i[]`` and ``rn[]`` as well, which is harmless arithmetically and not what any paper writes.
+        """
+        model = model_from_gcn(get_example_gcn("Three_Equation_NK"), verbose=False)
+
+        euler = next(row for row in model.to_latex().splitlines() if row.startswith("x_{t}"))
+        enclosed = re.findall(r"\\mathbb\{E\}_t\\left\[(.*?)\\right\]", euler)
+
+        assert enclosed == [r"x_{t+1}", r"\pi_{t+1}"]
 
     def test_the_rendered_system_matches_the_golden_file(self, rbc):
         """
