@@ -202,9 +202,7 @@ def _wrap_unless_authored(side: sp.Expr) -> sp.Expr:
     return side if side.has(ConditionalExpectation) else wrap_leads_in_expectations(side)
 
 
-def definition_sides_latex(
-    source_ast: GCNModel | None, overrides: dict[str, str] | None = None
-) -> list[tuple[str, str]]:
+def definition_rows(source_ast: GCNModel | None, overrides: dict[str, str] | None = None) -> list[tuple[str, str, str]]:
     """
     Recover every ``definitions`` entry, in source order.
 
@@ -222,7 +220,7 @@ def definition_sides_latex(
     Returns
     -------
     definitions : list of tuple of str
-        The rendered left and right side of each definition.
+        The block name and the rendered left and right side of each definition.
     """
     if source_ast is None:
         return []
@@ -231,6 +229,7 @@ def definition_sides_latex(
     names = overrides or {}
     return [
         (
+            block.name,
             sp.latex(left := converter.convert_expr(equation.lhs), symbol_names=symbol_names_for(left, names)),
             sp.latex(right := converter.convert_expr(equation.rhs), symbol_names=symbol_names_for(right, names)),
         )

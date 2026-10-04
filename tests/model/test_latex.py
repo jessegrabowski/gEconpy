@@ -8,12 +8,7 @@ import sympy as sp
 from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.data import get_example_gcn
-from gEconpy.model.latex import (
-    authored_sides,
-    block_heading,
-    definition_sides_latex,
-    wrap_leads_in_expectations,
-)
+from gEconpy.model.latex import authored_sides, block_heading, definition_rows, wrap_leads_in_expectations
 from tests.conftest import TEST_GCNS
 
 GOLDEN = Path(__file__).parent.parent / "_resources" / "RBC_equations.tex"
@@ -202,14 +197,18 @@ class TestToLatex:
         assert r"\mathbb{E}_t" not in rbc.to_latex(expectations=False)
 
     def test_every_equation_and_definition_becomes_one_row(self, rbc):
-        rows = rbc.to_latex().splitlines()[1:-1]
+        lines = rbc.to_latex().splitlines()[1:-1]
+        rows = [line for line in lines if not line.startswith(r"\intertext")]
 
-        assert len(rows) == len(definition_sides_latex(rbc._source_ast)) + len(rbc._equation_ids)
+        assert len(rows) == len(definition_rows(rbc._source_ast)) + len(rbc._equation_ids)
         assert all("&=" in row for row in rows)
 
     def test_a_definition_the_solver_substituted_away_is_still_printed(self, rbc):
         """An authored equation names it, so without the row the system has more unknowns than equations."""
-        assert rbc.to_latex().splitlines()[1].startswith("u_{t} &=")
+        rendered = rbc.to_latex()
+        definition = next(line for line in rendered.splitlines() if line.startswith("u_{t} &="))
+
+        assert rendered.index(definition) < rendered.index("C_{t} + I_{t} &=")
 
 
 class TestBlockHeading:

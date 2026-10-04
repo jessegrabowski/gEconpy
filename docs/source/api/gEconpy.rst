@@ -71,6 +71,7 @@ gEconpy
     gEconpy.model.statistics.perturbation_diagnostics <gEconpy.model.statistics.perturbation_diagnostics>
     gEconpy.model.statistics.validation <gEconpy.model.statistics.validation>
     gEconpy.model.steady_state <gEconpy.model.steady_state>
+    gEconpy.model.tables <gEconpy.model.tables>
     gEconpy.model.timing <gEconpy.model.timing>
     gEconpy.parser <gEconpy.parser>
     gEconpy.parser.ast <gEconpy.parser.ast>
