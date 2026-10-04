@@ -24,7 +24,7 @@ from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
-from gEconpy.model.latex import equation_sides_latex
+from gEconpy.model.latex import definition_sides_latex, equation_sides_latex
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import check_perturbation_solution, make_not_loglin_flags
 from gEconpy.model.perturbation import linearize_model as _linearize_model
@@ -525,6 +525,10 @@ class Model:
         """
         overrides = self._latex_overrides()
         rows = []
+
+        # First, because the solver substitutes them away and the equations below still name them.
+        rows.extend(rf"{left} &= {right}" for left, right in definition_sides_latex(self._source_ast, overrides))
+
         for equation_id, expression in zip(self._equation_ids, self._equations, strict=True):
             left, right = equation_sides_latex(
                 self._source_ast,

@@ -200,3 +200,40 @@ def equation_sides_latex(
 
 def _wrap_unless_authored(side: sp.Expr) -> sp.Expr:
     return side if side.has(ConditionalExpectation) else wrap_leads_in_expectations(side)
+
+
+def definition_sides_latex(
+    source_ast: GCNModel | None, overrides: dict[str, str] | None = None
+) -> list[tuple[str, str]]:
+    """
+    Recover every ``definitions`` entry, in source order.
+
+    ``Block.solve_optimization`` substitutes definitions into the equations that use them, so they never reach
+    the solved system. An authored equation still names them, and without these rows the printed system has
+    more unknowns than equations.
+
+    Parameters
+    ----------
+    source_ast : GCNModel, optional
+        The parsed file. None for a model built without one.
+    overrides : dict mapping str to str, optional
+        Declared LaTeX, keyed by the symbol's storage name. Defaults to none.
+
+    Returns
+    -------
+    definitions : list of tuple of str
+        The rendered left and right side of each definition.
+    """
+    if source_ast is None:
+        return []
+
+    converter = _PrintingConverter()
+    names = overrides or {}
+    return [
+        (
+            sp.latex(left := converter.convert_expr(equation.lhs), symbol_names=symbol_names_for(left, names)),
+            sp.latex(right := converter.convert_expr(equation.rhs), symbol_names=symbol_names_for(right, names)),
+        )
+        for block in source_ast.blocks
+        for equation in block.definitions
+    ]
