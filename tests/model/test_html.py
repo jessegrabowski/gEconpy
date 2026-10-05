@@ -116,7 +116,7 @@ class TestModelRepr:
 
         rendered = model._repr_html_()
 
-        assert f"Parameters ({len(model.calibration_table().rows)})" in rendered
+        assert f"Parameters ({len(model.table('parameters').rows)})" in rendered
 
     def test_a_value_in_scientific_notation_stays_in_math_mode(self, tmp_path):
         """``_format_value`` writes ``$...$`` for a LaTeX table, and no notebook frontend typesets that."""

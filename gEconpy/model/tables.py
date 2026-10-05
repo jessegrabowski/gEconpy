@@ -1,13 +1,16 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, fields
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal, get_args
 
 import pandas as pd
 
 from sympy.printing.latex import latex_escape
 
 from gEconpy.model.latex import block_heading
+
+TableGroup = Literal["equations", "variables", "shocks", "parameters"]
+TABLE_GROUPS: tuple[TableGroup, ...] = get_args(TableGroup)
 
 
 def _format_value(value: float | None, math: tuple[str, str] = ("$", "$")) -> str:

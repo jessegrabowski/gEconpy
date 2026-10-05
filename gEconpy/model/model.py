@@ -4,7 +4,8 @@ import logging
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from copy import deepcopy
-from typing import Literal, NamedTuple
+from functools import partial
+from typing import Any, Literal, NamedTuple, overload
 
 import numpy as np
 import pytensor
@@ -21,7 +22,7 @@ from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_name_latex
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex, render_name_latex
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
 from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex
@@ -37,7 +38,16 @@ from gEconpy.model.steady_state import (
     compile_known_ss,
     system_to_steady_state,
 )
-from gEconpy.model.tables import CalibrationTable, EquationRow, EquationTable, ParameterRow
+from gEconpy.model.tables import (
+    TABLE_GROUPS,
+    CalibrationTable,
+    EquationRow,
+    EquationTable,
+    ParameterRow,
+    SymbolRow,
+    SymbolTable,
+    TableGroup,
+)
 from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
@@ -504,7 +514,7 @@ class Model:
 
         return f"{block_heading(block_name)} first-order condition for {self._symbol_caption(control)}"
 
-    def equation_table(self, expectations: bool = True) -> EquationTable:
+    def _equation_table(self, expectations: bool = True) -> EquationTable:
         r"""
         Build the model's equations as table data, for a paper's equation table.
 
@@ -564,7 +574,7 @@ class Model:
 
         return EquationTable(rows=rows)
 
-    def calibration_table(self) -> CalibrationTable:
+    def _calibration_table(self) -> CalibrationTable:
         """
         Build the model's parameters as table data, for a paper's calibration table.
 
@@ -607,6 +617,69 @@ class Model:
             ]
         )
 
+    def _symbol_table(self, group: str) -> SymbolTable:
+        """Build the variable or shock rows, resolving each symbol's declared caption and LaTeX."""
+        overrides = self._latex_overrides()
+        declarations = self._declarations_by_name()
+        symbols = {"variables": self.variables, "shocks": self.shocks}[group]
+
+        rows = []
+        for symbol in symbols:
+            key = variable_key(symbol.base_name)
+            declaration = declarations.get(key)
+            rows.append(
+                SymbolRow(
+                    symbol=render_latex(symbol, stem_override=overrides.get(key)),
+                    description=declaration.name if declaration is not None else None,
+                )
+            )
+        return SymbolTable(rows=rows)
+
+    @overload
+    def table(self, group: Literal["equations"], **options: Any) -> EquationTable: ...
+
+    @overload
+    def table(self, group: Literal["variables", "shocks"], **options: Any) -> SymbolTable: ...
+
+    @overload
+    def table(self, group: Literal["parameters"], **options: Any) -> CalibrationTable: ...
+
+    def table(self, group: TableGroup, **options: Any) -> EquationTable | SymbolTable | CalibrationTable:
+        r"""
+        Build one group of the model as table data, for a paper or a notebook.
+
+        Parameters
+        ----------
+        group : str
+            One of ``"equations"``, ``"variables"``, ``"shocks"`` or ``"parameters"``.
+        **options
+            Build options for the group. ``"equations"`` takes ``expectations``, which wraps lead-carrying
+            terms in :math:`\mathbb{E}_t` except where the author wrote the operator themselves and defaults
+            to True. The other groups take no options.
+
+        Returns
+        -------
+        table : EquationTable or SymbolTable or CalibrationTable
+            The rows, renderable as LaTeX or as a dataframe.
+
+        Raises
+        ------
+        ValueError
+            If ``group`` is not one of the four groups.
+        TypeError
+            If an option is given that the group does not take.
+        """
+        if group not in TABLE_GROUPS:
+            raise ValueError(f"group must be one of {', '.join(TABLE_GROUPS)}, got {group!r}.")
+
+        builders = {
+            "equations": self._equation_table,
+            "parameters": self._calibration_table,
+            "variables": partial(self._symbol_table, group),
+            "shocks": partial(self._symbol_table, group),
+        }
+        return builders[group](**options)
+
     def to_latex(self, expectations: bool = True) -> str:
         r"""
         Render the model's equations as a LaTeX ``align`` environment.
@@ -621,7 +694,7 @@ class Model:
         renders as ``\mathbb{E}``, so the document needs ``amsmath`` and ``amssymb``. A caption becomes a
         ``\tag``, which replaces the equation number and so stops the equation being cross-referenced.
 
-        Equivalent to ``model.equation_table(expectations).to_latex()``.
+        Equivalent to ``model.table("equations", expectations).to_latex()``.
 
         Parameters
         ----------
@@ -635,7 +708,7 @@ class Model:
         latex : str
             The environment, ready to paste into a document.
         """
-        return self.equation_table(expectations=expectations).to_latex()
+        return self.table("equations", expectations=expectations).to_latex()
 
     def _repr_html_(self) -> str:
         """

@@ -311,7 +311,7 @@ def _block_section(block: GCNBlock, overrides: dict[str, str]) -> str:
 
 def _calibration_section(model: "Model") -> str:
     """Reuse the calibration table's rows, so the notebook view and a paper's table cannot disagree."""
-    rows = model.calibration_table().rows
+    rows = model.table("parameters").rows
     cells = [
         (
             f"\\({row.symbol}\\)",

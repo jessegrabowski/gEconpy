@@ -10,6 +10,7 @@ from gEconpy.model.tables import (
     EquationRow,
     EquationTable,
     ParameterRow,
+    SymbolTable,
     _format_value,
 )
 from tests.conftest import TEST_GCNS
@@ -23,7 +24,7 @@ def rbc():
 
 class TestEquationTable:
     def test_a_row_carries_its_block_id_caption_and_both_sides(self, rbc):
-        row = next(r for r in rbc.equation_table().rows if r.equation_id == "Household.foc.C")
+        row = next(r for r in rbc.table("equations").rows if r.equation_id == "Household.foc.C")
 
         assert row.block == "Household"
         assert row.label == "Household first-order condition for Consumption"
@@ -32,13 +33,13 @@ class TestEquationTable:
 
     def test_a_definition_row_has_no_equation_id(self, rbc):
         """The solver substitutes definitions away before equations are given ids."""
-        definitions = [r for r in rbc.equation_table().rows if r.equation_id is None]
+        definitions = [r for r in rbc.table("equations").rows if r.equation_id is None]
 
         assert [r.left for r in definitions] == ["u_{t}"]
         assert all(r.block == "Household" for r in definitions)
 
     def test_every_equation_gets_a_row(self, rbc):
-        rows = rbc.equation_table().rows
+        rows = rbc.table("equations").rows
 
         assert [r.equation_id for r in rows if r.equation_id is not None] == rbc._equation_ids
 
@@ -57,7 +58,7 @@ class TestEquationTable:
         RBC alone cannot pin this: its definitions are in its first block, so emitting all definitions ahead of
         all equations happens to produce the right order. Baxter-King has them in a later block.
         """
-        blocks = [r.block for r in model_from_gcn(get_example_gcn(example), verbose=False).equation_table().rows]
+        blocks = [r.block for r in model_from_gcn(get_example_gcn(example), verbose=False).table("equations").rows]
 
         assert list(dict.fromkeys(blocks)) == expected
         assert blocks == sorted(blocks, key=expected.index)
@@ -74,18 +75,18 @@ class TestRendering:
     )
     def test_each_block_gets_exactly_one_heading(self, example, expected):
         """A repeated heading means the rows were grouped by something other than the block."""
-        rendered = model_from_gcn(get_example_gcn(example), verbose=False).equation_table().to_latex()
+        rendered = model_from_gcn(get_example_gcn(example), verbose=False).table("equations").to_latex()
 
         headings = [line for line in rendered.splitlines() if line.startswith(r"\intertext")]
         assert headings == [rf"\intertext{{\textbf{{{name}}}}}" for name in expected]
 
     def test_a_row_keeps_the_block_identifier_the_file_spells(self, rbc):
         """The renderers turn it into prose, so the row has to keep the name a caller could filter on."""
-        assert {r.block for r in rbc.equation_table().rows} == {"Household", "Firm", "Technology_Shocks"}
+        assert {r.block for r in rbc.table("equations").rows} == {"Household", "Firm", "Technology_Shocks"}
 
     def test_only_the_last_equation_line_lacks_a_terminator(self, rbc):
         r"""A stray terminator before \\end{align} is a LaTeX error, and one on a heading breaks the alignment."""
-        lines = rbc.equation_table().to_latex().splitlines()[1:-1]
+        lines = rbc.table("equations").to_latex().splitlines()[1:-1]
 
         assert all(not line.endswith(r"\\") for line in lines if line.startswith(r"\intertext"))
         equations = [line for line in lines if not line.startswith(r"\intertext")]
@@ -98,15 +99,15 @@ class TestRendering:
         assert r"\textbf{R\&D Lab}" in table.to_latex()
 
     def test_the_frame_has_one_row_per_equation_with_the_sides_joined(self, rbc):
-        frame = rbc.equation_table().to_frame()
+        frame = rbc.table("equations").to_frame()
 
         assert list(frame.columns) == ["block", "equation_id", "label", "equation"]
-        assert len(frame) == len(rbc.equation_table().rows)
+        assert len(frame) == len(rbc.table("equations").rows)
         assert frame.loc[frame.equation_id == "Household.foc.C", "equation"].item().endswith(" = 0")
 
     def test_the_frame_and_the_latex_hold_the_same_rows(self, rbc):
         """One builder feeds both, so a row cannot appear in one rendering and not the other."""
-        table = rbc.equation_table()
+        table = rbc.table("equations")
         equations = [line for line in table.to_latex().splitlines()[1:-1] if not line.startswith(r"\intertext")]
 
         assert len(equations) == len(table.rows) == len(table.to_frame())
@@ -115,7 +116,7 @@ class TestRendering:
 
 class TestCalibrationTable:
     def test_a_row_carries_the_symbol_description_value_and_prior(self, rbc):
-        row = next(r for r in rbc.calibration_table().rows if r.symbol == r"\alpha")
+        row = next(r for r in rbc.table("parameters").rows if r.symbol == r"\alpha")
 
         assert row.description == "Capital share of output"
         assert row.value == pytest.approx(0.35)
@@ -135,7 +136,7 @@ class TestCalibrationTable:
             " calibration { mc = 1.0; epsilon = 0.1; }; };\n"
         )
 
-        symbols = {r.symbol for r in model_from_gcn(path, verbose=False).calibration_table().rows}
+        symbols = {r.symbol for r in model_from_gcn(path, verbose=False).table("parameters").rows}
 
         assert r"\text{mc}" in symbols
         assert r"\varepsilon" in symbols
@@ -144,10 +145,10 @@ class TestCalibrationTable:
         """It is solved for rather than set, so printing a number would invent one."""
         model = model_from_gcn(TEST_GCNS / "one_block_2_no_extra.gcn", verbose=False)
 
-        calibrated = next(r for r in model.calibration_table().rows if r.symbol == r"\alpha")
+        calibrated = next(r for r in model.table("parameters").rows if r.symbol == r"\alpha")
 
         assert calibrated.value is None
-        assert [r.symbol for r in model.calibration_table().rows][-1] == r"\alpha"
+        assert [r.symbol for r in model.table("parameters").rows][-1] == r"\alpha"
 
     def test_an_empty_column_is_dropped(self):
         """Built here rather than from a fixture, so adding a source to a shipped model cannot silently break it."""
@@ -171,17 +172,17 @@ class TestCalibrationTable:
             "block H { identities { Y[] = alpha * A[]; A[] = 1; }; calibration { alpha = 0.3; }; };\n"
         )
 
-        rendered = model_from_gcn(path, verbose=False).calibration_table().to_latex()
+        rendered = model_from_gcn(path, verbose=False).table("parameters").to_latex()
 
         assert "Source" in rendered
         assert r"Smets \& Wouters (2007)" in rendered
 
     def test_the_frame_keeps_every_column(self, rbc):
         """to_latex drops an empty column for printing; the frame is data and keeps it."""
-        frame = rbc.calibration_table().to_frame()
+        frame = rbc.table("parameters").to_frame()
 
         assert list(frame.columns) == ["symbol", "description", "value", "prior", "source"]
-        assert len(frame) == len(rbc.calibration_table().rows)
+        assert len(frame) == len(rbc.table("parameters").rows)
 
 
 class TestEmptyTable:
@@ -252,8 +253,8 @@ def test_the_rendered_calibration_has_the_expected_shape():
     )
 
 
-@pytest.mark.parametrize("renderer", ["equation_table", "calibration_table"])
-def test_the_rendered_table_compiles(rbc, renderer, tmp_path):
+@pytest.mark.parametrize("group", ["equations", "parameters"])
+def test_the_rendered_table_compiles(rbc, group, tmp_path):
     r"""
     The feature's whole contract is valid LaTeX, and an empty table once produced output pdflatex rejected.
 
@@ -263,7 +264,7 @@ def test_the_rendered_table_compiles(rbc, renderer, tmp_path):
     if pdflatex is None:
         pytest.skip("pdflatex not installed")
 
-    body = getattr(rbc, renderer)().to_latex()
+    body = rbc.table(group).to_latex()
     source = tmp_path / "table.tex"
     source.write_text(
         f"\\documentclass{{article}}\n\\usepackage{{amsmath,amssymb}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"
@@ -278,3 +279,67 @@ def test_the_rendered_table_compiles(rbc, renderer, tmp_path):
     )
 
     assert result.returncode == 0, result.stdout[-2000:]
+
+
+@pytest.mark.parametrize(
+    "group, columns",
+    [
+        ("equations", ["block", "equation_id", "label", "equation"]),
+        ("variables", ["symbol", "description"]),
+        ("shocks", ["symbol", "description"]),
+        ("parameters", ["symbol", "description", "value", "prior", "source"]),
+    ],
+)
+def test_every_group_declares_the_columns_its_frame_carries(rbc, group, columns):
+    table = rbc.table(group)
+
+    assert list(table.to_frame().columns) == columns
+    assert len(table.to_frame()) == len(table.rows)
+
+
+@pytest.mark.parametrize("group", ["variables", "shocks"])
+def test_a_symbol_group_covers_every_symbol(rbc, group):
+    """A row builder that filtered or deduplicated would leave a symbol out of the paper."""
+    assert len(rbc.table(group).rows) == len(getattr(rbc, group))
+
+
+def test_the_equations_group_covers_every_equation(rbc):
+    """Definitions have no id and are extra rows; every solved equation must still appear, in order."""
+    ids = [row.equation_id for row in rbc.table("equations").rows if row.equation_id is not None]
+
+    assert ids == rbc._equation_ids
+
+
+def test_an_unknown_group_raises(rbc):
+    """A typo in a group name should fail loudly rather than return an empty table."""
+    with pytest.raises(ValueError, match="group must be one of equations, variables, shocks, parameters"):
+        rbc.table("parameter")
+
+
+def test_a_symbol_row_carries_its_declared_caption_and_latex(rbc):
+    """The variables group reads the same declarations the notebook repr does."""
+    frame = rbc.table("variables").to_frame().set_index("symbol")
+
+    assert frame.loc[r"\lambda_{t}", "description"] == "Marginal utility of wealth"
+    assert frame.loc["K_{t}", "description"] == "Capital stock"
+
+
+def test_a_shock_row_renders_through_the_latex_printer(rbc):
+    r"""``epsilon`` renders as ``\\varepsilon``, which a bare sympy printer would not do."""
+    symbols = rbc.table("shocks").to_frame()["symbol"].tolist()
+
+    assert symbols == [r"\varepsilon_{A,t}"]
+
+
+def test_a_symbol_table_drops_the_description_column_when_nothing_declares_one(tmp_path):
+    """A model with no declared names should not print an empty caption column."""
+    path = tmp_path / "bare.gcn"
+    path.write_text(
+        "symbols { Y[] { }; A[] { }; alpha { }; };\n"
+        "block H { identities { Y[] = alpha * A[]; A[] = 1; }; calibration { alpha = 0.3; }; };\n"
+    )
+
+    rendered = model_from_gcn(path, verbose=False).table("variables").to_latex()
+
+    assert "Description" not in rendered
+    assert "Symbol" in rendered

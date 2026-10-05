@@ -391,8 +391,8 @@ Block names also form the first part of an equation's id, so ``block Household``
 Publication tables
 ------------------
 
-:meth:`~gEconpy.model.model.Model.equation_table` and
-:meth:`~gEconpy.model.model.Model.calibration_table` return the two tables a paper needs, as data:
+:meth:`~gEconpy.model.model.Model.table` returns one group of the model as data. The groups are
+``equations``, ``variables``, ``shocks`` and ``parameters``:
 
 .. code-block:: python
 
@@ -400,8 +400,8 @@ Publication tables
     from gEconpy.data import get_example_gcn
 
     model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
-    print(model.calibration_table().to_latex())
-    model.equation_table().to_frame()
+    print(model.table("parameters").to_latex())
+    model.table("equations").to_frame()
 
 The equation table renders as an ``align`` environment and uses ``\intertext`` for its headings, and the
 expectation operator renders as ``\mathbb{E}``, so the document needs ``amsmath`` and ``amssymb``. A
