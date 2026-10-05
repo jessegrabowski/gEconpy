@@ -400,8 +400,13 @@ Publication tables
     from gEconpy.data import get_example_gcn
 
     model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
-    print(model.table("parameters").to_latex())
+    print(model.write_table("parameters", caption="Calibration", label="tab:calib", booktabs=True))
     model.table("equations").to_frame()
+
+:meth:`~gEconpy.model.model.Model.write_table` renders a group as markup for a document. It takes ``caption``
+and ``label``, which put the table in a ``table`` environment so it can be cross-referenced, ``size`` for a
+LaTeX size command, ``widths`` to replace the column specifiers, and ``booktabs`` for ``\toprule`` rules
+instead of ``\hline``. Pass ``path`` to write the markup to a file as well as returning it.
 
 The equation table renders as an ``align`` environment and uses ``\intertext`` for its headings, and the
 expectation operator renders as ``\mathbb{E}``, so the document needs ``amsmath`` and ``amssymb``. A
