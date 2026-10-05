@@ -11,6 +11,9 @@ from gEconpy.model.latex import block_heading
 
 TableGroup = Literal["equations", "variables", "shocks", "parameters"]
 TABLE_GROUPS: tuple[TableGroup, ...] = get_args(TableGroup)
+# Writer name to the method that renders it. ``test_every_announced_writer_renders_every_group`` parametrizes
+# over this mapping and every group, so a writer added here without a method on all three tables fails.
+TABLE_WRITERS = {"latex": "to_latex"}
 
 
 def _format_value(value: float | None, math: tuple[str, str] = ("$", "$")) -> str:

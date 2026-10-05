@@ -6,6 +6,8 @@ import pytest
 from gEconpy import model_from_gcn
 from gEconpy.data import get_example_gcn
 from gEconpy.model.tables import (
+    TABLE_GROUPS,
+    TABLE_WRITERS,
     CalibrationTable,
     EquationRow,
     EquationTable,
@@ -348,6 +350,118 @@ def test_a_symbol_table_drops_the_description_column_when_nothing_declares_one(t
 
     assert "Description" not in rendered
     assert "Symbol" in rendered
+
+
+class TestWriteTable:
+    def test_an_unknown_writer_raises(self, rbc):
+        with pytest.raises(ValueError, match="writer must be one of latex"):
+            rbc.write_table("parameters", writer="typst")
+
+    def test_a_caption_and_label_wrap_the_table(self, rbc):
+        """Neither can be referenced outside a table environment, so asking for one implies the wrapper."""
+        rendered = rbc.write_table("parameters", caption="Calibrated parameters", label="tab:calib")
+
+        assert r"\begin{table}[htbp]" in rendered
+        assert r"\caption{Calibrated parameters}" in rendered
+        assert r"\label{tab:calib}" in rendered
+
+    def test_a_caption_carries_math_unescaped(self, rbc):
+        """A table caption in this literature routinely carries math, so it is the author's own LaTeX."""
+        rendered = rbc.write_table("parameters", caption=r"Calibration of $\beta$")
+
+        assert r"\caption{Calibration of $\beta$}" in rendered
+
+    def test_no_style_leaves_a_bare_tabular(self, rbc):
+        rendered = rbc.write_table("parameters")
+
+        assert r"\begin{table}" not in rendered
+        assert rendered.startswith(r"\begin{tabular}")
+
+    def test_booktabs_replaces_the_hlines(self, rbc):
+        rendered = rbc.write_table("variables", booktabs=True)
+
+        assert r"\toprule" in rendered
+        assert r"\midrule" in rendered
+        assert r"\bottomrule" in rendered
+        assert r"\hline" not in rendered
+
+    def test_size_is_scoped_to_the_table(self, rbc):
+        """A size command is a declaration, so unbraced it shrinks every paragraph after the table."""
+        rendered = rbc.write_table("variables", size="footnotesize")
+
+        assert rendered.startswith("{\\footnotesize\n")
+        assert rendered.endswith("}")
+
+    def test_widths_replace_the_column_spec(self, rbc):
+        rendered = rbc.write_table("variables", widths=["c", r"p{0.9\linewidth}"])
+
+        assert r"\begin{tabular}{cp{0.9\linewidth}}" in rendered
+
+    def test_widths_of_the_wrong_length_raise(self, rbc):
+        """A dropped empty column changes how many specifiers are needed, so the count is checked."""
+        with pytest.raises(ValueError, match="one specifier per printed column"):
+            rbc.write_table("variables", widths=["c"])
+
+    def test_a_path_receives_the_markup(self, rbc, tmp_path):
+        out = tmp_path / "table.tex"
+
+        returned = rbc.write_table("shocks", path=out)
+
+        assert out.read_text() == returned
+
+    def test_a_fully_styled_table_compiles(self, rbc, tmp_path):
+        """Every style option at once is the combination most likely to produce invalid LaTeX."""
+        pdflatex = shutil.which("pdflatex")
+        if pdflatex is None:
+            pytest.skip("pdflatex not installed")
+
+        body = rbc.write_table(
+            "parameters",
+            caption="Calibration",
+            label="tab:calib",
+            size="small",
+            booktabs=True,
+        )
+        source = tmp_path / "styled.tex"
+        source.write_text(
+            "\\documentclass{article}\n\\usepackage{amsmath,amssymb,booktabs}\n"
+            f"\\begin{{document}}\n{body}\n\\end{{document}}\n"
+        )
+
+        result = subprocess.run(
+            [pdflatex, "-interaction=nonstopmode", "-halt-on-error", source.name],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stdout[-2000:]
+
+
+@pytest.mark.parametrize("group", TABLE_GROUPS)
+@pytest.mark.parametrize("writer", list(TABLE_WRITERS))
+def test_every_announced_writer_renders_every_group(rbc, writer, group):
+    """A writer wired onto one table class but not the others passes a single-group test and fails in use."""
+    assert rbc.write_table(group, writer=writer)
+
+
+def test_a_style_option_the_group_does_not_take_raises(rbc):
+    """Equations render as an align environment, which has no rules to style, so booktabs must not be ignored."""
+    with pytest.raises(TypeError, match="'equations' takes no style option 'booktabs'"):
+        rbc.write_table("equations", booktabs=True)
+
+
+def test_a_build_option_the_group_does_not_take_raises(rbc):
+    """``expectations`` means nothing outside the equations group, and silence would hide a flag going nowhere."""
+    with pytest.raises(TypeError, match="'variables' takes no build option 'expectations'"):
+        rbc.table("variables", expectations=False)
+
+
+def test_an_unknown_style_option_names_the_group_not_the_renderer(rbc):
+    """Python's own message names the bound method, which is private, so a typo points at the wrong thing."""
+    with pytest.raises(TypeError, match="Accepted: caption, label, size, widths, booktabs"):
+        rbc.write_table("parameters", captoin="Calibration")
 
 
 def test_an_empty_table_rejects_widths():

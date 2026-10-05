@@ -221,6 +221,7 @@ numpydoc_xref_aliases = {
     "InferenceData": "arviz.InferenceData",
     "EquationTable": "gEconpy.model.tables.EquationTable",
     "CalibrationTable": "gEconpy.model.tables.CalibrationTable",
+    "SymbolTable": "gEconpy.model.tables.SymbolTable",
     "sp.Expr": "sympy.core.expr.Expr",
     "sympy.Expr": "sympy.core.expr.Expr",
     "Expr": "sympy.core.expr.Expr",

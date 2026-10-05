@@ -1,10 +1,13 @@
 import difflib
 import logging
+import re
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from functools import partial
+from inspect import signature
+from pathlib import Path
 from typing import Any, Literal, NamedTuple, overload
 
 import numpy as np
@@ -40,6 +43,7 @@ from gEconpy.model.steady_state import (
 )
 from gEconpy.model.tables import (
     TABLE_GROUPS,
+    TABLE_WRITERS,
     CalibrationTable,
     EquationRow,
     EquationTable,
@@ -678,7 +682,59 @@ class Model:
             "variables": partial(self._symbol_table, group),
             "shocks": partial(self._symbol_table, group),
         }
-        return builders[group](**options)
+        return _call_for_group(builders[group], group=group, kind="build option", **options)
+
+    def write_table(
+        self,
+        group: TableGroup,
+        writer: str = "latex",
+        path: str | Path | None = None,
+        build_options: dict[str, Any] | None = None,
+        **style: Any,
+    ) -> str:
+        """
+        Render one group of the model as markup for a document.
+
+        Parameters
+        ----------
+        group : str
+            One of ``"equations"``, ``"variables"``, ``"shocks"`` or ``"parameters"``.
+        writer : str, optional
+            Markup to emit. Defaults to ``"latex"``.
+        path : str or Path, optional
+            Write the markup to this file as well as returning it. Defaults to returning it only.
+        build_options : dict, optional
+            Options forwarded to the group's builder, as :meth:`table` takes them. Defaults to none.
+        **style
+            Style options for the writer, such as ``caption``, ``label``, ``size``, ``widths`` and
+            ``booktabs``. An option the group's renderer does not take raises ``TypeError``, so the
+            ``"equations"`` group, which renders as an ``align`` environment, takes none of them.
+
+        Returns
+        -------
+        markup : str
+            The rendered table.
+
+        Raises
+        ------
+        ValueError
+            If ``group`` or ``writer`` is not recognized.
+
+        Examples
+        --------
+        .. code-block:: python
+
+            model.write_table("parameters", caption="Calibration", label="tab:calib", booktabs=True)
+        """
+        build_options = build_options or {}
+        if writer not in TABLE_WRITERS:
+            raise ValueError(f"writer must be one of {', '.join(TABLE_WRITERS)}, got {writer!r}.")
+
+        table = self.table(group, **build_options)
+        markup = _call_for_group(getattr(table, TABLE_WRITERS[writer]), group=group, kind="style option", **style)
+        if path is not None:
+            Path(path).write_text(markup, encoding="utf-8")
+        return markup
 
     def to_latex(self, expectations: bool = True) -> str:
         r"""
@@ -2457,6 +2513,24 @@ class _ResidualFunctions(NamedTuple):
     resid: Callable
     jac: Callable | None = None
     grad: Callable | None = None
+
+
+def _call_for_group(renderer: Callable[..., Any], group: str, kind: str, **options: Any) -> Any:
+    """
+    Call a group's builder or renderer, re-raising an unknown keyword against the group the caller named.
+
+    Python's own message names the bound method, which is private here, so a caller passing a typo or an
+    option meant for another group is told about a function they never called.
+    """
+    try:
+        return renderer(**options)
+    except TypeError as error:
+        unexpected = re.search(r"unexpected keyword argument '([^']+)'", str(error))
+        if unexpected is None:
+            raise
+        accepted = [name for name in signature(renderer).parameters if name != "self"]
+        accepted_text = ", ".join(accepted) if accepted else "none"
+        raise TypeError(f"{group!r} takes no {kind} {unexpected.group(1)!r}. Accepted: {accepted_text}.") from error
 
 
 def _initialize_x0(optimizer_kwargs: dict, variables: list[sp.Symbol], jitter_x0: bool) -> np.ndarray:
