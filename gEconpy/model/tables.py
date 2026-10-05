@@ -1,6 +1,7 @@
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, fields
-from typing import Any
+from typing import Any, ClassVar
 
 import pandas as pd
 
@@ -167,6 +168,71 @@ class EquationTable:
 
 
 @dataclass(frozen=True)
+class _TabularTable(ABC):
+    """
+    Shared behavior for a table that prints as a LaTeX ``tabular``.
+
+    A subclass supplies its row type and its columns. The rows are built once and each renderer reads them,
+    so LaTeX and a dataframe cannot drift apart.
+    """
+
+    rows: Sequence[Any]
+
+    _row_type: ClassVar[type]
+
+    @abstractmethod
+    def _columns(self) -> list[_Column]:
+        """Return the columns this table prints, in order."""
+
+    def to_frame(self) -> pd.DataFrame:
+        """
+        Return the table as a dataframe, one row per entry.
+
+        Returns
+        -------
+        frame : pandas.DataFrame
+            One column per field of the row type, in declaration order.
+        """
+        return pd.DataFrame(
+            [asdict(row) for row in self.rows], columns=[field.name for field in fields(self._row_type)]
+        )
+
+    def to_latex(self) -> str:
+        r"""
+        Render the table as a LaTeX ``tabular``, dropping any column that is empty for every row.
+
+        Returns
+        -------
+        latex : str
+            The tabular, ready to paste into a document.
+        """
+        return _tabular(self.rows, self._columns())
+
+
+@dataclass(frozen=True)
+class SymbolRow:
+    """One variable or shock of a model, with the caption its ``symbols`` entry declares."""
+
+    symbol: str
+    description: str | None
+
+
+@dataclass(frozen=True)
+class SymbolTable(_TabularTable):
+    """A model's variables or shocks as table data, rendered on demand."""
+
+    rows: tuple[SymbolRow, ...] | list[SymbolRow]
+
+    _row_type: ClassVar[type] = SymbolRow
+
+    def _columns(self) -> list[_Column]:
+        return [
+            _Column("Symbol", "l", lambda row: f"${row.symbol}$"),
+            _Column("Description", r"p{0.5\linewidth}", lambda row: latex_escape(row.description or "")),
+        ]
+
+
+@dataclass(frozen=True)
 class ParameterRow:
     """One parameter of a model, with everything a calibration table prints about it."""
 
@@ -178,46 +244,19 @@ class ParameterRow:
 
 
 @dataclass(frozen=True)
-class CalibrationTable:
-    """
-    A model's parameters as table data, rendered on demand.
-
-    The rows are built once and each renderer reads them, so LaTeX and a dataframe cannot drift apart.
-    """
+class CalibrationTable(_TabularTable):
+    """A model's parameters as table data, rendered on demand."""
 
     rows: tuple[ParameterRow, ...] | list[ParameterRow]
 
-    def to_frame(self) -> pd.DataFrame:
-        """
-        Return the table as a dataframe, one row per parameter.
+    _row_type: ClassVar[type] = ParameterRow
 
-        Returns
-        -------
-        frame : pandas.DataFrame
-            Columns ``symbol``, ``description``, ``value``, ``prior`` and ``source``.
-        """
-        return pd.DataFrame([asdict(row) for row in self.rows], columns=[field.name for field in fields(ParameterRow)])
-
-    def to_latex(self) -> str:
-        r"""
-        Render the table as a LaTeX ``tabular``.
-
-        A column whose every entry is empty is dropped, so a model that declares no ``source`` does not print an
-        empty citation column.
-
-        Returns
-        -------
-        latex : str
-            The tabular, ready to paste into a document.
-        """
+    def _columns(self) -> list[_Column]:
         # Prose columns wrap; a symbol or a number does not need to.
-        return _tabular(
-            self.rows,
-            [
-                _Column("Parameter", "l", lambda row: f"${row.symbol}$"),
-                _Column("Description", r"p{0.3\linewidth}", lambda row: latex_escape(row.description or "")),
-                _Column("Value", "l", lambda row: _format_value(row.value)),
-                _Column("Prior", r"p{0.25\linewidth}", lambda row: latex_escape(row.prior or "")),
-                _Column("Source", r"p{0.2\linewidth}", lambda row: latex_escape(row.source or "")),
-            ],
-        )
+        return [
+            _Column("Parameter", "l", lambda row: f"${row.symbol}$"),
+            _Column("Description", r"p{0.3\linewidth}", lambda row: latex_escape(row.description or "")),
+            _Column("Value", "l", lambda row: _format_value(row.value)),
+            _Column("Prior", r"p{0.25\linewidth}", lambda row: latex_escape(row.prior or "")),
+            _Column("Source", r"p{0.2\linewidth}", lambda row: latex_escape(row.source or "")),
+        ]

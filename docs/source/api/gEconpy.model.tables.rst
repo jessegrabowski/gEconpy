@@ -11,7 +11,9 @@ gEconpy.model.tables
     EquationRow
     EquationTable
     ParameterRow
+    SymbolRow
+    SymbolTable
 
 .. automodule:: gEconpy.model.tables
-    :members: CalibrationTable, EquationRow, EquationTable, ParameterRow
+    :members: CalibrationTable, EquationRow, EquationTable, ParameterRow, SymbolRow, SymbolTable
     :undoc-members:
