@@ -192,6 +192,11 @@ class TestEmptyTable:
     def test_an_empty_table_renders_as_nothing(self, table):
         assert table.to_latex() == ""
 
+    @pytest.mark.parametrize("style", [{}, {"caption": "Shocks"}, {"label": "tab:s"}, {"size": "small"}])
+    def test_an_empty_table_stays_empty_under_any_style(self, style):
+        """A caption on no table still floats, numbering a phantom entry in the list of tables."""
+        assert SymbolTable([]).to_latex(**style) == ""
+
     @pytest.mark.parametrize(
         "table, columns",
         [
@@ -343,3 +348,9 @@ def test_a_symbol_table_drops_the_description_column_when_nothing_declares_one(t
 
     assert "Description" not in rendered
     assert "Symbol" in rendered
+
+
+def test_an_empty_table_rejects_widths():
+    """An empty table prints no columns, so any width count is wrong, and silence would hide a bad script."""
+    with pytest.raises(ValueError, match="one specifier per printed column"):
+        SymbolTable([]).to_latex(widths=["c", "c"])

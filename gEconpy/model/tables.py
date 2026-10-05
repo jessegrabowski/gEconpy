@@ -42,6 +42,62 @@ def _format_value(value: float | None, math: tuple[str, str] = ("$", "$")) -> st
     return rf"{opening}{mantissa} \times 10^{{{int(exponent)}}}{closing}"
 
 
+def _rules(booktabs: bool) -> tuple[str, str, str]:
+    """Return the top, middle and bottom rule commands, in booktabs or plain LaTeX."""
+    if booktabs:
+        return r"\toprule", r"\midrule", r"\bottomrule"
+    return r"\hline", r"\hline", r"\hline"
+
+
+def _wrap(
+    body: str,
+    caption: str | None,
+    label: str | None,
+    size: str | None,
+) -> str:
+    r"""
+    Wrap a rendered body in the LaTeX a document needs around it.
+
+    A caption or a label puts the body in a ``table`` environment, because neither can be referenced outside
+    one. A size is a declaration, so it applies until the enclosing group ends.
+
+    Parameters
+    ----------
+    body : str
+        The rendered tabular or environment. An empty body wraps to nothing, because a caption on no table
+        still floats.
+    caption : str, optional
+        Caption text, passed through as LaTeX so it can carry math. Defaults to no caption.
+    label : str, optional
+        Label for ``\ref``. Defaults to no label.
+    size : str, optional
+        A LaTeX size command without its backslash, such as ``small``. Defaults to the document's size.
+
+    Returns
+    -------
+    latex : str
+        The wrapped body.
+    """
+    # A caption on nothing still floats, numbering a phantom entry in the list of tables.
+    if not body:
+        return ""
+    if size:
+        # Braced, because a size command is a declaration that would otherwise run to the end of whatever
+        # group the caller pasted the table into.
+        body = f"{{\\{size}\n{body}\n}}"
+    if caption is None and label is None:
+        return body
+
+    lines = ["\\begin{table}[htbp]", "\\centering", body]
+    if caption is not None:
+        # Passed through as LaTeX, because a table caption in this literature routinely carries math.
+        lines.append(rf"\caption{{{caption}}}")
+    if label is not None:
+        lines.append(rf"\label{{{label}}}")
+    lines.append("\\end{table}")
+    return "\n".join(lines)
+
+
 @dataclass(frozen=True)
 class _Column:
     """
@@ -62,7 +118,12 @@ class _Column:
     value: Callable[[Any], str]
 
 
-def _tabular(rows: Sequence[Any], columns: Sequence[_Column]) -> str:
+def _tabular(
+    rows: Sequence[Any],
+    columns: Sequence[_Column],
+    widths: Sequence[str] | None = None,
+    booktabs: bool = False,
+) -> str:
     r"""
     Render rows as a LaTeX ``tabular``, dropping any column that is empty for every row.
 
@@ -72,6 +133,10 @@ def _tabular(rows: Sequence[Any], columns: Sequence[_Column]) -> str:
         The table rows, in print order.
     columns : sequence of _Column
         The columns to consider, in print order.
+    widths : sequence of str, optional
+        One LaTeX column specifier per kept column, replacing the defaults. Defaults to each column's own.
+    booktabs : bool, optional
+        Use ``\toprule``, ``\midrule`` and ``\bottomrule`` instead of ``\hline``. Defaults to False.
 
     Returns
     -------
@@ -80,13 +145,19 @@ def _tabular(rows: Sequence[Any], columns: Sequence[_Column]) -> str:
     """
     cells = {column.heading: [column.value(row) for row in rows] for column in columns}
     kept = [column for column in columns if any(cells[column.heading])]
+    # Checked before the empty-rows return, so a wrong column count is an error whether or not the model
+    # happens to have rows.
+    if widths is not None and len(widths) != len(kept):
+        raise ValueError(f"widths must give one specifier per printed column, got {len(widths)} for {len(kept)}.")
+
     if not rows:
         return ""
 
+    top, middle, bottom = _rules(booktabs)
     header = " & ".join(rf"\textbf{{{column.heading}}}" for column in kept)
     body = " \\\\\n".join(" & ".join(cells[column.heading][index] for column in kept) for index in range(len(rows)))
-    alignment = "".join(column.alignment for column in kept)
-    return f"\\begin{{tabular}}{{{alignment}}}\n\\hline\n{header} \\\\\n\\hline\n{body} \\\\\n\\hline\n\\end{{tabular}}"
+    alignment = "".join(widths) if widths is not None else "".join(column.alignment for column in kept)
+    return f"\\begin{{tabular}}{{{alignment}}}\n{top}\n{header} \\\\\n{middle}\n{body} \\\\\n{bottom}\n\\end{{tabular}}"
 
 
 @dataclass(frozen=True)
@@ -200,16 +271,42 @@ class _TabularTable(ABC):
             [asdict(row) for row in self.rows], columns=[field.name for field in fields(self._row_type)]
         )
 
-    def to_latex(self) -> str:
+    def to_latex(
+        self,
+        caption: str | None = None,
+        label: str | None = None,
+        size: str | None = None,
+        widths: Sequence[str] | None = None,
+        booktabs: bool = False,
+    ) -> str:
         r"""
         Render the table as a LaTeX ``tabular``, dropping any column that is empty for every row.
+
+        Parameters
+        ----------
+        caption : str, optional
+            Caption text, which puts the table in a ``table`` environment. It is passed through as LaTeX,
+            so it can carry math. Defaults to no caption.
+        label : str, optional
+            Label for ``\ref``, which puts the table in a ``table`` environment. Defaults to no label.
+        size : str, optional
+            A LaTeX size command without its backslash, such as ``small``. Defaults to the document's size.
+        widths : sequence of str, optional
+            One column specifier per printed column. Defaults to each column's own.
+        booktabs : bool, optional
+            Use booktabs rules instead of ``\hline``. Defaults to False.
 
         Returns
         -------
         latex : str
             The tabular, ready to paste into a document.
         """
-        return _tabular(self.rows, self._columns())
+        return _wrap(
+            _tabular(self.rows, self._columns(), widths=widths, booktabs=booktabs),
+            caption=caption,
+            label=label,
+            size=size,
+        )
 
 
 @dataclass(frozen=True)
