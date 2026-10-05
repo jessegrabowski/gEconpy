@@ -1,4 +1,6 @@
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, fields
+from typing import Any
 
 import pandas as pd
 
@@ -34,6 +36,53 @@ def _format_value(value: float | None, math: tuple[str, str] = ("$", "$")) -> st
     mantissa, _, exponent = rendered.partition("e")
     opening, closing = math
     return rf"{opening}{mantissa} \times 10^{{{int(exponent)}}}{closing}"
+
+
+@dataclass(frozen=True)
+class _Column:
+    """
+    One column of a tabular table: its heading, its LaTeX alignment, and how to read it off a row.
+
+    Parameters
+    ----------
+    heading : str
+        Column heading, printed in bold.
+    alignment : str
+        LaTeX column specifier, such as ``l`` or a ``p`` box for a column of prose that should wrap.
+    value : callable
+        Maps a row to its already-escaped cell text.
+    """
+
+    heading: str
+    alignment: str
+    value: Callable[[Any], str]
+
+
+def _tabular(rows: Sequence[Any], columns: Sequence[_Column]) -> str:
+    r"""
+    Render rows as a LaTeX ``tabular``, dropping any column that is empty for every row.
+
+    Parameters
+    ----------
+    rows : sequence
+        The table rows, in print order.
+    columns : sequence of _Column
+        The columns to consider, in print order.
+
+    Returns
+    -------
+    latex : str
+        The tabular, or the empty string when there are no rows.
+    """
+    cells = {column.heading: [column.value(row) for row in rows] for column in columns}
+    kept = [column for column in columns if any(cells[column.heading])]
+    if not rows:
+        return ""
+
+    header = " & ".join(rf"\textbf{{{column.heading}}}" for column in kept)
+    body = " \\\\\n".join(" & ".join(cells[column.heading][index] for column in kept) for index in range(len(rows)))
+    alignment = "".join(column.alignment for column in kept)
+    return f"\\begin{{tabular}}{{{alignment}}}\n\\hline\n{header} \\\\\n\\hline\n{body} \\\\\n\\hline\n\\end{{tabular}}"
 
 
 @dataclass(frozen=True)
@@ -161,26 +210,14 @@ class CalibrationTable:
         latex : str
             The tabular, ready to paste into a document.
         """
-        if not self.rows:
-            return ""
-
         # Prose columns wrap; a symbol or a number does not need to.
-        columns = [
-            ("Parameter", "l", lambda row: f"${row.symbol}$"),
-            ("Description", r"p{0.3\linewidth}", lambda row: latex_escape(row.description or "")),
-            ("Value", "l", lambda row: _format_value(row.value)),
-            ("Prior", r"p{0.25\linewidth}", lambda row: latex_escape(row.prior or "")),
-            ("Source", r"p{0.2\linewidth}", lambda row: latex_escape(row.source or "")),
-        ]
-        rendered = {heading: [render(row) for row in self.rows] for heading, _, render in columns}
-        kept = [(heading, alignment) for heading, alignment, _ in columns if any(rendered[heading])]
-
-        header = " & ".join(rf"\textbf{{{heading}}}" for heading, _ in kept)
-        body = " \\\\\n".join(
-            " & ".join(rendered[heading][index] for heading, _ in kept) for index in range(len(self.rows))
-        )
-        alignment = "".join(column for _, column in kept)
-        return (
-            f"\\begin{{tabular}}{{{alignment}}}\n\\hline\n{header} \\\\\n\\hline\n"
-            f"{body} \\\\\n\\hline\n\\end{{tabular}}"
+        return _tabular(
+            self.rows,
+            [
+                _Column("Parameter", "l", lambda row: f"${row.symbol}$"),
+                _Column("Description", r"p{0.3\linewidth}", lambda row: latex_escape(row.description or "")),
+                _Column("Value", "l", lambda row: _format_value(row.value)),
+                _Column("Prior", r"p{0.25\linewidth}", lambda row: latex_escape(row.prior or "")),
+                _Column("Source", r"p{0.2\linewidth}", lambda row: latex_escape(row.source or "")),
+            ],
         )
