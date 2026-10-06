@@ -7,6 +7,8 @@ import pytest
 from gEconpy import model_from_gcn
 from gEconpy.data import get_example_gcn
 from gEconpy.model.tables import (
+    PRIOR_STAT_HEADINGS,
+    PRIOR_STATS,
     TABLE_GROUPS,
     TABLE_WRITERS,
     CalibrationTable,
@@ -507,6 +509,36 @@ def test_the_prior_presentation_is_chosen_by_the_caller(rbc, options, headings):
     ]
 
     assert printed == headings
+
+
+def test_an_unknown_prior_statistic_raises(rbc):
+    """A typo must not produce a silently empty column in a table bound for a paper."""
+    with pytest.raises(ValueError, match="got medain"):
+        rbc.table("parameters", prior_stats=["medain"])
+
+
+def test_an_unknown_statistic_raises_even_when_no_parameter_has_a_prior():
+    """Validating against the rows would pass a typo on a model whose parameters are all calibrated."""
+    with pytest.raises(ValueError, match="got medain"):
+        CalibrationTable(rows=[ParameterRow("x", None, 1.0, None, None)], prior_stats=["medain"])
+
+
+def test_a_distribution_method_that_is_not_a_statistic_is_rejected():
+    """``rvs`` and ``plot_pdf`` are on the base class too, so presence alone is not the test."""
+    with pytest.raises(ValueError, match="got rvs"):
+        CalibrationTable(rows=[], prior_stats=["rvs"])
+
+
+@pytest.mark.parametrize("name", PRIOR_STATS)
+def test_every_announced_statistic_renders(rbc, name):
+    """A name in PRIOR_STATS that some family cannot compute would raise only for that family's priors."""
+    heading = PRIOR_STAT_HEADINGS.get(name, name.title())
+
+    frame = rbc.table("parameters", prior_stats=[name]).to_frame()
+    rendered = rbc.table("parameters", prior_stats=[name]).to_latex()
+
+    assert rf"\textbf{{{heading}}}" in rendered
+    assert frame[f"prior_{name}"].notna().all()
 
 
 def test_a_prior_prints_its_moments_to_three_figures(rbc):

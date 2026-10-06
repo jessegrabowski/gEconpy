@@ -11,6 +11,9 @@ from sympy.printing.latex import latex_escape
 from gEconpy.model.latex import block_heading
 
 TableGroup = Literal["equations", "variables", "shocks", "parameters"]
+# The statistics every preliz family reports, which is the vocabulary a caller may ask a prior for. A name
+# outside it is rejected rather than rendered empty, because an empty column in a paper is not a visible error.
+PRIOR_STATS = ("mean", "median", "mode", "std", "var", "skewness", "kurtosis", "entropy")
 # Headings for the names a title case would get wrong.
 PRIOR_STAT_HEADINGS = {"std": "S.D.", "var": "Variance", "skewness": "Skew", "kurtosis": "Kurtosis"}
 DEFAULT_PRIOR_STATS = ("mean", "std")
@@ -414,8 +417,8 @@ class CalibrationTable(_TabularTable):
     rows : sequence of ParameterRow
         The parameters, in print order.
     prior_stats : sequence of str, optional
-        Statistics of the prior to print, one column each, named as the distribution's own methods are.
-        Defaults to the mean and the standard deviation, which is what a DSGE paper reports.
+        Statistics of the prior to print, one column each, from ``PRIOR_STATS``. Defaults to the mean and the
+        standard deviation, which is what a DSGE paper reports.
     include_prior_params : bool, optional
         Print the distribution's own parameters in a column of their own. Defaults to False.
     """
@@ -425,6 +428,14 @@ class CalibrationTable(_TabularTable):
     include_prior_params: bool = False
 
     _row_type: ClassVar[type] = ParameterRow
+
+    def __post_init__(self) -> None:
+        """Reject an unknown statistic here rather than at render time, where it depends on the data."""
+        unknown = [name for name in self.prior_stats if name not in PRIOR_STATS]
+        if unknown:
+            raise ValueError(
+                f"prior_stats must name statistics from {', '.join(PRIOR_STATS)}, got {', '.join(unknown)}."
+            )
 
     def to_frame(self) -> pd.DataFrame:
         """
