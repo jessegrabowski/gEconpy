@@ -1,6 +1,7 @@
 import shutil
 import subprocess
 
+import preliz
 import pytest
 
 from gEconpy import model_from_gcn
@@ -122,7 +123,8 @@ class TestCalibrationTable:
 
         assert row.description == "Capital share of output"
         assert row.value == pytest.approx(0.35)
-        assert row.prior.startswith("Beta(")
+        assert row.prior_family == "Beta"
+        assert row.prior_stat("mean") == pytest.approx(0.344, abs=1e-3)
 
     def test_a_parameter_renders_by_the_same_rules_as_a_variable(self, tmp_path):
         r"""
@@ -183,7 +185,16 @@ class TestCalibrationTable:
         """to_latex drops an empty column for printing; the frame is data and keeps it."""
         frame = rbc.table("parameters").to_frame()
 
-        assert list(frame.columns) == ["symbol", "description", "value", "prior", "source"]
+        assert list(frame.columns) == [
+            "symbol",
+            "description",
+            "value",
+            "prior",
+            "prior_mean",
+            "prior_std",
+            "prior_parameters",
+            "source",
+        ]
         assert len(frame) == len(rbc.table("parameters").rows)
 
 
@@ -203,7 +214,10 @@ class TestEmptyTable:
         "table, columns",
         [
             (EquationTable([]), ["block", "equation_id", "label", "equation"]),
-            (CalibrationTable([]), ["symbol", "description", "value", "prior", "source"]),
+            (
+                CalibrationTable([]),
+                ["symbol", "description", "value", "prior", "prior_mean", "prior_std", "prior_parameters", "source"],
+            ),
         ],
         ids=["equations", "calibration"],
     )
@@ -241,7 +255,7 @@ def test_the_rendered_calibration_has_the_expected_shape():
                 symbol=r"\alpha",
                 description="Capital share of output",
                 value=0.35,
-                prior="Beta(alpha=21.8, beta=41.6)",
+                prior=preliz.Beta(alpha=21.8, beta=41.6),
                 source="Smets & Wouters (2007)",
             ),
             ParameterRow(symbol=r"\delta", description="Depreciation rate", value=0.02, prior=None, source=None),
@@ -249,12 +263,13 @@ def test_the_rendered_calibration_has_the_expected_shape():
     )
 
     assert table.to_latex() == (
-        "\\begin{tabular}{lp{0.3\\linewidth}lp{0.25\\linewidth}p{0.2\\linewidth}}\n"
+        "\\begin{tabular}{lp{0.3\\linewidth}llrrp{0.2\\linewidth}}\n"
         "\\hline\n"
-        "\\textbf{Parameter} & \\textbf{Description} & \\textbf{Value} & \\textbf{Prior} & \\textbf{Source} \\\\\n"
+        "\\textbf{Parameter} & \\textbf{Description} & \\textbf{Value} & \\textbf{Prior} & "
+        "\\textbf{Mean} & \\textbf{S.D.} & \\textbf{Source} \\\\\n"
         "\\hline\n"
-        "$\\alpha$ & Capital share of output & 0.35 & Beta(alpha=21.8, beta=41.6) & Smets \\& Wouters (2007) \\\\\n"
-        "$\\delta$ & Depreciation rate & 0.02 &  &  \\\\\n"
+        "$\\alpha$ & Capital share of output & 0.35 & Beta & 0.344 & 0.0592 & Smets \\& Wouters (2007) \\\\\n"
+        "$\\delta$ & Depreciation rate & 0.02 &  &  &  &  \\\\\n"
         "\\hline\n"
         "\\end{tabular}"
     )
@@ -294,7 +309,10 @@ def test_the_rendered_table_compiles(rbc, group, tmp_path):
         ("equations", ["block", "equation_id", "label", "equation"]),
         ("variables", ["symbol", "description"]),
         ("shocks", ["symbol", "description"]),
-        ("parameters", ["symbol", "description", "value", "prior", "source"]),
+        (
+            "parameters",
+            ["symbol", "description", "value", "prior", "prior_mean", "prior_std", "prior_parameters", "source"],
+        ),
     ],
 )
 def test_every_group_declares_the_columns_its_frame_carries(rbc, group, columns):
@@ -468,3 +486,29 @@ def test_an_empty_table_rejects_widths():
     """An empty table prints no columns, so any width count is wrong, and silence would hide a bad script."""
     with pytest.raises(ValueError, match="one specifier per printed column"):
         SymbolTable([]).to_latex(widths=["c", "c"])
+
+
+def test_a_prior_prints_its_moments_to_three_figures(rbc):
+    """``%g`` gives six, and a prior mean of 0.343849 is noise in a paper."""
+    rendered = rbc.table("parameters").to_latex()
+
+    assert "& 0.344 &" in rendered
+    assert "0.343849" not in rendered
+
+
+def test_a_parameter_with_no_prior_reports_nothing_about_one():
+    """A calibrated parameter has a value and no distribution, and must not print a family or a moment."""
+    row = ParameterRow(symbol=r"\delta", description="Depreciation rate", value=0.02, prior=None, source=None)
+
+    assert row.prior_family == ""
+    assert row.prior_stat("mean") is None
+    assert row.prior_parameters == ""
+
+
+def test_prior_parameters_rounds_like_the_moment_columns_beside_it():
+    """The raw fitted values run to six figures, which is the noise this column exists to avoid."""
+    row = ParameterRow(
+        symbol=r"\alpha", description=None, value=None, prior=preliz.Beta(alpha=21.8346, beta=41.6247), source=None
+    )
+
+    assert row.prior_parameters == "alpha=21.8, beta=41.6"

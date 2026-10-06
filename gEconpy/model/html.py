@@ -10,7 +10,7 @@ from IPython.display import HTML
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
 from gEconpy.model.latex import authored_equation_latex, block_heading
-from gEconpy.model.tables import SymbolTable, _format_value
+from gEconpy.model.tables import PRIOR_STAT_PRECISION, SymbolTable, _format_value
 from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.parser.ast.nodes import GCNBlock, GCNDistribution, GCNEquation
 from gEconpy.parser.loader import load_gcn_file
@@ -309,14 +309,19 @@ def _calibration_section(model: "Model") -> str:
             f"\\({row.symbol}\\)",
             escape(row.description or ""),
             _format_value(row.value, math=(r"\(", r"\)")),
-            escape(row.prior or ""),
+            escape(row.prior_family),
+            _format_value(row.prior_stat("mean"), math=(r"\(", r"\)"), precision=PRIOR_STAT_PRECISION),
+            _format_value(row.prior_stat("std"), math=(r"\(", r"\)"), precision=PRIOR_STAT_PRECISION),
             escape(row.source or ""),
         )
         for row in rows
     ]
     # Counted from the rows, because the parameters group adds calibrated parameters and shock
     # hyper-parameters that ``model.params`` does not hold.
-    return _section(f"Parameters ({len(rows)})", _table(cells, ("Symbol", "Description", "Value", "Prior", "Source")))
+    return _section(
+        f"Parameters ({len(rows)})",
+        _table(cells, ("Symbol", "Description", "Value", "Prior", "Mean", "S.D.", "Source")),
+    )
 
 
 def render_model(model: "Model", source_ast: GCNModel | None = None) -> str:

@@ -108,7 +108,14 @@ class TestModelRepr:
         assert not re.findall(r"<details[^>]*\bopen\b", rbc._repr_html_())
 
     def test_a_prior_reaches_the_parameter_table(self, rbc):
-        assert "Beta(alpha=" in rbc._repr_html_()
+        """The notebook and a paper's table read the same rows, so they report the prior the same way."""
+        rendered = rbc._repr_html_()
+        row = next(r for r in rbc.table("parameters").rows if r.prior is not None)
+        mean = f"{row.prior_stat('mean'):.3g}"
+
+        assert [h for h in ["Prior", "Mean", "S.D."] if f"<th>{h}</th>" in rendered] == ["Prior", "Mean", "S.D."]
+        assert f"<td>{row.prior_family}</td>" in rendered
+        assert mean in rendered
 
     def test_the_parameter_count_matches_the_table_under_it(self):
         """``model.params`` omits calibrated parameters and shock hyper-parameters; the table holds them."""

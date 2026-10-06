@@ -599,7 +599,7 @@ class Model:
         # A shock's standard deviation is a hyper-parameter of its prior, not a model parameter, so it reaches
         # neither of the dicts above. An estimated model's prior table is the one place it must appear.
         hyper_priors = {
-            hyper_name: str(distribution.hyper_param_dict[param_name])
+            hyper_name: distribution.hyper_param_dict[param_name]
             for distribution in self.shock_priors.values()
             for param_name, hyper_name in getattr(distribution, "param_name_to_hyper_name", {}).items()
             if param_name in getattr(distribution, "hyper_param_dict", {})
@@ -614,11 +614,11 @@ class Model:
                     symbol=render_name_latex(name, stem_override=overrides.get(name)),
                     description=declarations[name].name if name in declarations else None,
                     value=None if name not in values else float(values[name]),
-                    prior=None if name not in priors else str(priors[name]),
+                    prior=priors.get(name),
                     source=declarations[name].source if name in declarations else None,
                 )
                 for name in names
-            ]
+            ],
         )
 
     def _symbol_table(self, group: str) -> SymbolTable:

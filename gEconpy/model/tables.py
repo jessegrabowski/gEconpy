@@ -5,18 +5,21 @@ from typing import Any, ClassVar, Literal, get_args
 
 import pandas as pd
 
+from preliz.distributions.distributions import Distribution
 from sympy.printing.latex import latex_escape
 
 from gEconpy.model.latex import block_heading
 
 TableGroup = Literal["equations", "variables", "shocks", "parameters"]
+# A prior mean of 0.343849 is noise in a paper, and three figures is what the literature prints.
+PRIOR_STAT_PRECISION = 3
 TABLE_GROUPS: tuple[TableGroup, ...] = get_args(TableGroup)
 # Writer name to the method that renders it. ``test_every_announced_writer_renders_every_group`` parametrizes
 # over this mapping and every group, so a writer added here without a method on all three tables fails.
 TABLE_WRITERS = {"latex": "to_latex"}
 
 
-def _format_value(value: float | None, math: tuple[str, str] = ("$", "$")) -> str:
+def _format_value(value: float | None, math: tuple[str, str] = ("$", "$"), precision: int = 6) -> str:
     """
     Render a parameter value, keeping scientific notation inside math mode so it does not print literally.
 
@@ -27,6 +30,8 @@ def _format_value(value: float | None, math: tuple[str, str] = ("$", "$")) -> st
     math : tuple of (str, str), optional
         Opening and closing math delimiters for scientific notation. Defaults to a LaTeX document's ``$``,
         which an HTML renderer must override because no notebook frontend recognizes it.
+    precision : int, optional
+        Significant figures. Defaults to 6, which is what ``%g`` gives.
 
     Returns
     -------
@@ -36,7 +41,7 @@ def _format_value(value: float | None, math: tuple[str, str] = ("$", "$")) -> st
     if value is None:
         return ""
 
-    rendered = f"{value:g}"
+    rendered = f"{value:.{precision}g}"
     if "e" not in rendered:
         return rendered
 
@@ -337,22 +342,126 @@ class SymbolTable(_TabularTable):
 
 @dataclass(frozen=True)
 class ParameterRow:
-    """One parameter of a model, with everything a calibration table prints about it."""
+    """
+    One parameter of a model, with everything a calibration table prints about it.
+
+    ``prior`` is the distribution itself rather than a rendering of it, so a renderer can print the family,
+    its moments, its parameters, or any combination.
+    """
 
     symbol: str
     description: str | None
     value: float | None
-    prior: str | None
+    prior: Distribution | None
     source: str | None
+
+    @property
+    def prior_family(self) -> str:
+        """Name of the prior's distribution family, empty when the parameter has no prior."""
+        return "" if self.prior is None else type(self.prior).__name__
+
+    def prior_stat(self, name: str) -> float | None:
+        """
+        Return one statistic of the prior.
+
+        Parameters
+        ----------
+        name : str
+            Any statistic the distribution computes, such as ``mean``, ``std``, ``median``, ``skewness`` or
+            ``kurtosis``.
+
+        Returns
+        -------
+        value : float or None
+            The statistic, or None when the parameter has no prior.
+
+        Raises
+        ------
+        AttributeError
+            If the prior's family does not provide ``name``.
+        """
+        if self.prior is None:
+            return None
+        statistic = getattr(self.prior, name, None)
+        if statistic is None:
+            raise AttributeError(f"{type(self.prior).__name__} has no statistic {name!r}.")
+        return float(statistic())
+
+    @property
+    def prior_parameters(self) -> str:
+        """
+        The prior's own parameters as ``name=value`` pairs, empty when the parameter has no prior.
+
+        The values carry ``PRIOR_STAT_PRECISION`` figures, matching the moment columns beside them.
+        """
+        # An unfrozen distribution, such as a ``Beta()`` declared with no parameters, has none to report.
+        params = None if self.prior is None else self.prior.params_dict
+        if not params:
+            return ""
+        return ", ".join(f"{name}={value:.{PRIOR_STAT_PRECISION}g}" for name, value in params.items())
 
 
 @dataclass(frozen=True)
 class CalibrationTable(_TabularTable):
-    """A model's parameters as table data, rendered on demand."""
+    """
+    A model's parameters as table data, rendered on demand.
+
+    Parameters
+    ----------
+    rows : sequence of ParameterRow
+        The parameters, in print order.
+    """
 
     rows: tuple[ParameterRow, ...] | list[ParameterRow]
 
     _row_type: ClassVar[type] = ParameterRow
+
+    def to_frame(self) -> pd.DataFrame:
+        """
+        Return the table as a dataframe, one row per parameter.
+
+        The prior is expanded into its family, moments and parameters, because a dataframe cell holding a
+        live distribution object is not data anyone can work with.
+
+        Returns
+        -------
+        frame : pandas.DataFrame
+            Columns ``symbol``, ``description``, ``value``, ``prior``, ``prior_mean``, ``prior_sd``,
+            ``prior_parameters`` and ``source``.
+        """
+        return pd.DataFrame(
+            [
+                {
+                    "symbol": row.symbol,
+                    "description": row.description,
+                    "value": row.value,
+                    "prior": row.prior_family or None,
+                    "prior_mean": row.prior_stat("mean"),
+                    "prior_std": row.prior_stat("std"),
+                    "prior_parameters": row.prior_parameters or None,
+                    "source": row.source,
+                }
+                for row in self.rows
+            ],
+            columns=[
+                "symbol",
+                "description",
+                "value",
+                "prior",
+                "prior_mean",
+                "prior_std",
+                "prior_parameters",
+                "source",
+            ],
+        )
+
+    def _prior_columns(self) -> list[_Column]:
+        """Return the family column and the two moments a DSGE paper reports."""
+        return [
+            _Column("Prior", "l", lambda row: latex_escape(row.prior_family)),
+            _Column("Mean", "r", lambda row: _format_value(row.prior_stat("mean"), precision=PRIOR_STAT_PRECISION)),
+            _Column("S.D.", "r", lambda row: _format_value(row.prior_stat("std"), precision=PRIOR_STAT_PRECISION)),
+        ]
 
     def _columns(self) -> list[_Column]:
         # Prose columns wrap; a symbol or a number does not need to.
@@ -360,6 +469,6 @@ class CalibrationTable(_TabularTable):
             _Column("Parameter", "l", lambda row: f"${row.symbol}$"),
             _Column("Description", r"p{0.3\linewidth}", lambda row: latex_escape(row.description or "")),
             _Column("Value", "l", lambda row: _format_value(row.value)),
-            _Column("Prior", r"p{0.25\linewidth}", lambda row: latex_escape(row.prior or "")),
+            *self._prior_columns(),
             _Column("Source", r"p{0.2\linewidth}", lambda row: latex_escape(row.source or "")),
         ]
