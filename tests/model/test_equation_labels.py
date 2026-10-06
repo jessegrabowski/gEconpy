@@ -72,40 +72,58 @@ def test_a_control_caption_lands_on_the_derived_condition_not_the_control():
     }
 
 
-class TestGeneratedCaptions:
-    def test_an_unannotated_first_order_condition_gets_a_caption_from_its_block_and_symbol(self):
-        """The default is what most models print, since nobody annotates every control."""
+class TestDerivativeConditions:
+    def test_an_unannotated_first_order_condition_is_not_captioned(self):
+        """Only an author captions an equation, exactly as for every other kind of row."""
         model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
 
-        assert model.equation_label("Household.foc.C") == "Household first-order condition for Consumption"
-        assert model.equation_label("Firm.foc.L") == "Firm first-order condition for Hours worked"
+        assert model.equation_label("Household.foc.C") is None
+        assert model.equation_label("Firm.foc.L") is None
 
-    def test_a_multi_word_block_name_reads_as_a_sentence(self):
-        """An underscore is a word break, and a name the author cased themselves keeps that casing."""
+    def test_an_uncaptioned_condition_prints_the_derivative_it_came_from(self):
+        """The prefix is what tells a reader which control the condition belongs to, now that no caption does."""
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+
+        latex = model.table("equations").to_latex()
+
+        assert r"\frac{\partial \mathcal{L}}{\partial C_{t}} = 0 &\implies" in latex
+
+    def test_the_control_carries_the_time_index_it_was_declared_with(self):
+        """``K[-1]`` is a control of the firm, and a derivative with respect to ``K_t`` would be the wrong one."""
         model = model_from_gcn(get_example_gcn("RBC_two_household"), verbose=False)
 
-        label = model.equation_label("Ricardian_Household.foc.C_R")
+        latex = model.table("equations").to_latex()
 
-        assert label.startswith("Ricardian Household first-order condition for ")
+        assert r"\partial K_{t-1}} = 0" in latex
 
-    def test_a_symbol_without_a_declared_name_falls_back_to_its_identifier(self):
-        model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+    def test_a_declared_latex_name_renders_in_the_derivative(self, tmp_path):
+        """The prefix is built from the same symbol the equations are, so an override has to reach both."""
+        source = (TEST_GCNS / "open_rbc.gcn").read_text()
+        declared = source.replace(
+            "    C[] { positive = True; };", r'    C[] { positive = True; latex = "\mathcal{C}"; };', 1
+        )
+        assert declared != source, "open_rbc.gcn changed; update the replacement"
+        path = tmp_path / "declared.gcn"
+        path.write_text(declared)
 
-        assert model.equation_label("Household.foc.C") == "Household first-order condition for C"
+        latex = model_from_gcn(path, verbose=False).table("equations").to_latex()
 
-    @pytest.mark.parametrize(
-        "equation_id",
-        ["Household.identities.0", "Household.constraints.0", "Household.objective"],
-        ids=["identity", "constraint", "objective"],
-    )
-    def test_nothing_is_derived_for_an_equation_the_author_wrote(self, equation_id):
-        """An authored equation has source text to label, so inventing a caption for it would be guessing."""
-        model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+        assert r"\partial {\mathcal{C}}_{t}} = 0" in latex
 
-        assert model.equation_label(equation_id) is None
-
-    def test_an_authored_caption_beats_the_generated_one(self, labelled_model_path):
+    def test_an_authored_caption_keeps_its_tag_instead_of_the_derivative(self, labelled_model_path):
+        """A caption and a derivative in the same row would say the same thing twice."""
         model = model_from_gcn(labelled_model_path, verbose=False)
 
-        assert model.equation_label("Household.foc.C") == "Consumption Euler equation"
-        assert model.equation_label("Household.foc.L") == "Household first-order condition for L"
+        latex = model.table("equations").to_latex()
+
+        assert r"\tag{\text{Consumption Euler equation}}" in latex
+        assert r"\partial C_{t}} = 0" not in latex
+
+    def test_an_equation_the_author_wrote_gets_neither(self):
+        """An authored equation has source text to label, so inventing a caption or a derivative would be guessing."""
+        model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+
+        row = next(r for r in model.table("equations").rows if r.equation_id == "Household.constraints.0")
+
+        assert row.label is None
+        assert row.foc_control is None

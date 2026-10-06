@@ -10,7 +10,7 @@ from IPython.display import HTML
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
 from gEconpy.model.latex import authored_equation_latex, block_heading
-from gEconpy.model.tables import _format_value
+from gEconpy.model.tables import PRIOR_STAT_PRECISION, SymbolTable, _format_value
 from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.parser.ast.nodes import GCNBlock, GCNDistribution, GCNEquation
 from gEconpy.parser.loader import load_gcn_file
@@ -222,17 +222,9 @@ def _declared_latex(declarations: dict[str, SymbolDeclaration]) -> dict[str, str
     return {name: declaration.latex for name, declaration in declarations.items() if declaration.latex}
 
 
-def _symbol_rows(
-    symbols: Sequence[TimeAwareSymbol],
-    declarations: dict[str, SymbolDeclaration],
-    overrides: dict[str, str],
-) -> list[tuple[str, str]]:
-    rows = []
-    for symbol in symbols:
-        declaration = declarations.get(variable_key(symbol.base_name))
-        caption = escape(declaration.name) if declaration is not None and declaration.name else ""
-        rows.append((f"\\({_symbol_latex(symbol, overrides)}\\)", caption))
-    return rows
+def _symbol_cells(table: SymbolTable) -> list[tuple[str, str]]:
+    r"""Wrap the public symbol rows for HTML, where math takes ``\(...\)`` and prose must be escaped."""
+    return [(f"\\({row.symbol}\\)", escape(row.description or "")) for row in table.rows]
 
 
 def _problem_latex(block: GCNBlock, overrides: dict[str, str]) -> list[str]:
@@ -311,20 +303,25 @@ def _block_section(block: GCNBlock, overrides: dict[str, str]) -> str:
 
 def _calibration_section(model: "Model") -> str:
     """Reuse the calibration table's rows, so the notebook view and a paper's table cannot disagree."""
-    rows = model.calibration_table().rows
+    rows = model.table("parameters").rows
     cells = [
         (
             f"\\({row.symbol}\\)",
             escape(row.description or ""),
             _format_value(row.value, math=(r"\(", r"\)")),
-            escape(row.prior or ""),
+            escape(row.prior_family),
+            _format_value(row.prior_stat("mean"), math=(r"\(", r"\)"), precision=PRIOR_STAT_PRECISION),
+            _format_value(row.prior_stat("std"), math=(r"\(", r"\)"), precision=PRIOR_STAT_PRECISION),
             escape(row.source or ""),
         )
         for row in rows
     ]
-    # Counted from the rows, because ``calibration_table`` adds calibrated parameters and shock
+    # Counted from the rows, because the parameters group adds calibrated parameters and shock
     # hyper-parameters that ``model.params`` does not hold.
-    return _section(f"Parameters ({len(rows)})", _table(cells, ("Symbol", "Description", "Value", "Prior", "Source")))
+    return _section(
+        f"Parameters ({len(rows)})",
+        _table(cells, ("Symbol", "Description", "Value", "Prior", "Mean", "S.D.", "Source")),
+    )
 
 
 def render_model(model: "Model", source_ast: GCNModel | None = None) -> str:
@@ -348,19 +345,17 @@ def render_model(model: "Model", source_ast: GCNModel | None = None) -> str:
     html : str
         The rendered representation, including its stylesheet.
     """
-    # Taken from the model rather than from ``source_ast``, which may be absent. Otherwise a model built
-    # without a parsed file would blank every variable caption while the parameter table, which goes through
-    # ``calibration_table``, kept its descriptions.
-    declarations = model._declarations_by_name()
+    # The symbol tables take their captions from the model, not from ``source_ast``, which may be absent.
+    # The block sections below need the overrides directly, because they render authored equations.
     overrides = model._latex_overrides()
     sections = [
         _section(
             f"Variables ({len(model.variables)})",
-            _table(_symbol_rows(model.variables, declarations, overrides), ("Symbol", "Description")),
+            _table(_symbol_cells(model.table("variables")), ("Symbol", "Description")),
         ),
         _section(
             f"Shocks ({len(model.shocks)})",
-            _table(_symbol_rows(model.shocks, declarations, overrides), ("Symbol", "Description")),
+            _table(_symbol_cells(model.table("shocks")), ("Symbol", "Description")),
         ),
         _calibration_section(model),
     ]

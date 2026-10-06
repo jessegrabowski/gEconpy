@@ -201,7 +201,8 @@ class TestToLatex:
         rows = [line for line in lines if not line.startswith(r"\intertext")]
 
         assert len(rows) == len(definition_rows(rbc._source_ast)) + len(rbc._equation_ids)
-        assert all("&=" in row for row in rows)
+        # A first-order condition aligns on its implication arrow instead, which sits in the same column.
+        assert all("&=" in row or r"&\implies" in row for row in rows)
 
     def test_a_definition_the_solver_substituted_away_is_still_printed(self, rbc):
         """An authored equation names it, so without the row the system has more unknowns than equations."""

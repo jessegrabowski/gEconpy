@@ -1,10 +1,14 @@
 import difflib
 import logging
+import re
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from copy import deepcopy
-from typing import Literal, NamedTuple
+from functools import partial
+from inspect import signature
+from pathlib import Path
+from typing import Any, Literal, NamedTuple, overload
 
 import numpy as np
 import pytensor
@@ -21,10 +25,10 @@ from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_name_latex
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex, render_name_latex
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
-from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex
+from gEconpy.model.latex import definition_rows, equation_sides_latex
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import check_perturbation_solution, make_not_loglin_flags
 from gEconpy.model.perturbation import linearize_model as _linearize_model
@@ -37,7 +41,18 @@ from gEconpy.model.steady_state import (
     compile_known_ss,
     system_to_steady_state,
 )
-from gEconpy.model.tables import CalibrationTable, EquationRow, EquationTable, ParameterRow
+from gEconpy.model.tables import (
+    DEFAULT_PRIOR_STATS,
+    TABLE_GROUPS,
+    TABLE_WRITERS,
+    CalibrationTable,
+    EquationRow,
+    EquationTable,
+    ParameterRow,
+    SymbolRow,
+    SymbolTable,
+    TableGroup,
+)
 from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
@@ -477,9 +492,7 @@ class Model:
         """
         Caption for one equation, as a table or a figure would print it.
 
-        An author's ``@name`` or ``@foc_name`` wins. Failing that, a first-order condition gets a caption built
-        from its block and the control it came from, so an unannotated model still labels the equations most
-        papers tabulate.
+        An equation is captioned only where the author wrote a ``@name`` or a ``@foc_name``.
 
         Parameters
         ----------
@@ -489,22 +502,27 @@ class Model:
         Returns
         -------
         label : str or None
-            The caption, or None when there is no authored one and none can be derived.
+            The authored caption, or None.
         """
-        authored = self._equation_labels.get(equation_id)
-        if authored is not None:
-            return authored
+        return self._equation_labels.get(equation_id)
 
+    def _foc_control_latex(self, equation_id: str, overrides: dict[str, str]) -> str | None:
+        """Return the rendered control a first-order condition was taken with respect to, or None."""
         # Ids are built in Block.solve_optimization as "{block}.{component}.{suffix}", and
         # test_ids_name_the_block_and_component_they_came_from pins that format.
         block_name, _, remainder = equation_id.partition(".")
-        component, _, control = remainder.partition(".")
-        if component != "foc":
+        component, _, control_name = remainder.partition(".")
+        block = self._source_ast.get_block(block_name) if self._source_ast else None
+        if component != "foc" or block is None:
             return None
 
-        return f"{block_heading(block_name)} first-order condition for {self._symbol_caption(control)}"
+        for variable in block.controls:
+            if variable.name == control_name:
+                symbol = TimeAwareSymbol(control_name, variable.time_index.value)
+                return render_latex(symbol, stem_override=overrides.get(variable_key(control_name)))
+        return None
 
-    def equation_table(self, expectations: bool = True) -> EquationTable:
+    def _equation_table(self, expectations: bool = True) -> EquationTable:
         r"""
         Build the model's equations as table data, for a paper's equation table.
 
@@ -559,12 +577,17 @@ class Model:
                         label=self.equation_label(equation_id),
                         left=left,
                         right=right,
+                        foc_control=self._foc_control_latex(equation_id, overrides),
                     )
                 )
 
         return EquationTable(rows=rows)
 
-    def calibration_table(self) -> CalibrationTable:
+    def _calibration_table(
+        self,
+        prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS,
+        include_prior_params: bool = False,
+    ) -> CalibrationTable:
         """
         Build the model's parameters as table data, for a paper's calibration table.
 
@@ -585,7 +608,7 @@ class Model:
         # A shock's standard deviation is a hyper-parameter of its prior, not a model parameter, so it reaches
         # neither of the dicts above. An estimated model's prior table is the one place it must appear.
         hyper_priors = {
-            hyper_name: str(distribution.hyper_param_dict[param_name])
+            hyper_name: distribution.hyper_param_dict[param_name]
             for distribution in self.shock_priors.values()
             for param_name, hyper_name in getattr(distribution, "param_name_to_hyper_name", {}).items()
             if param_name in getattr(distribution, "hyper_param_dict", {})
@@ -595,17 +618,134 @@ class Model:
         calibrated = [parameter.name for parameter in self.calibrated_params if parameter.name not in values]
         names = [*values, *calibrated, *(name for name in hyper_priors if name not in values)]
         return CalibrationTable(
+            prior_stats=prior_stats,
+            include_prior_params=include_prior_params,
             rows=[
                 ParameterRow(
                     symbol=render_name_latex(name, stem_override=overrides.get(name)),
                     description=declarations[name].name if name in declarations else None,
                     value=None if name not in values else float(values[name]),
-                    prior=None if name not in priors else str(priors[name]),
+                    prior=priors.get(name),
                     source=declarations[name].source if name in declarations else None,
                 )
                 for name in names
-            ]
+            ],
         )
+
+    def _symbol_table(self, group: str) -> SymbolTable:
+        """Build the variable or shock rows, resolving each symbol's declared caption and LaTeX."""
+        overrides = self._latex_overrides()
+        declarations = self._declarations_by_name()
+        symbols = {"variables": self.variables, "shocks": self.shocks}[group]
+
+        rows = []
+        for symbol in symbols:
+            key = variable_key(symbol.base_name)
+            declaration = declarations.get(key)
+            rows.append(
+                SymbolRow(
+                    symbol=render_latex(symbol, stem_override=overrides.get(key)),
+                    description=declaration.name if declaration is not None else None,
+                )
+            )
+        return SymbolTable(rows=rows)
+
+    @overload
+    def table(self, group: Literal["equations"], **options: Any) -> EquationTable: ...
+
+    @overload
+    def table(self, group: Literal["variables", "shocks"], **options: Any) -> SymbolTable: ...
+
+    @overload
+    def table(self, group: Literal["parameters"], **options: Any) -> CalibrationTable: ...
+
+    def table(self, group: TableGroup, **options: Any) -> EquationTable | SymbolTable | CalibrationTable:
+        r"""
+        Build one group of the model as table data, for a paper or a notebook.
+
+        Parameters
+        ----------
+        group : str
+            One of ``"equations"``, ``"variables"``, ``"shocks"`` or ``"parameters"``.
+        **options
+            Build options for the group. ``"equations"`` takes ``expectations``, which wraps lead-carrying
+            terms in :math:`\mathbb{E}_t` except where the author wrote the operator themselves and defaults
+            to True. The other groups take no options.
+
+        Returns
+        -------
+        table : EquationTable or SymbolTable or CalibrationTable
+            The rows, renderable as LaTeX or as a dataframe.
+
+        Raises
+        ------
+        ValueError
+            If ``group`` is not one of the four groups.
+        TypeError
+            If an option is given that the group does not take.
+        """
+        if group not in TABLE_GROUPS:
+            raise ValueError(f"group must be one of {', '.join(TABLE_GROUPS)}, got {group!r}.")
+
+        builders = {
+            "equations": self._equation_table,
+            "parameters": self._calibration_table,
+            "variables": partial(self._symbol_table, group),
+            "shocks": partial(self._symbol_table, group),
+        }
+        return _call_for_group(builders[group], group=group, kind="build option", **options)
+
+    def write_table(
+        self,
+        group: TableGroup,
+        writer: str = "latex",
+        path: str | Path | None = None,
+        build_options: dict[str, Any] | None = None,
+        **style: Any,
+    ) -> str:
+        """
+        Render one group of the model as markup for a document.
+
+        Parameters
+        ----------
+        group : str
+            One of ``"equations"``, ``"variables"``, ``"shocks"`` or ``"parameters"``.
+        writer : str, optional
+            Markup to emit. Defaults to ``"latex"``.
+        path : str or Path, optional
+            Write the markup to this file as well as returning it. Defaults to returning it only.
+        build_options : dict, optional
+            Options forwarded to the group's builder, as :meth:`table` takes them. Defaults to none.
+        **style
+            Style options for the writer, such as ``caption``, ``label``, ``size``, ``widths`` and
+            ``booktabs``. An option the group's renderer does not take raises ``TypeError``, so the
+            ``"equations"`` group, which renders as an ``align`` environment, takes none of them.
+
+        Returns
+        -------
+        markup : str
+            The rendered table.
+
+        Raises
+        ------
+        ValueError
+            If ``group`` or ``writer`` is not recognized.
+
+        Examples
+        --------
+        .. code-block:: python
+
+            model.write_table("parameters", caption="Calibration", label="tab:calib", booktabs=True)
+        """
+        build_options = build_options or {}
+        if writer not in TABLE_WRITERS:
+            raise ValueError(f"writer must be one of {', '.join(TABLE_WRITERS)}, got {writer!r}.")
+
+        table = self.table(group, **build_options)
+        markup = _call_for_group(getattr(table, TABLE_WRITERS[writer]), group=group, kind="style option", **style)
+        if path is not None:
+            Path(path).write_text(markup, encoding="utf-8")
+        return markup
 
     def to_latex(self, expectations: bool = True) -> str:
         r"""
@@ -621,7 +761,7 @@ class Model:
         renders as ``\mathbb{E}``, so the document needs ``amsmath`` and ``amssymb``. A caption becomes a
         ``\tag``, which replaces the equation number and so stops the equation being cross-referenced.
 
-        Equivalent to ``model.equation_table(expectations).to_latex()``.
+        Equivalent to ``model.table("equations", expectations).to_latex()``.
 
         Parameters
         ----------
@@ -635,7 +775,7 @@ class Model:
         latex : str
             The environment, ready to paste into a document.
         """
-        return self.equation_table(expectations=expectations).to_latex()
+        return self.table("equations", expectations=expectations).to_latex()
 
     def _repr_html_(self) -> str:
         """
@@ -662,11 +802,6 @@ class Model:
             for symbol, declaration in self._symbols.items()
             if declaration.latex is not None
         }
-
-    def _symbol_caption(self, base_name: str) -> str:
-        """Return a variable's declared ``name``, falling back to the identifier the author wrote."""
-        declaration = self._declarations_by_name().get(variable_key(base_name))
-        return (declaration.name if declaration else None) or base_name
 
     def _declarations_by_name(self) -> dict[str, SymbolDeclaration]:
         """Return the declarations keyed by storage name, which is how every consumer looks them up."""
@@ -2384,6 +2519,24 @@ class _ResidualFunctions(NamedTuple):
     resid: Callable
     jac: Callable | None = None
     grad: Callable | None = None
+
+
+def _call_for_group(renderer: Callable[..., Any], group: str, kind: str, **options: Any) -> Any:
+    """
+    Call a group's builder or renderer, re-raising an unknown keyword against the group the caller named.
+
+    Python's own message names the bound method, which is private here, so a caller passing a typo or an
+    option meant for another group is told about a function they never called.
+    """
+    try:
+        return renderer(**options)
+    except TypeError as error:
+        unexpected = re.search(r"unexpected keyword argument '([^']+)'", str(error))
+        if unexpected is None:
+            raise
+        accepted = [name for name in signature(renderer).parameters if name != "self"]
+        accepted_text = ", ".join(accepted) if accepted else "none"
+        raise TypeError(f"{group!r} takes no {kind} {unexpected.group(1)!r}. Accepted: {accepted_text}.") from error
 
 
 def _initialize_x0(optimizer_kwargs: dict, variables: list[sp.Symbol], jitter_x0: bool) -> np.ndarray:
