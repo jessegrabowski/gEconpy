@@ -228,10 +228,9 @@ A tag applies to the entry it sits above, and an entry ends at its semicolon. ``
 entry holding two controls. A ``@foc_name`` above a comma-separated list is an error, because several controls
 produce several conditions and one caption cannot say which it means.
 
-Neither tag is required. An unannotated first-order condition takes a caption built from its block and the
-``name`` its control declares in the ``symbols`` block, so ``C[]`` declared as
-``name = "Consumption"`` inside ``block Household`` prints as *Household first-order condition for Consumption*.
-A control with no declared name falls back to the identifier the author wrote.
+Neither tag is required, and an untagged equation prints without a caption. An untagged first-order condition
+is instead printed under the derivative it came from, as :math:`\partial \mathcal{L} / \partial C_t = 0`, which
+says which control it belongs to without a caption having to.
 
 
 The steady state block
@@ -364,7 +363,8 @@ the stem for the cases this cannot infer, and the subscript and time index still
 
 An equation you wrote keeps the two sides you wrote. A first-order condition has no source text, so it prints as
 its residual equal to zero. Labels from ``@name`` and ``@foc_name`` become ``\tag``, and an unlabeled first-order
-condition takes the caption generated from its block and control.
+condition is prefixed with its derivative instead, aligned so the ``\implies`` falls in the same column as every
+other equation's ``=``.
 
 The parser drops the expectation operator, because first-order perturbation is certainty equivalent, so no stored
 equation carries one. Every lead came from under an expectation, so ``to_latex`` puts it back: a term containing a

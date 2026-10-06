@@ -28,11 +28,12 @@ def rbc():
 
 
 class TestEquationTable:
-    def test_a_row_carries_its_block_id_caption_and_both_sides(self, rbc):
+    def test_a_row_carries_its_block_id_control_and_both_sides(self, rbc):
         row = next(r for r in rbc.table("equations").rows if r.equation_id == "Household.foc.C")
 
         assert row.block == "Household"
-        assert row.label == "Household first-order condition for Consumption"
+        assert row.label is None
+        assert row.foc_control == "C_{t}"
         assert row.right == "0"
         assert r"\lambda_{t}" in row.left
 

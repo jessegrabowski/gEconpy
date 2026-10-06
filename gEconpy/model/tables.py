@@ -181,6 +181,8 @@ class EquationRow:
 
     ``block`` is the identifier as the file spells it. The renderers turn it into prose. A ``definitions``
     entry has no ``equation_id``, because the solver substitutes it away before equations are given ids.
+    ``foc_control`` is the rendered control a first-order condition was taken with respect to, and is None
+    for every other kind of row.
     """
 
     block: str
@@ -188,6 +190,7 @@ class EquationRow:
     label: str | None
     left: str
     right: str
+    foc_control: str | None = None
 
 
 @dataclass(frozen=True)
@@ -227,8 +230,10 @@ class EquationTable:
         r"""
         Render the table as a LaTeX ``align`` environment, with a heading before each block's equations.
 
-        A row's caption becomes a ``\tag``. Headings use ``\intertext``, which is how amsmath interjects prose
-        into an aligned block without breaking the alignment.
+        A row's caption becomes a ``\tag``. An uncaptioned first-order condition is prefixed with the
+        derivative it came from instead, aligned so that its ``\implies`` falls in the same column as every
+        other row's ``=``. Headings use ``\intertext``, which is how amsmath interjects prose into an aligned
+        block without breaking the alignment.
 
         Returns
         -------
@@ -244,8 +249,14 @@ class EquationTable:
             if row.block != heading:
                 heading = row.block
                 lines.append((True, rf"\intertext{{\textbf{{{latex_escape(block_heading(heading))}}}}}"))
-            tag = rf" \tag{{\text{{{latex_escape(row.label)}}}}}" if row.label else ""
-            lines.append((False, rf"{row.left} &= {row.right}{tag}"))
+            if row.label:
+                tag = rf" \tag{{\text{{{latex_escape(row.label)}}}}}"
+                lines.append((False, rf"{row.left} &= {row.right}{tag}"))
+            elif row.foc_control:
+                derivative = rf"\frac{{\partial \mathcal{{L}}}}{{\partial {row.foc_control}}} = 0"
+                lines.append((False, rf"{derivative} &\implies {row.left} = {row.right}"))
+            else:
+                lines.append((False, rf"{row.left} &= {row.right}"))
 
         # A heading is not a row and takes no terminator, and one after the final row is a LaTeX error.
         last_row = max((index for index, (is_heading, _) in enumerate(lines) if not is_heading), default=-1)

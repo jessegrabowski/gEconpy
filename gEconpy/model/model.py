@@ -28,7 +28,7 @@ from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex, render_name_latex
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
-from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex
+from gEconpy.model.latex import definition_rows, equation_sides_latex
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import check_perturbation_solution, make_not_loglin_flags
 from gEconpy.model.perturbation import linearize_model as _linearize_model
@@ -492,9 +492,7 @@ class Model:
         """
         Caption for one equation, as a table or a figure would print it.
 
-        An author's ``@name`` or ``@foc_name`` wins. Failing that, a first-order condition gets a caption built
-        from its block and the control it came from, so an unannotated model still labels the equations most
-        papers tabulate.
+        An equation is captioned only where the author wrote a ``@name`` or a ``@foc_name``.
 
         Parameters
         ----------
@@ -504,20 +502,25 @@ class Model:
         Returns
         -------
         label : str or None
-            The caption, or None when there is no authored one and none can be derived.
+            The authored caption, or None.
         """
-        authored = self._equation_labels.get(equation_id)
-        if authored is not None:
-            return authored
+        return self._equation_labels.get(equation_id)
 
+    def _foc_control_latex(self, equation_id: str, overrides: dict[str, str]) -> str | None:
+        """Return the rendered control a first-order condition was taken with respect to, or None."""
         # Ids are built in Block.solve_optimization as "{block}.{component}.{suffix}", and
         # test_ids_name_the_block_and_component_they_came_from pins that format.
         block_name, _, remainder = equation_id.partition(".")
-        component, _, control = remainder.partition(".")
-        if component != "foc":
+        component, _, control_name = remainder.partition(".")
+        block = self._source_ast.get_block(block_name) if self._source_ast else None
+        if component != "foc" or block is None:
             return None
 
-        return f"{block_heading(block_name)} first-order condition for {self._symbol_caption(control)}"
+        for variable in block.controls:
+            if variable.name == control_name:
+                symbol = TimeAwareSymbol(control_name, variable.time_index.value)
+                return render_latex(symbol, stem_override=overrides.get(variable_key(control_name)))
+        return None
 
     def _equation_table(self, expectations: bool = True) -> EquationTable:
         r"""
@@ -574,6 +577,7 @@ class Model:
                         label=self.equation_label(equation_id),
                         left=left,
                         right=right,
+                        foc_control=self._foc_control_latex(equation_id, overrides),
                     )
                 )
 
@@ -798,11 +802,6 @@ class Model:
             for symbol, declaration in self._symbols.items()
             if declaration.latex is not None
         }
-
-    def _symbol_caption(self, base_name: str) -> str:
-        """Return a variable's declared ``name``, falling back to the identifier the author wrote."""
-        declaration = self._declarations_by_name().get(variable_key(base_name))
-        return (declaration.name if declaration else None) or base_name
 
     def _declarations_by_name(self) -> dict[str, SymbolDeclaration]:
         """Return the declarations keyed by storage name, which is how every consumer looks them up."""
