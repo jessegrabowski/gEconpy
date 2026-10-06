@@ -42,6 +42,7 @@ from gEconpy.model.steady_state import (
     system_to_steady_state,
 )
 from gEconpy.model.tables import (
+    DEFAULT_PRIOR_STATS,
     TABLE_GROUPS,
     TABLE_WRITERS,
     CalibrationTable,
@@ -578,7 +579,11 @@ class Model:
 
         return EquationTable(rows=rows)
 
-    def _calibration_table(self) -> CalibrationTable:
+    def _calibration_table(
+        self,
+        prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS,
+        include_prior_params: bool = False,
+    ) -> CalibrationTable:
         """
         Build the model's parameters as table data, for a paper's calibration table.
 
@@ -609,6 +614,8 @@ class Model:
         calibrated = [parameter.name for parameter in self.calibrated_params if parameter.name not in values]
         names = [*values, *calibrated, *(name for name in hyper_priors if name not in values)]
         return CalibrationTable(
+            prior_stats=prior_stats,
+            include_prior_params=include_prior_params,
             rows=[
                 ParameterRow(
                     symbol=render_name_latex(name, stem_override=overrides.get(name)),

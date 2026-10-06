@@ -11,6 +11,9 @@ from sympy.printing.latex import latex_escape
 from gEconpy.model.latex import block_heading
 
 TableGroup = Literal["equations", "variables", "shocks", "parameters"]
+# Headings for the names a title case would get wrong.
+PRIOR_STAT_HEADINGS = {"std": "S.D.", "var": "Variance", "skewness": "Skew", "kurtosis": "Kurtosis"}
+DEFAULT_PRIOR_STATS = ("mean", "std")
 # A prior mean of 0.343849 is noise in a paper, and three figures is what the literature prints.
 PRIOR_STAT_PRECISION = 3
 TABLE_GROUPS: tuple[TableGroup, ...] = get_args(TableGroup)
@@ -410,9 +413,16 @@ class CalibrationTable(_TabularTable):
     ----------
     rows : sequence of ParameterRow
         The parameters, in print order.
+    prior_stats : sequence of str, optional
+        Statistics of the prior to print, one column each, named as the distribution's own methods are.
+        Defaults to the mean and the standard deviation, which is what a DSGE paper reports.
+    include_prior_params : bool, optional
+        Print the distribution's own parameters in a column of their own. Defaults to False.
     """
 
     rows: tuple[ParameterRow, ...] | list[ParameterRow]
+    prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS
+    include_prior_params: bool = False
 
     _row_type: ClassVar[type] = ParameterRow
 
@@ -436,8 +446,7 @@ class CalibrationTable(_TabularTable):
                     "description": row.description,
                     "value": row.value,
                     "prior": row.prior_family or None,
-                    "prior_mean": row.prior_stat("mean"),
-                    "prior_std": row.prior_stat("std"),
+                    **{f"prior_{name}": row.prior_stat(name) for name in self.prior_stats},
                     "prior_parameters": row.prior_parameters or None,
                     "source": row.source,
                 }
@@ -448,20 +457,26 @@ class CalibrationTable(_TabularTable):
                 "description",
                 "value",
                 "prior",
-                "prior_mean",
-                "prior_std",
+                *(f"prior_{name}" for name in self.prior_stats),
                 "prior_parameters",
                 "source",
             ],
         )
 
     def _prior_columns(self) -> list[_Column]:
-        """Return the family column and the two moments a DSGE paper reports."""
-        return [
-            _Column("Prior", "l", lambda row: latex_escape(row.prior_family)),
-            _Column("Mean", "r", lambda row: _format_value(row.prior_stat("mean"), precision=PRIOR_STAT_PRECISION)),
-            _Column("S.D.", "r", lambda row: _format_value(row.prior_stat("std"), precision=PRIOR_STAT_PRECISION)),
+        """Return the family column, one column per requested statistic, and the parameters when asked for."""
+        columns = [_Column("Prior", "l", lambda row: latex_escape(row.prior_family))]
+        columns += [
+            _Column(
+                PRIOR_STAT_HEADINGS.get(name, name.title()),
+                "r",
+                lambda row, name=name: _format_value(row.prior_stat(name), precision=PRIOR_STAT_PRECISION),
+            )
+            for name in self.prior_stats
         ]
+        if self.include_prior_params:
+            columns.append(_Column("Parameters", r"p{0.22\linewidth}", lambda row: latex_escape(row.prior_parameters)))
+        return columns
 
     def _columns(self) -> list[_Column]:
         # Prose columns wrap; a symbol or a number does not need to.

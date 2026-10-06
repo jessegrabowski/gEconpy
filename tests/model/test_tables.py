@@ -488,6 +488,27 @@ def test_an_empty_table_rejects_widths():
         SymbolTable([]).to_latex(widths=["c", "c"])
 
 
+@pytest.mark.parametrize(
+    "options, headings",
+    [
+        ({}, ["Prior", "Mean", "S.D."]),
+        ({"prior_stats": ["median", "skewness", "kurtosis"]}, ["Prior", "Median", "Skew", "Kurtosis"]),
+        ({"prior_stats": [], "include_prior_params": True}, ["Prior", "Parameters"]),
+        ({"include_prior_params": True}, ["Prior", "Mean", "S.D.", "Parameters"]),
+    ],
+    ids=["default", "other_stats", "params_only", "stats_and_params"],
+)
+def test_the_prior_presentation_is_chosen_by_the_caller(rbc, options, headings):
+    """A prior as one string is the least readable column in the table, so the caller picks its columns."""
+    rendered = rbc.table("parameters", **options).to_latex()
+    header = next(line for line in rendered.splitlines() if "textbf{Parameter}" in line)
+    printed = [
+        h for h in ["Prior", "Mean", "S.D.", "Median", "Skew", "Kurtosis", "Parameters"] if f"\\textbf{{{h}}}" in header
+    ]
+
+    assert printed == headings
+
+
 def test_a_prior_prints_its_moments_to_three_figures(rbc):
     """``%g`` gives six, and a prior mean of 0.343849 is noise in a paper."""
     rendered = rbc.table("parameters").to_latex()
@@ -503,6 +524,19 @@ def test_a_parameter_with_no_prior_reports_nothing_about_one():
     assert row.prior_family == ""
     assert row.prior_stat("mean") is None
     assert row.prior_parameters == ""
+
+
+def test_a_table_of_calibrated_parameters_drops_every_prior_column():
+    """The empty-column rule should take the family and the moments out together, not leave blank headings."""
+    table = CalibrationTable(
+        rows=[ParameterRow(symbol=r"\delta", description="Depreciation rate", value=0.02, prior=None, source=None)],
+        include_prior_params=True,
+    )
+
+    rendered = table.to_latex()
+
+    assert not [h for h in ["Prior", "Mean", "S.D.", "Parameters"] if f"\\textbf{{{h}}}" in rendered]
+    assert r"\textbf{Value}" in rendered
 
 
 def test_prior_parameters_rounds_like_the_moment_columns_beside_it():
