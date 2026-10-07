@@ -416,22 +416,42 @@ Publication tables
     model.table("equations").to_frame()
 
 :meth:`~gEconpy.model.model.Model.write_table` renders a group as markup for a document. It takes ``caption``
-and ``label``, which put the table in a ``table`` environment so it can be cross-referenced, ``size`` for a
-LaTeX size command, ``widths`` to replace the column specifiers, and ``booktabs`` for ``\toprule`` rules
-instead of ``\hline``. Pass ``path`` to write the markup to a file as well as returning it.
+and ``label``, which wrap the table so it can be cross-referenced, ``size`` for a font size, ``widths`` to
+replace the column specifiers, and ``booktabs`` for rules above the header, below it and below the last row
+rather than a full grid. Pass ``path`` to write the markup to a file as well as returning it.
+
+``writer`` chooses the language, either ``"latex"`` or ``"typst"``:
+
+.. code-block:: python
+
+    model.write_table("parameters", writer="typst", caption="Calibration", label="tab:calib", booktabs=True)
+
+Three of the style options are values in the target language rather than gEconpy's own, because each language
+spells them itself. ``size`` is a LaTeX size command without its backslash, as ``small``, and a Typst length,
+as ``9pt``. ``widths`` is one LaTeX column specifier per column, as ``p{0.3\linewidth}``, and one Typst width,
+as ``30%``. ``caption`` is passed through unescaped in both, so it can carry math.
+
+A table's cells hold markup rather than model objects, so ``writer`` also chooses the language the rows are
+built in. :meth:`~gEconpy.model.model.Model.table` takes the same choice as ``markup`` when you want the rows
+themselves.
 
 The equation table renders as an ``align`` environment and uses ``\intertext`` for its headings, and the
 expectation operator renders as ``\mathbb{E}``, so the document needs ``amsmath`` and ``amssymb``. A
 caption becomes a ``\tag``, which replaces the equation number, so a tagged equation cannot be
 cross-referenced with ``\ref``.
 
-Each table builds its rows once and renders them on demand, so ``to_latex`` and ``to_frame`` cannot disagree
-about what is in the table. The equation table carries a row per equation with its block, its id, its caption
+Typst has no ``intertext``, so there the equation table is one aligned math block per model block, each under
+a heading of its own. A caption is pushed to the right margin with ``h(1fr)``, which is what Typst gives in
+place of a ``tag``.
+
+Each table builds its rows once and renders them on demand, so ``to_latex``, ``to_typst`` and ``to_frame``
+cannot disagree about what is in the table. The equation table carries a row per equation with its block, its id, its caption
 and its two rendered sides, and groups the rows under a heading per block. The calibration table carries a row
 per parameter with its symbol, the ``name`` and ``source`` it declares, its value and its prior.
 
 A calibrated parameter is solved for rather than set, so its value is empty. A column that is empty for every
-row is dropped from the LaTeX, so a model that declares no ``source`` does not print a blank citation column.
+row is dropped from the rendered table, so a model that declares no ``source`` does not print a blank
+citation column.
 ``to_frame`` keeps every column, because it is data rather than a printed table.
 
 
