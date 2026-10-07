@@ -131,6 +131,66 @@ def _latex_stem(stem: str) -> str:
     return stem if len(stem) == 1 else f"\\text{{{stem}}}"
 
 
+def render_typst(symbol: "TimeAwareSymbol", stem_override: str | None = None) -> str:
+    """
+    Render one time-aware symbol as Typst.
+
+    Typst knows the greek letters by name, so a greek stem passes through unchanged where LaTeX needs a command.
+    A stem longer than one character is wrapped in ``upright()`` so a multi-letter name does not read as a
+    product. Anything after the first underscore is a subscript, and the time index joins it.
+
+    Parameters
+    ----------
+    symbol : TimeAwareSymbol
+        The symbol to render.
+    stem_override : str, optional
+        Typst for the stem, from a ``symbols`` block ``typst`` field, replacing what would be inferred. It must
+        be a single Typst atom, such as ``cal(C)``, because the subscript attaches to whatever precedes it.
+        Defaults to inferring the stem.
+
+    Returns
+    -------
+    typst : str
+        The rendered symbol, without surrounding math delimiters.
+    """
+    return render_name_typst(symbol.base_name, stem_override=stem_override, time_subscript=symbol._time_subscript())
+
+
+def render_name_typst(name: str, stem_override: str | None = None, time_subscript: str | None = None) -> str:
+    """
+    Render a symbol name as Typst, by the same rules whether or not it carries a time index.
+
+    Parameters
+    ----------
+    name : str
+        The symbol's name, without a time index.
+    stem_override : str, optional
+        Typst for the stem, replacing what would be inferred. It must be a single Typst atom. Defaults to
+        inferring the stem.
+    time_subscript : str, optional
+        A trailing subscript for the time index. Defaults to none, as for a parameter.
+
+    Returns
+    -------
+    typst : str
+        The rendered name, without surrounding math delimiters.
+    """
+    stem, _, remainder = name.partition("_")
+    rendered_stem = _typst_stem(stem) if stem_override is None else stem_override
+
+    # Every underscore separates a subscript, and each one is a name in its own right, exactly as in LaTeX.
+    parts = [_typst_stem(part) for part in remainder.split("_") if part]
+    if time_subscript:
+        parts.append(time_subscript)
+    return f"{rendered_stem}_({','.join(parts)})" if parts else rendered_stem
+
+
+def _typst_stem(stem: str) -> str:
+    if stem in _GREEK_COMMANDS:
+        return stem
+    return stem if len(stem) == 1 else f'upright("{stem}")'
+
+
 class TimeAwareSymbol(sp.Symbol):
     """
     Subclass of :class:`~sympy.core.symbol.Symbol` with a time index.
