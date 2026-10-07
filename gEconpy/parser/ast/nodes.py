@@ -480,6 +480,10 @@ class SymbolDeclaration:
         Human-readable name, used as the caption in generated tables. Defaults to None.
     latex : str, optional
         LaTeX rendering, overriding whatever the printer would infer. Defaults to None.
+    typst : str, optional
+        Typst rendering, overriding whatever the printer would infer. The two languages share no syntax, so a
+        declared ``latex`` says nothing about Typst and the Typst printer falls back to the name it infers.
+        Defaults to None.
     source : str, optional
         Provenance of a calibrated value, for the citation column of a calibration table. Defaults to None.
     bounds : tuple of (float or None, float or None), optional
@@ -494,6 +498,7 @@ class SymbolDeclaration:
     symbol: str
     name: str | None = None
     latex: str | None = None
+    typst: str | None = None
     source: str | None = None
     bounds: tuple[float | None, float | None] = (None, None)
     closed: tuple[bool, bool] = (False, False)

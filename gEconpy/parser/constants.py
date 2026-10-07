@@ -46,7 +46,7 @@ SIGN_ASSUMPTION_SUPPORTS: dict[str, tuple[tuple[float | None, float | None], tup
     "unit_interval": ((0.0, 1.0), (False, False)),
 }
 
-SYMBOL_METADATA_FIELDS = ["name", "latex", "source"]
+SYMBOL_METADATA_FIELDS = ["name", "latex", "typst", "source"]
 SYMBOL_FIELDS = [*SYMBOL_METADATA_FIELDS, "bounds", *GCN_ASSUMPTIONS]
 
 DIST_TO_PARAM_NAMES = {

@@ -294,7 +294,13 @@ class TestPrintModel:
         source = """
         symbols
         {
-            alpha { name = "Capital share"; latex = "\\alpha"; source = "Smets and Wouters (2007)"; bounds = (0, 1); };
+            alpha {
+                name = "Capital share";
+                latex = "\\alpha";
+                typst = "alpha";
+                source = "Smets and Wouters (2007)";
+                bounds = (0, 1);
+            };
             K[] { positive = True; };
             z { nonnegative = True; };
             n { integer = True; real = False; };
@@ -310,6 +316,7 @@ class TestPrintModel:
 
         assert reparsed == model
         assert reparsed.symbols["alpha"].latex == "\\alpha"
+        assert reparsed.symbols["alpha"].typst == "alpha"
         assert reparsed.symbols["bare"].bounds == (None, None)
 
         # A variable stored under "K_t" must print as the spelling its equations use, or the declaration reparses

@@ -266,8 +266,8 @@ model smaller before it is solved. The RBC model removes the two objective value
    :start-at: tryreduce
    :end-at: };
 
-``symbols`` declares each variable and parameter once, giving it a readable name, a LaTeX rendering, a support, and
-a provenance for its calibrated value. Every field is optional:
+``symbols`` declares each variable and parameter once, giving it a readable name, a rendering for each output
+language, a support, and a provenance for its calibrated value. Every field is optional:
 
 .. code-block:: text
 
@@ -279,6 +279,13 @@ a provenance for its calibrated value. Every field is optional:
             bounds = (0, None);
         };
 
+        C[]
+        {
+            name = "Consumption";
+            latex = "\mathcal{C}";
+            typst = "cal(C)";
+        };
+
         alpha
         {
             name = "Capital share of output";
@@ -286,6 +293,11 @@ a provenance for its calibrated value. Every field is optional:
             bounds = (0, 1);
         };
     };
+
+``latex`` and ``typst`` override the rendering a printer would otherwise infer, each for one output language.
+The two languages share no syntax, so declaring one says nothing about the other, and a printer with no override
+for its own language falls back to the name it infers. A symbol declaring only ``latex`` therefore renders as
+``\mathcal{C}_{t}`` in LaTeX and ``C_(t)`` in Typst.
 
 ``bounds`` is the canonical record of a symbol's support, written ``(lower, upper)`` with ``None`` for an unbounded
 side. Bounds are open, so ``(0, None)`` means strictly positive. A declared bound both attaches the matching sympy

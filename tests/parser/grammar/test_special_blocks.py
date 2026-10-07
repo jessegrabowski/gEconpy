@@ -193,9 +193,10 @@ class TestSymbolsBlock:
         [
             ('symbols { alpha { name = "Capital share"; }; };', "name", "Capital share"),
             ('symbols { alpha { latex = "\\alpha"; }; };', "latex", "\\alpha"),
+            ('symbols { alpha { typst = "alpha"; }; };', "typst", "alpha"),
             ('symbols { alpha { source = "Smets and Wouters (2007)"; }; };', "source", "Smets and Wouters (2007)"),
         ],
-        ids=["name", "latex_is_raw", "source"],
+        ids=["name", "latex_is_raw", "typst", "source"],
     )
     def test_metadata_fields(self, text, attribute, expected):
         assert getattr(parse_symbols_block(text)["alpha"], attribute) == expected
@@ -293,6 +294,7 @@ class TestSymbolsBlock:
             alpha {
                 name = "Capital share of output";
                 latex = "\\alpha";
+                typst = "alpha";
                 source = "Smets and Wouters (2007)";
                 bounds = (0, 1);
             };
@@ -301,6 +303,7 @@ class TestSymbolsBlock:
         assert declaration.symbol == "alpha"
         assert declaration.name == "Capital share of output"
         assert declaration.latex == "\\alpha"
+        assert declaration.typst == "alpha"
         assert declaration.source == "Smets and Wouters (2007)"
         assert declaration.bounds == (0.0, 1.0)
 
