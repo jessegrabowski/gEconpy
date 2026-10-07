@@ -347,7 +347,7 @@ def render_model(model: "Model", source_ast: GCNModel | None = None) -> str:
     """
     # The symbol tables take their captions from the model, not from ``source_ast``, which may be absent.
     # The block sections below need the overrides directly, because they render authored equations.
-    overrides = model._latex_overrides()
+    overrides = model._markup_overrides()
     sections = [
         _section(
             f"Variables ({len(model.variables)})",

@@ -7,6 +7,8 @@ from sympy.printing.printer import Printer
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_name_typst, render_typst
 from gEconpy.exceptions import TypstPrintError
+from gEconpy.model.latex import authored_expressions, equation_expressions, render_sides
+from gEconpy.parser.ast import GCNModel
 
 
 class TypstPrinter(Printer):
@@ -115,3 +117,69 @@ def typst(expression: sp.Expr, symbol_names: dict[sp.Symbol, str] | None = None)
         If the expression contains a node type the printer has no rendering for.
     """
     return TypstPrinter({"symbol_names": symbol_names or {}}).doprint(expression)
+
+
+def equation_sides_typst(
+    source_ast: GCNModel | None,
+    equation_id: str,
+    expression: sp.Expr,
+    overrides: dict[str, str] | None = None,
+    expectations: bool = True,
+) -> tuple[str, str]:
+    """
+    Render one equation as a left and a right side of Typst math.
+
+    The Typst twin of :func:`~gEconpy.model.latex.equation_sides_latex`, sharing its recovery of an authored
+    equation's own two sides so the two languages print one equation rather than two different expressions.
+
+    Parameters
+    ----------
+    source_ast : GCNModel, optional
+        The parsed file, used to recover an authored equation's own two sides. None for a model built without one.
+    equation_id : str
+        The id of the equation.
+    expression : sympy expression
+        The equation as the solved system holds it, used when there is no authored form.
+    overrides : dict mapping str to str, optional
+        Declared Typst, keyed by the symbol's storage name. Defaults to none.
+    expectations : bool, optional
+        Wrap lead-carrying terms in a conditional expectation. Defaults to True.
+
+    Returns
+    -------
+    left : str
+        The left side. A derived equation's residual.
+    right : str
+        The right side, which is ``0`` for a derived equation.
+    """
+    left, right = equation_expressions(source_ast, equation_id, expression, expectations)
+    return render_sides(left, right, overrides, printer=typst, renderer=render_typst)
+
+
+def definition_rows_typst(
+    source_ast: GCNModel | None,
+    overrides: dict[str, str] | None = None,
+) -> list[tuple[str, str, str]]:
+    """
+    Recover every ``definitions`` entry as Typst, in source order.
+
+    Parameters
+    ----------
+    source_ast : GCNModel, optional
+        The parsed file. None for a model built without one.
+    overrides : dict mapping str to str, optional
+        Declared Typst, keyed by the symbol's storage name. Defaults to none.
+
+    Returns
+    -------
+    definitions : list of tuple of str
+        The block name and the rendered left and right side of each definition.
+    """
+    if source_ast is None:
+        return []
+
+    return [
+        (block.name, *render_sides(*authored_expressions(equation), overrides, printer=typst, renderer=render_typst))
+        for block in source_ast.blocks
+        for equation in block.definitions
+    ]

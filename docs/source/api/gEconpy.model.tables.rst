@@ -14,6 +14,12 @@ gEconpy.model.tables
     SymbolRow
     SymbolTable
 
+.. rubric:: Functions
+
+.. autosummary::
+
+    typst_escape
+
 .. automodule:: gEconpy.model.tables
-    :members: CalibrationTable, EquationRow, EquationTable, ParameterRow, SymbolRow, SymbolTable
+    :members: CalibrationTable, EquationRow, EquationTable, ParameterRow, SymbolRow, SymbolTable, typst_escape
     :undoc-members:

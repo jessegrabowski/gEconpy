@@ -375,8 +375,8 @@ def test_a_symbol_table_drops_the_description_column_when_nothing_declares_one(t
 
 class TestWriteTable:
     def test_an_unknown_writer_raises(self, rbc):
-        with pytest.raises(ValueError, match="writer must be one of latex"):
-            rbc.write_table("parameters", writer="typst")
+        with pytest.raises(ValueError, match="writer must be one of latex, typst"):
+            rbc.write_table("parameters", writer="markdown")
 
     def test_a_caption_and_label_wrap_the_table(self, rbc):
         """Neither can be referenced outside a table environment, so asking for one implies the wrapper."""
