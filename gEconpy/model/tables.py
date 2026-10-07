@@ -25,8 +25,13 @@ TABLE_GROUPS: tuple[TableGroup, ...] = get_args(TableGroup)
 TABLE_WRITERS = {"latex": "to_latex"}
 
 
-def _format_value(value: float | None, math: tuple[str, str] = ("$", "$"), precision: int = 6) -> str:
-    """
+def _format_value(
+    value: float | None,
+    math: tuple[str, str] = ("$", "$"),
+    precision: int = 6,
+    times: str = r"\times",
+) -> str:
+    r"""
     Render a parameter value, keeping scientific notation inside math mode so it does not print literally.
 
     Parameters
@@ -38,6 +43,8 @@ def _format_value(value: float | None, math: tuple[str, str] = ("$", "$"), preci
         which an HTML renderer must override because no notebook frontend recognizes it.
     precision : int, optional
         Significant figures. Defaults to 6, which is what ``%g`` gives.
+    times : str, optional
+        The multiplication sign for scientific notation. Defaults to LaTeX's ``\times``.
 
     Returns
     -------
@@ -53,7 +60,7 @@ def _format_value(value: float | None, math: tuple[str, str] = ("$", "$"), preci
 
     mantissa, _, exponent = rendered.partition("e")
     opening, closing = math
-    return rf"{opening}{mantissa} \times 10^{{{int(exponent)}}}{closing}"
+    return rf"{opening}{mantissa} {times} 10^{{{int(exponent)}}}{closing}"
 
 
 def _rules(booktabs: bool) -> tuple[str, str, str]:
@@ -113,23 +120,112 @@ def _wrap(
 
 
 @dataclass(frozen=True)
+class _Dialect:
+    """
+    Everything that differs between two markup languages, gathered in one place.
+
+    A column says what a cell *is* and the dialect says how to write it, which is what lets one set of column
+    definitions render in two languages. The symbol and equation renderers are here for the same reason: a
+    table's cells hold rendered markup, so the language is chosen when the rows are built.
+
+    Parameters
+    ----------
+    escape : callable
+        Makes a string safe to print as text in this language.
+    math : callable
+        Wraps already-rendered math markup in this language's inline math delimiters.
+    times : str
+        This language's multiplication sign, for a value in scientific notation.
+    column : callable
+        Maps a column to its specifier, taking the column and returning the language's own spelling.
+    """
+
+    escape: Callable[[str], str]
+    math: Callable[[str], str]
+    times: str
+    column: "Callable[[_Column], str]"
+
+
+@dataclass(frozen=True)
 class _Column:
     """
-    One column of a tabular table: its heading, its LaTeX alignment, and how to read it off a row.
+    One column of a tabular table: its heading, its shape, and how to read it off a row.
 
     Parameters
     ----------
     heading : str
         Column heading, printed in bold.
-    alignment : str
-        LaTeX column specifier, such as ``l`` or a ``p`` box for a column of prose that should wrap.
+    align : str
+        ``"left"`` or ``"right"``, which each dialect spells its own way.
     value : callable
-        Maps a row to its already-escaped cell text.
+        Maps a dialect and a row to the cell's markup, escaping or setting math through the dialect.
+    width : float, optional
+        Fraction of the text width, for a column of prose that should wrap. Defaults to sizing to content.
     """
 
     heading: str
-    alignment: str
-    value: Callable[[Any], str]
+    align: Literal["left", "right"]
+    value: Callable[["_Dialect", Any], str]
+    width: float | None = None
+
+
+def _latex_column(column: _Column) -> str:
+    if column.width is None:
+        return "r" if column.align == "right" else "l"
+    return rf"p{{{column.width}\linewidth}}"
+
+
+LATEX = _Dialect(
+    escape=latex_escape,
+    math=lambda markup: f"${markup}$",
+    times=r"\times",
+    column=_latex_column,
+)
+
+
+def _printed_columns(
+    rows: Sequence[Any],
+    columns: Sequence[_Column],
+    dialect: _Dialect,
+    widths: Sequence[str] | None,
+    specifier_name: str,
+) -> tuple[dict[str, list[str]], list[_Column]]:
+    """
+    Render every cell and return them with the columns that are not empty for every row.
+
+    Parameters
+    ----------
+    rows : sequence
+        The table rows, in print order.
+    columns : sequence of _Column
+        The columns to consider, in print order.
+    dialect : _Dialect
+        The language the cells are written in.
+    widths : sequence of str, optional
+        The caller's column specifiers, checked against the number of columns actually printed.
+    specifier_name : str
+        What this language calls one, for the error message.
+
+    Returns
+    -------
+    cells : dict mapping str to list of str
+        The rendered cells of every column, keyed by heading.
+    kept : list of _Column
+        The columns that have content, in print order.
+
+    Raises
+    ------
+    ValueError
+        If ``widths`` does not give one specifier per printed column. Checked before the caller's empty-rows
+        return, so a wrong count is an error whether or not the model happens to have rows.
+    """
+    cells = {column.heading: [column.value(dialect, row) for row in rows] for column in columns}
+    kept = [column for column in columns if any(cells[column.heading])]
+    if widths is not None and len(widths) != len(kept):
+        raise ValueError(
+            f"widths must give one {specifier_name} per printed column, got {len(widths)} for {len(kept)}."
+        )
+    return cells, kept
 
 
 def _tabular(
@@ -157,20 +253,14 @@ def _tabular(
     latex : str
         The tabular, or the empty string when there are no rows.
     """
-    cells = {column.heading: [column.value(row) for row in rows] for column in columns}
-    kept = [column for column in columns if any(cells[column.heading])]
-    # Checked before the empty-rows return, so a wrong column count is an error whether or not the model
-    # happens to have rows.
-    if widths is not None and len(widths) != len(kept):
-        raise ValueError(f"widths must give one specifier per printed column, got {len(widths)} for {len(kept)}.")
-
+    cells, kept = _printed_columns(rows, columns, LATEX, widths, "specifier")
     if not rows:
         return ""
 
     top, middle, bottom = _rules(booktabs)
     header = " & ".join(rf"\textbf{{{column.heading}}}" for column in kept)
     body = " \\\\\n".join(" & ".join(cells[column.heading][index] for column in kept) for index in range(len(rows)))
-    alignment = "".join(widths) if widths is not None else "".join(column.alignment for column in kept)
+    alignment = "".join(widths) if widths is not None else "".join(LATEX.column(column) for column in kept)
     return f"\\begin{{tabular}}{{{alignment}}}\n{top}\n{header} \\\\\n{middle}\n{body} \\\\\n{bottom}\n\\end{{tabular}}"
 
 
@@ -352,8 +442,8 @@ class SymbolTable(_TabularTable):
 
     def _columns(self) -> list[_Column]:
         return [
-            _Column("Symbol", "l", lambda row: f"${row.symbol}$"),
-            _Column("Description", r"p{0.5\linewidth}", lambda row: latex_escape(row.description or "")),
+            _Column("Symbol", "left", lambda dialect, row: dialect.math(row.symbol)),
+            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.5),
         ]
 
 
@@ -487,25 +577,29 @@ class CalibrationTable(_TabularTable):
 
     def _prior_columns(self) -> list[_Column]:
         """Return the family column, one column per requested statistic, and the parameters when asked for."""
-        columns = [_Column("Prior", "l", lambda row: latex_escape(row.prior_family))]
+        columns = [_Column("Prior", "left", lambda dialect, row: dialect.escape(row.prior_family))]
         columns += [
             _Column(
                 PRIOR_STAT_HEADINGS.get(name, name.title()),
-                "r",
-                lambda row, name=name: _format_value(row.prior_stat(name), precision=PRIOR_STAT_PRECISION),
+                "right",
+                lambda dialect, row, name=name: _format_value(
+                    row.prior_stat(name), precision=PRIOR_STAT_PRECISION, times=dialect.times
+                ),
             )
             for name in self.prior_stats
         ]
         if self.include_prior_params:
-            columns.append(_Column("Parameters", r"p{0.22\linewidth}", lambda row: latex_escape(row.prior_parameters)))
+            columns.append(
+                _Column("Parameters", "left", lambda dialect, row: dialect.escape(row.prior_parameters), width=0.22)
+            )
         return columns
 
     def _columns(self) -> list[_Column]:
         # Prose columns wrap; a symbol or a number does not need to.
         return [
-            _Column("Parameter", "l", lambda row: f"${row.symbol}$"),
-            _Column("Description", r"p{0.3\linewidth}", lambda row: latex_escape(row.description or "")),
-            _Column("Value", "l", lambda row: _format_value(row.value)),
+            _Column("Parameter", "left", lambda dialect, row: dialect.math(row.symbol)),
+            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.3),
+            _Column("Value", "left", lambda dialect, row: _format_value(row.value, times=dialect.times)),
             *self._prior_columns(),
-            _Column("Source", r"p{0.2\linewidth}", lambda row: latex_escape(row.source or "")),
+            _Column("Source", "left", lambda dialect, row: dialect.escape(row.source or ""), width=0.2),
         ]
