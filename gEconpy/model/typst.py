@@ -110,11 +110,6 @@ def typst(expression: sp.Expr, symbol_names: dict[sp.Symbol, str] | None = None)
     -------
     typst : str
         The rendered expression, without surrounding math delimiters.
-
-    Raises
-    ------
-    TypstPrintError
-        If the expression contains a node type the printer has no rendering for.
     """
     return TypstPrinter({"symbol_names": symbol_names or {}}).doprint(expression)
 
