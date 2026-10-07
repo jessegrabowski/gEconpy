@@ -255,6 +255,19 @@ class GensysFailedException(ValueError):
         super().__init__(message or "The perturbation solver did not return a unique stable solution.")
 
 
+class TypstPrintError(ValueError):
+    """Raised when an expression contains a node the Typst printer has no rendering for."""
+
+    def __init__(self, expression: object):
+        node = type(expression).__name__
+        message = (
+            f"No Typst rendering for {node}: {expression}. Typst is not one of sympy's printing targets, so "
+            f"gEconpy renders each node type itself. Add a _print_{node} method to TypstPrinter."
+        )
+
+        super().__init__(message)
+
+
 class InvalidDistributionException(ValueError):
     """Raised when a distribution declaration in a GCN file cannot be interpreted."""
 
