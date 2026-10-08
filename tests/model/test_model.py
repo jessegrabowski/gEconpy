@@ -899,14 +899,6 @@ def test_autocovariance_matrix_lag_zero_is_stationary_covariance(gcn_file):
     assert_allclose(autocov[0], Sigma, atol=1e-8, rtol=1e-8)
 
 
-def _shock_covariance_arguments(argument, n_shocks, model):
-    shock_std = 0.1 if argument == "shock_std" else None
-    shock_std_dict = {shock.base_name: 0.1 for shock in model.shocks} if argument == "shock_std_dict" else None
-    shock_cov_matrix = np.eye(n_shocks) * 0.1**2 if argument == "shock_cov_matrix" else None
-
-    return shock_std, shock_std_dict, shock_cov_matrix
-
-
 @pytest.fixture
 def irf_inputs():
     model = load_and_cache_model("one_block_1_ss_2shock.gcn")
@@ -1007,23 +999,42 @@ class TestIRF:
         assert "shock" not in da.dims
 
 
-@pytest.mark.parametrize(
-    "gcn_file",
-    [
-        "one_block_1_ss.gcn",
-        "open_rbc.gcn",
-    ],
-)
-@pytest.mark.parametrize("argument", ["shock_std", "shock_std_dict", "shock_cov_matrix"])
-def test_simulate(gcn_file, argument):
+@pytest.mark.include_nk
+def test_simulate_accepts_every_shock_specification():
+    """
+    The three spellings describe one covariance matrix, so they have to produce the same draws.
+
+    Each shock is given a different standard deviation, against a model with four of them. With one shock, or
+    with one value shared by all of them, a dict read in the wrong order agrees with the other spellings anyway.
+    """
+    model = load_and_cache_model("full_nk.gcn")
+    T, R = model.solve_model(solver="gensys", verbose=False)
+    stds = [0.1, 0.2, 0.3, 0.4]
+
+    specifications = {
+        "shock_std": {"shock_std": stds},
+        "shock_std_dict": {
+            "shock_std_dict": {shock.base_name: std for shock, std in zip(model.shocks, stds, strict=True)}
+        },
+        "shock_cov_matrix": {"shock_cov_matrix": np.diag(np.array(stds) ** 2)},
+    }
+    draws = {
+        name: simulate(model, T, R, simulation_length=10, n_simulations=2, random_seed=1234, **specification).values
+        for name, specification in specifications.items()
+    }
+
+    assert_allclose(draws["shock_std_dict"], draws["shock_std"])
+    assert_allclose(draws["shock_cov_matrix"], draws["shock_std"])
+
+
+@pytest.mark.parametrize("gcn_file", ["one_block_1_ss.gcn", "open_rbc.gcn"])
+def test_simulate(gcn_file):
     model = load_and_cache_model(gcn_file)
     T, R = model.solve_model(solver="gensys", verbose=False)
-    n_variables, n_shocks = R.shape
+    n_variables, _n_shocks = R.shape
 
     n_simulations = 3000
     simulation_length = 2000
-
-    shock_std, shock_std_dict, shock_cov_matrix = _shock_covariance_arguments(argument, n_shocks, model)
 
     data = simulate(
         model,
@@ -1031,9 +1042,7 @@ def test_simulate(gcn_file, argument):
         R,
         simulation_length=simulation_length,
         n_simulations=n_simulations,
-        shock_std=shock_std,
-        shock_std_dict=shock_std_dict,
-        shock_cov_matrix=shock_cov_matrix,
+        shock_std=0.1,
         random_seed=1234,
     )
 
