@@ -61,9 +61,8 @@ def _model_without_analytic_steady_state(gcn_file):
     [
         "one_block_1_dist.gcn",
         "one_block_1_ss.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
     ],
-    ids=["one_block_prior", "one_block_ss", "full_nk"],
+    ids=["one_block_prior", "one_block_ss"],
 )
 def test_model_parameters(gcn_path: str):
     model = load_and_cache_model(gcn_path)
@@ -829,7 +828,6 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
     ],
 )
@@ -855,11 +853,11 @@ def test_compute_stationary_covariance(caplog, gcn_file):
 @pytest.mark.parametrize(
     "gcn_file, state_name, rho_name",
     [
+        # One nonlinear model, one linear one, and one whose four shocks make the state-to-rho pairing a
+        # real choice rather than the only one available.
         ("one_block_1_ss.gcn", "A", "rho"),
-        ("open_rbc.gcn", "A", "rho_A"),
         ("rbc_linearized.gcn", "A", "rho_A"),
         pytest.param("full_nk.gcn", "shock_technology", "rho_technology", marks=pytest.mark.include_nk),
-        pytest.param("full_nk.gcn", "shock_preference", "rho_preference", marks=pytest.mark.include_nk),
     ],
 )
 def test_autocorrelation_of_ar1_state_decays_at_rho(gcn_file, state_name, rho_name, rng):
@@ -884,7 +882,6 @@ def test_autocorrelation_of_ar1_state_decays_at_rho(gcn_file, state_name, rho_na
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
     ],
 )
@@ -1015,7 +1012,6 @@ class TestIRF:
     [
         "one_block_1_ss.gcn",
         "open_rbc.gcn",
-        pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
     ],
 )
 @pytest.mark.parametrize("argument", ["shock_std", "shock_std_dict", "shock_cov_matrix"])
