@@ -4,7 +4,11 @@ import pytensor
 
 from pytensor.compile.executor import Function
 from pytensor.compile.mode import Mode
+from pytensor.compile.sharedvalue import SharedVariable
+from pytensor.graph.fg import FunctionGraph
 from pytensor.graph.rewriting import rewrite_graph
+from pytensor.graph.traversal import graph_inputs
+from pytensor.graph.utils import MissingInputError
 from pytensor.tensor.variable import TensorVariable
 
 
@@ -40,7 +44,7 @@ def compile_pytensor_function(
     """Compile a pytensor graph to a callable function.
 
     Wraps :func:`pytensor.function`, adding pre-gradient rewrites via
-    :func:`~gEconpy.pytensorf.compile.rewrite_pregrad` and caching keyed on the identity of the graph nodes.
+    :func:`~gEconpy.pytensorf.compile.rewrite_pregrad` and caching keyed on the structure of the graph.
     Parameters mirror :func:`pytensor.function`, except that ``on_unused_input`` defaults to ``"ignore"``.
 
     Parameters
@@ -74,15 +78,31 @@ def compile_pytensor_function(
     f : callable
         Compiled pytensor function.
     """
-    if isinstance(outputs, list):
-        outputs = tuple(outputs)
+    frozen_updates = _freeze_pairs(updates)
+    frozen_givens = _freeze_pairs(givens)
+    try:
+        graph = _GraphKey(tuple(inputs), outputs, frozen_givens)
+    except MissingInputError:
+        # pytensor.function tolerates an input list FunctionGraph rejects. Those still compile, just uncached.
+        return _compile(
+            tuple(inputs),
+            outputs,
+            mode=mode,
+            updates=frozen_updates,
+            givens=frozen_givens,
+            accept_inplace=accept_inplace,
+            name=name,
+            rebuild_strict=rebuild_strict,
+            allow_input_downcast=allow_input_downcast,
+            on_unused_input=on_unused_input,
+            trust_input=trust_input,
+        )
 
     return _compile_cached(
-        tuple(inputs),
-        outputs,
+        graph,
         mode=mode,
-        updates=_freeze_pairs(updates),
-        givens=_freeze_pairs(givens),
+        updates=frozen_updates,
+        givens=frozen_givens,
         accept_inplace=accept_inplace,
         name=name,
         rebuild_strict=rebuild_strict,
@@ -111,15 +131,51 @@ def compile_cache_info() -> _CacheInfo:
 def _freeze_pairs(
     pairs: dict[TensorVariable, TensorVariable] | list[tuple[TensorVariable, TensorVariable]] | None,
 ) -> tuple[tuple[TensorVariable, TensorVariable], ...] | None:
+    """Return substitutions as a hashable tuple, so the same pairs given as a dict and as a list share a key."""
     if pairs is None:
         return None
     return tuple(pairs.items() if isinstance(pairs, dict) else pairs)
 
 
+class _GraphKey:
+    """
+    Carry a graph while comparing by its structure, so the compile cache can key on one argument.
+
+    Two keys are equal when their graphs are structurally identical and they agree on the input names, on
+    whether the caller asked for one output or a sequence, and on which shared variables the graph reads.
+    """
+
+    __slots__ = ("_identity", "inputs", "outputs")
+
+    def __init__(
+        self,
+        inputs: tuple[TensorVariable, ...],
+        outputs: TensorVariable | list[TensorVariable] | tuple[TensorVariable, ...],
+        givens: tuple[tuple[TensorVariable, TensorVariable], ...] | None,
+    ) -> None:
+        self.inputs = inputs
+        self.outputs = outputs
+        is_sequence = isinstance(outputs, list | tuple)
+        output_list = list(outputs) if is_sequence else [outputs]
+        # Neither a substituted variable nor a shared one is listed as an input, so the frozen graph has to
+        # name them both or it cannot be built at all.
+        substituted = tuple(source for source, _ in givens or ())
+        shared = tuple(root for root in graph_inputs(output_list) if isinstance(root, SharedVariable))
+        frozen = FunctionGraph(list(inputs) + list(substituted) + list(shared), output_list, clone=True).freeze()
+        # Freezing compares a shared variable by its type, so two holding different values look identical. The
+        # compiled function reads one specific variable's storage, so they are compared by identity instead.
+        self._identity = (frozen, tuple(variable.name for variable in inputs), is_sequence, shared)
+
+    def __hash__(self) -> int:
+        return hash(self._identity)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _GraphKey) and self._identity == other._identity
+
+
 @lru_cache(maxsize=128)
 def _compile_cached(
-    inputs: tuple[TensorVariable, ...],
-    outputs: TensorVariable | tuple[TensorVariable, ...],
+    graph: "_GraphKey",
     mode: str | Mode | None = None,
     updates: tuple[tuple[TensorVariable, TensorVariable], ...] | None = None,
     givens: tuple[tuple[TensorVariable, TensorVariable], ...] | None = None,
@@ -130,14 +186,37 @@ def _compile_cached(
     on_unused_input: str | None = "ignore",
     trust_input: bool = False,
 ) -> Function:
-    if isinstance(outputs, tuple):
-        outputs = list(outputs)
+    return _compile(
+        graph.inputs,
+        graph.outputs,
+        mode=mode,
+        updates=updates,
+        givens=givens,
+        accept_inplace=accept_inplace,
+        name=name,
+        rebuild_strict=rebuild_strict,
+        allow_input_downcast=allow_input_downcast,
+        on_unused_input=on_unused_input,
+        trust_input=trust_input,
+    )
 
-    outputs = rewrite_pregrad(outputs)
 
+def _compile(
+    inputs: tuple[TensorVariable, ...],
+    outputs: TensorVariable | list[TensorVariable] | tuple[TensorVariable, ...],
+    mode: str | Mode | None = None,
+    updates: tuple[tuple[TensorVariable, TensorVariable], ...] | None = None,
+    givens: tuple[tuple[TensorVariable, TensorVariable], ...] | None = None,
+    accept_inplace: bool = False,
+    name: str | None = None,
+    rebuild_strict: bool = True,
+    allow_input_downcast: bool | None = None,
+    on_unused_input: str | None = "ignore",
+    trust_input: bool = False,
+) -> Function:
     return pytensor.function(
         list(inputs),
-        outputs,
+        rewrite_pregrad(list(outputs) if isinstance(outputs, tuple) else outputs),
         mode=mode,
         updates=dict(updates) if updates is not None else None,
         givens=dict(givens) if givens is not None else None,
