@@ -109,17 +109,15 @@ class TestBackwardLookingIRF:
 
 
 class TestBackwardLookingSimulation:
-    def test_simulate_variance_scales_with_shock_std(self, sarima_solved):
+    def test_simulate_scales_linearly_with_shock_std(self, sarima_solved):
+        """A shock standard deviation scales the draws it is applied to, so doubling it doubles every path."""
         model, T, R = sarima_solved
-        kwargs = {"simulation_length": 500, "n_simulations": 500, "random_seed": 42}
+        kwargs = {"simulation_length": 20, "n_simulations": 3, "random_seed": 42}
 
         data_1 = simulate(model, T, R, shock_std=1.0, **kwargs)
         data_2 = simulate(model, T, R, shock_std=2.0, **kwargs)
 
-        var_1 = data_1.sel(variable="x").values[:, -1].var()
-        var_2 = data_2.sel(variable="x").values[:, -1].var()
-
-        assert_allclose(var_2 / var_1, 4.0, rtol=0.2)
+        assert_allclose(data_2.values, 2 * data_1.values, rtol=0, atol=1e-12)
 
 
 class TestBackwardLookingMoments:

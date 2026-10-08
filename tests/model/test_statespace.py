@@ -81,16 +81,13 @@ def test_statespace_matrices_agree_with_model(gcn_file):
 
 @pytest.mark.parametrize(
     "gcn_file",
-    [
-        "one_block_1_ss.gcn",
-        "open_rbc.gcn",
-        "full_nk.gcn",
-        "rbc_linearized.gcn",
-        "sarima2_12.gcn",
-    ],
+    ["one_block_1_ss.gcn", "open_rbc.gcn", "rbc_linearized.gcn", "sarima2_12.gcn"],
 )
 def test_to_pymc_creates_rvs_for_priors(gcn_file):
     ss_mod = load_and_cache_statespace(gcn_file)
+    # A model declaring no priors satisfies both assertions below without exercising anything.
+    assert ss_mod.param_priors or ss_mod.shock_priors, f"{gcn_file} declares no priors"
+
     with pm.Model() as m:
         ss_mod.to_pymc()
     rv_names = {rv.name for rv in m.free_RVs}
