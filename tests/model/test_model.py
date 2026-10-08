@@ -760,11 +760,11 @@ def test_summarize_perturbation_solution():
     ],
 )
 def test_validate_shock_options(shock_kwargs, expected_msg):
+    """The shock options are validated before the model is solved, so no solution is needed to reach the error."""
     model = load_and_cache_model("full_nk.gcn")
-    T, R = model.solve_model(solver="gensys", verbose=False)
 
     with pytest.raises(ValueError, match=re.escape(expected_msg)):
-        stationary_covariance_matrix(model, T, R, **shock_kwargs)
+        stationary_covariance_matrix(model, **shock_kwargs)
 
 
 def test_build_Q_matrix(rng):
