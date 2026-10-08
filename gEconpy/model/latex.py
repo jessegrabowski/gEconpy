@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import sympy as sp
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
@@ -54,7 +56,7 @@ def wrap_leads_in_expectations(expression: sp.Expr) -> sp.Expr:
     return sp.Add(*terms)
 
 
-class _PrintingConverter(ASTToSympyConverter):
+class PrintingConverter(ASTToSympyConverter):
     """
     Converts an authored equation while keeping its expectation operator.
 
@@ -115,11 +117,15 @@ def authored_sides(source_ast: GCNModel | None, equation_id: str) -> tuple[sp.Ex
         return None
 
     equation = equations[index]
-    converter = _PrintingConverter()
+    converter = PrintingConverter()
     return converter.convert_expr(equation.lhs), converter.convert_expr(equation.rhs)
 
 
-def symbol_names_for(expression: sp.Expr, overrides: dict[str, str]) -> dict[sp.Symbol, str]:
+def symbol_names_for(
+    expression: sp.Expr,
+    overrides: dict[str, str],
+    renderer: Callable[..., str] = render_latex,
+) -> dict[sp.Symbol, str]:
     """
     Resolve declared LaTeX overrides against the symbols of one expression.
 
@@ -132,7 +138,10 @@ def symbol_names_for(expression: sp.Expr, overrides: dict[str, str]) -> dict[sp.
     expression : sympy expression
         The expression about to be rendered.
     overrides : dict mapping str to str
-        Declared LaTeX, keyed by the symbol's storage name.
+        Declared markup, keyed by the symbol's storage name.
+    renderer : callable, optional
+        Composes a declared stem with the symbol's subscripts, in the target language. Defaults to
+        :func:`~gEconpy.classes.time_aware_symbol.render_latex`.
 
     Returns
     -------
@@ -147,7 +156,7 @@ def symbol_names_for(expression: sp.Expr, overrides: dict[str, str]) -> dict[sp.
         if isinstance(symbol, TimeAwareSymbol):
             override = overrides.get(variable_key(symbol.base_name))
             if override is not None:
-                resolved[symbol] = render_latex(symbol, stem_override=override)
+                resolved[symbol] = renderer(symbol, stem_override=override)
         elif symbol.name in overrides:
             resolved[symbol] = overrides[symbol.name]
     return resolved
@@ -183,22 +192,91 @@ def equation_sides_latex(
     right : str
         The right side, which is ``0`` for a derived equation.
     """
+    left, right = equation_expressions(source_ast, equation_id, expression, expectations)
+    return render_sides(left, right, overrides, printer=sp.latex, renderer=render_latex)
+
+
+def equation_expressions(
+    source_ast: GCNModel | None,
+    equation_id: str,
+    expression: sp.Expr,
+    expectations: bool = True,
+) -> tuple[sp.Expr, sp.Expr]:
+    """
+    Recover one equation's two sides as expressions, before any language renders them.
+
+    Parameters
+    ----------
+    source_ast : GCNModel, optional
+        The parsed file, used to recover an authored equation's own two sides. None for a model built without one.
+    equation_id : str
+        The id of the equation.
+    expression : sympy expression
+        The equation as the solved system holds it, used when there is no authored form.
+    expectations : bool, optional
+        Wrap lead-carrying terms in a conditional expectation. Defaults to True.
+
+    Returns
+    -------
+    left : sympy expression
+        The left side. A derived equation's residual.
+    right : sympy expression
+        The right side, which is zero for a derived equation.
+    """
     sides = authored_sides(source_ast, equation_id)
     left, right = (expression, sp.Integer(0)) if sides is None else sides
+    if not expectations:
+        return left, right
 
-    if expectations:
-        # A side the author already wrote an operator on is left alone, since they said where it belongs.
-        left, right = _wrap_unless_authored(left), _wrap_unless_authored(right)
+    # A side the author already wrote an operator on is left alone, since they said where it belongs.
+    return wrap_unless_authored(left), wrap_unless_authored(right)
 
-    # Resolved against the sides actually being rendered, which are rebuilt symbols for an authored equation.
+
+def authored_expressions(equation: GCNEquation) -> tuple[sp.Expr, sp.Expr]:
+    """Convert one authored equation's two sides to expressions, keeping the operators the author wrote."""
+    converter = PrintingConverter()
+    return converter.convert_expr(equation.lhs), converter.convert_expr(equation.rhs)
+
+
+def render_sides(
+    left: sp.Expr,
+    right: sp.Expr,
+    overrides: dict[str, str] | None,
+    printer: Callable[..., str],
+    renderer: Callable[..., str],
+) -> tuple[str, str]:
+    """
+    Render two sides of an equation, resolving declared markup against the symbols each side actually holds.
+
+    An authored equation is rebuilt from the file, so its symbols are different objects from the solved
+    system's and an override has to be matched by name rather than by identity.
+
+    Parameters
+    ----------
+    left, right : sympy expression
+        The two sides.
+    overrides : dict mapping str to str, optional
+        Declared markup, keyed by the symbol's storage name.
+    printer : callable
+        Renders an expression, taking ``symbol_names`` as ``sympy.latex`` does.
+    renderer : callable
+        Composes a declared stem with a symbol's subscripts, in the same language.
+
+    Returns
+    -------
+    left : str
+        The rendered left side.
+    right : str
+        The rendered right side.
+    """
     names = overrides or {}
     return (
-        sp.latex(left, symbol_names=symbol_names_for(left, names)),
-        sp.latex(right, symbol_names=symbol_names_for(right, names)),
+        printer(left, symbol_names=symbol_names_for(left, names, renderer=renderer)),
+        printer(right, symbol_names=symbol_names_for(right, names, renderer=renderer)),
     )
 
 
-def _wrap_unless_authored(side: sp.Expr) -> sp.Expr:
+def wrap_unless_authored(side: sp.Expr) -> sp.Expr:
     return side if side.has(ConditionalExpectation) else wrap_leads_in_expectations(side)
 
 
@@ -220,14 +298,8 @@ def authored_equation_latex(equation: GCNEquation, overrides: dict[str, str] | N
     right : str
         The rendered right side.
     """
-    converter = _PrintingConverter()
-    names = overrides or {}
-    left = converter.convert_expr(equation.lhs)
-    right = converter.convert_expr(equation.rhs)
-    return (
-        sp.latex(left, symbol_names=symbol_names_for(left, names)),
-        sp.latex(right, symbol_names=symbol_names_for(right, names)),
-    )
+    left, right = authored_expressions(equation)
+    return render_sides(left, right, overrides, printer=sp.latex, renderer=render_latex)
 
 
 def definition_rows(source_ast: GCNModel | None, overrides: dict[str, str] | None = None) -> list[tuple[str, str, str]]:

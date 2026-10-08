@@ -74,6 +74,7 @@ gEconpy
     gEconpy.model.steady_state <gEconpy.model.steady_state>
     gEconpy.model.tables <gEconpy.model.tables>
     gEconpy.model.timing <gEconpy.model.timing>
+    gEconpy.model.typst <gEconpy.model.typst>
     gEconpy.parser <gEconpy.parser>
     gEconpy.parser.ast <gEconpy.parser.ast>
     gEconpy.parser.ast.nodes <gEconpy.parser.ast.nodes>

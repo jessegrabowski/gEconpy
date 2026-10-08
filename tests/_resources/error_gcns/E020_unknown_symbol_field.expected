@@ -9,4 +9,4 @@ error[E020]: Unknown symbol field 'long_name'. Found 'long_name'
    8 | };
      |
    = note: Did you mean 'name'?
-   = note: Rename the field to one of: name, latex, source, bounds, positive, negative, nonpositive, nonnegative, nonzero, real, integer, finite, unit_interval
+   = note: Rename the field to one of: name, latex, typst, source, bounds, positive, negative, nonpositive, nonnegative, nonzero, real, integer, finite, unit_interval

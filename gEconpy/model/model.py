@@ -25,10 +25,11 @@ from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex, render_name_latex
+from gEconpy.classes.time_aware_symbol import (
+    TimeAwareSymbol,
+)
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
-from gEconpy.model.latex import definition_rows, equation_sides_latex
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import check_perturbation_solution, make_not_loglin_flags
 from gEconpy.model.perturbation import linearize_model as _linearize_model
@@ -43,11 +44,13 @@ from gEconpy.model.steady_state import (
 )
 from gEconpy.model.tables import (
     DEFAULT_PRIOR_STATS,
+    DIALECTS,
     TABLE_GROUPS,
     TABLE_WRITERS,
     CalibrationTable,
     EquationRow,
     EquationTable,
+    Markup,
     ParameterRow,
     SymbolRow,
     SymbolTable,
@@ -506,7 +509,7 @@ class Model:
         """
         return self._equation_labels.get(equation_id)
 
-    def _foc_control_latex(self, equation_id: str, overrides: dict[str, str]) -> str | None:
+    def _foc_control(self, equation_id: str, overrides: dict[str, str], markup: Markup = "latex") -> str | None:
         """Return the rendered control a first-order condition was taken with respect to, or None."""
         # Ids are built in Block.solve_optimization as "{block}.{component}.{suffix}", and
         # test_ids_name_the_block_and_component_they_came_from pins that format.
@@ -519,10 +522,11 @@ class Model:
         for variable in block.controls:
             if variable.name == control_name:
                 symbol = TimeAwareSymbol(control_name, variable.time_index.value)
-                return render_latex(symbol, stem_override=overrides.get(variable_key(control_name)))
+                stem = overrides.get(variable_key(control_name))
+                return DIALECTS[markup].render_symbol(symbol, stem_override=stem)
         return None
 
-    def _equation_table(self, expectations: bool = True) -> EquationTable:
+    def _equation_table(self, expectations: bool = True, markup: Markup = "latex") -> EquationTable:
         r"""
         Build the model's equations as table data, for a paper's equation table.
 
@@ -535,16 +539,20 @@ class Model:
         expectations : bool, optional
             Wrap lead-carrying terms in :math:`\mathbb{E}_t`, except where the author wrote the operator
             themselves. Defaults to True.
+        markup : str, optional
+            ``"latex"`` or ``"typst"``, the language the rows are rendered in. Defaults to ``"latex"``.
 
         Returns
         -------
         table : EquationTable
             The rows, renderable as LaTeX or as a dataframe.
         """
-        overrides = self._latex_overrides()
+        overrides = self._markup_overrides(markup)
+
+        dialect = DIALECTS[markup]
 
         definitions: dict[str, list[tuple[str, str]]] = defaultdict(list)
-        for block_name, left, right in definition_rows(self._source_ast, overrides):
+        for block_name, left, right in dialect.definition_rows(self._source_ast, overrides):
             definitions[block_name].append((left, right))
 
         equations: dict[str, list[tuple[str, sp.Expr]]] = defaultdict(list)
@@ -563,7 +571,7 @@ class Model:
                 for left, right in definitions[block_name]
             )
             for equation_id, expression in equations[block_name]:
-                left, right = equation_sides_latex(
+                left, right = dialect.equation_sides(
                     self._source_ast,
                     equation_id,
                     expression,
@@ -577,7 +585,7 @@ class Model:
                         label=self.equation_label(equation_id),
                         left=left,
                         right=right,
-                        foc_control=self._foc_control_latex(equation_id, overrides),
+                        foc_control=self._foc_control(equation_id, overrides, markup),
                     )
                 )
 
@@ -587,6 +595,7 @@ class Model:
         self,
         prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS,
         include_prior_params: bool = False,
+        markup: Markup = "latex",
     ) -> CalibrationTable:
         """
         Build the model's parameters as table data, for a paper's calibration table.
@@ -600,7 +609,8 @@ class Model:
         table : CalibrationTable
             The rows, renderable as LaTeX or as a dataframe.
         """
-        overrides = self._latex_overrides()
+        overrides = self._markup_overrides(markup)
+        render_name = DIALECTS[markup].render_name
         declarations = self._declarations_by_name()
         values = self.parameters().to_string()
         priors = self.param_priors.to_string()
@@ -622,7 +632,7 @@ class Model:
             include_prior_params=include_prior_params,
             rows=[
                 ParameterRow(
-                    symbol=render_name_latex(name, stem_override=overrides.get(name)),
+                    symbol=render_name(name, stem_override=overrides.get(name)),
                     description=declarations[name].name if name in declarations else None,
                     value=None if name not in values else float(values[name]),
                     prior=priors.get(name),
@@ -632,11 +642,12 @@ class Model:
             ],
         )
 
-    def _symbol_table(self, group: str) -> SymbolTable:
-        """Build the variable or shock rows, resolving each symbol's declared caption and LaTeX."""
-        overrides = self._latex_overrides()
+    def _symbol_table(self, group: str, markup: Markup = "latex") -> SymbolTable:
+        """Build the variable or shock rows, resolving each symbol's declared caption and rendering."""
+        overrides = self._markup_overrides(markup)
         declarations = self._declarations_by_name()
         symbols = {"variables": self.variables, "shocks": self.shocks}[group]
+        render = DIALECTS[markup].render_symbol
 
         rows = []
         for symbol in symbols:
@@ -644,7 +655,7 @@ class Model:
             declaration = declarations.get(key)
             rows.append(
                 SymbolRow(
-                    symbol=render_latex(symbol, stem_override=overrides.get(key)),
+                    symbol=render(symbol, stem_override=overrides.get(key)),
                     description=declaration.name if declaration is not None else None,
                 )
             )
@@ -741,7 +752,8 @@ class Model:
         if writer not in TABLE_WRITERS:
             raise ValueError(f"writer must be one of {', '.join(TABLE_WRITERS)}, got {writer!r}.")
 
-        table = self.table(group, **build_options)
+        # The writer's name is also the markup its rows are built in, because a cell carries rendered markup.
+        table = self.table(group, markup=writer, **build_options)
         markup = _call_for_group(getattr(table, TABLE_WRITERS[writer]), group=group, kind="style option", **style)
         if path is not None:
             Path(path).write_text(markup, encoding="utf-8")
@@ -795,12 +807,12 @@ class Model:
 
         return render_model(self, self._source_ast)
 
-    def _latex_overrides(self) -> dict[str, str]:
-        """Return the ``symbols`` block's declared LaTeX, keyed by each symbol's storage name."""
+    def _markup_overrides(self, markup: Markup = "latex") -> dict[str, str]:
+        """Return the ``symbols`` block's declared markup for one language, keyed by each symbol's storage name."""
         return {
-            symbol.name: declaration.latex
+            symbol.name: declared
             for symbol, declaration in self._symbols.items()
-            if declaration.latex is not None
+            if (declared := getattr(declaration, markup)) is not None
         }
 
     def _declarations_by_name(self) -> dict[str, SymbolDeclaration]:

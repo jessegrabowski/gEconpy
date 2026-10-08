@@ -18,6 +18,7 @@ from gEconpy.parser.ast import (
     assumptions_implied_by_bounds,
     gcn_spelling,
 )
+from gEconpy.parser.constants import SYMBOL_METADATA_FIELDS
 
 PRECEDENCE = {
     Operator.ADD: 1,
@@ -208,9 +209,7 @@ def _symbols_section(symbols: dict[str, SymbolDeclaration], indent: str) -> str:
 def _symbol_fields(declaration: SymbolDeclaration) -> list[str]:
     """Render one ``symbols`` entry's fields, omitting every assumption the parser derives from the bound."""
     fields = [
-        f'{field} = "{text}";'
-        for field in ("name", "latex", "source")
-        if (text := getattr(declaration, field)) is not None
+        f'{field} = "{text}";' for field in SYMBOL_METADATA_FIELDS if (text := getattr(declaration, field)) is not None
     ]
 
     if declaration.bounds != (None, None):
