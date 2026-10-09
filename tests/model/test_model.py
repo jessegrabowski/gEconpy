@@ -56,6 +56,19 @@ def _model_without_analytic_steady_state(gcn_file):
     return model
 
 
+def test_stripping_a_steady_state_cannot_reach_the_shared_model():
+    """
+    The helper above mutates the model it returns, so it has to build its own rather than take the cached one.
+
+    Routing it through ``load_and_cache_model`` would empty the analytic steady state of the copy that every
+    other test using this file reads, and those tests would then fail for a reason nowhere near the cause.
+    """
+    stripped = _model_without_analytic_steady_state("one_block_1_ss.gcn")
+
+    assert not stripped._ss_solution_dict
+    assert load_and_cache_model("one_block_1_ss.gcn")._ss_solution_dict
+
+
 @pytest.mark.parametrize(
     "gcn_path",
     [
