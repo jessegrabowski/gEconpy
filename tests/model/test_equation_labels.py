@@ -1,8 +1,8 @@
 import pytest
 
 from gEconpy import model_from_gcn
-from gEconpy.data import get_example_gcn
 from gEconpy.parser.loader import load_gcn_string
+from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 from tests.conftest import TEST_GCNS
 
 
@@ -51,7 +51,7 @@ def test_every_labelled_id_still_names_a_surviving_equation(labelled_model_path)
 
 
 def test_an_unlabelled_model_carries_no_labels():
-    assert model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)._equation_labels == {}
+    assert load_and_cache_model("open_rbc.gcn")._equation_labels == {}
 
 
 def test_a_control_caption_lands_on_the_derived_condition_not_the_control():
@@ -75,14 +75,14 @@ def test_a_control_caption_lands_on_the_derived_condition_not_the_control():
 class TestDerivativeConditions:
     def test_an_unannotated_first_order_condition_is_not_captioned(self):
         """Only an author captions an equation, exactly as for every other kind of row."""
-        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        model = load_and_cache_example("RBC")
 
         assert model.equation_label("Household.foc.C") is None
         assert model.equation_label("Firm.foc.L") is None
 
     def test_an_uncaptioned_condition_prints_the_derivative_it_came_from(self):
         """The prefix is what tells a reader which control the condition belongs to, now that no caption does."""
-        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        model = load_and_cache_example("RBC")
 
         latex = model.table("equations").to_latex()
 
@@ -90,7 +90,7 @@ class TestDerivativeConditions:
 
     def test_the_control_carries_the_time_index_it_was_declared_with(self):
         """``K[-1]`` is a control of the firm, and a derivative with respect to ``K_t`` would be the wrong one."""
-        model = model_from_gcn(get_example_gcn("RBC_two_household"), verbose=False)
+        model = load_and_cache_example("RBC_two_household")
 
         latex = model.table("equations").to_latex()
 
@@ -121,7 +121,7 @@ class TestDerivativeConditions:
 
     def test_an_equation_the_author_wrote_gets_neither(self):
         """An authored equation has source text to label, so inventing a caption or a derivative would be guessing."""
-        model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+        model = load_and_cache_model("open_rbc.gcn")
 
         row = next(r for r in model.table("equations").rows if r.equation_id == "Household.constraints.0")
 

@@ -6,6 +6,7 @@ from gEconpy import model_from_gcn
 from gEconpy.data import get_example_gcn
 from gEconpy.model.html import SOLVED_STEADY_STATE_TITLE, render_gcn_file, render_model
 from gEconpy.model.latex import block_heading
+from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 from tests.conftest import TEST_GCNS
 
 # Sphinx tells MathJax to re-enter an ignored subtree only for these, so the container must carry one of them.
@@ -24,7 +25,7 @@ def rendered():
 @pytest.fixture(scope="module")
 def rbc():
     """Build once: building the model dominates the runtime of every assertion below."""
-    return model_from_gcn(get_example_gcn("RBC"), verbose=False)
+    return load_and_cache_example("RBC")
 
 
 def test_the_render_runs_no_javascript(rendered):
@@ -119,7 +120,7 @@ class TestModelRepr:
 
     def test_the_parameter_count_matches_the_table_under_it(self):
         """``model.params`` omits calibrated parameters and shock hyper-parameters; the table holds them."""
-        model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+        model = load_and_cache_model("open_rbc.gcn")
 
         rendered = model._repr_html_()
 
@@ -203,7 +204,7 @@ def test_a_model_with_no_parsed_file_keeps_its_captions(rbc):
 @pytest.mark.parametrize("example", ["RBC", "New_Keynesian", "Three_Equation_NK"])
 def test_every_authored_block_reaches_the_render(example):
     """A renderer that drops a block leaves a model the reader cannot check against their file."""
-    model = model_from_gcn(get_example_gcn(example), verbose=False)
+    model = load_and_cache_example(example)
 
     rendered = model._repr_html_()
 

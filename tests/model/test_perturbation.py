@@ -10,7 +10,6 @@ from pytensor.graph.traversal import explicit_graph_inputs
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.build import model_from_gcn
 from gEconpy.model.perturbation import (
     check_bk_condition,
     check_bk_condition_pt,
@@ -235,7 +234,7 @@ class TestSolvePolicyFunction:
         assert_allclose(R_gensys, R_cr, atol=1e-8, rtol=1e-8)
 
     def test_cycle_reduction_reports_non_convergence(self):
-        mod = model_from_gcn("tests/_resources/test_gcns/pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
+        mod = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
         A, B, C, D = mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
 
         T, R, result, _log_norm = solve_policy_function_with_cycle_reduction(
@@ -381,10 +380,8 @@ class TestNumbaBackend:
 class TestCheckBKCondition:
     @staticmethod
     def _system(gcn_file):
-        if gcn_file == "pert_fails.gcn":
-            mod = model_from_gcn(f"tests/_resources/test_gcns/{gcn_file}", verbose=False, on_unused_parameters="ignore")
-        else:
-            mod = load_and_cache_model(gcn_file)
+        on_unused = "ignore" if gcn_file == "pert_fails.gcn" else "raise"
+        mod = load_and_cache_model(gcn_file, on_unused_parameters=on_unused)
         return mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
 
     @pytest.mark.parametrize(

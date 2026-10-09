@@ -8,11 +8,11 @@ import sympy as sp
 
 from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.data import get_example_gcn
 from gEconpy.exceptions import TypstPrintError
 from gEconpy.model.latex import wrap_leads_in_expectations
 from gEconpy.model.tables import CalibrationTable, EquationTable, SymbolRow, SymbolTable
 from gEconpy.model.typst import typst
+from tests._resources.cache_compiled_models import load_and_cache_example
 from tests.conftest import TEST_GCNS
 
 alpha = sp.Symbol("alpha")
@@ -106,7 +106,7 @@ class TestAgreementWithLatex:
         term out is deliberately not compared: the LaTeX printer leaves a negative power as a leading factor
         where this one builds a ``frac``, which moves a variable within its own term and says the same thing.
         """
-        model = model_from_gcn(get_example_gcn(model_name), verbose=False)
+        model = load_and_cache_example(model_name)
         sums = {
             addition for equation in model.equations for addition in equation.atoms(sp.Add) if len(addition.args) > 1
         }
@@ -131,7 +131,7 @@ def _term_order(addition: sp.Add, printer: Callable[[sp.Expr], str]) -> list[sp.
 @pytest.fixture(scope="module")
 def rbc():
     """Built once: every test here reads the same model, and building it dominates their runtime."""
-    return model_from_gcn(get_example_gcn("RBC"), verbose=False)
+    return load_and_cache_example("RBC")
 
 
 class TestWriter:

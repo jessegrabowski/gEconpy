@@ -5,6 +5,7 @@ import pytest
 
 from gEconpy import model_from_gcn
 from gEconpy.exceptions import ExtraParameterError, ExtraParameterWarning, OrphanParameterError
+from tests._resources.cache_compiled_models import load_and_cache_model
 from tests.conftest import TEST_GCNS
 
 
@@ -309,7 +310,7 @@ def test_build_report(caplog):
 
 
 def test_symbols_block_reaches_the_model():
-    model = model_from_gcn(TEST_GCNS / "one_block_2_symbols.gcn", verbose=False)
+    model = load_and_cache_model("one_block_2_symbols.gcn")
 
     declarations = model._symbols.to_string()
     assert declarations["alpha"].name == "Capital share of output"
@@ -318,4 +319,4 @@ def test_symbols_block_reaches_the_model():
 
 
 def test_model_without_a_symbols_block_has_no_declarations():
-    assert model_from_gcn(TEST_GCNS / "one_block_1.gcn", verbose=False)._symbols == {}
+    assert load_and_cache_model("one_block_1.gcn")._symbols == {}

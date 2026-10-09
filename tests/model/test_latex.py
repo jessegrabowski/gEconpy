@@ -9,6 +9,7 @@ from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.data import get_example_gcn
 from gEconpy.model.latex import authored_sides, block_heading, definition_rows, wrap_leads_in_expectations
+from tests._resources.cache_compiled_models import load_and_cache_example
 from tests.conftest import TEST_GCNS
 
 GOLDEN = Path(__file__).parent.parent / "_resources" / "RBC_equations.tex"
@@ -17,7 +18,7 @@ GOLDEN = Path(__file__).parent.parent / "_resources" / "RBC_equations.tex"
 @pytest.fixture(scope="module")
 def rbc():
     """Built once: every test here reads the same rendering, and building the model dominates their runtime."""
-    return model_from_gcn(get_example_gcn("RBC"), verbose=False)
+    return load_and_cache_example("RBC")
 
 
 class TestExpectationWrapper:
@@ -145,7 +146,7 @@ def test_every_shipped_model_renders_as_compilable_latex(gcn_file):
     Rendering only RBC hid a double subscript, an unescaped caption, an italic word inside a subscript, and an
     undefined control sequence, every one of which produces LaTeX that does not compile.
     """
-    rendered = model_from_gcn(Path(get_example_gcn("RBC")).parent / gcn_file, verbose=False).to_latex()
+    rendered = load_and_cache_example(Path(gcn_file).stem).to_latex()
 
     assert rendered.startswith(r"\begin{align}")
     assert rendered.endswith(r"\end{align}")
@@ -176,7 +177,7 @@ class TestToLatex:
         Discarding that and re-deriving the placement at Add-term granularity produced an operator enclosing
         ``i[]`` and ``rn[]`` as well, which is harmless arithmetically and not what any paper writes.
         """
-        model = model_from_gcn(get_example_gcn("Three_Equation_NK"), verbose=False)
+        model = load_and_cache_example("Three_Equation_NK")
 
         euler = next(row for row in model.to_latex().splitlines() if row.startswith("x_{t}"))
         enclosed = re.findall(r"\\mathbb\{E\}_t\\left\[(.*?)\\right\]", euler)
