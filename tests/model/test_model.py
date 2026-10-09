@@ -49,7 +49,7 @@ def rng():
 
 def _model_without_analytic_steady_state(gcn_file):
     """Build a fresh model and strip its analytic steady state so every variable must be solved numerically."""
-    model = model_from_gcn(TEST_GCNS / gcn_file, verbose=False, mode="FAST_RUN")
+    model = model_from_gcn(TEST_GCNS / gcn_file, verbose=False)
     model._ss_solution_dict = SymbolDictionary()
     model._f_ss = None
     model._equation_tensors = None
