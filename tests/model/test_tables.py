@@ -5,7 +5,6 @@ import preliz
 import pytest
 
 from gEconpy import model_from_gcn
-from gEconpy.data import get_example_gcn
 from gEconpy.model.tables import (
     PRIOR_STAT_HEADINGS,
     PRIOR_STATS,
@@ -18,13 +17,14 @@ from gEconpy.model.tables import (
     SymbolTable,
     _format_value,
 )
+from tests._resources.cache_compiled_models import load_and_cache_example
 from tests.conftest import TEST_GCNS
 
 
 @pytest.fixture(scope="module")
 def rbc():
     """Built once: every test here reads the same table, and building the model dominates their runtime."""
-    return model_from_gcn(get_example_gcn("RBC"), verbose=False)
+    return load_and_cache_example("RBC")
 
 
 class TestEquationTable:
@@ -64,7 +64,7 @@ class TestEquationTable:
         RBC alone cannot pin this: its definitions are in its first block, so emitting all definitions ahead of
         all equations happens to produce the right order. Baxter-King has them in a later block.
         """
-        blocks = [r.block for r in model_from_gcn(get_example_gcn(example), verbose=False).table("equations").rows]
+        blocks = [r.block for r in load_and_cache_example(example).table("equations").rows]
 
         assert list(dict.fromkeys(blocks)) == expected
         assert blocks == sorted(blocks, key=expected.index)
@@ -81,7 +81,7 @@ class TestRendering:
     )
     def test_each_block_gets_exactly_one_heading(self, example, expected):
         """A repeated heading means the rows were grouped by something other than the block."""
-        rendered = model_from_gcn(get_example_gcn(example), verbose=False).table("equations").to_latex()
+        rendered = load_and_cache_example(example).table("equations").to_latex()
 
         headings = [line for line in rendered.splitlines() if line.startswith(r"\intertext")]
         assert headings == [rf"\intertext{{\textbf{{{name}}}}}" for name in expected]
