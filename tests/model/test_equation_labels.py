@@ -2,7 +2,7 @@ import pytest
 
 from gEconpy import model_from_gcn
 from gEconpy.parser.loader import load_gcn_string
-from tests._resources.cache_compiled_models import load_and_cache_example
+from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 from tests.conftest import TEST_GCNS
 
 
@@ -51,7 +51,7 @@ def test_every_labelled_id_still_names_a_surviving_equation(labelled_model_path)
 
 
 def test_an_unlabelled_model_carries_no_labels():
-    assert model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)._equation_labels == {}
+    assert load_and_cache_model("open_rbc.gcn")._equation_labels == {}
 
 
 def test_a_control_caption_lands_on_the_derived_condition_not_the_control():
@@ -121,7 +121,7 @@ class TestDerivativeConditions:
 
     def test_an_equation_the_author_wrote_gets_neither(self):
         """An authored equation has source text to label, so inventing a caption or a derivative would be guessing."""
-        model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+        model = load_and_cache_model("open_rbc.gcn")
 
         row = next(r for r in model.table("equations").rows if r.equation_id == "Household.constraints.0")
 

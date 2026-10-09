@@ -3,7 +3,6 @@ import pytest
 
 from numpy.testing import assert_allclose
 
-from gEconpy.model.build import model_from_gcn
 from gEconpy.solvers.gensys import (
     _thin_svd_and_rank,
     interpret_gensys_output,
@@ -67,7 +66,7 @@ def test_policy_only_return_keeps_existence_codes():
 
 
 def test_mistimed_model_reports_non_unique_solution():
-    mod = model_from_gcn("tests/_resources/test_gcns/pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
+    mod = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
     A, B, C, D = mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
 
     _, eu = solve_policy_function_with_gensys(A, B, C, D, return_all_matrices=False)

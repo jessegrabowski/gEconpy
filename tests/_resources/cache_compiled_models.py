@@ -6,9 +6,11 @@ from gEconpy.data import get_example_gcn
 
 
 @cache
-def load_and_cache_model(gcn_file, infer_steady_state=True):
+def load_and_cache_model(gcn_file, infer_steady_state=True, on_unused_parameters="raise"):
     gcn_path = Path("tests") / "_resources" / "test_gcns" / gcn_file
-    return model_from_gcn(gcn_path, verbose=False, infer_steady_state=infer_steady_state)
+    return model_from_gcn(
+        gcn_path, verbose=False, infer_steady_state=infer_steady_state, on_unused_parameters=on_unused_parameters
+    )
 
 
 @cache

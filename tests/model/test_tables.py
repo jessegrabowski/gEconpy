@@ -17,8 +17,7 @@ from gEconpy.model.tables import (
     SymbolTable,
     _format_value,
 )
-from tests._resources.cache_compiled_models import load_and_cache_example
-from tests.conftest import TEST_GCNS
+from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 
 
 @pytest.fixture(scope="module")
@@ -150,7 +149,7 @@ class TestCalibrationTable:
 
     def test_a_calibrated_parameter_has_no_value(self):
         """It is solved for rather than set, so printing a number would invent one."""
-        model = model_from_gcn(TEST_GCNS / "one_block_2_no_extra.gcn", verbose=False)
+        model = load_and_cache_model("one_block_2_no_extra.gcn")
 
         calibrated = next(r for r in model.table("parameters").rows if r.symbol == r"\alpha")
 

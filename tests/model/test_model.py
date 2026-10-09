@@ -502,7 +502,7 @@ def test_dr_order_groups_variables_and_equations_by_time_shift():
 
 
 def test_invalid_solver_raises():
-    model = model_from_gcn(TEST_GCNS / "one_block_1_ss.gcn", verbose=False)
+    model = load_and_cache_model("one_block_1_ss.gcn")
     model.steady_state(verbose=False, progressbar=False)
 
     with pytest.raises(NotImplementedError):
@@ -514,7 +514,7 @@ def test_invalid_solver_raises():
 
 
 def test_bad_failure_argument_raises():
-    model = model_from_gcn(TEST_GCNS / "pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
 
     with pytest.raises(ValueError, match='on_failure must be one of "error" or "ignore"'):
         model.solve_model(
@@ -530,7 +530,7 @@ def test_bad_failure_argument_raises():
     [("gensys", "Gensys return codes"), ("cycle_reduction", "^Iteration on all matrices failed to converge$")],
 )
 def test_unsolvable_model_raises_with_the_solver_message(solver, match):
-    model = model_from_gcn(TEST_GCNS / "pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
 
     with pytest.raises(GensysFailedException, match=match):
         model.solve_model(
@@ -542,7 +542,7 @@ def test_unsolvable_model_raises_with_the_solver_message(solver, match):
 
 
 def test_outputs_after_gensys_failure(caplog):
-    model = model_from_gcn(TEST_GCNS / "pert_fails.gcn", verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
     T, R = model.solve_model(
         solver="gensys",
         on_failure="ignore",
@@ -590,7 +590,7 @@ def test_solve_matches_dynare(model_name, log_linearize):
 
 
 def test_outputs_after_pert_success(caplog):
-    model = model_from_gcn(TEST_GCNS / "rbc_linearized.gcn", verbose=False, on_unused_parameters="ignore")
+    model = load_and_cache_model("rbc_linearized.gcn", on_unused_parameters="ignore")
     model.solve_model(
         solver="gensys",
         verbose=True,

@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 
-from gEconpy import model_from_gcn
 from gEconpy.parser.loader import load_gcn_file, load_gcn_string
 from tests._resources.cache_compiled_models import load_and_cache_model
 from tests.conftest import TEST_GCNS
@@ -86,7 +85,7 @@ def test_the_note_is_empty_when_the_residual_does_not_match_the_ids():
 
 
 def test_the_parsed_file_reaches_the_model():
-    model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+    model = load_and_cache_model("open_rbc.gcn")
 
     assert model._source_ast.block_names() == [
         "Steady_State",

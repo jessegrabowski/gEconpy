@@ -6,7 +6,7 @@ from gEconpy import model_from_gcn
 from gEconpy.data import get_example_gcn
 from gEconpy.model.html import SOLVED_STEADY_STATE_TITLE, render_gcn_file, render_model
 from gEconpy.model.latex import block_heading
-from tests._resources.cache_compiled_models import load_and_cache_example
+from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 from tests.conftest import TEST_GCNS
 
 # Sphinx tells MathJax to re-enter an ignored subtree only for these, so the container must carry one of them.
@@ -120,7 +120,7 @@ class TestModelRepr:
 
     def test_the_parameter_count_matches_the_table_under_it(self):
         """``model.params`` omits calibrated parameters and shock hyper-parameters; the table holds them."""
-        model = model_from_gcn(TEST_GCNS / "open_rbc.gcn", verbose=False)
+        model = load_and_cache_model("open_rbc.gcn")
 
         rendered = model._repr_html_()
 
