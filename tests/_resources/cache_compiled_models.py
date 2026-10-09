@@ -1,15 +1,17 @@
 from functools import cache
-from pathlib import Path
 
 from gEconpy import model_from_gcn, statespace_from_gcn
 from gEconpy.data import get_example_gcn
+from tests.conftest import TEST_GCNS
 
 
 @cache
 def _build_model(gcn_file: str, infer_steady_state: bool, on_unused_parameters: str):
-    gcn_path = Path("tests") / "_resources" / "test_gcns" / gcn_file
     return model_from_gcn(
-        gcn_path, verbose=False, infer_steady_state=infer_steady_state, on_unused_parameters=on_unused_parameters
+        TEST_GCNS / gcn_file,
+        verbose=False,
+        infer_steady_state=infer_steady_state,
+        on_unused_parameters=on_unused_parameters,
     )
 
 
@@ -21,8 +23,7 @@ def load_and_cache_model(gcn_file: str, infer_steady_state: bool = True, on_unus
 
 @cache
 def load_and_cache_statespace(gcn_file: str):
-    gcn_path = Path("tests") / "_resources" / "test_gcns" / gcn_file
-    return statespace_from_gcn(gcn_path, verbose=False)
+    return statespace_from_gcn(TEST_GCNS / gcn_file, verbose=False)
 
 
 @cache
