@@ -78,10 +78,12 @@ def one_block_model():
 
 @pytest.fixture(scope="session")
 def simulation_data(rbc_model):
+    # No test below reads a simulated value: they count panels, lines and bands, and the one checking
+    # trajectory count reads it off this array. The path count only has to be enough to draw a band.
     return simulate(
         rbc_model,
         simulation_length=100,
-        n_simulations=1000,
+        n_simulations=50,
         shock_std=0.1,
         solver="gensys",
         verbose=False,
