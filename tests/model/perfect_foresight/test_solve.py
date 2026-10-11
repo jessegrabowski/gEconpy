@@ -248,6 +248,18 @@ class TestX0Dispatch:
             solve_perfect_foresight(rbc_model, simulation_length=20, x0=pd.DataFrame(np.zeros((5, 1))))
 
 
+class TestValidationOrder:
+    def test_unknown_parameter_is_reported_before_the_steady_state_is_computed(self, rbc_model):
+        """The model's own error for a bad name does not say which names a parameter path may use."""
+        with (
+            patch.object(type(rbc_model), "steady_state") as mock_ss,
+            pytest.raises(ValueError, match="Unknown parameters in param_paths"),
+        ):
+            solve_perfect_foresight(rbc_model, simulation_length=10, param_paths={"not_a_param": 1.0})
+
+        mock_ss.assert_not_called()
+
+
 class TestSolverArgument:
     @pytest.mark.parametrize(
         "solver",

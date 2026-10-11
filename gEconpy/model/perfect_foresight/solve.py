@@ -137,6 +137,20 @@ def solve_perfect_foresight(
     var_names = problem.var_names
     var_set = set(var_names)
 
+    # Validation runs before anything expensive, and before any name reaches the model: a typo in param_paths
+    # otherwise surfaces as whatever model.steady_state makes of it.
+    validate_perfect_foresight_inputs(
+        initial_conditions=initial_conditions,
+        terminal_conditions=terminal_conditions,
+        shocks=shocks,
+        param_paths=param_paths,
+        var_names=var_names,
+        shock_names=problem.shock_names,
+        param_names=problem.param_names,
+        deterministic_param_names=problem.deterministic_param_names,
+        simulation_length=simulation_length,
+    )
+
     init_param_kwargs, term_param_kwargs = _extract_boundary_param_kwargs(param_paths)
     same_boundary_params = term_param_kwargs == init_param_kwargs
 
@@ -163,18 +177,6 @@ def solve_perfect_foresight(
 
     if x0_vec is None:
         x0_vec = np.tile(_ss_dict_to_array(init_ss_dict, var_names), simulation_length)
-
-    validate_perfect_foresight_inputs(
-        initial_conditions,
-        terminal_conditions,
-        shocks,
-        param_paths,
-        var_names,
-        problem.shock_names,
-        problem.param_names,
-        problem.deterministic_param_names,
-        simulation_length,
-    )
 
     y_initial = _boundary_vector(initial_conditions, init_ss_dict if needs_initial_ss else None, var_names)
     y_terminal = _boundary_vector(terminal_conditions, term_ss_dict if needs_terminal_ss else None, var_names)

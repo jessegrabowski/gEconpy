@@ -4,6 +4,7 @@ import numpy as np
 
 
 def validate_perfect_foresight_inputs(
+    *,
     initial_conditions: dict[str, float],
     terminal_conditions: dict[str, float],
     shocks: dict[str, np.ndarray] | None,
@@ -47,7 +48,6 @@ def validate_perfect_foresight_inputs(
     """
     var_set = set(var_names)
     shock_set = set(shock_names)
-    param_set = set(param_names)
 
     invalid_initial = set(initial_conditions.keys()) - var_set
     if invalid_initial:
@@ -70,7 +70,7 @@ def validate_perfect_foresight_inputs(
         deterministic_set = set(deterministic_param_names)
         free_param_names = [name for name in param_names if name not in deterministic_set]
 
-        invalid_params = set(param_paths.keys()) - param_set
+        invalid_params = set(param_paths.keys()) - set(param_names)
         if invalid_params:
             raise ValueError(f"Unknown parameters in param_paths: {invalid_params}. Valid: {free_param_names}")
 
