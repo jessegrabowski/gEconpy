@@ -11,6 +11,7 @@ def validate_perfect_foresight_inputs(
     var_names: list[str],
     shock_names: list[str],
     param_names: list[str],
+    deterministic_param_names: list[str],
     simulation_length: int,
 ) -> None:
     """
@@ -33,8 +34,16 @@ def validate_perfect_foresight_inputs(
         Shock names the model knows.
     param_names : list of str
         Parameter names the model knows.
+    deterministic_param_names : list of str
+        Names in ``param_names`` that the model derives from other parameters, which cannot be set directly.
     simulation_length : int
         Number of periods.
+
+    Raises
+    ------
+    ValueError
+        If a name is unknown, if a path does not have the simulation length, or if a deterministic parameter is
+        given a path.
     """
     var_set = set(var_names)
     shock_set = set(shock_names)
@@ -58,9 +67,23 @@ def validate_perfect_foresight_inputs(
                 raise ValueError(f"Shock '{name}' has length {len(values)}, expected {simulation_length}")
 
     if param_paths:
+        deterministic_set = set(deterministic_param_names)
+        free_param_names = [name for name in param_names if name not in deterministic_set]
+
         invalid_params = set(param_paths.keys()) - param_set
         if invalid_params:
-            raise ValueError(f"Unknown parameters in param_paths: {invalid_params}. Valid: {param_names}")
+            raise ValueError(f"Unknown parameters in param_paths: {invalid_params}. Valid: {free_param_names}")
+
+        # A deterministic parameter is a function of the free parameters, so the model recomputes it from them at
+        # every update. Writing a path for it directly would be honored in the simulated periods and ignored when
+        # the boundary steady states are computed, leaving the two halves of the problem disagreeing.
+        invalid_deterministic = sorted(set(param_paths.keys()) & deterministic_set)
+        if invalid_deterministic:
+            raise ValueError(
+                f"Cannot set a path for deterministic parameters: {', '.join(invalid_deterministic)}. They are "
+                f"derived from other parameters, so set a path for those instead. Free parameters: "
+                f"{free_param_names}"
+            )
 
         for name, value in param_paths.items():
             if np.ndim(value) > 0 and len(value) != simulation_length:

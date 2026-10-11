@@ -341,6 +341,10 @@ class TestDeterministicParameters:
         expected_jump = parameters(beta=0.95)["rstar"] - parameters(beta=0.99)["rstar"]
         assert_allclose(trajectory["r"].iloc[-1] - trajectory["r"].iloc[0], expected_jump, rtol=1e-3)
 
+    def test_path_on_a_deterministic_parameter_is_rejected(self, open_rbc_model):
+        with pytest.raises(ValueError, match="Cannot set a path for deterministic parameters: rstar"):
+            solve_perfect_foresight(open_rbc_model, simulation_length=10, param_paths={"rstar": 0.05})
+
 
 class TestConditionKeyNormalization:
     @pytest.mark.parametrize(

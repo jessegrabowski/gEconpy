@@ -43,6 +43,8 @@ class PerfectForesightProblem:
         Shock names, giving the order of ``x_t``.
     param_names : list of str
         Parameter names, in the order the compiled functions expect them.
+    deterministic_param_names : list of str
+        The subset of ``param_names`` that the model derives from other parameters.
     T : int
         Number of periods in the simulation horizon.
     """
@@ -53,6 +55,7 @@ class PerfectForesightProblem:
     var_names: list[str]
     shock_names: list[str]
     param_names: list[str]
+    deterministic_param_names: list[str]
     T: int
 
     @property
@@ -118,6 +121,7 @@ def compile_perfect_foresight_problem(
         var_names=graph.var_names,
         shock_names=graph.shock_names,
         param_names=graph.param_names,
+        deterministic_param_names=graph.deterministic_param_names,
         T=T,
     )
 
@@ -131,6 +135,7 @@ class _SinglePeriodGraph:
     var_names: list[str]
     shock_names: list[str]
     param_names: list[str]
+    deterministic_param_names: list[str]
 
 
 def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
@@ -198,6 +203,8 @@ def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
 
     residuals_vec, jacobian_vec = graph_replace([residuals, jacobian], replacements, strict=False)
 
+    deterministic_names = {p.name for p in model.deterministic_params}
+
     inputs = [y_tm1, y_t, y_tp1]
     if x_t is not None:
         inputs.append(x_t)
@@ -211,6 +218,7 @@ def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
         var_names=var_names,
         shock_names=[x.base_name for x in shocks_t],
         param_names=[p.name for p in params_in_equations],
+        deterministic_param_names=[p.name for p in params_in_equations if p.name in deterministic_names],
     )
 
 

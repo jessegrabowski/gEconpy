@@ -24,6 +24,7 @@ class TestCompile:
         assert problem.n_vars == len(rbc_model.variables)
         assert problem.n_shocks == len(rbc_model.shocks)
         assert problem.n_eq == len(rbc_model.equations)
+        assert problem.deterministic_param_names == []
 
     def test_residuals_vanish_at_steady_state_and_jacobian_matches_finite_differences(self, rbc_model):
         problem = compile_perfect_foresight_problem(rbc_model, 5)
@@ -102,6 +103,12 @@ class TestCompile:
 
         missing_from_mask = (jacobian != 0) & ~problem.jacobian_sparsity
         assert not missing_from_mask.any()
+
+    def test_deterministic_parameters_are_reported(self):
+        problem = compile_perfect_foresight_problem(load_and_cache_model("open_rbc.gcn"), 5)
+
+        assert "rstar" in problem.deterministic_param_names
+        assert set(problem.deterministic_param_names) <= set(problem.param_names)
 
     def test_steady_state_reference_without_analytic_solution_raises(self):
         model = load_and_cache_model("full_nk_no_ss.gcn")

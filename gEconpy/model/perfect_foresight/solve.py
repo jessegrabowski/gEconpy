@@ -172,6 +172,7 @@ def solve_perfect_foresight(
         var_names,
         problem.shock_names,
         problem.param_names,
+        problem.deterministic_param_names,
         simulation_length,
     )
 
