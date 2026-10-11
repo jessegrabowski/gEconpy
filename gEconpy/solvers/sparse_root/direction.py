@@ -33,9 +33,15 @@ class DirectionProposal:
 
 
 class DirectionStrategy(Protocol):
-    """Strategy that proposes a search direction from the current residuals and Jacobian."""
+    """Strategy that proposes a search direction from the current residuals and Jacobian.
+
+    ``reset`` discards whatever the strategy carried over from a previous solve, and a solver calls it before the
+    first step so one instance can be reused across solves.
+    """
 
     def compute(self, x: np.ndarray, res: np.ndarray, jac: sp.spmatrix) -> DirectionProposal: ...
+
+    def reset(self) -> None: ...
 
 
 @dataclass
@@ -54,6 +60,9 @@ class NewtonDirection:
     # A function stored directly as the class attribute becomes the attribute's docstring under autodoc, and
     # scipy's spsolve docstring uses roles Sphinx does not define, so the default lives in a factory.
     linear_solver: Callable = field(default_factory=lambda: spsolve)
+
+    def reset(self) -> None:
+        """Do nothing: this strategy carries no state between solves."""
 
     def compute(
         self,

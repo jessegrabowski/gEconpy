@@ -45,7 +45,22 @@ class LineSearchResult:
 
 
 class GlobalizationStrategy(Protocol):
-    """Strategy that picks a step length along a proposed direction."""
+    """Strategy that picks a step length along a proposed direction.
+
+    ``reset`` discards whatever the strategy carried over from a previous solve, and a solver calls it before the
+    first step so one instance can be reused across solves.
+
+    Attributes
+    ----------
+    max_iter : int
+        Largest number of trial points one search may evaluate.
+    merit_fun : callable, optional
+        Residual-only function ``merit_fun(x, *args)`` used to evaluate trial points. Defaults to ``None``, meaning
+        ``fun`` evaluates every trial point.
+    """
+
+    max_iter: int
+    merit_fun: MeritFunction | None
 
     def search(
         self,
@@ -55,6 +70,8 @@ class GlobalizationStrategy(Protocol):
         proposal: DirectionProposal,
         args: tuple[Any, ...],
     ) -> LineSearchResult: ...
+
+    def reset(self) -> None: ...
 
 
 @dataclass
@@ -85,6 +102,9 @@ class ArmijoBacktracking:
     beta: float = DEFAULT_ARMIJO_BETA
     max_iter: int = DEFAULT_ARMIJO_MAX_ITER
     merit_fun: MeritFunction | None = None
+
+    def reset(self) -> None:
+        """Do nothing: this strategy carries no state between solves."""
 
     def search(
         self,

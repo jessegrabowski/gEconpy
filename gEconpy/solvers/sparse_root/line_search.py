@@ -53,10 +53,8 @@ class LineSearchSolver:
         state : ~gEconpy.solvers.sparse_root.base.SolverState
             State holding the initial point, residuals, Jacobian, merit value and evaluation counts.
         """
-        if hasattr(self.direction, "reset"):
-            self.direction.reset()
-        if hasattr(self.globalization, "reset"):
-            self.globalization.reset()
+        self.direction.reset()
+        self.globalization.reset()
         return initial_state(fun, x0, args)
 
     def step(self, fun: RootFunction, state: SolverState, args: tuple) -> tuple[SolverState, StepInfo]:
@@ -85,7 +83,7 @@ class LineSearchSolver:
         except RuntimeError as error:
             return state, StepInfo(accepted=False, step=np.zeros_like(state.x), message=str(error))
 
-        njev = 1 if getattr(self.globalization, "merit_fun", None) is not None else accepted.n_evals
+        njev = 1 if self.globalization.merit_fun is not None else accepted.n_evals
         new_state = SolverState(
             x=accepted.x_new,
             res=accepted.res_new,

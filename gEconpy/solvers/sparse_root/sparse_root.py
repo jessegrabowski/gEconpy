@@ -111,7 +111,9 @@ def sparse_root(
     x0 = np.asarray(x0, dtype=np.float64)
     validate_fused_fun(fun, x0, args)
 
-    max_line_search_evals = getattr(getattr(solver, "globalization", None), "max_iter", DEFAULT_ARMIJO_MAX_ITER)
+    # Trust-region solvers take no globalization strategy, so they have no line search budget to read.
+    globalization = getattr(solver, "globalization", None)
+    max_line_search_evals = DEFAULT_ARMIJO_MAX_ITER if globalization is None else globalization.max_iter
     objective = ObjectiveWrapper(
         maxeval=maxiter * (max_line_search_evals + 1),
         f=fun,
