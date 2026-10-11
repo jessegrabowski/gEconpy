@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import scipy.sparse as sp
@@ -121,8 +121,8 @@ class GaussNewtonTrustRegion:
 
             self._delta *= self.shrink_factor
 
-        state.stats.update(nfev=nfev, njev=nfev, nsolve=nsolve, nreject=self.max_reject)
-        return state, StepInfo(
+        stats = state.stats.update(nfev=nfev, njev=nfev, nsolve=nsolve, nreject=self.max_reject)
+        return replace(state, stats=stats), StepInfo(
             accepted=False,
             step=np.zeros_like(state.x),
             message=f"fatal: trust region rejected {self.max_reject} consecutive steps",

@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -129,8 +129,8 @@ class LevenbergMarquardt:
             if self._lam >= self.max_lam:
                 break
 
-        state.stats.update(nfev=nfev, njev=nfev, nsolve=nsolve, nreject=nsolve)
-        return state, StepInfo(
+        stats = state.stats.update(nfev=nfev, njev=nfev, nsolve=nsolve, nreject=nsolve)
+        return replace(state, stats=stats), StepInfo(
             accepted=False,
             step=np.zeros_like(state.x),
             message=f"fatal: Levenberg-Marquardt rejected every step, damping reached {self._lam:.1e}",

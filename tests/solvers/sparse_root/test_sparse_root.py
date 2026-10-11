@@ -1,3 +1,5 @@
+from dataclasses import astuple
+
 import numpy as np
 import pytest
 import scipy.sparse as sp
@@ -164,3 +166,33 @@ class TestTrustRegionReuse:
 
         assert (second.nit, second.nfev) == (first.nit, first.nfev)
         np.testing.assert_array_equal(second.x, first.x)
+
+
+class TestSolverStateIsAValue:
+    def test_an_accepted_step_does_not_move_the_earlier_states_counters(self, rosenbrock_root):
+        fun, x0, _ = rosenbrock_root
+        solver = NewtonArmijo()
+        first = solver.init(fun, x0, ())
+        counts_before = astuple(first.stats)
+
+        second, info = solver.step(fun, first, ())
+
+        assert info.accepted
+        assert astuple(first.stats) == counts_before
+        assert second.stats != first.stats
+
+    @pytest.mark.parametrize(
+        "solver",
+        [SparseDogleg(max_reject=3), GaussNewtonTrustRegion(max_reject=3), LevenbergMarquardt(lam0=0.5, max_lam=1.0)],
+        ids=["dogleg", "gauss_newton", "levenberg_marquardt"],
+    )
+    def test_a_rejected_step_does_not_move_the_earlier_states_counters(self, solver):
+        x0 = np.array([5.0, 5.0])
+        first = solver.init(uphill_everywhere, x0, ())
+        counts_before = astuple(first.stats)
+
+        second, info = solver.step(uphill_everywhere, first, ())
+
+        assert not info.accepted
+        assert astuple(first.stats) == counts_before
+        assert second.stats.nreject > 0

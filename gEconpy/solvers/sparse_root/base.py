@@ -35,7 +35,7 @@ class RootSolver(Protocol):
     ) -> tuple["SolverState", "StepInfo"]: ...
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class IterationStats:
     """Running counts of the work done by a solver.
 
@@ -60,7 +60,7 @@ class IterationStats:
     nreject: int = 0
 
     def update(self, nit: int = 0, nfev: int = 0, njev: int = 0, nsolve: int = 0, nreject: int = 0) -> "IterationStats":
-        """Add to each count in place.
+        """Return a new instance with each count increased by the amount given.
 
         Parameters
         ----------
@@ -78,14 +78,15 @@ class IterationStats:
         Returns
         -------
         stats : IterationStats
-            This object, after the counts are added.
+            New counts, leaving this object unchanged.
         """
-        self.nit += nit
-        self.nfev += nfev
-        self.njev += njev
-        self.nsolve += nsolve
-        self.nreject += nreject
-        return self
+        return IterationStats(
+            nit=self.nit + nit,
+            nfev=self.nfev + nfev,
+            njev=self.njev + njev,
+            nsolve=self.nsolve + nsolve,
+            nreject=self.nreject + nreject,
+        )
 
 
 @dataclass(frozen=True, slots=True)
