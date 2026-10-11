@@ -224,8 +224,9 @@ def solve_perfect_foresight(
     if solver is None:
         solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
     else:
+        # Trust-region solvers take no globalization strategy, so there is nowhere to put the merit function.
         globalization = getattr(solver, "globalization", None)
-        if globalization is not None and hasattr(globalization, "merit_fun") and globalization.merit_fun is None:
+        if globalization is not None and globalization.merit_fun is None:
             solver = replace(solver, globalization=replace(globalization, merit_fun=merit_fun))
 
     result = sparse_root(
