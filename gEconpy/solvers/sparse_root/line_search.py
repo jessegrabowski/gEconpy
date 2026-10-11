@@ -121,14 +121,14 @@ def newton_armijo(
 
 
 def chord(
-    direction: DirectionStrategy | None = None,
+    direction: ChordDirection | None = None,
     globalization: GlobalizationStrategy | None = None,
 ) -> LineSearchSolver:
     """Build a chord solver, which reuses a cached Jacobian, with Armijo backtracking line search.
 
     Parameters
     ----------
-    direction : DirectionStrategy, optional
+    direction : ChordDirection, optional
         Search direction strategy. Defaults to
         :class:`~gEconpy.solvers.sparse_root.direction.ChordDirection`.
     globalization : GlobalizationStrategy, optional
@@ -147,14 +147,14 @@ def chord(
 
 
 def inexact_newton_krylov(
-    direction: DirectionStrategy | None = None,
+    direction: KrylovDirection | None = None,
     globalization: GlobalizationStrategy | None = None,
 ) -> LineSearchSolver:
     """Build an inexact Newton solver that computes the direction with a Krylov method.
 
     Parameters
     ----------
-    direction : DirectionStrategy, optional
+    direction : KrylovDirection, optional
         Search direction strategy. Defaults to
         :class:`~gEconpy.solvers.sparse_root.direction.KrylovDirection`, which uses GMRES.
     globalization : GlobalizationStrategy, optional
@@ -174,7 +174,7 @@ def inexact_newton_krylov(
 
 def newton_nonmonotone(
     direction: DirectionStrategy | None = None,
-    globalization: GlobalizationStrategy | None = None,
+    globalization: NonmonotoneBacktracking | None = None,
 ) -> LineSearchSolver:
     """Build a Newton solver with a nonmonotone (Grippo-Lampariello-Lucidi) line search.
 
@@ -183,7 +183,7 @@ def newton_nonmonotone(
     direction : DirectionStrategy, optional
         Search direction strategy. Defaults to
         :class:`~gEconpy.solvers.sparse_root.direction.NewtonDirection`.
-    globalization : GlobalizationStrategy, optional
+    globalization : NonmonotoneBacktracking, optional
         Line search strategy. Defaults to
         :class:`~gEconpy.solvers.sparse_root.globalization.NonmonotoneBacktracking`.
 

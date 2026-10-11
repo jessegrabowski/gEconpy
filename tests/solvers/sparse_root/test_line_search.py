@@ -1,13 +1,49 @@
 import numpy as np
+import pytest
 import scipy.sparse as sp
 
 from conftest import CommonSolverTests
 from scipy.sparse.linalg import gmres
 
 from gEconpy.solvers.sparse_root import chord, inexact_newton_krylov, newton_armijo, newton_nonmonotone, sparse_root
-from gEconpy.solvers.sparse_root.direction import KrylovDirection, NewtonDirection
+from gEconpy.solvers.sparse_root.direction import ChordDirection, KrylovDirection, NewtonDirection
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking, NonmonotoneBacktracking
 from gEconpy.solvers.sparse_root.line_search import LineSearchSolver
+
+
+@pytest.mark.parametrize(
+    ("factory", "direction_type", "globalization_type"),
+    [
+        (newton_armijo, NewtonDirection, ArmijoBacktracking),
+        (chord, ChordDirection, ArmijoBacktracking),
+        (inexact_newton_krylov, KrylovDirection, ArmijoBacktracking),
+        (newton_nonmonotone, NewtonDirection, NonmonotoneBacktracking),
+    ],
+    ids=["newton_armijo", "chord", "inexact_newton_krylov", "newton_nonmonotone"],
+)
+def test_each_factory_builds_the_strategies_it_names(factory, direction_type, globalization_type):
+    solver = factory()
+
+    assert isinstance(solver.direction, direction_type)
+    assert isinstance(solver.globalization, globalization_type)
+
+
+@pytest.mark.parametrize(
+    ("factory", "direction_type"),
+    [
+        (newton_armijo, NewtonDirection),
+        (chord, ChordDirection),
+        (inexact_newton_krylov, KrylovDirection),
+        (newton_nonmonotone, NewtonDirection),
+    ],
+    ids=["newton_armijo", "chord", "inexact_newton_krylov", "newton_nonmonotone"],
+)
+def test_each_factory_keeps_the_strategy_it_is_handed(factory, direction_type):
+    direction = direction_type()
+
+    solver = factory(direction=direction)
+
+    assert solver.direction is direction
 
 
 class TestNewtonArmijoSuite(CommonSolverTests):
