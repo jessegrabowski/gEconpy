@@ -1,9 +1,12 @@
 import numpy as np
 import pytest
+import sympy as sp
 
 from numpy.testing import assert_allclose
 
+from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perfect_foresight import compile_perfect_foresight_problem
+from gEconpy.model.perfect_foresight.compile import _check_system_is_solvable
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 
@@ -20,7 +23,7 @@ class TestCompile:
         assert problem.T == T
         assert problem.n_vars == len(rbc_model.variables)
         assert problem.n_shocks == len(rbc_model.shocks)
-        assert problem.n_eq == problem.n_vars
+        assert problem.n_eq == len(rbc_model.equations)
 
     def test_residuals_vanish_at_steady_state_and_jacobian_matches_finite_differences(self, rbc_model):
         problem = compile_perfect_foresight_problem(rbc_model, 5)
@@ -104,3 +107,40 @@ class TestCompile:
         model = load_and_cache_model("full_nk_no_ss.gcn")
         with pytest.raises(ValueError, match="following do not: pi_ss, r_G_ss"):
             compile_perfect_foresight_problem(model, 5)
+
+    def test_calibrated_parameter_raises(self):
+        """A calibrated parameter is solved for with the steady state, so it has no value at compile time."""
+        model = load_and_cache_model("one_block_2.gcn")
+        with pytest.raises(ValueError, match=r"does not support calibrated parameters.*alpha"):
+            compile_perfect_foresight_problem(model, 5)
+
+
+class TestSystemChecks:
+    """``_check_system_is_solvable`` guards the two shapes that otherwise fail deep inside pytensor or scipy."""
+
+    def test_variables_absent_at_a_lag_or_lead_are_allowed(self):
+        """``x`` never appears at ``t+1`` and ``y`` never at ``t-1``; only absence at ``t`` is a problem."""
+        _check_system_is_solvable(
+            equations=[sp.Symbol("x"), sp.Symbol("y")],
+            vars_tm1=[TimeAwareSymbol("x", -1)],
+            vars_t=[TimeAwareSymbol("x", 0), TimeAwareSymbol("y", 0)],
+            vars_tp1=[TimeAwareSymbol("y", 1)],
+        )
+
+    def test_variable_never_at_time_t_raises(self):
+        with pytest.raises(ValueError, match=r"appear only at t-1 or t\+1: z"):
+            _check_system_is_solvable(
+                equations=[sp.Symbol("x"), sp.Symbol("y")],
+                vars_tm1=[TimeAwareSymbol("z", -1)],
+                vars_t=[TimeAwareSymbol("x", 0), TimeAwareSymbol("y", 0)],
+                vars_tp1=[],
+            )
+
+    def test_non_square_system_raises(self):
+        with pytest.raises(ValueError, match="2 equations and 3 variables"):
+            _check_system_is_solvable(
+                equations=[sp.Symbol("x"), sp.Symbol("y")],
+                vars_tm1=[],
+                vars_t=[TimeAwareSymbol(name, 0) for name in ("x", "y", "z")],
+                vars_tp1=[],
+            )

@@ -67,8 +67,8 @@ class PerfectForesightProblem:
 
     @property
     def n_eq(self) -> int:
-        """Number of model equations, which equals the number of variables."""
-        return len(self.var_names)
+        """Number of model equations, which :func:`compile_perfect_foresight_problem` checks equals ``n_vars``."""
+        return self.jacobian_sparsity.shape[0]
 
     @cached_property
     def jacobian_layout(self) -> StackedJacobianLayout:
@@ -87,7 +87,8 @@ def compile_perfect_foresight_problem(
     Parameters
     ----------
     model : Model
-        Model to compile. Every steady-state variable that appears in its equations must have an analytic solution.
+        Model to compile. It must be square, every variable must appear at time ``t``, it must have no calibrated
+        parameters, and every steady-state variable in its equations must have an analytic solution.
     T : int
         Number of periods in the simulation horizon.
     **compile_kwargs
@@ -97,6 +98,12 @@ def compile_perfect_foresight_problem(
     -------
     problem : PerfectForesightProblem
         The compiled functions, together with the variable, shock, and parameter names.
+
+    Raises
+    ------
+    ValueError
+        If the model is not square, if a variable never appears at time ``t``, if the model has calibrated
+        parameters, or if a steady-state variable has no analytic solution.
     """
     graph = _build_single_period_graph(model)
     compile_kwargs.setdefault("on_unused_input", "ignore")
@@ -139,9 +146,11 @@ def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
 
     equations = _substitute_steady_state_values(model.equations, model._ss_solution_dict)
     vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(equations, shock_names)
+    _check_system_is_solvable(equations=equations, vars_tm1=vars_tm1, vars_t=vars_t, vars_tp1=vars_tp1)
 
     cache: dict = {}
     equations_pt = [as_tensor(eq, cache=cache) for eq in equations]
+    _check_no_calibrated_parameters(calibrated_params=model.calibrated_params, cache=cache)
 
     def get_pt_var(sym: TimeAwareSymbol) -> pt.TensorVariable:
         return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
@@ -203,6 +212,59 @@ def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
         shock_names=[x.base_name for x in shocks_t],
         param_names=[p.name for p in params_in_equations],
     )
+
+
+def _check_system_is_solvable(
+    equations: list[sp.Expr],
+    vars_tm1: list[TimeAwareSymbol],
+    vars_t: list[TimeAwareSymbol],
+    vars_tp1: list[TimeAwareSymbol],
+) -> None:
+    """
+    Check that the system is square and that every variable appears at time ``t``.
+
+    Raises
+    ------
+    ValueError
+        If the system is not square, or if a variable appears at ``t-1`` or ``t+1`` but never at ``t``.
+    """
+    # Both checks fail far from their cause if left to the compiler: a non-square system reaches
+    # build_stacked_jacobian_layout as a shape mismatch, and a variable missing at t is never given an input
+    # slot, so pytensor reports it as a missing input to an anonymous subgraph.
+    names_at_t = {x.base_name for x in vars_t}
+    only_at_other_times = sorted({x.base_name for x in vars_tm1 + vars_tp1} - names_at_t)
+    if only_at_other_times:
+        raise ValueError(
+            f"Perfect foresight simulation requires every variable to appear at time t, but the following "
+            f"appear only at t-1 or t+1: {', '.join(only_at_other_times)}."
+        )
+
+    if len(equations) != len(vars_t):
+        raise ValueError(
+            f"Perfect foresight simulation requires a square system, but the model has {len(equations)} "
+            f"equations and {len(vars_t)} variables."
+        )
+
+
+def _check_no_calibrated_parameters(calibrated_params: list[sp.Symbol], cache: dict) -> None:
+    """
+    Check that no calibrated parameter appears in the equations.
+
+    Raises
+    ------
+    ValueError
+        If a calibrated parameter is used by the equations.
+    """
+    # A calibrated parameter is solved for alongside the steady state, so its value is not known when the
+    # equations are compiled and it never gets an input slot. Caught here, the user learns which parameter and
+    # why; left to pytensor, it surfaces as a MissingInputError naming an arbitrary node that uses it.
+    in_equations = [p.name for p in calibrated_params if make_cache_key(p.name, cls=sp.Symbol) in cache]
+    if in_equations:
+        raise ValueError(
+            f"Perfect foresight simulation does not support calibrated parameters, but the equations use: "
+            f"{', '.join(sorted(in_equations))}. Replace the calibration equation with a fixed value in the "
+            f"calibration block of your GCN file."
+        )
 
 
 def _jacobian_sparsity(equations: list[sp.Expr], wrt: list[TimeAwareSymbol]) -> np.ndarray:
