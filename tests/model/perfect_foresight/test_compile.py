@@ -15,6 +15,16 @@ def rbc_model():
     return load_and_cache_model("one_block_1.gcn")
 
 
+def _exogenous_inputs(problem, model):
+    """Zero shocks and the model's own parameters, held flat across the horizon."""
+    params = model.parameters()
+
+    return (
+        np.zeros((problem.T, problem.n_shocks)),
+        np.tile([params[name] for name in problem.param_names], (problem.T, 1)),
+    )
+
+
 class TestCompile:
     def test_problem_has_correct_dimensions(self, rbc_model):
         T = 25
@@ -26,59 +36,88 @@ class TestCompile:
         assert problem.n_eq == len(rbc_model.equations)
         assert problem.deterministic_param_names == []
 
-    def test_residuals_vanish_at_steady_state_and_jacobian_matches_finite_differences(self, rbc_model):
-        problem = compile_perfect_foresight_problem(rbc_model, 5)
+    def test_residuals_vanish_at_the_steady_state(self, rbc_model):
+        T = 5
+        problem = compile_perfect_foresight_problem(rbc_model, T)
         ss = rbc_model.steady_state(verbose=False)
-        params = rbc_model.parameters()
 
         y_ss = np.array([ss[f"{name}_ss"] for name in problem.var_names])
-        x_zero = np.zeros(problem.n_shocks)
-        param_values = [params[name] for name in problem.param_names]
+        Y_ss = np.tile(y_ss, (T, 1))
+        X, P = _exogenous_inputs(problem, rbc_model)
 
-        residuals, jacobian = problem.f_resid_and_jac(y_ss, y_ss, y_ss, x_zero, *param_values)
+        residuals, jacobian = problem.f_resid_and_jac(Y_ss, Y_ss, Y_ss, X, P)
+
         assert_allclose(residuals, 0.0, atol=1e-8)
-        assert jacobian.shape == (problem.n_eq, 3 * problem.n_vars)
+        assert residuals.shape == (T, problem.n_eq)
+        assert jacobian.shape == (T, problem.n_eq, 3 * problem.n_vars)
+
+    def test_jacobian_matches_finite_differences(self, rbc_model):
+        T = 5
+        problem = compile_perfect_foresight_problem(rbc_model, T)
+        ss = rbc_model.steady_state(verbose=False)
+        X, P = _exogenous_inputs(problem, rbc_model)
 
         rng = np.random.default_rng(0)
+        y_ss = np.array([ss[f"{name}_ss"] for name in problem.var_names])
         point = np.concatenate([y_ss * (1 + 0.05 * rng.normal(size=problem.n_vars)) for _ in range(3)])
 
-        def residual_at(stacked):
-            y_tm1, y_t, y_tp1 = np.split(stacked, 3)
-            return problem.f_resid_and_jac(y_tm1, y_t, y_tp1, x_zero, *param_values)[0]
+        def residuals_at(stacked):
+            Y_tm1, Y_t, Y_tp1 = (np.tile(block, (T, 1)) for block in np.split(stacked, 3))
+            return problem.f_resid_and_jac(Y_tm1, Y_t, Y_tp1, X, P)[0][0]
 
-        _, jacobian = problem.f_resid_and_jac(*np.split(point, 3), x_zero, *param_values)
         step = 1e-6
         numerical = np.stack(
             [
-                (residual_at(point + step * basis) - residual_at(point - step * basis)) / (2 * step)
+                (residuals_at(point + step * basis) - residuals_at(point - step * basis)) / (2 * step)
                 for basis in np.eye(point.size)
             ],
             axis=1,
         )
-        assert_allclose(jacobian, numerical, rtol=1e-5, atol=1e-6)
 
-        (residuals_only,) = problem.f_resid_only(*np.split(point, 3), x_zero, *param_values)
-        assert_allclose(residuals_only, residual_at(point))
+        Y_tm1, Y_t, Y_tp1 = (np.tile(block, (T, 1)) for block in np.split(point, 3))
+        _, jacobian = problem.f_resid_and_jac(Y_tm1, Y_t, Y_tp1, X, P)
+
+        assert_allclose(jacobian[0], numerical, rtol=1e-5, atol=1e-6)
+
+    def test_every_period_is_evaluated_at_its_own_inputs(self, rbc_model):
+        """One call covers the horizon, so a row of the output must depend only on the matching row of the input."""
+        T = 4
+        problem = compile_perfect_foresight_problem(rbc_model, T)
+        ss = rbc_model.steady_state(verbose=False)
+
+        rng = np.random.default_rng(1)
+        y_ss = np.array([ss[f"{name}_ss"] for name in problem.var_names])
+        Y = y_ss * (1 + 0.05 * rng.normal(size=(T, problem.n_vars)))
+        X, P = _exogenous_inputs(problem, rbc_model)
+
+        batched_residuals, batched_jacobian = problem.f_resid_and_jac(Y, Y, Y, X, P)
+        for t in range(T):
+            one_row = np.tile(Y[t], (T, 1))
+            residuals, jacobian = problem.f_resid_and_jac(one_row, one_row, one_row, X, P)
+
+            assert_allclose(batched_residuals[t], residuals[0], rtol=1e-12)
+            assert_allclose(batched_jacobian[t], jacobian[0], rtol=1e-12)
 
     def test_jacobian_sparsity_covers_every_numerically_nonzero_entry(self, rbc_model):
-        problem = compile_perfect_foresight_problem(rbc_model, 5)
+        T = 10
+        problem = compile_perfect_foresight_problem(rbc_model, T)
         ss = rbc_model.steady_state(verbose=False)
-        params = rbc_model.parameters()
 
         y_ss = np.array([ss[f"{name}_ss"] for name in problem.var_names])
-        param_values = [params[name] for name in problem.param_names]
+        _, P = _exogenous_inputs(problem, rbc_model)
 
         assert problem.jacobian_sparsity.shape == (problem.n_eq, 3 * problem.n_vars)
 
         rng = np.random.default_rng(0)
-        observed = np.zeros_like(problem.jacobian_sparsity)
-        for _ in range(10):
-            point = [y_ss * (1 + 0.1 * rng.normal(size=problem.n_vars)) for _ in range(3)]
-            _, jacobian = problem.f_resid_and_jac(*point, rng.normal(size=problem.n_shocks), *param_values)
-            observed |= jacobian != 0
+        blocks = [y_ss * (1 + 0.1 * rng.normal(size=(T, problem.n_vars))) for _ in range(3)]
+        _, jacobian = problem.f_resid_and_jac(*blocks, rng.normal(size=(T, problem.n_shocks)), P)
 
-        missing_from_mask = observed & ~problem.jacobian_sparsity
-        assert not missing_from_mask.any()
+        observed = (jacobian != 0).any(axis=0)
+        assert not (observed & ~problem.jacobian_sparsity).any()
+
+        # A mask of all True would satisfy the superset check above while carrying no information.
+        assert not problem.jacobian_sparsity.all()
+        assert problem.jacobian_sparsity.sum() >= observed.sum()
 
     @pytest.mark.include_nk
     def test_sparsity_keeps_entries_that_vanish_at_the_steady_state(self):
@@ -89,20 +128,20 @@ class TestCompile:
         state. Since the steady state is also the default starting path, a pattern taken from the numbers there
         drops those entries from every period at once and the first Newton step solves against a wrong Jacobian.
         """
+        T = 5
         model = load_and_cache_model("full_nk.gcn")
-        problem = compile_perfect_foresight_problem(model, 5)
+        problem = compile_perfect_foresight_problem(model, T)
         ss = model.steady_state(verbose=False)
-        params = model.parameters()
 
         y_ss = np.array([ss[f"{name}_ss"] for name in problem.var_names])
-        param_values = [params[name] for name in problem.param_names]
-        _, jacobian = problem.f_resid_and_jac(y_ss, y_ss, y_ss, np.zeros(problem.n_shocks), *param_values)
+        Y_ss = np.tile(y_ss, (T, 1))
+        X, P = _exogenous_inputs(problem, model)
+        _, jacobian = problem.f_resid_and_jac(Y_ss, Y_ss, Y_ss, X, P)
 
-        vanishing = problem.jacobian_sparsity & (jacobian == 0)
+        vanishing = problem.jacobian_sparsity & (jacobian[0] == 0)
         assert vanishing.any(), "expected entries that are structurally nonzero but zero at the steady state"
 
-        missing_from_mask = (jacobian != 0) & ~problem.jacobian_sparsity
-        assert not missing_from_mask.any()
+        assert not ((jacobian[0] != 0) & ~problem.jacobian_sparsity).any()
 
     def test_deterministic_parameters_are_reported(self):
         problem = compile_perfect_foresight_problem(load_and_cache_model("open_rbc.gcn"), 5)

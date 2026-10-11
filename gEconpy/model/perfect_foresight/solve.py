@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 
 import numpy as np
@@ -168,7 +168,7 @@ def solve_perfect_foresight(
         init_ss_dict = compute_ss(**init_param_kwargs)
         term_ss_dict = init_ss_dict if same_boundary_params else compute_ss(**term_param_kwargs)
     else:
-        x0_vec = _x0_to_vector(x0, var_names, simulation_length)
+        x0_vec = _x0_to_vector(x0=x0, var_names=var_names, simulation_length=simulation_length)
         init_ss_dict = compute_ss(**init_param_kwargs) if needs_initial_ss else None
         term_ss_dict = None
         if needs_terminal_ss:
@@ -178,10 +178,18 @@ def solve_perfect_foresight(
     if x0_vec is None:
         x0_vec = np.tile(_ss_dict_to_array(init_ss_dict, var_names), simulation_length)
 
-    y_initial = _boundary_vector(initial_conditions, init_ss_dict if needs_initial_ss else None, var_names)
-    y_terminal = _boundary_vector(terminal_conditions, term_ss_dict if needs_terminal_ss else None, var_names)
+    y_initial = _boundary_vector(
+        conditions=initial_conditions,
+        ss_dict=init_ss_dict if needs_initial_ss else None,
+        var_names=var_names,
+    )
+    y_terminal = _boundary_vector(
+        conditions=terminal_conditions,
+        ss_dict=term_ss_dict if needs_terminal_ss else None,
+        var_names=var_names,
+    )
 
-    shock_matrix = _build_shock_matrix(shocks, problem.shock_names, simulation_length)
+    shock_matrix = _build_shock_matrix(shocks=shocks, shock_names=problem.shock_names, T=simulation_length)
     param_matrix = _build_param_matrix(
         param_paths=param_paths,
         param_names=problem.param_names,
@@ -200,7 +208,14 @@ def solve_perfect_foresight(
     # The residual-only function lets the line search evaluate the merit function at rejected trial points
     # without paying for a Jacobian there.
     def merit_fun(x, *_args):
-        return _compute_stacked_residuals(x, y_initial, y_terminal, shock_matrix, param_matrix, problem)
+        return _compute_stacked_residuals(
+            y=x,
+            y_initial=y_initial,
+            y_terminal=y_terminal,
+            x=shock_matrix,
+            params=param_matrix,
+            problem=problem,
+        )
 
     if solver is None:
         solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
@@ -216,7 +231,7 @@ def solve_perfect_foresight(
         solver=solver,
     )
 
-    trajectory = pd.DataFrame(result.x.reshape(simulation_length, len(var_names)), columns=var_names)
+    trajectory = pd.DataFrame(result.x.reshape(simulation_length, problem.n_vars), columns=var_names)
     return trajectory, result
 
 
@@ -410,27 +425,24 @@ def _build_param_matrix(
     return np.array([[parameters[name] for name in param_names] for parameters in by_period])
 
 
-def _evaluate_periods(
-    f: Callable,
+def _period_inputs(
     y: np.ndarray,
     y_initial: np.ndarray,
     y_terminal: np.ndarray,
-    x: np.ndarray,
-    params: np.ndarray,
     problem: PerfectForesightProblem,
-) -> Iterator[list[np.ndarray]]:
-    """Call ``f`` once per period, in order, with the neighboring periods and the boundary vectors at the ends."""
-    T = problem.T
-    y_mat = y.reshape(T, problem.n_vars)
-    for t in range(T):
-        y_tm1 = y_initial if t == 0 else y_mat[t - 1]
-        y_t = y_mat[t]
-        y_tp1 = y_terminal if t == T - 1 else y_mat[t + 1]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Lay the iterate out as the three arrays of lagged, current, and led values.
 
-        if problem.n_shocks > 0:
-            yield f(y_tm1, y_t, y_tp1, x[t], *params[t])
-        else:
-            yield f(y_tm1, y_t, y_tp1, *params[t])
+    Returns
+    -------
+    Y_tm1, Y_t, Y_tp1 : ndarray
+        Values at ``t-1``, ``t``, and ``t+1``, each of shape ``(T, n_vars)``. The boundary vectors stand in for
+        the lag of the first period and the lead of the last.
+    """
+    y_mat = y.reshape(problem.T, problem.n_vars)
+
+    return np.vstack([y_initial, y_mat[:-1]]), y_mat, np.vstack([y_mat[1:], y_terminal])
 
 
 def _compute_stacked_residuals_and_jacobian(
@@ -441,11 +453,10 @@ def _compute_stacked_residuals_and_jacobian(
     params: np.ndarray,
     problem: PerfectForesightProblem,
 ) -> tuple[np.ndarray, sparse.csc_matrix]:
-    period_outputs = _evaluate_periods(problem.f_resid_and_jac, y, y_initial, y_terminal, x, params, problem)
-    residuals, jacobians = zip(*period_outputs, strict=True)
+    Y_tm1, Y_t, Y_tp1 = _period_inputs(y=y, y_initial=y_initial, y_terminal=y_terminal, problem=problem)
+    residuals, jacobians = problem.f_resid_and_jac(Y_tm1, Y_t, Y_tp1, x, params)
 
-    stacked_jacobian = assemble_stacked_jacobian(jacobians, problem.jacobian_layout)
-    return np.concatenate(residuals), stacked_jacobian
+    return residuals.ravel(), assemble_stacked_jacobian(period_jacobians=jacobians, layout=problem.jacobian_layout)
 
 
 def _compute_stacked_residuals(
@@ -456,5 +467,7 @@ def _compute_stacked_residuals(
     params: np.ndarray,
     problem: PerfectForesightProblem,
 ) -> np.ndarray:
-    period_outputs = _evaluate_periods(problem.f_resid_only, y, y_initial, y_terminal, x, params, problem)
-    return np.concatenate([residuals for (residuals,) in period_outputs])
+    Y_tm1, Y_t, Y_tp1 = _period_inputs(y=y, y_initial=y_initial, y_terminal=y_terminal, problem=problem)
+    (residuals,) = problem.f_resid_only(Y_tm1, Y_t, Y_tp1, x, params)
+
+    return residuals.ravel()

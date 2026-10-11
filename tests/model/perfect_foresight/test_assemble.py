@@ -21,15 +21,16 @@ def _dense_reference(period_jacobians, n_vars, n_eq, T):
     return dense
 
 
+@pytest.mark.parametrize("as_array", [False, True], ids=["list-of-matrices", "stacked-array"])
 @pytest.mark.parametrize("T", [1, 2, 5])
 @pytest.mark.parametrize(("n_eq", "n_vars"), [(3, 3), (2, 4), (4, 2)], ids=["square", "wide", "tall"])
-def test_stacked_jacobian_matches_dense_block_tridiagonal(T, n_eq, n_vars):
+def test_stacked_jacobian_matches_dense_block_tridiagonal(T, n_eq, n_vars, as_array):
     rng = np.random.default_rng(0)
     period_jacobians = [rng.normal(size=(n_eq, 3 * n_vars)) for _ in range(T)]
     dense_pattern = np.ones((n_eq, 3 * n_vars), dtype=bool)
 
     layout = build_stacked_jacobian_layout(dense_pattern, n_vars, n_eq, T)
-    stacked = assemble_stacked_jacobian(period_jacobians, layout)
+    stacked = assemble_stacked_jacobian(np.asarray(period_jacobians) if as_array else period_jacobians, layout)
 
     assert stacked.shape == (T * n_eq, T * n_vars)
     assert_array_equal(stacked.toarray(), _dense_reference(period_jacobians, n_vars, n_eq, T))
@@ -75,6 +76,25 @@ def test_wrong_pattern_shape_is_rejected():
 
     with pytest.raises(ValueError, match="sparsity_pattern has shape"):
         build_stacked_jacobian_layout(np.ones((n_eq, n_vars), dtype=bool), n_vars, n_eq, T)
+
+
+@pytest.mark.parametrize("T", [0, -1], ids=["zero", "negative"])
+def test_non_positive_horizon_is_rejected(T):
+    with pytest.raises(ValueError, match="T must be at least 1"):
+        build_stacked_jacobian_layout(np.ones((2, 6), dtype=bool), n_vars=2, n_eq=2, T=T)
+
+
+@pytest.mark.parametrize(
+    "bad_shape",
+    [(2, 2, 6), (3, 3, 6), (3, 2, 4), (2, 6)],
+    ids=["too-few-periods", "wrong-equation-count", "wrong-column-count", "missing-period-axis"],
+)
+def test_period_jacobians_of_the_wrong_shape_are_rejected(bad_shape):
+    """A silent broadcast here would gather the wrong entries and corrupt the Newton step without failing."""
+    layout = build_stacked_jacobian_layout(np.ones((2, 6), dtype=bool), n_vars=2, n_eq=2, T=3)
+
+    with pytest.raises(ValueError, match="period_jacobians has shape"):
+        assemble_stacked_jacobian(np.zeros(bad_shape), layout)
 
 
 def test_pattern_with_an_empty_block_assembles():

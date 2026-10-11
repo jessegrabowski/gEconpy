@@ -7,7 +7,7 @@ import pytensor
 import pytensor.tensor as pt
 import sympy as sp
 
-from pytensor.graph.replace import graph_replace
+from pytensor.graph.replace import graph_replace, vectorize_graph
 from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -25,24 +25,26 @@ from gEconpy.utilities import safe_to_ss
 @dataclass
 class PerfectForesightProblem:
     """
-    Compiled single-period functions of a model, plus the names that fix their input and output ordering.
+    Compiled equations of a model, plus the names that fix their input and output ordering.
 
     Attributes
     ----------
     f_resid_and_jac : callable
-        Function returning the residuals and the ``(n_eq, 3 * n_vars)`` Jacobian of one period's equations. It is
-        called as ``f(y_tm1, y_t, y_tp1, [x_t,] *params)``, with ``x_t`` omitted when the model has no shocks.
-    f_resid_only : callable or None
-        Function with the same inputs returning only the residuals, or None when it was not compiled.
+        Function returning the residuals and the Jacobian of every period's equations at once. It is called as
+        ``f(Y_tm1, Y_t, Y_tp1, X, P)``, where the first three arguments have shape ``(T, n_vars)``, ``X`` has
+        shape ``(T, n_shocks)``, and ``P`` has shape ``(T, n_params)``. The residuals have shape ``(T, n_eq)``
+        and the Jacobian has shape ``(T, n_eq, 3 * n_vars)``.
+    f_resid_only : callable
+        Function with the same inputs returning only the residuals.
     jacobian_sparsity : ndarray of bool
-        Structural nonzero mask of the single-period Jacobian, of shape ``(n_eq, 3 * n_vars)``. It is derived
-        from the equations, so it holds at every point the solver can visit.
+        Structural nonzero mask of one period's Jacobian, of shape ``(n_eq, 3 * n_vars)``. It is derived from the
+        equations, so it holds at every point the solver can visit.
     var_names : list of str
         Variable names, giving the column order of the stacked system.
     shock_names : list of str
-        Shock names, giving the order of ``x_t``.
+        Shock names, giving the column order of ``X``.
     param_names : list of str
-        Parameter names, in the order the compiled functions expect them.
+        Parameter names, giving the column order of ``P``.
     deterministic_param_names : list of str
         The subset of ``param_names`` that the model derives from other parameters.
     T : int
@@ -50,7 +52,7 @@ class PerfectForesightProblem:
     """
 
     f_resid_and_jac: Callable
-    f_resid_only: Callable | None
+    f_resid_only: Callable
     jacobian_sparsity: np.ndarray
     var_names: list[str]
     shock_names: list[str]
@@ -76,7 +78,9 @@ class PerfectForesightProblem:
     @cached_property
     def jacobian_layout(self) -> StackedJacobianLayout:
         """Index arrays of the stacked Jacobian, resolved once and reused across Newton iterations."""
-        return build_stacked_jacobian_layout(self.jacobian_sparsity, self.n_vars, self.n_eq, self.T)
+        return build_stacked_jacobian_layout(
+            sparsity_pattern=self.jacobian_sparsity, n_vars=self.n_vars, n_eq=self.n_eq, T=self.T
+        )
 
 
 def compile_perfect_foresight_problem(
@@ -85,7 +89,7 @@ def compile_perfect_foresight_problem(
     **compile_kwargs,
 ) -> PerfectForesightProblem:
     """
-    Compile the single-period residual and Jacobian functions used by the perfect foresight solver.
+    Compile the residual and Jacobian functions used by the perfect foresight solver.
 
     Parameters
     ----------
@@ -108,7 +112,7 @@ def compile_perfect_foresight_problem(
         If the model is not square, if a variable never appears at time ``t``, if the model has calibrated
         parameters, or if a steady-state variable has no analytic solution.
     """
-    graph = _build_single_period_graph(model)
+    graph = _build_equation_graph(model)
     compile_kwargs.setdefault("on_unused_input", "ignore")
 
     f_resid_and_jac = pytensor.function(graph.inputs, [graph.residuals, graph.jacobian], **compile_kwargs)
@@ -127,7 +131,7 @@ def compile_perfect_foresight_problem(
 
 
 @dataclass
-class _SinglePeriodGraph:
+class _EquationGraph:
     inputs: list[pt.TensorVariable]
     residuals: pt.TensorVariable
     jacobian: pt.TensorVariable
@@ -138,14 +142,15 @@ class _SinglePeriodGraph:
     deterministic_param_names: list[str]
 
 
-def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
+def _build_equation_graph(model: Model) -> _EquationGraph:
     """
-    Build the symbolic residual and Jacobian of one period's equations as functions of stacked input vectors.
+    Build the symbolic residual and Jacobian of the model equations over a whole horizon.
 
-    The model equations are converted to pytensor once, differentiated with respect to every variable at ``t-1``,
-    ``t``, and ``t+1``, and then rewritten so that each scalar variable reads from an element of ``y_tm1``, ``y_t``,
-    ``y_tp1``, or ``x_t``. A variable that never appears at some time index gets a structurally zero Jacobian column
-    there.
+    The equations of one period are converted to pytensor once, differentiated with respect to every variable at
+    ``t-1``, ``t``, and ``t+1``, and rewritten so that each scalar variable reads from an element of ``y_tm1``,
+    ``y_t``, ``y_tp1``, or ``x_t``. That single-period graph is then vectorized over the horizon, so one call
+    evaluates every period. A variable that never appears at some time index gets a structurally zero Jacobian
+    column there.
     """
     shock_names = [s.base_name for s in model.shocks]
 
@@ -160,13 +165,7 @@ def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
     def get_pt_var(sym: TimeAwareSymbol) -> pt.TensorVariable:
         return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
 
-    params_in_equations = []
-    params_pt = []
-    for param in model.params + model.deterministic_params:
-        key = make_cache_key(param.name, cls=sp.Symbol)
-        if key in cache:
-            params_in_equations.append(param)
-            params_pt.append(cache[key])
+    params_in_equations, params_pt = _collect_parameters_in_equations(model, cache)
 
     var_names = [x.base_name for x in vars_t]
     vars_t_pt = [get_pt_var(x) for x in vars_t]
@@ -190,36 +189,60 @@ def _build_single_period_graph(model: Model) -> _SinglePeriodGraph:
     y_tm1 = pt.dvector("y_tm1", shape=(n_vars,))
     y_t = pt.dvector("y_t", shape=(n_vars,))
     y_tp1 = pt.dvector("y_tp1", shape=(n_vars,))
-    x_t = pt.dvector("x_t", shape=(n_shocks,)) if n_shocks > 0 else None
+    x_t = pt.dvector("x_t", shape=(n_shocks,))
 
-    replacements = {}
-    for i in range(n_vars):
-        replacements[vars_tm1_pt[i]] = y_tm1[i]
-        replacements[vars_t_pt[i]] = y_t[i]
-        replacements[vars_tp1_pt[i]] = y_tp1[i]
-    if x_t is not None:
-        for i, shock in enumerate(shocks_pt):
-            replacements[shock] = x_t[i]
+    stacked = ((y_tm1, vars_tm1_pt), (y_t, vars_t_pt), (y_tp1, vars_tp1_pt), (x_t, shocks_pt))
+    replacements = {node: vector[i] for vector, nodes in stacked for i, node in enumerate(nodes)}
 
     residuals_vec, jacobian_vec = graph_replace([residuals, jacobian], replacements, strict=False)
 
+    # The per-call overhead of a compiled function dominates the arithmetic of one period, so vectorizing the
+    # graph over the horizon and paying that overhead once is worth far more than the batching costs.
+    Y_tm1 = pt.dmatrix("Y_tm1")
+    Y_t = pt.dmatrix("Y_t")
+    Y_tp1 = pt.dmatrix("Y_tp1")
+    X = pt.dmatrix("X")
+    P = pt.dmatrix("P")
+
+    batch_replacements: dict = {y_tm1: Y_tm1, y_t: Y_t, y_tp1: Y_tp1, x_t: X}
+    for i, param in enumerate(params_pt):
+        batch_replacements[param] = P[:, i]
+
+    residuals_batched, jacobian_batched = vectorize_graph([residuals_vec, jacobian_vec], replace=batch_replacements)
+
     deterministic_names = {p.name for p in model.deterministic_params}
 
-    inputs = [y_tm1, y_t, y_tp1]
-    if x_t is not None:
-        inputs.append(x_t)
-    inputs.extend(params_pt)
-
-    return _SinglePeriodGraph(
-        inputs=inputs,
-        residuals=residuals_vec,
-        jacobian=jacobian_vec,
+    return _EquationGraph(
+        inputs=[Y_tm1, Y_t, Y_tp1, X, P],
+        residuals=residuals_batched,
+        jacobian=jacobian_batched,
         sparsity=sparsity,
         var_names=var_names,
         shock_names=[x.base_name for x in shocks_t],
         param_names=[p.name for p in params_in_equations],
         deterministic_param_names=[p.name for p in params_in_equations if p.name in deterministic_names],
     )
+
+
+def _collect_parameters_in_equations(model: Model, cache: dict) -> tuple[list[sp.Symbol], list[pt.TensorVariable]]:
+    """
+    Pick out the parameters the equations actually use, in the order the compiled functions expect them.
+
+    Returns
+    -------
+    parameters : list of sympy Symbol
+        The free and deterministic parameters appearing in the equations.
+    nodes : list of TensorVariable
+        The pytensor node of each, in the same order.
+    """
+    parameters, nodes = [], []
+    for param in model.params + model.deterministic_params:
+        key = make_cache_key(param.name, cls=sp.Symbol)
+        if key in cache:
+            parameters.append(param)
+            nodes.append(cache[key])
+
+    return parameters, nodes
 
 
 def _check_system_is_solvable(
@@ -305,6 +328,9 @@ def _substitute_steady_state_values(
 ) -> list[sp.Expr]:
     """
     Replace every steady-state variable in the equations with its analytic expression.
+
+    The expression is in model parameters, so under a parameter path the substituted term takes the parameter
+    values of each period rather than staying fixed at the initial steady state.
 
     Parameters
     ----------
