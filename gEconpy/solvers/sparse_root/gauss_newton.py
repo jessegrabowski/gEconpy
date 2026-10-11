@@ -14,7 +14,7 @@ from gEconpy.solvers.sparse_root.base import (
 )
 
 _CG_ZERO_GRADIENT_TOL = 1e-15
-_CG_RELATIVE_RESIDUAL_TOL = 1e-10
+_CG_DEFAULT_RTOL = 1e-6
 
 
 @dataclass
@@ -39,6 +39,13 @@ class GaussNewtonTrustRegion:
         Factor applied to the radius when the ratio exceeds 0.75 and the step reached the boundary. Defaults to 2.0.
     max_reject : int, optional
         Maximum consecutive rejected steps before reporting failure. Defaults to 50.
+    max_cg_iter : int, optional
+        Cap on conjugate gradient iterations per trust region subproblem, at least 1. Defaults to ``None``, meaning
+        twice the problem dimension.
+    cg_rtol : float, optional
+        Relative tolerance on the conjugate gradient residual, measured against the norm of the model gradient. The
+        trust region ratio test checks the resulting step, so the subproblem does not need solving to machine
+        precision. Defaults to 1e-6.
     """
 
     delta0: float = 1.0
@@ -47,8 +54,16 @@ class GaussNewtonTrustRegion:
     shrink_factor: float = 0.25
     grow_factor: float = 2.0
     max_reject: int = 50
+    max_cg_iter: int | None = None
+    cg_rtol: float = _CG_DEFAULT_RTOL
 
     _delta: float = field(init=False, repr=False, default=0.0)
+
+    def __post_init__(self):
+        if self.max_cg_iter is not None and self.max_cg_iter < 1:
+            raise ValueError(
+                f"max_cg_iter must be at least 1, got {self.max_cg_iter}. Pass None for twice the problem dimension."
+            )
 
     def reset(self) -> None:
         """Restore the trust region radius to ``delta0``."""
@@ -101,7 +116,7 @@ class GaussNewtonTrustRegion:
 
         for n_rejected in range(self.max_reject):
             nsolve += 1
-            p = _steihaug_cg(normal_matrix, grad, self._delta)
+            p = _steihaug_cg(normal_matrix, grad, self._delta, max_cg_iter=self.max_cg_iter, rtol=self.cg_rtol)
             jac_p = jac @ p
             predicted = -(float(grad @ p) + 0.5 * float(jac_p @ jac_p))
 
@@ -129,7 +144,13 @@ class GaussNewtonTrustRegion:
         )
 
 
-def _steihaug_cg(hessian: sp.spmatrix, grad: np.ndarray, delta: float, max_cg_iter: int = 0) -> np.ndarray:
+def _steihaug_cg(
+    hessian: sp.spmatrix,
+    grad: np.ndarray,
+    delta: float,
+    max_cg_iter: int | None = None,
+    rtol: float = _CG_DEFAULT_RTOL,
+) -> np.ndarray:
     r"""Approximately minimize :math:`\frac{1}{2} p^T H p + g^T p` subject to :math:`\lVert p \rVert \le \delta`.
 
     Parameters
@@ -141,7 +162,9 @@ def _steihaug_cg(hessian: sp.spmatrix, grad: np.ndarray, delta: float, max_cg_it
     delta : float
         Trust region radius.
     max_cg_iter : int, optional
-        Cap on conjugate gradient iterations. Defaults to 0, meaning twice the problem dimension.
+        Cap on conjugate gradient iterations, at least 1. Defaults to ``None``, meaning twice the problem dimension.
+    rtol : float, optional
+        Relative tolerance on the residual, measured against the norm of ``grad``. Defaults to 1e-6.
 
     Returns
     -------
@@ -149,7 +172,7 @@ def _steihaug_cg(hessian: sp.spmatrix, grad: np.ndarray, delta: float, max_cg_it
         Step. Lies on the boundary when the iteration met it or found negative curvature.
     """
     n = len(grad)
-    if max_cg_iter <= 0:
+    if max_cg_iter is None:
         max_cg_iter = 2 * n
 
     p = np.zeros(n)
@@ -178,7 +201,7 @@ def _steihaug_cg(hessian: sp.spmatrix, grad: np.ndarray, delta: float, max_cg_it
         residual += alpha * hessian_direction
         residual_sq_next = np.dot(residual, residual)
 
-        if np.sqrt(residual_sq_next) < _CG_RELATIVE_RESIDUAL_TOL * np.linalg.norm(grad):
+        if np.sqrt(residual_sq_next) < rtol * np.linalg.norm(grad):
             return p
 
         direction *= residual_sq_next / residual_sq
