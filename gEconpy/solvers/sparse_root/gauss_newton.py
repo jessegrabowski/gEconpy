@@ -39,6 +39,9 @@ class GaussNewtonTrustRegion:
         Factor applied to the radius when the ratio exceeds 0.75 and the step reached the boundary. Defaults to 2.0.
     max_reject : int, optional
         Maximum consecutive rejected steps before reporting failure. Defaults to 50.
+    max_cg_iter : int, optional
+        Cap on conjugate gradient iterations per trust region subproblem, at least 1. Defaults to ``None``, meaning
+        twice the problem dimension.
     """
 
     delta0: float = 1.0
@@ -47,8 +50,15 @@ class GaussNewtonTrustRegion:
     shrink_factor: float = 0.25
     grow_factor: float = 2.0
     max_reject: int = 50
+    max_cg_iter: int | None = None
 
     _delta: float = field(init=False, repr=False, default=0.0)
+
+    def __post_init__(self):
+        if self.max_cg_iter is not None and self.max_cg_iter < 1:
+            raise ValueError(
+                f"max_cg_iter must be at least 1, got {self.max_cg_iter}. Pass None for twice the problem dimension."
+            )
 
     def reset(self) -> None:
         """Restore the trust region radius to ``delta0``."""
@@ -101,7 +111,7 @@ class GaussNewtonTrustRegion:
 
         for n_rejected in range(self.max_reject):
             nsolve += 1
-            p = _steihaug_cg(normal_matrix, grad, self._delta)
+            p = _steihaug_cg(normal_matrix, grad, self._delta, max_cg_iter=self.max_cg_iter)
             jac_p = jac @ p
             predicted = -(float(grad @ p) + 0.5 * float(jac_p @ jac_p))
 
@@ -129,7 +139,12 @@ class GaussNewtonTrustRegion:
         )
 
 
-def _steihaug_cg(hessian: sp.spmatrix, grad: np.ndarray, delta: float, max_cg_iter: int = 0) -> np.ndarray:
+def _steihaug_cg(
+    hessian: sp.spmatrix,
+    grad: np.ndarray,
+    delta: float,
+    max_cg_iter: int | None = None,
+) -> np.ndarray:
     r"""Approximately minimize :math:`\frac{1}{2} p^T H p + g^T p` subject to :math:`\lVert p \rVert \le \delta`.
 
     Parameters
@@ -141,7 +156,7 @@ def _steihaug_cg(hessian: sp.spmatrix, grad: np.ndarray, delta: float, max_cg_it
     delta : float
         Trust region radius.
     max_cg_iter : int, optional
-        Cap on conjugate gradient iterations. Defaults to 0, meaning twice the problem dimension.
+        Cap on conjugate gradient iterations, at least 1. Defaults to ``None``, meaning twice the problem dimension.
 
     Returns
     -------
@@ -149,7 +164,7 @@ def _steihaug_cg(hessian: sp.spmatrix, grad: np.ndarray, delta: float, max_cg_it
         Step. Lies on the boundary when the iteration met it or found negative curvature.
     """
     n = len(grad)
-    if max_cg_iter <= 0:
+    if max_cg_iter is None:
         max_cg_iter = 2 * n
 
     p = np.zeros(n)
