@@ -79,6 +79,27 @@ class TestCompile:
 
         assert_allclose(jacobian[0], numerical, rtol=1e-5, atol=1e-6)
 
+    def test_both_compiled_functions_agree_on_the_residuals(self, rbc_model):
+        """
+        The line search trusts the residual-only function to stand in for the fused one.
+
+        They are two compilations of one graph, so pytensor may order the arithmetic differently and the two
+        agree to a few ULP rather than exactly.
+        """
+        T = 5
+        problem = compile_perfect_foresight_problem(rbc_model, T)
+        ss = rbc_model.steady_state(verbose=False)
+        X, P = _exogenous_inputs(problem, rbc_model)
+
+        rng = np.random.default_rng(0)
+        y_ss = np.array([ss[f"{name}_ss"] for name in problem.var_names])
+        blocks = [y_ss * (1 + 0.05 * rng.normal(size=(T, problem.n_vars))) for _ in range(3)]
+
+        fused, _ = problem.f_resid_and_jac(*blocks, X, P)
+        (residuals_only,) = problem.f_resid_only(*blocks, X, P)
+
+        assert_allclose(residuals_only, fused, rtol=1e-13, atol=0)
+
     def test_every_period_is_evaluated_at_its_own_inputs(self, rbc_model):
         """One call covers the horizon, so a row of the output must depend only on the matching row of the input."""
         T = 4
