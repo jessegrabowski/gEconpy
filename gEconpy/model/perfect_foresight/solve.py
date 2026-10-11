@@ -14,7 +14,7 @@ from gEconpy.model.perfect_foresight.compile import (
     compile_perfect_foresight_problem,
 )
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
-from gEconpy.solvers.sparse_root import NewtonArmijo, sparse_root
+from gEconpy.solvers.sparse_root import newton_armijo, sparse_root
 from gEconpy.solvers.sparse_root.base import RootSolver
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 
@@ -222,7 +222,7 @@ def solve_perfect_foresight(
         )
 
     if solver is None:
-        solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
+        solver = newton_armijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
     else:
         # Trust-region solvers take no globalization strategy, so there is nowhere to put the merit function.
         globalization = getattr(solver, "globalization", None)

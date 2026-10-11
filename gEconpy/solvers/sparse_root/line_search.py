@@ -20,8 +20,8 @@ from gEconpy.solvers.sparse_root.globalization import (
 class LineSearchSolver:
     """Line-search solver composing a direction strategy with a globalization strategy.
 
-    The named solvers :func:`NewtonArmijo`, :func:`Chord`, :func:`InexactNewtonKrylov` and
-    :func:`NewtonNonmonotone` build instances of this class with different default strategies.
+    The named solvers :func:`newton_armijo`, :func:`chord`, :func:`inexact_newton_krylov` and
+    :func:`newton_nonmonotone` build instances of this class with different default strategies.
 
     Parameters
     ----------
@@ -94,7 +94,7 @@ class LineSearchSolver:
         return new_state, StepInfo(accepted=True, step=accepted.alpha * proposal.direction)
 
 
-def NewtonArmijo(
+def newton_armijo(
     direction: DirectionStrategy | None = None,
     globalization: GlobalizationStrategy | None = None,
 ) -> LineSearchSolver:
@@ -120,11 +120,11 @@ def NewtonArmijo(
     )
 
 
-def Chord(
+def chord(
     direction: DirectionStrategy | None = None,
     globalization: GlobalizationStrategy | None = None,
 ) -> LineSearchSolver:
-    """Build a Chord solver, which reuses a cached Jacobian, with Armijo backtracking line search.
+    """Build a chord solver, which reuses a cached Jacobian, with Armijo backtracking line search.
 
     Parameters
     ----------
@@ -146,7 +146,7 @@ def Chord(
     )
 
 
-def InexactNewtonKrylov(
+def inexact_newton_krylov(
     direction: DirectionStrategy | None = None,
     globalization: GlobalizationStrategy | None = None,
 ) -> LineSearchSolver:
@@ -172,7 +172,7 @@ def InexactNewtonKrylov(
     )
 
 
-def NewtonNonmonotone(
+def newton_nonmonotone(
     direction: DirectionStrategy | None = None,
     globalization: GlobalizationStrategy | None = None,
 ) -> LineSearchSolver:

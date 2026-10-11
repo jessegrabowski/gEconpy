@@ -9,7 +9,7 @@ from numpy.testing import assert_allclose
 from gEconpy import impulse_response_function
 from gEconpy.model.perfect_foresight import solve_perfect_foresight
 from gEconpy.model.perfect_foresight.solve import _normalize_condition_keys, make_piecewise_x0
-from gEconpy.solvers.sparse_root import LevenbergMarquardt, NewtonArmijo
+from gEconpy.solvers.sparse_root import LevenbergMarquardt, newton_armijo
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 from tests._resources.cache_compiled_models import load_and_cache_model
 
@@ -252,7 +252,7 @@ class TestX0Dispatch:
 class TestSolverArgument:
     @pytest.mark.parametrize(
         "solver",
-        [NewtonArmijo(), LevenbergMarquardt()],
+        [newton_armijo(), LevenbergMarquardt()],
         ids=["newton-armijo-with-globalization", "levenberg-marquardt-without-globalization"],
     )
     def test_user_solver_reaches_the_same_path_when_reused(self, rbc_model, solver):
@@ -667,7 +667,7 @@ class TestInputGuards:
 class TestMeritFunction:
     def test_a_caller_owned_solver_is_not_mutated(self, rbc_model):
         """The merit function is installed on a copy, so a solver the caller keeps is unchanged afterwards."""
-        solver = NewtonArmijo(globalization=ArmijoBacktracking())
+        solver = newton_armijo(globalization=ArmijoBacktracking())
         _, result = solve_perfect_foresight(rbc_model, simulation_length=10, solver=solver)
 
         assert result.success
@@ -681,7 +681,7 @@ class TestMeritFunction:
             calls.append(x)
             return np.zeros_like(x)
 
-        solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=flat_merit_fun))
+        solver = newton_armijo(globalization=ArmijoBacktracking(merit_fun=flat_merit_fun))
         ss = rbc_model.steady_state(verbose=False)
 
         _, result = solve_perfect_foresight(

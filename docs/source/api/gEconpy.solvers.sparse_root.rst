@@ -15,9 +15,9 @@ gEconpy.solvers.sparse_root
     globalization.ArmijoBacktracking
     globalization.NonmonotoneBacktracking
     levenberg_marquardt.LevenbergMarquardt
-    line_search.Chord
-    line_search.InexactNewtonKrylov
     line_search.LineSearchSolver
-    line_search.NewtonArmijo
-    line_search.NewtonNonmonotone
+    line_search.chord
+    line_search.inexact_newton_krylov
+    line_search.newton_armijo
+    line_search.newton_nonmonotone
     sparse_root.sparse_root
