@@ -14,7 +14,7 @@ from gEconpy.solvers.sparse_root.base import (
 )
 
 _CG_ZERO_GRADIENT_TOL = 1e-15
-_CG_RELATIVE_RESIDUAL_TOL = 1e-10
+_CG_DEFAULT_RTOL = 1e-6
 
 
 @dataclass
@@ -42,6 +42,10 @@ class GaussNewtonTrustRegion:
     max_cg_iter : int, optional
         Cap on conjugate gradient iterations per trust region subproblem, at least 1. Defaults to ``None``, meaning
         twice the problem dimension.
+    cg_rtol : float, optional
+        Relative tolerance on the conjugate gradient residual, measured against the norm of the model gradient. The
+        trust region ratio test checks the resulting step, so the subproblem does not need solving to machine
+        precision. Defaults to 1e-6.
     """
 
     delta0: float = 1.0
@@ -51,6 +55,7 @@ class GaussNewtonTrustRegion:
     grow_factor: float = 2.0
     max_reject: int = 50
     max_cg_iter: int | None = None
+    cg_rtol: float = _CG_DEFAULT_RTOL
 
     _delta: float = field(init=False, repr=False, default=0.0)
 
@@ -111,7 +116,7 @@ class GaussNewtonTrustRegion:
 
         for n_rejected in range(self.max_reject):
             nsolve += 1
-            p = _steihaug_cg(normal_matrix, grad, self._delta, max_cg_iter=self.max_cg_iter)
+            p = _steihaug_cg(normal_matrix, grad, self._delta, max_cg_iter=self.max_cg_iter, rtol=self.cg_rtol)
             jac_p = jac @ p
             predicted = -(float(grad @ p) + 0.5 * float(jac_p @ jac_p))
 
@@ -144,6 +149,7 @@ def _steihaug_cg(
     grad: np.ndarray,
     delta: float,
     max_cg_iter: int | None = None,
+    rtol: float = _CG_DEFAULT_RTOL,
 ) -> np.ndarray:
     r"""Approximately minimize :math:`\frac{1}{2} p^T H p + g^T p` subject to :math:`\lVert p \rVert \le \delta`.
 
@@ -157,6 +163,8 @@ def _steihaug_cg(
         Trust region radius.
     max_cg_iter : int, optional
         Cap on conjugate gradient iterations, at least 1. Defaults to ``None``, meaning twice the problem dimension.
+    rtol : float, optional
+        Relative tolerance on the residual, measured against the norm of ``grad``. Defaults to 1e-6.
 
     Returns
     -------
@@ -193,7 +201,7 @@ def _steihaug_cg(
         residual += alpha * hessian_direction
         residual_sq_next = np.dot(residual, residual)
 
-        if np.sqrt(residual_sq_next) < _CG_RELATIVE_RESIDUAL_TOL * np.linalg.norm(grad):
+        if np.sqrt(residual_sq_next) < rtol * np.linalg.norm(grad):
             return p
 
         direction *= residual_sq_next / residual_sq
