@@ -10,6 +10,7 @@ from gEconpy import impulse_response_function
 from gEconpy.model.perfect_foresight import solve_perfect_foresight
 from gEconpy.model.perfect_foresight.solve import _normalize_condition_keys, make_piecewise_x0
 from gEconpy.solvers.sparse_root import LevenbergMarquardt, NewtonArmijo
+from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 
@@ -271,17 +272,18 @@ class TestSolverArgument:
 
 
 class TestSteadyStateKwargs:
-    def test_setdefault_verbose_false_and_forwarding(self, rbc_model):
+    def test_kwargs_reach_the_steady_state_with_verbose_defaulting_off(self, rbc_model):
         with patch.object(type(rbc_model), "steady_state", wraps=rbc_model.steady_state) as mock_ss:
             solve_perfect_foresight(rbc_model, simulation_length=10, steady_state_kwargs={"progressbar": False})
-            kwargs = mock_ss.call_args[1]
-            assert kwargs["verbose"] is False
-            assert kwargs["progressbar"] is False
+
+        assert mock_ss.call_args.kwargs["verbose"] is False
+        assert mock_ss.call_args.kwargs["progressbar"] is False
 
     def test_explicit_verbose_not_overridden(self, rbc_model):
         with patch.object(type(rbc_model), "steady_state", wraps=rbc_model.steady_state) as mock_ss:
             solve_perfect_foresight(rbc_model, simulation_length=10, steady_state_kwargs={"verbose": True})
-            assert mock_ss.call_args[1]["verbose"] is True
+
+        assert mock_ss.call_args.kwargs["verbose"] is True
 
 
 class TestDeterministicParameters:
@@ -291,25 +293,80 @@ class TestDeterministicParameters:
         assert result.success
         ss = open_rbc_model.steady_state(verbose=False)
         for var in trajectory.columns:
-            assert_allclose(trajectory[var].values, ss[f"{var}_ss"], rtol=1e-6)
+            # IIP, CA, TB and TBtoY are zero at the steady state, where a relative tolerance says nothing.
+            assert_allclose(trajectory[var].values, ss[f"{var}_ss"], rtol=1e-6, atol=1e-10)
 
-    def test_shock_response_converges(self, open_rbc_model):
-        simulation_length = 50
-        shock_path = np.zeros(simulation_length)
+    def test_shock_response_follows_the_technology_process_exactly(self, open_rbc_model):
+        """``log(A)`` is an AR(1) in the shock alone, so its whole path is known in closed form."""
+        T = 50
+        shock_path = np.zeros(T)
         shock_path[0] = 0.01
 
         trajectory, result = solve_perfect_foresight(
-            open_rbc_model,
-            simulation_length=simulation_length,
-            shocks={"epsilon_A": shock_path},
+            open_rbc_model, simulation_length=T, shocks={"epsilon_A": shock_path}
+        )
+        assert result.success
+
+        rho_A = open_rbc_model.parameters()["rho_A"]
+        assert_allclose(trajectory["A"].values, np.exp(0.01 * rho_A ** np.arange(T)), rtol=1e-10)
+
+    def test_shock_response_mean_reverts_in_the_flow_variables(self, open_rbc_model):
+        """
+        Consumption, labor and output return toward the steady state after a transitory technology shock.
+
+        The stock variables do not: with ``psi2 = 0.000742`` the debt-elastic premium is weak enough that net
+        foreign assets are near a unit root, so ``IIP`` is still drifting away from its steady state at the end
+        of any horizon this test could afford. Reading the whole trajectory on one scale hides that, because the
+        absolute deviations are dominated by ``K``.
+        """
+        T = 50
+        shock_path = np.zeros(T)
+        shock_path[0] = 0.01
+
+        trajectory, result = solve_perfect_foresight(
+            open_rbc_model, simulation_length=T, shocks={"epsilon_A": shock_path}
         )
         assert result.success
 
         ss = open_rbc_model.steady_state(verbose=False)
-        ss_vals = np.array([ss[f"{var}_ss"] for var in trajectory.columns])
-        deviations = np.abs(trajectory.values - ss_vals)
+        for var in ("C", "N", "Y", "KtoN"):
+            gap = np.abs(trajectory[var].values - ss[f"{var}_ss"])
+            assert gap[0] > 1e-4 * abs(ss[f"{var}_ss"]), f"the shock should move {var} on impact"
+            assert gap[-1] < gap[0] / 10, f"{var} should be most of the way back by period {T}"
 
-        assert np.sum(deviations[-1]) < np.sum(deviations[1])
+    def test_path_on_a_free_parameter_rederives_its_deterministic_children(self, open_rbc_model):
+        """A path for beta must carry rstar with it.
+
+        ``rstar = 1 / beta - 1``, so leaving rstar at its default would solve one model in the periods
+        and another at the boundaries, and report success anyway.
+        """
+        beta = 0.95
+        ss_override = open_rbc_model.steady_state(verbose=False, beta=beta)
+
+        trajectory, result = solve_perfect_foresight(open_rbc_model, simulation_length=20, param_paths={"beta": beta})
+
+        assert result.success
+        for var in trajectory.columns:
+            assert_allclose(trajectory[var].values, ss_override[f"{var}_ss"], rtol=1e-8, atol=1e-10)
+
+    def test_time_varying_free_parameter_moves_its_deterministic_children(self, open_rbc_model):
+        """``r`` is ``rstar`` plus a premium in IIP, so a step in beta must move r by the step in rstar."""
+        T = 20
+        beta_path = np.full(T, 0.99)
+        beta_path[T // 2 :] = 0.95
+
+        trajectory, result = solve_perfect_foresight(
+            open_rbc_model, simulation_length=T, param_paths={"beta": beta_path}
+        )
+        assert result.success
+
+        parameters = open_rbc_model.parameters
+        expected_jump = parameters(beta=0.95)["rstar"] - parameters(beta=0.99)["rstar"]
+        assert_allclose(trajectory["r"].iloc[-1] - trajectory["r"].iloc[0], expected_jump, rtol=1e-3)
+
+    def test_path_on_a_deterministic_parameter_is_rejected(self, open_rbc_model):
+        with pytest.raises(ValueError, match="Cannot set a path for deterministic parameters: rstar"):
+            solve_perfect_foresight(open_rbc_model, simulation_length=10, param_paths={"rstar": 0.05})
 
 
 class TestConditionKeyNormalization:
@@ -349,7 +406,6 @@ class TestMakePiecewiseX0:
     def test_returns_dataframe_with_correct_structure(self):
         x0 = make_piecewise_x0(self.INIT_SS, self.TERM_SS, simulation_length=100)
 
-        assert isinstance(x0, pd.DataFrame)
         assert len(x0) == 100
         assert sorted(x0.columns) == ["C", "K", "Y"]
 
@@ -500,3 +556,141 @@ class TestParamPaths:
         assert res_auto.success
         assert res_explicit.success
         assert_allclose(traj_auto.values, traj_explicit.values, rtol=1e-8)
+
+
+class TestBoundaryConditionsAreReached:
+    def test_a_longer_horizon_lands_closer_to_the_terminal_steady_state(self, rbc_model):
+        """The terminal condition is an approximation whose error a longer horizon pushes further away."""
+        ss = rbc_model.steady_state(verbose=False)
+        conditions = {"initial_conditions": {"K": 0.5 * ss["K_ss"]}}
+
+        def terminal_deviation(simulation_length):
+            trajectory, result = solve_perfect_foresight(rbc_model, simulation_length=simulation_length, **conditions)
+            assert result.success
+            ss_values = np.array([ss[f"{var}_ss"] for var in trajectory.columns])
+            return np.max(np.abs(trajectory.values[-1] - ss_values) / np.abs(ss_values))
+
+        assert terminal_deviation(400) < terminal_deviation(200) / 10
+
+    def test_terminal_condition_on_a_lead_variable_binds(self, rbc_model):
+        """Only the lead block multiplies the terminal vector, so lambda is where the condition can bite."""
+        ss = rbc_model.steady_state(verbose=False)
+        T = 50
+
+        reference, _ = solve_perfect_foresight(rbc_model, simulation_length=T)
+        bent, result = solve_perfect_foresight(
+            rbc_model, simulation_length=T, terminal_conditions={"lambda": 1.1 * ss["lambda_ss"]}
+        )
+        assert result.success
+
+        assert_allclose(reference["lambda"].values, ss["lambda_ss"], rtol=1e-8)
+        assert bent["lambda"].iloc[-1] > reference["lambda"].iloc[-1]
+        assert bent["lambda"].iloc[-1] < 1.1 * ss["lambda_ss"]
+        assert np.all(np.diff(bent["lambda"].values) > 0), "the path should climb toward the imposed value"
+
+    def test_initial_period_respects_the_initial_condition(self, rbc_model):
+        """K[0] is pinned by the accumulation constraint read at the supplied K[-1]."""
+        ss = rbc_model.steady_state(verbose=False)
+        params = rbc_model.parameters()
+        K_init = 0.9 * ss["K_ss"]
+
+        trajectory, result = solve_perfect_foresight(rbc_model, simulation_length=50, initial_conditions={"K": K_init})
+        assert result.success
+
+        resources = trajectory["A"].iloc[0] * K_init ** params["alpha"] + (1 - params["delta"]) * K_init
+        assert_allclose(trajectory["C"].iloc[0] + trajectory["K"].iloc[0], resources, rtol=1e-8)
+
+
+class TestInputGuards:
+    def test_x0_dataframe_missing_a_column_raises(self, rbc_model):
+        """Reindexing would fill it with NaN, which reaches Newton as a singular Jacobian."""
+        ss = rbc_model.steady_state(verbose=False)
+        x0 = make_piecewise_x0(ss, ss, simulation_length=10)
+
+        with pytest.raises(ValueError, match="x0 DataFrame is missing columns for: K"):
+            solve_perfect_foresight(rbc_model, simulation_length=10, x0=x0.drop(columns=["K"]))
+
+    def test_x0_dataframe_with_extra_columns_is_accepted(self, rbc_model):
+        """A steady-state dictionary may carry entries that are not model variables."""
+        ss = rbc_model.steady_state(verbose=False)
+        x0 = make_piecewise_x0(ss, ss, simulation_length=10)
+        x0["not_a_variable"] = 0.0
+
+        _, result = solve_perfect_foresight(rbc_model, simulation_length=10, x0=x0)
+        assert result.success
+
+    @pytest.mark.parametrize("simulation_length", [0, -1], ids=["zero", "negative"])
+    def test_non_positive_simulation_length_raises(self, rbc_model, simulation_length):
+        with pytest.raises(ValueError, match="simulation_length must be at least 1"):
+            solve_perfect_foresight(rbc_model, simulation_length=simulation_length)
+
+    @pytest.mark.parametrize("bad_value", [np.nan, np.inf], ids=["nan", "inf"])
+    @pytest.mark.parametrize(
+        "named_input",
+        ["x0", "initial_conditions", "terminal_conditions", "shocks", "param_paths"],
+    )
+    def test_non_finite_input_raises_naming_the_offender(self, rbc_model, named_input, bad_value):
+        T = 10
+        ss = rbc_model.steady_state(verbose=False)
+        var_names = [v.base_name for v in rbc_model.variables]
+
+        kwargs = {
+            "x0": {"x0": np.tile([ss[f"{name}_ss"] for name in var_names], (T, 1))},
+            "initial_conditions": {"initial_conditions": {"K": 0.0}},
+            "terminal_conditions": {"terminal_conditions": {"K": 0.0}},
+            "shocks": {"shocks": {"epsilon": np.zeros(T)}},
+            "param_paths": {"param_paths": {"delta": np.full(T, 0.02)}},
+        }[named_input]
+        if named_input == "x0":
+            kwargs["x0"][0, 0] = bad_value
+        elif named_input == "shocks":
+            kwargs["shocks"]["epsilon"][0] = bad_value
+        elif named_input == "param_paths":
+            kwargs["param_paths"]["delta"][0] = bad_value
+        else:
+            kwargs[named_input]["K"] = bad_value
+
+        with pytest.raises(ValueError, match=f"{named_input} contains non-finite values"):
+            solve_perfect_foresight(rbc_model, simulation_length=T, **kwargs)
+
+    def test_unknown_parameter_is_reported_before_the_steady_state_is_computed(self, rbc_model):
+        """The model's own error for a bad name does not say which names a parameter path may use."""
+        with (
+            patch.object(type(rbc_model), "steady_state") as mock_ss,
+            pytest.raises(ValueError, match="Unknown parameters in param_paths"),
+        ):
+            solve_perfect_foresight(rbc_model, simulation_length=10, param_paths={"not_a_param": 1.0})
+
+        mock_ss.assert_not_called()
+
+
+class TestMeritFunction:
+    def test_a_caller_owned_solver_is_not_mutated(self, rbc_model):
+        """The merit function is installed on a copy, so a solver the caller keeps is unchanged afterwards."""
+        solver = NewtonArmijo(globalization=ArmijoBacktracking())
+        _, result = solve_perfect_foresight(rbc_model, simulation_length=10, solver=solver)
+
+        assert result.success
+        assert solver.globalization.merit_fun is None
+
+    def test_a_caller_supplied_merit_function_is_kept(self, rbc_model):
+        """A merit function that reports every trial point as a root is observable in the solver's behavior."""
+        calls = []
+
+        def flat_merit_fun(x, *_args):
+            calls.append(x)
+            return np.zeros_like(x)
+
+        solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=flat_merit_fun))
+        ss = rbc_model.steady_state(verbose=False)
+
+        _, result = solve_perfect_foresight(
+            rbc_model,
+            simulation_length=10,
+            solver=solver,
+            initial_conditions={"K": 0.5 * ss["K_ss"]},
+        )
+
+        assert calls, "the caller's merit function was replaced"
+        assert solver.globalization.merit_fun is flat_merit_fun
+        assert not result.success, "a merit function that lies should keep the solve from converging"

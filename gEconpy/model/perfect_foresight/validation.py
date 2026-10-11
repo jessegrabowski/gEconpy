@@ -4,6 +4,7 @@ import numpy as np
 
 
 def validate_perfect_foresight_inputs(
+    *,
     initial_conditions: dict[str, float],
     terminal_conditions: dict[str, float],
     shocks: dict[str, np.ndarray] | None,
@@ -11,6 +12,7 @@ def validate_perfect_foresight_inputs(
     var_names: list[str],
     shock_names: list[str],
     param_names: list[str],
+    deterministic_param_names: list[str],
     simulation_length: int,
 ) -> None:
     """
@@ -33,12 +35,22 @@ def validate_perfect_foresight_inputs(
         Shock names the model knows.
     param_names : list of str
         Parameter names the model knows.
+    deterministic_param_names : list of str
+        Names in ``param_names`` that the model derives from other parameters, which cannot be set directly.
     simulation_length : int
         Number of periods.
+
+    Raises
+    ------
+    ValueError
+        If a name is unknown, if a path does not have the simulation length, if a deterministic parameter is
+        given a path, or if ``simulation_length`` is not positive.
     """
+    if simulation_length < 1:
+        raise ValueError(f"simulation_length must be at least 1, got {simulation_length}")
+
     var_set = set(var_names)
     shock_set = set(shock_names)
-    param_set = set(param_names)
 
     invalid_initial = set(initial_conditions.keys()) - var_set
     if invalid_initial:
@@ -54,14 +66,38 @@ def validate_perfect_foresight_inputs(
             raise ValueError(f"Unknown shocks: {invalid_shocks}. Valid: {shock_names}")
 
         for name, values in shocks.items():
+            if np.ndim(values) != 1:
+                raise ValueError(
+                    f"Shock '{name}' must be a one-dimensional path of length {simulation_length}, got an input "
+                    f"with {np.ndim(values)} dimensions"
+                )
             if len(values) != simulation_length:
                 raise ValueError(f"Shock '{name}' has length {len(values)}, expected {simulation_length}")
 
     if param_paths:
-        invalid_params = set(param_paths.keys()) - param_set
+        deterministic_set = set(deterministic_param_names)
+        free_param_names = [name for name in param_names if name not in deterministic_set]
+
+        invalid_params = set(param_paths.keys()) - set(param_names)
         if invalid_params:
-            raise ValueError(f"Unknown parameters in param_paths: {invalid_params}. Valid: {param_names}")
+            raise ValueError(f"Unknown parameters in param_paths: {invalid_params}. Valid: {free_param_names}")
+
+        # A deterministic parameter is a function of the free parameters, so the model recomputes it from them at
+        # every update. Writing a path for it directly would be honored in the simulated periods and ignored when
+        # the boundary steady states are computed, leaving the two halves of the problem disagreeing.
+        invalid_deterministic = sorted(set(param_paths.keys()) & deterministic_set)
+        if invalid_deterministic:
+            raise ValueError(
+                f"Cannot set a path for deterministic parameters: {', '.join(invalid_deterministic)}. They are "
+                f"derived from other parameters, so set a path for those instead. Free parameters: "
+                f"{free_param_names}"
+            )
 
         for name, value in param_paths.items():
-            if np.ndim(value) > 0 and len(value) != simulation_length:
+            if np.ndim(value) > 1:
+                raise ValueError(
+                    f"param_paths['{name}'] must be a scalar or a one-dimensional path, got an input with "
+                    f"{np.ndim(value)} dimensions"
+                )
+            if np.ndim(value) == 1 and len(value) != simulation_length:
                 raise ValueError(f"param_paths['{name}'] has length {len(value)}, expected {simulation_length}")

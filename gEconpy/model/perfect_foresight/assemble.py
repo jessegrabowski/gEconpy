@@ -13,24 +13,20 @@ class StackedJacobianLayout:
 
     Attributes
     ----------
-    source_rows, source_cols : ndarray of int
-        Row and column of the period Jacobian each entry reads, in fill order.
-    period_bounds : ndarray of int
-        Start of each period's entries in fill order, with the total in the last position.
-    permutation : ndarray of int
-        Reorders the filled entries into compressed-column order.
+    gather : ndarray of int
+        Flat indices into the ``(T, n_eq, 3 * n_vars)`` array of period Jacobians, in compressed-column order.
     indices, indptr : ndarray of int
         Row indices and column pointers of the compressed-column result.
+    period_shape : tuple of int
+        Shape ``(T, n_eq, 3 * n_vars)`` that ``gather`` indexes into.
     shape : tuple of int
         Shape of the stacked Jacobian.
     """
 
-    source_rows: np.ndarray
-    source_cols: np.ndarray
-    period_bounds: np.ndarray
-    permutation: np.ndarray
+    gather: np.ndarray
     indices: np.ndarray
     indptr: np.ndarray
+    period_shape: tuple[int, int, int]
     shape: tuple[int, int]
 
 
@@ -66,60 +62,64 @@ def build_stacked_jacobian_layout(
     Raises
     ------
     ValueError
-        If ``sparsity_pattern`` does not have shape ``(n_eq, 3 * n_vars)``.
+        If ``sparsity_pattern`` does not have shape ``(n_eq, 3 * n_vars)``, or if ``T`` is not positive.
     """
+    if sparsity_pattern.shape != (n_eq, 3 * n_vars):
+        raise ValueError(f"sparsity_pattern has shape {sparsity_pattern.shape}, expected {(n_eq, 3 * n_vars)}.")
+    if T < 1:
+        raise ValueError(f"T must be at least 1, got {T}.")
+
     # The pattern is supplied rather than read off the period Jacobians because an entry can pass through zero in
     # every period at once (a steady-state initial guess, a parameter path crossing zero). A pattern inferred from
     # those values drops it, leaving Newton to step against a Jacobian that is wrong rather than approximate.
-    if sparsity_pattern.shape != (n_eq, 3 * n_vars):
-        raise ValueError(f"sparsity_pattern has shape {sparsity_pattern.shape}, expected {(n_eq, 3 * n_vars)}.")
-
     blocks = [np.nonzero(sparsity_pattern[:, start : start + n_vars]) for start in (0, n_vars, 2 * n_vars)]
     placements = ((-1, 0), (0, n_vars), (1, 2 * n_vars))
+    period_shape = (T, n_eq, 3 * n_vars)
 
-    source_rows, source_cols, rows, cols, bounds = [], [], [], [], [0]
-    filled = 0
+    source_blocks, row_blocks, column_blocks = [], [], []
     for t in range(T):
         for (block_rows, block_cols), (shift, column_offset) in zip(blocks, placements, strict=True):
             if not 0 <= t + shift < T:
                 continue
-            source_rows.append(block_rows)
-            source_cols.append(block_cols + column_offset)
-            rows.append(t * n_eq + block_rows)
-            cols.append((t + shift) * n_vars + block_cols)
-            filled += block_rows.size
-        bounds.append(filled)
+            source_blocks.append(
+                np.ravel_multi_index(
+                    (np.full_like(block_rows, t), block_rows, block_cols + column_offset), period_shape
+                )
+            )
+            row_blocks.append(t * n_eq + block_rows)
+            column_blocks.append((t + shift) * n_vars + block_cols)
 
+    sources = np.concatenate(source_blocks)
+    rows = np.concatenate(row_blocks)
+    columns = np.concatenate(column_blocks)
     shape = (T * n_eq, T * n_vars)
 
-    # Carrying the fill position as the data of a throwaway matrix turns the conversion into the permutation that
-    # reorders filled entries into compressed-column order, so no later call has to convert from coordinate form.
-    positions = sparse.coo_matrix(
-        (np.arange(filled), (np.concatenate(rows), np.concatenate(cols))), shape=shape, dtype=np.int64
-    ).tocsc()
+    # Carrying the source index as the data of a throwaway matrix turns the conversion into the gather that reads
+    # the period Jacobians straight into compressed-column order, so no later call has to convert from coordinate
+    # form. The blocks of a period land in distinct columns and the periods in distinct rows, so no two entries
+    # share a position and nothing is summed away.
+    positions = sparse.coo_matrix((sources, (rows, columns)), shape=shape, dtype=np.int64).tocsc()
 
     return StackedJacobianLayout(
-        source_rows=np.concatenate(source_rows),
-        source_cols=np.concatenate(source_cols),
-        period_bounds=np.array(bounds, dtype=np.intp),
-        permutation=positions.data,
+        gather=positions.data,
         indices=positions.indices,
         indptr=positions.indptr,
+        period_shape=period_shape,
         shape=shape,
     )
 
 
 def assemble_stacked_jacobian(
-    period_jacobians: Sequence[np.ndarray],
+    period_jacobians: Sequence[np.ndarray] | np.ndarray,
     layout: StackedJacobianLayout,
 ) -> sparse.csc_matrix:
     """
-    Assemble the block-tridiagonal Jacobian of the stacked system from one dense Jacobian per period.
+    Assemble the block-tridiagonal Jacobian of the stacked system from the Jacobian of every period.
 
     Parameters
     ----------
-    period_jacobians : sequence of ndarray
-        T dense matrices, each of shape ``(n_eq, 3 * n_vars)``.
+    period_jacobians : ndarray or sequence of ndarray
+        Array of shape ``(T, n_eq, 3 * n_vars)``, or a sequence of T matrices of shape ``(n_eq, 3 * n_vars)``.
     layout : StackedJacobianLayout
         Index arrays from :func:`build_stacked_jacobian_layout`.
 
@@ -127,12 +127,16 @@ def assemble_stacked_jacobian(
     -------
     jacobian : sparse.csc_matrix
         Block-tridiagonal matrix of shape ``(T * n_eq, T * n_vars)``.
-    """
-    data = np.empty(layout.source_rows.size)
-    for period_jacobian, start, stop in zip(
-        period_jacobians, layout.period_bounds[:-1], layout.period_bounds[1:], strict=True
-    ):
-        entries = slice(start, stop)
-        data[entries] = period_jacobian[layout.source_rows[entries], layout.source_cols[entries]]
 
-    return sparse.csc_matrix((data[layout.permutation], layout.indices, layout.indptr), shape=layout.shape)
+    Raises
+    ------
+    ValueError
+        If ``period_jacobians`` does not have the shape the layout was built for.
+    """
+    jacobians = np.asarray(period_jacobians, dtype=float)
+    if jacobians.shape != layout.period_shape:
+        raise ValueError(f"period_jacobians has shape {jacobians.shape}, expected {layout.period_shape}.")
+
+    data = jacobians.ravel()[layout.gather]
+
+    return sparse.csc_matrix((data, layout.indices, layout.indptr), shape=layout.shape)

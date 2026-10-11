@@ -473,6 +473,7 @@ class Model:
         self._dr_order: DROrder | None = None
         self._symbolic_linearize_cache: dict[frozenset[str], tuple] = {}
         self._linearize_cache: dict[int, Callable] = {}
+        self._perfect_foresight_cache: dict[tuple, Any] = {}
 
     @property
     def variables(self) -> list[TimeAwareSymbol]:

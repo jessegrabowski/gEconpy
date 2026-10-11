@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 
 import numpy as np
@@ -47,10 +47,11 @@ def solve_perfect_foresight(
     x0 : DataFrame, ndarray, dict, or None, optional
         Initial guess for the Newton solver. A dict is a steady-state dictionary as returned by
         ``model.steady_state()``, tiled across every period and used in place of computing the steady state. It
-        must hold a value for every model variable. A
-        DataFrame has variable names as columns and periods as rows, and its columns are reindexed to the model's
-        variable order. This is what :func:`make_piecewise_x0` returns. An ndarray of shape ``(T, n_vars)`` must
-        already be in the model's variable order. Defaults to the steady state tiled across every period.
+        must hold a value for every model variable, and it also supplies both boundary conditions, so it is not
+        the right input for a permanent change in a parameter. A DataFrame has variable names as columns and
+        periods as rows, and must hold a column for every model variable. This is what :func:`make_piecewise_x0`
+        returns. An ndarray of shape ``(T, n_vars)`` must already be in the model's variable order. Defaults to
+        the steady state tiled across every period.
     initial_conditions : dict mapping str to float, optional
         Variable values at ``t = -1``, keyed by base name such as ``"K"`` or by steady-state name such as
         ``"K_ss"``. Variables not listed take their steady-state values.
@@ -60,10 +61,13 @@ def solve_perfect_foresight(
     shocks : dict mapping str to ndarray, optional
         Shock paths over the horizon, keyed by shock name, each of length ``T``. Shocks not listed are zero.
     param_paths : dict mapping str to float, sequence of float, or ndarray, optional
-        Parameter overrides, keyed by parameter name. A scalar holds for every period and a list or array of length
-        ``T`` varies over time. Parameters not listed keep their model values. When boundary conditions are not fully
+        Overrides for the free parameters, keyed by parameter name. A scalar holds for every period and a list or
+        array of length ``T`` varies over time. Parameters not listed keep their model values, and deterministic
+        parameters are rederived from the free values of each period. When boundary conditions are not fully
         specified, the initial and terminal steady states are computed at the parameter values of ``t = 0`` and
-        ``t = T - 1``.
+        ``t = T - 1``. A steady-state term written into an equation, such as the inflation target of a Taylor
+        rule, is an expression in the parameters, so under a parameter path it too takes the values of each
+        period rather than staying fixed at the initial steady state.
     compile_kwargs : dict, optional
         Keyword arguments forwarded to :func:`pytensor.function` when compiling the model.
     solver : RootSolver, optional
@@ -137,6 +141,20 @@ def solve_perfect_foresight(
     var_names = problem.var_names
     var_set = set(var_names)
 
+    # Validation runs before anything expensive, and before any name reaches the model: a typo in param_paths
+    # otherwise surfaces as whatever model.steady_state makes of it.
+    validate_perfect_foresight_inputs(
+        initial_conditions=initial_conditions,
+        terminal_conditions=terminal_conditions,
+        shocks=shocks,
+        param_paths=param_paths,
+        var_names=var_names,
+        shock_names=problem.shock_names,
+        param_names=problem.param_names,
+        deterministic_param_names=problem.deterministic_param_names,
+        simulation_length=simulation_length,
+    )
+
     init_param_kwargs, term_param_kwargs = _extract_boundary_param_kwargs(param_paths)
     same_boundary_params = term_param_kwargs == init_param_kwargs
 
@@ -154,7 +172,7 @@ def solve_perfect_foresight(
         init_ss_dict = compute_ss(**init_param_kwargs)
         term_ss_dict = init_ss_dict if same_boundary_params else compute_ss(**term_param_kwargs)
     else:
-        x0_vec = _x0_to_vector(x0, var_names, simulation_length)
+        x0_vec = _x0_to_vector(x0=x0, var_names=var_names, simulation_length=simulation_length)
         init_ss_dict = compute_ss(**init_param_kwargs) if needs_initial_ss else None
         term_ss_dict = None
         if needs_terminal_ss:
@@ -164,36 +182,51 @@ def solve_perfect_foresight(
     if x0_vec is None:
         x0_vec = np.tile(_ss_dict_to_array(init_ss_dict, var_names), simulation_length)
 
-    validate_perfect_foresight_inputs(
-        initial_conditions,
-        terminal_conditions,
-        shocks,
-        param_paths,
-        var_names,
-        problem.shock_names,
-        problem.param_names,
-        simulation_length,
+    y_initial = _boundary_vector(
+        conditions=initial_conditions,
+        ss_dict=init_ss_dict if needs_initial_ss else None,
+        var_names=var_names,
+    )
+    y_terminal = _boundary_vector(
+        conditions=terminal_conditions,
+        ss_dict=term_ss_dict if needs_terminal_ss else None,
+        var_names=var_names,
     )
 
-    y_initial = _boundary_vector(initial_conditions, init_ss_dict if needs_initial_ss else None, var_names)
-    y_terminal = _boundary_vector(terminal_conditions, term_ss_dict if needs_terminal_ss else None, var_names)
+    shock_matrix = _build_shock_matrix(shocks=shocks, shock_names=problem.shock_names, T=simulation_length)
+    param_matrix = _build_param_matrix(
+        param_paths=param_paths,
+        param_names=problem.param_names,
+        model=model,
+        T=simulation_length,
+    )
 
-    shock_matrix = _build_shock_matrix(shocks, problem.shock_names, simulation_length)
-    param_matrix = _build_param_matrix(param_paths, problem.param_names, model.parameters(), simulation_length)
+    _check_all_finite(
+        x0=x0_vec,
+        initial_conditions=y_initial,
+        terminal_conditions=y_terminal,
+        shocks=shock_matrix,
+        param_paths=param_matrix,
+    )
 
-    # The residual-only function lets the line search evaluate the merit function at rejected trial points without
-    # paying for a Jacobian there.
-    if problem.f_resid_only is not None:
+    # The residual-only function lets the line search evaluate the merit function at rejected trial points
+    # without paying for a Jacobian there.
+    def merit_fun(x, *_args):
+        return _compute_stacked_residuals(
+            y=x,
+            y_initial=y_initial,
+            y_terminal=y_terminal,
+            x=shock_matrix,
+            params=param_matrix,
+            problem=problem,
+        )
 
-        def merit_fun(x, *_args):
-            return _compute_stacked_residuals(x, y_initial, y_terminal, shock_matrix, param_matrix, problem)
-
-        if solver is None:
-            solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
-        else:
-            globalization = getattr(solver, "globalization", None)
-            if globalization is not None and hasattr(globalization, "merit_fun"):
-                solver = replace(solver, globalization=replace(globalization, merit_fun=merit_fun))
+    if solver is None:
+        solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
+    else:
+        globalization = getattr(solver, "globalization", None)
+        if globalization is not None and hasattr(globalization, "merit_fun") and globalization.merit_fun is None:
+            solver = replace(solver, globalization=replace(globalization, merit_fun=merit_fun))
 
     result = sparse_root(
         _compute_stacked_residuals_and_jacobian,
@@ -202,7 +235,7 @@ def solve_perfect_foresight(
         solver=solver,
     )
 
-    trajectory = pd.DataFrame(result.x.reshape(simulation_length, len(var_names)), columns=var_names)
+    trajectory = pd.DataFrame(result.x.reshape(simulation_length, problem.n_vars), columns=var_names)
     return trajectory, result
 
 
@@ -287,6 +320,22 @@ def _infer_var_names_from_ss(*ss_dicts: dict[str, float]) -> list[str]:
     return sorted(names)
 
 
+def _check_all_finite(**arrays: np.ndarray) -> None:
+    """
+    Check that no input carries a NaN or an infinity, naming the offender.
+
+    Raises
+    ------
+    ValueError
+        If any array holds a non-finite value.
+    """
+    # Newton reports a non-finite input as a singular Jacobian several layers down, which says nothing about
+    # which input was wrong.
+    for name, array in arrays.items():
+        if not np.all(np.isfinite(array)):
+            raise ValueError(f"{name} contains non-finite values")
+
+
 def _extract_boundary_param_kwargs(
     param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
 ) -> tuple[dict[str, float], dict[str, float]]:
@@ -301,9 +350,9 @@ def _extract_boundary_param_kwargs(
     initial_kwargs = {}
     terminal_kwargs = {}
     for name, value in param_paths.items():
-        path = np.asarray(value, dtype=float)
-        initial_kwargs[name] = float(path.flat[0])
-        terminal_kwargs[name] = float(path.flat[-1])
+        path = np.atleast_1d(np.asarray(value, dtype=float))
+        initial_kwargs[name] = float(path[0])
+        terminal_kwargs[name] = float(path[-1])
 
     return initial_kwargs, terminal_kwargs
 
@@ -313,6 +362,13 @@ def _x0_to_vector(x0: np.ndarray | pd.DataFrame, var_names: list[str], simulatio
     if isinstance(x0, pd.DataFrame):
         if len(x0) != simulation_length:
             raise ValueError(f"x0 DataFrame must have {simulation_length} rows, got {len(x0)}")
+
+        # Reindexing a missing column fills it with NaN, which reaches Newton as a singular Jacobian rather than
+        # as the input error it is.
+        missing = [name for name in var_names if name not in x0.columns]
+        if missing:
+            raise ValueError(f"x0 DataFrame is missing columns for: {', '.join(missing)}")
+
         return x0.reindex(columns=var_names).to_numpy().ravel()
 
     expected_shape = (simulation_length, len(var_names))
@@ -354,41 +410,44 @@ def _build_shock_matrix(
 def _build_param_matrix(
     param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
     param_names: list[str],
-    param_defaults: dict[str, float],
+    model: Model,
     T: int,
 ) -> np.ndarray:
-    """Arrange parameter values into a ``(T, n_params)`` matrix, overriding the defaults with any given paths."""
-    defaults = np.array([param_defaults[name] for name in param_names])
-    param_matrix = np.tile(defaults, (T, 1))
+    """
+    Arrange parameter values into a ``(T, n_params)`` matrix, overriding the model values with any given paths.
 
+    Every row goes through ``model.parameters()``, so each period's deterministic parameters are derived from
+    that period's free values.
+    """
+    # The boundary steady states are computed through the same resolver, so a period whose deterministic
+    # parameters were not rederived would be solving a different model than its own boundary conditions.
     if param_paths:
-        for name, value in param_paths.items():
-            param_matrix[:, param_names.index(name)] = value
+        paths = {name: np.broadcast_to(np.asarray(value, dtype=float), (T,)) for name, value in param_paths.items()}
+        by_period = [model.parameters(**{name: path[t] for name, path in paths.items()}) for t in range(T)]
+    else:
+        by_period = [model.parameters()] * T
 
-    return param_matrix
+    return np.array([[parameters[name] for name in param_names] for parameters in by_period])
 
 
-def _evaluate_periods(
-    f: Callable,
+def _period_inputs(
     y: np.ndarray,
     y_initial: np.ndarray,
     y_terminal: np.ndarray,
-    x: np.ndarray,
-    params: np.ndarray,
     problem: PerfectForesightProblem,
-) -> Iterator[list[np.ndarray]]:
-    """Call ``f`` once per period, in order, with the neighboring periods and the boundary vectors at the ends."""
-    T = problem.T
-    y_mat = y.reshape(T, problem.n_vars)
-    for t in range(T):
-        y_tm1 = y_initial if t == 0 else y_mat[t - 1]
-        y_t = y_mat[t]
-        y_tp1 = y_terminal if t == T - 1 else y_mat[t + 1]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Lay the iterate out as the three arrays of lagged, current, and led values.
 
-        if problem.n_shocks > 0:
-            yield f(y_tm1, y_t, y_tp1, x[t], *params[t])
-        else:
-            yield f(y_tm1, y_t, y_tp1, *params[t])
+    Returns
+    -------
+    Y_tm1, Y_t, Y_tp1 : ndarray
+        Values at ``t-1``, ``t``, and ``t+1``, each of shape ``(T, n_vars)``. The boundary vectors stand in for
+        the lag of the first period and the lead of the last.
+    """
+    y_mat = y.reshape(problem.T, problem.n_vars)
+
+    return np.vstack([y_initial, y_mat[:-1]]), y_mat, np.vstack([y_mat[1:], y_terminal])
 
 
 def _compute_stacked_residuals_and_jacobian(
@@ -399,11 +458,10 @@ def _compute_stacked_residuals_and_jacobian(
     params: np.ndarray,
     problem: PerfectForesightProblem,
 ) -> tuple[np.ndarray, sparse.csc_matrix]:
-    period_outputs = _evaluate_periods(problem.f_resid_and_jac, y, y_initial, y_terminal, x, params, problem)
-    residuals, jacobians = zip(*period_outputs, strict=True)
+    Y_tm1, Y_t, Y_tp1 = _period_inputs(y=y, y_initial=y_initial, y_terminal=y_terminal, problem=problem)
+    residuals, jacobians = problem.f_resid_and_jac(Y_tm1, Y_t, Y_tp1, x, params)
 
-    stacked_jacobian = assemble_stacked_jacobian(jacobians, problem.jacobian_layout)
-    return np.concatenate(residuals), stacked_jacobian
+    return residuals.ravel(), assemble_stacked_jacobian(period_jacobians=jacobians, layout=problem.jacobian_layout)
 
 
 def _compute_stacked_residuals(
@@ -414,5 +472,7 @@ def _compute_stacked_residuals(
     params: np.ndarray,
     problem: PerfectForesightProblem,
 ) -> np.ndarray:
-    period_outputs = _evaluate_periods(problem.f_resid_only, y, y_initial, y_terminal, x, params, problem)
-    return np.concatenate([residuals for (residuals,) in period_outputs])
+    Y_tm1, Y_t, Y_tp1 = _period_inputs(y=y, y_initial=y_initial, y_terminal=y_terminal, problem=problem)
+    (residuals,) = problem.f_resid_only(Y_tm1, Y_t, Y_tp1, x, params)
+
+    return residuals.ravel()
