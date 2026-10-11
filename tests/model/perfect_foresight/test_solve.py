@@ -311,6 +311,36 @@ class TestDeterministicParameters:
 
         assert np.sum(deviations[-1]) < np.sum(deviations[1])
 
+    def test_path_on_a_free_parameter_rederives_its_deterministic_children(self, open_rbc_model):
+        """A path for beta must carry rstar with it.
+
+        ``rstar = 1 / beta - 1``, so leaving rstar at its default would solve one model in the periods
+        and another at the boundaries, and report success anyway.
+        """
+        beta = 0.95
+        ss_override = open_rbc_model.steady_state(verbose=False, beta=beta)
+
+        trajectory, result = solve_perfect_foresight(open_rbc_model, simulation_length=20, param_paths={"beta": beta})
+
+        assert result.success
+        for var in trajectory.columns:
+            assert_allclose(trajectory[var].values, ss_override[f"{var}_ss"], rtol=1e-8, atol=1e-10)
+
+    def test_time_varying_free_parameter_moves_its_deterministic_children(self, open_rbc_model):
+        """``r`` is ``rstar`` plus a premium in IIP, so a step in beta must move r by the step in rstar."""
+        T = 20
+        beta_path = np.full(T, 0.99)
+        beta_path[T // 2 :] = 0.95
+
+        trajectory, result = solve_perfect_foresight(
+            open_rbc_model, simulation_length=T, param_paths={"beta": beta_path}
+        )
+        assert result.success
+
+        parameters = open_rbc_model.parameters
+        expected_jump = parameters(beta=0.95)["rstar"] - parameters(beta=0.99)["rstar"]
+        assert_allclose(trajectory["r"].iloc[-1] - trajectory["r"].iloc[0], expected_jump, rtol=1e-3)
+
 
 class TestConditionKeyNormalization:
     @pytest.mark.parametrize(

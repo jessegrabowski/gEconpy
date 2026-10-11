@@ -179,7 +179,12 @@ def solve_perfect_foresight(
     y_terminal = _boundary_vector(terminal_conditions, term_ss_dict if needs_terminal_ss else None, var_names)
 
     shock_matrix = _build_shock_matrix(shocks, problem.shock_names, simulation_length)
-    param_matrix = _build_param_matrix(param_paths, problem.param_names, model.parameters(), simulation_length)
+    param_matrix = _build_param_matrix(
+        param_paths=param_paths,
+        param_names=problem.param_names,
+        model=model,
+        T=simulation_length,
+    )
 
     # The residual-only function lets the line search evaluate the merit function at rejected trial points without
     # paying for a Jacobian there.
@@ -354,18 +359,24 @@ def _build_shock_matrix(
 def _build_param_matrix(
     param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
     param_names: list[str],
-    param_defaults: dict[str, float],
+    model: Model,
     T: int,
 ) -> np.ndarray:
-    """Arrange parameter values into a ``(T, n_params)`` matrix, overriding the defaults with any given paths."""
-    defaults = np.array([param_defaults[name] for name in param_names])
-    param_matrix = np.tile(defaults, (T, 1))
+    """
+    Arrange parameter values into a ``(T, n_params)`` matrix, overriding the model values with any given paths.
 
+    Every row goes through ``model.parameters()``, so each period's deterministic parameters are derived from
+    that period's free values.
+    """
+    # The boundary steady states are computed through the same resolver, so a period whose deterministic
+    # parameters were not rederived would be solving a different model than its own boundary conditions.
     if param_paths:
-        for name, value in param_paths.items():
-            param_matrix[:, param_names.index(name)] = value
+        paths = {name: np.broadcast_to(np.asarray(value, dtype=float), (T,)) for name, value in param_paths.items()}
+        by_period = [model.parameters(**{name: path[t] for name, path in paths.items()}) for t in range(T)]
+    else:
+        by_period = [model.parameters()] * T
 
-    return param_matrix
+    return np.array([[parameters[name] for name in param_names] for parameters in by_period])
 
 
 def _evaluate_periods(
