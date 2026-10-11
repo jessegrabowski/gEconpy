@@ -192,6 +192,7 @@ def _build_equation_graph(model: Model) -> _EquationGraph:
         return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
 
     params_in_equations, params_pt = _collect_parameters_in_equations(model, cache)
+    deterministic_names = {p.name for p in model.deterministic_params}
 
     var_names = [x.base_name for x in vars_t]
     vars_t_pt = [get_pt_var(x) for x in vars_t]
@@ -236,8 +237,6 @@ def _build_equation_graph(model: Model) -> _EquationGraph:
 
     residuals_batched, jacobian_batched = vectorize_graph([residuals_vec, jacobian_vec], replace=batch_replacements)
 
-    deterministic_names = {p.name for p in model.deterministic_params}
-
     return _EquationGraph(
         inputs=[Y_tm1, Y_t, Y_tp1, X, P],
         residuals=residuals_batched,
@@ -248,27 +247,6 @@ def _build_equation_graph(model: Model) -> _EquationGraph:
         param_names=[p.name for p in params_in_equations],
         deterministic_param_names=[p.name for p in params_in_equations if p.name in deterministic_names],
     )
-
-
-def _collect_parameters_in_equations(model: Model, cache: dict) -> tuple[list[sp.Symbol], list[pt.TensorVariable]]:
-    """
-    Pick out the parameters the equations actually use, in the order the compiled functions expect them.
-
-    Returns
-    -------
-    parameters : list of sympy Symbol
-        The free and deterministic parameters appearing in the equations.
-    nodes : list of TensorVariable
-        The pytensor node of each, in the same order.
-    """
-    parameters, nodes = [], []
-    for param in model.params + model.deterministic_params:
-        key = make_cache_key(param.name, cls=sp.Symbol)
-        if key in cache:
-            parameters.append(param)
-            nodes.append(cache[key])
-
-    return parameters, nodes
 
 
 def _check_system_is_solvable(
@@ -301,6 +279,27 @@ def _check_system_is_solvable(
             f"Perfect foresight simulation requires a square system, but the model has {len(equations)} "
             f"equations and {len(vars_t)} variables."
         )
+
+
+def _collect_parameters_in_equations(model: Model, cache: dict) -> tuple[list[sp.Symbol], list[pt.TensorVariable]]:
+    """
+    Pick out the parameters the equations actually use, in the order the compiled functions expect them.
+
+    Returns
+    -------
+    parameters : list of sympy Symbol
+        The free and deterministic parameters appearing in the equations.
+    nodes : list of TensorVariable
+        The pytensor node of each, in the same order.
+    """
+    parameters, nodes = [], []
+    for param in model.params + model.deterministic_params:
+        key = make_cache_key(param.name, cls=sp.Symbol)
+        if key in cache:
+            parameters.append(param)
+            nodes.append(cache[key])
+
+    return parameters, nodes
 
 
 def _check_no_calibrated_parameters(calibrated_params: list[sp.Symbol], cache: dict) -> None:

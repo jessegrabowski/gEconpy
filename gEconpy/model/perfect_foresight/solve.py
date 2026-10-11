@@ -47,10 +47,11 @@ def solve_perfect_foresight(
     x0 : DataFrame, ndarray, dict, or None, optional
         Initial guess for the Newton solver. A dict is a steady-state dictionary as returned by
         ``model.steady_state()``, tiled across every period and used in place of computing the steady state. It
-        must hold a value for every model variable. A
-        DataFrame has variable names as columns and periods as rows, and its columns are reindexed to the model's
-        variable order. This is what :func:`make_piecewise_x0` returns. An ndarray of shape ``(T, n_vars)`` must
-        already be in the model's variable order. Defaults to the steady state tiled across every period.
+        must hold a value for every model variable, and it also supplies both boundary conditions, so it is not
+        the right input for a permanent change in a parameter. A DataFrame has variable names as columns and
+        periods as rows, and must hold a column for every model variable. This is what :func:`make_piecewise_x0`
+        returns. An ndarray of shape ``(T, n_vars)`` must already be in the model's variable order. Defaults to
+        the steady state tiled across every period.
     initial_conditions : dict mapping str to float, optional
         Variable values at ``t = -1``, keyed by base name such as ``"K"`` or by steady-state name such as
         ``"K_ss"``. Variables not listed take their steady-state values.
@@ -60,10 +61,13 @@ def solve_perfect_foresight(
     shocks : dict mapping str to ndarray, optional
         Shock paths over the horizon, keyed by shock name, each of length ``T``. Shocks not listed are zero.
     param_paths : dict mapping str to float, sequence of float, or ndarray, optional
-        Parameter overrides, keyed by parameter name. A scalar holds for every period and a list or array of length
-        ``T`` varies over time. Parameters not listed keep their model values. When boundary conditions are not fully
+        Overrides for the free parameters, keyed by parameter name. A scalar holds for every period and a list or
+        array of length ``T`` varies over time. Parameters not listed keep their model values, and deterministic
+        parameters are rederived from the free values of each period. When boundary conditions are not fully
         specified, the initial and terminal steady states are computed at the parameter values of ``t = 0`` and
-        ``t = T - 1``.
+        ``t = T - 1``. A steady-state term written into an equation, such as the inflation target of a Taylor
+        rule, is an expression in the parameters, so under a parameter path it too takes the values of each
+        period rather than staying fixed at the initial steady state.
     compile_kwargs : dict, optional
         Keyword arguments forwarded to :func:`pytensor.function` when compiling the model.
     solver : RootSolver, optional
@@ -358,6 +362,7 @@ def _x0_to_vector(x0: np.ndarray | pd.DataFrame, var_names: list[str], simulatio
     if isinstance(x0, pd.DataFrame):
         if len(x0) != simulation_length:
             raise ValueError(f"x0 DataFrame must have {simulation_length} rows, got {len(x0)}")
+
         # Reindexing a missing column fills it with NaN, which reaches Newton as a singular Jacobian rather than
         # as the input error it is.
         missing = [name for name in var_names if name not in x0.columns]
