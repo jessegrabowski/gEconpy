@@ -58,6 +58,10 @@ class SparseDogleg:
 
     _delta: float = field(init=False, repr=False, default=0.0)
 
+    def reset(self) -> None:
+        """Restore the trust region radius to ``delta0``."""
+        self._delta = self.delta0
+
     def init(self, fun: RootFunction, x0: np.ndarray, args: tuple) -> SolverState:
         """Evaluate ``fun`` at ``x0``, reset the trust region radius, and build the initial solver state.
 
@@ -75,7 +79,7 @@ class SparseDogleg:
         state : ~gEconpy.solvers.sparse_root.base.SolverState
             State holding the initial point, residuals, Jacobian, merit value and evaluation counts.
         """
-        self._delta = self.delta0
+        self.reset()
         return initial_state(fun, x0, args)
 
     def step(self, fun: RootFunction, state: SolverState, args: tuple) -> tuple[SolverState, StepInfo]:

@@ -49,6 +49,10 @@ class LevenbergMarquardt:
 
     _lam: float = field(init=False, repr=False, default=0.0)
 
+    def reset(self) -> None:
+        """Restore the damping parameter to ``lam0``."""
+        self._lam = self.lam0
+
     def init(self, fun: RootFunction, x0: np.ndarray, args: tuple) -> SolverState:
         """Evaluate ``fun`` at ``x0``, reset the damping, and build the initial solver state.
 
@@ -66,7 +70,7 @@ class LevenbergMarquardt:
         state : ~gEconpy.solvers.sparse_root.base.SolverState
             State holding the initial point, residuals, Jacobian, merit value and evaluation counts.
         """
-        self._lam = self.lam0
+        self.reset()
         return initial_state(fun, x0, args)
 
     def step(self, fun: RootFunction, state: SolverState, args: tuple) -> tuple[SolverState, StepInfo]:

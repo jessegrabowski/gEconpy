@@ -143,3 +143,24 @@ class TestTrustRegionAccounting:
 
         assert state.stats.nreject > 0
         assert state.stats.nsolve == state.stats.nit + state.stats.nreject
+
+
+class TestTrustRegionReuse:
+    @pytest.mark.parametrize(
+        "make_solver",
+        [
+            lambda: SparseDogleg(delta0=0.05),
+            lambda: GaussNewtonTrustRegion(delta0=0.05),
+            lambda: LevenbergMarquardt(lam0=1e-6),
+        ],
+        ids=["dogleg", "gauss_newton", "levenberg_marquardt"],
+    )
+    def test_reused_solver_repeats_its_first_solve(self, make_solver, rosenbrock_root):
+        fun, x0, _ = rosenbrock_root
+        solver = make_solver()
+
+        first = sparse_root(fun, x0, solver=solver, progressbar=False)
+        second = sparse_root(fun, x0, solver=solver, progressbar=False)
+
+        assert (second.nit, second.nfev) == (first.nit, first.nfev)
+        np.testing.assert_array_equal(second.x, first.x)
