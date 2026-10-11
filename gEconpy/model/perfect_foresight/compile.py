@@ -91,6 +91,9 @@ def compile_perfect_foresight_problem(
     """
     Compile the residual and Jacobian functions used by the perfect foresight solver.
 
+    The compiled functions do not depend on ``T``, so they are cached on the model and reused across horizons
+    and across calls.
+
     Parameters
     ----------
     model : Model
@@ -112,20 +115,25 @@ def compile_perfect_foresight_problem(
         If the model is not square, if a variable never appears at time ``t``, if the model has calibrated
         parameters, or if a steady-state variable has no analytic solution.
     """
-    graph = _build_equation_graph(model)
     compile_kwargs.setdefault("on_unused_input", "ignore")
 
-    f_resid_and_jac = pytensor.function(graph.inputs, [graph.residuals, graph.jacobian], **compile_kwargs)
-    f_resid_only = pytensor.function(graph.inputs, [graph.residuals], **compile_kwargs)
+    # Compilation costs more than several Newton iterations, and the natural use of this module is a sweep over
+    # shocks or parameter paths, so a repeated call must not pay for it again. repr keys the cache on the kwargs
+    # without requiring them to be hashable.
+    cache_key = tuple(sorted((name, repr(value)) for name, value in compile_kwargs.items()))
+    if cache_key not in model._perfect_foresight_cache:
+        model._perfect_foresight_cache[cache_key] = _compile_equations(model, **compile_kwargs)
+
+    compiled = model._perfect_foresight_cache[cache_key]
 
     return PerfectForesightProblem(
-        f_resid_and_jac=f_resid_and_jac,
-        f_resid_only=f_resid_only,
-        jacobian_sparsity=graph.sparsity,
-        var_names=graph.var_names,
-        shock_names=graph.shock_names,
-        param_names=graph.param_names,
-        deterministic_param_names=graph.deterministic_param_names,
+        f_resid_and_jac=compiled.f_resid_and_jac,
+        f_resid_only=compiled.f_resid_only,
+        jacobian_sparsity=compiled.graph.sparsity,
+        var_names=compiled.graph.var_names,
+        shock_names=compiled.graph.shock_names,
+        param_names=compiled.graph.param_names,
+        deterministic_param_names=compiled.graph.deterministic_param_names,
         T=T,
     )
 
@@ -140,6 +148,24 @@ class _EquationGraph:
     shock_names: list[str]
     param_names: list[str]
     deterministic_param_names: list[str]
+
+
+@dataclass(frozen=True)
+class _CompiledEquations:
+    f_resid_and_jac: Callable
+    f_resid_only: Callable
+    graph: _EquationGraph
+
+
+def _compile_equations(model: Model, **compile_kwargs) -> _CompiledEquations:
+    """Build the horizon-independent half of a :class:`PerfectForesightProblem`."""
+    graph = _build_equation_graph(model)
+
+    return _CompiledEquations(
+        f_resid_and_jac=pytensor.function(graph.inputs, [graph.residuals, graph.jacobian], **compile_kwargs),
+        f_resid_only=pytensor.function(graph.inputs, [graph.residuals], **compile_kwargs),
+        graph=graph,
+    )
 
 
 def _build_equation_graph(model: Model) -> _EquationGraph:

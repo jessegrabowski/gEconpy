@@ -149,6 +149,37 @@ class TestCompile:
         assert "rstar" in problem.deterministic_param_names
         assert set(problem.deterministic_param_names) <= set(problem.param_names)
 
+    def test_compiled_functions_are_reused_across_horizons_and_calls(self, rbc_model):
+        """The compiled graph does not depend on T, and compiling costs more than a whole solve."""
+        first = compile_perfect_foresight_problem(rbc_model, 10)
+        again = compile_perfect_foresight_problem(rbc_model, 10)
+        longer = compile_perfect_foresight_problem(rbc_model, 40)
+
+        assert again.f_resid_and_jac is first.f_resid_and_jac
+        assert longer.f_resid_and_jac is first.f_resid_and_jac
+        assert longer.f_resid_only is first.f_resid_only
+
+        assert longer.T == 40
+        assert longer.jacobian_layout.shape == (40 * first.n_eq, 40 * first.n_vars)
+        assert first.jacobian_layout.shape == (10 * first.n_eq, 10 * first.n_vars)
+
+    def test_different_models_do_not_share_compiled_functions(self, rbc_model):
+        """A cache keyed on anything but the model would hand one model's equations to another."""
+        other_model = load_and_cache_model("open_rbc.gcn")
+
+        problem = compile_perfect_foresight_problem(rbc_model, 10)
+        other = compile_perfect_foresight_problem(other_model, 10)
+
+        assert other.f_resid_and_jac is not problem.f_resid_and_jac
+        assert other.var_names != problem.var_names
+        assert other.jacobian_sparsity.shape != problem.jacobian_sparsity.shape
+
+    def test_differing_compile_kwargs_get_their_own_functions(self, rbc_model):
+        default = compile_perfect_foresight_problem(rbc_model, 10)
+        excepting = compile_perfect_foresight_problem(rbc_model, 10, on_unused_input="raise")
+
+        assert excepting.f_resid_and_jac is not default.f_resid_and_jac
+
     def test_steady_state_reference_without_analytic_solution_raises(self):
         model = load_and_cache_model("full_nk_no_ss.gcn")
         with pytest.raises(ValueError, match="following do not: pi_ss, r_G_ss"):
