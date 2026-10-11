@@ -43,9 +43,12 @@ def validate_perfect_foresight_inputs(
     Raises
     ------
     ValueError
-        If a name is unknown, if a path does not have the simulation length, or if a deterministic parameter is
-        given a path.
+        If a name is unknown, if a path does not have the simulation length, if a deterministic parameter is
+        given a path, or if ``simulation_length`` is not positive.
     """
+    if simulation_length < 1:
+        raise ValueError(f"simulation_length must be at least 1, got {simulation_length}")
+
     var_set = set(var_names)
     shock_set = set(shock_names)
 
@@ -63,6 +66,11 @@ def validate_perfect_foresight_inputs(
             raise ValueError(f"Unknown shocks: {invalid_shocks}. Valid: {shock_names}")
 
         for name, values in shocks.items():
+            if np.ndim(values) != 1:
+                raise ValueError(
+                    f"Shock '{name}' must be a one-dimensional path of length {simulation_length}, got an input "
+                    f"with {np.ndim(values)} dimensions"
+                )
             if len(values) != simulation_length:
                 raise ValueError(f"Shock '{name}' has length {len(values)}, expected {simulation_length}")
 
@@ -86,5 +94,10 @@ def validate_perfect_foresight_inputs(
             )
 
         for name, value in param_paths.items():
-            if np.ndim(value) > 0 and len(value) != simulation_length:
+            if np.ndim(value) > 1:
+                raise ValueError(
+                    f"param_paths['{name}'] must be a scalar or a one-dimensional path, got an input with "
+                    f"{np.ndim(value)} dimensions"
+                )
+            if np.ndim(value) == 1 and len(value) != simulation_length:
                 raise ValueError(f"param_paths['{name}'] has length {len(value)}, expected {simulation_length}")

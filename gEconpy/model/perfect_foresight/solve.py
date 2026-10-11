@@ -189,19 +189,25 @@ def solve_perfect_foresight(
         T=simulation_length,
     )
 
-    # The residual-only function lets the line search evaluate the merit function at rejected trial points without
-    # paying for a Jacobian there.
-    if problem.f_resid_only is not None:
+    _check_all_finite(
+        x0=x0_vec,
+        initial_conditions=y_initial,
+        terminal_conditions=y_terminal,
+        shocks=shock_matrix,
+        param_paths=param_matrix,
+    )
 
-        def merit_fun(x, *_args):
-            return _compute_stacked_residuals(x, y_initial, y_terminal, shock_matrix, param_matrix, problem)
+    # The residual-only function lets the line search evaluate the merit function at rejected trial points
+    # without paying for a Jacobian there.
+    def merit_fun(x, *_args):
+        return _compute_stacked_residuals(x, y_initial, y_terminal, shock_matrix, param_matrix, problem)
 
-        if solver is None:
-            solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
-        else:
-            globalization = getattr(solver, "globalization", None)
-            if globalization is not None and hasattr(globalization, "merit_fun"):
-                solver = replace(solver, globalization=replace(globalization, merit_fun=merit_fun))
+    if solver is None:
+        solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
+    else:
+        globalization = getattr(solver, "globalization", None)
+        if globalization is not None and hasattr(globalization, "merit_fun") and globalization.merit_fun is None:
+            solver = replace(solver, globalization=replace(globalization, merit_fun=merit_fun))
 
     result = sparse_root(
         _compute_stacked_residuals_and_jacobian,
@@ -295,6 +301,22 @@ def _infer_var_names_from_ss(*ss_dicts: dict[str, float]) -> list[str]:
     return sorted(names)
 
 
+def _check_all_finite(**arrays: np.ndarray) -> None:
+    """
+    Check that no input carries a NaN or an infinity, naming the offender.
+
+    Raises
+    ------
+    ValueError
+        If any array holds a non-finite value.
+    """
+    # Newton reports a non-finite input as a singular Jacobian several layers down, which says nothing about
+    # which input was wrong.
+    for name, array in arrays.items():
+        if not np.all(np.isfinite(array)):
+            raise ValueError(f"{name} contains non-finite values")
+
+
 def _extract_boundary_param_kwargs(
     param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
 ) -> tuple[dict[str, float], dict[str, float]]:
@@ -309,9 +331,9 @@ def _extract_boundary_param_kwargs(
     initial_kwargs = {}
     terminal_kwargs = {}
     for name, value in param_paths.items():
-        path = np.asarray(value, dtype=float)
-        initial_kwargs[name] = float(path.flat[0])
-        terminal_kwargs[name] = float(path.flat[-1])
+        path = np.atleast_1d(np.asarray(value, dtype=float))
+        initial_kwargs[name] = float(path[0])
+        terminal_kwargs[name] = float(path[-1])
 
     return initial_kwargs, terminal_kwargs
 
@@ -321,6 +343,12 @@ def _x0_to_vector(x0: np.ndarray | pd.DataFrame, var_names: list[str], simulatio
     if isinstance(x0, pd.DataFrame):
         if len(x0) != simulation_length:
             raise ValueError(f"x0 DataFrame must have {simulation_length} rows, got {len(x0)}")
+        # Reindexing a missing column fills it with NaN, which reaches Newton as a singular Jacobian rather than
+        # as the input error it is.
+        missing = [name for name in var_names if name not in x0.columns]
+        if missing:
+            raise ValueError(f"x0 DataFrame is missing columns for: {', '.join(missing)}")
+
         return x0.reindex(columns=var_names).to_numpy().ravel()
 
     expected_shape = (simulation_length, len(var_names))

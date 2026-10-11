@@ -10,6 +10,7 @@ from gEconpy import impulse_response_function
 from gEconpy.model.perfect_foresight import solve_perfect_foresight
 from gEconpy.model.perfect_foresight.solve import _normalize_condition_keys, make_piecewise_x0
 from gEconpy.solvers.sparse_root import LevenbergMarquardt, NewtonArmijo
+from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 
@@ -546,3 +547,88 @@ class TestParamPaths:
         assert res_auto.success
         assert res_explicit.success
         assert_allclose(traj_auto.values, traj_explicit.values, rtol=1e-8)
+
+
+class TestInputGuards:
+    def test_x0_dataframe_missing_a_column_raises(self, rbc_model):
+        """Reindexing would fill it with NaN, which reaches Newton as a singular Jacobian."""
+        ss = rbc_model.steady_state(verbose=False)
+        x0 = make_piecewise_x0(ss, ss, simulation_length=10)
+
+        with pytest.raises(ValueError, match="x0 DataFrame is missing columns for: K"):
+            solve_perfect_foresight(rbc_model, simulation_length=10, x0=x0.drop(columns=["K"]))
+
+    def test_x0_dataframe_with_extra_columns_is_accepted(self, rbc_model):
+        """A steady-state dictionary may carry entries that are not model variables."""
+        ss = rbc_model.steady_state(verbose=False)
+        x0 = make_piecewise_x0(ss, ss, simulation_length=10)
+        x0["not_a_variable"] = 0.0
+
+        _, result = solve_perfect_foresight(rbc_model, simulation_length=10, x0=x0)
+        assert result.success
+
+    @pytest.mark.parametrize("simulation_length", [0, -1], ids=["zero", "negative"])
+    def test_non_positive_simulation_length_raises(self, rbc_model, simulation_length):
+        with pytest.raises(ValueError, match="simulation_length must be at least 1"):
+            solve_perfect_foresight(rbc_model, simulation_length=simulation_length)
+
+    @pytest.mark.parametrize("bad_value", [np.nan, np.inf], ids=["nan", "inf"])
+    @pytest.mark.parametrize(
+        "named_input",
+        ["x0", "initial_conditions", "terminal_conditions", "shocks", "param_paths"],
+    )
+    def test_non_finite_input_raises_naming_the_offender(self, rbc_model, named_input, bad_value):
+        T = 10
+        ss = rbc_model.steady_state(verbose=False)
+        var_names = [v.base_name for v in rbc_model.variables]
+
+        kwargs = {
+            "x0": {"x0": np.tile([ss[f"{name}_ss"] for name in var_names], (T, 1))},
+            "initial_conditions": {"initial_conditions": {"K": 0.0}},
+            "terminal_conditions": {"terminal_conditions": {"K": 0.0}},
+            "shocks": {"shocks": {"epsilon": np.zeros(T)}},
+            "param_paths": {"param_paths": {"delta": np.full(T, 0.02)}},
+        }[named_input]
+        if named_input == "x0":
+            kwargs["x0"][0, 0] = bad_value
+        elif named_input == "shocks":
+            kwargs["shocks"]["epsilon"][0] = bad_value
+        elif named_input == "param_paths":
+            kwargs["param_paths"]["delta"][0] = bad_value
+        else:
+            kwargs[named_input]["K"] = bad_value
+
+        with pytest.raises(ValueError, match=f"{named_input} contains non-finite values"):
+            solve_perfect_foresight(rbc_model, simulation_length=T, **kwargs)
+
+
+class TestMeritFunction:
+    def test_a_caller_owned_solver_is_not_mutated(self, rbc_model):
+        """The merit function is installed on a copy, so a solver the caller keeps is unchanged afterwards."""
+        solver = NewtonArmijo(globalization=ArmijoBacktracking())
+        _, result = solve_perfect_foresight(rbc_model, simulation_length=10, solver=solver)
+
+        assert result.success
+        assert solver.globalization.merit_fun is None
+
+    def test_a_caller_supplied_merit_function_is_kept(self, rbc_model):
+        """A merit function that reports every trial point as a root is observable in the solver's behavior."""
+        calls = []
+
+        def flat_merit_fun(x, *_args):
+            calls.append(x)
+            return np.zeros_like(x)
+
+        solver = NewtonArmijo(globalization=ArmijoBacktracking(merit_fun=flat_merit_fun))
+        ss = rbc_model.steady_state(verbose=False)
+
+        _, result = solve_perfect_foresight(
+            rbc_model,
+            simulation_length=10,
+            solver=solver,
+            initial_conditions={"K": 0.5 * ss["K_ss"]},
+        )
+
+        assert calls, "the caller's merit function was replaced"
+        assert solver.globalization.merit_fun is flat_merit_fun
+        assert not result.success, "a merit function that lies should keep the solve from converging"
