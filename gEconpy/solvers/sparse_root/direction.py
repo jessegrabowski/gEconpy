@@ -22,9 +22,11 @@ class DirectionProposal:
     direction : ndarray
         Proposed step direction.
     slope : float
-        Directional derivative of the merit function along ``direction``. Always negative.
+        Directional derivative of the merit function along ``direction``. Negative for a usable direction and
+        zero only at a stationary point, which is how a caller tells the two apart.
     kind : str
-        Label describing how the direction was computed, such as ``"newton"`` or ``"gradient_fallback"``.
+        Label describing how the direction was computed, such as ``"newton"`` or ``"gradient_fallback"``. The
+        ``_flipped`` and ``_stationary`` suffixes record which branch produced it.
     """
 
     direction: np.ndarray
@@ -274,6 +276,11 @@ def try_linear_solve(linear_solver: Callable, A: sp.spmatrix, b: np.ndarray) -> 
 def _descent_proposal(dx: np.ndarray, res: np.ndarray, jac: sp.spmatrix, kind: str) -> DirectionProposal:
     """Flip ``dx`` when it is not a descent direction for the merit function at the current Jacobian."""
     slope = float(np.dot(res, jac @ dx))
-    if slope >= 0:
+    if slope == 0.0:
+        # J^T r vanishing while r does not is a least-squares minimum rather than a root, so neither dx nor -dx
+        # reduces the merit function. The comparison is exact because the case is an algebraic zero, and a tiny
+        # nonzero slope is a bad step the line search already shrinks.
+        return DirectionProposal(direction=dx, slope=0.0, kind=f"{kind}_stationary")
+    if slope > 0:
         return DirectionProposal(direction=-dx, slope=-slope, kind=f"{kind}_flipped")
     return DirectionProposal(direction=dx, slope=slope, kind=kind)

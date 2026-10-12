@@ -155,8 +155,9 @@ def _iterate_to_root(
         state, info = solver.step(fun, state, args)
         if not info.accepted:
             return _make_result(state, success=False, message=info.message)
-        if default_check_convergence(state, f_tol=f_tol, x_tol=x_tol, last_step=info.step):
-            return _make_result(state, success=True, message="Converged")
+        message = default_check_convergence(state, f_tol=f_tol, x_tol=x_tol, last_step=info.step)
+        if message is not None:
+            return _make_result(state, success=message == "Converged", message=message)
 
     return _make_result(state, success=False, message=default_failure_message(state, maxiter))
 

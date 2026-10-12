@@ -2,7 +2,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from gEconpy.solvers.sparse_root.base import RootFunction, SolverState, StepInfo, initial_state
+from gEconpy.solvers.sparse_root.base import (
+    RootFunction,
+    SolverState,
+    StepInfo,
+    initial_state,
+    residual_summary,
+)
 from gEconpy.solvers.sparse_root.direction import (
     ChordDirection,
     DirectionStrategy,
@@ -77,6 +83,12 @@ class LineSearchSolver:
             Whether the step was accepted, the step taken, and a failure message when it was not.
         """
         proposal = self.direction.compute(state.x, state.res, state.jac)
+        if proposal.slope == 0.0:
+            message = (
+                f"fatal: the merit function gradient vanished at a non-root "
+                f"({residual_summary(state)}), so no direction reduces it."
+            )
+            return state, StepInfo(accepted=False, step=np.zeros_like(state.x), message=message)
 
         try:
             accepted = self.globalization.search(fun, state.x, state.phi, proposal, args)

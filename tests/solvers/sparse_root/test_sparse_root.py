@@ -66,14 +66,24 @@ class TestSparseRootInputs:
         assert result.x.dtype == np.float64
         np.testing.assert_allclose(result.x, [1.0, 2.0], rtol=1e-8)
 
-    def test_step_tolerance_stops_before_residual_tolerance(self):
+    def test_a_step_below_tolerance_is_a_stall_not_convergence(self):
         result = sparse_root(
             scaled_quadratic, np.array([2.0, 3.0]), args=(1.0,), f_tol=1e-300, x_tol=1e-6, progressbar=False
         )
 
-        assert result.success
-        assert result.message == "Converged"
+        assert not result.success
+        assert "x_tol" in result.message
         assert np.max(np.abs(result.fun)) > 1e-300
+
+    def test_a_system_with_no_root_reports_failure(self):
+        def no_real_root(x):
+            return np.array([x[0] ** 2 + 1.0]), sp.csc_matrix([[2.0 * x[0]]])
+
+        result = sparse_root(no_real_root, np.array([0.0]), progressbar=False)
+
+        assert not result.success
+        assert "gradient vanished at a non-root" in result.message
+        np.testing.assert_array_equal(result.fun, [1.0])
 
 
 class TestSparseRootFailureMessages:
