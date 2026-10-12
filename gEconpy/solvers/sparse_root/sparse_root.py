@@ -17,7 +17,7 @@ from gEconpy.solvers.sparse_root.base import (
     default_failure_message,
     validate_fused_fun,
 )
-from gEconpy.solvers.sparse_root.line_search import NewtonArmijo
+from gEconpy.solvers.sparse_root.line_search import newton_armijo
 
 
 def sparse_root(
@@ -43,7 +43,7 @@ def sparse_root(
         Initial guess for the root. Cast to a float64 array before ``fun`` is first called.
     solver : RootSolver, optional
         Iteration strategy, implementing ``init`` and ``step``. Defaults to
-        :func:`~gEconpy.solvers.sparse_root.line_search.NewtonArmijo`.
+        :func:`~gEconpy.solvers.sparse_root.line_search.newton_armijo`.
     args : tuple, optional
         Extra positional arguments passed to ``fun``. Defaults to an empty tuple.
     tol : float, optional
@@ -102,7 +102,7 @@ def sparse_root(
         print(result.x)
     """
     if solver is None:
-        solver = NewtonArmijo()
+        solver = newton_armijo()
     if f_tol is None:
         f_tol = tol
     if x_tol is None:

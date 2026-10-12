@@ -7,8 +7,8 @@ import scipy.sparse as sp
 from gEconpy.solvers.sparse_root import (
     GaussNewtonTrustRegion,
     LevenbergMarquardt,
-    NewtonArmijo,
     SparseDogleg,
+    newton_armijo,
     sparse_root,
 )
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
@@ -76,7 +76,7 @@ class TestSparseRootInputs:
 
 class TestSparseRootFailureMessages:
     def test_line_search_failure_is_reported(self):
-        solver = NewtonArmijo(globalization=ArmijoBacktracking(max_iter=1, c1=0.99))
+        solver = newton_armijo(globalization=ArmijoBacktracking(max_iter=1, c1=0.99))
         result = sparse_root(scaled_quadratic, np.array([100.0, 100.0]), args=(1.0,), solver=solver, progressbar=False)
 
         assert not result.success
@@ -171,7 +171,7 @@ class TestTrustRegionReuse:
 class TestSolverStateIsAValue:
     def test_an_accepted_step_does_not_move_the_earlier_states_counters(self, rosenbrock_root):
         fun, x0, _ = rosenbrock_root
-        solver = NewtonArmijo()
+        solver = newton_armijo()
         first = solver.init(fun, x0, ())
         counts_before = astuple(first.stats)
 

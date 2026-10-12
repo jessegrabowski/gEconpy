@@ -174,7 +174,8 @@ numpydoc_xref_ignore = {
 }
 
 # numpydoc_xref_param_type cross-references every word of a type field, so a class named bare or by its
-# import alias needs its documented path here. Third-party targets resolve through intersphinx.
+# import alias needs its documented path here once a docstring outside its own module names it; within that
+# module Sphinx resolves it without an entry. Third-party targets resolve through intersphinx.
 numpydoc_xref_aliases = {
     "SymbolDictionary": "gEconpy.classes.containers.SymbolDictionary",
     "SteadyStateResults": "gEconpy.classes.containers.SteadyStateResults",
@@ -203,7 +204,10 @@ numpydoc_xref_aliases = {
     "ParseResult": "gEconpy.parser.preprocessor.ParseResult",
     "RootSolver": "gEconpy.solvers.sparse_root.base.RootSolver",
     "DirectionStrategy": "gEconpy.solvers.sparse_root.direction.DirectionStrategy",
+    "ChordDirection": "gEconpy.solvers.sparse_root.direction.ChordDirection",
+    "KrylovDirection": "gEconpy.solvers.sparse_root.direction.KrylovDirection",
     "GlobalizationStrategy": "gEconpy.solvers.sparse_root.globalization.GlobalizationStrategy",
+    "NonmonotoneBacktracking": "gEconpy.solvers.sparse_root.globalization.NonmonotoneBacktracking",
     "Distribution": "preliz.distributions.distributions.Distribution",
     "TensorVariable": "pytensor.tensor.TensorVariable",
     "Apply": "pytensor.graph.basic.Apply",

@@ -66,13 +66,13 @@ globalization strategy, which picks the step length along it. Four named constru
 :class:`~gEconpy.solvers.sparse_root.line_search.LineSearchSolver` with a standard pairing, and each accepts
 ``direction`` and ``globalization`` to swap either part:
 
-- :func:`~gEconpy.solvers.sparse_root.line_search.NewtonArmijo`: a full Newton direction with Armijo backtracking.
+- :func:`~gEconpy.solvers.sparse_root.line_search.newton_armijo`: a full Newton direction with Armijo backtracking.
   This is the default solver.
-- :func:`~gEconpy.solvers.sparse_root.line_search.Chord`: a Newton direction that reuses the factorized Jacobian
+- :func:`~gEconpy.solvers.sparse_root.line_search.chord`: a Newton direction that reuses the factorized Jacobian
   for several steps, with Armijo backtracking.
-- :func:`~gEconpy.solvers.sparse_root.line_search.InexactNewtonKrylov`: a Krylov-solved Newton direction, for
+- :func:`~gEconpy.solvers.sparse_root.line_search.inexact_newton_krylov`: a Krylov-solved Newton direction, for
   systems too large to factorize, with Armijo backtracking.
-- :func:`~gEconpy.solvers.sparse_root.line_search.NewtonNonmonotone`: a Newton direction with nonmonotone
+- :func:`~gEconpy.solvers.sparse_root.line_search.newton_nonmonotone`: a Newton direction with nonmonotone
   backtracking, which accepts occasional increases in the residual and escapes flat regions.
 
 Trust-region solvers, :class:`~gEconpy.solvers.sparse_root.dogleg.SparseDogleg` and
