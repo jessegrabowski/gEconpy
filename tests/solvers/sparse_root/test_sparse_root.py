@@ -196,3 +196,45 @@ class TestSolverStateIsAValue:
         assert not info.accepted
         assert astuple(first.stats) == counts_before
         assert second.stats.nreject > 0
+
+
+class TestStackedSystem:
+    def test_the_true_root_is_exact(self, stacked_system):
+        residuals, _ = stacked_system.fun(stacked_system.x_true)
+
+        np.testing.assert_array_equal(residuals, np.zeros_like(residuals))
+
+    def test_the_jacobian_matches_the_layout(self, stacked_system):
+        _, jacobian = stacked_system.fun(stacked_system.x0)
+        side = stacked_system.horizon * stacked_system.n_vars
+
+        assert jacobian.shape == (side, side)
+        assert jacobian.nnz == len(stacked_system.layout.gather)
+
+    def test_the_jacobian_is_block_tridiagonal(self, stacked_system):
+        _, jacobian = stacked_system.fun(stacked_system.x0)
+        rows, columns = jacobian.nonzero()
+
+        period_distance = np.abs(rows // stacked_system.n_vars - columns // stacked_system.n_vars)
+
+        assert period_distance.max() == 1
+
+    # The layout drops the y_{t-1} block of the first period and the y_{t+1} block of the last, and a variable
+    # at the end of a period couples back to the start of it, so the corners are where a column is most likely
+    # to be wrong. A random sample of a few columns out of 4800 misses all of them.
+    @pytest.mark.parametrize(
+        ("period", "variable"),
+        [(0, 0), (0, -1), (-1, 0), (-1, -1), (1, 5)],
+        ids=["first_period_first_var", "first_period_wrap", "last_period_first_var", "last_period_wrap", "interior"],
+    )
+    def test_the_jacobian_agrees_with_finite_differences(self, period, variable, stacked_system):
+        n_vars = stacked_system.n_vars
+        column = (period % stacked_system.horizon) * n_vars + (variable % n_vars)
+        residuals, jacobian = stacked_system.fun(stacked_system.x0)
+        step = 1e-7
+
+        nudged = stacked_system.x0.copy()
+        nudged[column] += step
+        difference = (stacked_system.fun(nudged)[0] - residuals) / step
+
+        np.testing.assert_allclose(difference, jacobian[:, column].toarray().ravel(), atol=1e-6)

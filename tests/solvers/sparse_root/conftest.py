@@ -1,9 +1,17 @@
+from collections.abc import Callable
+from typing import NamedTuple
+
 import numpy as np
 import pytest
 import scipy.sparse as sp
 
 from scipy.special import lambertw
 
+from gEconpy.model.perfect_foresight.assemble import (
+    StackedJacobianLayout,
+    assemble_stacked_jacobian,
+    build_stacked_jacobian_layout,
+)
 from gEconpy.solvers.sparse_root import sparse_root
 
 
@@ -191,3 +199,97 @@ def _finite_difference_jacobian(residual, x, res, eps=1e-8):
         x_perturbed[j] += eps
         jac[:, j] = (residual(x_perturbed) - res) / eps
     return sp.csc_matrix(jac)
+
+
+class StackedSystem(NamedTuple):
+    """A nonlinear system with the block-tridiagonal structure a perfect foresight solve produces.
+
+    Attributes
+    ----------
+    fun : callable
+        Fused residual and Jacobian function over the stacked unknowns.
+    x0 : ndarray
+        Starting guess, perturbed off the root.
+    x_true : ndarray
+        The root, exact by construction.
+    layout : StackedJacobianLayout
+        Layout the Jacobian is assembled through.
+    n_vars : int
+        Unknowns per period.
+    horizon : int
+        Number of periods.
+    """
+
+    fun: Callable
+    x0: np.ndarray
+    x_true: np.ndarray
+    layout: StackedJacobianLayout
+    n_vars: int
+    horizon: int
+
+
+def _period_sparsity(n_vars):
+    """Mask of ``d r_t / d [y_{t-1}, y_t, y_{t+1}]``, four entries per equation."""
+    pattern = np.zeros((n_vars, 3 * n_vars), dtype=bool)
+    equations = np.arange(n_vars)
+    neighbor = (equations + 1) % n_vars
+    pattern[equations, equations] = True
+    pattern[equations, n_vars + equations] = True
+    pattern[equations, n_vars + neighbor] = True
+    pattern[equations, 2 * n_vars + equations] = True
+    return pattern
+
+
+@pytest.fixture
+def stacked_system():
+    """Discretized nonlinear boundary value problem, stacked over a horizon the way perfect foresight stacks one.
+
+    Each period's equations couple ``y_{t-1}``, ``y_t`` and ``y_{t+1}``, so the stacked Jacobian is genuinely
+    block-tridiagonal and is assembled through the same layout the perfect foresight solver uses. Per-period
+    constants are chosen so ``x_true`` is a root to the bit rather than to a tolerance.
+    """
+    n_vars, horizon = 24, 200
+    nonlinear_gain, coupling_gain = 0.4, 0.3
+    rng = np.random.default_rng(0)
+    equations = np.arange(n_vars)
+    neighbor = (equations + 1) % n_vars
+
+    y_true = 0.3 + 0.1 * rng.normal(size=(horizon, n_vars))
+    y_initial = 0.3 + 0.1 * rng.normal(size=n_vars)
+    y_terminal = 0.3 + 0.1 * rng.normal(size=n_vars)
+
+    def period_residual(previous, current, following):
+        return (
+            following
+            - 2.0 * current
+            + previous
+            + nonlinear_gain * (current - current**3)
+            + coupling_gain * (current[..., neighbor] - current)
+        )
+
+    true_stack = np.vstack([y_initial, y_true, y_terminal])
+    offsets = period_residual(true_stack[:-2], true_stack[1:-1], true_stack[2:])
+
+    layout = build_stacked_jacobian_layout(_period_sparsity(n_vars), n_vars=n_vars, n_eq=n_vars, T=horizon)
+
+    def fun(x):
+        stack = np.vstack([y_initial, x.reshape(horizon, n_vars), y_terminal])
+        current = stack[1:-1]
+        residuals = period_residual(stack[:-2], current, stack[2:]) - offsets
+
+        jacobians = np.zeros((horizon, n_vars, 3 * n_vars))
+        jacobians[:, equations, equations] = 1.0
+        jacobians[:, equations, n_vars + equations] = -2.0 + nonlinear_gain * (1.0 - 3.0 * current**2) - coupling_gain
+        jacobians[:, equations, n_vars + neighbor] = coupling_gain
+        jacobians[:, equations, 2 * n_vars + equations] = 1.0
+        return residuals.ravel(), assemble_stacked_jacobian(jacobians, layout)
+
+    x_true = y_true.ravel()
+    return StackedSystem(
+        fun=fun,
+        x0=x_true + 0.05 * rng.normal(size=x_true.size),
+        x_true=x_true,
+        layout=layout,
+        n_vars=n_vars,
+        horizon=horizon,
+    )
