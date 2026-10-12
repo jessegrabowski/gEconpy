@@ -4,7 +4,12 @@ import scipy.sparse as sp
 
 from scipy.sparse.linalg import spsolve
 
-from gEconpy.solvers.sparse_root.direction import ChordDirection, KrylovDirection, NewtonDirection
+from gEconpy.solvers.sparse_root.direction import (
+    ChordDirection,
+    KrylovDirection,
+    NewtonDirection,
+    _descent_proposal,
+)
 
 
 class TestNewtonDirection:
@@ -26,6 +31,20 @@ class TestNewtonDirection:
         direction = NewtonDirection(linear_solver=lambda _A, _b: np.array([np.nan, np.nan]))
         proposal = direction.compute(np.zeros(2), np.array([1.0, 1.0]), sp.eye(2, format="csc"))
         assert "fallback" in proposal.kind
+
+    def test_a_vanished_gradient_is_refused_rather_than_flipped(self):
+        """A square nonsingular Jacobian cannot be stationary at a non-root, so this reaches the branch directly.
+
+        ``J^T r = 0`` with ``r != 0`` is a least-squares minimum, where neither the step nor its negation reduces
+        the merit function. Flipping a zero slope would hand the line search a zero step it then accepts.
+        """
+        jac = sp.csc_matrix([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+        res = np.array([0.0, 0.0, 1.0])
+
+        proposal = _descent_proposal(-(jac.T @ res), res, jac, kind="gradient_fallback")
+
+        assert proposal.kind == "gradient_fallback_stationary"
+        assert proposal.slope == 0.0
 
     def test_ascent_direction_from_solver_is_flipped(self):
         """An exact Newton step is always a descent direction, so only a wrong-signed solver reaches the flip."""

@@ -82,7 +82,7 @@ class TestSparseRootInputs:
         result = sparse_root(no_real_root, np.array([0.0]), progressbar=False)
 
         assert not result.success
-        assert "x_tol" in result.message
+        assert "gradient vanished at a non-root" in result.message
         np.testing.assert_array_equal(result.fun, [1.0])
 
 
