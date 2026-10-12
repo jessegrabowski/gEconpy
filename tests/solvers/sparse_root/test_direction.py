@@ -4,6 +4,8 @@ import scipy.sparse as sp
 
 from scipy.sparse.linalg import spsolve
 
+import gEconpy.solvers.sparse_root.direction as direction_module
+
 from gEconpy.solvers.sparse_root.direction import (
     ChordDirection,
     KrylovDirection,
@@ -75,6 +77,53 @@ class TestChordDirection:
 
         direction.compute(x, res, jac_second)
         np.testing.assert_array_equal(direction._cached_jac.data, jac_second.data)
+
+    def test_factorizes_once_per_refresh_window(self, monkeypatch):
+        calls = {"n": 0}
+        real_splu = direction_module.splu
+
+        def counting_splu(A):
+            calls["n"] += 1
+            return real_splu(A)
+
+        monkeypatch.setattr(direction_module, "splu", counting_splu)
+        direction = ChordDirection(recompute_every=3)
+        direction.reset()
+        jac = sp.eye(2, format="csc")
+
+        for _ in range(7):
+            direction.compute(np.zeros(2), np.array([1.0, 1.0]), jac)
+
+        assert calls["n"] == 3
+
+    def test_a_non_csc_jacobian_is_converted_before_factorizing(self):
+        direction = ChordDirection()
+        direction.reset()
+        jac = sp.eye(2, format="csr")
+
+        proposal = direction.compute(np.zeros(2), np.array([1.0, 2.0]), jac)
+
+        assert proposal.kind == "chord"
+        np.testing.assert_allclose(proposal.direction, [-1.0, -2.0])
+
+    def test_a_singular_jacobian_is_not_refactorized_until_the_window_ends(self, monkeypatch):
+        calls = {"n": 0}
+        real_splu = direction_module.splu
+
+        def counting_splu(A):
+            calls["n"] += 1
+            return real_splu(A)
+
+        monkeypatch.setattr(direction_module, "splu", counting_splu)
+        direction = ChordDirection(recompute_every=3)
+        direction.reset()
+        singular = sp.csc_matrix([[1.0, 1.0], [1.0, 1.0]])
+
+        for _ in range(3):
+            proposal = direction.compute(np.zeros(2), np.array([1.0, 2.0]), singular)
+
+        assert proposal.kind == "chord_gradient_fallback"
+        assert calls["n"] == 1
 
 
 class TestKrylovDirection:
