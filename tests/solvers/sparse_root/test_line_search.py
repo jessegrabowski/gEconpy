@@ -2,13 +2,13 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from conftest import CommonSolverTests
 from scipy.sparse.linalg import gmres
 
 from gEconpy.solvers.sparse_root import chord, inexact_newton_krylov, newton_armijo, newton_nonmonotone, sparse_root
 from gEconpy.solvers.sparse_root.direction import ChordDirection, KrylovDirection, NewtonDirection
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking, NonmonotoneBacktracking
 from gEconpy.solvers.sparse_root.line_search import LineSearchSolver
+from tests.solvers.sparse_root._solver_suite import CommonSolverTests
 
 
 @pytest.mark.parametrize(

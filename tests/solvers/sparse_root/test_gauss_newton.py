@@ -2,10 +2,9 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from conftest import CommonSolverTests
-
 from gEconpy.solvers.sparse_root import GaussNewtonTrustRegion, sparse_root
 from gEconpy.solvers.sparse_root.gauss_newton import _steihaug_cg
+from tests.solvers.sparse_root._solver_suite import CommonSolverTests
 
 
 class TestGaussNewtonTrustRegionSuite(CommonSolverTests):
