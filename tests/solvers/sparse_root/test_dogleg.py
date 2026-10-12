@@ -6,7 +6,9 @@ from tests.solvers.sparse_root._solver_suite import CommonSolverTests
 
 
 class TestSparseDoglegSuite(CommonSolverTests):
-    solver = SparseDogleg()
+    @property
+    def solver(self):
+        return SparseDogleg()
 
 
 class TestSparseDoglegSpecific:

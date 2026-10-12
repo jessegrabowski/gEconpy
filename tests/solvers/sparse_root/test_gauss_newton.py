@@ -8,7 +8,9 @@ from tests.solvers.sparse_root._solver_suite import CommonSolverTests
 
 
 class TestGaussNewtonTrustRegionSuite(CommonSolverTests):
-    solver = GaussNewtonTrustRegion()
+    @property
+    def solver(self):
+        return GaussNewtonTrustRegion()
 
 
 class TestGaussNewtonTrustRegionSpecific:
