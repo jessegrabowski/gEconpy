@@ -280,9 +280,9 @@ def try_linear_solve(linear_solver: Callable, A: sp.spmatrix | SuperLU, b: np.nd
 def _try_factorize(jac: sp.spmatrix) -> SuperLU | None:
     """Factorize ``jac`` and return ``None`` when it is singular."""
     # splu converts a non-CSC input itself and warns while doing it, which is fatal under warnings-as-errors.
-    csc = jac if jac.format == "csc" else sp.csc_matrix(jac)
+    # tocsc returns the matrix unchanged when it is already CSC, so the common case costs nothing.
     try:
-        return splu(csc)
+        return splu(jac.tocsc())
     except Exception:
         return None
 
