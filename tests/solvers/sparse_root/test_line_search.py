@@ -143,6 +143,17 @@ class TestChordSuite(CommonSolverTests):
         return chord()
 
 
+class TestChordSpecific:
+    def test_a_reused_solver_discards_the_previous_factorization(self, quadratic_system):
+        fun, x0, _ = quadratic_system
+        solver = chord()
+
+        sparse_root(fun, np.array([10.0, 10.0]), solver=solver, progressbar=False)
+        solver.init(fun, x0, ())
+
+        assert solver.direction._cached_lu is None
+
+
 class TestInexactNewtonKrylovSuite(CommonSolverTests):
     @property
     def solver(self):

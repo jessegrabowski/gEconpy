@@ -61,7 +61,8 @@ def sparse_root(
     -------
     result : OptimizeResult
         Result with fields ``x``, ``success``, ``message``, ``fun`` (final residuals), ``jac`` (final sparse
-        Jacobian), ``nit``, and ``nfev``.
+        Jacobian), ``nit``, ``nfev``, ``njev``, ``nsolve`` (linear solves, which is the count a factorization
+        cache changes), and ``nreject`` (rejected trial steps).
 
     Examples
     --------
@@ -171,4 +172,7 @@ def _make_result(state: SolverState, success: bool, message: str) -> OptimizeRes
         jac=state.jac,
         nit=state.stats.nit,
         nfev=state.stats.nfev,
+        njev=state.stats.njev,
+        nsolve=state.stats.nsolve,
+        nreject=state.stats.nreject,
     )

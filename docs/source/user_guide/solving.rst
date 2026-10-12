@@ -69,7 +69,8 @@ globalization strategy, which picks the step length along it. Four named constru
 - :func:`~gEconpy.solvers.sparse_root.line_search.newton_armijo`: a full Newton direction with Armijo backtracking.
   This is the default solver.
 - :func:`~gEconpy.solvers.sparse_root.line_search.chord`: a Newton direction that reuses the factorized Jacobian
-  for several steps, with Armijo backtracking.
+  for several steps, with Armijo backtracking. One factorization serves ``recompute_every`` steps, five by
+  default, so a chord step costs a triangular solve rather than a factorization on four steps in five.
 - :func:`~gEconpy.solvers.sparse_root.line_search.inexact_newton_krylov`: a Krylov-solved Newton direction, for
   systems too large to factorize, with Armijo backtracking.
 - :func:`~gEconpy.solvers.sparse_root.line_search.newton_nonmonotone`: a Newton direction with nonmonotone
@@ -88,6 +89,19 @@ Newton direction with GMRES:
    :language: python
    :pyobject: TestNewtonArmijoSpecific.test_custom_linear_solver
    :dedent: 4
+
+Reading the cost of a solve
+---------------------------
+
+The returned :class:`~scipy.optimize.OptimizeResult` counts the work it took. ``nit`` is accepted iterations and
+``nfev`` residual evaluations, as scipy's own optimizers report them. Three more are specific to this package:
+``njev`` counts Jacobian builds, ``nreject`` counts trial steps a trust-region solver threw away, and ``nsolve``
+counts linear solves.
+
+``nsolve`` is the one to watch on a large stacked system, because a sparse factorization dominates everything
+else in a step. Comparing it against ``nit`` says which solver is doing what: a line-search solver reports one
+solve per step, a trust-region solver reports one per trial and so one per rejection as well, and the dogleg
+reports one per step no matter how many trials that step took.
 
 The ``merit_fun`` argument of both backtracking strategies has the largest effect on perfect foresight
 performance. A line search evaluates the residual at every trial step, and the full function also builds the

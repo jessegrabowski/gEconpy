@@ -5,7 +5,7 @@ from typing import Protocol
 import numpy as np
 import scipy.sparse as sp
 
-from scipy.sparse.linalg import bicgstab, gmres, spsolve
+from scipy.sparse.linalg import SuperLU, bicgstab, gmres, splu, spsolve
 
 _KRYLOV_METHODS = {
     "gmres": gmres,
@@ -96,26 +96,27 @@ class NewtonDirection:
 
 @dataclass
 class ChordDirection:
-    """Direction strategy that solves with a cached Jacobian, refreshing it every ``recompute_every`` calls.
+    """Direction strategy that solves with a cached factorization, refreshing it every ``recompute_every`` calls.
 
-    The residual is always current, so only the linear solve reuses old data.
+    The residual is always current, so only the linear solve reuses old data. One :func:`scipy.sparse.linalg.splu`
+    serves every call in a refresh window, which is what makes a chord step cheaper than the Newton step it
+    approximates.
 
     Parameters
     ----------
-    linear_solver : callable, optional
-        Sparse linear solver called as ``linear_solver(A, b)``. Defaults to :func:`scipy.sparse.linalg.spsolve`.
     recompute_every : int, optional
-        Number of direction computations between Jacobian refreshes. Defaults to 5.
+        Number of direction computations between factorization refreshes. Defaults to 5.
     """
 
-    linear_solver: Callable = field(default_factory=lambda: spsolve)
     recompute_every: int = 5
     _cached_jac: sp.spmatrix | None = field(init=False, repr=False, default=None)
+    _cached_lu: SuperLU | None = field(init=False, repr=False, default=None)
     _call_count: int = field(init=False, repr=False, default=0)
 
     def reset(self) -> None:
-        """Discard the cached Jacobian so the next call refreshes it."""
+        """Discard the cached factorization so the next call rebuilds it."""
         self._cached_jac = None
+        self._cached_lu = None
         self._call_count = 0
 
     def compute(
@@ -133,19 +134,22 @@ class ChordDirection:
         res : ndarray
             Residuals at ``x``.
         jac : sparse matrix
-            Jacobian at ``x``. Used for the slope even when the cached Jacobian is used for the solve.
+            Jacobian at ``x``. Used for the slope even when the cached factorization is used for the solve.
 
         Returns
         -------
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
+        # The schedule ignores whether the factorization succeeded, so a singular Jacobian leaves the previous
+        # matrix in place for the fallback instead of being refreshed on every call until it stops being singular.
         if self._cached_jac is None or self._call_count % self.recompute_every == 0:
             self._cached_jac = jac
+            self._cached_lu = _try_factorize(jac)
         self._call_count += 1
 
         cached_jac = self._cached_jac
-        dx = try_linear_solve(self.linear_solver, cached_jac, -res)
+        dx = None if self._cached_lu is None else try_linear_solve(_lu_solve, self._cached_lu, -res)
         if dx is None:
             return _descent_proposal(-(cached_jac.T @ res), res, jac, kind="chord_gradient_fallback")
         return _descent_proposal(dx, res, jac, kind="chord")
@@ -245,15 +249,15 @@ class KrylovDirection:
         self._eta = float(np.clip(max(eta_new, eta_floor), self.eta_min, self.eta_max))
 
 
-def try_linear_solve(linear_solver: Callable, A: sp.spmatrix, b: np.ndarray) -> np.ndarray | None:
+def try_linear_solve(linear_solver: Callable, A: sp.spmatrix | SuperLU, b: np.ndarray) -> np.ndarray | None:
     """Solve ``A x = b`` and return ``None`` when the solver raises or produces non-finite values.
 
     Parameters
     ----------
     linear_solver : callable
         Solver called as ``linear_solver(A, b)``.
-    A : sparse matrix
-        System matrix.
+    A : sparse matrix or SuperLU
+        System matrix, or a factorization of one.
     b : ndarray
         Right-hand side.
 
@@ -271,6 +275,20 @@ def try_linear_solve(linear_solver: Callable, A: sp.spmatrix, b: np.ndarray) -> 
     if not np.all(np.isfinite(x)):
         return None
     return x
+
+
+def _try_factorize(jac: sp.spmatrix) -> SuperLU | None:
+    """Factorize ``jac`` and return ``None`` when it is singular."""
+    # splu converts a non-CSC input itself and warns while doing it, which is fatal under warnings-as-errors.
+    # tocsc returns the matrix unchanged when it is already CSC, so the common case costs nothing.
+    try:
+        return splu(jac.tocsc())
+    except Exception:
+        return None
+
+
+def _lu_solve(lu: SuperLU, b: np.ndarray) -> np.ndarray:
+    return lu.solve(b)
 
 
 def _descent_proposal(dx: np.ndarray, res: np.ndarray, jac: sp.spmatrix, kind: str) -> DirectionProposal:

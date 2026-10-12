@@ -98,6 +98,16 @@ class CommonSolverTests:
         assert not result.success
         assert result.nit <= 3
 
+    def test_the_result_reports_the_work_counters(self, quadratic_system):
+        fun, _, _ = quadratic_system
+        result = sparse_root(fun, np.array([10.0, 10.0]), solver=self.solver, progressbar=False)
+
+        assert result.success
+        assert result.nit >= 1
+        assert result.nsolve >= result.nit
+        assert result.njev >= result.nit
+        assert result.nfev >= result.nit
+
     def test_single_variable(self):
         def fun(x):
             return np.array([x[0] ** 3 - 1.0]), sp.csc_matrix([[3.0 * x[0] ** 2]])

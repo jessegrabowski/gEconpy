@@ -171,6 +171,15 @@ class TestTrustRegionAccounting:
         assert state.stats.nreject > 0
         assert state.stats.nsolve == state.stats.nit + state.stats.nreject
 
+    def test_the_result_carries_the_rejection_counts(self, rosenbrock_root):
+        fun, x0, _ = rosenbrock_root
+        solver = GaussNewtonTrustRegion(delta0=0.05)
+
+        result = sparse_root(fun, x0, solver=solver, progressbar=False, maxiter=500)
+
+        assert result.nreject > 0
+        assert result.nsolve == result.nit + result.nreject
+
     def test_the_dogleg_pays_for_rejections_only_once_per_step(self, rosenbrock_root):
         fun, x0, _ = rosenbrock_root
         solver = SparseDogleg(delta0=0.05)
