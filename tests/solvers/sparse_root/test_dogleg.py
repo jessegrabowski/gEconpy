@@ -32,6 +32,19 @@ class TestSparseDoglegSpecific:
         res, _ = fun(result.x)
         np.testing.assert_allclose(res, 0.0, atol=1e-6)
 
+    def test_a_flat_model_costs_no_solve(self):
+        def flat(_x):
+            return np.array([1.0, 1.0]), sp.csc_matrix((2, 2))
+
+        solver = SparseDogleg(max_reject=3)
+        state = solver.init(flat, np.array([0.0, 0.0]), ())
+
+        state, info = solver.step(flat, state, ())
+
+        assert not info.accepted
+        assert state.stats.nsolve == 0
+        assert state.stats.nreject == 3
+
 
 class TestDoglegStep:
     @staticmethod

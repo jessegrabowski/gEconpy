@@ -105,11 +105,13 @@ class SparseDogleg:
         res = state.res
         grad = jac.T @ res
         nfev = 0
-        nsolve = 0
+
+        # Only the radius changes between rejections, so this must stay outside the loop: inside, it costs a
+        # factorization per rejected trial. A flat model short circuits before the solve, so the count is derived.
+        geometry = _dogleg_geometry(jac, res, grad, self.linear_solver)
+        nsolve = int(geometry.curvature >= ZERO_CURVATURE_TOL)
 
         for n_rejected in range(self.max_reject):
-            nsolve += 1
-            geometry = _dogleg_geometry(jac, res, grad, self.linear_solver)
             p = _dogleg_step(geometry, self._delta)
             jac_p = jac @ p
             predicted = -(float(grad @ p) + 0.5 * float(jac_p @ jac_p))

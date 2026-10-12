@@ -125,12 +125,15 @@ class TestTrustRegionAccounting:
 
         return counting_fun, calls
 
+    # Steihaug-CG and the Levenberg-Marquardt damped matrix both change with the trust region parameter, so each
+    # rejected trial genuinely needs its own solve. The dogleg's Newton step does not, which is why it is tested
+    # separately below rather than held to the same identity.
     @pytest.mark.parametrize(
         "solver",
-        [SparseDogleg(max_reject=3), GaussNewtonTrustRegion(max_reject=3), LevenbergMarquardt(lam0=0.5, max_lam=1.0)],
-        ids=["dogleg", "gauss_newton", "levenberg_marquardt"],
+        [GaussNewtonTrustRegion(max_reject=3), LevenbergMarquardt(lam0=0.5, max_lam=1.0)],
+        ids=["gauss_newton", "levenberg_marquardt"],
     )
-    def test_fatal_rejection_counts_trial_evaluations(self, solver):
+    def test_a_per_trial_solver_solves_once_per_trial(self, solver):
         counting_fun, calls = self._counting(uphill_everywhere)
         state = solver.init(counting_fun, np.array([5.0, 5.0]), ())
         state, info = solver.step(counting_fun, state, ())
@@ -142,12 +145,22 @@ class TestTrustRegionAccounting:
         assert state.stats.nreject == calls["n"] - 1
         assert state.stats.nsolve == calls["n"] - 1
 
+    def test_the_dogleg_solves_once_for_a_whole_rejected_step(self):
+        solver = SparseDogleg(max_reject=3)
+        counting_fun, calls = self._counting(uphill_everywhere)
+        state = solver.init(counting_fun, np.array([5.0, 5.0]), ())
+        state, info = solver.step(counting_fun, state, ())
+
+        assert not info.accepted
+        assert state.stats.nreject == calls["n"] - 1
+        assert state.stats.nsolve == 1
+
     @pytest.mark.parametrize(
         "solver",
-        [SparseDogleg(delta0=0.05), GaussNewtonTrustRegion(delta0=0.05), LevenbergMarquardt(lam0=1e-6)],
-        ids=["dogleg", "gauss_newton", "levenberg_marquardt"],
+        [GaussNewtonTrustRegion(delta0=0.05), LevenbergMarquardt(lam0=1e-6)],
+        ids=["gauss_newton", "levenberg_marquardt"],
     )
-    def test_accepted_step_counts_one_solve_per_trial(self, solver, rosenbrock_root):
+    def test_a_per_trial_solver_pays_for_every_rejection(self, solver, rosenbrock_root):
         fun, x0, _ = rosenbrock_root
         state = solver.init(fun, x0, ())
         for _ in range(200):
@@ -157,6 +170,18 @@ class TestTrustRegionAccounting:
 
         assert state.stats.nreject > 0
         assert state.stats.nsolve == state.stats.nit + state.stats.nreject
+
+    def test_the_dogleg_pays_for_rejections_only_once_per_step(self, rosenbrock_root):
+        fun, x0, _ = rosenbrock_root
+        solver = SparseDogleg(delta0=0.05)
+        state = solver.init(fun, x0, ())
+        for _ in range(200):
+            state, info = solver.step(fun, state, ())
+            if not info.accepted or np.max(np.abs(state.res)) < 1e-8:
+                break
+
+        assert state.stats.nreject > 0
+        assert state.stats.nsolve == state.stats.nit
 
 
 class TestTrustRegionReuse:
