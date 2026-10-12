@@ -105,11 +105,14 @@ class SparseDogleg:
         res = state.res
         grad = jac.T @ res
         nfev = 0
-        nsolve = 0
+
+        # Only the radius changes between rejections, so this must stay outside the loop: inside, it costs a
+        # factorization per rejected trial. A flat model short circuits before the solve, so the count is derived.
+        geometry = _dogleg_geometry(jac, res, grad, self.linear_solver)
+        nsolve = int(geometry.curvature >= ZERO_CURVATURE_TOL)
 
         for n_rejected in range(self.max_reject):
-            nsolve += 1
-            p = self._compute_dogleg_step(jac, res, grad, self._delta)
+            p = _dogleg_step(geometry, self._delta)
             jac_p = jac @ p
             predicted = -(float(grad @ p) + 0.5 * float(jac_p @ jac_p))
 
@@ -136,29 +139,87 @@ class SparseDogleg:
             message=f"fatal: dogleg rejected {self.max_reject} consecutive steps",
         )
 
-    def _compute_dogleg_step(self, jac: sp.spmatrix, res: np.ndarray, grad: np.ndarray, delta: float) -> np.ndarray:
-        jac_grad = jac @ grad
-        grad_sq = float(np.dot(grad, grad))
-        curvature = float(np.dot(jac_grad, jac_grad))
 
-        if curvature < ZERO_CURVATURE_TOL:
-            grad_norm = np.linalg.norm(grad)
-            if grad_norm < ZERO_CURVATURE_TOL:
-                return np.zeros_like(res)
-            return -(delta / grad_norm) * grad
+@dataclass(frozen=True, slots=True)
+class _DoglegGeometry:
+    r"""The parts of a dogleg step that do not depend on the trust region radius.
 
-        cauchy = -(grad_sq / curvature) * grad
-        cauchy_norm = np.linalg.norm(cauchy)
+    Attributes
+    ----------
+    gradient : ndarray
+        Gradient of the merit function, :math:`J^T r`.
+    gradient_norm : float
+        Euclidean norm of ``gradient``.
+    curvature : float
+        Model curvature along the gradient, :math:`\\lVert J J^T r \rVert^2`. Below
+        :data:`ZERO_CURVATURE_TOL` the model is flat and only the gradient ray is available.
+    cauchy : ndarray
+        Unconstrained minimizer along the gradient, or zeros when the curvature vanishes.
+    cauchy_norm : float
+        Euclidean norm of ``cauchy``.
+    newton : ndarray or None
+        Newton step, or ``None`` when the solve failed or the curvature vanished.
+    newton_norm : float
+        Euclidean norm of ``newton``, or infinity when there is none.
+    """
 
-        newton = try_linear_solve(self.linear_solver, jac, -res)
-        if newton is None:
-            return cauchy if cauchy_norm <= delta else (delta / cauchy_norm) * cauchy
+    gradient: np.ndarray
+    gradient_norm: float
+    curvature: float
+    cauchy: np.ndarray
+    cauchy_norm: float
+    newton: np.ndarray | None
+    newton_norm: float
 
-        if np.linalg.norm(newton) <= delta:
-            return newton
-        if cauchy_norm >= delta:
-            return (delta / cauchy_norm) * cauchy
-        return _dogleg_boundary_point(cauchy, newton, delta)
+
+def _dogleg_geometry(jac: sp.spmatrix, res: np.ndarray, grad: np.ndarray, linear_solver: Callable) -> _DoglegGeometry:
+    """Compute the radius-independent pieces of a dogleg step, including the one linear solve it needs."""
+    jac_grad = jac @ grad
+    curvature = float(np.dot(jac_grad, jac_grad))
+    gradient_norm = float(np.linalg.norm(grad))
+
+    # A flat model offers no Cauchy point, and asking for a Newton step would be work thrown away.
+    if curvature < ZERO_CURVATURE_TOL:
+        zeros = np.zeros_like(grad)
+        return _DoglegGeometry(
+            gradient=grad,
+            gradient_norm=gradient_norm,
+            curvature=curvature,
+            cauchy=zeros,
+            cauchy_norm=0.0,
+            newton=None,
+            newton_norm=np.inf,
+        )
+
+    gradient_sq = float(np.dot(grad, grad))
+    cauchy = -(gradient_sq / curvature) * grad
+    newton = try_linear_solve(linear_solver, jac, -res)
+    return _DoglegGeometry(
+        gradient=grad,
+        gradient_norm=gradient_norm,
+        curvature=curvature,
+        cauchy=cauchy,
+        cauchy_norm=float(np.linalg.norm(cauchy)),
+        newton=newton,
+        newton_norm=np.inf if newton is None else float(np.linalg.norm(newton)),
+    )
+
+
+def _dogleg_step(geometry: _DoglegGeometry, delta: float) -> np.ndarray:
+    """Pick the dogleg step of radius at most ``delta`` from geometry already computed at this iterate."""
+    if geometry.curvature < ZERO_CURVATURE_TOL:
+        if geometry.gradient_norm < ZERO_CURVATURE_TOL:
+            return np.zeros_like(geometry.gradient)
+        return -(delta / geometry.gradient_norm) * geometry.gradient
+
+    if geometry.newton is None:
+        return geometry.cauchy if geometry.cauchy_norm <= delta else (delta / geometry.cauchy_norm) * geometry.cauchy
+
+    if geometry.newton_norm <= delta:
+        return geometry.newton
+    if geometry.cauchy_norm >= delta:
+        return (delta / geometry.cauchy_norm) * geometry.cauchy
+    return _dogleg_boundary_point(geometry.cauchy, geometry.newton, delta)
 
 
 def _dogleg_boundary_point(cauchy: np.ndarray, newton: np.ndarray, delta: float) -> np.ndarray:
