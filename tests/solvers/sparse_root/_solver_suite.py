@@ -12,6 +12,23 @@ class CommonSolverTests:
 
     solver = None
 
+    def test_converged_implies_the_residual_tolerance(self, quadratic_system):
+        """A ``Converged`` report has to be true, which is the assertion whose absence let a stall claim success.
+
+        A tolerance this tight is met only by landing on the root exactly, which some solvers do and some do not.
+        That split is what makes the regime useful: a solver that stops short must not call it convergence, and
+        asserting the implication on an ordinary solve cannot tell the difference.
+        """
+        fun, x0, _ = quadratic_system
+        f_tol = 1e-300
+
+        result = sparse_root(fun, x0, solver=self.solver, progressbar=False, f_tol=f_tol, x_tol=1e-6)
+        residual = np.max(np.abs(result.fun))
+
+        assert not (result.message == "Converged" and residual >= f_tol), (
+            f"reported Converged with max |residual| = {residual:.2e}, above f_tol={f_tol:.0e}"
+        )
+
     def test_quadratic(self, quadratic_system):
         fun, x0, x_true = quadratic_system
         result = sparse_root(fun, x0, solver=self.solver, progressbar=False)
