@@ -1,13 +1,14 @@
 import numpy as np
 import scipy.sparse as sp
 
-from conftest import CommonSolverTests
-
 from gEconpy.solvers.sparse_root import LevenbergMarquardt, sparse_root
+from tests.solvers.sparse_root._solver_suite import CommonSolverTests
 
 
 class TestLevenbergMarquardtSuite(CommonSolverTests):
-    solver = LevenbergMarquardt()
+    @property
+    def solver(self):
+        return LevenbergMarquardt()
 
 
 class TestLevenbergMarquardtSpecific:

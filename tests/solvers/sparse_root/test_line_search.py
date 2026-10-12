@@ -2,13 +2,13 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from conftest import CommonSolverTests
 from scipy.sparse.linalg import gmres
 
 from gEconpy.solvers.sparse_root import chord, inexact_newton_krylov, newton_armijo, newton_nonmonotone, sparse_root
 from gEconpy.solvers.sparse_root.direction import ChordDirection, KrylovDirection, NewtonDirection
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking, NonmonotoneBacktracking
 from gEconpy.solvers.sparse_root.line_search import LineSearchSolver
+from tests.solvers.sparse_root._solver_suite import CommonSolverTests
 
 
 @pytest.mark.parametrize(
@@ -47,7 +47,9 @@ def test_each_factory_keeps_the_strategy_it_is_handed(factory, direction_type):
 
 
 class TestNewtonArmijoSuite(CommonSolverTests):
-    solver = newton_armijo()
+    @property
+    def solver(self):
+        return newton_armijo()
 
 
 class TestNewtonArmijoSpecific:
@@ -136,11 +138,15 @@ class TestNewtonArmijoSpecific:
 
 
 class TestChordSuite(CommonSolverTests):
-    solver = chord()
+    @property
+    def solver(self):
+        return chord()
 
 
 class TestInexactNewtonKrylovSuite(CommonSolverTests):
-    solver = inexact_newton_krylov()
+    @property
+    def solver(self):
+        return inexact_newton_krylov()
 
 
 class TestInexactNewtonKrylovSpecific:
@@ -174,7 +180,9 @@ class TestInexactNewtonKrylovSpecific:
 
 
 class TestNewtonNonmonotoneSuite(CommonSolverTests):
-    solver = newton_nonmonotone()
+    @property
+    def solver(self):
+        return newton_nonmonotone()
 
 
 class TestNewtonNonmonotoneSpecific:
@@ -195,7 +203,9 @@ class TestNewtonNonmonotoneSpecific:
 
 
 class TestCustomSolver(CommonSolverTests):
-    solver = LineSearchSolver(
-        direction=KrylovDirection(krylov_method="gmres"),
-        globalization=NonmonotoneBacktracking(memory=5),
-    )
+    @property
+    def solver(self):
+        return LineSearchSolver(
+            direction=KrylovDirection(krylov_method="gmres"),
+            globalization=NonmonotoneBacktracking(memory=5),
+        )
