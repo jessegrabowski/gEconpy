@@ -23,8 +23,9 @@ gEconpy.solvers.sparse_root.base
     default_failure_message
     initial_state
     merit
+    residual_summary
     validate_fused_fun
 
 .. automodule:: gEconpy.solvers.sparse_root.base
-    :members: IterationStats, MeritFunction, RootFunction, RootSolver, SolverState, StepInfo, check_step_convergence, default_check_convergence, default_failure_message, initial_state, merit, validate_fused_fun
+    :members: IterationStats, MeritFunction, RootFunction, RootSolver, SolverState, StepInfo, check_step_convergence, default_check_convergence, default_failure_message, initial_state, merit, residual_summary, validate_fused_fun
     :undoc-members:

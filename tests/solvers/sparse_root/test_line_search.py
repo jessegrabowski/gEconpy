@@ -153,7 +153,9 @@ class TestInexactNewtonKrylovSpecific:
     def test_direction_is_approximate(self, broyden_system):
         fun, x0 = broyden_system
         direction = KrylovDirection(krylov_method="gmres", eta_max=0.5, eisenstat_walker=False)
-        result = sparse_root(fun, x0, solver=inexact_newton_krylov(direction=direction), progressbar=False)
+        # A fixed loose forcing term converges linearly, so the step tolerance is reached just short of the
+        # default residual tolerance. `f_tol` asks for what this configuration can actually deliver.
+        result = sparse_root(fun, x0, solver=inexact_newton_krylov(direction=direction), progressbar=False, f_tol=1e-9)
         assert result.success
         np.testing.assert_allclose(fun(result.x)[0], 0.0, atol=1e-8)
 

@@ -155,8 +155,18 @@ def initial_state(fun: RootFunction, x0: np.ndarray, args: tuple[Any, ...]) -> S
     return SolverState(x=x, res=res, jac=jac, phi=merit(res), stats=IterationStats(nfev=1, njev=1))
 
 
-def default_check_convergence(state: SolverState, f_tol: float, x_tol: float, last_step: np.ndarray | None) -> bool:
-    """Report whether the residuals or the last step are small enough to stop iterating.
+def residual_summary(state: SolverState) -> str:
+    """Render the largest absolute residual the way every terminal message reports it."""
+    return f"max |residual| = {np.max(np.abs(state.res)):.2e}"
+
+
+def default_check_convergence(
+    state: SolverState, f_tol: float, x_tol: float, last_step: np.ndarray | None
+) -> str | None:
+    """Report the message to stop on, or ``None`` to keep iterating.
+
+    A small step on its own is not convergence. It means the iteration stopped moving, which is success only when
+    the residual is also small and is otherwise a stall short of a root.
 
     Parameters
     ----------
@@ -171,12 +181,18 @@ def default_check_convergence(state: SolverState, f_tol: float, x_tol: float, la
 
     Returns
     -------
-    converged : bool
-        Whether either test passed.
+    message : str or None
+        ``"Converged"`` when the residual tolerance is met, a message naming the stall when the step tolerance is
+        met without it, and ``None`` while neither applies.
     """
     if np.max(np.abs(state.res)) < f_tol:
-        return True
-    return bool(last_step is not None and check_step_convergence(last_step, state.x, x_tol))
+        return "Converged"
+    if last_step is not None and check_step_convergence(last_step, state.x, x_tol):
+        return (
+            f"fatal: step fell below x_tol={x_tol:.1e} while {residual_summary(state)}. "
+            f"The iteration stalled short of a root."
+        )
+    return None
 
 
 def default_failure_message(state: SolverState, maxiter: int) -> str:
@@ -194,7 +210,7 @@ def default_failure_message(state: SolverState, maxiter: int) -> str:
     message : str
         Message naming the budget and the largest remaining residual.
     """
-    return f"Did not converge after {maxiter} iterations (max |residual| = {np.max(np.abs(state.res)):.2e})"
+    return f"Did not converge after {maxiter} iterations ({residual_summary(state)})"
 
 
 def merit(res: np.ndarray) -> float:

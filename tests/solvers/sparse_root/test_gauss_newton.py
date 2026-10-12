@@ -34,8 +34,14 @@ class TestGaussNewtonTrustRegionSpecific:
     def test_cg_rtol_reaches_the_subproblem(self, helical_valley):
         fun, x0, _ = helical_valley
 
-        tight = sparse_root(fun, x0, solver=GaussNewtonTrustRegion(cg_rtol=1e-10), progressbar=False, maxiter=500)
-        loose = sparse_root(fun, x0, solver=GaussNewtonTrustRegion(cg_rtol=1e-1), progressbar=False, maxiter=500)
+        # Neither configuration reaches the default residual tolerance of 1e-10 on this system, and loosening
+        # `tol` rather than `f_tol` would relax `x_tol` too and stop the solve even sooner.
+        tight = sparse_root(
+            fun, x0, solver=GaussNewtonTrustRegion(cg_rtol=1e-10), progressbar=False, maxiter=500, f_tol=1e-9
+        )
+        loose = sparse_root(
+            fun, x0, solver=GaussNewtonTrustRegion(cg_rtol=1e-1), progressbar=False, maxiter=500, f_tol=1e-9
+        )
 
         assert tight.success
         assert loose.success
