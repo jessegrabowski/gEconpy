@@ -102,13 +102,10 @@ class ChordDirection:
 
     Parameters
     ----------
-    linear_solver : callable, optional
-        Sparse linear solver called as ``linear_solver(A, b)``. Defaults to :func:`scipy.sparse.linalg.spsolve`.
     recompute_every : int, optional
         Number of direction computations between Jacobian refreshes. Defaults to 5.
     """
 
-    linear_solver: Callable = field(default_factory=lambda: spsolve)
     recompute_every: int = 5
     _cached_jac: sp.spmatrix | None = field(init=False, repr=False, default=None)
     _call_count: int = field(init=False, repr=False, default=0)
@@ -145,7 +142,7 @@ class ChordDirection:
         self._call_count += 1
 
         cached_jac = self._cached_jac
-        dx = try_linear_solve(self.linear_solver, cached_jac, -res)
+        dx = try_linear_solve(spsolve, cached_jac, -res)
         if dx is None:
             return _descent_proposal(-(cached_jac.T @ res), res, jac, kind="chord_gradient_fallback")
         return _descent_proposal(dx, res, jac, kind="chord")
