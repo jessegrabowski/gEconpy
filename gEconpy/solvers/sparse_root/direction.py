@@ -1,3 +1,4 @@
+import math
 import warnings
 
 from collections.abc import Callable
@@ -28,7 +29,7 @@ class DirectionProposal:
         zero only at a stationary point, which is how a caller tells the two apart.
     kind : str
         Label describing how the direction was computed, such as ``"newton"`` or ``"gradient_fallback"``. The
-        ``_flipped`` and ``_stationary`` suffixes record which branch produced it.
+        ``_inexact``, ``_flipped`` and ``_stationary`` suffixes record which branch produced it.
     """
 
     direction: np.ndarray
@@ -235,7 +236,7 @@ class KrylovDirection:
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
-        res_norm = np.linalg.norm(res)
+        res_norm = float(np.linalg.norm(res))
         self._update_forcing_term(res_norm)
 
         krylov_solve = _KRYLOV_METHODS[self.krylov_method]
@@ -256,19 +257,21 @@ class KrylovDirection:
 
         dx = try_linear_solve(solve, jac, -res)
         kind = f"krylov_{self.krylov_method}"
+        predicted_norm = None if dx is None else float(np.linalg.norm(res + jac @ dx))
         # An iterate that lowered ||r + J dx|| below ||r|| has r^T J dx < 0, so it descends the merit function even
         # when the inner solve stopped short of the forcing term.
-        if dx is not None and stopped_early:
-            if np.linalg.norm(res + jac @ dx) < res_norm:
+        if stopped_early and predicted_norm is not None:
+            if predicted_norm < res_norm:
                 kind = f"{kind}_inexact"
             else:
                 dx = None
         if dx is None:
             dx = -(jac.T @ res)
             kind = f"{kind}_gradient_fallback"
+            predicted_norm = float(np.linalg.norm(res + jac @ dx))
 
         self._prev_res_norm = res_norm
-        self._prev_pred_norm = np.linalg.norm(res + jac @ dx)
+        self._prev_pred_norm = predicted_norm
 
         return _descent_proposal(dx, res, jac, kind=kind)
 
@@ -277,7 +280,7 @@ class KrylovDirection:
         # cap means a different maxiter for each.
         if self.krylov_method == "gmres":
             restart = min(self.restart, self.max_krylov_iter)
-            return {"restart": restart, "maxiter": -(-self.max_krylov_iter // restart)}
+            return {"restart": restart, "maxiter": math.ceil(self.max_krylov_iter / restart)}
         return {"maxiter": self.max_krylov_iter}
 
     def _update_forcing_term(self, res_norm: float) -> None:
