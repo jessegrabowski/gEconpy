@@ -194,8 +194,12 @@ class KrylovDirection:
     restart : int, optional
         Number of GMRES iterations between restarts, at least 1. Ignored by BiCGSTAB. Defaults to 20.
     preconditioner : sparse matrix or LinearOperator, optional
-        Approximation to the inverse Jacobian, applied as ``preconditioner @ v``. Defaults to ``None``, meaning no
-        preconditioning.
+        Approximation to the inverse Jacobian, applied as ``preconditioner @ v``. Takes precedence over the refreshed
+        factorization. Defaults to ``None``.
+    recompute_every : int or None, optional
+        Number of direction computations between refreshes of the LU factorization used as the preconditioner, at
+        least 1. ``None`` turns the factorization off, for systems too large to factorize. Ignored when
+        ``preconditioner`` is given. Defaults to 5.
     """
 
     krylov_method: str = "gmres"
@@ -205,10 +209,12 @@ class KrylovDirection:
     max_krylov_iter: int = 200
     restart: int = 20
     preconditioner: sp.spmatrix | LinearOperator | None = None
+    recompute_every: int | None = 5
 
     _eta: float = field(init=False, repr=False, default=0.0)
     _prev_res_norm: float = field(init=False, repr=False, default=0.0)
     _prev_pred_norm: float = field(init=False, repr=False, default=0.0)
+    _factorization: _ScheduledFactorization = field(init=False, repr=False, default_factory=_ScheduledFactorization)
 
     def __post_init__(self):
         if self.krylov_method not in _KRYLOV_METHODS:
@@ -219,13 +225,18 @@ class KrylovDirection:
             raise ValueError(f"max_krylov_iter must be at least 1, got {self.max_krylov_iter}.")
         if self.restart < 1:
             raise ValueError(f"restart must be at least 1, got {self.restart}.")
+        if self.recompute_every is not None and self.recompute_every < 1:
+            raise ValueError(
+                f"recompute_every must be at least 1, got {self.recompute_every}. Pass None to turn it off."
+            )
         self._eta = self.eta_max
 
     def reset(self) -> None:
-        """Restore the forcing term to ``eta_max`` and forget the previous residual."""
+        """Restore the forcing term to ``eta_max``, forget the previous residual, and discard the factorization."""
         self._eta = self.eta_max
         self._prev_res_norm = 0.0
         self._prev_pred_norm = 0.0
+        self._factorization.reset()
 
     def compute(
         self,
@@ -254,15 +265,14 @@ class KrylovDirection:
 
         krylov_solve = _KRYLOV_METHODS[self.krylov_method]
         iteration_limits = self._iteration_limits()
+        preconditioner = self._current_preconditioner(jac)
 
         stopped_early = False
 
         def solve(A, b):
             nonlocal stopped_early
             # scipy stops at max(rtol * ||b||, atol), and its default rtol of 1e-5 would floor the forcing term.
-            dx, info = krylov_solve(
-                A, b, rtol=0.0, atol=self._eta * res_norm, M=self.preconditioner, **iteration_limits
-            )
+            dx, info = krylov_solve(A, b, rtol=0.0, atol=self._eta * res_norm, M=preconditioner, **iteration_limits)
             if info < 0:
                 raise ValueError(f"Krylov solve failed with info={info}")
             stopped_early = info > 0
@@ -287,6 +297,13 @@ class KrylovDirection:
         self._prev_pred_norm = predicted_norm
 
         return _descent_proposal(dx, res, jac, kind=kind)
+
+    def _current_preconditioner(self, jac: sp.spmatrix) -> sp.spmatrix | LinearOperator | None:
+        if self.preconditioner is not None or self.recompute_every is None:
+            return self.preconditioner
+        self._factorization.update(jac, self.recompute_every)
+        lu = self._factorization.lu
+        return None if lu is None else LinearOperator(jac.shape, matvec=lu.solve)
 
     def _iteration_limits(self) -> dict[str, int]:
         # scipy's gmres counts maxiter in restart cycles and bicgstab counts it in iterations, so one inner-iteration
