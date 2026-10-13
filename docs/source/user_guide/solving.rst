@@ -71,8 +71,12 @@ globalization strategy, which picks the step length along it. Four named constru
 - :func:`~gEconpy.solvers.sparse_root.line_search.chord`: a Newton direction that reuses the factorized Jacobian
   for several steps, with Armijo backtracking. One factorization serves ``recompute_every`` steps, five by
   default, so a chord step costs a triangular solve rather than a factorization on four steps in five.
-- :func:`~gEconpy.solvers.sparse_root.line_search.inexact_newton_krylov`: a Krylov-solved Newton direction, for
-  systems too large to factorize, with Armijo backtracking.
+- :func:`~gEconpy.solvers.sparse_root.line_search.inexact_newton_krylov`: a Newton direction solved inexactly with
+  GMRES, preconditioned by an LU factorization refreshed every five steps, with Armijo backtracking. It replaces
+  most factorizations with cheaper preconditioned iterations, so it is faster than a direct solve where the
+  factorization dominates a step and slower where the factorization is cheap. For a system too large to factorize
+  at all, pass a :class:`~gEconpy.solvers.sparse_root.direction.KrylovDirection` with ``recompute_every=None`` and
+  a ``preconditioner`` of your own.
 - :func:`~gEconpy.solvers.sparse_root.line_search.newton_nonmonotone`: a Newton direction with nonmonotone
   backtracking, which accepts occasional increases in the residual and escapes flat regions.
 
