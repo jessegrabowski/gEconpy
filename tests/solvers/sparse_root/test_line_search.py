@@ -151,7 +151,7 @@ class TestChordSpecific:
         sparse_root(fun, np.array([10.0, 10.0]), solver=solver, progressbar=False)
         solver.init(fun, x0, ())
 
-        assert solver.direction._cached_lu is None
+        assert solver.direction._factorization.lu is None
 
 
 class TestInexactNewtonKrylovSuite(CommonSolverTests):

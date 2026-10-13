@@ -80,10 +80,10 @@ class TestChordDirection:
         direction.compute(x, res, jac_first)
         direction.compute(x, res, jac_second)
         direction.compute(x, res, jac_second)
-        np.testing.assert_array_equal(direction._cached_jac.data, jac_first.data)
+        np.testing.assert_array_equal(direction._factorization.matrix.data, jac_first.data)
 
         direction.compute(x, res, jac_second)
-        np.testing.assert_array_equal(direction._cached_jac.data, jac_second.data)
+        np.testing.assert_array_equal(direction._factorization.matrix.data, jac_second.data)
 
     def test_factorizes_once_per_refresh_window(self, monkeypatch):
         calls = {"n": 0}

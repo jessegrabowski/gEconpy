@@ -98,6 +98,28 @@ class NewtonDirection:
 
 
 @dataclass
+class _ScheduledFactorization:
+    """A Jacobian and its factorization, refreshed every ``recompute_every`` updates."""
+
+    matrix: sp.spmatrix | None = None
+    lu: SuperLU | None = None
+    _updates: int = 0
+
+    def reset(self) -> None:
+        self.matrix = None
+        self.lu = None
+        self._updates = 0
+
+    def update(self, jac: sp.spmatrix, recompute_every: int) -> None:
+        # Refresh on schedule even when factorizing failed, so a singular Jacobian is retried at the next window and
+        # not on every call.
+        if self.matrix is None or self._updates % recompute_every == 0:
+            self.matrix = jac
+            self.lu = _try_factorize(jac)
+        self._updates += 1
+
+
+@dataclass
 class ChordDirection:
     """Direction strategy that solves with a cached factorization, refreshing it every ``recompute_every`` calls.
 
@@ -112,15 +134,11 @@ class ChordDirection:
     """
 
     recompute_every: int = 5
-    _cached_jac: sp.spmatrix | None = field(init=False, repr=False, default=None)
-    _cached_lu: SuperLU | None = field(init=False, repr=False, default=None)
-    _call_count: int = field(init=False, repr=False, default=0)
+    _factorization: _ScheduledFactorization = field(init=False, repr=False, default_factory=_ScheduledFactorization)
 
     def reset(self) -> None:
         """Discard the cached factorization so the next call rebuilds it."""
-        self._cached_jac = None
-        self._cached_lu = None
-        self._call_count = 0
+        self._factorization.reset()
 
     def compute(
         self,
@@ -144,17 +162,12 @@ class ChordDirection:
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
-        # Refresh on schedule even when factorizing failed, so a singular Jacobian is retried at the next window and
-        # not on every call.
-        if self._cached_jac is None or self._call_count % self.recompute_every == 0:
-            self._cached_jac = jac
-            self._cached_lu = _try_factorize(jac)
-        self._call_count += 1
+        cached = self._factorization
+        cached.update(jac, self.recompute_every)
 
-        cached_jac = self._cached_jac
-        dx = None if self._cached_lu is None else try_linear_solve(SuperLU.solve, self._cached_lu, -res)
+        dx = None if cached.lu is None else try_linear_solve(SuperLU.solve, cached.lu, -res)
         if dx is None:
-            return _descent_proposal(-(cached_jac.T @ res), res, jac, kind="chord_gradient_fallback")
+            return _descent_proposal(-(cached.matrix.T @ res), res, jac, kind="chord_gradient_fallback")
         return _descent_proposal(dx, res, jac, kind="chord")
 
 
