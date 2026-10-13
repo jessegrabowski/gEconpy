@@ -207,6 +207,43 @@ class TestKrylovDirection:
         proposal = direction.compute(np.zeros(10), res, jac)
 
         assert proposal.kind == kind
+        assert proposal.slope < 0
+
+    @pytest.mark.parametrize(
+        ("max_krylov_iter", "kind"),
+        [(1, "krylov_bicgstab_inexact"), (200, "krylov_bicgstab")],
+        ids=["capped_keeps_the_iterate", "uncapped_converges"],
+    )
+    def test_bicgstab_takes_the_cap_as_its_iteration_count(self, max_krylov_iter, kind):
+        n = 300
+        jac = (4.0 * sp.eye(n) + sp.random(n, n, density=0.02, random_state=1)).tocsc()
+        res = np.random.default_rng(0).normal(size=n)
+        direction = KrylovDirection(
+            krylov_method="bicgstab",
+            eta_max=1e-8,
+            eta_min=1e-8,
+            eisenstat_walker=False,
+            max_krylov_iter=max_krylov_iter,
+        )
+        direction.reset()
+
+        proposal = direction.compute(np.zeros(n), res, jac)
+
+        assert proposal.kind == kind
+        assert proposal.slope < 0
+
+    def test_a_krylov_breakdown_falls_back_to_the_gradient(self):
+        # BiCGSTAB breaks down on a skew-symmetric system, which scipy reports as a negative info.
+        blocks = [sp.csc_matrix([[0.0, w], [-w, 0.0]]) for w in np.linspace(1.0, 2.0, 5)]
+        jac = sp.block_diag(blocks, format="csc")
+        res = np.random.default_rng(0).normal(size=10)
+        direction = KrylovDirection(krylov_method="bicgstab", eta_max=1e-8, eta_min=1e-8, eisenstat_walker=False)
+        direction.reset()
+
+        proposal = direction.compute(np.zeros(10), res, jac)
+
+        assert proposal.kind == "krylov_bicgstab_gradient_fallback"
+        np.testing.assert_allclose(proposal.direction, -(jac.T @ res))
 
     def test_the_preconditioner_reaches_the_inner_solve(self, stacked_system):
         res, jac = stacked_system.fun(stacked_system.x0)
