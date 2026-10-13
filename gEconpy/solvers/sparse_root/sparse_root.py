@@ -64,7 +64,8 @@ def sparse_root(
         Result with fields ``x``, ``success``, ``message``, ``fun`` (final residuals), ``jac`` (final sparse
         Jacobian), ``nit``, ``nfev``, ``njev``, ``nsolve`` (linear solves, which is the count a factorization
         cache changes), and ``nreject`` (rejected trial steps). Every field is present even when the solve is
-        interrupted or a strategy raises, in which case they describe the last accepted iterate.
+        interrupted or a strategy raises, in which case they describe the last accepted iterate, and ``fun`` and
+        ``jac`` are ``None`` when there was none.
 
     Examples
     --------
@@ -140,22 +141,23 @@ def sparse_root(
         maxiter=maxiter,
         latest=latest,
     )
-    result = optimizer_early_stopping_wrapper(run)
-
-    # The wrapper builds its own result when it catches an exception or an interrupt, and that result carries
-    # neither the Jacobian nor the work counts. Rebuild it from the last accepted iterate, keeping the message
-    # that names what went wrong.
-    if "nit" not in result:
-        if latest.state is None:
-            result.update(fun=None, jac=None, nit=0, nfev=0, njev=0, nsolve=0, nreject=0)
-        else:
-            result = _make_result(latest.state, success=False, message=result.message)
-    return result
+    return _with_documented_fields(optimizer_early_stopping_wrapper(run), latest)
 
 
 @dataclass
 class _LatestState:
     state: SolverState | None = None
+
+
+def _with_documented_fields(result: OptimizeResult, latest: _LatestState) -> OptimizeResult:
+    """Rebuild a result the wrapper made after catching an exception, keeping the message that names it."""
+    # The wrapper's own result carries neither the Jacobian nor the work counts, which is how it is recognized.
+    if "nit" in result:
+        return result
+    if latest.state is None:
+        result.update(fun=None, jac=None, nit=0, nfev=0, njev=0, nsolve=0, nreject=0)
+        return result
+    return _make_result(latest.state, success=False, message=result.message)
 
 
 def _iterate_to_root(
