@@ -52,6 +52,11 @@ class TestGaussNewtonTrustRegionSpecific:
         with pytest.raises(ValueError, match="max_cg_iter must be at least 1"):
             GaussNewtonTrustRegion(max_cg_iter=max_cg_iter)
 
+    @pytest.mark.parametrize("cg_rtol", [0.0, -1.0], ids=["zero", "negative"])
+    def test_a_non_positive_cg_rtol_is_rejected(self, cg_rtol):
+        with pytest.raises(ValueError, match="cg_rtol must be positive"):
+            GaussNewtonTrustRegion(cg_rtol=cg_rtol)
+
     def test_trust_region_radius_grows_on_good_steps(self, quadratic_system):
         fun, x0, _ = quadratic_system
         solver = GaussNewtonTrustRegion(delta0=0.001)

@@ -2,6 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 import numpy as np
+import scipy.sparse as sp
 
 from scipy.sparse.linalg import spsolve
 
@@ -97,14 +98,14 @@ class LevenbergMarquardt:
         grad = jac.T @ state.res
 
         scaling = np.maximum(1.0, np.asarray(normal_matrix.diagonal()).ravel())
-        diag_indices = np.arange(normal_matrix.shape[0])
         nfev = 0
         nsolve = 0
 
         for n_rejected in range(self.max_reject):
             nsolve += 1
-            damped_matrix = normal_matrix.copy()
-            damped_matrix[diag_indices, diag_indices] += self._lam * scaling
+            # Adding a diagonal takes the union of the two patterns. Assigning into the diagonal instead fails when a
+            # structurally empty column of J leaves J^T J with no slot there, which is the singular case LM exists for.
+            damped_matrix = normal_matrix + sp.diags(self._lam * scaling, format="csc")
             p = try_linear_solve(self.linear_solver, damped_matrix, -grad)
 
             if p is not None:

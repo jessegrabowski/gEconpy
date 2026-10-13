@@ -19,6 +19,12 @@ class TestLevenbergMarquardtSpecific:
         res, _ = fun(result.x)
         np.testing.assert_allclose(res, 0.0, atol=1e-8)
 
+    def test_handles_a_structurally_empty_column(self, structurally_singular_system):
+        fun, x0 = structurally_singular_system
+        result = sparse_root(fun, x0, solver=LevenbergMarquardt(), progressbar=False)
+        assert result.success
+        np.testing.assert_allclose(result.x[0], 2.0, rtol=1e-8)
+
     def test_lambda_increases_on_reject(self):
         n_calls = 0
 

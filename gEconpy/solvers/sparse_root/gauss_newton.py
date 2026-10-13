@@ -43,9 +43,9 @@ class GaussNewtonTrustRegion:
         Cap on conjugate gradient iterations per trust region subproblem, at least 1. Defaults to ``None``, meaning
         twice the problem dimension.
     cg_rtol : float, optional
-        Relative tolerance on the conjugate gradient residual, measured against the norm of the model gradient. The
-        trust region ratio test checks the resulting step, so the subproblem does not need solving to machine
-        precision. Defaults to 1e-6.
+        Relative tolerance on the conjugate gradient residual, measured against the norm of the model gradient, and
+        positive. The trust region ratio test checks the resulting step, so the subproblem does not need solving to
+        machine precision. Defaults to 1e-6.
     """
 
     delta0: float = 1.0
@@ -63,6 +63,12 @@ class GaussNewtonTrustRegion:
         if self.max_cg_iter is not None and self.max_cg_iter < 1:
             raise ValueError(
                 f"max_cg_iter must be at least 1, got {self.max_cg_iter}. Pass None for twice the problem dimension."
+            )
+        # A zero tolerance never lets conjugate gradients stop on an exact solve, so the next direction is the zero
+        # vector and the boundary step divides by its length.
+        if self.cg_rtol <= 0:
+            raise ValueError(
+                f"cg_rtol must be positive, got {self.cg_rtol}. Cap the iteration with max_cg_iter to bound the work."
             )
 
     def reset(self) -> None:

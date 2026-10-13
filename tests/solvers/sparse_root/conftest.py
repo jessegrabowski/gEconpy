@@ -68,6 +68,21 @@ def singular_system():
 
 
 @pytest.fixture
+def structurally_singular_system():
+    """System where x[1] never enters the residuals. Solution at x[0] = 2, with x[1] free.
+
+    Column 1 of the Jacobian is structurally empty, so ``J.T @ J`` stores no diagonal entry for it.
+    """
+
+    def fun(x):
+        res = np.array([x[0] ** 2 - 4.0, x[0] - 2.0])
+        jac = sp.csc_matrix((np.array([2.0 * x[0], 1.0]), (np.array([0, 1]), np.array([0, 0]))), shape=(2, 2))
+        return res, jac
+
+    return fun, np.array([3.0, 1.0])
+
+
+@pytest.fixture
 def powell_badly_scaled():
     """Powell's badly scaled system (scipy F4_powell), ill-conditioned because of the 1e4 scaling.
 
