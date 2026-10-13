@@ -9,6 +9,7 @@ from gEconpy.solvers.sparse_root import (
     LevenbergMarquardt,
     SparseDogleg,
     chord,
+    inexact_newton_krylov,
     newton_armijo,
     newton_nonmonotone,
     sparse_root,
@@ -343,13 +344,26 @@ class TestStackedSystem:
 
         np.testing.assert_allclose(difference, jacobian[:, column].toarray().ravel(), atol=1e-6)
 
-    # inexact_newton_krylov is absent because unpreconditioned GMRES stagnates on this structure: scipy's
-    # default restart=20 leaves the relative error at 3e-01 no matter how many iterations it is given. The
-    # preconditioner and the restart passthrough that would fix it are step 6 of the repair plan.
     @pytest.mark.parametrize(
         "make_solver",
-        [newton_armijo, chord, newton_nonmonotone, SparseDogleg, GaussNewtonTrustRegion, LevenbergMarquardt],
-        ids=["newton_armijo", "chord", "newton_nonmonotone", "dogleg", "gauss_newton", "levenberg_marquardt"],
+        [
+            newton_armijo,
+            chord,
+            inexact_newton_krylov,
+            newton_nonmonotone,
+            SparseDogleg,
+            GaussNewtonTrustRegion,
+            LevenbergMarquardt,
+        ],
+        ids=[
+            "newton_armijo",
+            "chord",
+            "inexact_newton_krylov",
+            "newton_nonmonotone",
+            "dogleg",
+            "gauss_newton",
+            "levenberg_marquardt",
+        ],
     )
     def test_every_solver_converges_at_horizon_scale(self, make_solver, stacked_system):
         result = sparse_root(
