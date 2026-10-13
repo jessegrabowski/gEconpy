@@ -62,10 +62,9 @@ def sparse_root(
     -------
     result : OptimizeResult
         Result with fields ``x``, ``success``, ``message``, ``fun`` (final residuals), ``jac`` (final sparse
-        Jacobian), ``nit``, ``nfev``, ``njev``, ``nsolve`` (linear solves, which is the count a factorization
-        cache changes), and ``nreject`` (rejected trial steps). Every field is present even when the solve is
-        interrupted or a strategy raises, in which case they describe the last accepted iterate, and ``fun`` and
-        ``jac`` are ``None`` when there was none.
+        Jacobian), ``nit``, ``nfev``, ``njev``, ``nsolve`` (linear solves), and ``nreject`` (rejected trial steps).
+        Every field is present even when the solve is interrupted or a strategy raises, in which case they describe
+        the last accepted iterate, and ``fun`` and ``jac`` are ``None`` when there was none.
 
     Examples
     --------

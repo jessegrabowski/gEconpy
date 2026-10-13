@@ -143,8 +143,8 @@ class ChordDirection:
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
-        # The schedule ignores whether the factorization succeeded, so a singular Jacobian leaves the previous
-        # matrix in place for the fallback instead of being refreshed on every call until it stops being singular.
+        # Refresh on schedule even when factorizing failed, so a singular Jacobian is retried at the next window and
+        # not on every call.
         if self._cached_jac is None or self._call_count % self.recompute_every == 0:
             self._cached_jac = jac
             self._cached_lu = _try_factorize(jac)
