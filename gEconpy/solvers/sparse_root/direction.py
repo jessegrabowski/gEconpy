@@ -1,3 +1,5 @@
+import warnings
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -5,7 +7,7 @@ from typing import Protocol
 import numpy as np
 import scipy.sparse as sp
 
-from scipy.sparse.linalg import SuperLU, bicgstab, gmres, splu, spsolve
+from scipy.sparse.linalg import MatrixRankWarning, SuperLU, bicgstab, gmres, splu, spsolve
 
 _KRYLOV_METHODS = {
     "gmres": gmres,
@@ -266,10 +268,13 @@ def try_linear_solve(linear_solver: Callable, A: sp.spmatrix | SuperLU, b: np.nd
     x : ndarray or None
         Solution, or ``None`` when the solve failed.
     """
-    # The solver is user-supplied and may fail in any way. Under warnings-as-errors, scipy's MatrixRankWarning on a
-    # singular matrix also arrives here as an exception, so the catch stays broad.
+    # A singular matrix is an expected outcome here, and the caller records it by falling back to the gradient, so
+    # scipy's MatrixRankWarning is silenced rather than left to surface with no solver or iteration attached. The
+    # solver is user-supplied and may fail in any other way, so the catch stays broad.
     try:
-        x = linear_solver(A, b)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=MatrixRankWarning)
+            x = linear_solver(A, b)
     except Exception:
         return None
     if not np.all(np.isfinite(x)):

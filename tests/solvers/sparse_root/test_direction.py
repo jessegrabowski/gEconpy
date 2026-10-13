@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 import scipy.sparse as sp
@@ -23,8 +25,13 @@ class TestNewtonDirection:
     def test_fallback_on_singular_jacobian(self, direction, kind):
         jac = sp.csc_matrix([[1.0, 1.0], [1.0, 1.0]])
         res = np.array([1.0, 2.0])
-        proposal = direction.compute(np.zeros(2), res, jac)
+        # The suite turns warnings into errors, which the solve seam would catch either way, so recording them is
+        # the only way to see whether one escapes.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            proposal = direction.compute(np.zeros(2), res, jac)
 
+        assert caught == []
         assert proposal.kind == kind
         np.testing.assert_allclose(proposal.direction, -(jac.T @ res))
         assert proposal.slope < 0
