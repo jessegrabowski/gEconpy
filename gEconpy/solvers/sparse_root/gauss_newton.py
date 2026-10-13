@@ -43,8 +43,8 @@ class GaussNewtonTrustRegion:
         Cap on conjugate gradient iterations per trust region subproblem, at least 1. Defaults to ``None``, meaning
         twice the problem dimension.
     cg_rtol : float, optional
-        Relative tolerance on the conjugate gradient residual, measured against the norm of the model gradient, and
-        positive. The trust region ratio test checks the resulting step, so the subproblem does not need solving to
+        Positive relative tolerance on the conjugate gradient residual, measured against the norm of the model
+        gradient. The trust region ratio test checks the resulting step, so the subproblem does not need solving to
         machine precision. Defaults to 1e-6.
     """
 

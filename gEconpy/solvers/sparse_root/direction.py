@@ -1,3 +1,5 @@
+import warnings
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -5,7 +7,7 @@ from typing import Protocol
 import numpy as np
 import scipy.sparse as sp
 
-from scipy.sparse.linalg import SuperLU, bicgstab, gmres, splu, spsolve
+from scipy.sparse.linalg import MatrixRankWarning, SuperLU, bicgstab, gmres, splu, spsolve
 
 _KRYLOV_METHODS = {
     "gmres": gmres,
@@ -141,15 +143,15 @@ class ChordDirection:
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
-        # The schedule ignores whether the factorization succeeded, so a singular Jacobian leaves the previous
-        # matrix in place for the fallback instead of being refreshed on every call until it stops being singular.
+        # Refresh on schedule even when factorizing failed, so a singular Jacobian is retried at the next window and
+        # not on every call.
         if self._cached_jac is None or self._call_count % self.recompute_every == 0:
             self._cached_jac = jac
             self._cached_lu = _try_factorize(jac)
         self._call_count += 1
 
         cached_jac = self._cached_jac
-        dx = None if self._cached_lu is None else try_linear_solve(_lu_solve, self._cached_lu, -res)
+        dx = None if self._cached_lu is None else try_linear_solve(SuperLU.solve, self._cached_lu, -res)
         if dx is None:
             return _descent_proposal(-(cached_jac.T @ res), res, jac, kind="chord_gradient_fallback")
         return _descent_proposal(dx, res, jac, kind="chord")
@@ -266,10 +268,13 @@ def try_linear_solve(linear_solver: Callable, A: sp.spmatrix | SuperLU, b: np.nd
     x : ndarray or None
         Solution, or ``None`` when the solve failed.
     """
-    # The solver is user-supplied and may fail in any way. Under warnings-as-errors, scipy's MatrixRankWarning on a
-    # singular matrix also arrives here as an exception, so the catch stays broad.
+    # A singular matrix is an expected outcome here, and the caller records it by falling back to the gradient, so
+    # scipy's MatrixRankWarning is silenced rather than left to surface with no solver or iteration attached. The
+    # solver is user-supplied and may fail in any other way, so the catch stays broad.
     try:
-        x = linear_solver(A, b)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=MatrixRankWarning)
+            x = linear_solver(A, b)
     except Exception:
         return None
     if not np.all(np.isfinite(x)):
@@ -285,10 +290,6 @@ def _try_factorize(jac: sp.spmatrix) -> SuperLU | None:
         return splu(jac.tocsc())
     except Exception:
         return None
-
-
-def _lu_solve(lu: SuperLU, b: np.ndarray) -> np.ndarray:
-    return lu.solve(b)
 
 
 def _descent_proposal(dx: np.ndarray, res: np.ndarray, jac: sp.spmatrix, kind: str) -> DirectionProposal:

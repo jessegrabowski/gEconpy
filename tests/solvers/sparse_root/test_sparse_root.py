@@ -13,6 +13,7 @@ from gEconpy.solvers.sparse_root import (
     newton_nonmonotone,
     sparse_root,
 )
+from gEconpy.solvers.sparse_root.direction import NewtonDirection
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 
 
@@ -112,6 +113,63 @@ class TestSparseRootFailureMessages:
         assert "fatal" in result.message
         assert result.message.endswith(suffix)
         np.testing.assert_array_equal(result.x, [5.0, 5.0])
+
+    @pytest.mark.parametrize("exception", [ZeroDivisionError, KeyboardInterrupt], ids=["error", "interrupt"])
+    def test_an_interrupted_solve_reports_the_last_accepted_iterate(self, exception):
+        calls = {"n": 0}
+
+        class RaisesOnThirdStep(NewtonDirection):
+            def compute(self, x, res, jac):
+                calls["n"] += 1
+                if calls["n"] == 3:
+                    raise exception
+                return super().compute(x, res, jac)
+
+        solver = newton_armijo(direction=RaisesOnThirdStep())
+        result = sparse_root(scaled_quadratic, np.array([100.0, 100.0]), args=(1.0,), solver=solver, progressbar=False)
+
+        assert not result.success
+        assert exception.__name__ in result.message
+        assert result.nit == 2
+        assert result.nsolve == 2
+        assert sp.issparse(result.jac)
+        np.testing.assert_array_equal(result.fun, scaled_quadratic(result.x, 1.0)[0])
+
+    def test_a_failure_mid_line_search_reports_the_accepted_iterate_not_the_trial(self):
+        evaluated = []
+
+        def fails_on_the_second_trial(x):
+            evaluated.append(x.copy())
+            # Calls 1 and 2 evaluate x0, call 3 is a full Newton step that c1=0.99 rejects, call 4 the next trial.
+            if len(evaluated) == 4:
+                raise ZeroDivisionError
+            return scaled_quadratic(x, 1.0)
+
+        x0 = np.array([100.0, 100.0])
+        solver = newton_armijo(globalization=ArmijoBacktracking(c1=0.99))
+        result = sparse_root(fails_on_the_second_trial, x0, solver=solver, progressbar=False)
+
+        assert not result.success
+        np.testing.assert_array_equal(result.x, x0)
+        assert not np.array_equal(result.x, evaluated[2])
+        np.testing.assert_array_equal(result.fun, scaled_quadratic(x0, 1.0)[0])
+
+    def test_a_failure_before_the_first_iterate_still_reports_every_field(self):
+        calls = {"n": 0}
+
+        def fails_during_init(x):
+            calls["n"] += 1
+            # Call 1 is input validation and call 2 is the solver's first evaluation.
+            if calls["n"] == 2:
+                raise ZeroDivisionError
+            return scaled_quadratic(x, 1.0)
+
+        result = sparse_root(fails_during_init, np.array([2.0, 3.0]), progressbar=False)
+
+        assert not result.success
+        assert result.fun is None
+        assert result.jac is None
+        assert (result.nit, result.nfev, result.njev, result.nsolve, result.nreject) == (0, 0, 0, 0, 0)
 
 
 class TestTrustRegionAccounting:
