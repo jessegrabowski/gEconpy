@@ -241,17 +241,28 @@ class KrylovDirection:
         krylov_solve = _KRYLOV_METHODS[self.krylov_method]
         iteration_limits = self._iteration_limits()
 
+        stopped_early = False
+
         def solve(A, b):
+            nonlocal stopped_early
             # scipy stops at max(rtol * ||b||, atol), and its default rtol of 1e-5 would floor the forcing term.
             dx, info = krylov_solve(
                 A, b, rtol=0.0, atol=self._eta * res_norm, M=self.preconditioner, **iteration_limits
             )
-            if info != 0:
-                raise ValueError(f"Krylov solve stopped with info={info}")
+            if info < 0:
+                raise ValueError(f"Krylov solve failed with info={info}")
+            stopped_early = info > 0
             return dx
 
         dx = try_linear_solve(solve, jac, -res)
         kind = f"krylov_{self.krylov_method}"
+        # An iterate that lowered ||r + J dx|| below ||r|| has r^T J dx < 0, so it descends the merit function even
+        # when the inner solve stopped short of the forcing term.
+        if dx is not None and stopped_early:
+            if np.linalg.norm(res + jac @ dx) < res_norm:
+                kind = f"{kind}_inexact"
+            else:
+                dx = None
         if dx is None:
             dx = -(jac.T @ res)
             kind = f"{kind}_gradient_fallback"

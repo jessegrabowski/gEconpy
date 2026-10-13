@@ -189,10 +189,10 @@ class TestKrylovDirection:
         ("restart", "max_krylov_iter", "kind"),
         [
             (1, 200, "krylov_gmres_gradient_fallback"),
-            (20, 2, "krylov_gmres_gradient_fallback"),
+            (20, 2, "krylov_gmres_inexact"),
             (20, 200, "krylov_gmres"),
         ],
-        ids=["gmres_1_stagnates", "capped_short", "defaults_converge"],
+        ids=["no_progress_falls_back", "capped_short_keeps_the_iterate", "defaults_converge"],
     )
     def test_the_iteration_limits_reach_the_inner_solve(self, restart, max_krylov_iter, kind):
         # Skew-symmetric, so GMRES(1) makes no progress at all, while 10 unrestarted iterations solve it exactly.
