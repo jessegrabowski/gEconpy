@@ -226,7 +226,8 @@ class KrylovDirection:
         krylov_solve = _KRYLOV_METHODS[self.krylov_method]
 
         def solve(A, b):
-            dx, info = krylov_solve(A, b, atol=self._eta * res_norm)
+            # scipy stops at max(rtol * ||b||, atol), and its default rtol of 1e-5 would floor the forcing term.
+            dx, info = krylov_solve(A, b, rtol=0.0, atol=self._eta * res_norm)
             if info != 0:
                 raise ValueError(f"Krylov solve stopped with info={info}")
             return dx

@@ -172,6 +172,19 @@ class TestKrylovDirection:
         proposal = direction.compute(np.zeros(2), np.array([1.0, 1.0]), sp.csc_matrix((2, 2)))
         assert "fallback" in proposal.kind
 
+    @pytest.mark.parametrize("eta", [1e-6, 1e-8], ids=["eta_min_default", "tighter"])
+    def test_the_forcing_term_is_the_stopping_rule(self, eta):
+        n = 300
+        jac = (4.0 * sp.eye(n) + sp.random(n, n, density=0.02, random_state=1)).tocsc()
+        res = np.random.default_rng(0).normal(size=n)
+        direction = KrylovDirection(eta_max=eta, eta_min=eta, eisenstat_walker=False)
+        direction.reset()
+
+        proposal = direction.compute(np.zeros(n), res, jac)
+
+        assert proposal.kind == "krylov_gmres"
+        assert np.linalg.norm(res + jac @ proposal.direction) <= eta * np.linalg.norm(res)
+
     def test_unknown_method_rejected(self):
         with pytest.raises(ValueError, match="Unknown Krylov method"):
             KrylovDirection(krylov_method="cg")
