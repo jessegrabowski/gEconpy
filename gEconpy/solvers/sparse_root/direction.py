@@ -110,13 +110,14 @@ class _ScheduledFactorization:
         self.lu = None
         self._updates = 0
 
-    def update(self, jac: sp.spmatrix, recompute_every: int) -> None:
+    def update(self, jac: sp.spmatrix, recompute_every: int) -> tuple[sp.spmatrix, SuperLU | None]:
         # Refresh on schedule even when factorizing failed, so a singular Jacobian is retried at the next window and
         # not on every call.
         if self.matrix is None or self._updates % recompute_every == 0:
             self.matrix = jac
             self.lu = _try_factorize(jac)
         self._updates += 1
+        return self.matrix, self.lu
 
 
 @dataclass
@@ -162,12 +163,11 @@ class ChordDirection:
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
-        cached = self._factorization
-        cached.update(jac, self.recompute_every)
+        cached_jac, lu = self._factorization.update(jac, self.recompute_every)
 
-        dx = None if cached.lu is None else try_linear_solve(SuperLU.solve, cached.lu, -res)
+        dx = None if lu is None else try_linear_solve(SuperLU.solve, lu, -res)
         if dx is None:
-            return _descent_proposal(-(cached.matrix.T @ res), res, jac, kind="chord_gradient_fallback")
+            return _descent_proposal(-(cached_jac.T @ res), res, jac, kind="chord_gradient_fallback")
         return _descent_proposal(dx, res, jac, kind="chord")
 
 
@@ -177,6 +177,8 @@ class KrylovDirection:
 
     Solves :math:`J \, dx = -r` approximately using GMRES or BiCGSTAB with absolute tolerance
     :math:`\eta_k \lVert r_k \rVert`. With Eisenstat-Walker forcing, :math:`\eta_k` tightens as the residual shrinks.
+    By default each solve is preconditioned with an LU factorization of the Jacobian, refreshed every
+    ``recompute_every`` calls.
 
     Parameters
     ----------
@@ -301,8 +303,7 @@ class KrylovDirection:
     def _current_preconditioner(self, jac: sp.spmatrix) -> sp.spmatrix | LinearOperator | None:
         if self.preconditioner is not None or self.recompute_every is None:
             return self.preconditioner
-        self._factorization.update(jac, self.recompute_every)
-        lu = self._factorization.lu
+        _, lu = self._factorization.update(jac, self.recompute_every)
         return None if lu is None else LinearOperator(jac.shape, matvec=lu.solve)
 
     def _iteration_limits(self) -> dict[str, int]:
