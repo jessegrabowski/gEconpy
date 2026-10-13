@@ -46,6 +46,17 @@ def test_each_factory_keeps_the_strategy_it_is_handed(factory, direction_type):
     assert solver.direction is direction
 
 
+@pytest.mark.parametrize("factory", [chord, inexact_newton_krylov], ids=["chord", "inexact_newton_krylov"])
+def test_a_reused_solver_discards_the_previous_factorization(factory, quadratic_system):
+    fun, x0, _ = quadratic_system
+    solver = factory()
+
+    sparse_root(fun, np.array([10.0, 10.0]), solver=solver, progressbar=False)
+    solver.init(fun, x0, ())
+
+    assert solver.direction._factorization.lu is None
+
+
 class TestNewtonArmijoSuite(CommonSolverTests):
     @property
     def solver(self):
@@ -141,17 +152,6 @@ class TestChordSuite(CommonSolverTests):
     @property
     def solver(self):
         return chord()
-
-
-class TestChordSpecific:
-    def test_a_reused_solver_discards_the_previous_factorization(self, quadratic_system):
-        fun, x0, _ = quadratic_system
-        solver = chord()
-
-        sparse_root(fun, np.array([10.0, 10.0]), solver=solver, progressbar=False)
-        solver.init(fun, x0, ())
-
-        assert solver.direction._factorization.lu is None
 
 
 class TestInexactNewtonKrylovSuite(CommonSolverTests):

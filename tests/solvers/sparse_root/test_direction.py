@@ -289,6 +289,17 @@ class TestKrylovDirection:
 
         assert calls["n"] == factorizations
 
+    def test_a_singular_jacobian_solves_unpreconditioned(self):
+        jac = sp.csc_matrix([[1.0, 1.0], [1.0, 1.0]])
+        res = np.array([1.0, 2.0])
+        direction = KrylovDirection()
+        direction.reset()
+
+        proposal = direction.compute(np.zeros(2), res, jac)
+
+        assert proposal.kind == "krylov_gmres"
+        assert proposal.slope < 0
+
     def test_the_preconditioner_reaches_the_inner_solve(self, stacked_system):
         res, jac = stacked_system.fun(stacked_system.x0)
         lu = splu(jac.tocsc())
