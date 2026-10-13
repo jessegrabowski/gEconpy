@@ -135,6 +135,25 @@ class TestSparseRootFailureMessages:
         assert sp.issparse(result.jac)
         np.testing.assert_array_equal(result.fun, scaled_quadratic(result.x, 1.0)[0])
 
+    def test_a_failure_mid_line_search_reports_the_accepted_iterate_not_the_trial(self):
+        evaluated = []
+
+        def fails_on_the_second_trial(x):
+            evaluated.append(x.copy())
+            # Calls 1 and 2 evaluate x0, call 3 is a full Newton step that c1=0.99 rejects, call 4 the next trial.
+            if len(evaluated) == 4:
+                raise ZeroDivisionError
+            return scaled_quadratic(x, 1.0)
+
+        x0 = np.array([100.0, 100.0])
+        solver = newton_armijo(globalization=ArmijoBacktracking(c1=0.99))
+        result = sparse_root(fails_on_the_second_trial, x0, solver=solver, progressbar=False)
+
+        assert not result.success
+        np.testing.assert_array_equal(result.x, x0)
+        assert not np.array_equal(result.x, evaluated[2])
+        np.testing.assert_array_equal(result.fun, scaled_quadratic(x0, 1.0)[0])
+
     def test_a_failure_before_the_first_iterate_still_reports_every_field(self):
         calls = {"n": 0}
 
