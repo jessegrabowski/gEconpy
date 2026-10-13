@@ -7,7 +7,7 @@ from typing import Protocol
 import numpy as np
 import scipy.sparse as sp
 
-from scipy.sparse.linalg import MatrixRankWarning, SuperLU, bicgstab, gmres, splu, spsolve
+from scipy.sparse.linalg import LinearOperator, MatrixRankWarning, SuperLU, bicgstab, gmres, splu, spsolve
 
 _KRYLOV_METHODS = {
     "gmres": gmres,
@@ -174,12 +174,23 @@ class KrylovDirection:
         Lower bound on the forcing term. Defaults to 1e-6.
     eisenstat_walker : bool, optional
         Whether to adapt the forcing term. When ``False``, ``eta_max`` is used throughout. Defaults to ``True``.
+    max_krylov_iter : int, optional
+        Cap on inner Krylov iterations per direction, at least 1. For GMRES it is rounded up to whole restart cycles.
+        Defaults to 200.
+    restart : int, optional
+        Number of GMRES iterations between restarts, at least 1. Ignored by BiCGSTAB. Defaults to 20.
+    preconditioner : sparse matrix or LinearOperator, optional
+        Approximation to the inverse Jacobian, applied as ``preconditioner @ v``. Defaults to ``None``, meaning no
+        preconditioning.
     """
 
     krylov_method: str = "gmres"
     eta_max: float = 0.9
     eta_min: float = 1e-6
     eisenstat_walker: bool = True
+    max_krylov_iter: int = 200
+    restart: int = 20
+    preconditioner: sp.spmatrix | LinearOperator | None = None
 
     _eta: float = field(init=False, repr=False, default=0.0)
     _prev_res_norm: float = field(init=False, repr=False, default=0.0)
@@ -190,6 +201,10 @@ class KrylovDirection:
             raise ValueError(
                 f"Unknown Krylov method {self.krylov_method!r}. Pass one of {sorted(_KRYLOV_METHODS)} as krylov_method."
             )
+        if self.max_krylov_iter < 1:
+            raise ValueError(f"max_krylov_iter must be at least 1, got {self.max_krylov_iter}.")
+        if self.restart < 1:
+            raise ValueError(f"restart must be at least 1, got {self.restart}.")
         self._eta = self.eta_max
 
     def reset(self) -> None:
@@ -224,10 +239,13 @@ class KrylovDirection:
         self._update_forcing_term(res_norm)
 
         krylov_solve = _KRYLOV_METHODS[self.krylov_method]
+        iteration_limits = self._iteration_limits()
 
         def solve(A, b):
             # scipy stops at max(rtol * ||b||, atol), and its default rtol of 1e-5 would floor the forcing term.
-            dx, info = krylov_solve(A, b, rtol=0.0, atol=self._eta * res_norm)
+            dx, info = krylov_solve(
+                A, b, rtol=0.0, atol=self._eta * res_norm, M=self.preconditioner, **iteration_limits
+            )
             if info != 0:
                 raise ValueError(f"Krylov solve stopped with info={info}")
             return dx
@@ -242,6 +260,14 @@ class KrylovDirection:
         self._prev_pred_norm = np.linalg.norm(res + jac @ dx)
 
         return _descent_proposal(dx, res, jac, kind=kind)
+
+    def _iteration_limits(self) -> dict[str, int]:
+        # scipy's gmres counts maxiter in restart cycles and bicgstab counts it in iterations, so one inner-iteration
+        # cap means a different maxiter for each.
+        if self.krylov_method == "gmres":
+            restart = min(self.restart, self.max_krylov_iter)
+            return {"restart": restart, "maxiter": -(-self.max_krylov_iter // restart)}
+        return {"maxiter": self.max_krylov_iter}
 
     def _update_forcing_term(self, res_norm: float) -> None:
         if not self.eisenstat_walker or self._prev_res_norm == 0:

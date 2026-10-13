@@ -206,6 +206,7 @@ numpydoc_xref_aliases = {
     "DirectionStrategy": "gEconpy.solvers.sparse_root.direction.DirectionStrategy",
     "ChordDirection": "gEconpy.solvers.sparse_root.direction.ChordDirection",
     "SuperLU": "scipy.sparse.linalg.SuperLU",
+    "LinearOperator": "scipy.sparse.linalg.LinearOperator",
     "KrylovDirection": "gEconpy.solvers.sparse_root.direction.KrylovDirection",
     "GlobalizationStrategy": "gEconpy.solvers.sparse_root.globalization.GlobalizationStrategy",
     "NonmonotoneBacktracking": "gEconpy.solvers.sparse_root.globalization.NonmonotoneBacktracking",

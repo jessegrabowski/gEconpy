@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import LinearOperator, splu, spsolve
 
 import gEconpy.solvers.sparse_root.direction as direction_module
 
@@ -184,6 +184,48 @@ class TestKrylovDirection:
 
         assert proposal.kind == "krylov_gmres"
         assert np.linalg.norm(res + jac @ proposal.direction) <= eta * np.linalg.norm(res)
+
+    @pytest.mark.parametrize(
+        ("restart", "max_krylov_iter", "kind"),
+        [
+            (1, 200, "krylov_gmres_gradient_fallback"),
+            (20, 2, "krylov_gmres_gradient_fallback"),
+            (20, 200, "krylov_gmres"),
+        ],
+        ids=["gmres_1_stagnates", "capped_short", "defaults_converge"],
+    )
+    def test_the_iteration_limits_reach_the_inner_solve(self, restart, max_krylov_iter, kind):
+        # Skew-symmetric, so GMRES(1) makes no progress at all, while 10 unrestarted iterations solve it exactly.
+        blocks = [sp.csc_matrix([[0.0, w], [-w, 0.0]]) for w in np.linspace(1.0, 2.0, 5)]
+        jac = sp.block_diag(blocks, format="csc")
+        res = np.random.default_rng(0).normal(size=10)
+        direction = KrylovDirection(
+            eta_max=1e-8, eta_min=1e-8, eisenstat_walker=False, restart=restart, max_krylov_iter=max_krylov_iter
+        )
+        direction.reset()
+
+        proposal = direction.compute(np.zeros(10), res, jac)
+
+        assert proposal.kind == kind
+
+    def test_the_preconditioner_reaches_the_inner_solve(self, stacked_system):
+        res, jac = stacked_system.fun(stacked_system.x0)
+        lu = splu(jac.tocsc())
+        exact_inverse = LinearOperator(jac.shape, matvec=lu.solve)
+        direction = KrylovDirection(
+            eta_max=1e-8, eta_min=1e-8, eisenstat_walker=False, max_krylov_iter=3, preconditioner=exact_inverse
+        )
+        direction.reset()
+
+        proposal = direction.compute(stacked_system.x0, res, jac)
+
+        assert proposal.kind == "krylov_gmres"
+        np.testing.assert_allclose(proposal.direction, spsolve(jac, -res), rtol=1e-6)
+
+    @pytest.mark.parametrize("field_name", ["max_krylov_iter", "restart"])
+    def test_an_iteration_limit_below_one_is_rejected(self, field_name):
+        with pytest.raises(ValueError, match=f"{field_name} must be at least 1"):
+            KrylovDirection(**{field_name: 0})
 
     def test_unknown_method_rejected(self):
         with pytest.raises(ValueError, match="Unknown Krylov method"):
