@@ -151,7 +151,7 @@ class ChordDirection:
         self._call_count += 1
 
         cached_jac = self._cached_jac
-        dx = None if self._cached_lu is None else try_linear_solve(_lu_solve, self._cached_lu, -res)
+        dx = None if self._cached_lu is None else try_linear_solve(SuperLU.solve, self._cached_lu, -res)
         if dx is None:
             return _descent_proposal(-(cached_jac.T @ res), res, jac, kind="chord_gradient_fallback")
         return _descent_proposal(dx, res, jac, kind="chord")
@@ -290,10 +290,6 @@ def _try_factorize(jac: sp.spmatrix) -> SuperLU | None:
         return splu(jac.tocsc())
     except Exception:
         return None
-
-
-def _lu_solve(lu: SuperLU, b: np.ndarray) -> np.ndarray:
-    return lu.solve(b)
 
 
 def _descent_proposal(dx: np.ndarray, res: np.ndarray, jac: sp.spmatrix, kind: str) -> DirectionProposal:
