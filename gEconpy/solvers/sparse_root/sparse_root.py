@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
@@ -62,7 +63,8 @@ def sparse_root(
     result : OptimizeResult
         Result with fields ``x``, ``success``, ``message``, ``fun`` (final residuals), ``jac`` (final sparse
         Jacobian), ``nit``, ``nfev``, ``njev``, ``nsolve`` (linear solves, which is the count a factorization
-        cache changes), and ``nreject`` (rejected trial steps).
+        cache changes), and ``nreject`` (rejected trial steps). Every field is present even when the solve is
+        interrupted or a strategy raises, in which case they describe the last accepted iterate.
 
     Examples
     --------
@@ -126,6 +128,7 @@ def sparse_root(
         root=True,
     )
 
+    latest = _LatestState()
     run = partial(
         _iterate_to_root,
         fun=objective,
@@ -135,8 +138,24 @@ def sparse_root(
         f_tol=f_tol,
         x_tol=x_tol,
         maxiter=maxiter,
+        latest=latest,
     )
-    return optimizer_early_stopping_wrapper(run)
+    result = optimizer_early_stopping_wrapper(run)
+
+    # The wrapper builds its own result when it catches an exception or an interrupt, and that result carries
+    # neither the Jacobian nor the work counts. Rebuild it from the last accepted iterate, keeping the message
+    # that names what went wrong.
+    if "nit" not in result:
+        if latest.state is None:
+            result.update(fun=None, jac=None, nit=0, nfev=0, njev=0, nsolve=0, nreject=0)
+        else:
+            result = _make_result(latest.state, success=False, message=result.message)
+    return result
+
+
+@dataclass
+class _LatestState:
+    state: SolverState | None = None
 
 
 def _iterate_to_root(
@@ -147,13 +166,16 @@ def _iterate_to_root(
     f_tol: float,
     x_tol: float,
     maxiter: int,
+    latest: _LatestState,
 ) -> OptimizeResult:
     state = solver.init(fun, x0, args)
+    latest.state = state
     if np.max(np.abs(state.res)) < f_tol:
         return _make_result(state, success=True, message="Converged")
 
     for _ in range(maxiter):
         state, info = solver.step(fun, state, args)
+        latest.state = state
         if not info.accepted:
             return _make_result(state, success=False, message=info.message)
         message = default_check_convergence(state, f_tol=f_tol, x_tol=x_tol, last_step=info.step)
