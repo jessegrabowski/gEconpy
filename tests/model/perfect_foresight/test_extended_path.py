@@ -1,0 +1,98 @@
+import numpy as np
+import pytest
+
+from numpy.testing import assert_allclose
+
+from gEconpy import simulate
+from gEconpy.model.perfect_foresight import simulate_extended_path, solve_perfect_foresight
+from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
+
+
+@pytest.fixture
+def rbc_model():
+    return load_and_cache_model("one_block_1.gcn")
+
+
+@pytest.fixture
+def linear_nk_model():
+    return load_and_cache_model("3_eq_linear_nk.gcn")
+
+
+def _steady_state_values(model, var_names):
+    steady_state = model.steady_state(verbose=False, progressbar=False)
+    return np.array([steady_state[f"{name}_ss"] for name in var_names])
+
+
+def test_zero_shocks_stay_at_the_steady_state(rbc_model):
+    paths, diagnostics = simulate_extended_path(rbc_model, n_simulations=2, simulation_length=5, shock_std=0.0)
+
+    var_names = list(paths.coords["variable"].values)
+    assert diagnostics.success.shape == (2, 5)
+    assert diagnostics.success.all()
+    assert not diagnostics.nit.any()
+    assert_allclose(paths.values, np.broadcast_to(_steady_state_values(rbc_model, var_names), paths.shape))
+
+
+def test_linear_model_reproduces_the_linear_simulator(linear_nk_model):
+    simulation_kwargs = {"n_simulations": 2, "simulation_length": 20, "shock_std": 0.01, "random_seed": 3}
+
+    paths, diagnostics = simulate_extended_path(linear_nk_model, **simulation_kwargs)
+    linear_paths = simulate(linear_nk_model, verbose=False, **simulation_kwargs)
+
+    assert diagnostics.success.all()
+    assert_allclose(paths.values, linear_paths.sel(variable=paths.coords["variable"]).values, atol=1e-12)
+
+
+def test_small_shocks_match_the_linear_simulator_to_first_order(rbc_model):
+    shock_std = 1e-3
+    simulation_kwargs = {"simulation_length": 30, "shock_std": shock_std, "random_seed": 1}
+
+    # Capital's root of 0.98 needs a long horizon, or imposing the steady state at its end is a first-order error.
+    paths, diagnostics = simulate_extended_path(
+        rbc_model, horizon=400, sparse_root_kwargs={"tol": 1e-12}, **simulation_kwargs
+    )
+    linear_paths = simulate(rbc_model, verbose=False, **simulation_kwargs)
+
+    var_names = list(paths.coords["variable"].values)
+    log_deviations = np.log(paths.values / _steady_state_values(rbc_model, var_names))
+
+    assert diagnostics.success.all()
+    assert_allclose(log_deviations, linear_paths.sel(variable=var_names).values, atol=1e-2 * shock_std)
+
+
+def test_zero_shocks_from_a_displaced_state_follow_the_perfect_foresight_path(rbc_model):
+    """
+    Without surprises each period's plan continues the last, so the path is one PF solution.
+
+    The shifted warm start then leaves only the truncated horizon's last period to correct, in one Newton step.
+    """
+    steady_state = rbc_model.steady_state(verbose=False, progressbar=False)
+    initial_conditions = {"K": 0.9 * steady_state["K_ss"]}
+
+    paths, diagnostics = simulate_extended_path(
+        rbc_model,
+        simulation_length=10,
+        shock_std=0.0,
+        initial_conditions=initial_conditions,
+        horizon=400,
+        sparse_root_kwargs={"tol": 1e-10},
+    )
+    pf_path, _ = solve_perfect_foresight(rbc_model, simulation_length=400, initial_conditions=initial_conditions)
+
+    var_names = list(paths.coords["variable"].values)
+    assert_allclose(paths.values[0], pf_path[var_names].to_numpy()[:10], rtol=1e-6)
+    assert (diagnostics.nit.values[0, 1:] == 1).all()
+
+
+def test_default_tolerance_leaves_the_stall_test_strict():
+    """Newton takes many short steps on this model's first period, which a step tolerance of 1e-5 calls a stall."""
+    model = load_and_cache_example("RBC_two_household_additive")
+
+    _, diagnostics = simulate_extended_path(model, simulation_length=1, shock_std=1e-4, random_seed=0)
+
+    assert diagnostics.success.all()
+
+
+def test_unknown_initial_condition_raises(rbc_model):
+    with pytest.raises(ValueError, match="unknown variables: Q"):
+        simulate_extended_path(rbc_model, shock_std=0.0, initial_conditions={"Q": 1.0})

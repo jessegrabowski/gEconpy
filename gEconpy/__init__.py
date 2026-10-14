@@ -37,6 +37,7 @@ from gEconpy import classes, data, parser, plotting, solvers, utilities
 from gEconpy.dynare_convert import make_mod_file
 from gEconpy.model.build import model_from_gcn, statespace_from_gcn
 from gEconpy.model.html import print_gcn_file
+from gEconpy.model.perfect_foresight.extended_path import simulate_extended_path
 from gEconpy.model.perfect_foresight.solve import solve_perfect_foresight
 from gEconpy.model.sampling import (
     bounds_from_priors,
@@ -93,6 +94,7 @@ __all__ = [
     "sample_uniform",
     "sample_uniform_from_priors",
     "simulate",
+    "simulate_extended_path",
     "solvability_check",
     "solve_perfect_foresight",
     "solvers",
