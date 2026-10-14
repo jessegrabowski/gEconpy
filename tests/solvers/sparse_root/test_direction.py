@@ -80,10 +80,10 @@ class TestChordDirection:
         direction.compute(x, res, jac_first)
         direction.compute(x, res, jac_second)
         direction.compute(x, res, jac_second)
-        np.testing.assert_array_equal(direction._cached_jac.data, jac_first.data)
+        np.testing.assert_array_equal(direction._factorization.matrix.data, jac_first.data)
 
         direction.compute(x, res, jac_second)
-        np.testing.assert_array_equal(direction._cached_jac.data, jac_second.data)
+        np.testing.assert_array_equal(direction._factorization.matrix.data, jac_second.data)
 
     def test_factorizes_once_per_refresh_window(self, monkeypatch):
         calls = {"n": 0}
@@ -142,7 +142,10 @@ class TestKrylovDirection:
 
         x = x0.copy()
         res, jac = fun(x)
+        # Past the root the forcing-term ratio is rounding noise, so stepping stops once the residual has converged.
         for _ in range(10):
+            if np.linalg.norm(res) < 1e-8:
+                break
             proposal = direction.compute(x, res, jac)
             x = x + proposal.direction
             res, jac = fun(x)
@@ -177,7 +180,7 @@ class TestKrylovDirection:
         n = 300
         jac = (4.0 * sp.eye(n) + sp.random(n, n, density=0.02, random_state=1)).tocsc()
         res = np.random.default_rng(0).normal(size=n)
-        direction = KrylovDirection(eta_max=eta, eta_min=eta, eisenstat_walker=False)
+        direction = KrylovDirection(eta_max=eta, eta_min=eta, eisenstat_walker=False, recompute_every=None)
         direction.reset()
 
         proposal = direction.compute(np.zeros(n), res, jac)
@@ -200,7 +203,12 @@ class TestKrylovDirection:
         jac = sp.block_diag(blocks, format="csc")
         res = np.random.default_rng(0).normal(size=10)
         direction = KrylovDirection(
-            eta_max=1e-8, eta_min=1e-8, eisenstat_walker=False, restart=restart, max_krylov_iter=max_krylov_iter
+            eta_max=1e-8,
+            eta_min=1e-8,
+            eisenstat_walker=False,
+            restart=restart,
+            max_krylov_iter=max_krylov_iter,
+            recompute_every=None,
         )
         direction.reset()
 
@@ -224,6 +232,7 @@ class TestKrylovDirection:
             eta_min=1e-8,
             eisenstat_walker=False,
             max_krylov_iter=max_krylov_iter,
+            recompute_every=None,
         )
         direction.reset()
 
@@ -237,13 +246,59 @@ class TestKrylovDirection:
         blocks = [sp.csc_matrix([[0.0, w], [-w, 0.0]]) for w in np.linspace(1.0, 2.0, 5)]
         jac = sp.block_diag(blocks, format="csc")
         res = np.random.default_rng(0).normal(size=10)
-        direction = KrylovDirection(krylov_method="bicgstab", eta_max=1e-8, eta_min=1e-8, eisenstat_walker=False)
+        direction = KrylovDirection(
+            krylov_method="bicgstab", eta_max=1e-8, eta_min=1e-8, eisenstat_walker=False, recompute_every=None
+        )
         direction.reset()
 
         proposal = direction.compute(np.zeros(10), res, jac)
 
         assert proposal.kind == "krylov_bicgstab_gradient_fallback"
         np.testing.assert_allclose(proposal.direction, -(jac.T @ res))
+
+    def test_a_refreshed_lu_preconditions_by_default(self, stacked_system):
+        res, jac = stacked_system.fun(stacked_system.x0)
+        direction = KrylovDirection(eta_max=1e-8, eta_min=1e-8, eisenstat_walker=False, max_krylov_iter=3)
+        direction.reset()
+
+        proposal = direction.compute(stacked_system.x0, res, jac)
+
+        assert proposal.kind == "krylov_gmres"
+        np.testing.assert_allclose(proposal.direction, spsolve(jac, -res), rtol=1e-6)
+
+    @pytest.mark.parametrize(
+        ("options", "factorizations"),
+        [({}, 3), ({"recompute_every": None}, 0), ({"preconditioner": sp.eye(2, format="csc")}, 0)],
+        ids=["refreshed_every_5", "turned_off", "user_preconditioner_wins"],
+    )
+    def test_the_preconditioner_is_refactorized_on_schedule(self, monkeypatch, options, factorizations):
+        calls = {"n": 0}
+        real_splu = direction_module.splu
+
+        def counting_splu(A):
+            calls["n"] += 1
+            return real_splu(A)
+
+        monkeypatch.setattr(direction_module, "splu", counting_splu)
+        direction = KrylovDirection(**options)
+        direction.reset()
+        jac = sp.csc_matrix([[2.0, 1.0], [0.0, 3.0]])
+
+        for _ in range(12):
+            direction.compute(np.zeros(2), np.array([1.0, 1.0]), jac)
+
+        assert calls["n"] == factorizations
+
+    def test_a_singular_jacobian_solves_unpreconditioned(self):
+        jac = sp.csc_matrix([[1.0, 1.0], [1.0, 1.0]])
+        res = np.array([1.0, 2.0])
+        direction = KrylovDirection()
+        direction.reset()
+
+        proposal = direction.compute(np.zeros(2), res, jac)
+
+        assert proposal.kind == "krylov_gmres"
+        assert proposal.slope < 0
 
     def test_the_preconditioner_reaches_the_inner_solve(self, stacked_system):
         res, jac = stacked_system.fun(stacked_system.x0)
@@ -259,7 +314,7 @@ class TestKrylovDirection:
         assert proposal.kind == "krylov_gmres"
         np.testing.assert_allclose(proposal.direction, spsolve(jac, -res), rtol=1e-6)
 
-    @pytest.mark.parametrize("field_name", ["max_krylov_iter", "restart"])
+    @pytest.mark.parametrize("field_name", ["max_krylov_iter", "restart", "recompute_every"])
     def test_an_iteration_limit_below_one_is_rejected(self, field_name):
         with pytest.raises(ValueError, match=f"{field_name} must be at least 1"):
             KrylovDirection(**{field_name: 0})
