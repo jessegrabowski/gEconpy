@@ -16,7 +16,6 @@ from gEconpy.model.perfect_foresight.compile import (
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
 from gEconpy.solvers.sparse_root import newton_armijo, sparse_root
 from gEconpy.solvers.sparse_root.base import RootSolver
-from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 
 
 def solve_perfect_foresight(
@@ -81,7 +80,9 @@ def solve_perfect_foresight(
     trajectory : DataFrame
         Solution path with periods as the index and variables as columns.
     result : OptimizeResult
-        Convergence information from the solver.
+        Convergence information from the solver. Each equation is divided by the largest entry of its Jacobian row at
+        the initial guess before solving, so convergence is judged on these scaled residuals. ``fun`` and ``jac`` are
+        reported unscaled, so an equation with large terms can show a residual above the tolerance by its own scale.
 
     Examples
     --------
@@ -209,6 +210,15 @@ def solve_perfect_foresight(
         param_paths=param_matrix,
     )
 
+    row_scale = _residual_row_scale(
+        y=x0_vec,
+        y_initial=y_initial,
+        y_terminal=y_terminal,
+        x=shock_matrix,
+        params=param_matrix,
+        problem=problem,
+    )
+
     # The residual-only function lets the line search evaluate the merit function at rejected trial points
     # without paying for a Jacobian there.
     def merit_fun(x, *_args):
@@ -222,19 +232,28 @@ def solve_perfect_foresight(
         )
 
     if solver is None:
-        solver = newton_armijo(globalization=ArmijoBacktracking(merit_fun=merit_fun))
-    else:
-        # Trust-region solvers take no globalization strategy, so there is nowhere to put the merit function.
-        globalization = getattr(solver, "globalization", None)
-        if globalization is not None and globalization.merit_fun is None:
-            solver = replace(solver, globalization=replace(globalization, merit_fun=merit_fun))
+        solver = newton_armijo()
+
+    # Trust-region solvers take no globalization strategy, so there is nowhere to put the merit function. A caller's
+    # own merit function returns raw residuals, so it is scaled like everything else the line search compares.
+    globalization = getattr(solver, "globalization", None)
+    if globalization is not None:
+        unscaled_merit_fun = globalization.merit_fun or merit_fun
+
+        def scaled_merit_fun(x, *args):
+            return row_scale * unscaled_merit_fun(x, *args)
+
+        solver = replace(solver, globalization=replace(globalization, merit_fun=scaled_merit_fun))
 
     result = sparse_root(
-        _compute_stacked_residuals_and_jacobian,
+        _compute_scaled_residuals_and_jacobian,
         x0_vec,
-        args=(y_initial, y_terminal, shock_matrix, param_matrix, problem),
+        args=(y_initial, y_terminal, shock_matrix, param_matrix, problem, row_scale),
         solver=solver,
     )
+    if result.fun is not None:
+        result.fun = result.fun / row_scale
+        result.jac = _scale_rows(result.jac, 1 / row_scale)
 
     trajectory = pd.DataFrame(result.x.reshape(simulation_length, problem.n_vars), columns=var_names)
     return trajectory, result
@@ -463,6 +482,39 @@ def _compute_stacked_residuals_and_jacobian(
     residuals, jacobians = problem.f_resid_and_jac(Y_tm1, Y_t, Y_tp1, x, params)
 
     return residuals.ravel(), assemble_stacked_jacobian(period_jacobians=jacobians, layout=problem.jacobian_layout)
+
+
+def _residual_row_scale(
+    y: np.ndarray,
+    y_initial: np.ndarray,
+    y_terminal: np.ndarray,
+    x: np.ndarray,
+    params: np.ndarray,
+    problem: PerfectForesightProblem,
+) -> np.ndarray:
+    """Return the reciprocal of the largest Jacobian entry in each stacked equation, evaluated at ``y``."""
+    _, jacobian = _compute_stacked_residuals_and_jacobian(y, y_initial, y_terminal, x, params, problem)
+    row_max = abs(jacobian).max(axis=1).toarray().ravel()
+    return 1 / np.where(row_max > 0, row_max, 1.0)
+
+
+def _scale_rows(matrix: sparse.csc_matrix, scale: np.ndarray) -> sparse.csc_matrix:
+    scaled = matrix.copy()
+    scaled.data *= scale[scaled.indices]
+    return scaled
+
+
+def _compute_scaled_residuals_and_jacobian(
+    y: np.ndarray,
+    y_initial: np.ndarray,
+    y_terminal: np.ndarray,
+    x: np.ndarray,
+    params: np.ndarray,
+    problem: PerfectForesightProblem,
+    row_scale: np.ndarray,
+) -> tuple[np.ndarray, sparse.csc_matrix]:
+    residuals, jacobian = _compute_stacked_residuals_and_jacobian(y, y_initial, y_terminal, x, params, problem)
+    return row_scale * residuals, _scale_rows(jacobian, row_scale)
 
 
 def _compute_stacked_residuals(

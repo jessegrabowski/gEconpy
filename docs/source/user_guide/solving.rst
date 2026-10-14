@@ -58,6 +58,13 @@ root. The result is exact for the nonlinear model, so it handles large shocks, o
 and transitions between steady states. :func:`~gEconpy.model.perfect_foresight.solve.make_piecewise_x0`
 builds a starting path that jumps between two steady states, which is the right guess for a permanent shock.
 
+Before solving, each stacked equation is divided by the largest entry of its Jacobian row at the initial guess. A
+model whose equations hold terms of very different sizes, such as a recursive wage-setting auxiliary of order
+:math:`10^5` next to an Euler equation of order one, otherwise has its line search and convergence test dominated
+by the large equation. The returned ``fun`` and ``jac`` are unscaled, but the convergence tolerance applies to the
+scaled residuals, so the residual of an equation with terms of order :math:`10^5` can exceed the tolerance by about
+that factor. In double precision such an equation cannot be solved to a much smaller absolute residual in any case.
+
 The stacked system is solved by :func:`~gEconpy.solvers.sparse_root.sparse_root.sparse_root`, which takes a fused
 residual-and-Jacobian function and a solver object. The package ships two families of solvers.
 

@@ -7,11 +7,17 @@ import pytest
 from numpy.testing import assert_allclose
 
 from gEconpy import impulse_response_function
-from gEconpy.model.perfect_foresight import solve_perfect_foresight
-from gEconpy.model.perfect_foresight.solve import _normalize_condition_keys, make_piecewise_x0
+from gEconpy.model.perfect_foresight import compile_perfect_foresight_problem, solve_perfect_foresight
+from gEconpy.model.perfect_foresight.solve import (
+    _build_param_matrix,
+    _compute_stacked_residuals,
+    _compute_stacked_residuals_and_jacobian,
+    _normalize_condition_keys,
+    make_piecewise_x0,
+)
 from gEconpy.solvers.sparse_root import LevenbergMarquardt, newton_armijo
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
-from tests._resources.cache_compiled_models import load_and_cache_model
+from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 
 
 @pytest.fixture
@@ -662,6 +668,71 @@ class TestInputGuards:
             solve_perfect_foresight(rbc_model, simulation_length=10, param_paths={"not_a_param": 1.0})
 
         mock_ss.assert_not_called()
+
+
+class TestResidualScaling:
+    @pytest.fixture
+    def wage_setting_nk_model(self):
+        # Its wage-setting auxiliary is of order 1e5, with a large exponent on inflation in the same equation.
+        return load_and_cache_example("sims_2024/nk_complete_more_shocks")
+
+    def test_an_equation_with_large_terms_does_not_stall_the_line_search(self, wage_setting_nk_model):
+        shock_path = np.zeros(20)
+        shock_path[0] = 1e-4
+
+        _, result = solve_perfect_foresight(
+            wage_setting_nk_model, simulation_length=20, shocks={"epsilon_beta": shock_path}
+        )
+
+        assert result.success
+        assert result.nit <= 3
+
+    def test_result_reports_the_unscaled_residuals_and_jacobian(self, wage_setting_nk_model):
+        simulation_length = 20
+        shock_path = np.zeros(simulation_length)
+        shock_path[0] = 1e-4
+
+        _trajectory, result = solve_perfect_foresight(
+            wage_setting_nk_model, simulation_length=simulation_length, shocks={"epsilon_beta": shock_path}
+        )
+
+        problem = compile_perfect_foresight_problem(wage_setting_nk_model, simulation_length)
+        steady_state = wage_setting_nk_model.steady_state(verbose=False)
+        boundary = np.array([steady_state[f"{name}_ss"] for name in problem.var_names])
+        shocks = np.zeros((simulation_length, len(problem.shock_names)))
+        shocks[0, problem.shock_names.index("epsilon_beta")] = 1e-4
+        params = _build_param_matrix(None, problem.param_names, wage_setting_nk_model, simulation_length)
+
+        residuals, jacobian = _compute_stacked_residuals_and_jacobian(
+            result.x, boundary, boundary, shocks, params, problem
+        )
+        assert_allclose(result.fun, residuals, rtol=1e-12)
+        assert_allclose(result.jac.toarray(), jacobian.toarray(), rtol=1e-12)
+
+    def test_a_caller_supplied_raw_merit_function_is_scaled_to_match(self, wage_setting_nk_model):
+        simulation_length = 20
+        shock_path = np.zeros(simulation_length)
+        shock_path[0] = 1e-4
+
+        problem = compile_perfect_foresight_problem(wage_setting_nk_model, simulation_length)
+        steady_state = wage_setting_nk_model.steady_state(verbose=False)
+        boundary = np.array([steady_state[f"{name}_ss"] for name in problem.var_names])
+        shocks = np.zeros((simulation_length, len(problem.shock_names)))
+        shocks[0, problem.shock_names.index("epsilon_beta")] = 1e-4
+        params = _build_param_matrix(None, problem.param_names, wage_setting_nk_model, simulation_length)
+
+        def raw_merit_fun(x, *_args):
+            return _compute_stacked_residuals(x, boundary, boundary, shocks, params, problem)
+
+        _, result = solve_perfect_foresight(
+            wage_setting_nk_model,
+            simulation_length=simulation_length,
+            shocks={"epsilon_beta": shock_path},
+            solver=newton_armijo(globalization=ArmijoBacktracking(merit_fun=raw_merit_fun)),
+        )
+
+        assert result.success
+        assert result.nit <= 3
 
 
 class TestMeritFunction:
