@@ -29,6 +29,7 @@ def solve_perfect_foresight(
     compile_kwargs: dict | None = None,
     solver: RootSolver | None = None,
     steady_state_kwargs: dict | None = None,
+    sparse_root_kwargs: dict | None = None,
 ) -> tuple[pd.DataFrame, OptimizeResult]:
     """
     Solve the nonlinear model under perfect foresight over a finite horizon.
@@ -74,6 +75,9 @@ def solve_perfect_foresight(
         available solvers. Defaults to Newton's method with Armijo backtracking.
     steady_state_kwargs : dict, optional
         Keyword arguments forwarded to ``model.steady_state()``. ``verbose`` defaults to False.
+    sparse_root_kwargs : dict, optional
+        Keyword arguments forwarded to :func:`~gEconpy.solvers.sparse_root.sparse_root.sparse_root`, such as
+        ``tol``, ``maxiter``, or ``progressbar``.
 
     Returns
     -------
@@ -137,6 +141,7 @@ def solve_perfect_foresight(
     terminal_conditions = _normalize_condition_keys(terminal_conditions or {})
     compile_kwargs = compile_kwargs or {}
     steady_state_kwargs = {"verbose": False, **(steady_state_kwargs or {})}
+    sparse_root_kwargs = sparse_root_kwargs or {}
 
     problem = compile_perfect_foresight_problem(model, simulation_length, **compile_kwargs)
     var_names = problem.var_names
@@ -250,6 +255,7 @@ def solve_perfect_foresight(
         x0_vec,
         args=(y_initial, y_terminal, shock_matrix, param_matrix, problem, row_scale),
         solver=solver,
+        **sparse_root_kwargs,
     )
     if result.fun is not None:
         result.fun = result.fun / row_scale

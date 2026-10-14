@@ -277,6 +277,26 @@ class TestSolverArgument:
         assert_allclose(second.values, reference.values, rtol=1e-8)
 
 
+class TestSparseRootKwargs:
+    def test_tolerance_and_iteration_cap_reach_the_root_finder(self, rbc_model):
+        ss_dict = rbc_model.steady_state(verbose=False)
+        conditions = {"initial_conditions": {"K": 0.5 * ss_dict["K_ss"]}}
+
+        _, default_result = solve_perfect_foresight(rbc_model, simulation_length=20, **conditions)
+        _, loose_result = solve_perfect_foresight(
+            rbc_model, simulation_length=20, sparse_root_kwargs={"tol": 1e-3}, **conditions
+        )
+        _, capped_result = solve_perfect_foresight(
+            rbc_model, simulation_length=20, sparse_root_kwargs={"maxiter": 1}, **conditions
+        )
+
+        assert default_result.success
+        assert loose_result.success
+        assert loose_result.nit < default_result.nit
+        assert not capped_result.success
+        assert capped_result.nit == 1
+
+
 class TestSteadyStateKwargs:
     def test_kwargs_reach_the_steady_state_with_verbose_defaulting_off(self, rbc_model):
         with patch.object(type(rbc_model), "steady_state", wraps=rbc_model.steady_state) as mock_ss:
