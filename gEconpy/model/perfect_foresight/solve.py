@@ -492,8 +492,23 @@ def _residual_row_scale(
     params: np.ndarray,
     problem: PerfectForesightProblem,
 ) -> np.ndarray:
-    """Return the reciprocal of the largest Jacobian entry in each stacked equation, evaluated at ``y``."""
-    _, jacobian = _compute_stacked_residuals_and_jacobian(y, y_initial, y_terminal, x, params, problem)
+    """
+    Return the reciprocal of the largest Jacobian entry in each stacked equation, evaluated at ``y``.
+
+    Raises
+    ------
+    ValueError
+        If a residual or a Jacobian entry at ``y`` is not finite, naming the first such equation and its period.
+    """
+    residuals, jacobian = _compute_stacked_residuals_and_jacobian(y, y_initial, y_terminal, x, params, problem)
+
+    non_finite_rows = np.union1d(np.flatnonzero(~np.isfinite(residuals)), jacobian.indices[~np.isfinite(jacobian.data)])
+    if non_finite_rows.size:
+        period, equation = divmod(int(non_finite_rows[0]), problem.n_vars)
+        raise ValueError(
+            f"The residual or Jacobian of equation {equation} in period {period} is not finite at the initial guess"
+        )
+
     row_max = abs(jacobian).max(axis=1).toarray().ravel()
     return 1 / np.where(row_max > 0, row_max, 1.0)
 

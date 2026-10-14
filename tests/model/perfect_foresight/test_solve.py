@@ -659,6 +659,16 @@ class TestInputGuards:
         with pytest.raises(ValueError, match=f"{named_input} contains non-finite values"):
             solve_perfect_foresight(rbc_model, simulation_length=T, **kwargs)
 
+    def test_initial_guess_where_the_model_is_undefined_raises_naming_the_period(self, rbc_model):
+        T = 10
+        ss = rbc_model.steady_state(verbose=False)
+        var_names = [v.base_name for v in rbc_model.variables]
+        x0 = np.tile([ss[f"{name}_ss"] for name in var_names], (T, 1))
+        x0[3, var_names.index("K")] = -1.0
+
+        with pytest.raises(ValueError, match=r"equation \d+ in period 3 is not finite at the initial guess"):
+            solve_perfect_foresight(rbc_model, simulation_length=T, x0=x0)
+
     def test_unknown_parameter_is_reported_before_the_steady_state_is_computed(self, rbc_model):
         """The model's own error for a bad name does not say which names a parameter path may use."""
         with (
