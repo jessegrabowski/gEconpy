@@ -93,6 +93,31 @@ def test_default_tolerance_leaves_the_stall_test_strict():
     assert diagnostics.success.all()
 
 
+def test_a_failed_period_ends_only_its_own_trajectory(rbc_model):
+    # One Newton iteration is too few for some of these shocks, so each trajectory fails at its own period.
+    with pytest.warns(UserWarning, match="stopped at period") as record:
+        paths, diagnostics = simulate_extended_path(
+            rbc_model,
+            n_simulations=2,
+            simulation_length=8,
+            shock_std=0.01,
+            random_seed=1,
+            sparse_root_kwargs={"maxiter": 1},
+        )
+
+    failed_periods = diagnostics.success.argmin(dim="time").values
+    assert list(failed_periods) == [1, 3]
+    assert [str(warning.message).split(",")[0] for warning in record] == [
+        "Simulation 0 stopped at period 1",
+        "Simulation 1 stopped at period 3",
+    ]
+    for simulation, failed_period in enumerate(failed_periods):
+        assert np.isfinite(paths.values[simulation, :failed_period]).all()
+        assert np.isnan(paths.values[simulation, failed_period:]).all()
+        assert not diagnostics.success.values[simulation, failed_period:].any()
+        assert not diagnostics.nit.values[simulation, failed_period + 1 :].any()
+
+
 def test_unknown_initial_condition_raises(rbc_model):
     with pytest.raises(ValueError, match="unknown variables: Q"):
         simulate_extended_path(rbc_model, shock_std=0.0, initial_conditions={"Q": 1.0})

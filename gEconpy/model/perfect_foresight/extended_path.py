@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import xarray as xr
 
@@ -77,10 +79,12 @@ def simulate_extended_path(
     Returns
     -------
     simulations : DataArray
-        Simulated levels with dimensions ``(simulation, time, variable)``.
+        Simulated levels with dimensions ``(simulation, time, variable)``. A trajectory whose period fails to solve
+        is NaN from that period on, with a warning naming the period, and the other trajectories continue.
     diagnostics : Dataset
         Per-period solver output with dimensions ``(simulation, time)``: ``success``, and the work counts ``nit``,
-        ``nfev``, ``njev``, and ``nsolve``.
+        ``nfev``, ``njev``, and ``nsolve``. Periods after a failure were not attempted, so ``success`` is False and
+        the counts are zero there.
 
     Examples
     --------
@@ -143,6 +147,14 @@ def simulate_extended_path(
             success[simulation, t] = result.success
             for field in _WORK_COUNT_FIELDS:
                 work_counts[field][simulation, t] = result[field]
+
+            if not result.success:
+                warnings.warn(
+                    f"Simulation {simulation} stopped at period {t}, and its values from that period on are NaN. "
+                    f"The solver reported: {result.message}",
+                    stacklevel=2,
+                )
+                break
 
             path = solution[var_names].to_numpy()
             state = path[0]
