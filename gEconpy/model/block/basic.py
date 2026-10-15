@@ -342,7 +342,9 @@ class Block:
         system = self.system_equations
         simplified_system = system.copy()
         variables = [x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
-        generated_multipliers = list({x for x in variables if "lambda__" in x.base_name})
+        # Sorted because set order follows the per-process string hash seed, and the elimination order can change
+        # which equation defines each multiplier.
+        generated_multipliers = sorted({x for x in variables if "lambda__" in x.base_name}, key=lambda x: x.name)
 
         eliminated_variables = []
         for multiplier in generated_multipliers:
