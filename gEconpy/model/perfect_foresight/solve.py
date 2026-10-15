@@ -15,8 +15,9 @@ from gEconpy.model.perfect_foresight.compile import (
     compile_perfect_foresight_problem,
 )
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
-from gEconpy.solvers.sparse_root import newton_armijo, sparse_root
+from gEconpy.solvers.sparse_root import newton_armijo
 from gEconpy.solvers.sparse_root.base import RootSolver
+from gEconpy.solvers.sparse_root.sparse_root import _run_sparse_root
 
 
 def solve_perfect_foresight(
@@ -221,51 +222,16 @@ def solve_perfect_foresight(
         param_paths=param_matrix,
     )
 
-    row_scale = _residual_row_scale(
-        y=x0_vec,
+    result = _solve_stacked(
+        problem=problem,
+        x0=x0_vec,
         y_initial=y_initial,
         y_terminal=y_terminal,
-        x=shock_matrix,
+        shocks=shock_matrix,
         params=param_matrix,
-        problem=problem,
-    )
-
-    # The residual-only function lets the line search evaluate the merit function at rejected trial points
-    # without paying for a Jacobian there.
-    def merit_fun(x, *_args):
-        return _compute_stacked_residuals(
-            y=x,
-            y_initial=y_initial,
-            y_terminal=y_terminal,
-            x=shock_matrix,
-            params=param_matrix,
-            problem=problem,
-        )
-
-    if solver is None:
-        solver = newton_armijo()
-
-    # Trust-region solvers take no globalization strategy, so there is nowhere to put the merit function. A caller's
-    # own merit function returns raw residuals, so it is scaled like everything else the line search compares.
-    globalization = getattr(solver, "globalization", None)
-    if globalization is not None:
-        unscaled_merit_fun = globalization.merit_fun or merit_fun
-
-        def scaled_merit_fun(x, *args):
-            return row_scale * unscaled_merit_fun(x, *args)
-
-        solver = replace(solver, globalization=replace(globalization, merit_fun=scaled_merit_fun))
-
-    result = sparse_root(
-        _compute_scaled_residuals_and_jacobian,
-        x0_vec,
-        args=(y_initial, y_terminal, shock_matrix, param_matrix, problem, row_scale),
         solver=solver,
-        **sparse_root_kwargs,
+        sparse_root_kwargs=sparse_root_kwargs,
     )
-    if result.fun is not None:
-        result.fun = result.fun / row_scale
-        result.jac = _scale_rows(result.jac, 1 / row_scale)
 
     trajectory = pd.DataFrame(result.x.reshape(simulation_length, problem.n_vars), columns=var_names)
     return trajectory, result
@@ -497,43 +463,75 @@ def _compute_stacked_residuals_and_jacobian(
     return residuals.ravel(), assemble_stacked_jacobian(period_jacobians=jacobians, layout=problem.jacobian_layout)
 
 
-def _residual_row_scale(
-    y: np.ndarray,
+def _solve_stacked(
+    problem: PerfectForesightProblem,
+    x0: np.ndarray,
     y_initial: np.ndarray,
     y_terminal: np.ndarray,
-    x: np.ndarray,
+    shocks: np.ndarray,
     params: np.ndarray,
-    problem: PerfectForesightProblem,
-) -> np.ndarray:
-    """Return the reciprocal of the largest Jacobian entry in each stacked equation, evaluated at ``y``."""
-    residuals, jacobian = _compute_stacked_residuals_and_jacobian(y, y_initial, y_terminal, x, params, problem)
+    solver: RootSolver | None,
+    sparse_root_kwargs: dict,
+) -> OptimizeResult:
+    """
+    Solve the stacked system from validated inputs, with each equation scaled by its largest Jacobian entry at ``x0``.
 
+    ``fun`` and ``jac`` on the result are unscaled.
+    """
+    residuals, jacobian = _compute_stacked_residuals_and_jacobian(x0, y_initial, y_terminal, shocks, params, problem)
+    row_scale = _residual_row_scale(residuals=residuals, jacobian=jacobian, n_vars=problem.n_vars)
+
+    # The solver's first evaluation is at x0, which the row scale has just paid for.
+    first_evaluation = [(row_scale * residuals, _scale_rows_in_place(jacobian, row_scale))]
+
+    def scaled_fun(y):
+        if first_evaluation and np.array_equal(y, x0):
+            return first_evaluation.pop()
+        residuals, jacobian = _compute_stacked_residuals_and_jacobian(y, y_initial, y_terminal, shocks, params, problem)
+        return row_scale * residuals, _scale_rows_in_place(jacobian, row_scale)
+
+    # The residual-only function lets the line search evaluate the merit function at rejected trial points
+    # without paying for a Jacobian there.
+    def merit_fun(y, *_args):
+        return _compute_stacked_residuals(
+            y=y, y_initial=y_initial, y_terminal=y_terminal, x=shocks, params=params, problem=problem
+        )
+
+    if solver is None:
+        solver = newton_armijo()
+
+    # Trust-region solvers take no globalization strategy, so there is nowhere to put the merit function. A caller's
+    # own merit function returns raw residuals, so it is scaled like everything else the line search compares.
+    globalization = getattr(solver, "globalization", None)
+    if globalization is not None:
+        unscaled_merit_fun = globalization.merit_fun or merit_fun
+
+        def scaled_merit_fun(y, *args):
+            return row_scale * unscaled_merit_fun(y, *args)
+
+        solver = replace(solver, globalization=replace(globalization, merit_fun=scaled_merit_fun))
+
+    result = _run_sparse_root(scaled_fun, x0, solver=solver, **sparse_root_kwargs)
+    if result.fun is not None:
+        result.fun = result.fun / row_scale
+        result.jac = _scale_rows_in_place(result.jac.copy(), 1 / row_scale)
+    return result
+
+
+def _residual_row_scale(residuals: np.ndarray, jacobian: sparse.csc_matrix, n_vars: int) -> np.ndarray:
+    """Return the reciprocal of the largest Jacobian entry in each stacked equation."""
     non_finite_rows = np.union1d(np.flatnonzero(~np.isfinite(residuals)), jacobian.indices[~np.isfinite(jacobian.data)])
     if non_finite_rows.size:
-        period, equation = divmod(int(non_finite_rows[0]), problem.n_vars)
+        period, equation = divmod(int(non_finite_rows[0]), n_vars)
         raise NonFiniteInitialGuessError(equation=equation, period=period)
 
     row_max = abs(jacobian).max(axis=1).toarray().ravel()
     return 1 / np.where(row_max > 0, row_max, 1.0)
 
 
-def _scale_rows(matrix: sparse.csc_matrix, scale: np.ndarray) -> sparse.csc_matrix:
-    scaled = matrix.copy()
-    scaled.data *= scale[scaled.indices]
-    return scaled
-
-
-def _compute_scaled_residuals_and_jacobian(
-    y: np.ndarray,
-    y_initial: np.ndarray,
-    y_terminal: np.ndarray,
-    x: np.ndarray,
-    params: np.ndarray,
-    problem: PerfectForesightProblem,
-    row_scale: np.ndarray,
-) -> tuple[np.ndarray, sparse.csc_matrix]:
-    residuals, jacobian = _compute_stacked_residuals_and_jacobian(y, y_initial, y_terminal, x, params, problem)
-    return row_scale * residuals, _scale_rows(jacobian, row_scale)
+def _scale_rows_in_place(matrix: sparse.csc_matrix, scale: np.ndarray) -> sparse.csc_matrix:
+    matrix.data *= scale[matrix.indices]
+    return matrix
 
 
 def _compute_stacked_residuals(
