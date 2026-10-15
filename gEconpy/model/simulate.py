@@ -213,10 +213,42 @@ def simulate(
         paths = simulate(model, n_simulations=5, simulation_length=100, shock_std=0.01, random_seed=0, verbose=False)
         print(paths.sel(variable="Y").std(dim="time").values)
     """
-    rng = np.random.default_rng(random_seed)
+    epsilons = _draw_shocks(
+        model=model,
+        n_simulations=n_simulations,
+        simulation_length=simulation_length,
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
+        random_seed=random_seed,
+    )
 
+    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
+    trajectories = _simulate_linear_system(T, R, epsilons)
+
+    return xr.DataArray(
+        trajectories,
+        dims=["simulation", "time", "variable"],
+        coords={
+            "variable": [x.base_name for x in model.variables],
+            "simulation": np.arange(n_simulations),
+            "time": np.arange(simulation_length),
+        },
+    )
+
+
+def _draw_shocks(
+    model: Model,
+    n_simulations: int,
+    simulation_length: int,
+    shock_std_dict: dict[str, float] | None = None,
+    shock_cov_matrix: np.ndarray | None = None,
+    shock_std: np.ndarray | list | float | None = None,
+    random_seed: int | np.random.RandomState | None = None,
+) -> np.ndarray:
+    """Draw ``(n_simulations, simulation_length, n_shocks)`` Gaussian shocks from :func:`simulate`'s arguments."""
+    rng = np.random.default_rng(random_seed)
     shocks = model.shocks
-    n_shocks = len(shocks)
 
     _validate_shock_options(
         shock_std_dict=shock_std_dict,
@@ -232,24 +264,11 @@ def simulate(
         shock_std=shock_std,
     )
 
-    epsilons = rng.multivariate_normal(
-        mean=np.zeros(n_shocks),
+    return rng.multivariate_normal(
+        mean=np.zeros(len(shocks)),
         cov=Q,
         size=(n_simulations, simulation_length),
         method="svd",
-    )
-
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-    trajectories = _simulate_linear_system(T, R, epsilons)
-
-    return xr.DataArray(
-        trajectories,
-        dims=["simulation", "time", "variable"],
-        coords={
-            "variable": [x.base_name for x in model.variables],
-            "simulation": np.arange(n_simulations),
-            "time": np.arange(simulation_length),
-        },
     )
 
 

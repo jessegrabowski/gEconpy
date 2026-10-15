@@ -7,6 +7,7 @@ import pandas as pd
 from scipy import sparse
 from scipy.optimize import OptimizeResult
 
+from gEconpy.exceptions import NonFiniteInitialGuessError
 from gEconpy.model.model import Model
 from gEconpy.model.perfect_foresight.assemble import assemble_stacked_jacobian
 from gEconpy.model.perfect_foresight.compile import (
@@ -29,6 +30,7 @@ def solve_perfect_foresight(
     compile_kwargs: dict | None = None,
     solver: RootSolver | None = None,
     steady_state_kwargs: dict | None = None,
+    sparse_root_kwargs: dict | None = None,
 ) -> tuple[pd.DataFrame, OptimizeResult]:
     """
     Solve the nonlinear model under perfect foresight over a finite horizon.
@@ -73,7 +75,11 @@ def solve_perfect_foresight(
         The root-finding solver. See :doc:`gEconpy.solvers.sparse_root </api/gEconpy.solvers.sparse_root>` for the
         available solvers. Defaults to Newton's method with Armijo backtracking.
     steady_state_kwargs : dict, optional
-        Keyword arguments forwarded to ``model.steady_state()``. ``verbose`` defaults to False.
+        Keyword arguments forwarded to ``model.steady_state()``. A parameter value given here also holds in every
+        period of the path, unless ``param_paths`` names the same parameter. ``verbose`` defaults to False.
+    sparse_root_kwargs : dict, optional
+        Keyword arguments forwarded to :func:`~gEconpy.solvers.sparse_root.sparse_root.sparse_root`, such as
+        ``tol``, ``maxiter``, or ``progressbar``.
 
     Returns
     -------
@@ -137,10 +143,15 @@ def solve_perfect_foresight(
     terminal_conditions = _normalize_condition_keys(terminal_conditions or {})
     compile_kwargs = compile_kwargs or {}
     steady_state_kwargs = {"verbose": False, **(steady_state_kwargs or {})}
+    sparse_root_kwargs = sparse_root_kwargs or {}
 
     problem = compile_perfect_foresight_problem(model, simulation_length, **compile_kwargs)
     var_names = problem.var_names
     var_set = set(var_names)
+
+    parameter_updates = {name: value for name, value in steady_state_kwargs.items() if name in problem.param_names}
+    steady_state_kwargs = {name: value for name, value in steady_state_kwargs.items() if name not in parameter_updates}
+    param_paths = {**parameter_updates, **(param_paths or {})}
 
     # Validation runs before anything expensive, and before any name reaches the model: a typo in param_paths
     # otherwise surfaces as whatever model.steady_state makes of it.
@@ -250,6 +261,7 @@ def solve_perfect_foresight(
         x0_vec,
         args=(y_initial, y_terminal, shock_matrix, param_matrix, problem, row_scale),
         solver=solver,
+        **sparse_root_kwargs,
     )
     if result.fun is not None:
         result.fun = result.fun / row_scale
@@ -441,11 +453,12 @@ def _build_param_matrix(
     """
     # The boundary steady states are computed through the same resolver, so a period whose deterministic
     # parameters were not rederived would be solving a different model than its own boundary conditions.
-    if param_paths:
+    param_paths = param_paths or {}
+    if all(np.ndim(value) == 0 for value in param_paths.values()):
+        by_period = [model.parameters(**param_paths)] * T
+    else:
         paths = {name: np.broadcast_to(np.asarray(value, dtype=float), (T,)) for name, value in param_paths.items()}
         by_period = [model.parameters(**{name: path[t] for name, path in paths.items()}) for t in range(T)]
-    else:
-        by_period = [model.parameters()] * T
 
     return np.array([[parameters[name] for name in param_names] for parameters in by_period])
 
@@ -492,22 +505,13 @@ def _residual_row_scale(
     params: np.ndarray,
     problem: PerfectForesightProblem,
 ) -> np.ndarray:
-    """
-    Return the reciprocal of the largest Jacobian entry in each stacked equation, evaluated at ``y``.
-
-    Raises
-    ------
-    ValueError
-        If a residual or a Jacobian entry at ``y`` is not finite, naming the first such equation and its period.
-    """
+    """Return the reciprocal of the largest Jacobian entry in each stacked equation, evaluated at ``y``."""
     residuals, jacobian = _compute_stacked_residuals_and_jacobian(y, y_initial, y_terminal, x, params, problem)
 
     non_finite_rows = np.union1d(np.flatnonzero(~np.isfinite(residuals)), jacobian.indices[~np.isfinite(jacobian.data)])
     if non_finite_rows.size:
         period, equation = divmod(int(non_finite_rows[0]), problem.n_vars)
-        raise ValueError(
-            f"The residual or Jacobian of equation {equation} in period {period} is not finite at the initial guess"
-        )
+        raise NonFiniteInitialGuessError(equation=equation, period=period)
 
     row_max = abs(jacobian).max(axis=1).toarray().ravel()
     return 1 / np.where(row_max > 0, row_max, 1.0)

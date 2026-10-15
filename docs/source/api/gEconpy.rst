@@ -11,6 +11,7 @@ gEconpy
     model.build.model_from_gcn
     model.build.statespace_from_gcn
     model.html.print_gcn_file
+    model.perfect_foresight.extended_path.simulate_extended_path
     model.perfect_foresight.solve.solve_perfect_foresight
     model.sampling.bounds_from_priors
     model.sampling.sample_from_priors
@@ -59,6 +60,7 @@ gEconpy
     gEconpy.model.perfect_foresight <gEconpy.model.perfect_foresight>
     gEconpy.model.perfect_foresight.assemble <gEconpy.model.perfect_foresight.assemble>
     gEconpy.model.perfect_foresight.compile <gEconpy.model.perfect_foresight.compile>
+    gEconpy.model.perfect_foresight.extended_path <gEconpy.model.perfect_foresight.extended_path>
     gEconpy.model.perfect_foresight.solve <gEconpy.model.perfect_foresight.solve>
     gEconpy.model.perfect_foresight.validation <gEconpy.model.perfect_foresight.validation>
     gEconpy.model.perturbation <gEconpy.model.perturbation>

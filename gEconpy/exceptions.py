@@ -223,6 +223,20 @@ class PerturbationSolutionNotFoundException(ValueError):
         super().__init__(message)
 
 
+class NonFiniteInitialGuessError(ValueError):
+    """Raised when a perfect-foresight problem's residual or Jacobian is not finite at the initial guess."""
+
+    def __init__(self, equation: int, period: int):
+        self.equation = equation
+        self.period = period
+
+        message = (
+            f"The residual or Jacobian of equation {equation} in period {period} is not finite at the initial guess"
+        )
+
+        super().__init__(message)
+
+
 class SteadyStateNotFoundError(ValueError):
     """Raised when the provided steady-state values leave non-zero residuals in some model equations."""
 
