@@ -17,6 +17,7 @@ from gEconpy.solvers.shared import (
     o1_policy_function_adjoints,
     pt_compute_selection_matrix,
 )
+from gEconpy.solvers.stein import AdjointMethod, validate_adjoint_method
 
 EPSILON = np.spacing(1)
 floatX = pytensor.config.floatX
@@ -190,6 +191,7 @@ def gensys_pt(
     C: TensorVariable,
     D: TensorVariable,
     tol: float = 1e-8,
+    adjoint_method: AdjointMethod = "doubling",
 ) -> tuple[TensorVariable, TensorVariable, TensorVariable]:
     """
     Build a symbolic graph that solves a linearized DSGE system with gensys.
@@ -209,6 +211,9 @@ def gensys_pt(
         on a lead variable smaller than ``tol`` times the largest coefficient in its equation counts as zero, so the
         policy function does not respond to perturbations of ``C`` below that size. A finite-difference gradient check
         needs a step larger than this threshold, or a smaller ``tol``. Defaults to 1e-8.
+    adjoint_method : {"doubling", "qz", "sylvester", "direct"}, optional
+        Algorithm for the Stein equation in the policy function adjoint. See
+        :func:`~gEconpy.solvers.stein.solve_policy_stein` for the trade-offs. Defaults to ``"doubling"``.
 
     Returns
     -------
@@ -219,7 +224,7 @@ def gensys_pt(
     success : TensorVariable
         Boolean scalar that is True when gensys found a unique, stable solution.
     """
-    T, success = GensysWrapper(tol=tol)(A, B, C, D)
+    T, success = GensysWrapper(tol=tol, adjoint_method=adjoint_method)(A, B, C, D)
     R = pt_compute_selection_matrix(B, C, D, T)
 
     return T, R, success
@@ -234,13 +239,18 @@ class GensysWrapper(Op):
     tol : float, optional
         Relative tolerance passed to :func:`~gEconpy.solvers.gensys.solve_policy_function_with_gensys`. Defaults to
         1e-8.
+    adjoint_method : {"doubling", "qz", "sylvester", "direct"}, optional
+        Algorithm for the Stein equation in the policy function adjoint. See
+        :func:`~gEconpy.solvers.stein.solve_policy_stein` for the trade-offs. Defaults to ``"doubling"``.
     """
 
-    __props__ = ("tol",)
+    __props__ = ("tol", "adjoint_method")
     gufunc_signature = "(n,n),(n,n),(n,n),(n,k)->(n,n),()"
 
-    def __init__(self, tol: float = 1e-8):
+    def __init__(self, tol: float = 1e-8, adjoint_method: AdjointMethod = "doubling"):
+        validate_adjoint_method(adjoint_method)
         self.tol = tol
+        self.adjoint_method = adjoint_method
         super().__init__()
 
     def make_node(self, A, B, C, D) -> Apply:
@@ -274,7 +284,7 @@ class GensysWrapper(Op):
         T, _success = outputs
         T_bar, _success_bar = cotangents
 
-        A_bar, B_bar, C_bar = o1_policy_function_adjoints(A, B, C, T, T_bar)
+        A_bar, B_bar, C_bar = o1_policy_function_adjoints(A, B, C, T, T_bar, method=self.adjoint_method)
         D_bar = pt.zeros_like(D).astype(floatX)
 
         return [A_bar, B_bar, C_bar, D_bar]

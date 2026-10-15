@@ -42,6 +42,7 @@ from gEconpy.pytensorf.block import block
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct_pt
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
+from gEconpy.solvers.stein import AdjointMethod, validate_adjoint_method
 
 _log = logging.getLogger(__name__)
 floatX = pytensor.config.floatX
@@ -770,6 +771,7 @@ class DSGEStateSpace(PyMCStateSpace):
         max_iter: int = 50,
         tol: float = 1e-6,
         use_adjoint_gradients: bool = True,
+        adjoint_method: AdjointMethod = "doubling",
         use_direct_lyapunov: bool = False,
     ) -> None:
         r"""
@@ -822,6 +824,13 @@ class DSGEStateSpace(PyMCStateSpace):
             Convergence tolerance for the solver. Defaults to 1e-6.
         use_adjoint_gradients : bool, optional
             Differentiate ``scan_cycle_reduction`` with the adjoint method. Defaults to True.
+        adjoint_method : {"doubling", "qz", "sylvester", "direct"}, optional
+            Algorithm for the Stein equation in the policy function adjoint, used by every solver except
+            ``"backward_direct"``. ``"doubling"`` runs on every backend. ``"qz"`` is the most accurate but has no
+            JAX implementation and gives first derivatives only. ``"sylvester"`` is the fastest but loses accuracy
+            on badly conditioned models. ``"direct"`` is an :math:`O(n^6)` Kronecker solve kept as a reference
+            only and is not recommended. See :func:`~gEconpy.solvers.stein.solve_policy_stein`. Defaults to
+            ``"doubling"``.
         use_direct_lyapunov : bool, optional
             Solve the initial-state Lyapunov equation with the direct method. The default uses the bilinear method.
             Defaults to False.
@@ -937,14 +946,20 @@ class DSGEStateSpace(PyMCStateSpace):
                 f"variation (by adding measurement error or structural shocks)"
             )
 
+        validate_adjoint_method(adjoint_method)
         if solver == "gensys":
-            solver_kwargs = {"tol": tol}
+            solver_kwargs = {"tol": tol, "adjoint_method": adjoint_method}
         elif solver == "cycle_reduction":
-            solver_kwargs = {"tol": tol, "max_iter": max_iter}
+            solver_kwargs = {"tol": tol, "max_iter": max_iter, "adjoint_method": adjoint_method}
         elif solver == "backward_direct":
             solver_kwargs = {}
         else:
-            solver_kwargs = {"tol": tol, "max_iter": max_iter, "use_adjoint_gradients": use_adjoint_gradients}
+            solver_kwargs = {
+                "tol": tol,
+                "max_iter": max_iter,
+                "use_adjoint_gradients": use_adjoint_gradients,
+                "adjoint_method": adjoint_method,
+            }
 
         self._obs_state_names = observed_states
         self.error_states = measurement_error

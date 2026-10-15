@@ -25,6 +25,7 @@ from gEconpy.solvers.cycle_reduction import (
     solve_policy_function_with_cycle_reduction,
 )
 from gEconpy.solvers.gensys import gensys_pt, solve_policy_function_with_gensys
+from gEconpy.solvers.stein import ADJOINT_METHODS
 from gEconpy.utilities import eq_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
 
@@ -291,8 +292,9 @@ class TestCycleReductionGradients:
 
 
 class TestGensysPytensor:
+    @pytest.mark.parametrize("adjoint_method", ADJOINT_METHODS)
     @pytest.mark.include_nk
-    def test_gensys_and_cycle_reduction_gradients_agree(self):
+    def test_gensys_and_cycle_reduction_gradients_agree(self, adjoint_method):
         mod = load_and_cache_model("full_nk.gcn")
         A, B, C, D = [
             np.ascontiguousarray(x, dtype="float64")
@@ -307,7 +309,7 @@ class TestGensysPytensor:
         T_cr, R_cr = cycle_reduction_pt(A_pt, B_pt, C_pt, D_pt)
         cr_grads = pt.grad(T_cr.sum(), [A_pt, B_pt, C_pt])
 
-        T_gs, R_gs, _ = gensys_pt(A_pt, B_pt, C_pt, D_pt, tol=1e-8)
+        T_gs, R_gs, _ = gensys_pt(A_pt, B_pt, C_pt, D_pt, tol=1e-8, adjoint_method=adjoint_method)
         gs_grads = pt.grad(T_gs.sum(), [A_pt, B_pt, C_pt])
 
         f = pytensor.function(
@@ -322,13 +324,17 @@ class TestGensysPytensor:
         assert_allclose(B_bar_cr, B_bar_gs, atol=1e-8, rtol=1e-8)
         assert_allclose(C_bar_cr, C_bar_gs, atol=1e-8, rtol=1e-8)
 
+    @pytest.mark.include_nk
+    def test_gensys_gradients_verify(self):
+        mod = load_and_cache_model("full_nk.gcn")
+        A, B, C, D = [
+            np.ascontiguousarray(x, dtype="float64")
+            for x in mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
+        ]
+
         # gensys treats a lead coefficient below tol, relative to its equation, as zero, so a finite-difference step on
         # a structural zero of C must clear that threshold for the numeric gradient to see the true solution.
-        verify_grad(
-            lambda *args: gensys_pt(*args, tol=1e-12)[0].sum(),
-            pt=[A, B, C, D.astype("float64")],
-            rng=np.random.default_rng(),
-        )
+        verify_grad(lambda *args: gensys_pt(*args, tol=1e-12)[0].sum(), pt=[A, B, C, D], rng=np.random.default_rng())
 
 
 class TestNumbaBackend:

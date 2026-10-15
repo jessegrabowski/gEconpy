@@ -119,4 +119,5 @@ gEconpy
     gEconpy.solvers.sparse_root.levenberg_marquardt <gEconpy.solvers.sparse_root.levenberg_marquardt>
     gEconpy.solvers.sparse_root.line_search <gEconpy.solvers.sparse_root.line_search>
     gEconpy.solvers.sparse_root.sparse_root <gEconpy.solvers.sparse_root.sparse_root>
+    gEconpy.solvers.stein <gEconpy.solvers.stein>
     gEconpy.utilities <gEconpy.utilities>
