@@ -19,19 +19,23 @@ def linear_nk_model():
     return load_and_cache_model("3_eq_linear_nk.gcn")
 
 
-def _steady_state_values(model, var_names):
-    steady_state = model.steady_state(verbose=False, progressbar=False)
+def _steady_state_values(model, var_names, **parameter_updates):
+    steady_state = model.steady_state(verbose=False, progressbar=False, **parameter_updates)
     return np.array([steady_state[f"{name}_ss"] for name in var_names])
 
 
-def test_zero_shocks_stay_at_the_steady_state(rbc_model):
-    paths, diagnostics = simulate_extended_path(rbc_model, n_simulations=2, simulation_length=5, shock_std=0.0)
+@pytest.mark.parametrize("parameter_updates", [{}, {"beta": 0.98}], ids=["model_parameters", "updated_beta"])
+def test_zero_shocks_stay_at_the_steady_state(rbc_model, parameter_updates):
+    paths, diagnostics = simulate_extended_path(
+        rbc_model, n_simulations=2, simulation_length=5, shock_std=0.0, steady_state_kwargs=parameter_updates
+    )
 
     var_names = list(paths.coords["variable"].values)
+    steady_state_values = _steady_state_values(rbc_model, var_names, **parameter_updates)
     assert diagnostics.success.shape == (2, 5)
     assert diagnostics.success.all()
     assert not diagnostics.nit.any()
-    assert_allclose(paths.values, np.broadcast_to(_steady_state_values(rbc_model, var_names), paths.shape))
+    assert_allclose(paths.values, np.broadcast_to(steady_state_values, paths.shape))
 
 
 def test_linear_model_reproduces_the_linear_simulator(linear_nk_model):

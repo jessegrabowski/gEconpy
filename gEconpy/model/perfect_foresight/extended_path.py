@@ -79,7 +79,8 @@ def simulate_extended_path(
     compile_kwargs : dict, optional
         Keyword arguments forwarded to :func:`pytensor.function` when compiling the model.
     steady_state_kwargs : dict, optional
-        Keyword arguments forwarded to ``model.steady_state()``. ``verbose`` and ``progressbar`` default to False.
+        Keyword arguments forwarded to ``model.steady_state()``. A parameter value given here also holds in every
+        period's problem. ``verbose`` and ``progressbar`` default to False.
     sparse_root_kwargs : dict, optional
         Keyword arguments forwarded to :func:`~gEconpy.solvers.sparse_root.sparse_root.sparse_root` for each
         period's problem. ``f_tol`` defaults to 1e-5 unless ``tol`` is given, and ``progressbar`` defaults to False.
@@ -151,6 +152,7 @@ def simulate_extended_path(
                 shocks=dict(zip(shock_names, shock_paths.T, strict=True)),
                 compile_kwargs=compile_kwargs,
                 solver=solver,
+                steady_state_kwargs=steady_state_kwargs,
                 sparse_root_kwargs=sparse_root_kwargs,
             )
             try:
