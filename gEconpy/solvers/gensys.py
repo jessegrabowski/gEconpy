@@ -79,7 +79,11 @@ def gensys(
     div : float, optional
         Ignored. Eigenvalues are classified as stable when they lie strictly inside the unit circle. Defaults to None.
     tol : float, optional
-        Floating point tolerance used to detect zero singular values and zero diagonal entries. Defaults to 1e-8.
+        Relative tolerance used to detect zero singular values and zero diagonal entries. A QZ diagonal entry counts
+        as zero below ``tol`` times the largest entry of ``g0`` or ``g1``, and a singular value of the expectational
+        error loadings below ``tol`` times the largest entry of ``pi``. Systems built by
+        :func:`~gEconpy.solvers.gensys.solve_policy_function_with_gensys` are already rescaled to equations of unit
+        size, so there these scales are close to one. Defaults to 1e-8.
     return_all_matrices : bool, optional
         Return every matrix of the solved system, or only the policy function and the existence and uniqueness codes.
         Defaults to True.
@@ -160,7 +164,8 @@ def solve_policy_function_with_gensys(
     D : ndarray
         Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
     tol : float, optional
-        Floating point tolerance used to detect zero columns and to judge rank. Defaults to 1e-8.
+        Relative tolerance used to detect zero columns and to judge rank. Each equation is rescaled to unit size
+        before either test, so the result does not depend on the units an equation is written in. Defaults to 1e-8.
     return_all_matrices : bool, optional
         Return every matrix computed by :func:`~gEconpy.solvers.gensys.gensys`, or only the policy function and the
         existence and uniqueness codes. Defaults to True.
@@ -200,7 +205,10 @@ def gensys_pt(
     D : TensorVariable
         Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
     tol : float, optional
-        Floating point tolerance used by the gensys solve. Defaults to 1e-8.
+        Relative tolerance passed to :func:`~gEconpy.solvers.gensys.solve_policy_function_with_gensys`. A coefficient
+        on a lead variable smaller than ``tol`` times the largest coefficient in its equation counts as zero, so the
+        policy function does not respond to perturbations of ``C`` below that size. A finite-difference gradient check
+        needs a step larger than this threshold, or a smaller ``tol``. Defaults to 1e-8.
 
     Returns
     -------
@@ -224,8 +232,8 @@ class GensysWrapper(Op):
     Parameters
     ----------
     tol : float, optional
-        Floating point tolerance passed to :func:`~gEconpy.solvers.gensys.solve_policy_function_with_gensys`.
-        Defaults to 1e-8.
+        Relative tolerance passed to :func:`~gEconpy.solvers.gensys.solve_policy_function_with_gensys`. Defaults to
+        1e-8.
     """
 
     __props__ = ("tol",)
@@ -299,7 +307,7 @@ def numba_funcify_GensysWrapper(op, node, **kwargs):  # noqa: ARG001
         success = (eu[0] == 1) and (eu[1] == 1)
         return T, success
 
-    cache_version = 2
+    cache_version = 3
     return gensys_wrapper, cache_version
 
 
@@ -367,6 +375,14 @@ def _thin_svd_and_rank(eta: np.ndarray, realsmall: float):
 
 
 @numba_basic.numba_njit(final_function=True)
+def _max_abs_or_one(X: np.ndarray) -> float:
+    if X.size == 0:
+        return 1.0
+    largest = np.abs(X).max()
+    return largest if largest > 0 else 1.0
+
+
+@numba_basic.numba_njit(final_function=True)
 def _matrix_rank(A: np.ndarray, tol: float) -> int:
     if A.shape[0] == 0 or A.shape[1] == 0:
         return 0
@@ -381,6 +397,17 @@ def _matrix_rank(A: np.ndarray, tol: float) -> int:
 
 
 @numba_basic.numba_njit(final_function=True)
+def _equation_scales(A: np.ndarray, B: np.ndarray, C: np.ndarray) -> np.ndarray:
+    n_eq = A.shape[0]
+    row_scale = np.ones((n_eq, 1), dtype=np.float64)
+    for i in range(n_eq):
+        row_max = max(np.abs(A[i]).max(), np.abs(B[i]).max(), np.abs(C[i]).max())
+        if row_max > 0:
+            row_scale[i, 0] = 2.0 ** -np.ceil(np.log2(row_max))
+    return row_scale
+
+
+@numba_basic.numba_njit(final_function=True)
 def _gensys_setup(
     A: np.ndarray,
     B: np.ndarray,
@@ -391,12 +418,22 @@ def _gensys_setup(
     """
     Assemble the ``(g0, g1, c, psi, pi)`` quintuple expected by :func:`gensys`, plus the lead variable indices.
 
-    A lead variable is a column of ``C`` whose absolute column sum exceeds ``tol``. Each lead variable gets an
-    auxiliary equation and an expectational error, so the stacked system has ``n_eq + n_leads`` rows. This is
+    Each equation is first divided by a power of two near the largest absolute entry of its rows of ``A``, ``B`` and
+    ``C``. Rescaling an equation leaves the solution unchanged, and powers of two rescale without rounding, so the
+    stacked pencil and every tolerance downstream see equations of unit size whatever units they were written in.
+
+    A lead variable is a column of the rescaled ``C`` whose absolute column sum exceeds ``tol``. Each lead variable
+    gets an auxiliary equation and an expectational error, so the stacked system has ``n_eq + n_leads`` rows. This is
     the only place that rule is applied, so callers needing the same set take it from here.
     """
     n_eq = A.shape[0]
     n_shocks = D.shape[1]
+
+    row_scale = _equation_scales(A, B, C)
+    A = A * row_scale
+    B = B * row_scale
+    C = C * row_scale
+    D = D * row_scale
 
     col_abs_sum = np.zeros(C.shape[1], dtype=np.float64)
     for j in range(C.shape[1]):
@@ -468,6 +505,12 @@ def _gensys_core(
     n_shocks = psi.shape[1]
     realsmall = tol if tol > 0 else np.spacing(1)
 
+    # QZ and the SVDs are accurate relative to the size of their inputs, so a zero test on their outputs is scaled by
+    # that size.
+    small_alpha = realsmall * _max_abs_or_one(g0)
+    small_beta = realsmall * _max_abs_or_one(g1)
+    small_eta = realsmall * _max_abs_or_one(pi)
+
     # The QZ works on complex inputs. These casts are fresh buffers used only by the QZ, so gges may overwrite them.
     g0_c = g0.astype(np.complex128)
     g1_c = g1.astype(np.complex128)
@@ -483,10 +526,10 @@ def _gensys_core(
     for i in range(n):
         abs_a = np.abs(alpha[i])
         abs_b = np.abs(beta[i])
-        if abs_a < realsmall and abs_b < realsmall:
+        if abs_a < small_alpha and abs_b < small_beta:
             zxz = True
         # The "ouc" stable criterion: (alpha != 0 and beta == 0) or |alpha| > |beta|.
-        is_stable = ((abs_b < realsmall) and (abs_a >= realsmall)) or ((abs_b >= realsmall) and (abs_a > abs_b))
+        is_stable = ((abs_b < small_beta) and (abs_a >= small_alpha)) or ((abs_b >= small_beta) and (abs_a > abs_b))
         if not is_stable:
             n_unstable += 1
 
@@ -516,7 +559,7 @@ def _gensys_core(
         d_eta = np.zeros(0, dtype=np.float64)
         v_eta = np.zeros((n_eta, 0), dtype=np.complex128)
     else:
-        u_raw, s_raw, vh_raw, keep = _thin_svd_and_rank(eta_wt, realsmall)
+        u_raw, s_raw, vh_raw, keep = _thin_svd_and_rank(eta_wt, small_eta)
         big_ev = np.flatnonzero(keep)
         u_eta = u_raw[:, big_ev]
         d_eta = s_raw[big_ev]
@@ -532,7 +575,7 @@ def _gensys_core(
         v_eta_1 = np.zeros((n_eta, 0), dtype=np.complex128)
     else:
         eta_wt_1 = Q1 @ pi.astype(np.complex128)
-        u1_raw, s1_raw, vh1_raw, keep1 = _thin_svd_and_rank(eta_wt_1, realsmall)
+        u1_raw, s1_raw, vh1_raw, keep1 = _thin_svd_and_rank(eta_wt_1, small_eta)
         big_ev_1 = np.flatnonzero(keep1)
         u_eta_1 = u1_raw[:, big_ev_1]
         d_eta_1 = s1_raw[big_ev_1]
@@ -544,6 +587,7 @@ def _gensys_core(
     if v_eta_1.shape[0] == 0 or v_eta_1.shape[1] == 0:
         unique = True
     else:
+        # Both terms are built from orthonormal singular vectors, so this matrix is already of unit scale.
         loose_for_rank = v_eta_1 - v_eta @ v_eta_H @ v_eta_1
         n_loose = _matrix_rank(loose_for_rank, realsmall * n)
         eu[2] = n_loose

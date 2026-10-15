@@ -429,8 +429,9 @@ def compute_bk_eigenvalues(
     A, B, C, D : ndarray
         Jacobian matrices of the linearized DSGE system.
     tol : float, optional
-        Threshold on the absolute column sums of ``C`` below which a lead column counts as empty, and on the
-        pencil diagonal below which an eigenvalue counts as infinite. Defaults to 1e-8.
+        Relative threshold. Each equation is first rescaled to unit size, then a column of ``C`` whose absolute
+        sum falls below ``tol`` counts as empty, and a pencil diagonal entry below ``tol`` marks an infinite
+        eigenvalue. Defaults to 1e-8.
 
     Returns
     -------
@@ -439,7 +440,7 @@ def compute_bk_eigenvalues(
     eigvals_imag : ndarray
         Imaginary parts of the eigenvalues, sorted by modulus.
     n_lead_columns : int
-        Number of columns of ``C`` whose absolute column sum exceeds ``tol``, the variables entering at ``t+1``
+        Number of columns of the rescaled ``C`` whose absolute sum exceeds ``tol``, the variables entering at ``t+1``
         at these parameter values. It is smaller than :attr:`~gEconpy.model.model.Model.n_forward` when every
         coefficient on some lead variable vanishes at the current parameterization.
     """

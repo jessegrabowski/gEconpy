@@ -322,8 +322,10 @@ class TestGensysPytensor:
         assert_allclose(B_bar_cr, B_bar_gs, atol=1e-8, rtol=1e-8)
         assert_allclose(C_bar_cr, C_bar_gs, atol=1e-8, rtol=1e-8)
 
+        # gensys treats a lead coefficient below tol, relative to its equation, as zero, so a finite-difference step on
+        # a structural zero of C must clear that threshold for the numeric gradient to see the true solution.
         verify_grad(
-            lambda *args: gensys_pt(*args)[0].sum(),
+            lambda *args: gensys_pt(*args, tol=1e-12)[0].sum(),
             pt=[A, B, C, D.astype("float64")],
             rng=np.random.default_rng(),
         )
@@ -383,6 +385,19 @@ class TestCheckBKCondition:
         on_unused = "ignore" if gcn_file == "pert_fails.gcn" else "raise"
         mod = load_and_cache_model(gcn_file, on_unused_parameters=on_unused)
         return mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
+
+    @pytest.mark.parametrize("scale", ["1e-6", "1e6", "per_equation"])
+    def test_eigenvalues_do_not_depend_on_equation_units(self, scale):
+        A, B, C, D = self._system("one_block_1_ss.gcn")
+        if scale == "per_equation":
+            equation_scale = 10.0 ** np.random.default_rng(0).uniform(-6, 6, size=(A.shape[0], 1))
+        else:
+            equation_scale = float(scale)
+
+        eigenvalues = check_bk_condition(A, B, C, D, verbose=False)
+        scaled_eigenvalues = check_bk_condition(*(X * equation_scale for X in (A, B, C, D)), verbose=False)
+
+        assert_allclose(scaled_eigenvalues.to_numpy(), eigenvalues.to_numpy(), rtol=1e-8, atol=1e-12)
 
     @pytest.mark.parametrize(
         ("gcn_file", "satisfied"), [("one_block_1_ss.gcn", True), ("pert_fails.gcn", False)], ids=["pass", "fail"]

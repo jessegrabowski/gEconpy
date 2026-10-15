@@ -72,3 +72,29 @@ def test_mistimed_model_reports_non_unique_solution():
     _, eu = solve_policy_function_with_gensys(A, B, C, D, return_all_matrices=False)
 
     assert eu == [1, 0, 2]
+
+
+@pytest.mark.parametrize("scale", ["1e-6", "1e6", "per_equation"])
+def test_policy_function_does_not_depend_on_equation_units(scale):
+    """Rescaling equations leaves the solution unchanged, so gensys must return the same policy function."""
+    mod = load_and_cache_model("one_block_1_ss.gcn")
+    A, B, C, D = mod.linearize_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
+    n = A.shape[0]
+
+    if scale == "per_equation":
+        equation_scale = 10.0 ** np.random.default_rng(0).uniform(-6, 6, size=(n, 1))
+    else:
+        equation_scale = float(scale)
+
+    T, eu = solve_policy_function_with_gensys(A, B, C, D, tol=1e-8, return_all_matrices=False)
+    T_scaled, eu_scaled = solve_policy_function_with_gensys(
+        A * equation_scale,
+        B * equation_scale,
+        C * equation_scale,
+        D * equation_scale,
+        tol=1e-8,
+        return_all_matrices=False,
+    )
+
+    assert eu_scaled == eu
+    assert_allclose(T_scaled[:n, :n], T[:n, :n], atol=1e-10 * np.abs(T[:n, :n]).max())
