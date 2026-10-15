@@ -4,6 +4,8 @@ import pytensor.tensor as pt
 import pytest
 import sympy as sp
 
+from sympytensor.pytensor import PytensorPrinter
+
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
@@ -106,6 +108,23 @@ def test_sympy_to_pytensor_evaluates_outputs_and_caches_inputs(cse):
     assert [cache[make_cache_key(name, sp.Symbol)] for name in ("x", "y")] == input_nodes
     f = pytensor.function(input_nodes, output_nodes, mode="FAST_COMPILE")
     np.testing.assert_allclose(f(2.0, 1.0), [18.0, 9.0, 3.0])
+
+
+def _printer_memoizes() -> bool:
+    printer = PytensorPrinter(cache={}, settings={})
+    x = sp.Symbol("x")
+    return printer.doprint(x + 1) is printer.doprint(x + 1)
+
+
+@pytest.mark.skipif(not _printer_memoizes(), reason="the installed sympytensor does not memoize subexpressions")
+def test_sympy_to_pytensor_converts_a_subexpression_shared_between_outputs_once():
+    x, y = sp.symbols("x y")
+    shared = sp.exp(x + y)
+
+    _, (first, second), _ = sympy_to_pytensor([x, y], [shared * x, shared * y])
+
+    (shared_in_first,) = (node for node in first.owner.inputs if node.owner is not None)
+    assert shared_in_first in second.owner.inputs
 
 
 def test_sympy_to_pytensor_shared_cache():
