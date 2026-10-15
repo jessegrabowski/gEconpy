@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 
 import numpy as np
@@ -92,7 +92,8 @@ def compile_perfect_foresight_problem(
     Compile the residual and Jacobian functions used by the perfect foresight solver.
 
     The compiled functions do not depend on ``T``, so they are cached on the model and reused across horizons
-    and across calls.
+    and across calls. The returned problem is cached per horizon as well, so repeated calls with the same ``T`` and
+    compile options return the same object and build its stacked Jacobian layout once.
 
     Parameters
     ----------
@@ -125,17 +126,19 @@ def compile_perfect_foresight_problem(
         model._perfect_foresight_cache[cache_key] = _compile_equations(model, **compile_kwargs)
 
     compiled = model._perfect_foresight_cache[cache_key]
+    if T not in compiled.problems:
+        compiled.problems[T] = PerfectForesightProblem(
+            f_resid_and_jac=compiled.f_resid_and_jac,
+            f_resid_only=compiled.f_resid_only,
+            jacobian_sparsity=compiled.graph.sparsity,
+            var_names=tuple(compiled.graph.var_names),
+            shock_names=tuple(compiled.graph.shock_names),
+            param_names=tuple(compiled.graph.param_names),
+            deterministic_param_names=tuple(compiled.graph.deterministic_param_names),
+            T=T,
+        )
 
-    return PerfectForesightProblem(
-        f_resid_and_jac=compiled.f_resid_and_jac,
-        f_resid_only=compiled.f_resid_only,
-        jacobian_sparsity=compiled.graph.sparsity,
-        var_names=tuple(compiled.graph.var_names),
-        shock_names=tuple(compiled.graph.shock_names),
-        param_names=tuple(compiled.graph.param_names),
-        deterministic_param_names=tuple(compiled.graph.deterministic_param_names),
-        T=T,
-    )
+    return compiled.problems[T]
 
 
 @dataclass
@@ -155,6 +158,7 @@ class _CompiledEquations:
     f_resid_and_jac: Callable
     f_resid_only: Callable
     graph: _EquationGraph
+    problems: dict[int, PerfectForesightProblem] = field(default_factory=dict)
 
 
 def _compile_equations(model: Model, **compile_kwargs) -> _CompiledEquations:

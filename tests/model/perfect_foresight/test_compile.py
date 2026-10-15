@@ -177,7 +177,8 @@ class TestCompile:
         again = compile_perfect_foresight_problem(rbc_model, 10)
         longer = compile_perfect_foresight_problem(rbc_model, 40)
 
-        assert again.f_resid_and_jac is first.f_resid_and_jac
+        assert again is first
+        assert longer is not first
         assert longer.f_resid_and_jac is first.f_resid_and_jac
         assert longer.f_resid_only is first.f_resid_only
 
