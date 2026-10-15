@@ -34,7 +34,7 @@ class TestCompile:
         assert problem.n_vars == len(rbc_model.variables)
         assert problem.n_shocks == len(rbc_model.shocks)
         assert problem.n_eq == len(rbc_model.equations)
-        assert problem.deterministic_param_names == []
+        assert problem.deterministic_param_names == ()
 
     def test_residuals_vanish_at_the_steady_state(self, rbc_model):
         T = 5
@@ -177,7 +177,8 @@ class TestCompile:
         again = compile_perfect_foresight_problem(rbc_model, 10)
         longer = compile_perfect_foresight_problem(rbc_model, 40)
 
-        assert again.f_resid_and_jac is first.f_resid_and_jac
+        assert again is first
+        assert longer is not first
         assert longer.f_resid_and_jac is first.f_resid_and_jac
         assert longer.f_resid_only is first.f_resid_only
 
