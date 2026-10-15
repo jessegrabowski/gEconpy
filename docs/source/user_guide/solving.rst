@@ -102,6 +102,49 @@ Newton direction with GMRES:
    :pyobject: TestNewtonArmijoSpecific.test_custom_linear_solver
    :dedent: 4
 
+Nonlinear simulation
+--------------------
+
+:func:`~gEconpy.model.perfect_foresight.extended_path.simulate_extended_path` simulates sample paths of the
+nonlinear model by the extended path method. Each period draws that period's shocks, solves a perfect foresight
+problem over ``horizon`` periods from the current state with every later shock set to zero, and keeps the first
+period of the solution as the next state. Shocks are drawn exactly as :func:`~gEconpy.model.simulate.simulate`
+draws them, so with the same arguments and seed the two simulators see the same shocks. Their paths then differ
+because of the model's nonlinearity and the finite horizon described below.
+
+.. code-block:: python
+
+    from gEconpy import model_from_gcn, simulate_extended_path
+    from gEconpy.data import get_example_gcn
+
+    model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+    paths, diagnostics = simulate_extended_path(
+        model, n_simulations=10, simulation_length=100, shock_std=0.01, random_seed=0
+    )
+
+``paths`` holds levels with dimensions ``(simulation, time, variable)``. ``diagnostics`` holds, for every period,
+whether it solved and the solver's work counts summed over every solve the period took.
+
+Agents in the extended path are surprised by every shock and expect no further ones. The paths show how the
+nonlinear model responds to the shocks that arrive, and they leave out any behavior that comes from expecting
+future uncertainty. A model whose main nonlinearity is a precautionary motive, such as buffer-stock saving, shows
+little of it in these paths.
+
+Each period's problem imposes the steady state at its end, which is an approximation unless the economy has
+returned to it by then. The error is first order in the shocks and shrinks with the horizon at the rate set by
+the model's most persistent stable dynamics, the largest modulus among the eigenvalues of the policy matrix ``T``
+from :meth:`~gEconpy.model.model.Model.solve_model`. In the RBC example above that modulus is 0.97. Against a
+reference simulated with ``horizon=800``, its paths differ by up to 0.8 percent of their range at ``horizon=100``
+and by less than 0.001 percent at the default of 200. The practical check is to simulate again with ``horizon``
+doubled and compare. A model whose largest modulus is closer to 1 needs a longer horizon, and each period's cost
+grows roughly linearly with it.
+
+A period whose solve fails is retried by homotopy: the period's shocks and the state's deviation from the
+steady state are scaled by a weight that rises from 0.1 to 1, each solve starting from the last that succeeded,
+for at most ``max_homotopy_solves`` solves. If that also fails, the simulation warns, naming the simulation and
+the period, and that path is NaN from the failed period on. The other paths continue. ``sparse_root_kwargs``
+is passed to the solver in every period, and its ``f_tol`` defaults to :math:`10^{-5}`.
+
 Reading the cost of a solve
 ---------------------------
 
