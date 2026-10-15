@@ -485,8 +485,36 @@ def get_name(x: str | sp.Symbol, base_name: bool = False) -> str | None:
     return None
 
 
+def substitute_unevaluated(expr: sp.Basic, mapping: dict[sp.Expr, sp.Expr]) -> sp.Basic:
+    """
+    Replace exact occurrences of ``mapping``'s keys in ``expr`` without putting the rebuilt nodes in canonical form.
+
+    The result is the same function of the free symbols as an evaluating substitution. A result with no free symbols
+    is folded to a number.
+
+    Parameters
+    ----------
+    expr : sympy expression
+        Expression to substitute into.
+    mapping : dict mapping sympy expression to sympy expression
+        Replacements, matched structurally as in :meth:`sympy.core.basic.Basic.xreplace`.
+
+    Returns
+    -------
+    substituted : sympy expression
+        ``expr`` with every key of ``mapping`` replaced by its value.
+    """
+    # Evaluating Pow(base, e) where e has a symbolic denominator makes sympy take re() or im() of the base, which
+    # expands it. On inlined steady-state chains that costs minutes.
+    with sp.evaluate(False):
+        substituted = expr.xreplace(mapping)
+
+    return substituted.doit() if not substituted.free_symbols else substituted
+
+
 def flatten_substitution_dict(
     sub_dict: dict[sp.Expr, sp.Expr],
+    evaluate: bool = True,
 ) -> dict[sp.Expr, sp.Expr]:
     """
     Resolve a substitution dictionary so each value references no other keys.
@@ -499,6 +527,9 @@ def flatten_substitution_dict(
     ----------
     sub_dict : dict mapping sympy symbol to sympy expression
         Substitutions, possibly with values that reference other keys.
+    evaluate : bool, optional
+        Put each substituted value in sympy's canonical form. Default is True. Pass False when values chain deeply
+        through non-integer powers, where evaluation is exponentially slow; see :func:`substitute_unevaluated`.
 
     Returns
     -------
@@ -530,7 +561,8 @@ def flatten_substitution_dict(
         for dep in deps[key]:
             resolve(dep)
         if deps[key] and isinstance(value, sp.Basic):
-            value = value.subs({d: flat[d] for d in deps[key]})
+            replacements = {d: flat[d] for d in deps[key]}
+            value = value.subs(replacements) if evaluate else substitute_unevaluated(value, replacements)
 
         visiting.discard(key)
         flat[key] = value

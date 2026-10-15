@@ -32,6 +32,19 @@ def test_flatten_substitution_dict_keeps_plain_values():
     assert flat == {a: 1.5, b: 0.5}
 
 
+def test_flatten_substitution_dict_unevaluated_is_the_same_function():
+    a, b, c, psi = sp.symbols("a b c psi", positive=True)
+    sub_dict = {a: (1 - b / 2) ** (1 / (1 - psi)), b: c * psi, c: 3}
+
+    evaluated = flatten_substitution_dict(sub_dict)
+    unevaluated = flatten_substitution_dict(sub_dict, evaluate=False)
+
+    assert unevaluated[c] == 3
+    assert unevaluated[b] == 3 * psi
+    point = {psi: sp.Rational(1, 4)}
+    assert sp.N(unevaluated[a].xreplace(point)) == sp.N(evaluated[a].xreplace(point))
+
+
 def test_flatten_substitution_dict_cycle_raises():
     a, b = sp.symbols("a b")
     with pytest.raises(ValueError, match="Substitution dictionary has a cycle"):

@@ -349,7 +349,7 @@ def _extract_ss_solution_dict(model: GCNModel, assumptions: dict[str, dict[str, 
         sub_dict[sympy_eq.lhs] = sympy_eq.rhs
         identity_keys.append(sympy_eq.lhs)
 
-    flat = flatten_substitution_dict(sub_dict)
+    flat = flatten_substitution_dict(sub_dict, evaluate=False)
 
     steady_state_dict = SymbolDictionary({k: flat[k] for k in identity_keys})
     return steady_state_dict.sort_keys().to_string().values_to_float()

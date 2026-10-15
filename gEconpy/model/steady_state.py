@@ -21,7 +21,7 @@ from gEconpy.model.compile import (
     sympy_to_pytensor,
 )
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.utilities import eq_to_ss, flatten_substitution_dict, safe_to_ss
+from gEconpy.utilities import eq_to_ss, flatten_substitution_dict, safe_to_ss, substitute_unevaluated
 
 _log = logging.getLogger(__name__)
 
@@ -139,10 +139,10 @@ def simplify_provided_ss_equations(
         return ss_solution_dict
 
     simplified = SymbolDictionary({key: value for key, value in ss_dict_sympy.items() if key in ss_variables})
-    flat_intermediates = flatten_substitution_dict(intermediates)
+    flat_intermediates = flatten_substitution_dict(intermediates, evaluate=False)
     for variable, eq in simplified.items():
-        if hasattr(eq, "subs"):
-            simplified[variable] = eq.subs(flat_intermediates)
+        if isinstance(eq, sp.Basic):
+            simplified[variable] = substitute_unevaluated(eq, flat_intermediates)
 
     return simplified
 

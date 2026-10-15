@@ -643,7 +643,8 @@ def _derive_model_primitives(
     param_dict, hyper_param_dict = split_out_hyper_params(parsed.param_dict, shock_priors)
 
     ss_solution_dict = simplify_provided_ss_equations(parsed.ss_solution_dict, variables)
-    user_provided_relationships = [sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()]
+    # Evaluating Eq computes lhs - rhs, which re-evaluates the unevaluated steady-state trees at exponential cost.
+    user_provided_relationships = [sp.Eq(var, eq, evaluate=False) for var, eq in ss_solution_dict.to_sympy().items()]
 
     deterministic_dict, reduced_params = _resolve_deterministic_params(
         parsed.deterministic_dict,
@@ -672,7 +673,7 @@ def _derive_model_primitives(
 
     all_ss_vars = list(ss_solution_dict.to_sympy().keys())
     inferred_ss_vars = [var for var in all_ss_vars if var not in user_provided_ss_vars]
-    steady_state_relationships = [sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()]
+    steady_state_relationships = [sp.Eq(var, eq, evaluate=False) for var, eq in ss_solution_dict.to_sympy().items()]
 
     variables = sorted(variables, key=natural_sort_key)
     shocks = sorted(parsed.shocks, key=natural_sort_key)
@@ -858,7 +859,7 @@ def _resolve_deterministic_params(
         Parameters dropped because no equation refers to them.
     """
     resolved = deterministic_dict.to_sympy()
-    flat = flatten_substitution_dict(dict(resolved))
+    flat = flatten_substitution_dict(dict(resolved), evaluate=False)
     for param in resolved:
         resolved[param] = flat[param]
 
