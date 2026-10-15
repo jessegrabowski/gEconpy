@@ -21,7 +21,7 @@ jobs:
           python-version: 3.12
       - name: Install release tooling
         run: |
-          pip install hatch numpy
+          pip install hatch
       - name: Build package
         run: |
           hatch build
@@ -62,10 +62,13 @@ jobs:
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: 3.12
-    - name: Give PyPI a chance to update the index
-      run: sleep 360
     - name: Install from PyPI
       env:
         TAG_NAME: ${{ github.ref_name }}
+      # The new version can take a few minutes to reach the index, so retry for up to ten minutes.
       run: |
-        pip install gEconpy==${TAG_NAME#v}
+        for attempt in $(seq 20); do
+          pip install "gEconpy==${TAG_NAME#v}" && exit 0
+          sleep 30
+        done
+        exit 1
