@@ -93,7 +93,10 @@ def test_default_tolerance_leaves_the_stall_test_strict():
     """Newton takes many short steps on this model's first period, which a step tolerance of 1e-5 calls a stall."""
     model = load_and_cache_example("RBC_two_household_additive")
 
-    _, diagnostics = simulate_extended_path(model, simulation_length=1, shock_std=1e-4, random_seed=0)
+    # Only the solver's stall test matters here, so FAST_COMPILE skips the model's numba compilation.
+    _, diagnostics = simulate_extended_path(
+        model, simulation_length=1, shock_std=1e-4, random_seed=0, compile_kwargs={"mode": "FAST_COMPILE"}
+    )
 
     assert diagnostics.success.all()
 

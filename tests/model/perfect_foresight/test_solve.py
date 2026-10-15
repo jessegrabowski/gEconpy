@@ -716,7 +716,9 @@ class TestInputGuards:
 class TestResidualScaling:
     @pytest.fixture
     def wage_setting_nk_model(self):
-        # Its wage-setting auxiliary is of order 1e5, with a large exponent on inflation in the same equation.
+        # Its wage-setting auxiliary is of order 1e5, with a large exponent on inflation in the same equation. Its
+        # stacked problem takes minutes to compile through numba on CI, and these tests check the solver, not the
+        # backend, so every test here compiles it in FAST_COMPILE mode.
         return load_and_cache_example("sims_2024/nk_complete_more_shocks")
 
     def test_an_equation_with_large_terms_does_not_stall_the_line_search(self, wage_setting_nk_model):
@@ -724,7 +726,10 @@ class TestResidualScaling:
         shock_path[0] = 1e-4
 
         _, result = solve_perfect_foresight(
-            wage_setting_nk_model, simulation_length=20, shocks={"epsilon_beta": shock_path}
+            wage_setting_nk_model,
+            simulation_length=20,
+            shocks={"epsilon_beta": shock_path},
+            compile_kwargs={"mode": "FAST_COMPILE"},
         )
 
         assert result.success
@@ -736,10 +741,13 @@ class TestResidualScaling:
         shock_path[0] = 1e-4
 
         _trajectory, result = solve_perfect_foresight(
-            wage_setting_nk_model, simulation_length=simulation_length, shocks={"epsilon_beta": shock_path}
+            wage_setting_nk_model,
+            simulation_length=simulation_length,
+            shocks={"epsilon_beta": shock_path},
+            compile_kwargs={"mode": "FAST_COMPILE"},
         )
 
-        problem = compile_perfect_foresight_problem(wage_setting_nk_model, simulation_length)
+        problem = compile_perfect_foresight_problem(wage_setting_nk_model, simulation_length, mode="FAST_COMPILE")
         steady_state = wage_setting_nk_model.steady_state(verbose=False)
         boundary = np.array([steady_state[f"{name}_ss"] for name in problem.var_names])
         shocks = np.zeros((simulation_length, len(problem.shock_names)))
@@ -757,7 +765,7 @@ class TestResidualScaling:
         shock_path = np.zeros(simulation_length)
         shock_path[0] = 1e-4
 
-        problem = compile_perfect_foresight_problem(wage_setting_nk_model, simulation_length)
+        problem = compile_perfect_foresight_problem(wage_setting_nk_model, simulation_length, mode="FAST_COMPILE")
         steady_state = wage_setting_nk_model.steady_state(verbose=False)
         boundary = np.array([steady_state[f"{name}_ss"] for name in problem.var_names])
         shocks = np.zeros((simulation_length, len(problem.shock_names)))
@@ -772,6 +780,7 @@ class TestResidualScaling:
             simulation_length=simulation_length,
             shocks={"epsilon_beta": shock_path},
             solver=newton_armijo(globalization=ArmijoBacktracking(merit_fun=raw_merit_fun)),
+            compile_kwargs={"mode": "FAST_COMPILE"},
         )
 
         assert result.success
