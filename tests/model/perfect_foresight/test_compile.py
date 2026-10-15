@@ -151,7 +151,8 @@ class TestCompile:
         """
         T = 5
         model = load_and_cache_model("full_nk.gcn")
-        problem = compile_perfect_foresight_problem(model, T)
+        # The sparsity pattern is the same in every mode, and FAST_COMPILE skips minutes of numba compilation on CI.
+        problem = compile_perfect_foresight_problem(model, T, mode="FAST_COMPILE")
         ss = model.steady_state(verbose=False)
 
         y_ss = np.array([ss[f"{name}_ss"] for name in problem.var_names])
