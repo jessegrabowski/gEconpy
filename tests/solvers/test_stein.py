@@ -6,12 +6,18 @@ import pytensor.tensor as pt
 import pytest
 
 from numpy.testing import assert_allclose
+from threadpoolctl import threadpool_info
 
 from gEconpy.solvers.cycle_reduction import cycle_reduction_numpy
 from gEconpy.solvers.stein import ADJOINT_METHODS, solve_policy_stein
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 requires_jax = pytest.mark.skipif(importlib.util.find_spec("jax") is None, reason="jax not installed")
+# JAX's CPU Schur decomposition, which jax.scipy.linalg.solve_sylvester calls, segfaults when LAPACK is MKL.
+skip_jax_schur_under_mkl = pytest.mark.skipif(
+    any(info["internal_api"] == "mkl" for info in threadpool_info()),
+    reason="JAX's CPU Schur decomposition segfaults with MKL",
+)
 BACKENDS = ["NUMBA", "CVM", pytest.param("JAX", marks=requires_jax)]
 
 
@@ -30,9 +36,13 @@ def stein_symbols(dtype="float64"):
     return [pt.matrix(name, dtype=dtype) for name in ("A1", "C", "T", "Q")]
 
 
+JAX_MARKS = {"sylvester": [requires_jax, skip_jax_schur_under_mkl]}
+
 # PyTensor has no JAX implementation of QZ.
 METHOD_BACKENDS = [
-    pytest.param(method, mode, marks=requires_jax if mode == "JAX" else (), id=f"{method}-{mode}")
+    pytest.param(
+        method, mode, marks=JAX_MARKS.get(method, requires_jax) if mode == "JAX" else (), id=f"{method}-{mode}"
+    )
     for method in ADJOINT_METHODS
     for mode in ("NUMBA", "CVM", "JAX")
     if (method, mode) != ("qz", "JAX")
