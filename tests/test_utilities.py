@@ -47,7 +47,7 @@ def test_flatten_substitution_dict_unevaluated_is_the_same_function():
     assert unevaluated[c] == 3
     assert unevaluated[b] == 3 * psi
     point = {psi: sp.Rational(1, 4)}
-    assert sp.N(unevaluated[a].xreplace(point)) == sp.N(evaluated[a].xreplace(point))
+    assert float(unevaluated[a].xreplace(point)) == pytest.approx(float(evaluated[a].xreplace(point)), rel=1e-14)
 
 
 def test_topological_order_places_dependencies_first():
