@@ -14,7 +14,7 @@ from scipy import optimize
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model import model as model_module
-from gEconpy.model.compile import sympy_to_pytensor
+from gEconpy.model.compile import make_cache_key, sympy_to_pytensor
 from gEconpy.model.model import (
     Model,
     infer_variable_bounds,
@@ -230,11 +230,28 @@ class TestKnownSteadyStateGraphs:
         a_graph, b_graph = graphs
         assert a_graph in ancestors([b_graph])
 
-    def test_numeric_value_overrides_definition(self):
+    def test_numeric_value_overrides_only_its_own_entry(self):
         _, values = self._evaluate({self.a_ss: 5.0, self.b_ss: self.flat[self.b_ss]}, self.definitions)
 
         assert values[0] == 5.0
         assert_allclose(values[1], 0.6 ** (1 / 0.7) + 0.6)
+
+    def test_value_without_a_block_entry_is_converted_directly(self):
+        c_ss = sp.Symbol("c_ss", positive=True)
+
+        _, values = self._evaluate({c_ss: 3 * self.alpha}, self.definitions)
+
+        assert_allclose(values, [0.9])
+
+    def test_shared_cache_keeps_steady_state_symbol_as_input(self):
+        cache = {}
+        sympy_to_pytensor([self.alpha, self.a_ss], [], cache)
+        key = make_cache_key(self.a_ss.name, type(self.a_ss))
+        input_node = cache[key]
+
+        known_steady_state_graphs(self.flat, self.definitions, cache)
+
+        assert cache[key] is input_node
 
 
 def test_wrong_user_solutions_raises():
