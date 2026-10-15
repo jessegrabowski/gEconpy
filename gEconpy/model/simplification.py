@@ -85,7 +85,10 @@ def simplify_tryreduce(
             continue
 
         sub_dict = {reduction_variable: tryreduce_sub_dict[reduction_variable]}
-        candidate = [eq.simplify() for eq in substitute_all_equations(reduced_equations, sub_dict)]
+        substituted = substitute_all_equations(reduced_equations, sub_dict)
+        candidate = [
+            new.simplify() if new is not old else old for old, new in zip(reduced_equations, substituted, strict=True)
+        ]
 
         all_time_indices = make_all_var_time_combos([reduction_variable])
         variable_remains = any(sym in eq.atoms() for eq in candidate for sym in all_time_indices)
