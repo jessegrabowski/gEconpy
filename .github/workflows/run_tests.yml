@@ -120,7 +120,7 @@ jobs:
     - name: Cache pytensor compiledir
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.temp }}/pytensor
+        path: .pytensor-compiledir
         key: pytensor-compiledir-${{ steps.matrix-id.outputs.id }}-${{ github.run_id }}
         restore-keys: |
           pytensor-compiledir-${{ steps.matrix-id.outputs.id }}-
@@ -132,8 +132,9 @@ jobs:
       env:
         MATRIX_ID: ${{ steps.matrix-id.outputs.id }}
         # pytensor's default compiledir is ~/.pytensor on Linux but under %LOCALAPPDATA% on Windows, so it is set
-        # explicitly to the one path the cache step names on every OS.
-        PYTENSOR_FLAGS: base_compiledir=${{ runner.temp }}/pytensor
+        # explicitly to the one path the cache step names on every OS. It is relative because the PYTENSOR_FLAGS parser
+        # drops backslashes, which turns an absolute Windows path such as D:\a\_temp into D:a_temp.
+        PYTENSOR_FLAGS: base_compiledir=.pytensor-compiledir
 
     - name: Upload coverage file
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
