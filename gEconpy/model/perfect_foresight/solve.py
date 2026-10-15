@@ -75,7 +75,8 @@ def solve_perfect_foresight(
         The root-finding solver. See :doc:`gEconpy.solvers.sparse_root </api/gEconpy.solvers.sparse_root>` for the
         available solvers. Defaults to Newton's method with Armijo backtracking.
     steady_state_kwargs : dict, optional
-        Keyword arguments forwarded to ``model.steady_state()``. ``verbose`` defaults to False.
+        Keyword arguments forwarded to ``model.steady_state()``. A parameter value given here also holds in every
+        period of the path, unless ``param_paths`` names the same parameter. ``verbose`` defaults to False.
     sparse_root_kwargs : dict, optional
         Keyword arguments forwarded to :func:`~gEconpy.solvers.sparse_root.sparse_root.sparse_root`, such as
         ``tol``, ``maxiter``, or ``progressbar``.
@@ -147,6 +148,10 @@ def solve_perfect_foresight(
     problem = compile_perfect_foresight_problem(model, simulation_length, **compile_kwargs)
     var_names = problem.var_names
     var_set = set(var_names)
+
+    parameter_updates = {name: value for name, value in steady_state_kwargs.items() if name in problem.param_names}
+    steady_state_kwargs = {name: value for name, value in steady_state_kwargs.items() if name not in parameter_updates}
+    param_paths = {**parameter_updates, **(param_paths or {})}
 
     # Validation runs before anything expensive, and before any name reaches the model: a typo in param_paths
     # otherwise surfaces as whatever model.steady_state makes of it.
@@ -448,11 +453,12 @@ def _build_param_matrix(
     """
     # The boundary steady states are computed through the same resolver, so a period whose deterministic
     # parameters were not rederived would be solving a different model than its own boundary conditions.
-    if param_paths:
+    param_paths = param_paths or {}
+    if all(np.ndim(value) == 0 for value in param_paths.values()):
+        by_period = [model.parameters(**param_paths)] * T
+    else:
         paths = {name: np.broadcast_to(np.asarray(value, dtype=float), (T,)) for name, value in param_paths.items()}
         by_period = [model.parameters(**{name: path[t] for name, path in paths.items()}) for t in range(T)]
-    else:
-        by_period = [model.parameters()] * T
 
     return np.array([[parameters[name] for name in param_names] for parameters in by_period])
 

@@ -311,6 +311,19 @@ class TestSteadyStateKwargs:
 
         assert mock_ss.call_args.kwargs["verbose"] is True
 
+    @pytest.mark.parametrize(
+        "param_paths, expected_beta", [(None, 0.98), ({"beta": 0.97}, 0.97)], ids=["alone", "under_param_paths"]
+    )
+    def test_a_parameter_update_holds_in_every_period(self, rbc_model, param_paths, expected_beta):
+        trajectory, result = solve_perfect_foresight(
+            rbc_model, simulation_length=10, steady_state_kwargs={"beta": 0.98}, param_paths=param_paths
+        )
+
+        ss = rbc_model.steady_state(verbose=False, beta=expected_beta)
+        assert result.success
+        for var in trajectory.columns:
+            assert_allclose(trajectory[var].values, ss[f"{var}_ss"], rtol=1e-8)
+
 
 class TestDeterministicParameters:
     def test_steady_state_is_fixed_point(self, open_rbc_model):
