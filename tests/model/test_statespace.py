@@ -669,6 +669,16 @@ def test_observation_equations_aggregation_produces_finite_logp(rbc_nonlinear_ss
     assert np.isfinite(logp)
 
 
+def test_observation_coefficients_are_in_sorted_order(rbc_nonlinear_ss):
+    """Set order follows the per-process hash seed. A fixed order keeps the graph, and its numba cache key, stable."""
+    rbc_nonlinear_ss.configure(observed_states=["Y"], measurement_error=["Y"], constant_params="auto", verbose=False)
+    expression = rbc_nonlinear_ss._parse_observation_equation("obs", "log(Y[]) - log(Y[-1]) + log(C[]) - log(I[-1])")
+
+    _, coeffs = rbc_nonlinear_ss._linearize_observation_equation(expression)
+
+    assert list(coeffs) == sorted(coeffs)
+
+
 def test_observation_equations_produce_finite_logp(rbc_nonlinear_ss):
     """Two simultaneous observation equations flow through to a finite Kalman likelihood."""
     rbc_nonlinear_ss.configure(

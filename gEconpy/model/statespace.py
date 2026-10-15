@@ -448,11 +448,15 @@ class DSGEStateSpace(PyMCStateSpace):
             0 for contemporaneous references and negative for lags.
         """
         var_by_name = {v.base_name: v for v in self.variables}
-        appearing = {
-            (symbol.base_name, symbol.time_index)
-            for symbol in expression.free_symbols
-            if isinstance(symbol, TimeAwareSymbol) and symbol.time_index != "ss"
-        }
+        # Sorted because set order follows the per-process string hash seed. The order fixes the order of the
+        # design-matrix updates, so an unsorted walk changes the graph, and with it the numba cache key, every session.
+        appearing = sorted(
+            {
+                (symbol.base_name, symbol.time_index)
+                for symbol in expression.free_symbols
+                if isinstance(symbol, TimeAwareSymbol) and symbol.time_index != "ss"
+            }
+        )
 
         deviation_form: dict[TimeAwareSymbol, sp.Expr] = {}
         deviations: dict[tuple[str, int], sp.Symbol] = {}
