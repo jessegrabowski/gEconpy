@@ -8,11 +8,13 @@ import sympy as sp
 
 from numpy.testing import assert_allclose
 from pymc.distributions.transforms import Interval, log, logodds
+from pytensor.graph.traversal import ancestors
 from scipy import optimize
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model import model as model_module
+from gEconpy.model.compile import make_cache_key, sympy_to_pytensor
 from gEconpy.model.model import (
     Model,
     infer_variable_bounds,
@@ -23,6 +25,7 @@ from gEconpy.model.model import (
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.steady_state import (
     compile_known_ss,
+    known_steady_state_graphs,
     print_steady_state,
     propagate_steady_state_through_identities,
     pt_error_from_resid,
@@ -205,6 +208,50 @@ def test_compile_known_ss_symbolic_keys_only_known_variables():
 
     known_names = [symbol.name for symbol in model._ss_solution_dict.to_sympy()]
     assert [node.name for node in mapping] == known_names
+
+
+class TestKnownSteadyStateGraphs:
+    alpha = sp.Symbol("alpha", positive=True)
+    a_ss, b_ss = sp.symbols("a_ss b_ss", positive=True)
+    definitions = {b_ss: a_ss ** (1 / (1 - alpha)) + a_ss, a_ss: 2 * alpha}
+    flat = {a_ss: 2 * alpha, b_ss: (2 * alpha) ** (1 / (1 - alpha)) + 2 * alpha}
+
+    def _evaluate(self, known, definitions):
+        cache = {}
+        (alpha_pt,), _, cache = sympy_to_pytensor([self.alpha], [], cache)
+        graphs = known_steady_state_graphs(known, definitions, cache)
+        return graphs, pytensor.function([alpha_pt], graphs)(0.3)
+
+    def test_matches_inlined_values_and_reuses_definition_graphs(self):
+        graphs, values = self._evaluate(self.flat, self.definitions)
+        _, expected = self._evaluate(self.flat, None)
+
+        assert_allclose(values, expected)
+        a_graph, b_graph = graphs
+        assert a_graph in ancestors([b_graph])
+
+    def test_numeric_value_overrides_only_its_own_entry(self):
+        _, values = self._evaluate({self.a_ss: 5.0, self.b_ss: self.flat[self.b_ss]}, self.definitions)
+
+        assert values[0] == 5.0
+        assert_allclose(values[1], 0.6 ** (1 / 0.7) + 0.6)
+
+    def test_value_without_a_block_entry_is_converted_directly(self):
+        c_ss = sp.Symbol("c_ss", positive=True)
+
+        _, values = self._evaluate({c_ss: 3 * self.alpha}, self.definitions)
+
+        assert_allclose(values, [0.9])
+
+    def test_shared_cache_keeps_steady_state_symbol_as_input(self):
+        cache = {}
+        sympy_to_pytensor([self.alpha, self.a_ss], [], cache)
+        key = make_cache_key(self.a_ss.name, type(self.a_ss))
+        input_node = cache[key]
+
+        known_steady_state_graphs(self.flat, self.definitions, cache)
+
+        assert cache[key] is input_node
 
 
 def test_wrong_user_solutions_raises():

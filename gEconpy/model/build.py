@@ -126,6 +126,7 @@ def model_from_gcn(
         steady_state_relationships=primitives.steady_state_relationships,
         steady_state_equations=primitives.steady_state_equations,
         ss_solution_dict=primitives.ss_solution_dict,
+        ss_definitions=primitives.ss_definitions,
         param_dict=primitives.param_dict,
         hyper_param_dict=primitives.hyper_param_dict,
         deterministic_dict=primitives.deterministic_dict,
@@ -250,6 +251,7 @@ def statespace_from_gcn(
         all_params,
         cache=cache,
         return_symbolic=True,
+        ss_definitions=primitives.ss_definitions,
     )
 
     if steady_state_mapping is None or len(steady_state_mapping) != len(variables):
@@ -568,6 +570,7 @@ class _ModelPrimitives:
     steady_state_relationships: list[sp.Eq]
     steady_state_equations: list[sp.Expr]
     ss_solution_dict: SymbolDictionary
+    ss_definitions: dict[sp.Expr, sp.Expr]
     param_dict: SymbolDictionary
     hyper_param_dict: SymbolDictionary
     deterministic_dict: SymbolDictionary
@@ -643,7 +646,8 @@ def _derive_model_primitives(
     param_dict, hyper_param_dict = split_out_hyper_params(parsed.param_dict, shock_priors)
 
     ss_solution_dict = simplify_provided_ss_equations(parsed.ss_solution_dict, variables)
-    user_provided_relationships = [sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()]
+    # Evaluating Eq computes lhs - rhs, which re-evaluates the unevaluated steady-state trees at exponential cost.
+    user_provided_relationships = [sp.Eq(var, eq, evaluate=False) for var, eq in ss_solution_dict.to_sympy().items()]
 
     deterministic_dict, reduced_params = _resolve_deterministic_params(
         parsed.deterministic_dict,
@@ -672,7 +676,7 @@ def _derive_model_primitives(
 
     all_ss_vars = list(ss_solution_dict.to_sympy().keys())
     inferred_ss_vars = [var for var in all_ss_vars if var not in user_provided_ss_vars]
-    steady_state_relationships = [sp.Eq(var, eq) for var, eq in ss_solution_dict.to_sympy().items()]
+    steady_state_relationships = [sp.Eq(var, eq, evaluate=False) for var, eq in ss_solution_dict.to_sympy().items()]
 
     variables = sorted(variables, key=natural_sort_key)
     shocks = sorted(parsed.shocks, key=natural_sort_key)
@@ -700,6 +704,7 @@ def _derive_model_primitives(
         steady_state_relationships=steady_state_relationships,
         steady_state_equations=steady_state_equations,
         ss_solution_dict=ss_solution_dict,
+        ss_definitions=parsed.ss_definitions,
         param_dict=param_dict,
         hyper_param_dict=hyper_param_dict,
         deterministic_dict=deterministic_dict,
@@ -858,7 +863,7 @@ def _resolve_deterministic_params(
         Parameters dropped because no equation refers to them.
     """
     resolved = deterministic_dict.to_sympy()
-    flat = flatten_substitution_dict(dict(resolved))
+    flat = flatten_substitution_dict(dict(resolved), evaluate=False)
     for param in resolved:
         resolved[param] = flat[param]
 

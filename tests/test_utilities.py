@@ -5,7 +5,12 @@ import sympy as sp
 from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults
-from gEconpy.utilities import drop_equations, flatten_substitution_dict, postprocess_optimizer_res
+from gEconpy.utilities import (
+    drop_equations,
+    flatten_substitution_dict,
+    postprocess_optimizer_res,
+    topological_order,
+)
 
 
 def test_flatten_substitution_dict_resolves_chained_values():
@@ -30,6 +35,35 @@ def test_flatten_substitution_dict_keeps_plain_values():
     flat = flatten_substitution_dict({a: b + 1, b: 0.5})
 
     assert flat == {a: 1.5, b: 0.5}
+
+
+def test_flatten_substitution_dict_unevaluated_is_the_same_function():
+    a, b, c, psi = sp.symbols("a b c psi", positive=True)
+    sub_dict = {a: (1 - b / 2) ** (1 / (1 - psi)), b: c * psi, c: 3}
+
+    evaluated = flatten_substitution_dict(sub_dict)
+    unevaluated = flatten_substitution_dict(sub_dict, evaluate=False)
+
+    assert unevaluated[c] == 3
+    assert unevaluated[b] == 3 * psi
+    point = {psi: sp.Rational(1, 4)}
+    assert float(unevaluated[a].xreplace(point)) == pytest.approx(float(evaluated[a].xreplace(point)), rel=1e-14)
+
+
+def test_topological_order_places_dependencies_first():
+    a, b, c, d = sp.symbols("a b c d")
+
+    order = topological_order({a: b + c, b: c * d, c: d**2})
+
+    assert order == [c, b, a]
+
+
+def test_topological_order_breaks_ties_in_source_order():
+    a, b, c, d = sp.symbols("a b c d")
+
+    order = topological_order({a: b + c + d, d: sp.Integer(1), c: sp.Integer(2), b: sp.Integer(3)})
+
+    assert order == [d, c, b, a]
 
 
 def test_flatten_substitution_dict_cycle_raises():

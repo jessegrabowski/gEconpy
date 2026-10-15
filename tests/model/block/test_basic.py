@@ -667,6 +667,27 @@ class TestBlockFromSympy:
         assert len(block.system_equations) == 3
         assert sp.simplify(block.system_equations[-1] - (w / C - 1)) == 0
 
+    def test_generated_multipliers_are_eliminated_in_name_order(self):
+        """Set order follows the per-process hash seed, so elimination must not depend on it."""
+        U, U_next = parsed_var("U", 0), parsed_var("U", 1)
+        C, L, K, I = (parsed_var(name, 0) for name in ("C", "L", "K", "I"))
+        w, beta = parsed_symbol("w"), parsed_symbol("beta")
+
+        block = Block(
+            name="Household",
+            objective={0: sp.Eq(U, sp.log(C) - L + sp.log(K) + beta * U_next)},
+            constraints={1: sp.Eq(C, w * L), 2: sp.Eq(K, I)},
+            controls=[C, L, K, I],
+            multipliers={0: None, 1: None, 2: None},
+            equation_flags={0: {}, 1: {}, 2: {}},
+        )
+        block.solve_optimization(try_simplify=False)
+        block.simplify_system_equations()
+
+        eliminated = list(dict.fromkeys(x.base_name for x in block.eliminated_variables if "lambda__" in x.base_name))
+        assert len(eliminated) == 2
+        assert eliminated == sorted(eliminated)
+
 
 def test_lagged_definition_produces_derivative_in_foc():
     """The bond Euler equation must carry the derivative of the lagged risk-premium definition."""

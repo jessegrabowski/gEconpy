@@ -18,6 +18,7 @@ from gEconpy.utilities import (
     set_equality_equals_zero,
     step_equation_backward,
     step_equation_forward,
+    substitute_unevaluated,
     unpack_keys_and_values,
 )
 
@@ -341,7 +342,9 @@ class Block:
         system = self.system_equations
         simplified_system = system.copy()
         variables = [x for eq in system for x in eq.atoms() if isinstance(x, TimeAwareSymbol)]
-        generated_multipliers = list({x for x in variables if "lambda__" in x.base_name})
+        # Sorted because set order follows the per-process string hash seed, and the elimination order can change
+        # which equation defines each multiplier.
+        generated_multipliers = sorted({x for x in variables if "lambda__" in x.base_name}, key=lambda x: x.name)
 
         eliminated_variables = []
         for multiplier in generated_multipliers:
@@ -526,7 +529,9 @@ class Block:
                 if param in self.deterministic_dict:
                     duplicates.append(param)
                 else:
-                    self.deterministic_dict[param] = rhs.doit()
+                    # A full doit() rebuilds every node with evaluation, which is slow on inlined steady-state values.
+                    has_unevaluated_calculus = rhs.has(sp.Derivative, sp.Integral, sp.Sum, sp.Product)
+                    self.deterministic_dict[param] = rhs.doit() if has_unevaluated_calculus else rhs
 
         if len(duplicates) > 0:
             location = self._symbol_locations.get(str(duplicates[0]))
@@ -576,7 +581,7 @@ class Block:
                 f"without analytic solutions: {names}. Provide analytic values in the Steady_State block."
             )
 
-        return rhs.subs({var: values_by_name[var.name] for var in ss_vars})
+        return substitute_unevaluated(rhs, {var: values_by_name[var.name] for var in ss_vars})
 
     def _build_lagrangian(self) -> sp.Add:
         """Build the Lagrangian of the block's optimization program, generating multipliers where none were named."""

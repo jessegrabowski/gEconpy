@@ -485,8 +485,86 @@ def get_name(x: str | sp.Symbol, base_name: bool = False) -> str | None:
     return None
 
 
+def substitute_unevaluated(expr: sp.Basic, mapping: dict[sp.Expr, sp.Expr]) -> sp.Basic:
+    """
+    Replace exact occurrences of ``mapping``'s keys in ``expr`` without putting the rebuilt nodes in canonical form.
+
+    The result is the same function of the free symbols as an evaluating substitution. A result with no free symbols
+    is folded to a number.
+
+    Parameters
+    ----------
+    expr : sympy expression
+        Expression to substitute into.
+    mapping : dict mapping sympy expression to sympy expression
+        Replacements, matched structurally as in :meth:`sympy.core.basic.Basic.xreplace`.
+
+    Returns
+    -------
+    substituted : sympy expression
+        ``expr`` with every key of ``mapping`` replaced by its value.
+    """
+    # Evaluating Pow(base, e) where e has a symbolic denominator makes sympy take re() or im() of the base, which
+    # expands it. On inlined steady-state chains that costs minutes.
+    with sp.evaluate(False):
+        substituted = expr.xreplace(mapping)
+
+    return substituted.doit() if not substituted.free_symbols else substituted
+
+
+def _substitution_dependencies(sub_dict: dict[sp.Expr, sp.Expr]) -> dict[sp.Expr, set[sp.Basic]]:
+    keys = set(sub_dict)
+    return {
+        key: (value.free_symbols & keys) - {key} if isinstance(value, sp.Basic) else set()
+        for key, value in sub_dict.items()
+    }
+
+
+def topological_order(sub_dict: dict[sp.Expr, sp.Expr]) -> list[sp.Expr]:
+    """
+    Order the keys of a substitution dictionary so that every key comes after the keys its value references.
+
+    Parameters
+    ----------
+    sub_dict : dict mapping sympy symbol to sympy expression
+        Substitutions, possibly with values that reference other keys.
+
+    Returns
+    -------
+    order : list of sympy symbol
+        The keys of ``sub_dict``, dependencies first.
+    """
+    deps = _substitution_dependencies(sub_dict)
+    position = {key: index for index, key in enumerate(sub_dict)}
+    order: list[sp.Expr] = []
+    placed: set[sp.Expr] = set()
+    visiting: set[sp.Expr] = set()
+
+    def visit(key: sp.Expr) -> None:
+        if key in placed:
+            return
+        if key in visiting:
+            raise ValueError(
+                f"Substitution dictionary has a cycle involving {key}. Rewrite the definitions so no value "
+                "depends on itself through other keys."
+            )
+        visiting.add(key)
+        # Source order, because set order follows the per-process string hash seed.
+        for dep in sorted(deps[key], key=position.__getitem__):
+            visit(dep)
+        visiting.discard(key)
+        placed.add(key)
+        order.append(key)
+
+    for key in sub_dict:
+        visit(key)
+
+    return order
+
+
 def flatten_substitution_dict(
     sub_dict: dict[sp.Expr, sp.Expr],
+    evaluate: bool = True,
 ) -> dict[sp.Expr, sp.Expr]:
     """
     Resolve a substitution dictionary so each value references no other keys.
@@ -499,44 +577,23 @@ def flatten_substitution_dict(
     ----------
     sub_dict : dict mapping sympy symbol to sympy expression
         Substitutions, possibly with values that reference other keys.
+    evaluate : bool, optional
+        Put each substituted value in sympy's canonical form. Default is True. Pass False when values chain deeply
+        through non-integer powers, where evaluation is exponentially slow; see :func:`substitute_unevaluated`.
 
     Returns
     -------
     flat_dict : dict mapping sympy symbol to sympy expression
-        Same keys as the input, with values fully resolved against each other.
+        Same keys as the input, in the same order, with values fully resolved against each other.
     """
-    keys = set(sub_dict)
-    deps: dict[sp.Expr, set[sp.Expr]] = {}
-    for k, v in sub_dict.items():
-        if isinstance(v, sp.Basic):
-            deps[k] = (v.free_symbols & keys) - {k}
-        else:
-            deps[k] = set()
-
+    deps = _substitution_dependencies(sub_dict)
     flat: dict[sp.Expr, sp.Expr] = {}
-    visiting: set[sp.Expr] = set()
 
-    def resolve(key: sp.Expr) -> sp.Expr:
-        if key in flat:
-            return flat[key]
-        if key in visiting:
-            raise ValueError(
-                f"Substitution dictionary has a cycle involving {key}. Rewrite the definitions so no value "
-                "depends on itself through other keys."
-            )
-        visiting.add(key)
-
+    for key in topological_order(sub_dict):
         value = sub_dict[key]
-        for dep in deps[key]:
-            resolve(dep)
         if deps[key] and isinstance(value, sp.Basic):
-            value = value.subs({d: flat[d] for d in deps[key]})
-
-        visiting.discard(key)
+            replacements = {dep: flat[dep] for dep in deps[key]}
+            value = value.subs(replacements) if evaluate else substitute_unevaluated(value, replacements)
         flat[key] = value
-        return value
 
-    for key in sub_dict:
-        resolve(key)
-
-    return flat
+    return {key: flat[key] for key in sub_dict}
