@@ -335,7 +335,7 @@ def _normalize_condition_keys(conditions: dict[str, float]) -> dict[str, float]:
     return {k.removesuffix("_ss"): v for k, v in conditions.items()}
 
 
-def _ss_dict_to_array(ss_dict: dict[str, float], var_names: list[str]) -> np.ndarray:
+def _ss_dict_to_array(ss_dict: dict[str, float], var_names: Sequence[str]) -> np.ndarray:
     """Read steady-state values in ``var_names`` order, accepting suffixed or bare keys."""
     values = _normalize_condition_keys(ss_dict)
     missing = [name for name in var_names if name not in values]
@@ -389,7 +389,7 @@ def _extract_boundary_param_kwargs(
     return initial_kwargs, terminal_kwargs
 
 
-def _x0_to_vector(x0: np.ndarray | pd.DataFrame, var_names: list[str], simulation_length: int) -> np.ndarray:
+def _x0_to_vector(x0: np.ndarray | pd.DataFrame, var_names: Sequence[str], simulation_length: int) -> np.ndarray:
     """Flatten a user-supplied trajectory guess into the ``(T * n_vars,)`` layout of the stacked system."""
     if isinstance(x0, pd.DataFrame):
         if len(x0) != simulation_length:
@@ -412,7 +412,7 @@ def _x0_to_vector(x0: np.ndarray | pd.DataFrame, var_names: list[str], simulatio
 def _boundary_vector(
     conditions: dict[str, float],
     ss_dict: dict[str, float] | None,
-    var_names: list[str],
+    var_names: Sequence[str],
 ) -> np.ndarray:
     """Build a boundary vector from user conditions, filling any unlisted variable from ``ss_dict``."""
     if ss_dict is None:
@@ -426,7 +426,7 @@ def _boundary_vector(
 
 def _build_shock_matrix(
     shocks: dict[str, np.ndarray] | None,
-    shock_names: list[str],
+    shock_names: Sequence[str],
     T: int,
 ) -> np.ndarray:
     """Arrange the user's shock paths into a ``(T, n_shocks)`` matrix, with zeros for shocks not given."""
@@ -441,7 +441,7 @@ def _build_shock_matrix(
 
 def _build_param_matrix(
     param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
-    param_names: list[str],
+    param_names: Sequence[str],
     model: Model,
     T: int,
 ) -> np.ndarray:

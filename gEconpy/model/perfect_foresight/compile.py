@@ -22,7 +22,7 @@ from gEconpy.model.timing import classify_variables_by_timing
 from gEconpy.utilities import safe_to_ss
 
 
-@dataclass
+@dataclass(frozen=True)
 class PerfectForesightProblem:
     """
     Compiled equations of a model, plus the names that fix their input and output ordering.
@@ -39,13 +39,13 @@ class PerfectForesightProblem:
     jacobian_sparsity : ndarray of bool
         Structural nonzero mask of one period's Jacobian, of shape ``(n_eq, 3 * n_vars)``. It is derived from the
         equations, so it holds at every point the solver can visit.
-    var_names : list of str
+    var_names : tuple of str
         Variable names, giving the column order of the stacked system.
-    shock_names : list of str
+    shock_names : tuple of str
         Shock names, giving the column order of ``X``.
-    param_names : list of str
+    param_names : tuple of str
         Parameter names, giving the column order of ``P``.
-    deterministic_param_names : list of str
+    deterministic_param_names : tuple of str
         The subset of ``param_names`` that the model derives from other parameters.
     T : int
         Number of periods in the simulation horizon.
@@ -54,10 +54,10 @@ class PerfectForesightProblem:
     f_resid_and_jac: Callable
     f_resid_only: Callable
     jacobian_sparsity: np.ndarray
-    var_names: list[str]
-    shock_names: list[str]
-    param_names: list[str]
-    deterministic_param_names: list[str]
+    var_names: tuple[str, ...]
+    shock_names: tuple[str, ...]
+    param_names: tuple[str, ...]
+    deterministic_param_names: tuple[str, ...]
     T: int
 
     @property
@@ -130,10 +130,10 @@ def compile_perfect_foresight_problem(
         f_resid_and_jac=compiled.f_resid_and_jac,
         f_resid_only=compiled.f_resid_only,
         jacobian_sparsity=compiled.graph.sparsity,
-        var_names=compiled.graph.var_names,
-        shock_names=compiled.graph.shock_names,
-        param_names=compiled.graph.param_names,
-        deterministic_param_names=compiled.graph.deterministic_param_names,
+        var_names=tuple(compiled.graph.var_names),
+        shock_names=tuple(compiled.graph.shock_names),
+        param_names=tuple(compiled.graph.param_names),
+        deterministic_param_names=tuple(compiled.graph.deterministic_param_names),
         T=T,
     )
 

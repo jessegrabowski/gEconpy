@@ -34,7 +34,7 @@ class TestCompile:
         assert problem.n_vars == len(rbc_model.variables)
         assert problem.n_shocks == len(rbc_model.shocks)
         assert problem.n_eq == len(rbc_model.equations)
-        assert problem.deterministic_param_names == []
+        assert problem.deterministic_param_names == ()
 
     def test_residuals_vanish_at_the_steady_state(self, rbc_model):
         T = 5

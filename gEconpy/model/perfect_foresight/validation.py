@@ -9,10 +9,10 @@ def validate_perfect_foresight_inputs(
     terminal_conditions: dict[str, float],
     shocks: dict[str, np.ndarray] | None,
     param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
-    var_names: list[str],
-    shock_names: list[str],
-    param_names: list[str],
-    deterministic_param_names: list[str],
+    var_names: Sequence[str],
+    shock_names: Sequence[str],
+    param_names: Sequence[str],
+    deterministic_param_names: Sequence[str],
     simulation_length: int,
 ) -> None:
     """
@@ -29,13 +29,13 @@ def validate_perfect_foresight_inputs(
     param_paths : dict mapping str to float, sequence of float, or ndarray, optional
         Parameter overrides, keyed by parameter name. A scalar holds for every period. A list or array gives one
         value per period.
-    var_names : list of str
+    var_names : sequence of str
         Variable names the model knows.
-    shock_names : list of str
+    shock_names : sequence of str
         Shock names the model knows.
-    param_names : list of str
+    param_names : sequence of str
         Parameter names the model knows.
-    deterministic_param_names : list of str
+    deterministic_param_names : sequence of str
         Names in ``param_names`` that the model derives from other parameters, which cannot be set directly.
     simulation_length : int
         Number of periods.
