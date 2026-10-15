@@ -14,14 +14,21 @@ from pytensor.tensor import TensorVariable
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
-    compile_function,
     dictionary_return_wrapper,
     make_cache_key,
     make_return_dict_and_update_cache,
+    output_to_tensor,
     sympy_to_pytensor,
 )
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.utilities import eq_to_ss, flatten_substitution_dict, safe_to_ss, substitute_unevaluated
+from gEconpy.pytensorf.compile import compile_pytensor_function
+from gEconpy.utilities import (
+    eq_to_ss,
+    flatten_substitution_dict,
+    safe_to_ss,
+    substitute_unevaluated,
+    topological_order,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -204,6 +211,63 @@ def propagate_steady_state_through_identities(
     return SymbolDictionary(known)
 
 
+def known_steady_state_graphs(
+    known_values: dict[sp.Symbol, sp.Expr | float],
+    ss_definitions: dict[sp.Expr, sp.Expr] | None,
+    cache: dict,
+) -> list[TensorVariable]:
+    """
+    Convert analytic steady-state values to PyTensor graphs that share the steady state block's subexpressions.
+
+    With ``ss_definitions``, each entry of the block is converted once, in dependency order, and the values reuse
+    those graphs. A value that is a plain number, or whose symbol has no entry in the block, is converted directly.
+
+    Parameters
+    ----------
+    known_values : dict mapping sympy symbol to sympy expression or float
+        Known steady-state values, keyed by steady-state symbol, each a function of the parameters only.
+    ss_definitions : dict mapping sympy symbol to sympy expression, or None
+        Entries of the steady state block as written, whose values may reference other entries. None converts each
+        value of ``known_values`` alone.
+    cache : dict
+        Sympytensor cache, extended with a node for every symbol the values reference. The block's entries are bound
+        to their graphs only in a copy, so elsewhere a steady-state symbol keeps mapping to its input node.
+
+    Returns
+    -------
+    graphs : list of TensorVariable
+        One graph per entry of ``known_values``, in the same order.
+    """
+    if not ss_definitions:
+        return [output_to_tensor(value, cache) for value in known_values.values()]
+
+    referenced = {
+        symbol
+        for value in (*known_values.values(), *ss_definitions.values())
+        if isinstance(value, sp.Basic)
+        for symbol in value.free_symbols
+    }
+    for symbol in referenced - set(ss_definitions):
+        output_to_tensor(symbol, cache)
+
+    local_cache = dict(cache)
+    definition_graphs = {}
+    for key in topological_order(ss_definitions):
+        graph = output_to_tensor(ss_definitions[key], local_cache)
+        local_cache[make_cache_key(key.name, type(key))] = graph
+        definition_graphs[key.name] = graph
+
+    def from_definitions(symbol: sp.Symbol, value: sp.Expr | float) -> bool:
+        # A plain number may be a user-fixed value that overrides the block, and is as cheap to convert either way.
+        is_expression = isinstance(value, sp.Basic) and not value.is_number
+        return is_expression and symbol.name in definition_graphs
+
+    return [
+        definition_graphs[symbol.name] if from_definitions(symbol, value) else output_to_tensor(value, local_cache)
+        for symbol, value in known_values.items()
+    ]
+
+
 def compile_known_ss(
     ss_solution_dict: SymbolDictionary,
     variables: list[TimeAwareSymbol | sp.Symbol],
@@ -211,6 +275,7 @@ def compile_known_ss(
     cache: dict | None,
     return_symbolic: bool = False,
     stack_return: bool | None = None,
+    ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
     **kwargs,
 ):
     """
@@ -230,8 +295,11 @@ def compile_known_ss(
         Return a dictionary of PyTensor graphs instead of a compiled function. Default is False.
     stack_return : bool, optional
         Stack the outputs into a single array. Default is None, meaning the opposite of ``return_symbolic``.
+    ss_definitions : dict mapping sympy symbol to sympy expression, optional
+        Entries of the steady state block as written. When given, the outputs share the block's subexpressions; see
+        :func:`known_steady_state_graphs`. Default is None, which converts each value of ``ss_solution_dict`` alone.
     **kwargs
-        Forwarded to :func:`~gEconpy.model.compile.compile_function`.
+        Forwarded to :func:`~gEconpy.pytensorf.compile.compile_pytensor_function`.
 
     Returns
     -------
@@ -254,17 +322,15 @@ def compile_known_ss(
     if stack_return is None:
         stack_return = not return_symbolic
 
-    f_ss, cache = compile_function(
-        parameters,
-        list(ordered_solutions.values()),
-        cache=cache,
-        stack_return=stack_return,
-        return_symbolic=return_symbolic,
-        **kwargs,
-    )
-    if return_symbolic:
-        return make_return_dict_and_update_cache(list(ordered_solutions.keys()), f_ss, cache, TimeAwareSymbol)
+    input_pt, _, cache = sympy_to_pytensor(parameters, [], cache)
+    output_pt = known_steady_state_graphs(ordered_solutions, ss_definitions, cache)
+    if stack_return:
+        output_pt = pt.stack(output_pt)
 
+    if return_symbolic:
+        return make_return_dict_and_update_cache(list(ordered_solutions.keys()), output_pt, cache, TimeAwareSymbol)
+
+    f_ss = compile_pytensor_function(input_pt, output_pt, **kwargs)
     return dictionary_return_wrapper(f_ss, list(ordered_solutions.keys())), cache
 
 
@@ -403,6 +469,7 @@ def _ss_residual_to_pytensor(
     deterministic_dict: SymbolDictionary,
     calib_dict: SymbolDictionary,
     cache: dict | None = None,
+    ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
 ) -> tuple[list[TensorVariable], dict]:
     """
     Convert the steady-state residual system from sympy to PyTensor graphs.
@@ -428,6 +495,9 @@ def _ss_residual_to_pytensor(
     cache : dict, optional
         Sympytensor cache to extend, so that PyTensor nodes are shared across graph-building calls. Default is a new
         empty cache.
+    ss_definitions : dict mapping sympy symbol to sympy expression, optional
+        Entries of the steady state block as written, so the substituted known values share the block's
+        subexpressions; see :func:`known_steady_state_graphs`. Default is None.
 
     Returns
     -------
@@ -452,7 +522,9 @@ def _ss_residual_to_pytensor(
     _input_pt, resid_pt, cache = sympy_to_pytensor(ss_variables + parameters, full_equations, cache)
 
     if ss_solution_dict:
-        resid_pt, cache = _substitute_and_filter(resid_pt, ss_solution_dict, ss_variables, parameters, cache)
+        resid_pt, cache = _substitute_and_filter(
+            resid_pt, ss_solution_dict, ss_variables, parameters, cache, ss_definitions=ss_definitions
+        )
 
     return resid_pt, cache
 
@@ -463,6 +535,7 @@ def _substitute_and_filter(
     ss_variables: list[sp.Symbol],
     parameters: list[sp.Symbol],
     cache: dict,
+    ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
 ) -> tuple[list[TensorVariable], dict]:
     """
     Replace known steady-state variables in each equation and drop equations with no remaining unknowns.
@@ -481,7 +554,9 @@ def _substitute_and_filter(
     parameters : list of sympy Symbol
         Free parameter symbols.
     cache : dict
-        Sympytensor cache, extended in place with the graphs of the known values.
+        Sympytensor cache, extended in place with the parameter nodes the known values need.
+    ss_definitions : dict mapping sympy symbol to sympy expression, optional
+        Entries of the steady state block as written; see :func:`known_steady_state_graphs`. Default is None.
 
     Returns
     -------
@@ -499,7 +574,8 @@ def _substitute_and_filter(
     if not known:
         return equations, cache
 
-    _, known_pt, cache = sympy_to_pytensor(parameters, list(known.values()), cache)
+    _, _, cache = sympy_to_pytensor(parameters, [], cache)
+    known_pt = known_steady_state_graphs(known, ss_definitions, cache)
 
     replacements = {}
     for symbol, expression_pt in zip(known.keys(), known_pt, strict=True):

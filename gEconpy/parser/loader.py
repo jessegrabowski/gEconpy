@@ -51,7 +51,11 @@ class ModelPrimitives:
     distribution_param_names : set of str
         Parameter names referenced inside shock distribution arguments.
     ss_solution_dict : SymbolDictionary
-        Steady-state values the user supplied in the steady state block.
+        Steady-state values the user supplied in the steady state block, each with every other entry of the block
+        substituted in.
+    ss_definitions : dict mapping sympy symbol to sympy expression
+        Every entry of the steady state block, intermediate definitions included, as written. Values reference other
+        entries, so the block's shared subexpressions appear once.
     options : dict mapping str to str or bool
         Entries of the ``options`` block.
     tryreduce : list of TimeAwareSymbol
@@ -77,6 +81,7 @@ class ModelPrimitives:
     shock_distributions: SymbolDictionary
     distribution_param_names: set[str]
     ss_solution_dict: SymbolDictionary
+    ss_definitions: dict[sp.Expr, sp.Expr]
     options: dict[str, str | bool]
     tryreduce: list[TimeAwareSymbol]
     assumptions: dict[str, dict[str, bool]]
@@ -154,7 +159,7 @@ def ast_model_to_primitives(
     for name, declaration in model.symbols.items():
         assumptions[name] = {**assumptions.get(name, {}), **declaration.assumptions}
 
-    ss_solution_dict = _extract_ss_solution_dict(model, assumptions)
+    ss_solution_dict, ss_definitions = _extract_ss_solution_dict(model, assumptions)
     block_dict = ast_model_to_block_dict(
         model,
         assumptions=assumptions,
@@ -180,6 +185,7 @@ def ast_model_to_primitives(
         shock_distributions=shock_distributions,
         distribution_param_names=distribution_param_names,
         ss_solution_dict=ss_solution_dict,
+        ss_definitions=ss_definitions,
         options=model.options,
         tryreduce=_extract_tryreduce(model, variables),
         assumptions=assumptions,
@@ -327,10 +333,12 @@ def _block_dict_to_variables_and_shocks(
     return variables, shocks
 
 
-def _extract_ss_solution_dict(model: GCNModel, assumptions: dict[str, dict[str, bool]]) -> SymbolDictionary:
+def _extract_ss_solution_dict(
+    model: GCNModel, assumptions: dict[str, dict[str, bool]]
+) -> tuple[SymbolDictionary, dict[sp.Expr, sp.Expr]]:
     ss_blocks = [b for b in model.blocks if b.name.upper().replace("_", "") in STEADY_STATE_BLOCK_KEYS]
     if not ss_blocks:
-        return SymbolDictionary()
+        return SymbolDictionary(), {}
 
     ss_block = ss_blocks[0]
 
@@ -352,7 +360,7 @@ def _extract_ss_solution_dict(model: GCNModel, assumptions: dict[str, dict[str, 
     flat = flatten_substitution_dict(sub_dict, evaluate=False)
 
     steady_state_dict = SymbolDictionary({k: flat[k] for k in identity_keys})
-    return steady_state_dict.sort_keys().to_string().values_to_float()
+    return steady_state_dict.sort_keys().to_string().values_to_float(), sub_dict
 
 
 def _equation_to_sympy_eq(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) -> sp.Eq:

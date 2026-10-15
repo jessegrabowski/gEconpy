@@ -400,6 +400,10 @@ class Model:
     source_ast : GCNModel, optional
         The parsed GCN file, kept so an error about a derived equation can name the authored one. Default None,
         as for a model built without a file.
+    ss_definitions : dict mapping sympy symbol to sympy expression, optional
+        Entries of the GCN file's steady state block as written, intermediate definitions included. Compiled
+        steady-state graphs reuse their shared subexpressions instead of rebuilding each inlined value. Default None,
+        meaning each value of ``ss_solution_dict`` is compiled alone.
     """
 
     def __init__(
@@ -422,6 +426,7 @@ class Model:
         equation_ids: list[str] | None = None,
         equation_labels: dict[str, str] | None = None,
         source_ast: GCNModel | None = None,
+        ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
     ) -> None:
         self._variables = variables
         self._equation_ids = [] if equation_ids is None else equation_ids
@@ -454,6 +459,7 @@ class Model:
 
         self._steady_state_equations = steady_state_equations
         self._ss_solution_dict = ss_solution_dict
+        self._ss_definitions = ss_definitions
         self._param_dict = param_dict
         self._deterministic_dict = deterministic_dict
         self._calib_dict = calib_dict
@@ -984,6 +990,7 @@ class Model:
                 all_params,
                 mode=self._mode,
                 cache=cache,
+                ss_definitions=self._ss_definitions,
             )
         return self._f_ss
 
@@ -2094,6 +2101,7 @@ class Model:
             self._deterministic_dict,
             self._calib_dict,
             cache=self._ensure_cache(),
+            ss_definitions=self._ss_definitions,
         )
         return equations
 

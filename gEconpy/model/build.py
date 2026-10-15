@@ -126,6 +126,7 @@ def model_from_gcn(
         steady_state_relationships=primitives.steady_state_relationships,
         steady_state_equations=primitives.steady_state_equations,
         ss_solution_dict=primitives.ss_solution_dict,
+        ss_definitions=primitives.ss_definitions,
         param_dict=primitives.param_dict,
         hyper_param_dict=primitives.hyper_param_dict,
         deterministic_dict=primitives.deterministic_dict,
@@ -250,6 +251,7 @@ def statespace_from_gcn(
         all_params,
         cache=cache,
         return_symbolic=True,
+        ss_definitions=primitives.ss_definitions,
     )
 
     if steady_state_mapping is None or len(steady_state_mapping) != len(variables):
@@ -568,6 +570,7 @@ class _ModelPrimitives:
     steady_state_relationships: list[sp.Eq]
     steady_state_equations: list[sp.Expr]
     ss_solution_dict: SymbolDictionary
+    ss_definitions: dict[sp.Expr, sp.Expr]
     param_dict: SymbolDictionary
     hyper_param_dict: SymbolDictionary
     deterministic_dict: SymbolDictionary
@@ -701,6 +704,7 @@ def _derive_model_primitives(
         steady_state_relationships=steady_state_relationships,
         steady_state_equations=steady_state_equations,
         ss_solution_dict=ss_solution_dict,
+        ss_definitions=parsed.ss_definitions,
         param_dict=param_dict,
         hyper_param_dict=hyper_param_dict,
         deterministic_dict=deterministic_dict,
