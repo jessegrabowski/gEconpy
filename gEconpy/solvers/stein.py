@@ -68,7 +68,7 @@ def solve_policy_stein(
         ``"sylvester"`` maps the equation to the Sylvester equation :math:`P S + S R = F` with a Cayley transform and
         solves that with Bartels-Stewart. It is the fastest method here, but :math:`P` is formed by a solve with
         :math:`A_1 - C^T`, so it loses accuracy as that matrix becomes ill-conditioned, and it does so without warning.
-        On the JAX backend it calls :func:`jax.scipy.linalg.solve_sylvester`, whose CPU Schur decomposition segfaults
+        On the JAX backend it calls ``jax.scipy.linalg.solve_sylvester``, whose CPU Schur decomposition segfaults
         under ``jaxlib`` 0.10.2 when LAPACK is MKL.
 
         ``"direct"`` solves the vectorized equation :math:`(T \otimes C^T + I \otimes A_1) \operatorname{vec}(S) =
