@@ -2,6 +2,8 @@ import pytensor.tensor as pt
 
 from pytensor.tensor import TensorVariable
 
+from gEconpy.solvers.stein import AdjointMethod, solve_policy_stein
+
 
 def stabilize(x: TensorVariable, jitter: float = 1e-16) -> TensorVariable:
     """
@@ -25,11 +27,12 @@ def stabilize(x: TensorVariable, jitter: float = 1e-16) -> TensorVariable:
 
 
 def o1_policy_function_adjoints(
-    A: TensorVariable,
+    A: TensorVariable,  # noqa: ARG001
     B: TensorVariable,
     C: TensorVariable,
     T: TensorVariable,
     T_bar: TensorVariable,
+    method: AdjointMethod = "doubling",
 ) -> list[TensorVariable]:
     r"""
     Compute the adjoints of the matrix quadratic equation that defines a first-order DSGE policy function.
@@ -41,7 +44,12 @@ def o1_policy_function_adjoints(
         A + BT + CTT = 0
 
     Given the cotangent :math:`\bar{T}` of a scalar loss with respect to :math:`T`, the adjoints of :math:`A`,
-    :math:`B`, and :math:`C` follow from the Lagrange multiplier :math:`S` of the constraint.
+    :math:`B`, and :math:`C` follow from the Lagrange multiplier :math:`S` of the constraint, which solves the
+    generalized Stein equation
+
+    .. math::
+
+        (B + CT)^T S + C^T S T^T = -\bar{T}
 
     Parameters
     ----------
@@ -55,23 +63,16 @@ def o1_policy_function_adjoints(
         Solved policy function matrix, such that :math:`X_t = T X_{t-1}`.
     T_bar : TensorVariable
         Cotangent of a scalar loss with respect to ``T``.
+    method : {"doubling", "qz", "sylvester", "direct"}, optional
+        Algorithm for the Stein equation. See :func:`~gEconpy.solvers.stein.solve_policy_stein` for the trade-offs.
+        Defaults to ``"doubling"``.
 
     Returns
     -------
     adjoints : list of TensorVariable
         Adjoints of ``A``, ``B`` and ``C``, in that order.
     """
-    vec_T_bar = T_bar.T.ravel()
-
-    n = A.shape[0]
-
-    eye = pt.eye(n)
-    M1 = pt.linalg.kron(T, C.T)
-    M2 = pt.linalg.kron(eye, T.T @ C.T)
-    M3 = pt.linalg.kron(eye, B.T)
-
-    vec_S = pt.linalg.solve(stabilize(M1 + M2 + M3), -vec_T_bar, assume_a="gen", check_finite=False)
-    S = vec_S.reshape((n, n)).T
+    S = solve_policy_stein((B + C @ T).T, C, T, -T_bar, method=method)
 
     A_bar = S
     B_bar = S @ T.T

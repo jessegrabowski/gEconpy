@@ -27,11 +27,12 @@ import pytensor as _pytensor
 # flag matters most for gradient and compile speed and is settable live, so set it unconditionally.
 _pytensor.config.traceback__limit = 0
 
-# Side-effect imports: register JAX and Numba dispatch rules for internal pytensor Ops, and the Join/dot/block graph
-# rewrites. These modules expose no public API.
+# Side-effect imports: register JAX and Numba dispatch rules for internal pytensor Ops, the Join/dot/block graph
+# rewrites, and the rewrite that stops converged scans early. These modules expose no public API.
 import gEconpy.pytensorf.block_rewrites
 import gEconpy.pytensorf.real
-import gEconpy.pytensorf.real_eig  # noqa: F401
+import gEconpy.pytensorf.real_eig
+import gEconpy.pytensorf.scan_rewrites  # noqa: F401
 
 from gEconpy import classes, data, parser, plotting, solvers, utilities
 from gEconpy.dynare_convert import make_mod_file

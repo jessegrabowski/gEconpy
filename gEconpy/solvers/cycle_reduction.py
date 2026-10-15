@@ -19,6 +19,7 @@ from gEconpy.solvers.shared import (
     pt_compute_selection_matrix,
     stabilize,
 )
+from gEconpy.solvers.stein import AdjointMethod, validate_adjoint_method
 
 _log = logging.getLogger(__name__)
 
@@ -181,6 +182,7 @@ def cycle_reduction_pt(
     D: TensorVariable,
     max_iter: int = 1000,
     tol: float = 1e-9,
+    adjoint_method: AdjointMethod = "doubling",
 ) -> tuple[TensorVariable, TensorVariable]:
     """
     Build a symbolic graph that solves a linearized DSGE system by cycle reduction.
@@ -201,6 +203,9 @@ def cycle_reduction_pt(
         Maximum number of cycle reduction iterations. Defaults to 1000.
     tol : float, optional
         Floating point tolerance used to detect convergence. Defaults to 1e-9.
+    adjoint_method : {"doubling", "qz", "sylvester", "direct"}, optional
+        Algorithm for the Stein equation in the policy function adjoint. See
+        :func:`~gEconpy.solvers.stein.solve_policy_stein` for the trade-offs. Defaults to ``"doubling"``.
 
     Returns
     -------
@@ -209,7 +214,7 @@ def cycle_reduction_pt(
     R : TensorVariable
         Selection matrix, giving the effect of exogenous shocks at t on variable values at t+1.
     """
-    T = CycleReductionWrapper(max_iter=max_iter, tol=tol)(A, B, C)
+    T = CycleReductionWrapper(max_iter=max_iter, tol=tol, adjoint_method=adjoint_method)(A, B, C)
     R = pt_compute_selection_matrix(B, C, D, T)
     return T, R
 
@@ -222,6 +227,7 @@ def scan_cycle_reduction(
     max_iter: int = 50,
     tol: float = 1e-7,
     use_adjoint_gradients: bool = True,
+    adjoint_method: AdjointMethod = "doubling",
 ) -> tuple[TensorVariable, TensorVariable, TensorVariable]:
     """
     Build a symbolic graph that solves a linearized DSGE system with an unrolled cycle reduction scan.
@@ -241,12 +247,18 @@ def scan_cycle_reduction(
     D : TensorVariable
         Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
     max_iter : int, optional
-        Number of scan steps. Steps taken after convergence are no-ops. Defaults to 50.
+        Maximum number of scan steps. When the forward scan is not differentiated through, as with
+        ``use_adjoint_gradients=True``, the Numba backend stops at convergence. Otherwise every step runs, and steps
+        after convergence leave the state unchanged but cost as much as the others. Defaults to 50.
     tol : float, optional
         Floating point tolerance used to detect convergence. Defaults to 1e-7.
     use_adjoint_gradients : bool, optional
         When True, differentiate with the closed-form adjoints of the matrix quadratic equation. When False,
         backpropagate through the scan. Defaults to True.
+    adjoint_method : {"doubling", "qz", "sylvester", "direct"}, optional
+        Algorithm for the Stein equation in the policy function adjoint. See
+        :func:`~gEconpy.solvers.stein.solve_policy_stein` for the trade-offs. Ignored when
+        ``use_adjoint_gradients`` is False. Defaults to ``"doubling"``.
 
     Returns
     -------
@@ -262,12 +274,16 @@ def scan_cycle_reduction(
     C = pt.as_tensor_variable(C, name="C")
     D = pt.as_tensor_variable(D, name="D")
 
+    validate_adjoint_method(adjoint_method)
     output = _scan_cycle_reduction(A, B, C, max_iter, tol)
+
+    def pullback(inputs, outputs, cotangents):
+        return _policy_function_pullback(inputs, outputs, cotangents, adjoint_method)
 
     scan_cycle_reduction_op = OpFromGraph(
         inputs=[A, B, C],
         outputs=output,
-        pullback=_policy_function_pullback if use_adjoint_gradients else None,
+        pullback=pullback if use_adjoint_gradients else None,
         name="ScanCycleReduction",
         inline=True,
     )
@@ -288,14 +304,19 @@ class CycleReductionWrapper(Op):
         Maximum number of cycle reduction iterations. Defaults to 1000.
     tol : float, optional
         Floating point tolerance used to detect convergence. Defaults to 1e-9.
+    adjoint_method : {"doubling", "qz", "sylvester", "direct"}, optional
+        Algorithm for the Stein equation in the policy function adjoint. See
+        :func:`~gEconpy.solvers.stein.solve_policy_stein` for the trade-offs. Defaults to ``"doubling"``.
     """
 
-    __props__ = ("max_iter", "tol")
+    __props__ = ("max_iter", "tol", "adjoint_method")
     gufunc_signature = "(n,n),(n,n),(n,n)->(n,n)"
 
-    def __init__(self, max_iter: int = 1000, tol: float = 1e-9):
+    def __init__(self, max_iter: int = 1000, tol: float = 1e-9, adjoint_method: AdjointMethod = "doubling"):
+        validate_adjoint_method(adjoint_method)
         self.max_iter = int(max_iter)
         self.tol = tol
+        self.adjoint_method = adjoint_method
         super().__init__()
 
     def make_node(self, A, B, C) -> Apply:
@@ -316,7 +337,7 @@ class CycleReductionWrapper(Op):
         outputs[0][0] = np.asarray(T, dtype=node.outputs[0].type.dtype)
 
     def pullback(self, inputs, outputs, cotangents):
-        return _policy_function_pullback(inputs, outputs, cotangents)
+        return _policy_function_pullback(inputs, outputs, cotangents, self.adjoint_method)
 
 
 @register_funcify_default_op_cache_key(CycleReductionWrapper)
@@ -343,14 +364,14 @@ def numba_funcify_CycleReductionWrapper(op, node, **kwargs):  # noqa: ARG001
     return cycle_reduction, cache_version
 
 
-def _policy_function_pullback(inputs, outputs, output_grads):
+def _policy_function_pullback(inputs, outputs, output_grads, adjoint_method: AdjointMethod):
     # CycleReductionWrapper exposes a single output (T) and the scan OpFromGraph exposes two (T, n_steps). Only T
     # carries gradient in either case.
     A, B, C = inputs
     T = outputs[0]
     T_bar = output_grads[0]
 
-    return o1_policy_function_adjoints(A, B, C, T, T_bar)
+    return o1_policy_function_adjoints(A, B, C, T, T_bar, method=adjoint_method)
 
 
 @numba_basic.numba_njit(final_function=True)
