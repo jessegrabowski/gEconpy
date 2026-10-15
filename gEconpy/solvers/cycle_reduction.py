@@ -247,7 +247,9 @@ def scan_cycle_reduction(
     D : TensorVariable
         Jacobian of the system with respect to exogenous shocks, evaluated at the steady state.
     max_iter : int, optional
-        Number of scan steps. Steps taken after convergence are no-ops. Defaults to 50.
+        Maximum number of scan steps. When the forward scan is not differentiated through, as with
+        ``use_adjoint_gradients=True``, the Numba backend stops at convergence. Otherwise every step runs, and steps
+        after convergence leave the state unchanged but cost as much as the others. Defaults to 50.
     tol : float, optional
         Floating point tolerance used to detect convergence. Defaults to 1e-7.
     use_adjoint_gradients : bool, optional

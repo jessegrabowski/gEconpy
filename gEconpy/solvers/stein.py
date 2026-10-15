@@ -17,7 +17,8 @@ AdjointMethod = Literal["doubling", "qz", "sylvester", "direct"]
 ADJOINT_METHODS: tuple[str, ...] = get_args(AdjointMethod)
 
 # The doubling iterate after k steps sums 2^k terms of a series that shrinks like (rho(M) rho(T))^i, so 30 steps cover
-# any model whose spectral radii are not within about 1e-8 of one.
+# any model whose spectral radii are not within about 1e-8 of one. This is a cap: the loop stops at convergence when
+# the scan_until rewrite applies.
 DOUBLING_STEPS = 30
 
 
@@ -54,7 +55,8 @@ def solve_policy_stein(
         Algorithm for the solve. Defaults to ``"doubling"``.
 
         ``"doubling"`` runs Smith doubling steps on :math:`S - M S T^T = A_1^{-1} Q` with :math:`M = -A_1^{-1} C^T`,
-        using matrix products only, so it compiles on every backend. It always runs 30 steps. It returns
+        using matrix products only, so it compiles on every backend. On backends with while loops it stops once the
+        remaining terms are below machine precision. Elsewhere it always runs 30 steps, each at full cost. It returns
         ``nan`` when the series has not converged after 30 steps, which happens when :math:`\rho(M) \rho(T)` is within
         about :math:`10^{-8}` of one, or when the explicitly formed :math:`M` is so far from normal that its powers
         overflow.
