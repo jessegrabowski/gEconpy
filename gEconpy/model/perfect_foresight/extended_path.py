@@ -1,8 +1,15 @@
 import warnings
 
+from collections.abc import Callable
+from functools import partial
+
 import numpy as np
+import pandas as pd
 import xarray as xr
 
+from scipy.optimize import OptimizeResult
+
+from gEconpy.exceptions import NonFiniteInitialGuessError
 from gEconpy.model.model import Model
 from gEconpy.model.perfect_foresight.solve import (
     _normalize_condition_keys,
@@ -35,9 +42,10 @@ def simulate_extended_path(
 
     Each period draws that period's shock and solves a perfect-foresight problem over ``horizon`` periods, starting
     from the current state, with every later shock set to zero and the steady state as the terminal condition. The
-    first period of the solution is kept and becomes the next period's state. Agents are therefore surprised by
-    every shock and expect no further ones, so the trajectories carry the model's nonlinearity but no precautionary
-    effects of future uncertainty.
+    first period of the solution is kept and becomes the next period's state. Each solve starts from the previous
+    solution shifted one period forward, or from the steady state if the model is not finite at that guess. Agents are
+    therefore surprised by every shock and expect no further ones, so the trajectories carry the model's nonlinearity
+    but no precautionary effects of future uncertainty.
 
     Shocks are drawn exactly as :func:`~gEconpy.model.simulate.simulate` draws them, so the two simulators see the
     same shocks for the same arguments and seed.
@@ -79,8 +87,9 @@ def simulate_extended_path(
     Returns
     -------
     simulations : DataArray
-        Simulated levels with dimensions ``(simulation, time, variable)``. A trajectory whose period fails to solve
-        is NaN from that period on, with a warning naming the period, and the other trajectories continue.
+        Simulated levels with dimensions ``(simulation, time, variable)``. A trajectory whose period fails to solve,
+        or whose model is not finite at either starting guess, is NaN from that period on, with a warning naming the
+        period, and the other trajectories continue.
     diagnostics : Dataset
         Per-period solver output with dimensions ``(simulation, time)``: ``success``, and the work counts ``nit``,
         ``nfev``, ``njev``, and ``nsolve``. Periods after a failure were not attempted, so ``success`` is False and
@@ -124,18 +133,19 @@ def simulate_extended_path(
     success = np.zeros((n_simulations, simulation_length), dtype=bool)
     work_counts = {field: np.zeros((n_simulations, simulation_length), dtype=int) for field in _WORK_COUNT_FIELDS}
 
+    steady_state_guess = np.tile(steady_state_values, (horizon, 1))
     for simulation in range(n_simulations):
         state = initial_state
-        guess = np.tile(steady_state_values, (horizon, 1))
+        guess = steady_state_guess
 
         for t in range(simulation_length):
             shock_paths = np.zeros((horizon, len(shock_names)))
             shock_paths[0] = epsilons[simulation, t]
 
-            solution, result = solve_perfect_foresight(
+            solve = partial(
+                solve_perfect_foresight,
                 model,
                 simulation_length=horizon,
-                x0=guess,
                 initial_conditions=dict(zip(var_names, state, strict=True)),
                 terminal_conditions=terminal_conditions,
                 shocks=dict(zip(shock_names, shock_paths.T, strict=True)),
@@ -143,17 +153,18 @@ def simulate_extended_path(
                 solver=solver,
                 sparse_root_kwargs=sparse_root_kwargs,
             )
+            try:
+                solution, result = _solve_period(solve, warm_guess=guess, steady_state_guess=steady_state_guess)
+            except NonFiniteInitialGuessError as error:
+                _warn_stopped(simulation=simulation, period=t, reason=str(error))
+                break
 
             success[simulation, t] = result.success
             for field in _WORK_COUNT_FIELDS:
                 work_counts[field][simulation, t] = result[field]
 
             if not result.success:
-                warnings.warn(
-                    f"Simulation {simulation} stopped at period {t}, and its values from that period on are NaN. "
-                    f"The solver reported: {result.message}",
-                    stacklevel=2,
-                )
+                _warn_stopped(simulation=simulation, period=t, reason=f"The solver reported: {result.message}")
                 break
 
             path = solution[var_names].to_numpy()
@@ -168,6 +179,26 @@ def simulate_extended_path(
     )
     paths = xr.DataArray(simulations, dims=["simulation", "time", "variable"], coords={**coords, "variable": var_names})
     return paths, diagnostics
+
+
+def _solve_period(
+    solve: Callable[..., tuple[pd.DataFrame, OptimizeResult]],
+    warm_guess: np.ndarray,
+    steady_state_guess: np.ndarray,
+) -> tuple[pd.DataFrame, OptimizeResult]:
+    try:
+        return solve(x0=warm_guess)
+    except NonFiniteInitialGuessError:
+        if warm_guess is steady_state_guess:
+            raise
+        return solve(x0=steady_state_guess)
+
+
+def _warn_stopped(simulation: int, period: int, reason: str) -> None:
+    warnings.warn(
+        f"Simulation {simulation} stopped at period {period}, and its values from that period on are NaN. {reason}",
+        stacklevel=3,
+    )
 
 
 def _initial_state(

@@ -4,7 +4,8 @@ import pytest
 from numpy.testing import assert_allclose
 
 from gEconpy import simulate
-from gEconpy.model.perfect_foresight import simulate_extended_path, solve_perfect_foresight
+from gEconpy.exceptions import NonFiniteInitialGuessError
+from gEconpy.model.perfect_foresight import extended_path, simulate_extended_path, solve_perfect_foresight
 from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 
 
@@ -116,6 +117,36 @@ def test_a_failed_period_ends_only_its_own_trajectory(rbc_model):
         assert np.isnan(paths.values[simulation, failed_period:]).all()
         assert not diagnostics.success.values[simulation, failed_period:].any()
         assert not diagnostics.nit.values[simulation, failed_period + 1 :].any()
+
+
+def test_a_non_finite_warm_start_is_retried_from_the_steady_state(rbc_model, monkeypatch):
+    simulation_kwargs = {"simulation_length": 4, "shock_std": 0.01, "random_seed": 0, "horizon": 100}
+    expected, _ = simulate_extended_path(rbc_model, **simulation_kwargs)
+
+    calls = []
+
+    def warm_start_at_period_two_is_not_finite(*args, **kwargs):
+        calls.append(kwargs["x0"])
+        if len(calls) == 3:
+            raise NonFiniteInitialGuessError(equation=0, period=0)
+        return solve_perfect_foresight(*args, **kwargs)
+
+    monkeypatch.setattr(extended_path, "solve_perfect_foresight", warm_start_at_period_two_is_not_finite)
+    paths, diagnostics = simulate_extended_path(rbc_model, **simulation_kwargs)
+
+    assert diagnostics.success.all()
+    assert_allclose(calls[3], calls[0])
+    assert_allclose(paths.values, expected.values, rtol=1e-8)
+
+
+def test_a_state_where_the_model_is_not_finite_ends_the_trajectory(rbc_model):
+    with pytest.warns(UserWarning, match="Simulation 0 stopped at period 0.*not finite at the initial guess"):
+        paths, diagnostics = simulate_extended_path(
+            rbc_model, simulation_length=3, shock_std=0.0, initial_conditions={"K": -1.0}, horizon=50
+        )
+
+    assert np.isnan(paths.values).all()
+    assert not diagnostics.success.any()
 
 
 def test_unknown_initial_condition_raises(rbc_model):
