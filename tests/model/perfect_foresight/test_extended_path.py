@@ -108,6 +108,7 @@ def test_a_failed_period_ends_only_its_own_trajectory(rbc_model):
             shock_std=0.01,
             random_seed=1,
             sparse_root_kwargs={"maxiter": 1},
+            max_homotopy_solves=0,
         )
 
     failed_periods = diagnostics.success.argmin(dim="time").values
@@ -143,14 +144,36 @@ def test_a_non_finite_warm_start_is_retried_from_the_steady_state(rbc_model, mon
     assert_allclose(paths.values, expected.values, rtol=1e-8)
 
 
-def test_a_state_where_the_model_is_not_finite_ends_the_trajectory(rbc_model):
-    with pytest.warns(UserWarning, match="Simulation 0 stopped at period 0.*not finite at the initial guess"):
+@pytest.mark.parametrize(
+    "max_homotopy_solves, most_solves_spent", [(5, 5), (1000, 999)], ids=["budget_runs_out", "step_shrinks_away"]
+)
+def test_a_state_where_the_model_is_not_finite_ends_the_trajectory(rbc_model, max_homotopy_solves, most_solves_spent):
+    with pytest.warns(UserWarning, match="Simulation 0 stopped at period 0.*Homotopy reached weight"):
         paths, diagnostics = simulate_extended_path(
-            rbc_model, simulation_length=3, shock_std=0.0, initial_conditions={"K": -1.0}, horizon=50
+            rbc_model,
+            simulation_length=3,
+            shock_std=0.0,
+            initial_conditions={"K": -1.0},
+            horizon=50,
+            max_homotopy_solves=max_homotopy_solves,
         )
 
     assert np.isnan(paths.values).all()
     assert not diagnostics.success.any()
+    assert 0 < diagnostics.homotopy_solves.values[0, 0] <= most_solves_spent
+
+
+def test_periods_that_fail_under_an_iteration_cap_succeed_by_homotopy(rbc_model):
+    simulation_kwargs = {"n_simulations": 2, "simulation_length": 8, "shock_std": 0.01, "random_seed": 1}
+    expected, _ = simulate_extended_path(rbc_model, **simulation_kwargs)
+
+    paths, diagnostics = simulate_extended_path(rbc_model, sparse_root_kwargs={"maxiter": 1}, **simulation_kwargs)
+
+    assert diagnostics.success.all()
+    assert diagnostics.homotopy_solves.any()
+    assert (diagnostics.nsolve.values >= diagnostics.homotopy_solves.values).all()
+    # Every period solves only to f_tol = 1e-5, so the two runs agree to about that.
+    assert_allclose(paths.values, expected.values, rtol=1e-4)
 
 
 def test_unknown_initial_condition_raises(rbc_model):
