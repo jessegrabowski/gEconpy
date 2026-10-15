@@ -54,6 +54,13 @@ class TestTransposeOfJoin:
         tester.assert_graph(pt.join(0, A.mT, B.mT))
         tester.assert_eval(*_vals(rng, (N, N), (N, N)))
 
+    def test_batch_axis_join_keeps_its_axis(self, rng):
+        X, Y = (pt.tensor3(s, shape=(2, N, N)) for s in "XY")
+        tester = block_rewrite_tester([X, Y], [pt.join(0, X, Y).mT])
+
+        tester.assert_graph(pt.join(0, X.mT, Y.mT))
+        tester.assert_eval(*_vals(rng, (2, N, N), (2, N, N)))
+
 
 class TestNestedJoinToBlockDiagonal:
     def test_zero_off_diagonal_becomes_block_diag(self, rng):
