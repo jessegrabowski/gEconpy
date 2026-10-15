@@ -5,18 +5,20 @@ from functools import partial
 from typing import NamedTuple
 
 import numpy as np
-import pandas as pd
 import xarray as xr
 
 from scipy.optimize import OptimizeResult
 
 from gEconpy.exceptions import NonFiniteInitialGuessError
 from gEconpy.model.model import Model
+from gEconpy.model.perfect_foresight.compile import PerfectForesightProblem, compile_perfect_foresight_problem
 from gEconpy.model.perfect_foresight.solve import (
+    _build_param_matrix,
     _normalize_condition_keys,
+    _solve_stacked,
     _ss_dict_to_array,
-    solve_perfect_foresight,
 )
+from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
 from gEconpy.model.simulate import _draw_shocks
 from gEconpy.solvers.sparse_root.base import RootSolver
 
@@ -135,9 +137,27 @@ def simulate_extended_path(
         random_seed=random_seed,
     )
 
+    # Every period solves the same problem, so it is compiled and its parameter matrix built once. Inside the loop
+    # states follow the problem's variable order, and the output is put back in the model's order at the end.
+    problem = compile_perfect_foresight_problem(model, horizon, **(compile_kwargs or {}))
+    parameter_updates = {name: value for name, value in steady_state_kwargs.items() if name in problem.param_names}
+    validate_perfect_foresight_inputs(
+        initial_conditions={},
+        terminal_conditions={},
+        shocks=None,
+        param_paths=parameter_updates,
+        var_names=problem.var_names,
+        shock_names=problem.shock_names,
+        param_names=problem.param_names,
+        deterministic_param_names=problem.deterministic_param_names,
+        simulation_length=horizon,
+    )
+    params = _build_param_matrix(parameter_updates, problem.param_names, model, horizon)
+    shock_columns = [shock_names.index(name) for name in problem.shock_names]
+
     steady_state = model.steady_state(**steady_state_kwargs)
-    steady_state_values = _ss_dict_to_array(steady_state, var_names)
-    initial_state = _initial_state(initial_conditions, steady_state_values, var_names)
+    steady_state_values = _ss_dict_to_array(steady_state, problem.var_names)
+    initial_state = _initial_state(initial_conditions, steady_state_values, list(problem.var_names))
 
     simulations = np.full((n_simulations, simulation_length, len(var_names)), np.nan)
     success = np.zeros((n_simulations, simulation_length), dtype=bool)
@@ -147,15 +167,10 @@ def simulate_extended_path(
     steady_state_guess = np.tile(steady_state_values, (horizon, 1))
     solve_at_weight = partial(
         _solve_at_weight,
-        model=model,
-        horizon=horizon,
+        problem=problem,
         steady_state_values=steady_state_values,
-        terminal_conditions=dict(zip(var_names, steady_state_values, strict=True)),
-        var_names=var_names,
-        shock_names=shock_names,
+        params=params,
         solver=solver,
-        compile_kwargs=compile_kwargs,
-        steady_state_kwargs=steady_state_kwargs,
         sparse_root_kwargs=sparse_root_kwargs,
     )
 
@@ -165,7 +180,7 @@ def simulate_extended_path(
 
         for t in range(simulation_length):
             outcome = _solve_period(
-                solve=partial(solve_at_weight, state=state, shock=epsilons[simulation, t]),
+                solve=partial(solve_at_weight, state=state, shock=epsilons[simulation, t, shock_columns]),
                 warm_guess=guess,
                 steady_state_guess=steady_state_guess,
                 max_homotopy_solves=max_homotopy_solves,
@@ -196,7 +211,10 @@ def simulate_extended_path(
         },
         coords=coords,
     )
-    paths = xr.DataArray(simulations, dims=["simulation", "time", "variable"], coords={**coords, "variable": var_names})
+    model_order = [problem.var_names.index(name) for name in var_names]
+    paths = xr.DataArray(
+        simulations[..., model_order], dims=["simulation", "time", "variable"], coords={**coords, "variable": var_names}
+    )
     return paths, diagnostics
 
 
@@ -208,7 +226,7 @@ class _PeriodOutcome(NamedTuple):
 
 
 def _solve_period(
-    solve: Callable[..., tuple[pd.DataFrame, OptimizeResult]],
+    solve: Callable[..., tuple[np.ndarray, OptimizeResult]],
     warm_guess: np.ndarray,
     steady_state_guess: np.ndarray,
     max_homotopy_solves: int,
@@ -232,7 +250,7 @@ def _solve_period(
             work_counts[field] += result[field]
         if not result.success:
             return None, f"The solver reported: {result.message}"
-        return solution.to_numpy(), None
+        return solution, None
 
     path, failure = attempt(weight=1.0, guess=warm_guess)
     if path is not None:
@@ -260,11 +278,11 @@ def _solve_period(
 
 
 def _solve_from(
-    solve: Callable[..., tuple[pd.DataFrame, OptimizeResult]],
+    solve: Callable[..., tuple[np.ndarray, OptimizeResult]],
     weight: float,
     guess: np.ndarray,
     steady_state_guess: np.ndarray,
-) -> tuple[pd.DataFrame, OptimizeResult]:
+) -> tuple[np.ndarray, OptimizeResult]:
     try:
         return solve(weight=weight, x0=guess)
     except NonFiniteInitialGuessError:
@@ -278,35 +296,27 @@ def _solve_at_weight(
     x0: np.ndarray,
     state: np.ndarray,
     shock: np.ndarray,
-    model: Model,
-    horizon: int,
+    problem: PerfectForesightProblem,
     steady_state_values: np.ndarray,
-    terminal_conditions: dict[str, float],
-    var_names: list[str],
-    shock_names: list[str],
+    params: np.ndarray,
     solver: RootSolver | None,
-    compile_kwargs: dict | None,
-    steady_state_kwargs: dict,
     sparse_root_kwargs: dict,
-) -> tuple[pd.DataFrame, OptimizeResult]:
+) -> tuple[np.ndarray, OptimizeResult]:
     """Solve the period's problem with its shock and initial deviation from the steady state scaled by ``weight``."""
-    shock_paths = np.zeros((horizon, len(shock_names)))
-    shock_paths[0] = weight * shock
-    initial_state = steady_state_values + weight * (state - steady_state_values)
+    shocks = np.zeros((problem.T, problem.n_shocks))
+    shocks[0] = weight * shock
 
-    solution, result = solve_perfect_foresight(
-        model,
-        simulation_length=horizon,
-        x0=x0,
-        initial_conditions=dict(zip(var_names, initial_state, strict=True)),
-        terminal_conditions=terminal_conditions,
-        shocks=dict(zip(shock_names, shock_paths.T, strict=True)),
-        compile_kwargs=compile_kwargs,
+    result = _solve_stacked(
+        problem=problem,
+        x0=x0.ravel(),
+        y_initial=steady_state_values + weight * (state - steady_state_values),
+        y_terminal=steady_state_values,
+        shocks=shocks,
+        params=params,
         solver=solver,
-        steady_state_kwargs=steady_state_kwargs,
         sparse_root_kwargs=sparse_root_kwargs,
     )
-    return solution[var_names], result
+    return result.x.reshape(problem.T, problem.n_vars), result
 
 
 def _initial_state(

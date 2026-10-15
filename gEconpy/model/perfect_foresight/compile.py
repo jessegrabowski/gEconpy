@@ -32,8 +32,9 @@ class PerfectForesightProblem:
     f_resid_and_jac : callable
         Function returning the residuals and the Jacobian of every period's equations at once. It is called as
         ``f(Y_tm1, Y_t, Y_tp1, X, P)``, where the first three arguments have shape ``(T, n_vars)``, ``X`` has
-        shape ``(T, n_shocks)``, and ``P`` has shape ``(T, n_params)``. The residuals have shape ``(T, n_eq)``
-        and the Jacobian has shape ``(T, n_eq, 3 * n_vars)``.
+        shape ``(T, n_shocks)``, and ``P`` has shape ``(T, n_params)``, all float64. The inputs are not checked
+        unless the problem was compiled with ``trust_input=False``. The residuals have shape ``(T, n_eq)`` and the
+        Jacobian has shape ``(T, n_eq, 3 * n_vars)``.
     f_resid_only : callable
         Function with the same inputs returning only the residuals.
     jacobian_sparsity : ndarray of bool
@@ -103,7 +104,8 @@ def compile_perfect_foresight_problem(
     T : int
         Number of periods in the simulation horizon.
     **compile_kwargs
-        Keyword arguments forwarded to :func:`pytensor.function`. ``on_unused_input`` defaults to ``"ignore"``.
+        Keyword arguments forwarded to :func:`pytensor.function`. ``on_unused_input`` defaults to ``"ignore"`` and
+        ``trust_input`` to True, so the compiled functions skip checking their inputs on every call.
 
     Returns
     -------
@@ -117,6 +119,7 @@ def compile_perfect_foresight_problem(
         parameters, or if a steady-state variable has no analytic solution.
     """
     compile_kwargs.setdefault("on_unused_input", "ignore")
+    compile_kwargs.setdefault("trust_input", True)
 
     # Compilation costs more than several Newton iterations, and the natural use of this module is a sweep over
     # shocks or parameter paths, so a repeated call must not pay for it again. repr keys the cache on the kwargs

@@ -132,14 +132,15 @@ def test_a_non_finite_warm_start_is_retried_from_the_steady_state(rbc_model, mon
     expected, _ = simulate_extended_path(rbc_model, **simulation_kwargs)
 
     calls = []
+    real_solve_stacked = extended_path._solve_stacked
 
     def warm_start_at_period_two_is_not_finite(*args, **kwargs):
         calls.append(kwargs["x0"])
         if len(calls) == 3:
             raise NonFiniteInitialGuessError(equation=0, period=0)
-        return solve_perfect_foresight(*args, **kwargs)
+        return real_solve_stacked(*args, **kwargs)
 
-    monkeypatch.setattr(extended_path, "solve_perfect_foresight", warm_start_at_period_two_is_not_finite)
+    monkeypatch.setattr(extended_path, "_solve_stacked", warm_start_at_period_two_is_not_finite)
     paths, diagnostics = simulate_extended_path(rbc_model, **simulation_kwargs)
 
     assert diagnostics.success.all()
@@ -177,6 +178,13 @@ def test_periods_that_fail_under_an_iteration_cap_succeed_by_homotopy(rbc_model)
     assert (diagnostics.nsolve.values >= diagnostics.homotopy_solves.values).all()
     # Every period solves only to f_tol = 1e-5, so the two runs agree to about that.
     assert_allclose(paths.values, expected.values, rtol=1e-4)
+
+
+def test_a_deterministic_parameter_update_raises():
+    model = load_and_cache_model("open_rbc.gcn")
+
+    with pytest.raises(ValueError, match="Cannot set a path for deterministic parameters: gamma"):
+        simulate_extended_path(model, simulation_length=2, shock_std=0.0, steady_state_kwargs={"gamma": 1.0})
 
 
 def test_unknown_initial_condition_raises(rbc_model):

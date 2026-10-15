@@ -104,15 +104,41 @@ def sparse_root(
         result = sparse_root(fun, np.array([1.0, 1.0]), solver=LevenbergMarquardt(), progressbar=False)
         print(result.x)
     """
+    validate_fused_fun(fun, np.asarray(x0, dtype=np.float64), args)
+
+    return _run_sparse_root(
+        fun,
+        x0,
+        solver=solver,
+        args=args,
+        tol=tol,
+        f_tol=f_tol,
+        x_tol=x_tol,
+        maxiter=maxiter,
+        progressbar=progressbar,
+    )
+
+
+def _run_sparse_root(
+    fun: RootFunction,
+    x0: np.ndarray,
+    *,
+    solver: RootSolver | None = None,
+    args: tuple[Any, ...] = (),
+    tol: float = DEFAULT_TOL,
+    f_tol: float | None = None,
+    x_tol: float | None = None,
+    maxiter: int = DEFAULT_MAXITER,
+    progressbar: bool = True,
+) -> OptimizeResult:
+    """Run :func:`sparse_root` without validating ``fun``, for callers whose ``fun`` is known to be well formed."""
     if solver is None:
         solver = newton_armijo()
     if f_tol is None:
         f_tol = tol
     if x_tol is None:
         x_tol = tol
-
     x0 = np.asarray(x0, dtype=np.float64)
-    validate_fused_fun(fun, x0, args)
 
     # Trust-region solvers take no globalization strategy, so they have no line search budget to read.
     globalization = getattr(solver, "globalization", None)
