@@ -2,6 +2,7 @@ import warnings
 
 from collections.abc import Callable
 from functools import partial
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,8 @@ from gEconpy.model.simulate import _draw_shocks
 from gEconpy.solvers.sparse_root.base import RootSolver
 
 _WORK_COUNT_FIELDS = ("nit", "nfev", "njev", "nsolve")
+_HOMOTOPY_INITIAL_STEP = 0.1
+_HOMOTOPY_MIN_STEP = 1e-4
 
 
 def simulate_extended_path(
@@ -36,6 +39,7 @@ def simulate_extended_path(
     compile_kwargs: dict | None = None,
     steady_state_kwargs: dict | None = None,
     sparse_root_kwargs: dict | None = None,
+    max_homotopy_solves: int = 100,
 ) -> tuple[xr.DataArray, xr.Dataset]:
     """
     Simulate trajectories of the nonlinear model by the extended path method.
@@ -46,6 +50,10 @@ def simulate_extended_path(
     solution shifted one period forward, or from the steady state if the model is not finite at that guess. Agents are
     therefore surprised by every shock and expect no further ones, so the trajectories carry the model's nonlinearity
     but no precautionary effects of future uncertainty.
+
+    A period that fails to solve is retried by homotopy. The period's shock and the state's deviation from the steady
+    state are scaled by a weight that rises from 0.1 to 1, and each solve starts from the solution at the last weight
+    that succeeded.
 
     Shocks are drawn exactly as :func:`~gEconpy.model.simulate.simulate` draws them, so the two simulators see the
     same shocks for the same arguments and seed.
@@ -84,17 +92,19 @@ def simulate_extended_path(
     sparse_root_kwargs : dict, optional
         Keyword arguments forwarded to :func:`~gEconpy.solvers.sparse_root.sparse_root.sparse_root` for each
         period's problem. ``f_tol`` defaults to 1e-5 unless ``tol`` is given, and ``progressbar`` defaults to False.
+    max_homotopy_solves : int, optional
+        Number of solves the homotopy may spend on one failed period. Zero turns homotopy off. Defaults to 100.
 
     Returns
     -------
     simulations : DataArray
-        Simulated levels with dimensions ``(simulation, time, variable)``. A trajectory whose period fails to solve,
-        or whose model is not finite at either starting guess, is NaN from that period on, with a warning naming the
-        period, and the other trajectories continue.
+        Simulated levels with dimensions ``(simulation, time, variable)``. A trajectory whose period fails to solve
+        even by homotopy is NaN from that period on, with a warning naming the period, and the other trajectories
+        continue.
     diagnostics : Dataset
-        Per-period solver output with dimensions ``(simulation, time)``: ``success``, and the work counts ``nit``,
-        ``nfev``, ``njev``, and ``nsolve``. Periods after a failure were not attempted, so ``success`` is False and
-        the counts are zero there.
+        Per-period solver output with dimensions ``(simulation, time)``: ``success``, the work counts ``nit``,
+        ``nfev``, ``njev``, and ``nsolve`` summed over every solve of the period, and ``homotopy_solves``. Periods
+        after a failure were not attempted, so ``success`` is False and the counts are zero there.
 
     Examples
     --------
@@ -127,80 +137,176 @@ def simulate_extended_path(
 
     steady_state = model.steady_state(**steady_state_kwargs)
     steady_state_values = _ss_dict_to_array(steady_state, var_names)
-    terminal_conditions = dict(zip(var_names, steady_state_values, strict=True))
     initial_state = _initial_state(initial_conditions, steady_state_values, var_names)
 
     simulations = np.full((n_simulations, simulation_length, len(var_names)), np.nan)
     success = np.zeros((n_simulations, simulation_length), dtype=bool)
     work_counts = {field: np.zeros((n_simulations, simulation_length), dtype=int) for field in _WORK_COUNT_FIELDS}
+    homotopy_solves = np.zeros((n_simulations, simulation_length), dtype=int)
 
     steady_state_guess = np.tile(steady_state_values, (horizon, 1))
+    solve_at_weight = partial(
+        _solve_at_weight,
+        model=model,
+        horizon=horizon,
+        steady_state_values=steady_state_values,
+        terminal_conditions=dict(zip(var_names, steady_state_values, strict=True)),
+        var_names=var_names,
+        shock_names=shock_names,
+        solver=solver,
+        compile_kwargs=compile_kwargs,
+        steady_state_kwargs=steady_state_kwargs,
+        sparse_root_kwargs=sparse_root_kwargs,
+    )
+
     for simulation in range(n_simulations):
         state = initial_state
         guess = steady_state_guess
 
         for t in range(simulation_length):
-            shock_paths = np.zeros((horizon, len(shock_names)))
-            shock_paths[0] = epsilons[simulation, t]
-
-            solve = partial(
-                solve_perfect_foresight,
-                model,
-                simulation_length=horizon,
-                initial_conditions=dict(zip(var_names, state, strict=True)),
-                terminal_conditions=terminal_conditions,
-                shocks=dict(zip(shock_names, shock_paths.T, strict=True)),
-                compile_kwargs=compile_kwargs,
-                solver=solver,
-                steady_state_kwargs=steady_state_kwargs,
-                sparse_root_kwargs=sparse_root_kwargs,
+            outcome = _solve_period(
+                solve=partial(solve_at_weight, state=state, shock=epsilons[simulation, t]),
+                warm_guess=guess,
+                steady_state_guess=steady_state_guess,
+                max_homotopy_solves=max_homotopy_solves,
             )
-            try:
-                solution, result = _solve_period(solve, warm_guess=guess, steady_state_guess=steady_state_guess)
-            except NonFiniteInitialGuessError as error:
-                _warn_stopped(simulation=simulation, period=t, reason=str(error))
-                break
 
-            success[simulation, t] = result.success
             for field in _WORK_COUNT_FIELDS:
-                work_counts[field][simulation, t] = result[field]
+                work_counts[field][simulation, t] = outcome.work_counts[field]
+            homotopy_solves[simulation, t] = outcome.homotopy_solves
 
-            if not result.success:
-                _warn_stopped(simulation=simulation, period=t, reason=f"The solver reported: {result.message}")
+            if outcome.path is None:
+                warnings.warn(
+                    f"Simulation {simulation} stopped at period {t}, and its values from that period on are NaN. "
+                    f"{outcome.failure}",
+                    stacklevel=2,
+                )
                 break
 
-            path = solution[var_names].to_numpy()
-            state = path[0]
-            guess = np.vstack([path[1:], steady_state_values])
+            success[simulation, t] = True
+            state = outcome.path[0]
+            guess = np.vstack([outcome.path[1:], steady_state_values])
             simulations[simulation, t] = state
 
     coords = {"simulation": np.arange(n_simulations), "time": np.arange(simulation_length)}
     diagnostics = xr.Dataset(
-        {name: (("simulation", "time"), values) for name, values in {"success": success, **work_counts}.items()},
+        {
+            name: (("simulation", "time"), values)
+            for name, values in {"success": success, **work_counts, "homotopy_solves": homotopy_solves}.items()
+        },
         coords=coords,
     )
     paths = xr.DataArray(simulations, dims=["simulation", "time", "variable"], coords={**coords, "variable": var_names})
     return paths, diagnostics
 
 
+class _PeriodOutcome(NamedTuple):
+    path: np.ndarray | None
+    work_counts: dict[str, int]
+    homotopy_solves: int
+    failure: str | None
+
+
 def _solve_period(
     solve: Callable[..., tuple[pd.DataFrame, OptimizeResult]],
     warm_guess: np.ndarray,
     steady_state_guess: np.ndarray,
+    max_homotopy_solves: int,
+) -> _PeriodOutcome:
+    """
+    Solve one period from the warm start, and by homotopy if that fails.
+
+    The homotopy scales the period's shock and the initial state's deviation from the steady state by a weight. At
+    weight 0 the steady state solves the problem, so the weight rises from there to 1, each solve starting from the
+    last solution. The step doubles after a success and halves after a failure.
+    """
+    work_counts: dict[str, int] = dict.fromkeys(_WORK_COUNT_FIELDS, 0)
+
+    def attempt(weight: float, guess: np.ndarray) -> tuple[np.ndarray | None, str | None]:
+        try:
+            solution, result = _solve_from(solve, weight=weight, guess=guess, steady_state_guess=steady_state_guess)
+        except NonFiniteInitialGuessError as error:
+            return None, str(error)
+
+        for field in _WORK_COUNT_FIELDS:
+            work_counts[field] += result[field]
+        if not result.success:
+            return None, f"The solver reported: {result.message}"
+        return solution.to_numpy(), None
+
+    path, failure = attempt(weight=1.0, guess=warm_guess)
+    if path is not None:
+        return _PeriodOutcome(path=path, work_counts=work_counts, homotopy_solves=0, failure=None)
+
+    accepted_weight = 0.0
+    step = _HOMOTOPY_INITIAL_STEP
+    guess = steady_state_guess
+    homotopy_solves = 0
+    while homotopy_solves < max_homotopy_solves and step >= _HOMOTOPY_MIN_STEP:
+        weight = min(accepted_weight + step, 1.0)
+        homotopy_solves += 1
+        path, _ = attempt(weight=weight, guess=guess)
+
+        if path is None:
+            step /= 2
+        elif weight == 1.0:
+            return _PeriodOutcome(path=path, work_counts=work_counts, homotopy_solves=homotopy_solves, failure=None)
+        else:
+            accepted_weight, guess = weight, path
+            step *= 2
+
+    failure = f"{failure.rstrip('.')}. Homotopy reached weight {accepted_weight:.3g} in {homotopy_solves} solves."
+    return _PeriodOutcome(path=None, work_counts=work_counts, homotopy_solves=homotopy_solves, failure=failure)
+
+
+def _solve_from(
+    solve: Callable[..., tuple[pd.DataFrame, OptimizeResult]],
+    weight: float,
+    guess: np.ndarray,
+    steady_state_guess: np.ndarray,
 ) -> tuple[pd.DataFrame, OptimizeResult]:
     try:
-        return solve(x0=warm_guess)
+        return solve(weight=weight, x0=guess)
     except NonFiniteInitialGuessError:
-        if warm_guess is steady_state_guess:
+        if guess is steady_state_guess:
             raise
-        return solve(x0=steady_state_guess)
+        return solve(weight=weight, x0=steady_state_guess)
 
 
-def _warn_stopped(simulation: int, period: int, reason: str) -> None:
-    warnings.warn(
-        f"Simulation {simulation} stopped at period {period}, and its values from that period on are NaN. {reason}",
-        stacklevel=3,
+def _solve_at_weight(
+    weight: float,
+    x0: np.ndarray,
+    state: np.ndarray,
+    shock: np.ndarray,
+    model: Model,
+    horizon: int,
+    steady_state_values: np.ndarray,
+    terminal_conditions: dict[str, float],
+    var_names: list[str],
+    shock_names: list[str],
+    solver: RootSolver | None,
+    compile_kwargs: dict | None,
+    steady_state_kwargs: dict,
+    sparse_root_kwargs: dict,
+) -> tuple[pd.DataFrame, OptimizeResult]:
+    """Solve the period's problem with its shock and initial deviation from the steady state scaled by ``weight``."""
+    shock_paths = np.zeros((horizon, len(shock_names)))
+    shock_paths[0] = weight * shock
+    initial_state = steady_state_values + weight * (state - steady_state_values)
+
+    solution, result = solve_perfect_foresight(
+        model,
+        simulation_length=horizon,
+        x0=x0,
+        initial_conditions=dict(zip(var_names, initial_state, strict=True)),
+        terminal_conditions=terminal_conditions,
+        shocks=dict(zip(shock_names, shock_paths.T, strict=True)),
+        compile_kwargs=compile_kwargs,
+        solver=solver,
+        steady_state_kwargs=steady_state_kwargs,
+        sparse_root_kwargs=sparse_root_kwargs,
     )
+    return solution[var_names], result
 
 
 def _initial_state(
