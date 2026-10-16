@@ -38,6 +38,6 @@ dependencies:
   - pyparsing<4
   - scipy<2
   - sympy>=1.14.0, <2
-  - sympytensor>=2.1.0, <3
+  - sympytensor>=2.2.0, <3
   - better-optimize>=0.4.2, <1
   - xarray<2027

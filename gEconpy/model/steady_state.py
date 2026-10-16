@@ -10,6 +10,7 @@ from pytensor.gradient import jacobian as pt_jacobian
 from pytensor.graph.replace import graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor import TensorVariable
+from sympytensor.pytensor import PytensorPrinter
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -239,7 +240,8 @@ def known_steady_state_graphs(
         One graph per entry of ``known_values``, in the same order.
     """
     if not ss_definitions:
-        return [output_to_tensor(value, cache) for value in known_values.values()]
+        printer = PytensorPrinter(cache=cache, settings={})
+        return [output_to_tensor(value, cache, printer=printer) for value in known_values.values()]
 
     referenced = {
         symbol
@@ -250,6 +252,7 @@ def known_steady_state_graphs(
     for symbol in referenced - set(ss_definitions):
         output_to_tensor(symbol, cache)
 
+    # Each binding replaces a cache entry, so these conversions cannot share a printer.
     local_cache = dict(cache)
     definition_graphs = {}
     for key in topological_order(ss_definitions):
@@ -262,8 +265,11 @@ def known_steady_state_graphs(
         is_expression = isinstance(value, sp.Basic) and not value.is_number
         return is_expression and symbol.name in definition_graphs
 
+    printer = PytensorPrinter(cache=local_cache, settings={})
     return [
-        definition_graphs[symbol.name] if from_definitions(symbol, value) else output_to_tensor(value, local_cache)
+        definition_graphs[symbol.name]
+        if from_definitions(symbol, value)
+        else output_to_tensor(value, local_cache, printer=printer)
         for symbol, value in known_values.items()
     ]
 

@@ -10,6 +10,7 @@ from pytensor.graph.replace import graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor import TensorVariable
 from sympytensor import as_tensor
+from sympytensor.pytensor import PytensorPrinter
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
@@ -152,22 +153,29 @@ def sympy_to_pytensor(
     """
     cache = {} if cache is None else cache
     outputs = [outputs] if not isinstance(outputs, list) else outputs
-    input_nodes = [as_tensor(x, cache) for x in inputs]
+
+    # One printer for every output, so a subexpression shared between outputs is converted once.
+    printer = PytensorPrinter(cache=cache, settings={})
+    input_nodes = [printer.doprint(x) for x in inputs]
 
     cse_candidates = [(i, output) for i, output in enumerate(outputs) if isinstance(output, sp.Basic)]
     if not cse or len(cse_candidates) < 2:
-        output_nodes = [output_to_tensor(x, cache) for x in outputs]
+        output_nodes = [output_to_tensor(x, cache, printer=printer) for x in outputs]
         return input_nodes, output_nodes, cache
 
     indices, expressions = zip(*cse_candidates, strict=True)
     reduced = _plant_cse_intermediates(list(expressions), cache)
     reduced_by_index = dict(zip(indices, reduced, strict=True))
-    output_nodes = [output_to_tensor(reduced_by_index.get(i, x), cache) for i, x in enumerate(outputs)]
+    output_nodes = [output_to_tensor(reduced_by_index.get(i, x), cache, printer=printer) for i, x in enumerate(outputs)]
 
     return input_nodes, output_nodes, cache
 
 
-def output_to_tensor(x: sp.Basic | int | float, cache: dict) -> TensorVariable:
+def output_to_tensor(
+    x: sp.Basic | int | float,
+    cache: dict,
+    printer: PytensorPrinter | None = None,
+) -> TensorVariable:
     """
     Convert one sympy expression to a PyTensor variable, mapping plain numbers to constants.
 
@@ -177,6 +185,9 @@ def output_to_tensor(x: sp.Basic | int | float, cache: dict) -> TensorVariable:
         Expression to convert.
     cache : dict
         Sympytensor cache mapping cache keys to PyTensor variables.
+    printer : PytensorPrinter, optional
+        Printer to convert with, built on ``cache``. Reusing one printer across conversions converts a shared
+        subexpression once. Default is None, which uses a new printer.
 
     Returns
     -------
@@ -186,7 +197,9 @@ def output_to_tensor(x: sp.Basic | int | float, cache: dict) -> TensorVariable:
     if isinstance(x, int | float | sp.Float | sp.Integer):
         return pt.constant(x, dtype=pytensor.config.floatX)
 
-    return as_tensor(x, cache)
+    if printer is None:
+        return as_tensor(x, cache)
+    return printer.doprint(x)
 
 
 def build_symbolic_jacobians(
@@ -288,7 +301,7 @@ def make_cache_key(name: str, cls: type[sp.Symbol]) -> tuple:
     key : tuple
         The key sympytensor uses for this symbol.
     """
-    return name, cls, (), "floatX", ()
+    return name, cls, (), "floatX", (), None
 
 
 def make_return_dict_and_update_cache(

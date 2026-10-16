@@ -360,15 +360,22 @@ def test_numerical_steady_state(how, optimizer_kwargs, gcn_file, fixed_values):
 def test_numerical_steady_state_with_calibrated_params():
     model = load_and_cache_model("one_block_2_no_extra.gcn")
 
+    # From the default x0 the minimizer can land in a different basin depending on the platform's floating point, so
+    # seed it from the root solution.
+    root_res = model.steady_state(how="root", verbose=False, progressbar=False)
+    assert root_res.success
+    x0 = np.array([float(root_res[v.name]) for v in model._vars_to_solve])
+
     res = model.steady_state(
         how="minimize",
         verbose=False,
         use_hess=False,
         use_hessp=False,
-        optimizer_kwargs={"method": "L-BFGS-B", "options": {"maxiter": 100_000}},
+        optimizer_kwargs={"method": "L-BFGS-B", "options": {"maxiter": 100_000}, "x0": x0},
         bounds={"alpha": (0.05, 0.7)},
         progressbar=False,
     )
+    assert res.success
     res = res.to_string()
     assert_allclose(res["L_ss"] / res["K_ss"], 0.36)
 

@@ -214,6 +214,7 @@ numpydoc_xref_aliases = {
     "TensorVariable": "pytensor.tensor.TensorVariable",
     "Apply": "pytensor.graph.basic.Apply",
     "Mode": "pytensor.compile.mode.Mode",
+    "PytensorPrinter": "sympytensor.pytensor.PytensorPrinter",
     "pd.DataFrame": "pandas.DataFrame",
     "DataFrame": "pandas.DataFrame",
     "pd.DatetimeIndex": "pandas.DatetimeIndex",

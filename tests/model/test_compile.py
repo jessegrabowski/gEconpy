@@ -108,6 +108,16 @@ def test_sympy_to_pytensor_evaluates_outputs_and_caches_inputs(cse):
     np.testing.assert_allclose(f(2.0, 1.0), [18.0, 9.0, 3.0])
 
 
+def test_sympy_to_pytensor_converts_a_subexpression_shared_between_outputs_once():
+    x, y = sp.symbols("x y")
+    shared = sp.exp(x + y)
+
+    _, (first, second), _ = sympy_to_pytensor([x, y], [shared * x, shared * y])
+
+    (shared_in_first,) = (node for node in first.owner.inputs if node.owner is not None)
+    assert shared_in_first in second.owner.inputs
+
+
 def test_sympy_to_pytensor_shared_cache():
     x = sp.symbols("x")
     cache = {}
