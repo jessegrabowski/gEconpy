@@ -6,7 +6,7 @@ from numpy.testing import assert_allclose
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perfect_foresight import compile_perfect_foresight_problem
-from gEconpy.model.perfect_foresight.compile import _check_system_is_solvable
+from gEconpy.model.perfect_foresight.compile import PerfectForesightProblem, _check_system_is_solvable
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 
@@ -196,6 +196,39 @@ class TestCompile:
         assert other.f_resid_and_jac is not problem.f_resid_and_jac
         assert other.var_names != problem.var_names
         assert other.jacobian_sparsity.shape != problem.jacobian_sparsity.shape
+
+    def test_column_order_keeps_the_natural_order_for_a_small_dense_period_block(self, rbc_model):
+        assert compile_perfect_foresight_problem(rbc_model, 10).column_order is None
+
+    def test_column_order_switches_to_colamd_when_the_natural_order_fills_far_more(self):
+        """Twenty decoupled sectors, interleaved in the variable order, fill in completely under the natural order."""
+        rng = np.random.default_rng(0)
+        n_sectors, sector_size = 20, 5
+        n = n_sectors * sector_size
+        interleave = rng.permutation(n)
+
+        def period_block():
+            block = np.zeros((n, n), dtype=bool)
+            for sector in range(n_sectors):
+                members = slice(sector * sector_size, (sector + 1) * sector_size)
+                block[members, members] = rng.random((sector_size, sector_size)) < 0.4
+            block[:, 0] = block[0, :] = True
+            return block[np.ix_(interleave, interleave)]
+
+        sparsity = np.hstack([period_block(), period_block() | np.eye(n, dtype=bool), period_block()])
+        problem = PerfectForesightProblem(
+            f_resid_and_jac=None,
+            f_resid_only=None,
+            jacobian_sparsity=sparsity,
+            var_names=tuple(f"x{i}" for i in range(n)),
+            shock_names=(),
+            param_names=(),
+            deterministic_param_names=(),
+            T=3,
+        )
+
+        assert problem.column_order is not None
+        assert sorted(problem.column_order) == list(range(3 * n))
 
     def test_differing_compile_kwargs_get_their_own_functions(self, rbc_model):
         default = compile_perfect_foresight_problem(rbc_model, 10)
