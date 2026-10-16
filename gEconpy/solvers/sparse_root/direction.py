@@ -10,6 +10,8 @@ import scipy.sparse as sp
 
 from scipy.sparse.linalg import LinearOperator, MatrixRankWarning, SuperLU, bicgstab, gmres, splu, spsolve
 
+from gEconpy.solvers.sparse_root.base import DEFAULT_TOL, check_step_convergence
+
 _KRYLOV_METHODS = {
     "gmres": gmres,
     "bicgstab": bicgstab,
@@ -99,51 +101,84 @@ class NewtonDirection:
 
 @dataclass
 class _ScheduledFactorization:
-    """A Jacobian and its factorization, refreshed every ``recompute_every`` updates."""
+    """A Jacobian and its factorization, refreshed every ``recompute_every`` updates or on demand."""
 
     matrix: sp.spmatrix | None = None
     lu: SuperLU | None = None
-    _updates: int = 0
+    refreshed: bool = False
+    _updates_since_refresh: int = 0
 
     def reset(self) -> None:
         self.matrix = None
         self.lu = None
-        self._updates = 0
+        self.refreshed = False
+        self._updates_since_refresh = 0
 
-    def update(self, jac: sp.spmatrix, recompute_every: int) -> tuple[sp.spmatrix, SuperLU | None]:
-        # Refresh on schedule even when factorizing failed, so a singular Jacobian is retried at the next window and
-        # not on every call.
-        if self.matrix is None or self._updates % recompute_every == 0:
+    def update(
+        self, jac: sp.spmatrix, recompute_every: int | None, permc_spec: str = "COLAMD", force: bool = False
+    ) -> tuple[sp.spmatrix, SuperLU | None]:
+        # On a schedule, a failed factorization waits for the next window, so a singular Jacobian is not retried on
+        # every call. Without one, no window ever comes, so it is retried on the next call.
+        due = self.lu is None if recompute_every is None else self._updates_since_refresh >= recompute_every
+        self.refreshed = self.matrix is None or self.matrix.shape != jac.shape or force or due
+        if self.refreshed:
             self.matrix = jac
-            self.lu = _try_factorize(jac)
-        self._updates += 1
+            self.lu = _try_factorize(jac, permc_spec)
+            self._updates_since_refresh = 0
+        self._updates_since_refresh += 1
         return self.matrix, self.lu
 
 
 @dataclass
 class ChordDirection:
-    """Direction strategy that solves with a cached factorization, refreshing it every ``recompute_every`` calls.
+    """Direction strategy that solves with a cached factorization, refreshed on a schedule or when progress slows.
 
     The residual is always current, so only the linear solve reuses old data. One :func:`scipy.sparse.linalg.splu`
-    serves every call in a refresh window, which is what makes a chord step cheaper than the Newton step it
+    serves every call until the next refresh, which is what makes a chord step cheaper than the Newton step it
     approximates.
 
     Parameters
     ----------
-    recompute_every : int, optional
-        Number of direction computations between factorization refreshes. Defaults to 5.
+    recompute_every : int or None, optional
+        Number of direction computations between scheduled refreshes, at least 1. ``None`` turns the schedule off.
+        Defaults to 5.
+    refresh_ratio : float or None, optional
+        Refresh when the residual norm falls by less than this factor from the previous call of the same solve, that
+        is when ``||r_k|| > refresh_ratio * ||r_{k-1}||``. ``None`` turns the rule off. Defaults to None.
+    refresh_step_tol : float or None, optional
+        Refresh a factorization from an earlier call when its step is below this tolerance relative to the iterate,
+        as the solver's step tolerance measures it. Matching the solver's ``x_tol`` keeps a short step from an old
+        factorization from ending the solve as a stall. ``None`` turns the rule off. Defaults to 1e-10, the default
+        ``x_tol`` of :func:`~gEconpy.solvers.sparse_root.sparse_root.sparse_root`.
+    keep_across_solves : bool, optional
+        Whether :meth:`reset` keeps the factorization, so the next solve starts with the last one. Defaults to False.
+    permc_spec : str, optional
+        Column ordering :func:`scipy.sparse.linalg.splu` factorizes in. Defaults to ``"COLAMD"``.
     """
 
-    recompute_every: int = 5
+    recompute_every: int | None = 5
+    refresh_ratio: float | None = None
+    refresh_step_tol: float | None = DEFAULT_TOL
+    keep_across_solves: bool = False
+    permc_spec: str = "COLAMD"
+    _previous_res_norm: float | None = field(init=False, repr=False, default=None)
     _factorization: _ScheduledFactorization = field(init=False, repr=False, default_factory=_ScheduledFactorization)
 
+    def __post_init__(self):
+        if self.recompute_every is not None and self.recompute_every < 1:
+            raise ValueError(
+                f"recompute_every must be at least 1, got {self.recompute_every}. Pass None to turn it off."
+            )
+
     def reset(self) -> None:
-        """Discard the cached factorization so the next call rebuilds it."""
-        self._factorization.reset()
+        """Forget the previous residual, and discard the cached factorization unless ``keep_across_solves``."""
+        self._previous_res_norm = None
+        if not self.keep_across_solves:
+            self._factorization.reset()
 
     def compute(
         self,
-        x: np.ndarray,  # noqa: ARG002
+        x: np.ndarray,
         res: np.ndarray,
         jac: sp.spmatrix,
     ) -> DirectionProposal:
@@ -152,7 +187,7 @@ class ChordDirection:
         Parameters
         ----------
         x : ndarray
-            Current iterate. Unused, accepted for interface compatibility.
+            Current iterate.
         res : ndarray
             Residuals at ``x``.
         jac : sparse matrix
@@ -163,12 +198,31 @@ class ChordDirection:
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
-        cached_jac, lu = self._factorization.update(jac, self.recompute_every)
+        res_norm = float(np.linalg.norm(res))
+        slowed = (
+            self.refresh_ratio is not None
+            and self._previous_res_norm is not None
+            and res_norm > self.refresh_ratio * self._previous_res_norm
+        )
+        self._previous_res_norm = res_norm
 
+        cached_jac, lu = self._factorization.update(jac, self.recompute_every, self.permc_spec, force=slowed)
         dx = None if lu is None else try_linear_solve(SuperLU.solve, lu, -res)
+        if self._is_short_step_from_an_old_factorization(dx, x):
+            cached_jac, lu = self._factorization.update(jac, self.recompute_every, self.permc_spec, force=True)
+            dx = None if lu is None else try_linear_solve(SuperLU.solve, lu, -res)
+
         if dx is None:
             return _descent_proposal(-(cached_jac.T @ res), res, jac, kind="chord_gradient_fallback")
         return _descent_proposal(dx, res, jac, kind="chord")
+
+    def _is_short_step_from_an_old_factorization(self, dx: np.ndarray | None, x: np.ndarray) -> bool:
+        return (
+            self.refresh_step_tol is not None
+            and dx is not None
+            and not self._factorization.refreshed
+            and check_step_convergence(dx, x + dx, self.refresh_step_tol)
+        )
 
 
 @dataclass
@@ -354,12 +408,12 @@ def try_linear_solve(linear_solver: Callable, A: sp.spmatrix | SuperLU, b: np.nd
     return x
 
 
-def _try_factorize(jac: sp.spmatrix) -> SuperLU | None:
+def _try_factorize(jac: sp.spmatrix, permc_spec: str = "COLAMD") -> SuperLU | None:
     """Factorize ``jac`` and return ``None`` when it is singular."""
     # splu converts a non-CSC input itself and warns while doing it, which is fatal under warnings-as-errors.
     # tocsc returns the matrix unchanged when it is already CSC, so the common case costs nothing.
     try:
-        return splu(jac.tocsc())
+        return splu(jac.tocsc(), permc_spec=permc_spec)
     except Exception:
         return None
 

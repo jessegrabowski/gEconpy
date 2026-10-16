@@ -3,9 +3,12 @@ import pytest
 
 from numpy.testing import assert_allclose
 
+import gEconpy.solvers.sparse_root.direction as direction_module
+
 from gEconpy import simulate
 from gEconpy.exceptions import NonFiniteInitialGuessError
 from gEconpy.model.perfect_foresight import extended_path, simulate_extended_path, solve_perfect_foresight
+from gEconpy.solvers.sparse_root.line_search import newton_armijo
 from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 
 
@@ -80,6 +83,7 @@ def test_zero_shocks_from_a_displaced_state_follow_the_perfect_foresight_path(rb
         shock_std=0.0,
         initial_conditions=initial_conditions,
         horizon=400,
+        solver=newton_armijo(),
         sparse_root_kwargs={"tol": 1e-10},
     )
     pf_path, _ = solve_perfect_foresight(rbc_model, simulation_length=400, initial_conditions=initial_conditions)
@@ -99,6 +103,44 @@ def test_default_tolerance_leaves_the_stall_test_strict():
     )
 
     assert diagnostics.success.all()
+
+
+def test_the_default_solver_reuses_factorizations_across_periods(rbc_model, monkeypatch):
+    simulation_kwargs = {"simulation_length": 10, "shock_std": 0.01, "random_seed": 1}
+    expected, _ = simulate_extended_path(rbc_model, solver=newton_armijo(), **simulation_kwargs)
+
+    calls = {"n": 0}
+    real_splu = direction_module.splu
+
+    def counting_splu(A, **kwargs):
+        calls["n"] += 1
+        return real_splu(A, **kwargs)
+
+    monkeypatch.setattr(direction_module, "splu", counting_splu)
+    paths, diagnostics = simulate_extended_path(rbc_model, **simulation_kwargs)
+
+    assert diagnostics.success.all()
+    assert calls["n"] < simulation_kwargs["simulation_length"]
+    # Both runs solve only to f_tol = 1e-5, so they agree to about that.
+    assert_allclose(paths.values, expected.values, rtol=1e-4)
+
+
+def test_a_tight_tolerance_needs_no_homotopy_with_the_default_solver():
+    """A carried factorization converges linearly, so its last steps fall below x_tol before the residual meets tol."""
+    model = load_and_cache_model("full_nk.gcn")
+
+    _, diagnostics = simulate_extended_path(
+        model,
+        simulation_length=3,
+        shock_std=0.01,
+        random_seed=0,
+        horizon=50,
+        sparse_root_kwargs={"tol": 1e-10},
+        compile_kwargs={"mode": "FAST_COMPILE"},
+    )
+
+    assert diagnostics.success.all()
+    assert not diagnostics.homotopy_solves.any()
 
 
 def test_a_failed_period_ends_only_its_own_trajectory(rbc_model):

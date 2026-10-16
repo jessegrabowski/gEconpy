@@ -89,9 +89,9 @@ class TestChordDirection:
         calls = {"n": 0}
         real_splu = direction_module.splu
 
-        def counting_splu(A):
+        def counting_splu(A, **kwargs):
             calls["n"] += 1
-            return real_splu(A)
+            return real_splu(A, **kwargs)
 
         monkeypatch.setattr(direction_module, "splu", counting_splu)
         direction = ChordDirection(recompute_every=3)
@@ -117,9 +117,9 @@ class TestChordDirection:
         calls = {"n": 0}
         real_splu = direction_module.splu
 
-        def counting_splu(A):
+        def counting_splu(A, **kwargs):
             calls["n"] += 1
-            return real_splu(A)
+            return real_splu(A, **kwargs)
 
         monkeypatch.setattr(direction_module, "splu", counting_splu)
         direction = ChordDirection(recompute_every=3)
@@ -131,6 +131,87 @@ class TestChordDirection:
 
         assert proposal.kind == "chord_gradient_fallback"
         assert calls["n"] == 1
+
+    @pytest.mark.parametrize(
+        ("second_residual", "refreshed"), [(0.05, False), (0.5, True)], ids=["fast_progress", "slow_progress"]
+    )
+    def test_a_residual_that_falls_too_slowly_refreshes_the_factorization(self, second_residual, refreshed):
+        direction = ChordDirection(recompute_every=None, refresh_ratio=0.1)
+        direction.reset()
+        jac_first = sp.eye(2, format="csc")
+        jac_second = 2.0 * sp.eye(2, format="csc")
+
+        direction.compute(np.zeros(2), np.array([1.0, 1.0]), jac_first)
+        direction.compute(np.zeros(2), np.array([second_residual, second_residual]), jac_second)
+
+        expected = jac_second if refreshed else jac_first
+        np.testing.assert_array_equal(direction._factorization.matrix.data, expected.data)
+
+    @pytest.mark.parametrize(("refresh_step_tol", "refreshed"), [(1e-10, True), (None, False)], ids=["on", "off"])
+    def test_a_short_step_from_an_old_factorization_refreshes_it(self, refresh_step_tol, refreshed):
+        direction = ChordDirection(recompute_every=None, refresh_step_tol=refresh_step_tol)
+        direction.reset()
+        jac_first = sp.eye(2, format="csc")
+        jac_second = 2.0 * sp.eye(2, format="csc")
+
+        direction.compute(np.zeros(2), np.array([1.0, 1.0]), jac_first)
+        proposal = direction.compute(np.zeros(2), np.array([1e-12, 1e-12]), jac_second)
+
+        expected_step = -1e-12 / (2.0 if refreshed else 1.0)
+        np.testing.assert_allclose(proposal.direction, [expected_step, expected_step])
+
+    def test_a_short_step_from_a_fresh_factorization_is_not_refactorized(self, monkeypatch):
+        calls = {"n": 0}
+        real_splu = direction_module.splu
+
+        def counting_splu(A, **kwargs):
+            calls["n"] += 1
+            return real_splu(A, **kwargs)
+
+        monkeypatch.setattr(direction_module, "splu", counting_splu)
+        direction = ChordDirection(recompute_every=None, refresh_step_tol=1e-10)
+        direction.reset()
+
+        direction.compute(np.zeros(2), np.array([1e-12, 1e-12]), sp.eye(2, format="csc"))
+
+        assert calls["n"] == 1
+
+    @pytest.mark.parametrize("keep_across_solves", [True, False])
+    def test_reset_keeps_the_factorization_only_when_asked(self, keep_across_solves):
+        direction = ChordDirection(keep_across_solves=keep_across_solves)
+        direction.reset()
+        direction.compute(np.zeros(2), np.array([1.0, 1.0]), sp.eye(2, format="csc"))
+
+        direction.reset()
+
+        assert (direction._factorization.lu is not None) == keep_across_solves
+
+    def test_a_kept_factorization_of_another_shape_is_refreshed(self):
+        direction = ChordDirection(keep_across_solves=True)
+        direction.reset()
+        direction.compute(np.zeros(2), np.array([1.0, 1.0]), sp.eye(2, format="csc"))
+        direction.reset()
+
+        proposal = direction.compute(np.zeros(3), np.array([1.0, 2.0, 3.0]), 2.0 * sp.eye(3, format="csc"))
+
+        assert proposal.kind == "chord"
+        np.testing.assert_allclose(proposal.direction, [-0.5, -1.0, -1.5])
+
+    def test_without_a_schedule_a_failed_factorization_is_retried_on_the_next_call(self):
+        direction = ChordDirection(recompute_every=None)
+        direction.reset()
+        singular = sp.csc_matrix([[1.0, 1.0], [1.0, 1.0]])
+
+        first = direction.compute(np.zeros(2), np.array([1.0, 2.0]), singular)
+        second = direction.compute(np.zeros(2), np.array([1.0, 2.0]), sp.eye(2, format="csc"))
+
+        assert first.kind == "chord_gradient_fallback"
+        assert second.kind == "chord"
+        np.testing.assert_allclose(second.direction, [-1.0, -2.0])
+
+    def test_a_recompute_every_below_one_is_rejected(self):
+        with pytest.raises(ValueError, match="recompute_every must be at least 1"):
+            ChordDirection(recompute_every=0)
 
 
 class TestKrylovDirection:
@@ -275,9 +356,9 @@ class TestKrylovDirection:
         calls = {"n": 0}
         real_splu = direction_module.splu
 
-        def counting_splu(A):
+        def counting_splu(A, **kwargs):
             calls["n"] += 1
-            return real_splu(A)
+            return real_splu(A, **kwargs)
 
         monkeypatch.setattr(direction_module, "splu", counting_splu)
         direction = KrylovDirection(**options)

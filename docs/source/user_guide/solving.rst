@@ -125,6 +125,23 @@ because of the model's nonlinearity and the finite horizon described below.
 ``paths`` holds levels with dimensions ``(simulation, time, variable)``. ``diagnostics`` holds, for every period,
 whether it solved and the solver's work counts summed over every solve the period took.
 
+By default every period is solved by a :func:`~gEconpy.solvers.sparse_root.line_search.chord` solver that keeps
+its factorization of the stacked Jacobian from one period to the next. It refactorizes only when the residual norm
+falls by less than a factor of 10 in one step, so a period often needs no factorization at all. The paths then match
+those of a full Newton solver to within the solver tolerance. A different solver passed as ``solver`` changes the
+trade-off, for example refactorizing less often or at every step:
+
+.. code-block:: python
+
+    from gEconpy.solvers.sparse_root.direction import ChordDirection
+    from gEconpy.solvers.sparse_root.line_search import chord, newton_armijo
+
+    lazy_chord = chord(
+        direction=ChordDirection(recompute_every=None, refresh_ratio=0.5, keep_across_solves=True)
+    )
+    paths, diagnostics = simulate_extended_path(model, simulation_length=100, shock_std=0.01, solver=lazy_chord)
+    paths, diagnostics = simulate_extended_path(model, simulation_length=100, shock_std=0.01, solver=newton_armijo())
+
 Agents in the extended path are surprised by every shock and expect no further ones. The paths show how the
 nonlinear model responds to the shocks that arrive, and they leave out any behavior that comes from expecting
 future uncertainty. A model whose main nonlinearity is a precautionary motive, such as buffer-stock saving, shows
