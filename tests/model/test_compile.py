@@ -4,8 +4,6 @@ import pytensor.tensor as pt
 import pytest
 import sympy as sp
 
-from sympytensor.pytensor import PytensorPrinter
-
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
@@ -110,13 +108,6 @@ def test_sympy_to_pytensor_evaluates_outputs_and_caches_inputs(cse):
     np.testing.assert_allclose(f(2.0, 1.0), [18.0, 9.0, 3.0])
 
 
-def _printer_memoizes() -> bool:
-    printer = PytensorPrinter(cache={}, settings={})
-    x = sp.Symbol("x")
-    return printer.doprint(x + 1) is printer.doprint(x + 1)
-
-
-@pytest.mark.skipif(not _printer_memoizes(), reason="the installed sympytensor does not memoize subexpressions")
 def test_sympy_to_pytensor_converts_a_subexpression_shared_between_outputs_once():
     x, y = sp.symbols("x y")
     shared = sp.exp(x + y)

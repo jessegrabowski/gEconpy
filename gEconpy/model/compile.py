@@ -301,7 +301,7 @@ def make_cache_key(name: str, cls: type[sp.Symbol]) -> tuple:
     key : tuple
         The key sympytensor uses for this symbol.
     """
-    return name, cls, (), "floatX", ()
+    return name, cls, (), "floatX", (), None
 
 
 def make_return_dict_and_update_cache(
