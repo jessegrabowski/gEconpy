@@ -125,6 +125,18 @@ def test_the_default_solver_reuses_factorizations_across_periods(rbc_model, monk
     assert_allclose(paths.values, expected.values, rtol=1e-4)
 
 
+def test_a_trajectory_does_not_depend_on_the_trajectories_before_it(rbc_model, monkeypatch):
+    # Shocks large enough that the first trajectory refactorizes mid-run, so it ends with a factorization the second
+    # trajectory would not start with.
+    shocks = np.random.default_rng(0).normal(scale=[[[0.1]], [[0.01]]], size=(2, 10, len(rbc_model.shocks)))
+    monkeypatch.setattr(extended_path, "_draw_shocks", lambda n_simulations, **_: shocks[-n_simulations:])
+
+    both, _ = simulate_extended_path(rbc_model, n_simulations=2, simulation_length=10)
+    second_alone, _ = simulate_extended_path(rbc_model, n_simulations=1, simulation_length=10)
+
+    np.testing.assert_array_equal(both.values[1], second_alone.values[0])
+
+
 def test_a_tight_tolerance_needs_no_homotopy_with_the_default_solver():
     """A carried factorization converges linearly, so its last steps fall below x_tol before the residual meets tol."""
     model = load_and_cache_model("full_nk.gcn")

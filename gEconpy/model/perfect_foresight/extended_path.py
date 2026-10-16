@@ -1,3 +1,4 @@
+import copy
 import warnings
 
 from collections.abc import Callable
@@ -87,7 +88,8 @@ def simulate_extended_path(
         Number of periods in each period's perfect-foresight problem. It must be long enough for the economy to
         return close to the steady state, which is imposed at its end. Defaults to 200.
     solver : RootSolver, optional
-        The root-finding solver for each period's problem. One instance serves every period. Defaults to a
+        The root-finding solver for each period's problem. Each trajectory solves with its own copy, so every period of
+        a trajectory shares one instance and no state passes between trajectories. Defaults to a
         :func:`~gEconpy.solvers.sparse_root.line_search.chord` solver whose
         :class:`~gEconpy.solvers.sparse_root.direction.ChordDirection` keeps its factorization from one period to the
         next and refreshes it when the residual norm falls by less than a factor of 10 in one step. Pass a solver
@@ -237,9 +239,13 @@ def _simulate_trajectory(
     steady_state_guess: np.ndarray,
     max_homotopy_solves: int,
 ) -> _Trajectory:
-    """Simulate one trajectory from ``initial_state`` under ``shocks``, one row per period."""
+    """
+    Simulate one trajectory from ``initial_state`` under ``shocks``, one row per period.
+
+    The trajectory solves with its own copy of ``solver``, so no solver state passes between trajectories.
+    """
     simulation_length = shocks.shape[0]
-    solve = partial(solve_at_weight, solver=solver)
+    solve = partial(solve_at_weight, solver=copy.deepcopy(solver))
 
     states = np.full((simulation_length, initial_state.size), np.nan)
     success = np.zeros(simulation_length, dtype=bool)
