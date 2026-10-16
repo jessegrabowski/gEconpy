@@ -1,11 +1,13 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
+from functools import partial
 
 import numpy as np
 import pandas as pd
 
 from scipy import sparse
 from scipy.optimize import OptimizeResult
+from scipy.sparse.linalg import spsolve
 
 from gEconpy.exceptions import NonFiniteInitialGuessError
 from gEconpy.model.model import Model
@@ -17,6 +19,7 @@ from gEconpy.model.perfect_foresight.compile import (
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
 from gEconpy.solvers.sparse_root import newton_armijo
 from gEconpy.solvers.sparse_root.base import RootSolver
+from gEconpy.solvers.sparse_root.direction import NewtonDirection
 from gEconpy.solvers.sparse_root.sparse_root import _run_sparse_root
 
 
@@ -74,7 +77,8 @@ def solve_perfect_foresight(
         Keyword arguments forwarded to :func:`pytensor.function` when compiling the model.
     solver : RootSolver, optional
         The root-finding solver. See :doc:`gEconpy.solvers.sparse_root </api/gEconpy.solvers.sparse_root>` for the
-        available solvers. Defaults to Newton's method with Armijo backtracking.
+        available solvers. Defaults to Newton's method with Armijo backtracking, factorizing the stacked Jacobian in
+        the column order of :attr:`~gEconpy.model.perfect_foresight.compile.PerfectForesightProblem.column_order`.
     steady_state_kwargs : dict, optional
         Keyword arguments forwarded to ``model.steady_state()``. A parameter value given here also holds in every
         period of the path, unless ``param_paths`` names the same parameter. ``verbose`` defaults to False.
@@ -498,7 +502,7 @@ def _solve_stacked(
         )
 
     if solver is None:
-        solver = newton_armijo()
+        solver = newton_armijo(direction=NewtonDirection(linear_solver=_ordered_sparse_solver(problem.column_order)))
 
     # Trust-region solvers take no globalization strategy, so there is nowhere to put the merit function. A caller's
     # own merit function returns raw residuals, so it is scaled like everything else the line search compares.
@@ -516,6 +520,20 @@ def _solve_stacked(
         result.fun = result.fun / row_scale
         result.jac = _scale_rows_in_place(result.jac.copy(), 1 / row_scale)
     return result
+
+
+def _ordered_sparse_solver(column_order: np.ndarray | None) -> Callable[[sparse.csc_matrix, np.ndarray], np.ndarray]:
+    """Return a SuperLU solve that factorizes in ``column_order``, so no factorization recomputes an ordering."""
+    if column_order is None:
+        return partial(spsolve, permc_spec="NATURAL", use_umfpack=False)
+    order = column_order
+
+    def solve(A: sparse.csc_matrix, b: np.ndarray) -> np.ndarray:
+        x = np.empty(A.shape[1])
+        x[order] = spsolve(A[:, order], b, permc_spec="NATURAL", use_umfpack=False)
+        return x
+
+    return solve
 
 
 def _residual_row_scale(residuals: np.ndarray, jacobian: sparse.csc_matrix, n_vars: int) -> np.ndarray:

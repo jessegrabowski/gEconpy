@@ -8,6 +8,8 @@ import pytensor.tensor as pt
 import sympy as sp
 
 from pytensor.graph.replace import graph_replace, vectorize_graph
+from scipy import sparse
+from scipy.sparse.linalg import splu
 from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -20,6 +22,8 @@ from gEconpy.model.perfect_foresight.assemble import (
 )
 from gEconpy.model.timing import classify_variables_by_timing
 from gEconpy.utilities import safe_to_ss
+
+_NATURAL_ORDER_MAX_FILL_RATIO = 4.0
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,31 @@ class PerfectForesightProblem:
         return build_stacked_jacobian_layout(
             sparsity_pattern=self.jacobian_sparsity, n_vars=self.n_vars, n_eq=self.n_eq, T=self.T
         )
+
+    @cached_property
+    def column_order(self) -> np.ndarray | None:
+        """
+        Column permutation for factorizing the stacked Jacobian, or None to keep the natural block-tridiagonal order.
+
+        The natural order factorizes fastest unless its fill is far larger than a fill-reducing order's. Both fills
+        are measured on the sparsity pattern alone, factorizing without pivoting with placeholder values, and COLAMD's
+        order is used when the natural fill is more than four times its fill.
+        """
+        layout = self.jacobian_layout
+        placeholder = np.random.default_rng(0).standard_normal(layout.indices.size)
+        pattern = sparse.csc_matrix((placeholder, layout.indices, layout.indptr), shape=layout.shape)
+        try:
+            natural = splu(pattern, permc_spec="NATURAL", diag_pivot_thresh=0.0)
+            colamd = splu(pattern, permc_spec="COLAMD", diag_pivot_thresh=0.0)
+        except RuntimeError:
+            # A structurally singular pattern has no factorization to compare. The solver reports the failure.
+            return None
+
+        natural_fill = natural.L.nnz + natural.U.nnz
+        colamd_fill = colamd.L.nnz + colamd.U.nnz
+        if natural_fill > _NATURAL_ORDER_MAX_FILL_RATIO * colamd_fill:
+            return np.argsort(colamd.perm_c)
+        return None
 
 
 def compile_perfect_foresight_problem(

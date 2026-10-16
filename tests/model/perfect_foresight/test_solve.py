@@ -3,8 +3,10 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.sparse as sp
 
 from numpy.testing import assert_allclose
+from scipy.sparse.linalg import spsolve
 
 from gEconpy import impulse_response_function
 from gEconpy.model.perfect_foresight import compile_perfect_foresight_problem, solve_perfect_foresight
@@ -13,6 +15,7 @@ from gEconpy.model.perfect_foresight.solve import (
     _compute_stacked_residuals,
     _compute_stacked_residuals_and_jacobian,
     _normalize_condition_keys,
+    _ordered_sparse_solver,
     make_piecewise_x0,
 )
 from gEconpy.solvers.sparse_root import LevenbergMarquardt, newton_armijo
@@ -711,6 +714,16 @@ class TestInputGuards:
             solve_perfect_foresight(rbc_model, simulation_length=10, param_paths={"not_a_param": 1.0})
 
         mock_ss.assert_not_called()
+
+
+@pytest.mark.parametrize("permuted", [False, True], ids=["natural_order", "permuted_order"])
+def test_ordered_sparse_solver_solves_in_any_column_order(permuted):
+    rng = np.random.default_rng(0)
+    A = (sp.random(60, 60, density=0.1, random_state=rng) + 10 * sp.eye(60)).tocsc()
+    b = rng.standard_normal(60)
+    column_order = rng.permutation(60) if permuted else None
+
+    assert_allclose(_ordered_sparse_solver(column_order)(A, b), spsolve(A, b), rtol=1e-12)
 
 
 class TestResidualScaling:
