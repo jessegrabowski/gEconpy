@@ -166,11 +166,6 @@ def simulate_extended_path(
     steady_state_values = _ss_dict_to_array(steady_state, problem.var_names)
     initial_state = _initial_state(initial_conditions, steady_state_values, list(problem.var_names))
 
-    simulations = np.full((n_simulations, simulation_length, len(var_names)), np.nan)
-    success = np.zeros((n_simulations, simulation_length), dtype=bool)
-    work_counts = {field: np.zeros((n_simulations, simulation_length), dtype=int) for field in _WORK_COUNT_FIELDS}
-    homotopy_solves = np.zeros((n_simulations, simulation_length), dtype=int)
-
     steady_state_guess = np.tile(steady_state_values, (horizon, 1))
     if solver is None:
         solver = _default_solver(problem, sparse_root_kwargs)
@@ -179,38 +174,36 @@ def simulate_extended_path(
         problem=problem,
         steady_state_values=steady_state_values,
         params=params,
-        solver=solver,
         sparse_root_kwargs=sparse_root_kwargs,
     )
 
-    for simulation in range(n_simulations):
-        state = initial_state
-        guess = steady_state_guess
-
-        for t in range(simulation_length):
-            outcome = _solve_period(
-                solve=partial(solve_at_weight, state=state, shock=epsilons[simulation, t, shock_columns]),
-                warm_guess=guess,
-                steady_state_guess=steady_state_guess,
-                max_homotopy_solves=max_homotopy_solves,
+    trajectories = [
+        _simulate_trajectory(
+            solve_at_weight=solve_at_weight,
+            solver=solver,
+            shocks=epsilons[simulation][:, shock_columns],
+            initial_state=initial_state,
+            steady_state_values=steady_state_values,
+            steady_state_guess=steady_state_guess,
+            max_homotopy_solves=max_homotopy_solves,
+        )
+        for simulation in range(n_simulations)
+    ]
+    for simulation, trajectory in enumerate(trajectories):
+        if trajectory.failure is not None:
+            period, message = trajectory.failure
+            warnings.warn(
+                f"Simulation {simulation} stopped at period {period}, and its values from that period on are NaN. "
+                f"{message}",
+                stacklevel=2,
             )
 
-            for field in _WORK_COUNT_FIELDS:
-                work_counts[field][simulation, t] = outcome.work_counts[field]
-            homotopy_solves[simulation, t] = outcome.homotopy_solves
-
-            if outcome.path is None:
-                warnings.warn(
-                    f"Simulation {simulation} stopped at period {t}, and its values from that period on are NaN. "
-                    f"{outcome.failure}",
-                    stacklevel=2,
-                )
-                break
-
-            success[simulation, t] = True
-            state = outcome.path[0]
-            guess = np.vstack([outcome.path[1:], steady_state_values])
-            simulations[simulation, t] = state
+    simulations = np.stack([trajectory.states for trajectory in trajectories])
+    success = np.stack([trajectory.success for trajectory in trajectories])
+    work_counts = {
+        field: np.stack([trajectory.work_counts[field] for trajectory in trajectories]) for field in _WORK_COUNT_FIELDS
+    }
+    homotopy_solves = np.stack([trajectory.homotopy_solves for trajectory in trajectories])
 
     coords = {"simulation": np.arange(n_simulations), "time": np.arange(simulation_length)}
     diagnostics = xr.Dataset(
@@ -225,6 +218,65 @@ def simulate_extended_path(
         simulations[..., model_order], dims=["simulation", "time", "variable"], coords={**coords, "variable": var_names}
     )
     return paths, diagnostics
+
+
+class _Trajectory(NamedTuple):
+    states: np.ndarray
+    success: np.ndarray
+    work_counts: dict[str, np.ndarray]
+    homotopy_solves: np.ndarray
+    failure: tuple[int, str] | None
+
+
+def _simulate_trajectory(
+    solve_at_weight: Callable[..., tuple[np.ndarray, OptimizeResult]],
+    solver: RootSolver,
+    shocks: np.ndarray,
+    initial_state: np.ndarray,
+    steady_state_values: np.ndarray,
+    steady_state_guess: np.ndarray,
+    max_homotopy_solves: int,
+) -> _Trajectory:
+    """Simulate one trajectory from ``initial_state`` under ``shocks``, one row per period."""
+    simulation_length = shocks.shape[0]
+    solve = partial(solve_at_weight, solver=solver)
+
+    states = np.full((simulation_length, initial_state.size), np.nan)
+    success = np.zeros(simulation_length, dtype=bool)
+    work_counts = {field: np.zeros(simulation_length, dtype=int) for field in _WORK_COUNT_FIELDS}
+    homotopy_solves = np.zeros(simulation_length, dtype=int)
+
+    state = initial_state
+    guess = steady_state_guess
+    for t in range(simulation_length):
+        outcome = _solve_period(
+            solve=partial(solve, state=state, shock=shocks[t]),
+            warm_guess=guess,
+            steady_state_guess=steady_state_guess,
+            max_homotopy_solves=max_homotopy_solves,
+        )
+
+        for field in _WORK_COUNT_FIELDS:
+            work_counts[field][t] = outcome.work_counts[field]
+        homotopy_solves[t] = outcome.homotopy_solves
+
+        if outcome.path is None:
+            return _Trajectory(
+                states=states,
+                success=success,
+                work_counts=work_counts,
+                homotopy_solves=homotopy_solves,
+                failure=(t, outcome.failure),
+            )
+
+        success[t] = True
+        state = outcome.path[0]
+        guess = np.vstack([outcome.path[1:], steady_state_values])
+        states[t] = state
+
+    return _Trajectory(
+        states=states, success=success, work_counts=work_counts, homotopy_solves=homotopy_solves, failure=None
+    )
 
 
 class _PeriodOutcome(NamedTuple):
