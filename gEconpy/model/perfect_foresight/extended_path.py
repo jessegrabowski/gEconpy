@@ -20,11 +20,14 @@ from gEconpy.model.perfect_foresight.solve import (
 )
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
 from gEconpy.model.simulate import _draw_shocks
-from gEconpy.solvers.sparse_root.base import RootSolver
+from gEconpy.solvers.sparse_root.base import DEFAULT_TOL, RootSolver
+from gEconpy.solvers.sparse_root.direction import ChordDirection
+from gEconpy.solvers.sparse_root.line_search import chord
 
 _WORK_COUNT_FIELDS = ("nit", "nfev", "njev", "nsolve")
 _HOMOTOPY_INITIAL_STEP = 0.1
 _HOMOTOPY_MIN_STEP = 1e-4
+_CHORD_REFRESH_RATIO = 0.1
 
 
 def simulate_extended_path(
@@ -84,8 +87,12 @@ def simulate_extended_path(
         Number of periods in each period's perfect-foresight problem. It must be long enough for the economy to
         return close to the steady state, which is imposed at its end. Defaults to 200.
     solver : RootSolver, optional
-        The root-finding solver for each period's problem. Defaults to the default of
-        :func:`~gEconpy.model.perfect_foresight.solve.solve_perfect_foresight`.
+        The root-finding solver for each period's problem. One instance serves every period. Defaults to a
+        :func:`~gEconpy.solvers.sparse_root.line_search.chord` solver whose
+        :class:`~gEconpy.solvers.sparse_root.direction.ChordDirection` keeps its factorization from one period to the
+        next and refreshes it when the residual norm falls by less than a factor of 10 in one step. Pass a solver
+        built on another ``ChordDirection`` to change those settings, or
+        :func:`~gEconpy.solvers.sparse_root.line_search.newton_armijo` to factorize at every step.
     compile_kwargs : dict, optional
         Keyword arguments forwarded to :func:`pytensor.function` when compiling the model.
     steady_state_kwargs : dict, optional
@@ -165,6 +172,8 @@ def simulate_extended_path(
     homotopy_solves = np.zeros((n_simulations, simulation_length), dtype=int)
 
     steady_state_guess = np.tile(steady_state_values, (horizon, 1))
+    if solver is None:
+        solver = _default_solver(problem, sparse_root_kwargs)
     solve_at_weight = partial(
         _solve_at_weight,
         problem=problem,
@@ -223,6 +232,19 @@ class _PeriodOutcome(NamedTuple):
     work_counts: dict[str, int]
     homotopy_solves: int
     failure: str | None
+
+
+def _default_solver(problem: PerfectForesightProblem, sparse_root_kwargs: dict) -> RootSolver:
+    """Return a chord solver that carries its factorization between periods, refreshed when progress slows."""
+    x_tol = sparse_root_kwargs.get("x_tol", sparse_root_kwargs.get("tol", DEFAULT_TOL))
+    direction = ChordDirection(
+        recompute_every=None,
+        refresh_ratio=_CHORD_REFRESH_RATIO,
+        refresh_step_tol=x_tol,
+        keep_across_solves=True,
+        permc_spec="NATURAL" if problem.column_order is None else "COLAMD",
+    )
+    return chord(direction=direction)
 
 
 def _solve_period(
