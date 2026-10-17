@@ -24,7 +24,7 @@ COMMENT = pp.python_style_comment
 IDENTIFIER = pp.Word(pp.alphas + "_", pp.alphanums + "_")
 
 # Contents are taken verbatim: there is no escape character, so a LaTeX fragment such as "\alpha" needs no doubling.
-STRING = pp.QuotedString('"')
+STRING = pp.QuotedString('"', convert_whitespace_escapes=False)
 
 NUMBER_PATTERN = r"(?:\d+\.\d*|\d+|\.\d+)(?:[eE][+-]?\d+)?(?![.\w])"
 NUMBER = pp.Regex(NUMBER_PATTERN)
