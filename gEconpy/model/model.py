@@ -705,9 +705,10 @@ class Model:
         include_prior_params: bool = False,
         ci_kind: Literal["hdi", "eti"] = "hdi",
         ci_prob: float | None = None,
+        diagnostics: bool = False,
         markup: Markup = "latex",
     ) -> EstimationTable:
-        """
+        r"""
         Build the model's estimated parameters as table data, for a paper's estimation table.
 
         Without sampler output, a row is every name the GCN file gives a prior, including each shock's estimated
@@ -733,6 +734,9 @@ class Model:
             ``"hdi"`` or ``"eti"``, the posterior interval to print. Defaults to ``"hdi"``.
         ci_prob : float, optional
             Probability mass of the posterior interval. Defaults to arviz's ``stats.ci_prob``.
+        diagnostics : bool, optional
+            Print each row's Monte Carlo standard errors, effective sample sizes and :math:`\hat{R}`. Defaults
+            to False.
         markup : str, optional
             Language the cells are rendered in. Defaults to ``"latex"``.
 
@@ -748,14 +752,16 @@ class Model:
         priors = priors_by_sampled_name(self.param_priors.to_string(), self.shock_priors)
 
         if idata is None:
-            if var_names:
-                raise ValueError("var_names selects posterior variables, so it needs an idata.")
+            if var_names or diagnostics:
+                raise ValueError("var_names and diagnostics describe the posterior, so they need an idata.")
             names = [name for name in self._parameter_names(values, priors) if name in priors]
             summary, interval, prior_draws = None, None, None
         else:
             posterior = posterior_dataset(idata)
             names = self._sampled_parameter_names(posterior, values, priors, var_names)
-            summary, interval = summarize_posterior(posterior, names, ci_kind=ci_kind, ci_prob=ci_prob)
+            summary, interval = summarize_posterior(
+                posterior, names, ci_kind=ci_kind, ci_prob=ci_prob, diagnostics=diagnostics
+            )
             prior_draws = prior_dataset(idata)
 
         rows = []
@@ -847,7 +853,7 @@ class Model:
             to True. ``"parameters"`` and ``"estimates"`` take ``prior_stats`` and ``include_prior_params``,
             which choose the prior columns. ``"estimates"`` also takes ``idata``, sampler output whose posterior
             adds the posterior columns and whose prior group, when present, supplies the priors, along with
-            ``var_names``, ``ci_kind`` and ``ci_prob``. The other groups take no options.
+            ``var_names``, ``ci_kind``, ``ci_prob`` and ``diagnostics``. The other groups take no options.
 
         Returns
         -------

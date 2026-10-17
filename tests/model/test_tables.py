@@ -10,6 +10,7 @@ import xarray as xr
 
 from gEconpy import model_from_gcn
 from gEconpy.model.tables import (
+    DIAGNOSTIC_FRAME_COLUMNS,
     POSTERIOR_FRAME_COLUMNS,
     PRIOR_STAT_HEADINGS,
     PRIOR_STATS,
@@ -302,16 +303,20 @@ class TestEstimationTableWithPosterior:
         assert rows[-1].posterior_mean == pytest.approx(float(posterior["bk_satisfied"].mean()))
 
     @pytest.mark.parametrize(
-        "with_idata, match",
-        [(True, "does not have: shock_scale"), (False, "needs an idata")],
-        ids=["absent_from_posterior", "without_idata"],
+        "with_idata, options, match",
+        [
+            (True, {"var_names": ["shock_scale"]}, "does not have: shock_scale"),
+            (False, {"var_names": ["shock_scale"]}, "need an idata"),
+            (False, {"diagnostics": True}, "need an idata"),
+        ],
+        ids=["var_names_absent_from_posterior", "var_names_without_idata", "diagnostics_without_idata"],
     )
-    def test_var_names_that_cannot_be_printed_raise(self, posterior, with_idata, match):
+    def test_posterior_options_that_cannot_be_printed_raise(self, posterior, with_idata, options, match):
         model = load_and_cache_model("one_block_1_dist.gcn")
         idata = posterior if with_idata else None
 
         with pytest.raises(ValueError, match=match):
-            model.table("estimates", idata=idata, var_names=["shock_scale"])
+            model.table("estimates", idata=idata, **options)
 
     def test_each_row_reports_the_prior_that_was_sampled(self, posterior):
         """
@@ -351,6 +356,28 @@ class TestEstimationTableWithPosterior:
         )
 
         np.testing.assert_allclose(frame[list(POSTERIOR_FRAME_COLUMNS)].to_numpy(), expected.to_numpy())
+        assert frame[list(DIAGNOSTIC_FRAME_COLUMNS)].isna().all().all()
+
+    def test_the_diagnostic_columns_are_the_arviz_diagnostics_of_the_draws(self, posterior):
+        model = load_and_cache_model("one_block_1_dist.gcn")
+
+        frame = model.table("estimates", idata=posterior, diagnostics=True).to_frame()
+        expected = azs.summary(
+            posterior, var_names=["alpha", "rho", "sigma_epsilon"], kind="diagnostics", round_to="none"
+        )
+
+        np.testing.assert_allclose(
+            frame[list(DIAGNOSTIC_FRAME_COLUMNS)].to_numpy(), expected[list(DIAGNOSTIC_FRAME_COLUMNS)].to_numpy()
+        )
+
+    @pytest.mark.parametrize("diagnostics", [False, True])
+    def test_the_diagnostic_columns_print_only_on_request(self, posterior, diagnostics):
+        model = load_and_cache_model("one_block_1_dist.gcn")
+        build_options = {"idata": posterior, "diagnostics": diagnostics}
+
+        rendered = model.write_table("estimates", build_options=build_options)
+
+        assert all((heading in rendered) is diagnostics for heading in ["MCSE mean", "ESS bulk", "R-hat"])
 
     def test_a_datatree_gives_the_table_its_posterior_group_gives(self, posterior):
         model = load_and_cache_model("one_block_1_dist.gcn")
@@ -432,6 +459,7 @@ class TestEmptyTable:
                     "prior_std",
                     "prior_parameters",
                     *POSTERIOR_FRAME_COLUMNS,
+                    *DIAGNOSTIC_FRAME_COLUMNS,
                 ],
             ),
         ],

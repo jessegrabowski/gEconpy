@@ -880,6 +880,7 @@ class CalibrationTable(_TabularTable):
 
 
 POSTERIOR_FRAME_COLUMNS = ("posterior_mean", "posterior_sd", "posterior_lower", "posterior_upper")
+DIAGNOSTIC_FRAME_COLUMNS = ("mcse_mean", "mcse_sd", "ess_bulk", "ess_tail", "r_hat")
 SAMPLE_DIMS = ("chain", "draw")
 
 
@@ -898,6 +899,7 @@ def summarize_posterior(
     names: Sequence[str],
     ci_kind: Literal["hdi", "eti"] = "hdi",
     ci_prob: float | None = None,
+    diagnostics: bool = False,
 ) -> tuple[pd.DataFrame, str]:
     """
     Summarize the posterior of each named scalar variable.
@@ -912,11 +914,13 @@ def summarize_posterior(
         ``"hdi"`` for the highest density interval or ``"eti"`` for the equal-tailed one. Defaults to ``"hdi"``.
     ci_prob : float, optional
         Probability mass of the interval. Defaults to arviz's ``stats.ci_prob``.
+    diagnostics : bool, optional
+        Add the convergence diagnostics, ``DIAGNOSTIC_FRAME_COLUMNS``. Defaults to False.
 
     Returns
     -------
     summary : pandas.DataFrame
-        One row per name, with columns ``POSTERIOR_FRAME_COLUMNS``.
+        One row per name, with columns ``POSTERIOR_FRAME_COLUMNS`` and, on request, ``DIAGNOSTIC_FRAME_COLUMNS``.
     interval : str
         The interval's heading, such as ``"89% HDI"``.
     """
@@ -930,10 +934,19 @@ def summarize_posterior(
     # The wide format, which is the default, is always a dataframe.
     summary = cast(
         pd.DataFrame,
-        azs.summary(posterior, var_names=list(names), kind="stats", ci_kind=ci_kind, ci_prob=mass, round_to="none"),
+        azs.summary(
+            posterior,
+            var_names=list(names),
+            kind="all" if diagnostics else "stats",
+            ci_kind=ci_kind,
+            ci_prob=mass,
+            round_to="none",
+        ),
     )
-    summary.columns = list(POSTERIOR_FRAME_COLUMNS)
-    return summary, f"{mass * 100:g}% {ci_kind.upper()}"
+    # arviz names the interval bounds after its kind and mass, so they are renamed by position.
+    summary.columns = [*POSTERIOR_FRAME_COLUMNS, *summary.columns[len(POSTERIOR_FRAME_COLUMNS) :]]
+    columns = [*POSTERIOR_FRAME_COLUMNS, *(DIAGNOSTIC_FRAME_COLUMNS if diagnostics else ())]
+    return summary.loc[:, columns], f"{mass * 100:g}% {ci_kind.upper()}"
 
 
 def prior_dataset(idata: xr.DataTree | xr.Dataset) -> xr.Dataset | None:
@@ -1021,6 +1034,11 @@ def _interval_cell(dialect: _Dialect, lower: float | None, upper: float | None) 
     return f"{dialect.escape('[')}{bounds}{dialect.escape(']')}"
 
 
+def _format_fixed(value: float | None, decimals: int) -> str:
+    """Render a diagnostic to fixed decimals, so an ESS of 1001 stays whole and an R-hat of 1.004 reads 1.00."""
+    return "" if value is None else f"{value:.{decimals}f}"
+
+
 @dataclass(frozen=True)
 class EstimateRow:
     """
@@ -1038,6 +1056,11 @@ class EstimateRow:
     posterior_sd: float | None = None
     posterior_lower: float | None = None
     posterior_upper: float | None = None
+    mcse_mean: float | None = None
+    mcse_sd: float | None = None
+    ess_bulk: float | None = None
+    ess_tail: float | None = None
+    r_hat: float | None = None
 
     @property
     def prior_family(self) -> str:
@@ -1092,8 +1115,9 @@ class EstimationTable(_TabularTable):
         -------
         frame : pandas.DataFrame
             Columns ``symbol``, ``description``, ``prior``, one ``prior_<stat>`` per requested statistic,
-            ``prior_parameters``, ``posterior_mean``, ``posterior_sd``, ``posterior_lower`` and
-            ``posterior_upper``.
+            ``prior_parameters``, ``posterior_mean``, ``posterior_sd``, ``posterior_lower``,
+            ``posterior_upper``, and the convergence diagnostics ``mcse_mean``, ``mcse_sd``, ``ess_bulk``,
+            ``ess_tail`` and ``r_hat``.
         """
         return pd.DataFrame(
             [
@@ -1101,11 +1125,17 @@ class EstimationTable(_TabularTable):
                     "symbol": row.symbol,
                     "description": row.description,
                     **_prior_frame_values(row, self.prior_stats),
-                    **{name: getattr(row, name) for name in POSTERIOR_FRAME_COLUMNS},
+                    **{name: getattr(row, name) for name in (*POSTERIOR_FRAME_COLUMNS, *DIAGNOSTIC_FRAME_COLUMNS)},
                 }
                 for row in self.rows
             ],
-            columns=["symbol", "description", *_prior_frame_columns(self.prior_stats), *POSTERIOR_FRAME_COLUMNS],
+            columns=[
+                "symbol",
+                "description",
+                *_prior_frame_columns(self.prior_stats),
+                *POSTERIOR_FRAME_COLUMNS,
+                *DIAGNOSTIC_FRAME_COLUMNS,
+            ],
         )
 
     def _columns(self) -> list[_Column]:
@@ -1120,4 +1150,9 @@ class EstimationTable(_TabularTable):
                 "right",
                 lambda dialect, row: _interval_cell(dialect, row.posterior_lower, row.posterior_upper),
             ),
+            _Column("MCSE mean", "right", lambda dialect, row: _format_statistic(dialect, row.mcse_mean)),
+            _Column("MCSE S.D.", "right", lambda dialect, row: _format_statistic(dialect, row.mcse_sd)),
+            _Column("ESS bulk", "right", lambda _, row: _format_fixed(row.ess_bulk, decimals=0)),
+            _Column("ESS tail", "right", lambda _, row: _format_fixed(row.ess_tail, decimals=0)),
+            _Column("R-hat", "right", lambda _, row: _format_fixed(row.r_hat, decimals=2)),
         ]
