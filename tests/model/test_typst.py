@@ -10,7 +10,7 @@ from gEconpy import model_from_gcn
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import TypstPrintError
 from gEconpy.model.latex import wrap_leads_in_expectations
-from gEconpy.model.tables import CalibrationTable, EquationTable, SymbolRow, SymbolTable
+from gEconpy.model.tables import CalibrationTable, EquationTable, EstimationTable, SymbolRow, SymbolTable
 from gEconpy.model.typst import typst
 from tests._resources.cache_compiled_models import load_and_cache_example
 from tests.conftest import TEST_GCNS
@@ -257,7 +257,9 @@ class TestEmptyTable:
     """An empty table must not emit a figure wrapping nothing, which is the shape pdflatex once rejected."""
 
     @pytest.mark.parametrize(
-        "table", [EquationTable([]), SymbolTable([]), CalibrationTable([])], ids=["equations", "symbols", "calibration"]
+        "table",
+        [EquationTable([]), SymbolTable([]), CalibrationTable([]), EstimationTable([])],
+        ids=["equations", "symbols", "calibration", "estimates"],
     )
     def test_an_empty_table_renders_as_nothing(self, table):
         assert table.to_typst() == ""

@@ -3,7 +3,7 @@ import logging
 import re
 
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from functools import partial
 from inspect import signature
@@ -14,6 +14,7 @@ import numpy as np
 import pytensor
 import pytensor.scalar as ps
 import sympy as sp
+import xarray as xr
 
 from better_optimize import minimize, root
 from preliz.distributions.distributions import Distribution
@@ -26,7 +27,7 @@ from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
-from gEconpy.classes.distributions import CompositeDistribution
+from gEconpy.classes.distributions import CompositeDistribution, priors_by_sampled_name
 from gEconpy.classes.time_aware_symbol import (
     TimeAwareSymbol,
 )
@@ -52,11 +53,17 @@ from gEconpy.model.tables import (
     CalibrationTable,
     EquationRow,
     EquationTable,
+    EstimateRow,
+    EstimationTable,
     Markup,
     ParameterRow,
     SymbolRow,
     SymbolTable,
     TableGroup,
+    posterior_dataset,
+    prior_dataset,
+    reconcile_prior,
+    summarize_posterior,
 )
 from gEconpy.parser.ast import GCNBlock, GCNModel, SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
@@ -668,20 +675,8 @@ class Model:
         render_name = DIALECTS[markup].render_name
         declarations = self._declarations_by_name()
         values = self.parameters().to_string()
-        priors = self.param_priors.to_string()
+        priors = priors_by_sampled_name(self.param_priors.to_string(), self.shock_priors)
 
-        # A shock's standard deviation is a hyper-parameter of its prior, not a model parameter, so it reaches
-        # neither of the dicts above. An estimated model's prior table is the one place it must appear.
-        hyper_priors = {
-            hyper_name: distribution.hyper_param_dict[param_name]
-            for distribution in self.shock_priors.values()
-            for param_name, hyper_name in getattr(distribution, "param_name_to_hyper_name", {}).items()
-            if param_name in getattr(distribution, "hyper_param_dict", {})
-        }
-        priors = {**priors, **hyper_priors}
-
-        calibrated = [parameter.name for parameter in self.calibrated_params if parameter.name not in values]
-        names = [*values, *calibrated, *(name for name in hyper_priors if name not in values)]
         return CalibrationTable(
             prior_stats=prior_stats,
             include_prior_params=include_prior_params,
@@ -693,9 +688,143 @@ class Model:
                     prior=priors.get(name),
                     source=declarations[name].source if name in declarations else None,
                 )
-                for name in names
+                for name in self._parameter_names(values, priors)
             ],
         )
+
+    def _parameter_names(self, values: Mapping[str, Any], priors: Mapping[str, Any]) -> list[str]:
+        """Return every name a parameter table can print: parameters with a value, then calibrated ones, then priors."""
+        calibrated = [parameter.name for parameter in self.calibrated_params]
+        return list(dict.fromkeys([*values, *calibrated, *priors]))
+
+    def _estimation_table(
+        self,
+        idata: xr.DataTree | xr.Dataset | None = None,
+        var_names: Sequence[str] = (),
+        prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS,
+        include_prior_params: bool = False,
+        ci_kind: Literal["hdi", "eti"] = "hdi",
+        ci_prob: float | None = None,
+        diagnostics: bool = False,
+        markup: Markup = "latex",
+    ) -> EstimationTable:
+        r"""
+        Build the model's estimated parameters as table data, for a paper's estimation table.
+
+        Without sampler output, a row is every name the GCN file gives a prior, including each shock's estimated
+        hyper-parameters, in the order the parameters table prints them. With it, a row is every scalar posterior
+        variable that names a model parameter, a shock standard deviation ``sigma_<shock>``, a measurement error
+        ``error_sigma_<variable>``, or an entry of ``var_names``, because a prior can be written in the PyMC
+        model alone. A shock standard deviation prints under the name, symbol and prior of the hyper-parameter the
+        GCN file declares for it. A row reports the prior its ``prior`` group sampled when the idata has one, and
+        the GCN file's declaration otherwise.
+
+        Parameters
+        ----------
+        idata : DataTree or Dataset, optional
+            Sampler output with a ``posterior`` group and optionally a ``prior`` group, or the posterior dataset
+            itself. Defaults to none, which builds the prior half of the table from the GCN file alone.
+        var_names : sequence of str, optional
+            Further posterior variables to print, such as a parameter of the PyMC model that the GCN file does
+            not name. Defaults to none.
+        prior_stats : sequence of str, optional
+            Statistics of the prior to print. Defaults to the mean and the standard deviation.
+        include_prior_params : bool, optional
+            Print the declared distribution's own parameters. Defaults to False.
+        ci_kind : str, optional
+            ``"hdi"`` or ``"eti"``, the posterior interval to print. Defaults to ``"hdi"``.
+        ci_prob : float, optional
+            Probability mass of the posterior interval. Defaults to arviz's ``stats.ci_prob``.
+        diagnostics : bool, optional
+            Print each row's Monte Carlo standard errors, effective sample sizes and :math:`\hat{R}`. Defaults
+            to False.
+        markup : str, optional
+            Language the cells are rendered in. Defaults to ``"latex"``.
+
+        Returns
+        -------
+        table : EstimationTable
+            The rows, renderable as LaTeX or as a dataframe.
+        """
+        overrides = self._markup_overrides(markup)
+        render_name = DIALECTS[markup].render_name
+        declarations = self._declarations_by_name()
+        values = self.parameters().to_string()
+        priors = priors_by_sampled_name(self.param_priors.to_string(), self.shock_priors)
+
+        if idata is None:
+            if var_names or diagnostics:
+                raise ValueError("var_names and diagnostics describe the posterior, so they need an idata.")
+            names = [name for name in self._parameter_names(values, priors) if name in priors]
+            summary, interval, prior_draws, aliases = None, None, None, {}
+        else:
+            posterior = posterior_dataset(idata)
+            names = self._sampled_parameter_names(posterior, values, priors, var_names)
+            aliases = self._shock_sd_aliases(posterior)
+            summary, interval = summarize_posterior(
+                posterior, names, ci_kind=ci_kind, ci_prob=ci_prob, diagnostics=diagnostics
+            )
+            prior_draws = prior_dataset(idata)
+
+        rows = []
+        for name in names:
+            declared_name = aliases.get(name, name)
+            draws = None if prior_draws is None or name not in prior_draws else prior_draws[name].to_numpy().ravel()
+            prior, draw_statistics = reconcile_prior(priors.get(declared_name), draws, prior_stats)
+            rows.append(
+                EstimateRow(
+                    symbol=render_name(declared_name, name_override=overrides.get(declared_name)),
+                    description=declarations[declared_name].name if declared_name in declarations else None,
+                    prior=prior,
+                    prior_draw_statistics=draw_statistics,
+                    **({} if summary is None else summary.loc[name].to_dict()),
+                )
+            )
+        return EstimationTable(
+            rows=rows, prior_stats=prior_stats, include_prior_params=include_prior_params, interval=interval
+        )
+
+    def _sampled_parameter_names(
+        self,
+        posterior: xr.Dataset,
+        values: Mapping[str, Any],
+        priors: Mapping[str, Any],
+        var_names: Sequence[str],
+    ) -> list[str]:
+        """Return the posterior variables an estimation table prints, model parameters first."""
+        missing = [name for name in var_names if name not in posterior.data_vars]
+        if missing:
+            raise ValueError(f"var_names names variables the posterior does not have: {', '.join(missing)}.")
+
+        candidates = [
+            *self._parameter_names(values, priors),
+            *(f"sigma_{shock.base_name}" for shock in self.shocks),
+            *(f"error_sigma_{variable.base_name}" for variable in self.variables),
+        ]
+        names = list(dict.fromkeys([*(name for name in candidates if name in posterior.data_vars), *var_names]))
+        if not names:
+            raise ValueError(
+                "The posterior shares no variable with the model's parameters, shock standard deviations or "
+                "measurement errors. Name the variables to print with var_names."
+            )
+        return names
+
+    def _shock_sd_aliases(self, posterior: xr.Dataset) -> dict[str, str]:
+        """
+        Map each statespace shock standard deviation in the posterior to the hyper-parameter the GCN file declares.
+
+        The statespace samples a shock's standard deviation as ``sigma_<shock>``, whatever name the GCN file gives
+        its prior. A posterior that also holds the declared name sampled the declared prior there, so its
+        ``sigma_<shock>`` is some other prior and keeps its own name.
+        """
+        aliases = {}
+        for shock_name, shock_prior in self.shock_priors.items():
+            statespace_name = f"sigma_{shock_name}"
+            hyper_name = shock_prior.param_name_to_hyper_name.get("sigma")
+            if hyper_name is None or statespace_name not in posterior.data_vars or hyper_name in posterior.data_vars:
+                continue
+            aliases[statespace_name] = hyper_name
+        return aliases
 
     def _symbol_table(self, group: str, markup: Markup = "latex") -> SymbolTable:
         """Build the variable or shock rows, resolving each symbol's declared caption and rendering."""
@@ -725,30 +854,31 @@ class Model:
     @overload
     def table(self, group: Literal["parameters"], **options: Any) -> CalibrationTable: ...
 
-    def table(self, group: TableGroup, **options: Any) -> EquationTable | SymbolTable | CalibrationTable:
+    @overload
+    def table(self, group: Literal["estimates"], **options: Any) -> EstimationTable: ...
+
+    def table(
+        self, group: TableGroup, **options: Any
+    ) -> EquationTable | SymbolTable | CalibrationTable | EstimationTable:
         r"""
         Build one group of the model as table data, for a paper or a notebook.
 
         Parameters
         ----------
         group : str
-            One of ``"equations"``, ``"variables"``, ``"shocks"`` or ``"parameters"``.
+            One of ``"equations"``, ``"variables"``, ``"shocks"``, ``"parameters"`` or ``"estimates"``.
         **options
             Build options for the group. ``"equations"`` takes ``expectations``, which wraps lead-carrying
             terms in :math:`\mathbb{E}_t` except where the author wrote the operator themselves and defaults
-            to True. The other groups take no options.
+            to True. ``"parameters"`` and ``"estimates"`` take ``prior_stats`` and ``include_prior_params``,
+            which choose the prior columns. ``"estimates"`` also takes ``idata``, sampler output whose posterior
+            adds the posterior columns and whose prior group, when present, supplies the priors, along with
+            ``var_names``, ``ci_kind``, ``ci_prob`` and ``diagnostics``. The other groups take no options.
 
         Returns
         -------
-        table : EquationTable or SymbolTable or CalibrationTable
+        table : EquationTable or SymbolTable or CalibrationTable or EstimationTable
             The rows, renderable as LaTeX or as a dataframe.
-
-        Raises
-        ------
-        ValueError
-            If ``group`` is not one of the four groups.
-        TypeError
-            If an option is given that the group does not take.
         """
         if group not in TABLE_GROUPS:
             raise ValueError(f"group must be one of {', '.join(TABLE_GROUPS)}, got {group!r}.")
@@ -756,6 +886,7 @@ class Model:
         builders = {
             "equations": self._equation_table,
             "parameters": self._calibration_table,
+            "estimates": self._estimation_table,
             "variables": partial(self._symbol_table, group),
             "shocks": partial(self._symbol_table, group),
         }
@@ -775,7 +906,7 @@ class Model:
         Parameters
         ----------
         group : str
-            One of ``"equations"``, ``"variables"``, ``"shocks"`` or ``"parameters"``.
+            One of ``"equations"``, ``"variables"``, ``"shocks"``, ``"parameters"`` or ``"estimates"``.
         writer : str, optional
             Markup to emit. Defaults to ``"latex"``.
         path : str or Path, optional
@@ -791,11 +922,6 @@ class Model:
         -------
         markup : str
             The rendered table.
-
-        Raises
-        ------
-        ValueError
-            If ``group`` or ``writer`` is not recognized.
 
         Examples
         --------

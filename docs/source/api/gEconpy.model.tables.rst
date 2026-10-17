@@ -10,6 +10,8 @@ gEconpy.model.tables
     CalibrationTable
     EquationRow
     EquationTable
+    EstimateRow
+    EstimationTable
     ParameterRow
     SymbolRow
     SymbolTable
@@ -18,8 +20,12 @@ gEconpy.model.tables
 
 .. autosummary::
 
+    posterior_dataset
+    prior_dataset
+    reconcile_prior
+    summarize_posterior
     typst_escape
 
 .. automodule:: gEconpy.model.tables
-    :members: CalibrationTable, EquationRow, EquationTable, ParameterRow, SymbolRow, SymbolTable, typst_escape
+    :members: CalibrationTable, EquationRow, EquationTable, EstimateRow, EstimationTable, ParameterRow, SymbolRow, SymbolTable, posterior_dataset, prior_dataset, reconcile_prior, summarize_posterior, typst_escape
     :undoc-members:

@@ -405,7 +405,7 @@ Publication tables
 ------------------
 
 :meth:`~gEconpy.model.model.Model.table` returns one group of the model as data. The groups are
-``equations``, ``variables``, ``shocks`` and ``parameters``:
+``equations``, ``variables``, ``shocks``, ``parameters`` and ``estimates``:
 
 .. code-block:: python
 
@@ -454,6 +454,37 @@ A calibrated parameter is solved for rather than set, so its value is empty. A c
 row is dropped from the rendered table, so a model that declares no ``source`` does not print a blank
 citation column.
 ``to_frame`` keeps every column, because it is data rather than a printed table.
+
+The ``estimates`` group is a table of the estimated parameters. Without sampler output it lists every
+parameter the GCN file gives a prior, with the prior's family and statistics. Passing sampler output as the
+``idata`` build option adds each parameter's posterior mean, standard deviation and interval:
+
+.. code-block:: python
+
+    model.write_table("estimates", build_options={"idata": idata}, caption="Estimates", booktabs=True)
+    model.table("estimates", idata=idata, diagnostics=True).to_frame()
+
+The table is built on the model from :func:`~gEconpy.model.build.model_from_gcn`, and ``idata`` can come
+from sampling the statespace of the same file, because the table looks up each parameter in the posterior under
+the name the statespace samples it as.
+
+With sampler output, the rows come from the posterior. A row is every scalar posterior variable that names a
+model parameter, a shock standard deviation ``sigma_<shock>`` or a measurement error ``error_sigma_<variable>``,
+because a prior written only in the PyMC model is as much an estimate as one written in the GCN file.
+``var_names`` adds any other posterior variable. A parameter with a GCN prior and no posterior draws was held
+fixed, so it is not a row. A shock standard deviation prints under the name and prior of the hyper-parameter
+the GCN file declares for it.
+
+When the sampler output has a ``prior`` group, its draws are the prior a row reports. The GCN file's
+declaration prints only where the draws match it. A prior that the PyMC model replaced, or that was never
+declared, prints the statistics of its draws and no family. The mode and the entropy need a density estimate,
+so a prior known only from draws leaves them empty.
+
+``prior_stats`` and ``include_prior_params`` choose the prior columns, as they do for the parameters table.
+``ci_kind`` chooses an ``"hdi"`` or ``"eti"`` interval and ``ci_prob`` its mass. The defaults are an HDI at
+arviz's ``stats.ci_prob``, and the column heading names both, as ``89% HDI``. ``diagnostics=True`` adds the
+Monte Carlo standard errors of the mean and standard deviation, the bulk and tail effective sample sizes, and
+:math:`\hat{R}`.
 
 
 The notebook representation
