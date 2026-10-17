@@ -73,9 +73,9 @@ _LATEX_BARE_SUBSCRIPT = re.compile(r"_(\\[A-Za-z]+|[A-Za-z0-9])$")
 _TYPST_BARE_SUBSCRIPT = re.compile(r"_([A-Za-z0-9]+)$")
 
 
-def render_latex(symbol: "TimeAwareSymbol", name_override: str | None = None) -> str:
+def render_latex(symbol: sp.Symbol, name_override: str | None = None) -> str:
     r"""
-    Render one time-aware symbol as LaTeX.
+    Render one symbol as LaTeX, a time-aware variable with its time index and a parameter without one.
 
     The stem becomes a greek letter when it names one, and is wrapped in ``\\text{}`` when it is longer than one
     character so a multi-letter name does not read as a product. Anything after the first underscore is a
@@ -83,7 +83,7 @@ def render_latex(symbol: "TimeAwareSymbol", name_override: str | None = None) ->
 
     Parameters
     ----------
-    symbol : TimeAwareSymbol
+    symbol : sympy.Symbol
         The symbol to render.
     name_override : str, optional
         LaTeX for the whole name, from a ``symbols`` block ``latex`` field, replacing what would be inferred. Only
@@ -94,7 +94,9 @@ def render_latex(symbol: "TimeAwareSymbol", name_override: str | None = None) ->
     latex : str
         The rendered symbol, without surrounding math delimiters.
     """
-    return render_name_latex(symbol.base_name, name_override=name_override, time_subscript=symbol._time_subscript())
+    if isinstance(symbol, TimeAwareSymbol):
+        return render_name_latex(symbol.base_name, name_override=name_override, time_subscript=symbol._time_subscript())
+    return render_name_latex(symbol.name, name_override=name_override)
 
 
 def render_name_latex(name: str, name_override: str | None = None, time_subscript: str | None = None) -> str:
@@ -167,9 +169,9 @@ def _latex_stem(stem: str) -> str:
     return stem if len(stem) == 1 else f"\\text{{{stem}}}"
 
 
-def render_typst(symbol: "TimeAwareSymbol", name_override: str | None = None) -> str:
+def render_typst(symbol: sp.Symbol, name_override: str | None = None) -> str:
     """
-    Render one time-aware symbol as Typst.
+    Render one symbol as Typst, a time-aware variable with its time index and a parameter without one.
 
     Typst knows the greek letters by name, so a greek stem passes through unchanged where LaTeX needs a command.
     A stem longer than one character is wrapped in ``upright()`` so a multi-letter name does not read as a
@@ -177,7 +179,7 @@ def render_typst(symbol: "TimeAwareSymbol", name_override: str | None = None) ->
 
     Parameters
     ----------
-    symbol : TimeAwareSymbol
+    symbol : sympy.Symbol
         The symbol to render.
     name_override : str, optional
         Typst for the whole name, from a ``symbols`` block ``typst`` field, replacing what would be inferred. Only
@@ -188,7 +190,9 @@ def render_typst(symbol: "TimeAwareSymbol", name_override: str | None = None) ->
     typst : str
         The rendered symbol, without surrounding math delimiters.
     """
-    return render_name_typst(symbol.base_name, name_override=name_override, time_subscript=symbol._time_subscript())
+    if isinstance(symbol, TimeAwareSymbol):
+        return render_name_typst(symbol.base_name, name_override=name_override, time_subscript=symbol._time_subscript())
+    return render_name_typst(symbol.name, name_override=name_override)
 
 
 def render_name_typst(name: str, name_override: str | None = None, time_subscript: str | None = None) -> str:
