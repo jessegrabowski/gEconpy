@@ -680,6 +680,21 @@ def test_compute_bk_eigenvalues():
     assert np.all(np.diff(modulus) >= -1e-12)
 
 
+def test_stable_bk_eigenvalues_match_policy_matrix():
+    model = load_and_cache_model("rbc_linearized.gcn")
+    A, B, C, D = model.linearize_model()
+    T, _ = model.solve_model(verbose=False)
+
+    eigvals_real, eigvals_imag, _ = compute_bk_eigenvalues(A, B, C, D)
+    eigvals = eigvals_real + 1j * eigvals_imag
+    stable = eigvals[(np.abs(eigvals) > 1e-8) & (np.abs(eigvals) < 1)]
+
+    policy_eigvals = np.linalg.eigvals(T)
+    policy_eigvals = policy_eigvals[np.abs(policy_eigvals) > 1e-8]
+
+    assert_allclose(np.sort_complex(stable), np.sort_complex(policy_eigvals), atol=1e-8)
+
+
 def test_infinite_eigenvalues_are_reported_as_infinite():
     """A singular pencil has genuinely infinite eigenvalues, not large finite ones."""
     model = load_and_cache_model("one_block_1.gcn")
@@ -707,8 +722,16 @@ def test_compute_bk_eigenvalues_pt():
     modulus_pt = np.sqrt(re_val**2 + im_val**2)
 
     # QZ and solve-plus-eig may return different infinite or spurious eigenvalues, but the count of unstable ones
-    # must agree.
+    # must agree, and so must the nonzero stable eigenvalues.
     assert (modulus_np > 1).sum() == (modulus_pt > 1).sum()
+
+    stable_np = (modulus_np > 1e-8) & (modulus_np < 1)
+    stable_pt = (modulus_pt > 1e-8) & (modulus_pt < 1)
+    assert_allclose(
+        np.sort_complex(eigvals_real_np[stable_np] + 1j * eigvals_imag_np[stable_np]),
+        np.sort_complex(re_val[stable_pt] + 1j * im_val[stable_pt]),
+        rtol=1e-4,
+    )
 
 
 def test_eigenvalue_sensitivity():
