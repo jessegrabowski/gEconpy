@@ -47,10 +47,12 @@ Declare priors
 --------------
 
 Inside a ``pm.Model`` context, :meth:`~gEconpy.model.statespace.DSGEStateSpace.to_pymc` creates a PyMC random
-variable for every model parameter from the prior declared in the GCN file. Priors for the shock standard deviations
-and any measurement error standard deviations are not in the GCN file and are declared by hand, under the names the
-configure table listed. Priors can also be declared entirely by hand, without calling ``to_pymc``, as long as every
-name in the table is present.
+variable for every model parameter from the prior declared in the GCN file. A shock's standard deviation keeps the
+name the GCN file gives it, as ``sigma_A`` in ``epsilon_A[] ~ Normal(mu=0, sigma=sigma_A)``, so ``to_pymc`` registers
+its declared prior too. A shock the GCN file gives no standard deviation prior has its standard deviation named
+``sigma_<shock>``. Its prior and any measurement error priors are declared by hand, under the names the configure table
+listed. Priors can also be declared entirely by hand, without calling ``to_pymc``, as long as every name in the table
+is present.
 
 Before touching data, :func:`~gEconpy.model.statespace.data_from_prior` draws parameter values from those priors,
 simulates a data set from each, and returns the values that generated it. Fitting the model to a simulated set and

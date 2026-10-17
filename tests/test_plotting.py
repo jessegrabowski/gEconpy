@@ -229,7 +229,6 @@ def ss_mod() -> DSGEStateSpace:
 def pm_mod(ss_mod) -> pm.Model:
     with pm.Model(coords=ss_mod.coords) as pm_mod:
         ss_mod.to_pymc()
-        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
 
         for var_name in ss_mod.observed_states:
             pm.Gamma(f"error_sigma_{var_name}", alpha=2, beta=100)
