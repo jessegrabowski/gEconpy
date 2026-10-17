@@ -302,7 +302,9 @@ def authored_equation_latex(equation: GCNEquation, overrides: dict[str, str] | N
     return render_sides(left, right, overrides, printer=sp.latex, renderer=render_latex)
 
 
-def definition_rows(source_ast: GCNModel | None, overrides: dict[str, str] | None = None) -> list[tuple[str, str, str]]:
+def definition_rows(
+    source_ast: GCNModel | None, overrides: dict[str, str] | None = None
+) -> list[tuple[str, str, str, str]]:
     """
     Recover every ``definitions`` entry, in source order.
 
@@ -319,16 +321,21 @@ def definition_rows(source_ast: GCNModel | None, overrides: dict[str, str] | Non
 
     Returns
     -------
-    definitions : list of tuple of str
-        The block name and the rendered left and right side of each definition.
+    definitions : list of tuple
+        The block name, the equation id ``{block}.definitions.{position}``, and the rendered left and right side
+        of each definition.
     """
     if source_ast is None:
         return []
 
     return [
-        (block.name, *authored_equation_latex(equation, overrides))
+        (
+            block.name,
+            f"{block.name}.definitions.{position}",
+            *authored_equation_latex(equation, overrides),
+        )
         for block in source_ast.blocks
-        for equation in block.definitions
+        for position, equation in enumerate(block.definitions)
     ]
 
 

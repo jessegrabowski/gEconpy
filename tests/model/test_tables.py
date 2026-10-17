@@ -36,17 +36,15 @@ class TestEquationTable:
         assert row.right == "0"
         assert r"\lambda_{t}" in row.left
 
-    def test_a_definition_row_has_no_equation_id(self, rbc):
-        """The solver substitutes definitions away before equations are given ids."""
-        definitions = [r for r in rbc.table("equations").rows if r.equation_id is None]
+    def test_a_definition_row_is_identified_by_its_position(self, rbc):
+        definitions = [r for r in rbc.table("equations").rows if ".definitions." in r.equation_id]
 
-        assert [r.left for r in definitions] == ["u_{t}"]
-        assert all(r.block == "Household" for r in definitions)
+        assert [(r.equation_id, r.left) for r in definitions] == [("Household.definitions.0", "u_{t}")]
 
     def test_every_equation_gets_a_row(self, rbc):
         rows = rbc.table("equations").rows
 
-        assert [r.equation_id for r in rows if r.equation_id is not None] == rbc._equation_ids
+        assert [r.equation_id for r in rows if ".definitions." not in r.equation_id] == rbc._equation_ids
 
     @pytest.mark.parametrize(
         "example, expected",
@@ -331,8 +329,8 @@ def test_a_symbol_group_covers_every_symbol(rbc, group):
 
 
 def test_the_equations_group_covers_every_equation(rbc):
-    """Definitions have no id and are extra rows; every solved equation must still appear, in order."""
-    ids = [row.equation_id for row in rbc.table("equations").rows if row.equation_id is not None]
+    """Definitions are extra rows; every solved equation must still appear, in order."""
+    ids = [row.equation_id for row in rbc.table("equations").rows if ".definitions." not in row.equation_id]
 
     assert ids == rbc._equation_ids
 
