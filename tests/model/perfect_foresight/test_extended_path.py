@@ -8,7 +8,8 @@ import gEconpy.solvers.sparse_root.direction as direction_module
 from gEconpy import simulate
 from gEconpy.exceptions import NonFiniteInitialGuessError
 from gEconpy.model.perfect_foresight import extended_path, simulate_extended_path, solve_perfect_foresight
-from gEconpy.solvers.sparse_root.line_search import newton_armijo
+from gEconpy.solvers.sparse_root.direction import ChordDirection
+from gEconpy.solvers.sparse_root.line_search import chord, newton_armijo
 from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 
 
@@ -27,14 +28,19 @@ def _steady_state_values(model, var_names, **parameter_updates):
     return np.array([steady_state[f"{name}_ss"] for name in var_names])
 
 
-@pytest.mark.parametrize("parameter_updates", [{}, {"beta": 0.98}], ids=["model_parameters", "updated_beta"])
-def test_zero_shocks_stay_at_the_steady_state(rbc_model, parameter_updates):
+@pytest.mark.parametrize(
+    ("gcn", "parameter_updates"),
+    [("one_block_1.gcn", {}), ("one_block_1.gcn", {"beta": 0.98}), ("open_rbc.gcn", {"gamma_rv": 2.0})],
+    ids=["model_parameters", "updated_beta", "free_parameter_behind_a_deterministic_one"],
+)
+def test_zero_shocks_stay_at_the_steady_state(gcn, parameter_updates):
+    model = load_and_cache_model(gcn)
     paths, diagnostics = simulate_extended_path(
-        rbc_model, n_simulations=2, simulation_length=5, shock_std=0.0, steady_state_kwargs=parameter_updates
+        model, n_simulations=2, simulation_length=5, shock_std=0.0, steady_state_kwargs=parameter_updates
     )
 
     var_names = list(paths.coords["variable"].values)
-    steady_state_values = _steady_state_values(rbc_model, var_names, **parameter_updates)
+    steady_state_values = _steady_state_values(model, var_names, **parameter_updates)
     assert diagnostics.success.shape == (2, 5)
     assert diagnostics.success.all()
     assert not diagnostics.nit.any()
@@ -123,6 +129,31 @@ def test_the_default_solver_reuses_factorizations_across_periods(rbc_model, monk
     assert calls["n"] < simulation_kwargs["simulation_length"]
     # Both runs solve only to f_tol = 1e-5, so they agree to about that.
     assert_allclose(paths.values, expected.values, rtol=1e-4)
+
+
+def test_a_trajectory_does_not_depend_on_the_trajectories_before_it(rbc_model, monkeypatch):
+    # Shocks large enough that the first trajectory refactorizes mid-run, so it ends with a factorization the second
+    # trajectory would not start with.
+    shocks = np.random.default_rng(0).normal(scale=[[[0.1]], [[0.01]]], size=(2, 10, len(rbc_model.shocks)))
+    monkeypatch.setattr(extended_path, "_draw_shocks", lambda n_simulations, **_: shocks[-n_simulations:])
+
+    both, _ = simulate_extended_path(rbc_model, n_simulations=2, simulation_length=10)
+    second_alone, _ = simulate_extended_path(rbc_model, n_simulations=1, simulation_length=10)
+
+    np.testing.assert_array_equal(both.values[1], second_alone.values[0])
+
+
+def test_a_solver_holding_a_factorization_can_be_passed_in(rbc_model):
+    solver = chord(direction=ChordDirection(keep_across_solves=True))
+    steady_state = rbc_model.steady_state(verbose=False, progressbar=False)
+    solve_perfect_foresight(
+        rbc_model, simulation_length=50, solver=solver, initial_conditions={"K": 0.9 * steady_state["K_ss"]}
+    )
+    assert solver.direction._factorization.lu is not None
+
+    _, diagnostics = simulate_extended_path(rbc_model, simulation_length=3, shock_std=0.01, solver=solver)
+
+    assert diagnostics.success.all()
 
 
 def test_a_tight_tolerance_needs_no_homotopy_with_the_default_solver():
@@ -227,6 +258,11 @@ def test_a_deterministic_parameter_update_raises():
 
     with pytest.raises(ValueError, match="Cannot set a path for deterministic parameters: gamma"):
         simulate_extended_path(model, simulation_length=2, shock_std=0.0, steady_state_kwargs={"gamma": 1.0})
+
+
+def test_fewer_than_one_simulation_raises(rbc_model):
+    with pytest.raises(ValueError, match="n_simulations must be at least 1, got 0"):
+        simulate_extended_path(rbc_model, n_simulations=0, shock_std=0.0)
 
 
 def test_unknown_initial_condition_raises(rbc_model):

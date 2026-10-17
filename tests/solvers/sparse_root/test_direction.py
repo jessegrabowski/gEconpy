@@ -1,3 +1,5 @@
+import copy
+import pickle
 import warnings
 
 import numpy as np
@@ -208,6 +210,22 @@ class TestChordDirection:
         assert first.kind == "chord_gradient_fallback"
         assert second.kind == "chord"
         np.testing.assert_allclose(second.direction, [-1.0, -2.0])
+
+    @pytest.mark.parametrize(
+        "duplicate",
+        [copy.deepcopy, lambda direction: pickle.loads(pickle.dumps(direction))],
+        ids=["deepcopy", "pickle"],
+    )
+    def test_a_copy_of_a_direction_holding_a_factorization_starts_without_one(self, duplicate):
+        direction = ChordDirection(keep_across_solves=True)
+        direction.reset()
+        direction.compute(np.zeros(2), np.array([1.0, 1.0]), sp.eye(2, format="csc"))
+        assert direction._factorization.lu is not None
+
+        duplicated = duplicate(direction)
+        proposal = duplicated.compute(np.zeros(2), np.array([1.0, 2.0]), 2.0 * sp.eye(2, format="csc"))
+
+        np.testing.assert_allclose(proposal.direction, [-0.5, -1.0])
 
     def test_a_recompute_every_below_one_is_rejected(self):
         with pytest.raises(ValueError, match="recompute_every must be at least 1"):

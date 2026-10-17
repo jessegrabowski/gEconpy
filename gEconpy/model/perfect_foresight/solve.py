@@ -154,8 +154,8 @@ def solve_perfect_foresight(
     var_names = problem.var_names
     var_set = set(var_names)
 
-    parameter_updates = {name: value for name, value in steady_state_kwargs.items() if name in problem.param_names}
-    steady_state_kwargs = {name: value for name, value in steady_state_kwargs.items() if name not in parameter_updates}
+    param_names, deterministic_param_names = _settable_parameter_names(model)
+    parameter_updates, steady_state_kwargs = _split_parameter_updates(steady_state_kwargs, param_names)
     param_paths = {**parameter_updates, **(param_paths or {})}
 
     # Validation runs before anything expensive, and before any name reaches the model: a typo in param_paths
@@ -167,8 +167,8 @@ def solve_perfect_foresight(
         param_paths=param_paths,
         var_names=var_names,
         shock_names=problem.shock_names,
-        param_names=problem.param_names,
-        deterministic_param_names=problem.deterministic_param_names,
+        param_names=param_names,
+        deterministic_param_names=deterministic_param_names,
         simulation_length=simulation_length,
     )
 
@@ -298,6 +298,21 @@ def make_piecewise_x0(
         x0[transition_start:transition_end] = (1 - weights) * init_vals + weights * term_vals
 
     return pd.DataFrame(x0, columns=var_names)
+
+
+def _settable_parameter_names(model: Model) -> tuple[list[str], list[str]]:
+    """Return the names of every free and deterministic parameter of ``model``, and the deterministic ones alone."""
+    # A free parameter can reach the equations only through a deterministic one, so the compiled problem's parameter
+    # list misses it.
+    deterministic_names = [param.name for param in model.deterministic_params]
+    return [param.name for param in model.params] + deterministic_names, deterministic_names
+
+
+def _split_parameter_updates(steady_state_kwargs: dict, param_names: Sequence[str]) -> tuple[dict, dict]:
+    """Separate the parameter values in ``steady_state_kwargs`` from the options for ``model.steady_state``."""
+    parameter_updates = {name: value for name, value in steady_state_kwargs.items() if name in param_names}
+    options = {name: value for name, value in steady_state_kwargs.items() if name not in parameter_updates}
+    return parameter_updates, options
 
 
 def _normalize_condition_keys(conditions: dict[str, float]) -> dict[str, float]:

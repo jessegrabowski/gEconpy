@@ -1,3 +1,4 @@
+import copy
 import warnings
 
 from collections.abc import Callable
@@ -15,7 +16,9 @@ from gEconpy.model.perfect_foresight.compile import PerfectForesightProblem, com
 from gEconpy.model.perfect_foresight.solve import (
     _build_param_matrix,
     _normalize_condition_keys,
+    _settable_parameter_names,
     _solve_stacked,
+    _split_parameter_updates,
     _ss_dict_to_array,
 )
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
@@ -87,7 +90,8 @@ def simulate_extended_path(
         Number of periods in each period's perfect-foresight problem. It must be long enough for the economy to
         return close to the steady state, which is imposed at its end. Defaults to 200.
     solver : RootSolver, optional
-        The root-finding solver for each period's problem. One instance serves every period. Defaults to a
+        The root-finding solver for each period's problem. Each trajectory solves with its own copy, so every period of
+        a trajectory shares one instance and no state passes between trajectories. Defaults to a
         :func:`~gEconpy.solvers.sparse_root.line_search.chord` solver whose
         :class:`~gEconpy.solvers.sparse_root.direction.ChordDirection` keeps its factorization from one period to the
         next and refreshes it when the residual norm falls by less than a factor of 10 in one step. Pass a solver
@@ -126,6 +130,9 @@ def simulate_extended_path(
         paths, diagnostics = simulate_extended_path(model, simulation_length=50, shock_std=0.01, random_seed=0)
         print(bool(diagnostics.success.all()), paths.sel(variable="Y").std(dim="time").values)
     """
+    if n_simulations < 1:
+        raise ValueError(f"n_simulations must be at least 1, got {n_simulations}")
+
     steady_state_kwargs = {"verbose": False, "progressbar": False, **(steady_state_kwargs or {})}
     sparse_root_kwargs = {"progressbar": False, **(sparse_root_kwargs or {})}
     if "tol" not in sparse_root_kwargs:
@@ -147,7 +154,8 @@ def simulate_extended_path(
     # Every period solves the same problem, so it is compiled and its parameter matrix built once. Inside the loop
     # states follow the problem's variable order, and the output is put back in the model's order at the end.
     problem = compile_perfect_foresight_problem(model, horizon, **(compile_kwargs or {}))
-    parameter_updates = {name: value for name, value in steady_state_kwargs.items() if name in problem.param_names}
+    param_names, deterministic_param_names = _settable_parameter_names(model)
+    parameter_updates, _ = _split_parameter_updates(steady_state_kwargs, param_names)
     validate_perfect_foresight_inputs(
         initial_conditions={},
         terminal_conditions={},
@@ -155,8 +163,8 @@ def simulate_extended_path(
         param_paths=parameter_updates,
         var_names=problem.var_names,
         shock_names=problem.shock_names,
-        param_names=problem.param_names,
-        deterministic_param_names=problem.deterministic_param_names,
+        param_names=param_names,
+        deterministic_param_names=deterministic_param_names,
         simulation_length=horizon,
     )
     params = _build_param_matrix(parameter_updates, problem.param_names, model, horizon)
@@ -166,11 +174,6 @@ def simulate_extended_path(
     steady_state_values = _ss_dict_to_array(steady_state, problem.var_names)
     initial_state = _initial_state(initial_conditions, steady_state_values, list(problem.var_names))
 
-    simulations = np.full((n_simulations, simulation_length, len(var_names)), np.nan)
-    success = np.zeros((n_simulations, simulation_length), dtype=bool)
-    work_counts = {field: np.zeros((n_simulations, simulation_length), dtype=int) for field in _WORK_COUNT_FIELDS}
-    homotopy_solves = np.zeros((n_simulations, simulation_length), dtype=int)
-
     steady_state_guess = np.tile(steady_state_values, (horizon, 1))
     if solver is None:
         solver = _default_solver(problem, sparse_root_kwargs)
@@ -179,38 +182,36 @@ def simulate_extended_path(
         problem=problem,
         steady_state_values=steady_state_values,
         params=params,
-        solver=solver,
         sparse_root_kwargs=sparse_root_kwargs,
     )
 
-    for simulation in range(n_simulations):
-        state = initial_state
-        guess = steady_state_guess
-
-        for t in range(simulation_length):
-            outcome = _solve_period(
-                solve=partial(solve_at_weight, state=state, shock=epsilons[simulation, t, shock_columns]),
-                warm_guess=guess,
-                steady_state_guess=steady_state_guess,
-                max_homotopy_solves=max_homotopy_solves,
+    trajectories = [
+        _simulate_trajectory(
+            solve_at_weight=solve_at_weight,
+            solver=solver,
+            shocks=epsilons[simulation][:, shock_columns],
+            initial_state=initial_state,
+            steady_state_values=steady_state_values,
+            steady_state_guess=steady_state_guess,
+            max_homotopy_solves=max_homotopy_solves,
+        )
+        for simulation in range(n_simulations)
+    ]
+    for simulation, trajectory in enumerate(trajectories):
+        if trajectory.failure is not None:
+            period, message = trajectory.failure
+            warnings.warn(
+                f"Simulation {simulation} stopped at period {period}, and its values from that period on are NaN. "
+                f"{message}",
+                stacklevel=2,
             )
 
-            for field in _WORK_COUNT_FIELDS:
-                work_counts[field][simulation, t] = outcome.work_counts[field]
-            homotopy_solves[simulation, t] = outcome.homotopy_solves
-
-            if outcome.path is None:
-                warnings.warn(
-                    f"Simulation {simulation} stopped at period {t}, and its values from that period on are NaN. "
-                    f"{outcome.failure}",
-                    stacklevel=2,
-                )
-                break
-
-            success[simulation, t] = True
-            state = outcome.path[0]
-            guess = np.vstack([outcome.path[1:], steady_state_values])
-            simulations[simulation, t] = state
+    simulations = np.stack([trajectory.states for trajectory in trajectories])
+    success = np.stack([trajectory.success for trajectory in trajectories])
+    work_counts = {
+        field: np.stack([trajectory.work_counts[field] for trajectory in trajectories]) for field in _WORK_COUNT_FIELDS
+    }
+    homotopy_solves = np.stack([trajectory.homotopy_solves for trajectory in trajectories])
 
     coords = {"simulation": np.arange(n_simulations), "time": np.arange(simulation_length)}
     diagnostics = xr.Dataset(
@@ -225,6 +226,69 @@ def simulate_extended_path(
         simulations[..., model_order], dims=["simulation", "time", "variable"], coords={**coords, "variable": var_names}
     )
     return paths, diagnostics
+
+
+class _Trajectory(NamedTuple):
+    states: np.ndarray
+    success: np.ndarray
+    work_counts: dict[str, np.ndarray]
+    homotopy_solves: np.ndarray
+    failure: tuple[int, str] | None
+
+
+def _simulate_trajectory(
+    solve_at_weight: Callable[..., tuple[np.ndarray, OptimizeResult]],
+    solver: RootSolver,
+    shocks: np.ndarray,
+    initial_state: np.ndarray,
+    steady_state_values: np.ndarray,
+    steady_state_guess: np.ndarray,
+    max_homotopy_solves: int,
+) -> _Trajectory:
+    """
+    Simulate one trajectory from ``initial_state`` under ``shocks``, one row per period.
+
+    The trajectory solves with its own copy of ``solver``, so no solver state passes between trajectories.
+    """
+    simulation_length = shocks.shape[0]
+    solve = partial(solve_at_weight, solver=copy.deepcopy(solver))
+
+    states = np.full((simulation_length, initial_state.size), np.nan)
+    success = np.zeros(simulation_length, dtype=bool)
+    work_counts = {field: np.zeros(simulation_length, dtype=int) for field in _WORK_COUNT_FIELDS}
+    homotopy_solves = np.zeros(simulation_length, dtype=int)
+
+    state = initial_state
+    guess = steady_state_guess
+    for t in range(simulation_length):
+        outcome = _solve_period(
+            solve=partial(solve, state=state, shock=shocks[t]),
+            warm_guess=guess,
+            steady_state_guess=steady_state_guess,
+            max_homotopy_solves=max_homotopy_solves,
+        )
+
+        for field in _WORK_COUNT_FIELDS:
+            work_counts[field][t] = outcome.work_counts[field]
+        homotopy_solves[t] = outcome.homotopy_solves
+
+        if outcome.path is None:
+            return _Trajectory(
+                states=states,
+                success=success,
+                work_counts=work_counts,
+                homotopy_solves=homotopy_solves,
+                failure=(t, outcome.failure),
+            )
+
+        success[t] = True
+        state = outcome.path[0]
+        guess = np.vstack([outcome.path[1:], steady_state_values])
+        states[t] = state
+
+    return _Trajectory(
+        states=states, success=success, work_counts=work_counts, homotopy_solves=homotopy_solves, failure=None
+    )
 
 
 class _PeriodOutcome(NamedTuple):
