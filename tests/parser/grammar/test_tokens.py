@@ -28,6 +28,7 @@ from gEconpy.parser.grammar.tokens import (
     RBRACKET,
     RPAREN,
     SEMI,
+    STRING,
     TILDE,
     TIME_INDEX,
     TIME_INDEX_CONTENT,
@@ -172,6 +173,16 @@ class TestComments:
         grammar = IDENTIFIER + COMMENT
         result = grammar.parse_string("alpha # comment")
         assert result[0] == "alpha"
+
+
+class TestString:
+    @pytest.mark.parametrize(
+        "contents",
+        [r"\tau", r"\nu", r"\rho", r"\\beta", r"\text{tilde}"],
+        ids=["tab_escape", "newline_escape", "return_escape", "doubled_backslash", "latex_command"],
+    )
+    def test_contents_are_verbatim(self, contents):
+        assert STRING.parse_string(f'"{contents}"')[0] == contents
 
 
 class TestTokenCombinations:
