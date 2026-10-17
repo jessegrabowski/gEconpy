@@ -255,10 +255,16 @@ class DSGEStateSpace(PyMCStateSpace):
 
         # AssumptionFeature tags ``pt.diag(stack(...))`` as diagonal and propagates symmetric/PSD through the
         # congruence R Q R', so the compiled logp and its gradient can use Cholesky-based solves.
-        sigmas = [self.make_and_register_variable(f"sigma_{shock.base_name}", shape=()) for shock in self.shocks]
+        sigmas = [self.make_and_register_variable(self._shock_sd_name(shock), shape=()) for shock in self.shocks]
         Q = pt.diag(pt.stack([s**2 for s in sigmas]))
         self.ssm["state_cov"] = Q
         return Q
+
+    def _shock_sd_name(self, shock: TimeAwareSymbol) -> str:
+        """Return the name the GCN file gives a shock's standard deviation, or ``sigma_<shock>`` when it gives none."""
+        shock_prior = self.shock_priors.get(shock.base_name)
+        declared = None if shock_prior is None else shock_prior.param_name_to_hyper_name.get("sigma")
+        return declared or f"sigma_{shock.base_name}"
 
     def _selector_columns(self, name: str) -> tuple[list[int], float]:
         """
@@ -1089,7 +1095,7 @@ class DSGEStateSpace(PyMCStateSpace):
             ]
         else:
             parameters += [
-                Parameter(name=f"sigma_{shock.base_name}", shape=(), constraints="Positive") for shock in self.shocks
+                Parameter(name=self._shock_sd_name(shock), shape=(), constraints="Positive") for shock in self.shocks
             ]
 
         if self.measurement_error:

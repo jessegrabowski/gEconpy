@@ -100,6 +100,19 @@ def test_to_pymc_creates_rvs_for_priors(gcn_file):
     assert hyper_prior_names <= rv_names
 
 
+@pytest.mark.parametrize(
+    "gcn_file, shock_sd_name",
+    [("rbc_linearized.gcn", "sigma_A"), ("open_rbc.gcn", "sigma_epsilon_A")],
+    ids=["declared_in_gcn", "undeclared"],
+)
+def test_a_shock_standard_deviation_takes_the_name_the_gcn_file_gives_it(gcn_file, shock_sd_name):
+    """``rbc_linearized`` writes ``epsilon_A[] ~ Normal(mu=0, sigma=sigma_A)``, and ``open_rbc`` declares no prior."""
+    ss_mod = load_and_cache_statespace(gcn_file)
+    ss_mod.configure(observed_states=["Y"], solver="gensys", verbose=False)
+
+    assert [name for name in ss_mod.param_names if name.startswith("sigma_")] == [shock_sd_name]
+
+
 def test_backward_direct_solver_produces_finite_logp():
     ss_mod = load_and_cache_statespace("sarima2_12.gcn")
     ss_mod.configure(observed_states=["x"], solver="backward_direct", verbose=False)
@@ -126,7 +139,6 @@ def test_norm_check_is_zero_at_solution(rbc_statespace):
 
     with pm.Model() as m:
         rbc_statespace.to_pymc()
-        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
         rbc_statespace.build_statespace_graph(np.full((40, 1), np.nan), add_norm_check=True)
         norm_fn = m.compile_fn(
             [m["deterministic_norm"], m["stochastic_norm"]], inputs=m.value_vars, on_unused_input="ignore"
@@ -222,7 +234,6 @@ def test_data_from_prior_drops_constant_params_and_blanks_requested_fraction(rbc
 
     with pm.Model(coords=ss_mod.coords) as pm_mod:
         ss_mod.to_pymc()
-        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
         for var_name in ss_mod.observed_states:
             pm.Gamma(f"error_sigma_{var_name}", alpha=2, beta=100)
 
@@ -352,7 +363,6 @@ def test_mixed_frequency_data_produces_finite_logp(rbc_statespace):
 
     with pm.Model():
         rbc_statespace.to_pymc()
-        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
         pm.Gamma("error_sigma_Y", alpha=2, beta=100)
         pm.Gamma("error_sigma_K", alpha=2, beta=100)
         rbc_statespace.build_statespace_graph(data, add_norm_check=False)
@@ -1322,7 +1332,6 @@ def autocorrelation_setup(rbc_statespace):
     )
     with pm.Model():
         ss_mod.to_pymc()
-        pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
         pm.Gamma("error_sigma_Y", alpha=2, beta=100)
         pm.Gamma("error_sigma_K", alpha=2, beta=100)
         with warnings.catch_warnings():
