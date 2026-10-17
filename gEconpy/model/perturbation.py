@@ -445,7 +445,7 @@ def compute_bk_eigenvalues(
         coefficient on some lead variable vanishes at the current parameterization.
     """
     G0, Gamma_1, _, _, _, lead_var_idx = _gensys_setup(A, B, C, D, tol)
-    AA, BB, *_ = linalg.ordqz(-G0, Gamma_1, sort="ouc", output="complex")
+    AA, BB, *_ = linalg.ordqz(G0, Gamma_1, sort="ouc", output="complex")
 
     # A zero on the diagonal of AA is an infinite generalized eigenvalue, not a large one. Nudging the
     # denominator by tol instead would bias every eigenvalue, and would amplify rather than damp the ones where
