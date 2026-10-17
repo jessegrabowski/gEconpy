@@ -130,6 +130,9 @@ def simulate_extended_path(
         paths, diagnostics = simulate_extended_path(model, simulation_length=50, shock_std=0.01, random_seed=0)
         print(bool(diagnostics.success.all()), paths.sel(variable="Y").std(dim="time").values)
     """
+    if n_simulations < 1:
+        raise ValueError(f"n_simulations must be at least 1, got {n_simulations}")
+
     steady_state_kwargs = {"verbose": False, "progressbar": False, **(steady_state_kwargs or {})}
     sparse_root_kwargs = {"progressbar": False, **(sparse_root_kwargs or {})}
     if "tol" not in sparse_root_kwargs:

@@ -260,6 +260,11 @@ def test_a_deterministic_parameter_update_raises():
         simulate_extended_path(model, simulation_length=2, shock_std=0.0, steady_state_kwargs={"gamma": 1.0})
 
 
+def test_fewer_than_one_simulation_raises(rbc_model):
+    with pytest.raises(ValueError, match="n_simulations must be at least 1, got 0"):
+        simulate_extended_path(rbc_model, n_simulations=0, shock_std=0.0)
+
+
 def test_unknown_initial_condition_raises(rbc_model):
     with pytest.raises(ValueError, match="unknown variables: Q"):
         simulate_extended_path(rbc_model, shock_std=0.0, initial_conditions={"Q": 1.0})
