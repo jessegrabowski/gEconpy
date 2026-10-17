@@ -156,7 +156,7 @@ def symbol_names_for(
         if isinstance(symbol, TimeAwareSymbol):
             override = overrides.get(variable_key(symbol.base_name))
             if override is not None:
-                resolved[symbol] = renderer(symbol, stem_override=override)
+                resolved[symbol] = renderer(symbol, name_override=override)
         elif symbol.name in overrides:
             resolved[symbol] = overrides[symbol.name]
     return resolved

@@ -370,6 +370,18 @@ def test_a_symbol_table_drops_the_description_column_when_nothing_declares_one(t
     assert "Symbol" in rendered
 
 
+def test_a_declared_name_replaces_the_whole_variable_name(tmp_path):
+    path = tmp_path / "declared.gcn"
+    path.write_text(
+        'symbols { p_H_tilde[] { latex = "\\hat{p}_H"; }; };\n'
+        "block H { identities { log(p_H_tilde[]) = 0.9 * log(p_H_tilde[-1]); }; };\n"
+    )
+
+    rows = model_from_gcn(path, verbose=False).table("variables").rows
+
+    assert [row.symbol for row in rows] == [r"\hat{p}_{H,t}"]
+
+
 class TestWriteTable:
     def test_an_unknown_writer_raises(self, rbc):
         with pytest.raises(ValueError, match="writer must be one of latex, typst"):

@@ -1,3 +1,5 @@
+import re
+
 import sympy as sp
 
 from sympy.core.cache import cacheit
@@ -64,8 +66,14 @@ _GREEK_COMMANDS = (
     | {"epsilon": "\\varepsilon"}
 )
 
+# A subscript written without braces takes one token: a single character or one command.
+_LATEX_BARE_SUBSCRIPT = re.compile(r"_(\\[A-Za-z]+|[A-Za-z0-9])$")
 
-def render_latex(symbol: "TimeAwareSymbol", stem_override: str | None = None) -> str:
+# Typst reads a run of letters after an underscore as one identifier, so the whole run is the subscript.
+_TYPST_BARE_SUBSCRIPT = re.compile(r"_([A-Za-z0-9]+)$")
+
+
+def render_latex(symbol: "TimeAwareSymbol", name_override: str | None = None) -> str:
     r"""
     Render one time-aware symbol as LaTeX.
 
@@ -77,33 +85,30 @@ def render_latex(symbol: "TimeAwareSymbol", stem_override: str | None = None) ->
     ----------
     symbol : TimeAwareSymbol
         The symbol to render.
-    stem_override : str, optional
-        LaTeX for the stem, from a ``symbols`` block ``latex`` field, replacing what would be inferred. It is
-        braced before the subscripts compose onto it, so an override that carries its own subscript does not
-        produce a double subscript. Defaults to inferring the stem.
+    name_override : str, optional
+        LaTeX for the whole name, from a ``symbols`` block ``latex`` field, replacing what would be inferred. Only
+        the time index is added to it. Defaults to inferring the name.
 
     Returns
     -------
     latex : str
         The rendered symbol, without surrounding math delimiters.
     """
-    return render_name_latex(symbol.base_name, stem_override=stem_override, time_subscript=symbol._time_subscript())
+    return render_name_latex(symbol.base_name, name_override=name_override, time_subscript=symbol._time_subscript())
 
 
-def render_name_latex(name: str, stem_override: str | None = None, time_subscript: str | None = None) -> str:
-    """
+def render_name_latex(name: str, name_override: str | None = None, time_subscript: str | None = None) -> str:
+    r"""
     Render a symbol name as LaTeX, by the same rules whether or not it carries a time index.
-
-    A parameter is a plain :class:`~sympy.core.symbol.Symbol` and would otherwise go through sympy's default
-    printer, so a multi-letter name like ``mc`` would read as a product.
 
     Parameters
     ----------
     name : str
         The symbol's name, without a time index.
-    stem_override : str, optional
-        LaTeX for the stem, replacing what would be inferred. It is braced before the subscripts compose onto
-        it. Defaults to inferring the stem.
+    name_override : str, optional
+        LaTeX for the whole name, replacing what would be inferred. A time index joins the subscript the override
+        ends with, so ``\hat{p}_H`` renders as ``\hat{p}_{H,t}``, and is attached to the braced override
+        otherwise. Defaults to inferring the name.
     time_subscript : str, optional
         A trailing subscript for the time index. Defaults to none, as for a parameter.
 
@@ -112,8 +117,11 @@ def render_name_latex(name: str, stem_override: str | None = None, time_subscrip
     latex : str
         The rendered name, without surrounding math delimiters.
     """
+    if name_override is not None:
+        return _attach_latex_subscript(name_override, time_subscript)
+
     stem, _, remainder = name.partition("_")
-    rendered_stem = _latex_stem(stem) if stem_override is None else f"{{{stem_override}}}"
+    rendered_stem = _latex_stem(stem)
 
     # Every underscore separates a subscript, and each one is a name in its own right: ``epsilon_beta`` is a
     # greek letter subscripted by another, not by the four letters ``beta``.
@@ -121,6 +129,34 @@ def render_name_latex(name: str, stem_override: str | None = None, time_subscrip
     if time_subscript:
         parts.append(time_subscript)
     return f"{rendered_stem}_{{{','.join(parts)}}}" if parts else rendered_stem
+
+
+def _attach_latex_subscript(latex: str, subscript: str | None) -> str:
+    if not subscript:
+        return latex
+    joined = _join_bracketed_subscript(latex, subscript, opening="{", closing="}")
+    if joined is not None:
+        return joined
+    bare = _LATEX_BARE_SUBSCRIPT.search(latex)
+    if bare is not None:
+        return f"{latex[: bare.start()]}_{{{bare.group(1)},{subscript}}}"
+    return f"{{{latex}}}_{{{subscript}}}"
+
+
+def _join_bracketed_subscript(markup: str, subscript: str, opening: str, closing: str) -> str | None:
+    """Join ``subscript`` into the bracketed subscript ``markup`` ends with, or return None if it ends with none."""
+    if not markup.endswith(closing):
+        return None
+
+    depth = 0
+    for index in range(len(markup) - 1, -1, -1):
+        if markup[index] == closing:
+            depth += 1
+        elif markup[index] == opening:
+            depth -= 1
+            if depth == 0:
+                return f"{markup[:-1]},{subscript}{closing}" if markup[index - 1 : index] == "_" else None
+    return None
 
 
 def _latex_stem(stem: str) -> str:
@@ -131,7 +167,7 @@ def _latex_stem(stem: str) -> str:
     return stem if len(stem) == 1 else f"\\text{{{stem}}}"
 
 
-def render_typst(symbol: "TimeAwareSymbol", stem_override: str | None = None) -> str:
+def render_typst(symbol: "TimeAwareSymbol", name_override: str | None = None) -> str:
     """
     Render one time-aware symbol as Typst.
 
@@ -143,20 +179,19 @@ def render_typst(symbol: "TimeAwareSymbol", stem_override: str | None = None) ->
     ----------
     symbol : TimeAwareSymbol
         The symbol to render.
-    stem_override : str, optional
-        Typst for the stem, from a ``symbols`` block ``typst`` field, replacing what would be inferred. It must
-        be a single Typst atom, such as ``cal(C)``, because the subscript attaches to whatever precedes it.
-        Defaults to inferring the stem.
+    name_override : str, optional
+        Typst for the whole name, from a ``symbols`` block ``typst`` field, replacing what would be inferred. Only
+        the time index is added to it. Defaults to inferring the name.
 
     Returns
     -------
     typst : str
         The rendered symbol, without surrounding math delimiters.
     """
-    return render_name_typst(symbol.base_name, stem_override=stem_override, time_subscript=symbol._time_subscript())
+    return render_name_typst(symbol.base_name, name_override=name_override, time_subscript=symbol._time_subscript())
 
 
-def render_name_typst(name: str, stem_override: str | None = None, time_subscript: str | None = None) -> str:
+def render_name_typst(name: str, name_override: str | None = None, time_subscript: str | None = None) -> str:
     """
     Render a symbol name as Typst, by the same rules whether or not it carries a time index.
 
@@ -164,9 +199,10 @@ def render_name_typst(name: str, stem_override: str | None = None, time_subscrip
     ----------
     name : str
         The symbol's name, without a time index.
-    stem_override : str, optional
-        Typst for the stem, replacing what would be inferred. It must be a single Typst atom. Defaults to
-        inferring the stem.
+    name_override : str, optional
+        Typst for the whole name, replacing what would be inferred. A time index joins the subscript the override
+        ends with, so ``hat(p)_H`` renders as ``hat(p)_(H,t)``, and is attached to the override otherwise, which
+        must then be a single Typst atom such as ``cal(C)``. Defaults to inferring the name.
     time_subscript : str, optional
         A trailing subscript for the time index. Defaults to none, as for a parameter.
 
@@ -175,14 +211,29 @@ def render_name_typst(name: str, stem_override: str | None = None, time_subscrip
     typst : str
         The rendered name, without surrounding math delimiters.
     """
+    if name_override is not None:
+        return _attach_typst_subscript(name_override, time_subscript)
+
     stem, _, remainder = name.partition("_")
-    rendered_stem = _typst_stem(stem) if stem_override is None else stem_override
+    rendered_stem = _typst_stem(stem)
 
     # Every underscore separates a subscript, and each one is a name in its own right, exactly as in LaTeX.
     parts = [_typst_stem(part) for part in remainder.split("_") if part]
     if time_subscript:
         parts.append(time_subscript)
     return f"{rendered_stem}_({','.join(parts)})" if parts else rendered_stem
+
+
+def _attach_typst_subscript(typst: str, subscript: str | None) -> str:
+    if not subscript:
+        return typst
+    joined = _join_bracketed_subscript(typst, subscript, opening="(", closing=")")
+    if joined is not None:
+        return joined
+    bare = _TYPST_BARE_SUBSCRIPT.search(typst)
+    if bare is not None:
+        return f"{typst[: bare.start()]}_({bare.group(1)},{subscript})"
+    return f"{typst}_({subscript})"
 
 
 def _typst_stem(stem: str) -> str:

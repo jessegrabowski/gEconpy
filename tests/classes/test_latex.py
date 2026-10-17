@@ -89,19 +89,29 @@ def test_sympy_renders_the_expression_structure_around_the_symbols():
 
 
 class TestOverride:
-    def test_an_override_replaces_the_stem_and_keeps_the_subscripts(self):
+    def test_an_override_without_a_subscript_takes_the_time_index_braced(self):
         symbol = TimeAwareSymbol("mc", -1)
 
-        assert render_latex(symbol, stem_override=r"\mathcal{M}") == r"{\mathcal{M}}_{t-1}"
+        assert render_latex(symbol, name_override=r"\mathcal{M}") == r"{\mathcal{M}}_{t-1}"
 
-    def test_an_override_composes_with_a_declared_subscript(self):
+    def test_an_override_replaces_the_declared_subscripts_too(self):
         symbol = TimeAwareSymbol("sigma_C", 1)
 
-        assert render_latex(symbol, stem_override=r"\varsigma") == r"{\varsigma}_{C,t+1}"
+        assert render_latex(symbol, name_override=r"\varsigma") == r"{\varsigma}_{t+1}"
 
-    def test_an_override_carrying_its_own_subscript_is_braced(self):
-        """Appending the time subscript to a subscripted override is a hard LaTeX "Double subscript" error."""
-        assert render_latex(TimeAwareSymbol("mc", 0), stem_override=r"\mathcal{M}_{x}") == r"{\mathcal{M}_{x}}_{t}"
+    @pytest.mark.parametrize(
+        "override, expected",
+        [
+            (r"\hat{p}_H", r"\hat{p}_{H,t}"),
+            (r"\hat{p}_{H}", r"\hat{p}_{H,t}"),
+            (r"p_\alpha", r"p_{\alpha,t}"),
+            (r"x^{2}", r"{x^{2}}_{t}"),
+        ],
+        ids=["bare_subscript", "braced_subscript", "command_subscript", "braced_superscript"],
+    )
+    def test_the_time_index_joins_a_subscript_the_override_ends_with(self, override, expected):
+        """Appending a second subscript to a subscripted override is a hard LaTeX "Double subscript" error."""
+        assert render_latex(TimeAwareSymbol("p_H_tilde", 0), name_override=override) == expected
 
     def test_sympys_symbol_names_setting_reaches_a_time_aware_symbol(self):
         """Sympy dispatches to ``_latex`` before ``_print_Symbol``, so the setting only works if _latex reads it."""
@@ -142,5 +152,5 @@ class TestRenderNameLatex:
     def test_a_name_with_no_subscript_gets_no_empty_braces(self):
         assert render_name_latex("alpha") == r"\alpha"
 
-    def test_an_override_replaces_the_stem_here_too(self):
-        assert render_name_latex("mc", stem_override=r"\mathcal{M}") == r"{\mathcal{M}}"
+    def test_an_override_replaces_the_whole_name_here_too(self):
+        assert render_name_latex("phi_2", name_override=r"\kappa") == r"\kappa"

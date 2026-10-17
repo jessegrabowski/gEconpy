@@ -48,15 +48,19 @@ class TestStem:
 
 
 class TestOverride:
-    def test_an_override_replaces_the_stem_and_keeps_the_subscripts(self):
-        assert render_typst(TimeAwareSymbol("mc", -1), stem_override="cal(M)") == "cal(M)_(t-1)"
+    def test_an_override_without_a_subscript_takes_the_time_index(self):
+        assert render_typst(TimeAwareSymbol("mc", -1), name_override="cal(M)") == "cal(M)_(t-1)"
 
-    def test_an_override_composes_with_a_declared_subscript(self):
-        assert render_typst(TimeAwareSymbol("sigma_C", 1), stem_override="varsigma") == "varsigma_(C,t+1)"
+    def test_an_override_replaces_the_declared_subscripts_too(self):
+        assert render_typst(TimeAwareSymbol("sigma_C", 1), name_override="varsigma") == "varsigma_(t+1)"
+
+    @pytest.mark.parametrize("override", ["hat(p)_H", "hat(p)_(H)"], ids=["bare_subscript", "bracketed_subscript"])
+    def test_the_time_index_joins_a_subscript_the_override_ends_with(self, override):
+        assert render_typst(TimeAwareSymbol("p_H_tilde", 0), name_override=override) == "hat(p)_(H,t)"
 
     def test_an_override_is_not_wrapped_the_way_latex_wraps_one(self):
         """LaTeX braces the override to avoid a double subscript. Typst binds the subscript to one atom instead."""
         symbol = TimeAwareSymbol("mc", 0)
 
-        assert render_latex(symbol, stem_override=r"\mathcal{M}") == r"{\mathcal{M}}_{t}"
-        assert render_typst(symbol, stem_override="cal(M)") == "cal(M)_(t)"
+        assert render_latex(symbol, name_override=r"\mathcal{M}") == r"{\mathcal{M}}_{t}"
+        assert render_typst(symbol, name_override="cal(M)") == "cal(M)_(t)"

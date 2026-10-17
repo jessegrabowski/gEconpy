@@ -370,8 +370,9 @@ An unannotated file already produces usable output. A symbol's name becomes a gr
 ``alpha`` renders as :math:`\alpha` and ``epsilon_A`` as :math:`\varepsilon_{A,t}`, which is the convention in the
 macro literature. An underscore separates the stem from a subscript, and the time index joins it. A name longer
 than one character that is not greek is wrapped in ``\text{}``, so ``mc`` renders as :math:`\text{mc}_t` instead of
-reading as a product of :math:`m` and :math:`c`. The ``latex`` field of a :ref:`symbols entry <special-blocks>` overrides
-the stem for the cases this cannot infer, and the subscript and time index still compose onto it.
+reading as a product of :math:`m` and :math:`c`. The ``latex`` field of a :ref:`symbols entry <special-blocks>` replaces
+the whole name for the cases this cannot infer, and only the time index is added to it. The time index joins a
+subscript the override ends with, so ``p_H_tilde`` declared as ``\hat{p}_H`` renders as :math:`\hat{p}_{H,t}`.
 
 An equation you wrote keeps the two sides you wrote. A first-order condition has no source text, so it prints as
 its residual equal to zero. Labels from ``@name`` and ``@foc_name`` become ``\tag``, and an unlabeled first-order
