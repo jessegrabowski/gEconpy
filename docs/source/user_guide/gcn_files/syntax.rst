@@ -469,11 +469,10 @@ from sampling the statespace of the same file, because the table looks up each p
 the name the statespace samples it as.
 
 With sampler output, the rows come from the posterior. A row is every scalar posterior variable that names a
-model parameter, a shock standard deviation ``sigma_<shock>`` or a measurement error ``error_sigma_<variable>``,
-because a prior written only in the PyMC model is as much an estimate as one written in the GCN file.
-``var_names`` adds any other posterior variable. A parameter with a GCN prior and no posterior draws was held
-fixed, so it is not a row. A shock standard deviation prints under the name and prior of the hyper-parameter
-the GCN file declares for it.
+model parameter, a shock standard deviation or a measurement error ``error_sigma_<variable>``, because a prior
+written only in the PyMC model is as much an estimate as one written in the GCN file. A shock standard deviation
+is named as the GCN file names it, or ``sigma_<shock>`` when the file gives it no prior. ``var_names`` adds any
+other posterior variable. A parameter with a GCN prior and no posterior draws was held fixed, so it is not a row.
 
 When the sampler output has a ``prior`` group, its draws are the prior a row reports. The GCN file's
 declaration prints only where the draws match it. A prior that the PyMC model replaced, or that was never

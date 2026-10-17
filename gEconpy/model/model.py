@@ -713,11 +713,10 @@ class Model:
 
         Without sampler output, a row is every name the GCN file gives a prior, including each shock's estimated
         hyper-parameters, in the order the parameters table prints them. With it, a row is every scalar posterior
-        variable that names a model parameter, a shock standard deviation ``sigma_<shock>``, a measurement error
-        ``error_sigma_<variable>``, or an entry of ``var_names``, because a prior can be written in the PyMC
-        model alone. A shock standard deviation prints under the name, symbol and prior of the hyper-parameter the
-        GCN file declares for it. A row reports the prior its ``prior`` group sampled when the idata has one, and
-        the GCN file's declaration otherwise.
+        variable that names a model parameter, a shock standard deviation the GCN file names or ``sigma_<shock>``
+        for one it leaves unnamed, a measurement error ``error_sigma_<variable>``, or an entry of ``var_names``,
+        because a prior can be written in the PyMC model alone. A row reports the prior its ``prior`` group sampled
+        when the idata has one, and the GCN file's declaration otherwise.
 
         Parameters
         ----------
@@ -756,11 +755,10 @@ class Model:
             if var_names or diagnostics:
                 raise ValueError("var_names and diagnostics describe the posterior, so they need an idata.")
             names = [name for name in self._parameter_names(values, priors) if name in priors]
-            summary, interval, prior_draws, aliases = None, None, None, {}
+            summary, interval, prior_draws = None, None, None
         else:
             posterior = posterior_dataset(idata)
             names = self._sampled_parameter_names(posterior, values, priors, var_names)
-            aliases = self._shock_sd_aliases(posterior)
             summary, interval = summarize_posterior(
                 posterior, names, ci_kind=ci_kind, ci_prob=ci_prob, diagnostics=diagnostics
             )
@@ -768,13 +766,12 @@ class Model:
 
         rows = []
         for name in names:
-            declared_name = aliases.get(name, name)
             draws = None if prior_draws is None or name not in prior_draws else prior_draws[name].to_numpy().ravel()
-            prior, draw_statistics = reconcile_prior(priors.get(declared_name), draws, prior_stats)
+            prior, draw_statistics = reconcile_prior(priors.get(name), draws, prior_stats)
             rows.append(
                 EstimateRow(
-                    symbol=render_name(declared_name, name_override=overrides.get(declared_name)),
-                    description=declarations[declared_name].name if declared_name in declarations else None,
+                    symbol=render_name(name, name_override=overrides.get(name)),
+                    description=declarations[name].name if name in declarations else None,
                     prior=prior,
                     prior_draw_statistics=draw_statistics,
                     **({} if summary is None else summary.loc[name].to_dict()),
@@ -808,23 +805,6 @@ class Model:
                 "measurement errors. Name the variables to print with var_names."
             )
         return names
-
-    def _shock_sd_aliases(self, posterior: xr.Dataset) -> dict[str, str]:
-        """
-        Map each statespace shock standard deviation in the posterior to the hyper-parameter the GCN file declares.
-
-        The statespace samples a shock's standard deviation as ``sigma_<shock>``, whatever name the GCN file gives
-        its prior. A posterior that also holds the declared name sampled the declared prior there, so its
-        ``sigma_<shock>`` is some other prior and keeps its own name.
-        """
-        aliases = {}
-        for shock_name, shock_prior in self.shock_priors.items():
-            statespace_name = f"sigma_{shock_name}"
-            hyper_name = shock_prior.param_name_to_hyper_name.get("sigma")
-            if hyper_name is None or statespace_name not in posterior.data_vars or hyper_name in posterior.data_vars:
-                continue
-            aliases[statespace_name] = hyper_name
-        return aliases
 
     def _symbol_table(self, group: str, markup: Markup = "latex") -> SymbolTable:
         """Build the variable or shock rows, resolving each symbol's declared caption and rendering."""
