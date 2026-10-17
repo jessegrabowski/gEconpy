@@ -26,7 +26,7 @@ from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
-from gEconpy.classes.distributions import CompositeDistribution
+from gEconpy.classes.distributions import CompositeDistribution, priors_by_sampled_name
 from gEconpy.classes.time_aware_symbol import (
     TimeAwareSymbol,
 )
@@ -668,20 +668,10 @@ class Model:
         render_name = DIALECTS[markup].render_name
         declarations = self._declarations_by_name()
         values = self.parameters().to_string()
-        priors = self.param_priors.to_string()
+        priors = priors_by_sampled_name(self.param_priors.to_string(), self.shock_priors)
 
-        # A shock's standard deviation is a hyper-parameter of its prior, not a model parameter, so it reaches
-        # neither of the dicts above. An estimated model's prior table is the one place it must appear.
-        hyper_priors = {
-            hyper_name: distribution.hyper_param_dict[param_name]
-            for distribution in self.shock_priors.values()
-            for param_name, hyper_name in getattr(distribution, "param_name_to_hyper_name", {}).items()
-            if param_name in getattr(distribution, "hyper_param_dict", {})
-        }
-        priors = {**priors, **hyper_priors}
-
-        calibrated = [parameter.name for parameter in self.calibrated_params if parameter.name not in values]
-        names = [*values, *calibrated, *(name for name in hyper_priors if name not in values)]
+        calibrated = [parameter.name for parameter in self.calibrated_params]
+        names = list(dict.fromkeys([*values, *calibrated, *priors]))
         return CalibrationTable(
             prior_stats=prior_stats,
             include_prior_params=include_prior_params,

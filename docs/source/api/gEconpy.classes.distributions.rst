@@ -9,6 +9,12 @@ gEconpy.classes.distributions
 
     CompositeDistribution
 
+.. rubric:: Functions
+
+.. autosummary::
+
+    priors_by_sampled_name
+
 .. automodule:: gEconpy.classes.distributions
-    :members: CompositeDistribution
+    :members: CompositeDistribution, priors_by_sampled_name
     :undoc-members:

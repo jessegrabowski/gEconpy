@@ -170,6 +170,16 @@ class TestCalibrationTable:
         assert calibrated.value is None
         assert [r.symbol for r in model.table("parameters").rows][-1] == r"\alpha"
 
+    def test_a_shock_standard_deviation_is_one_row_after_the_parameters(self):
+        """It is estimated, so it carries a prior and no value, and it is a parameter of no equation."""
+        model = load_and_cache_model("rbc_linearized.gcn")
+
+        rows = model.table("parameters").rows
+        shock_rows = [r for r in rows if r.symbol == r"\sigma_{A}"]
+
+        assert rows[-1] == shock_rows[0]
+        assert [(r.value, r.prior_family) for r in shock_rows] == [(None, "Gamma")]
+
     def test_an_empty_column_is_dropped(self):
         """Built here rather than from a fixture, so adding a source to a shipped model cannot silently break it."""
         table = CalibrationTable(

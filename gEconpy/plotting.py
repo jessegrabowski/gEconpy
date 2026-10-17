@@ -24,6 +24,7 @@ from matplotlib.ticker import Formatter, StrMethodFormatter
 from scipy import stats
 from xarray_einstats.linalg import diagonal as xr_diagonal
 
+from gEconpy.classes.distributions import priors_by_sampled_name
 from gEconpy.model.model import Model
 from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.statistics import check_bk_condition, eigenvalue_sensitivity
@@ -1442,11 +1443,7 @@ def plot_priors(
         model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
         fig = plot_priors(model, n_cols=3)
     """
-    priors = dict(model.param_priors) | {
-        shock.param_name_to_hyper_name[name]: hyper_prior
-        for shock in model.shock_priors.values()
-        for name, hyper_prior in shock.hyper_param_dict.items()
-    }
+    priors = priors_by_sampled_name(model.param_priors, model.shock_priors)
 
     if var_names is not None:
         for name in var_names:

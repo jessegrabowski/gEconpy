@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -49,3 +50,33 @@ class CompositeDistribution:
         """
         for name, param_dist in self.hyper_param_dict.items():
             param_dist.to_pymc(name=self.param_name_to_hyper_name[name], **kwargs)
+
+
+def priors_by_sampled_name(
+    param_priors: Mapping[str, "Distribution"],
+    shock_priors: Mapping[str, CompositeDistribution],
+) -> dict[str, "Distribution"]:
+    """
+    Collect every prior a model declares, keyed by the name it is sampled under.
+
+    A shock's estimated hyper-parameters, such as its standard deviation, live inside its prior. Each is keyed by
+    the hyper-parameter name that :meth:`CompositeDistribution.to_pymc` registers it under.
+
+    Parameters
+    ----------
+    param_priors : mapping of str to Distribution
+        Prior of each model parameter, keyed by parameter name.
+    shock_priors : mapping of str to CompositeDistribution
+        Prior of each shock, keyed by shock name.
+
+    Returns
+    -------
+    priors : dict of str to Distribution
+        The parameter priors, followed by the shock hyper-parameter priors.
+    """
+    hyper_priors = {
+        shock_prior.param_name_to_hyper_name[param_name]: hyper_prior
+        for shock_prior in shock_priors.values()
+        for param_name, hyper_prior in shock_prior.hyper_param_dict.items()
+    }
+    return {**param_priors, **hyper_priors}
