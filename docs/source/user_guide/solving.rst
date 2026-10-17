@@ -162,6 +162,19 @@ for at most ``max_homotopy_solves`` solves. If that also fails, the simulation w
 the period, and that path is NaN from the failed period on. The other paths continue. ``sparse_root_kwargs``
 is passed to the solver in every period, and its ``f_tol`` defaults to :math:`10^{-5}`.
 
+Paths are independent of each other, so ``cores`` above 1 simulates them in that many worker processes, each
+taking a contiguous block of paths. Every path solves with its own copy of the solver, so the output is the same
+for any number of cores. ``mp_ctx`` picks the start method, with the defaults :func:`pymc.sample` uses. A forked
+worker inherits the compiled model and starts at once. Under ``"spawn"`` or ``"forkserver"`` each worker first
+imports gEconpy and rebuilds the problem, which takes a few seconds, and a script that starts them needs the
+usual ``if __name__ == "__main__":`` guard.
+
+.. code-block:: python
+
+    paths, diagnostics = simulate_extended_path(
+        model, n_simulations=64, simulation_length=200, shock_std=0.01, random_seed=0, cores=8
+    )
+
 Reading the cost of a solve
 ---------------------------
 

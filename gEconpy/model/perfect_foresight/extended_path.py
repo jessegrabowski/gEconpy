@@ -1,13 +1,19 @@
 import copy
+import multiprocessing
+import platform
 import warnings
 
 from collections.abc import Callable
 from functools import partial
+from multiprocessing.context import BaseContext
 from typing import NamedTuple
 
+import cloudpickle
 import numpy as np
 import xarray as xr
 
+from pytensor.compile.mode import Mode, get_mode
+from pytensor.link.jax.linker import JAXLinker
 from scipy.optimize import OptimizeResult
 
 from gEconpy.exceptions import NonFiniteInitialGuessError
@@ -32,6 +38,8 @@ _HOMOTOPY_INITIAL_STEP = 0.1
 _HOMOTOPY_MIN_STEP = 1e-4
 _CHORD_REFRESH_RATIO = 0.1
 
+_WORKER_STATE: dict = {}
+
 
 def simulate_extended_path(
     model: Model,
@@ -48,6 +56,8 @@ def simulate_extended_path(
     steady_state_kwargs: dict | None = None,
     sparse_root_kwargs: dict | None = None,
     max_homotopy_solves: int = 100,
+    cores: int = 1,
+    mp_ctx: str | BaseContext | None = None,
 ) -> tuple[xr.DataArray, xr.Dataset]:
     """
     Simulate trajectories of the nonlinear model by the extended path method.
@@ -107,6 +117,13 @@ def simulate_extended_path(
         period's problem. ``f_tol`` defaults to 1e-5 unless ``tol`` is given, and ``progressbar`` defaults to False.
     max_homotopy_solves : int, optional
         Number of solves the homotopy may spend on one failed period. Zero turns homotopy off. Defaults to 100.
+    cores : int, optional
+        Number of worker processes that simulate trajectories in parallel, each taking a contiguous block of them. The
+        output is the same for any number of cores. Defaults to 1, which simulates in the calling process.
+    mp_ctx : str or BaseContext, optional
+        Start method name, or a context from :func:`multiprocessing.get_context`, for the worker processes when
+        ``cores`` is above 1. Defaults to ``"fork"`` on macOS with Apple silicon, ``"forkserver"`` on other macOS,
+        and the platform's default elsewhere, except that a JAX compile mode never forks.
 
     Returns
     -------
@@ -132,6 +149,8 @@ def simulate_extended_path(
     """
     if n_simulations < 1:
         raise ValueError(f"n_simulations must be at least 1, got {n_simulations}")
+    if cores < 1:
+        raise ValueError(f"cores must be at least 1, got {cores}")
 
     steady_state_kwargs = {"verbose": False, "progressbar": False, **(steady_state_kwargs or {})}
     sparse_root_kwargs = {"progressbar": False, **(sparse_root_kwargs or {})}
@@ -185,18 +204,22 @@ def simulate_extended_path(
         sparse_root_kwargs=sparse_root_kwargs,
     )
 
-    trajectories = [
-        _simulate_trajectory(
-            solve_at_weight=solve_at_weight,
-            solver=solver,
-            shocks=epsilons[simulation][:, shock_columns],
-            initial_state=initial_state,
-            steady_state_values=steady_state_values,
-            steady_state_guess=steady_state_guess,
-            max_homotopy_solves=max_homotopy_solves,
-        )
-        for simulation in range(n_simulations)
-    ]
+    simulate_trajectory = partial(
+        _simulate_trajectory,
+        solve_at_weight=solve_at_weight,
+        solver=solver,
+        initial_state=initial_state,
+        steady_state_values=steady_state_values,
+        steady_state_guess=steady_state_guess,
+        max_homotopy_solves=max_homotopy_solves,
+    )
+    trajectory_shocks = epsilons[..., shock_columns]
+    workers = min(cores, n_simulations)
+    if workers == 1:
+        trajectories = [simulate_trajectory(shocks=shocks) for shocks in trajectory_shocks]
+    else:
+        context = _multiprocessing_context(mp_ctx, mode=(compile_kwargs or {}).get("mode"))
+        trajectories = _simulate_in_workers(simulate_trajectory, trajectory_shocks, workers, context)
     for simulation, trajectory in enumerate(trajectories):
         if trajectory.failure is not None:
             period, message = trajectory.failure
@@ -288,6 +311,61 @@ def _simulate_trajectory(
 
     return _Trajectory(
         states=states, success=success, work_counts=work_counts, homotopy_solves=homotopy_solves, failure=None
+    )
+
+
+def _simulate_in_workers(
+    simulate_trajectory: Callable[..., _Trajectory],
+    trajectory_shocks: np.ndarray,
+    workers: int,
+    context: BaseContext,
+) -> list[_Trajectory]:
+    """Simulate one trajectory per row of ``trajectory_shocks`` in a pool of ``workers`` processes, in order."""
+    # A forked worker inherits simulate_trajectory through the initializer, unpickled. Under any other start method the
+    # child reads initializer arguments only after importing gEconpy, so passing the problem there would start the
+    # workers one at a time, and it travels pickled with each block instead. cloudpickle also carries a solver class
+    # defined in the user's script.
+    if context.get_start_method() == "fork":
+        payload, initargs = None, (simulate_trajectory,)
+    else:
+        payload, initargs = cloudpickle.dumps(simulate_trajectory, protocol=-1), (None,)
+
+    blocks = np.array_split(trajectory_shocks, workers)
+    with context.Pool(workers, initializer=_initialize_worker, initargs=initargs) as pool:
+        simulated_blocks = pool.starmap(_simulate_block, [(payload, block) for block in blocks])
+    return [trajectory for block in simulated_blocks for trajectory in block]
+
+
+def _initialize_worker(simulate_trajectory: Callable[..., _Trajectory] | None) -> None:
+    _WORKER_STATE["simulate_trajectory"] = simulate_trajectory
+
+
+def _simulate_block(payload: bytes | None, block: np.ndarray) -> list[_Trajectory]:
+    simulate_trajectory = _WORKER_STATE["simulate_trajectory"] if payload is None else cloudpickle.loads(payload)
+    return [simulate_trajectory(shocks=shocks) for shocks in block]
+
+
+def _multiprocessing_context(mp_ctx: str | BaseContext | None, mode: str | Mode | None) -> BaseContext:
+    """Resolve ``mp_ctx`` to a multiprocessing context by the rules :func:`pymc.sample` uses."""
+    user_specified = mp_ctx is not None
+    if mp_ctx is None and platform.system() == "Darwin":
+        mp_ctx = "fork" if platform.processor() == "arm" else "forkserver"
+    if mp_ctx is None or isinstance(mp_ctx, str):
+        mp_ctx = multiprocessing.get_context(mp_ctx)
+
+    jax_mode = mode is not None and isinstance(get_mode(mode).linker, JAXLinker)
+    if not jax_mode or mp_ctx.get_start_method() != "fork":
+        return mp_ctx
+    if user_specified:
+        warnings.warn(
+            "Using a JAX compile mode with multiprocessing start method 'fork' is unsafe and may deadlock. Consider "
+            "passing mp_ctx='forkserver' or mp_ctx='spawn'.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return mp_ctx
+    return multiprocessing.get_context(
+        "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
     )
 
 
