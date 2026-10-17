@@ -95,7 +95,7 @@ jobs:
       with:
         fetch-depth: 0  # hatch-vcs derives the version from tags
         persist-credentials: false
-    - uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
+    - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
       with:
         pixi-version: v0.81.0
         environments: ${{ matrix.environment }}
@@ -151,7 +151,7 @@ jobs:
         with:
           fetch-depth: 0  # hatch-vcs derives the version from tags
           persist-credentials: false
-      - uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
         with:
           pixi-version: v0.81.0
           environments: docs
@@ -191,7 +191,8 @@ jobs:
     runs-on: ubuntu-latest
     name: "Upload coverage"
     needs: [all-checks]
-    if: ${{ needs.all-checks.result == 'success' }}
+    # Dependabot runs get no repository secrets, and codecov rejects a tokenless upload.
+    if: ${{ needs.all-checks.result == 'success' && github.event.pull_request.user.login != 'dependabot[bot]' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
