@@ -1,5 +1,9 @@
+import importlib.util
+import multiprocessing
+
 import numpy as np
 import pytest
+import xarray as xr
 
 from numpy.testing import assert_allclose
 
@@ -143,6 +147,40 @@ def test_a_trajectory_does_not_depend_on_the_trajectories_before_it(rbc_model, m
     np.testing.assert_array_equal(both.values[1], second_alone.values[0])
 
 
+@pytest.mark.parametrize(
+    "mp_ctx", [method for method in ("fork", "spawn") if method in multiprocessing.get_all_start_methods()]
+)
+def test_worker_processes_reproduce_the_serial_simulation(rbc_model, mp_ctx, monkeypatch):
+    pools = []
+    simulate_in_workers = extended_path._simulate_in_workers
+
+    def record_pool(simulate_trajectory, trajectory_shocks, workers, context):
+        pools.append((workers, context.get_start_method()))
+        return simulate_in_workers(simulate_trajectory, trajectory_shocks, workers, context)
+
+    monkeypatch.setattr(extended_path, "_simulate_in_workers", record_pool)
+    simulation_kwargs = {"n_simulations": 3, "simulation_length": 5, "shock_std": 0.01, "random_seed": 0}
+
+    serial_paths, serial_diagnostics = simulate_extended_path(rbc_model, **simulation_kwargs)
+    parallel_paths, parallel_diagnostics = simulate_extended_path(
+        rbc_model, cores=2, mp_ctx=mp_ctx, **simulation_kwargs
+    )
+
+    assert pools == [(2, mp_ctx)]
+    xr.testing.assert_identical(parallel_paths, serial_paths)
+    xr.testing.assert_identical(parallel_diagnostics, serial_diagnostics)
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("jax") is None or "fork" not in multiprocessing.get_all_start_methods(),
+    reason="needs jax and the fork start method",
+)
+def test_a_jax_compile_mode_forks_workers_only_when_asked():
+    assert extended_path._multiprocessing_context(None, mode="JAX").get_start_method() != "fork"
+    with pytest.warns(UserWarning, match="JAX compile mode with multiprocessing start method 'fork' is unsafe"):
+        assert extended_path._multiprocessing_context("fork", mode="JAX").get_start_method() == "fork"
+
+
 def test_a_solver_holding_a_factorization_can_be_passed_in(rbc_model):
     solver = chord(direction=ChordDirection(keep_across_solves=True))
     steady_state = rbc_model.steady_state(verbose=False, progressbar=False)
@@ -260,9 +298,10 @@ def test_a_deterministic_parameter_update_raises():
         simulate_extended_path(model, simulation_length=2, shock_std=0.0, steady_state_kwargs={"gamma": 1.0})
 
 
-def test_fewer_than_one_simulation_raises(rbc_model):
-    with pytest.raises(ValueError, match="n_simulations must be at least 1, got 0"):
-        simulate_extended_path(rbc_model, n_simulations=0, shock_std=0.0)
+@pytest.mark.parametrize("argument", ["n_simulations", "cores"])
+def test_a_count_below_one_raises(rbc_model, argument):
+    with pytest.raises(ValueError, match=f"{argument} must be at least 1, got 0"):
+        simulate_extended_path(rbc_model, shock_std=0.0, **{argument: 0})
 
 
 def test_unknown_initial_condition_raises(rbc_model):

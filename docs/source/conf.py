@@ -153,11 +153,13 @@ numpydoc_xref_ignore = {
     "distribution",
     "and",
     # Real classes whose projects publish no intersphinx entry for them: pymc's Transform base class,
-    # IPython's HTML, pyparsing's ParseBaseException and functools' lru_cache CacheInfo.
+    # IPython's HTML, pyparsing's ParseBaseException, functools' lru_cache CacheInfo and multiprocessing's
+    # BaseContext.
     "Transform",
     "HTML",
     "ParseBaseException",
     "CacheInfo",
+    "BaseContext",
     # Builtins, which numpydoc links to the CPython docs by default. Suppressing them needs an entry here and a
     # self-alias below, because make_xref consults numpydoc_xref_aliases before it consults this set.
     "bool",
