@@ -44,8 +44,10 @@ class SparseDogleg:
     max_reject : int, optional
         Maximum consecutive rejected steps before reporting failure. Defaults to 50.
     linear_solver : callable, optional
-        Sparse linear solver for the Newton step, called as ``linear_solver(A, b)``. Defaults to
-        :func:`scipy.sparse.linalg.spsolve`.
+        Sparse linear solver for the Newton step, called as ``linear_solver(A, b)``. None uses
+        :func:`scipy.sparse.linalg.spsolve`. :func:`~gEconpy.model.perfect_foresight.solve.solve_perfect_foresight` and
+        :func:`~gEconpy.model.perfect_foresight.extended_path.simulate_extended_path` fill None, on a copy, with a solve
+        in the column order their stacked Jacobian factorizes fastest in. Defaults to None.
     """
 
     delta0: float = 1.0
@@ -54,7 +56,7 @@ class SparseDogleg:
     shrink_factor: float = 0.25
     grow_factor: float = 2.0
     max_reject: int = 50
-    linear_solver: Callable = field(default_factory=lambda: spsolve)
+    linear_solver: Callable | None = None
 
     _delta: float = field(init=False, repr=False, default=0.0)
 
@@ -108,7 +110,7 @@ class SparseDogleg:
 
         # Only the radius changes between rejections, so this must stay outside the loop: inside, it costs a
         # factorization per rejected trial. A flat model short circuits before the solve, so the count is derived.
-        geometry = _dogleg_geometry(jac, res, grad, self.linear_solver)
+        geometry = _dogleg_geometry(jac, res, grad, self.linear_solver or spsolve)
         nsolve = int(geometry.curvature >= ZERO_CURVATURE_TOL)
 
         for n_rejected in range(self.max_reject):

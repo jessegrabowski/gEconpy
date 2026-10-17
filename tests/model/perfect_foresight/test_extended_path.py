@@ -182,7 +182,8 @@ def test_a_jax_compile_mode_forks_workers_only_when_asked():
 
 
 def test_a_solver_holding_a_factorization_can_be_passed_in(rbc_model):
-    solver = chord(direction=ChordDirection(keep_across_solves=True))
+    # An explicit ordering keeps solve_perfect_foresight from solving with an ordered copy, so this solver factorizes.
+    solver = chord(direction=ChordDirection(keep_across_solves=True, permc_spec="NATURAL"))
     steady_state = rbc_model.steady_state(verbose=False, progressbar=False)
     solve_perfect_foresight(
         rbc_model, simulation_length=50, solver=solver, initial_conditions={"K": 0.9 * steady_state["K_ss"]}

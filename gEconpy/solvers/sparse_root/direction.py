@@ -61,12 +61,13 @@ class NewtonDirection:
     Parameters
     ----------
     linear_solver : callable, optional
-        Sparse linear solver called as ``linear_solver(A, b)``. Defaults to :func:`scipy.sparse.linalg.spsolve`.
+        Sparse linear solver called as ``linear_solver(A, b)``. None uses :func:`scipy.sparse.linalg.spsolve`.
+        :func:`~gEconpy.model.perfect_foresight.solve.solve_perfect_foresight` and
+        :func:`~gEconpy.model.perfect_foresight.extended_path.simulate_extended_path` fill None, on a copy, with a solve
+        in the column order their stacked Jacobian factorizes fastest in. Defaults to None.
     """
 
-    # A function stored directly as the class attribute becomes the attribute's docstring under autodoc, and
-    # scipy's spsolve docstring uses roles Sphinx does not define, so the default lives in a factory.
-    linear_solver: Callable = field(default_factory=lambda: spsolve)
+    linear_solver: Callable | None = None
 
     def reset(self) -> None:
         """Do nothing: this strategy carries no state between solves."""
@@ -93,7 +94,7 @@ class NewtonDirection:
         proposal : ~gEconpy.solvers.sparse_root.direction.DirectionProposal
             Direction, its slope against the current residuals, and a label describing how it was computed.
         """
-        dx = try_linear_solve(self.linear_solver, jac, -res)
+        dx = try_linear_solve(self.linear_solver or spsolve, jac, -res)
         if dx is None:
             return _descent_proposal(-(jac.T @ res), res, jac, kind="gradient_fallback")
         return _descent_proposal(dx, res, jac, kind="newton")
@@ -157,14 +158,17 @@ class ChordDirection:
     keep_across_solves : bool, optional
         Whether :meth:`reset` keeps the factorization, so the next solve starts with the last one. Defaults to False.
     permc_spec : str, optional
-        Column ordering :func:`scipy.sparse.linalg.splu` factorizes in. Defaults to ``"COLAMD"``.
+        Column ordering :func:`scipy.sparse.linalg.splu` factorizes in. None uses ``"COLAMD"``.
+        :func:`~gEconpy.model.perfect_foresight.solve.solve_perfect_foresight` and
+        :func:`~gEconpy.model.perfect_foresight.extended_path.simulate_extended_path` fill None, on a copy, with the
+        ordering their stacked Jacobian factorizes fastest in. Defaults to None.
     """
 
     recompute_every: int | None = 5
     refresh_ratio: float | None = None
     refresh_step_tol: float | None = DEFAULT_TOL
     keep_across_solves: bool = False
-    permc_spec: str = "COLAMD"
+    permc_spec: str | None = None
     _previous_res_norm: float | None = field(init=False, repr=False, default=None)
     _factorization: _ScheduledFactorization = field(init=False, repr=False, default_factory=_ScheduledFactorization)
 
@@ -210,10 +214,11 @@ class ChordDirection:
         )
         self._previous_res_norm = res_norm
 
-        cached_jac, lu = self._factorization.update(jac, self.recompute_every, self.permc_spec, force=slowed)
+        permc_spec = self.permc_spec or "COLAMD"
+        cached_jac, lu = self._factorization.update(jac, self.recompute_every, permc_spec, force=slowed)
         dx = None if lu is None else try_linear_solve(SuperLU.solve, lu, -res)
         if self._is_short_step_from_an_old_factorization(dx, x):
-            cached_jac, lu = self._factorization.update(jac, self.recompute_every, self.permc_spec, force=True)
+            cached_jac, lu = self._factorization.update(jac, self.recompute_every, permc_spec, force=True)
             dx = None if lu is None else try_linear_solve(SuperLU.solve, lu, -res)
 
         if dx is None:
