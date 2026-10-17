@@ -742,13 +742,6 @@ class Model:
         -------
         table : EquationTable or SymbolTable or CalibrationTable
             The rows, renderable as LaTeX or as a dataframe.
-
-        Raises
-        ------
-        ValueError
-            If ``group`` is not one of the four groups.
-        TypeError
-            If an option is given that the group does not take.
         """
         if group not in TABLE_GROUPS:
             raise ValueError(f"group must be one of {', '.join(TABLE_GROUPS)}, got {group!r}.")
@@ -791,11 +784,6 @@ class Model:
         -------
         markup : str
             The rendered table.
-
-        Raises
-        ------
-        ValueError
-            If ``group`` or ``writer`` is not recognized.
 
         Examples
         --------
