@@ -14,6 +14,7 @@ import numpy as np
 import pytensor
 import pytensor.scalar as ps
 import sympy as sp
+import xarray as xr
 
 from better_optimize import minimize, root
 from preliz.distributions.distributions import Distribution
@@ -59,6 +60,10 @@ from gEconpy.model.tables import (
     SymbolRow,
     SymbolTable,
     TableGroup,
+    posterior_dataset,
+    prior_dataset,
+    reconcile_prior,
+    summarize_posterior,
 )
 from gEconpy.parser.ast import GCNBlock, GCNModel, SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
@@ -694,16 +699,42 @@ class Model:
 
     def _estimation_table(
         self,
+        idata: xr.DataTree | xr.Dataset | None = None,
+        var_names: Sequence[str] = (),
         prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS,
         include_prior_params: bool = False,
+        ci_kind: Literal["hdi", "eti"] = "hdi",
+        ci_prob: float | None = None,
         markup: Markup = "latex",
     ) -> EstimationTable:
         """
         Build the model's estimated parameters as table data, for a paper's estimation table.
 
-        A row is every name with a prior, including each shock's estimated hyper-parameters, in the order the
-        parameters table prints them. A parameter with no prior is fixed or calibrated, so it appears in the
-        parameters table only.
+        Without sampler output, a row is every name the GCN file gives a prior, including each shock's estimated
+        hyper-parameters, in the order the parameters table prints them. With it, a row is every scalar posterior
+        variable that names a model parameter, a shock standard deviation ``sigma_<shock>``, a measurement error
+        ``error_sigma_<variable>``, or an entry of ``var_names``, because a prior can be written in the PyMC
+        model alone. A row reports the prior its ``prior`` group sampled when the idata has one, and the GCN
+        file's declaration otherwise.
+
+        Parameters
+        ----------
+        idata : DataTree or Dataset, optional
+            Sampler output with a ``posterior`` group and optionally a ``prior`` group, or the posterior dataset
+            itself. Defaults to none, which builds the prior half of the table from the GCN file alone.
+        var_names : sequence of str, optional
+            Further posterior variables to print, such as a parameter of the PyMC model that the GCN file does
+            not name. Defaults to none.
+        prior_stats : sequence of str, optional
+            Statistics of the prior to print. Defaults to the mean and the standard deviation.
+        include_prior_params : bool, optional
+            Print the declared distribution's own parameters. Defaults to False.
+        ci_kind : str, optional
+            ``"hdi"`` or ``"eti"``, the posterior interval to print. Defaults to ``"hdi"``.
+        ci_prob : float, optional
+            Probability mass of the posterior interval. Defaults to arviz's ``stats.ci_prob``.
+        markup : str, optional
+            Language the cells are rendered in. Defaults to ``"latex"``.
 
         Returns
         -------
@@ -716,19 +747,58 @@ class Model:
         values = self.parameters().to_string()
         priors = priors_by_sampled_name(self.param_priors.to_string(), self.shock_priors)
 
-        return EstimationTable(
-            prior_stats=prior_stats,
-            include_prior_params=include_prior_params,
-            rows=[
+        if idata is None:
+            if var_names:
+                raise ValueError("var_names selects posterior variables, so it needs an idata.")
+            names = [name for name in self._parameter_names(values, priors) if name in priors]
+            summary, interval, prior_draws = None, None, None
+        else:
+            posterior = posterior_dataset(idata)
+            names = self._sampled_parameter_names(posterior, values, priors, var_names)
+            summary, interval = summarize_posterior(posterior, names, ci_kind=ci_kind, ci_prob=ci_prob)
+            prior_draws = prior_dataset(idata)
+
+        rows = []
+        for name in names:
+            draws = None if prior_draws is None or name not in prior_draws else prior_draws[name].to_numpy().ravel()
+            prior, draw_statistics = reconcile_prior(priors.get(name), draws, prior_stats)
+            rows.append(
                 EstimateRow(
                     symbol=render_name(name, name_override=overrides.get(name)),
                     description=declarations[name].name if name in declarations else None,
-                    prior=priors[name],
+                    prior=prior,
+                    prior_draw_statistics=draw_statistics,
+                    **({} if summary is None else summary.loc[name].to_dict()),
                 )
-                for name in self._parameter_names(values, priors)
-                if name in priors
-            ],
+            )
+        return EstimationTable(
+            rows=rows, prior_stats=prior_stats, include_prior_params=include_prior_params, interval=interval
         )
+
+    def _sampled_parameter_names(
+        self,
+        posterior: xr.Dataset,
+        values: Mapping[str, Any],
+        priors: Mapping[str, Any],
+        var_names: Sequence[str],
+    ) -> list[str]:
+        """Return the posterior variables an estimation table prints, model parameters first."""
+        missing = [name for name in var_names if name not in posterior.data_vars]
+        if missing:
+            raise ValueError(f"var_names names variables the posterior does not have: {', '.join(missing)}.")
+
+        candidates = [
+            *self._parameter_names(values, priors),
+            *(f"sigma_{shock.base_name}" for shock in self.shocks),
+            *(f"error_sigma_{variable.base_name}" for variable in self.variables),
+        ]
+        names = list(dict.fromkeys([*(name for name in candidates if name in posterior.data_vars), *var_names]))
+        if not names:
+            raise ValueError(
+                "The posterior shares no variable with the model's parameters, shock standard deviations or "
+                "measurement errors. Name the variables to print with var_names."
+            )
+        return names
 
     def _symbol_table(self, group: str, markup: Markup = "latex") -> SymbolTable:
         """Build the variable or shock rows, resolving each symbol's declared caption and rendering."""
@@ -775,7 +845,9 @@ class Model:
             Build options for the group. ``"equations"`` takes ``expectations``, which wraps lead-carrying
             terms in :math:`\mathbb{E}_t` except where the author wrote the operator themselves and defaults
             to True. ``"parameters"`` and ``"estimates"`` take ``prior_stats`` and ``include_prior_params``,
-            which choose the prior columns. The other groups take no options.
+            which choose the prior columns. ``"estimates"`` also takes ``idata``, sampler output whose posterior
+            adds the posterior columns and whose prior group, when present, supplies the priors, along with
+            ``var_names``, ``ci_kind`` and ``ci_prob``. The other groups take no options.
 
         Returns
         -------

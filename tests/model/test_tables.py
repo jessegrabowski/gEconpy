@@ -1,12 +1,16 @@
 import shutil
 import subprocess
 
+import arviz_stats as azs
+import numpy as np
 import pandas as pd
 import preliz
 import pytest
+import xarray as xr
 
 from gEconpy import model_from_gcn
 from gEconpy.model.tables import (
+    POSTERIOR_FRAME_COLUMNS,
     PRIOR_STAT_HEADINGS,
     PRIOR_STATS,
     TABLE_GROUPS,
@@ -242,8 +246,156 @@ class TestEstimationTable:
 
         estimates = model.table("estimates", **options).to_frame()
         parameters = model.table("parameters", **options).to_frame().dropna(subset="prior")
+        shared = [column for column in estimates.columns if column in parameters.columns]
 
-        pd.testing.assert_frame_equal(estimates, parameters[estimates.columns].reset_index(drop=True))
+        pd.testing.assert_frame_equal(estimates[shared], parameters[shared].reset_index(drop=True))
+
+    def test_a_table_without_a_posterior_prints_no_posterior_column(self):
+        model = load_and_cache_model("one_block_1_dist.gcn")
+
+        header = model.write_table("estimates").splitlines()[2]
+
+        assert header.endswith(r"\textbf{S.D.} \\")
+
+
+@pytest.fixture(scope="module")
+def posterior():
+    """Draws for three of ``one_block_1_dist``'s four priors, and a deterministic that no prior claims."""
+    rng = np.random.default_rng(0)
+    means = {"alpha": 0.42, "rho": 0.93, "sigma_epsilon": 0.011, "bk_satisfied": 1.0}
+    return xr.Dataset({name: (("chain", "draw"), rng.normal(mean, 0.02, (2, 100))) for name, mean in means.items()})
+
+
+class TestEstimationTableWithPosterior:
+    def test_a_prior_without_draws_is_dropped_and_draws_naming_no_parameter_ignored(self, posterior):
+        """``gamma`` was held constant while sampling, and ``bk_satisfied`` is a deterministic of the sampler."""
+        model = load_and_cache_model("one_block_1_dist.gcn")
+
+        symbols = [r.symbol for r in model.table("estimates", idata=posterior).rows]
+
+        assert symbols == [r"\alpha", r"\rho", r"\sigma_{\varepsilon}"]
+
+    def test_a_parameter_sampled_without_a_declared_prior_is_a_row(self, posterior):
+        """A prior can live in the PyMC model alone, as a measurement error's always does."""
+        model = load_and_cache_model("one_block_1_dist.gcn")
+        sampled = posterior.assign(beta=posterior["rho"], error_sigma_C=posterior["sigma_epsilon"])
+
+        rows = {r.symbol: r for r in model.table("estimates", idata=sampled).rows}
+
+        assert list(rows) == [r"\alpha", r"\beta", r"\rho", r"\sigma_{\varepsilon}", r"\text{error}_{\sigma,C}"]
+        assert [rows[symbol].prior_stat("mean") for symbol in [r"\beta", r"\text{error}_{\sigma,C}"]] == [None, None]
+
+    def test_a_shock_standard_deviation_is_a_row_under_the_statespace_name(self, posterior):
+        """The statespace reads ``sigma_epsilon_A``, which is not the ``sigma_A`` the GCN file declares a prior for."""
+        model = load_and_cache_model("rbc_linearized.gcn")
+        sampled = xr.Dataset({"alpha": posterior["alpha"], "sigma_epsilon_A": posterior["sigma_epsilon"]})
+
+        rows = model.table("estimates", idata=sampled).rows
+
+        assert [(r.symbol, r.prior_family) for r in rows][-1] == (r"\sigma_{\varepsilon,A}", "")
+
+    def test_var_names_adds_a_variable_the_model_does_not_name(self, posterior):
+        model = load_and_cache_model("one_block_1_dist.gcn")
+
+        rows = model.table("estimates", idata=posterior, var_names=["bk_satisfied"]).rows
+
+        assert rows[-1].posterior_mean == pytest.approx(float(posterior["bk_satisfied"].mean()))
+
+    @pytest.mark.parametrize(
+        "with_idata, match",
+        [(True, "does not have: shock_scale"), (False, "needs an idata")],
+        ids=["absent_from_posterior", "without_idata"],
+    )
+    def test_var_names_that_cannot_be_printed_raise(self, posterior, with_idata, match):
+        model = load_and_cache_model("one_block_1_dist.gcn")
+        idata = posterior if with_idata else None
+
+        with pytest.raises(ValueError, match=match):
+            model.table("estimates", idata=idata, var_names=["shock_scale"])
+
+    def test_each_row_reports_the_prior_that_was_sampled(self, posterior):
+        """
+        Only a prior sampled as declared prints its family and exact moments.
+
+        ``alpha`` was sampled as declared, ``rho`` under a prior the PyMC model swapped in, and ``beta`` under one
+        the GCN file never declared.
+        """
+        model = load_and_cache_model("one_block_1_dist.gcn")
+        draws = {
+            "alpha": preliz.Beta(mu=0.5, sigma=0.1).rvs((2, 1000), random_state=0),
+            "rho": preliz.Normal(mu=0.8, sigma=0.05).rvs((2, 1000), random_state=1),
+            "beta": preliz.Normal(mu=0.99, sigma=0.001).rvs((2, 1000), random_state=2),
+        }
+        prior = xr.Dataset({name: (("chain", "draw"), values) for name, values in draws.items()})
+        idata = xr.DataTree.from_dict({"posterior": posterior.assign(beta=posterior["rho"]), "prior": prior})
+
+        rows = {r.symbol: r for r in model.table("estimates", idata=idata, prior_stats=["mean", "mode"]).rows}
+
+        assert (rows[r"\alpha"].prior_family, rows[r"\alpha"].prior_stat("mean")) == ("Beta", pytest.approx(0.5))
+        for symbol, name in [(r"\rho", "rho"), (r"\beta", "beta")]:
+            assert rows[symbol].prior_family == ""
+            assert rows[symbol].prior_stat("mean") == pytest.approx(draws[name].mean())
+            assert rows[symbol].prior_stat("mode") is None
+
+    def test_the_posterior_columns_are_the_arviz_summary_of_the_draws(self, posterior):
+        model = load_and_cache_model("one_block_1_dist.gcn")
+
+        frame = model.table("estimates", idata=posterior, ci_kind="eti", ci_prob=0.9).to_frame()
+        expected = azs.summary(
+            posterior,
+            var_names=["alpha", "rho", "sigma_epsilon"],
+            kind="stats",
+            ci_kind="eti",
+            ci_prob=0.9,
+            round_to="none",
+        )
+
+        np.testing.assert_allclose(frame[list(POSTERIOR_FRAME_COLUMNS)].to_numpy(), expected.to_numpy())
+
+    def test_a_datatree_gives_the_table_its_posterior_group_gives(self, posterior):
+        model = load_and_cache_model("one_block_1_dist.gcn")
+        datatree = xr.DataTree.from_dict({"posterior": posterior})
+
+        pd.testing.assert_frame_equal(
+            model.table("estimates", idata=datatree).to_frame(), model.table("estimates", idata=posterior).to_frame()
+        )
+
+    def test_a_posterior_sharing_no_name_with_the_model_raises(self, posterior):
+        """Every row dropping means the wrong sampler output, not a model with nothing estimated."""
+        model = load_and_cache_model("one_block_1_dist.gcn")
+
+        with pytest.raises(ValueError, match="shares no variable with the model's parameters"):
+            model.table("estimates", idata=posterior[["bk_satisfied"]])
+
+    def test_sampler_output_without_a_posterior_group_raises(self, posterior):
+        """Prior predictive output has only a ``prior`` group, and xarray's own error names no group at all."""
+        model = load_and_cache_model("one_block_1_dist.gcn")
+        prior_only = xr.DataTree.from_dict({"prior": posterior})
+
+        with pytest.raises(ValueError, match="no posterior group to summarize\\. Its groups are: prior"):
+            model.table("estimates", idata=prior_only)
+
+    def test_a_posterior_variable_with_extra_dimensions_raises(self, posterior):
+        model = load_and_cache_model("one_block_1_dist.gcn")
+        vector = posterior.assign(alpha=posterior["alpha"].expand_dims(lag=2, axis=-1))
+
+        with pytest.raises(ValueError, match="dimensions beyond chain and draw: alpha"):
+            model.table("estimates", idata=vector)
+
+    @pytest.mark.parametrize(
+        "writer, heading, interval_opening",
+        [("latex", r"\textbf{90\% ETI}", "& ["), ("typst", "[*90% ETI*]", "[\\[")],
+        ids=["latex", "typst"],
+    )
+    def test_the_interval_heading_and_cell_survive_the_writer(self, posterior, writer, heading, interval_opening):
+        """A bare ``%`` starts a LaTeX comment, and a bare ``[`` opens Typst content, so both are escaped."""
+        model = load_and_cache_model("one_block_1_dist.gcn")
+        build_options = {"idata": posterior, "ci_kind": "eti", "ci_prob": 0.9}
+
+        rendered = model.write_table("estimates", writer=writer, build_options=build_options)
+
+        assert heading in rendered
+        assert rendered.count(interval_opening) == 3
 
 
 class TestEmptyTable:
@@ -270,7 +422,18 @@ class TestEmptyTable:
                 CalibrationTable([]),
                 ["symbol", "description", "value", "prior", "prior_mean", "prior_std", "prior_parameters", "source"],
             ),
-            (EstimationTable([]), ["symbol", "description", "prior", "prior_mean", "prior_std", "prior_parameters"]),
+            (
+                EstimationTable([]),
+                [
+                    "symbol",
+                    "description",
+                    "prior",
+                    "prior_mean",
+                    "prior_std",
+                    "prior_parameters",
+                    *POSTERIOR_FRAME_COLUMNS,
+                ],
+            ),
         ],
         ids=["equations", "calibration", "estimates"],
     )

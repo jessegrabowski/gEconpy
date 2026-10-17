@@ -1,13 +1,19 @@
 import textwrap
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
-from typing import Any, ClassVar, Literal, get_args
+from functools import partial
+from typing import Any, ClassVar, Literal, Protocol, cast, get_args
 
+import arviz_stats as azs
+import numpy as np
 import pandas as pd
+import xarray as xr
 
+from arviz_base import rcParams as arviz_rc_params
 from preliz.distributions.distributions import Distribution
+from scipy import stats
 from sympy.printing.latex import latex_escape
 
 from gEconpy.classes.time_aware_symbol import (
@@ -682,6 +688,10 @@ class SymbolTable(_TabularTable):
         ]
 
 
+def _format_statistic(dialect: "_Dialect", value: float | None) -> str:
+    return _format_value(value, precision=PRIOR_STAT_PRECISION, times=dialect.times)
+
+
 def _prior_family(prior: Distribution | None) -> str:
     return "" if prior is None else type(prior).__name__
 
@@ -703,6 +713,16 @@ def _prior_parameters(prior: Distribution | None) -> str:
     return ", ".join(f"{name}={value:.{PRIOR_STAT_PRECISION}g}" for name, value in params.items())
 
 
+class _PriorReader(Protocol):
+    @property
+    def prior_family(self) -> str: ...
+
+    def prior_stat(self, name: str) -> float | None: ...
+
+    @property
+    def prior_parameters(self) -> str: ...
+
+
 def _check_prior_stats(prior_stats: Sequence[str]) -> None:
     """Reject an unknown statistic when a table is built rather than at render time, where it depends on the data."""
     unknown = [name for name in prior_stats if name not in PRIOR_STATS]
@@ -712,20 +732,18 @@ def _check_prior_stats(prior_stats: Sequence[str]) -> None:
 
 def _prior_columns(prior_stats: Sequence[str], include_prior_params: bool) -> list[_Column]:
     """Return the family column, one column per requested statistic, and the parameters when asked for."""
-    columns = [_Column("Prior", "left", lambda dialect, row: dialect.escape(_prior_family(row.prior)))]
+    columns = [_Column("Prior", "left", lambda dialect, row: dialect.escape(row.prior_family))]
     columns += [
         _Column(
             PRIOR_STAT_HEADINGS.get(name, name.title()),
             "right",
-            lambda dialect, row, name=name: _format_value(
-                _prior_stat(row.prior, name), precision=PRIOR_STAT_PRECISION, times=dialect.times
-            ),
+            lambda dialect, row, name=name: _format_statistic(dialect, row.prior_stat(name)),
         )
         for name in prior_stats
     ]
     if include_prior_params:
         columns.append(
-            _Column("Parameters", "left", lambda dialect, row: dialect.escape(_prior_parameters(row.prior)), width=0.22)
+            _Column("Parameters", "left", lambda dialect, row: dialect.escape(row.prior_parameters), width=0.22)
         )
     return columns
 
@@ -735,17 +753,17 @@ def _prior_frame_columns(prior_stats: Sequence[str]) -> list[str]:
     return ["prior", *(f"prior_{name}" for name in prior_stats), "prior_parameters"]
 
 
-def _prior_frame_values(prior: Distribution | None, prior_stats: Sequence[str]) -> dict[str, Any]:
+def _prior_frame_values(row: _PriorReader, prior_stats: Sequence[str]) -> dict[str, Any]:
     """
-    Return a prior as dataframe cells, keyed by :func:`_prior_frame_columns`.
+    Return a row's prior as dataframe cells, keyed by :func:`_prior_frame_columns`.
 
     The prior is expanded into its family, moments and parameters, because a dataframe cell holding a live
     distribution object is not data anyone can work with.
     """
     return {
-        "prior": _prior_family(prior) or None,
-        **{f"prior_{name}": _prior_stat(prior, name) for name in prior_stats},
-        "prior_parameters": _prior_parameters(prior) or None,
+        "prior": row.prior_family or None,
+        **{f"prior_{name}": row.prior_stat(name) for name in prior_stats},
+        "prior_parameters": row.prior_parameters or None,
     }
 
 
@@ -842,7 +860,7 @@ class CalibrationTable(_TabularTable):
                     "symbol": row.symbol,
                     "description": row.description,
                     "value": row.value,
-                    **_prior_frame_values(row.prior, self.prior_stats),
+                    **_prior_frame_values(row, self.prior_stats),
                     "source": row.source,
                 }
                 for row in self.rows
@@ -861,13 +879,181 @@ class CalibrationTable(_TabularTable):
         ]
 
 
+POSTERIOR_FRAME_COLUMNS = ("posterior_mean", "posterior_sd", "posterior_lower", "posterior_upper")
+SAMPLE_DIMS = ("chain", "draw")
+
+
+def posterior_dataset(idata: xr.DataTree | xr.Dataset) -> xr.Dataset:
+    """Return the ``posterior`` group of sampler output, or the dataset itself when it is already a posterior."""
+    if not isinstance(idata, xr.DataTree):
+        return idata
+    if "posterior" not in idata.children:
+        groups = ", ".join(idata.children) or "none"
+        raise ValueError(f"idata has no posterior group to summarize. Its groups are: {groups}.")
+    return idata["posterior"].to_dataset()
+
+
+def summarize_posterior(
+    posterior: xr.Dataset,
+    names: Sequence[str],
+    ci_kind: Literal["hdi", "eti"] = "hdi",
+    ci_prob: float | None = None,
+) -> tuple[pd.DataFrame, str]:
+    """
+    Summarize the posterior of each named scalar variable.
+
+    Parameters
+    ----------
+    posterior : Dataset
+        Posterior draws, as :func:`posterior_dataset` returns them.
+    names : sequence of str
+        Variables to summarize. Each must be in the posterior with only ``chain`` and ``draw`` dimensions.
+    ci_kind : str, optional
+        ``"hdi"`` for the highest density interval or ``"eti"`` for the equal-tailed one. Defaults to ``"hdi"``.
+    ci_prob : float, optional
+        Probability mass of the interval. Defaults to arviz's ``stats.ci_prob``.
+
+    Returns
+    -------
+    summary : pandas.DataFrame
+        One row per name, with columns ``POSTERIOR_FRAME_COLUMNS``.
+    interval : str
+        The interval's heading, such as ``"89% HDI"``.
+    """
+    vector = [name for name in names if posterior[name].dims != SAMPLE_DIMS]
+    if vector:
+        raise ValueError(
+            f"A table row holds one scalar, but these have dimensions beyond chain and draw: {', '.join(vector)}."
+        )
+
+    mass = float(arviz_rc_params["stats.ci_prob"]) if ci_prob is None else ci_prob
+    # The wide format, which is the default, is always a dataframe.
+    summary = cast(
+        pd.DataFrame,
+        azs.summary(posterior, var_names=list(names), kind="stats", ci_kind=ci_kind, ci_prob=mass, round_to="none"),
+    )
+    summary.columns = list(POSTERIOR_FRAME_COLUMNS)
+    return summary, f"{mass * 100:g}% {ci_kind.upper()}"
+
+
+def prior_dataset(idata: xr.DataTree | xr.Dataset) -> xr.Dataset | None:
+    """Return the ``prior`` group of sampler output, or None when it has none or is a bare posterior dataset."""
+    if not isinstance(idata, xr.DataTree) or "prior" not in idata.children:
+        return None
+    return idata["prior"].to_dataset()
+
+
+# The mode and the entropy of a sample need a density estimate, so a prior known only from draws prints neither.
+_DRAW_STATISTICS: dict[str, Callable[[np.ndarray], float]] = {
+    "mean": np.mean,
+    "median": np.median,
+    "std": partial(np.std, ddof=1),
+    "var": partial(np.var, ddof=1),
+    "skewness": stats.skew,
+    "kurtosis": stats.kurtosis,
+}
+# Four Monte Carlo standard errors, so a declared prior that was sampled as declared is almost never rejected.
+_PRIOR_AGREEMENT_ERRORS = 4
+
+
+def _draw_statistics(draws: np.ndarray, names: Sequence[str]) -> dict[str, float | None]:
+    """Return each named statistic of a sample of prior draws, None for one a sample cannot estimate."""
+    return {name: float(_DRAW_STATISTICS[name](draws)) if name in _DRAW_STATISTICS else None for name in names}
+
+
+def _draws_match_prior(prior: Distribution, draws: np.ndarray) -> bool:
+    """
+    Report whether prior draws are consistent with a declared prior.
+
+    The draws match when their mean and standard deviation are each within ``_PRIOR_AGREEMENT_ERRORS`` Monte
+    Carlo standard errors of the declared prior's. A prior with no parameters, or with an infinite mean or
+    standard deviation, never matches, because its moments cannot be compared.
+    """
+    if not prior.params_dict:
+        return False
+    declared_mean, declared_std = float(prior.mean()), float(prior.std())
+    if not (np.isfinite(declared_mean) and np.isfinite(declared_std)):
+        return False
+
+    sample_std = float(np.std(draws, ddof=1))
+    mean_error = sample_std / np.sqrt(draws.size)
+    std_error = sample_std * np.sqrt((stats.kurtosis(draws) + 2) / (4 * draws.size))
+    return (
+        abs(declared_mean - float(np.mean(draws))) <= _PRIOR_AGREEMENT_ERRORS * mean_error
+        and abs(declared_std - sample_std) <= _PRIOR_AGREEMENT_ERRORS * std_error
+    )
+
+
+def reconcile_prior(
+    declared: Distribution | None, draws: np.ndarray | None, prior_stats: Sequence[str]
+) -> tuple[Distribution | None, dict[str, float | None] | None]:
+    """
+    Choose what a row reports as its prior: the declared distribution, or the statistics of its draws.
+
+    Draws are the prior that was actually sampled, so they win unless they match the declaration, in which case
+    the declaration's exact moments and family print instead.
+
+    Parameters
+    ----------
+    declared : Distribution, optional
+        The prior the GCN file declares, if any.
+    draws : ndarray, optional
+        Draws of the prior from the sampler output's ``prior`` group, if any.
+    prior_stats : sequence of str
+        Statistics the table prints.
+
+    Returns
+    -------
+    prior : Distribution or None
+        The declared prior, when it is the one that was sampled or no draws exist.
+    draw_statistics : dict of str to float, or None
+        The requested statistics of the draws, when they are what the row reports.
+    """
+    if draws is None or (declared is not None and _draws_match_prior(declared, draws)):
+        return declared, None
+    return None, _draw_statistics(draws, prior_stats)
+
+
+def _interval_cell(dialect: _Dialect, lower: float | None, upper: float | None) -> str:
+    if lower is None or upper is None:
+        return ""
+    bounds = f"{_format_statistic(dialect, lower)}, {_format_statistic(dialect, upper)}"
+    return f"{dialect.escape('[')}{bounds}{dialect.escape(']')}"
+
+
 @dataclass(frozen=True)
 class EstimateRow:
-    """One estimated parameter of a model, with the prior it is estimated under."""
+    """
+    One estimated parameter of a model, with its prior and, once sampled, its posterior summary.
+
+    The prior is either a declared distribution, ``prior``, or the statistics of its draws,
+    ``prior_draw_statistics``, for a prior that was declared nowhere or was sampled other than as declared.
+    """
 
     symbol: str
     description: str | None
-    prior: Distribution
+    prior: Distribution | None
+    prior_draw_statistics: Mapping[str, float | None] | None = None
+    posterior_mean: float | None = None
+    posterior_sd: float | None = None
+    posterior_lower: float | None = None
+    posterior_upper: float | None = None
+
+    @property
+    def prior_family(self) -> str:
+        """Name of the declared prior's family, empty when the prior is known only from draws or not at all."""
+        return _prior_family(self.prior)
+
+    def prior_stat(self, name: str) -> float | None:
+        """Return one statistic of the prior, from its draws when it has them and its declaration otherwise."""
+        if self.prior_draw_statistics is not None:
+            return self.prior_draw_statistics[name]
+        return _prior_stat(self.prior, name)
+
+    @property
+    def prior_parameters(self) -> str:
+        """The declared prior's own parameters as ``name=value`` pairs, empty without a declared prior."""
+        return _prior_parameters(self.prior)
 
 
 @dataclass(frozen=True)
@@ -884,11 +1070,14 @@ class EstimationTable(_TabularTable):
         standard deviation.
     include_prior_params : bool, optional
         Print the distribution's own parameters in a column of their own. Defaults to False.
+    interval : str, optional
+        Heading of the posterior interval column, such as ``"89% HDI"``. Defaults to no posterior.
     """
 
     rows: tuple[EstimateRow, ...] | list[EstimateRow]
     prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS
     include_prior_params: bool = False
+    interval: str | None = None
 
     _row_type: ClassVar[type] = EstimateRow
 
@@ -902,19 +1091,21 @@ class EstimationTable(_TabularTable):
         Returns
         -------
         frame : pandas.DataFrame
-            Columns ``symbol``, ``description``, ``prior``, one ``prior_<stat>`` per requested statistic, and
-            ``prior_parameters``.
+            Columns ``symbol``, ``description``, ``prior``, one ``prior_<stat>`` per requested statistic,
+            ``prior_parameters``, ``posterior_mean``, ``posterior_sd``, ``posterior_lower`` and
+            ``posterior_upper``.
         """
         return pd.DataFrame(
             [
                 {
                     "symbol": row.symbol,
                     "description": row.description,
-                    **_prior_frame_values(row.prior, self.prior_stats),
+                    **_prior_frame_values(row, self.prior_stats),
+                    **{name: getattr(row, name) for name in POSTERIOR_FRAME_COLUMNS},
                 }
                 for row in self.rows
             ],
-            columns=["symbol", "description", *_prior_frame_columns(self.prior_stats)],
+            columns=["symbol", "description", *_prior_frame_columns(self.prior_stats), *POSTERIOR_FRAME_COLUMNS],
         )
 
     def _columns(self) -> list[_Column]:
@@ -922,4 +1113,11 @@ class EstimationTable(_TabularTable):
             _Column("Parameter", "left", lambda dialect, row: dialect.math(row.symbol)),
             _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.3),
             *_prior_columns(self.prior_stats, include_prior_params=self.include_prior_params),
+            _Column("Post. mean", "right", lambda dialect, row: _format_statistic(dialect, row.posterior_mean)),
+            _Column("Post. S.D.", "right", lambda dialect, row: _format_statistic(dialect, row.posterior_sd)),
+            _Column(
+                self.interval or "Interval",
+                "right",
+                lambda dialect, row: _interval_cell(dialect, row.posterior_lower, row.posterior_upper),
+            ),
         ]
