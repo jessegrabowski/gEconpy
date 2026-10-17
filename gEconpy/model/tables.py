@@ -682,6 +682,73 @@ class SymbolTable(_TabularTable):
         ]
 
 
+def _prior_family(prior: Distribution | None) -> str:
+    return "" if prior is None else type(prior).__name__
+
+
+def _prior_stat(prior: Distribution | None, name: str) -> float | None:
+    if prior is None:
+        return None
+    statistic = getattr(prior, name, None)
+    if statistic is None:
+        raise AttributeError(f"{type(prior).__name__} has no statistic {name!r}.")
+    return float(statistic())
+
+
+def _prior_parameters(prior: Distribution | None) -> str:
+    # An unfrozen distribution, such as a ``Beta()`` declared with no parameters, has none to report.
+    params = None if prior is None else prior.params_dict
+    if not params:
+        return ""
+    return ", ".join(f"{name}={value:.{PRIOR_STAT_PRECISION}g}" for name, value in params.items())
+
+
+def _check_prior_stats(prior_stats: Sequence[str]) -> None:
+    """Reject an unknown statistic when a table is built rather than at render time, where it depends on the data."""
+    unknown = [name for name in prior_stats if name not in PRIOR_STATS]
+    if unknown:
+        raise ValueError(f"prior_stats must name statistics from {', '.join(PRIOR_STATS)}, got {', '.join(unknown)}.")
+
+
+def _prior_columns(prior_stats: Sequence[str], include_prior_params: bool) -> list[_Column]:
+    """Return the family column, one column per requested statistic, and the parameters when asked for."""
+    columns = [_Column("Prior", "left", lambda dialect, row: dialect.escape(_prior_family(row.prior)))]
+    columns += [
+        _Column(
+            PRIOR_STAT_HEADINGS.get(name, name.title()),
+            "right",
+            lambda dialect, row, name=name: _format_value(
+                _prior_stat(row.prior, name), precision=PRIOR_STAT_PRECISION, times=dialect.times
+            ),
+        )
+        for name in prior_stats
+    ]
+    if include_prior_params:
+        columns.append(
+            _Column("Parameters", "left", lambda dialect, row: dialect.escape(_prior_parameters(row.prior)), width=0.22)
+        )
+    return columns
+
+
+def _prior_frame_columns(prior_stats: Sequence[str]) -> list[str]:
+    """Return the dataframe columns a prior expands into, in print order."""
+    return ["prior", *(f"prior_{name}" for name in prior_stats), "prior_parameters"]
+
+
+def _prior_frame_values(prior: Distribution | None, prior_stats: Sequence[str]) -> dict[str, Any]:
+    """
+    Return a prior as dataframe cells, keyed by :func:`_prior_frame_columns`.
+
+    The prior is expanded into its family, moments and parameters, because a dataframe cell holding a live
+    distribution object is not data anyone can work with.
+    """
+    return {
+        "prior": _prior_family(prior) or None,
+        **{f"prior_{name}": _prior_stat(prior, name) for name in prior_stats},
+        "prior_parameters": _prior_parameters(prior) or None,
+    }
+
+
 @dataclass(frozen=True)
 class ParameterRow:
     """
@@ -700,7 +767,7 @@ class ParameterRow:
     @property
     def prior_family(self) -> str:
         """Name of the prior's distribution family, empty when the parameter has no prior."""
-        return "" if self.prior is None else type(self.prior).__name__
+        return _prior_family(self.prior)
 
     def prior_stat(self, name: str) -> float | None:
         """
@@ -722,12 +789,7 @@ class ParameterRow:
         AttributeError
             If the prior's family does not provide ``name``.
         """
-        if self.prior is None:
-            return None
-        statistic = getattr(self.prior, name, None)
-        if statistic is None:
-            raise AttributeError(f"{type(self.prior).__name__} has no statistic {name!r}.")
-        return float(statistic())
+        return _prior_stat(self.prior, name)
 
     @property
     def prior_parameters(self) -> str:
@@ -736,11 +798,7 @@ class ParameterRow:
 
         The values carry ``PRIOR_STAT_PRECISION`` figures, matching the moment columns beside them.
         """
-        # An unfrozen distribution, such as a ``Beta()`` declared with no parameters, has none to report.
-        params = None if self.prior is None else self.prior.params_dict
-        if not params:
-            return ""
-        return ", ".join(f"{name}={value:.{PRIOR_STAT_PRECISION}g}" for name, value in params.items())
+        return _prior_parameters(self.prior)
 
 
 @dataclass(frozen=True)
@@ -766,25 +824,17 @@ class CalibrationTable(_TabularTable):
     _row_type: ClassVar[type] = ParameterRow
 
     def __post_init__(self) -> None:
-        """Reject an unknown statistic here rather than at render time, where it depends on the data."""
-        unknown = [name for name in self.prior_stats if name not in PRIOR_STATS]
-        if unknown:
-            raise ValueError(
-                f"prior_stats must name statistics from {', '.join(PRIOR_STATS)}, got {', '.join(unknown)}."
-            )
+        _check_prior_stats(self.prior_stats)
 
     def to_frame(self) -> pd.DataFrame:
         """
         Return the table as a dataframe, one row per parameter.
 
-        The prior is expanded into its family, moments and parameters, because a dataframe cell holding a
-        live distribution object is not data anyone can work with.
-
         Returns
         -------
         frame : pandas.DataFrame
-            Columns ``symbol``, ``description``, ``value``, ``prior``, ``prior_mean``, ``prior_sd``,
-            ``prior_parameters`` and ``source``.
+            Columns ``symbol``, ``description``, ``value``, ``prior``, one ``prior_<stat>`` per requested
+            statistic, ``prior_parameters`` and ``source``.
         """
         return pd.DataFrame(
             [
@@ -792,42 +842,13 @@ class CalibrationTable(_TabularTable):
                     "symbol": row.symbol,
                     "description": row.description,
                     "value": row.value,
-                    "prior": row.prior_family or None,
-                    **{f"prior_{name}": row.prior_stat(name) for name in self.prior_stats},
-                    "prior_parameters": row.prior_parameters or None,
+                    **_prior_frame_values(row.prior, self.prior_stats),
                     "source": row.source,
                 }
                 for row in self.rows
             ],
-            columns=[
-                "symbol",
-                "description",
-                "value",
-                "prior",
-                *(f"prior_{name}" for name in self.prior_stats),
-                "prior_parameters",
-                "source",
-            ],
+            columns=["symbol", "description", "value", *_prior_frame_columns(self.prior_stats), "source"],
         )
-
-    def _prior_columns(self) -> list[_Column]:
-        """Return the family column, one column per requested statistic, and the parameters when asked for."""
-        columns = [_Column("Prior", "left", lambda dialect, row: dialect.escape(row.prior_family))]
-        columns += [
-            _Column(
-                PRIOR_STAT_HEADINGS.get(name, name.title()),
-                "right",
-                lambda dialect, row, name=name: _format_value(
-                    row.prior_stat(name), precision=PRIOR_STAT_PRECISION, times=dialect.times
-                ),
-            )
-            for name in self.prior_stats
-        ]
-        if self.include_prior_params:
-            columns.append(
-                _Column("Parameters", "left", lambda dialect, row: dialect.escape(row.prior_parameters), width=0.22)
-            )
-        return columns
 
     def _columns(self) -> list[_Column]:
         # Prose columns wrap; a symbol or a number does not need to.
@@ -835,6 +856,6 @@ class CalibrationTable(_TabularTable):
             _Column("Parameter", "left", lambda dialect, row: dialect.math(row.symbol)),
             _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.3),
             _Column("Value", "left", lambda dialect, row: _format_value(row.value, times=dialect.times)),
-            *self._prior_columns(),
+            *_prior_columns(self.prior_stats, include_prior_params=self.include_prior_params),
             _Column("Source", "left", lambda dialect, row: dialect.escape(row.source or ""), width=0.2),
         ]
