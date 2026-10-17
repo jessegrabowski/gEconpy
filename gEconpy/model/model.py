@@ -572,8 +572,8 @@ class Model:
         for variable in block.controls:
             if variable.name == control_name:
                 symbol = TimeAwareSymbol(control_name, variable.time_index.value)
-                stem = overrides.get(variable_key(control_name))
-                return DIALECTS[markup].render_symbol(symbol, stem_override=stem)
+                override = overrides.get(variable_key(control_name))
+                return DIALECTS[markup].render_symbol(symbol, name_override=override)
         return None
 
     def _equation_table(self, expectations: bool = True, markup: Markup = "latex") -> EquationTable:
@@ -687,7 +687,7 @@ class Model:
             include_prior_params=include_prior_params,
             rows=[
                 ParameterRow(
-                    symbol=render_name(name, stem_override=overrides.get(name)),
+                    symbol=render_name(name, name_override=overrides.get(name)),
                     description=declarations[name].name if name in declarations else None,
                     value=None if name not in values else float(values[name]),
                     prior=priors.get(name),
@@ -710,7 +710,7 @@ class Model:
             declaration = declarations.get(key)
             rows.append(
                 SymbolRow(
-                    symbol=render(symbol, stem_override=overrides.get(key)),
+                    symbol=render(symbol, name_override=overrides.get(key)),
                     description=declaration.name if declaration is not None else None,
                 )
             )

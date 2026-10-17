@@ -127,7 +127,7 @@ def symbol_names_for(
     renderer: Callable[..., str] = render_latex,
 ) -> dict[sp.Symbol, str]:
     """
-    Resolve declared LaTeX overrides against the symbols of one expression.
+    Render every symbol of one expression, resolving declared overrides by storage name.
 
     Sympy caches a symbol on its name and assumptions, so the same variable is a different object once it is
     rebuilt without them. Matching on the storage name rather than on identity is what lets an override survive
@@ -140,26 +140,23 @@ def symbol_names_for(
     overrides : dict mapping str to str
         Declared markup, keyed by the symbol's storage name.
     renderer : callable, optional
-        Composes a declared stem with the symbol's subscripts, in the target language. Defaults to
+        Renders one symbol with its declared name, in the target language. Defaults to
         :func:`~gEconpy.classes.time_aware_symbol.render_latex`.
 
     Returns
     -------
     symbol_names : dict mapping sympy.Symbol to str
-        One entry per symbol of ``expression`` carrying an override, as ``sympy.latex`` takes them.
+        One entry per symbol of ``expression``, as ``sympy.latex`` takes them. Every symbol is resolved, so a
+        parameter renders here exactly as it does in the parameter table.
     """
-    if not overrides:
-        return {}
+    return {
+        symbol: renderer(symbol, name_override=overrides.get(_override_key(symbol)))
+        for symbol in expression.atoms(sp.Symbol)
+    }
 
-    resolved = {}
-    for symbol in expression.atoms(sp.Symbol):
-        if isinstance(symbol, TimeAwareSymbol):
-            override = overrides.get(variable_key(symbol.base_name))
-            if override is not None:
-                resolved[symbol] = renderer(symbol, stem_override=override)
-        elif symbol.name in overrides:
-            resolved[symbol] = overrides[symbol.name]
-    return resolved
+
+def _override_key(symbol: sp.Symbol) -> str:
+    return variable_key(symbol.base_name) if isinstance(symbol, TimeAwareSymbol) else symbol.name
 
 
 def equation_sides_latex(

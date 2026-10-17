@@ -215,7 +215,7 @@ def _table(rows: Sequence[tuple[str, ...]], headers: tuple[str, ...]) -> str:
 
 
 def _symbol_latex(symbol: TimeAwareSymbol, overrides: dict[str, str]) -> str:
-    return render_latex(symbol, stem_override=overrides.get(variable_key(symbol.base_name)))
+    return render_latex(symbol, name_override=overrides.get(variable_key(symbol.base_name)))
 
 
 def _declared_latex(declarations: dict[str, SymbolDeclaration]) -> dict[str, str]:
