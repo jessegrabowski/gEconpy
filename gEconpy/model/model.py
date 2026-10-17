@@ -507,14 +507,24 @@ class Model:
         Parameters
         ----------
         equation_id : str
-            The id of the equation, as it appears in ``equation_ids``.
+            The id of the equation, as it appears in ``equation_ids`` or, for a ``definitions`` entry, as
+            ``{block}.definitions.{position}``.
 
         Returns
         -------
         label : str or None
             The authored caption, or None.
         """
-        return self._equation_labels.get(equation_id)
+        if equation_id in self._equation_labels:
+            return self._equation_labels[equation_id]
+
+        # Definitions are substituted away before labels are recorded, so their captions are read from the source.
+        block, component, position = self._source_block(equation_id)
+        if component != "definitions" or block is None or not position.isdigit():
+            return None
+
+        index = int(position)
+        return block.definitions[index].declared_name if index < len(block.definitions) else None
 
     def _source_block(self, equation_id: str) -> tuple[GCNBlock | None, str, str]:
         """Split an equation id into its parsed source block, its component and the suffix after it."""
@@ -563,9 +573,17 @@ class Model:
 
         dialect = DIALECTS[markup]
 
-        definitions: dict[str, list[tuple[str, str]]] = defaultdict(list)
-        for block_name, left, right in dialect.definition_rows(self._source_ast, overrides):
-            definitions[block_name].append((left, right))
+        definitions: dict[str, list[EquationRow]] = defaultdict(list)
+        for block_name, equation_id, left, right in dialect.definition_rows(self._source_ast, overrides):
+            definitions[block_name].append(
+                EquationRow(
+                    block=block_name,
+                    equation_id=equation_id,
+                    label=self.equation_label(equation_id),
+                    left=left,
+                    right=right,
+                )
+            )
 
         equations: dict[str, list[tuple[str, sp.Expr]]] = defaultdict(list)
         for equation_id, expression in zip(self._equation_ids, self._equations, strict=True):
@@ -578,10 +596,7 @@ class Model:
 
         rows = []
         for block_name in block_order:
-            rows.extend(
-                EquationRow(block=block_name, equation_id=None, label=None, left=left, right=right)
-                for left, right in definitions[block_name]
-            )
+            rows.extend(definitions[block_name])
             for equation_id, expression in equations[block_name]:
                 left, right = dialect.equation_sides(
                     self._source_ast,

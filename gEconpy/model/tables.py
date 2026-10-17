@@ -166,7 +166,7 @@ class _Dialect:
     render_symbol: Callable[..., str]
     render_name: Callable[..., str]
     equation_sides: Callable[..., tuple[str, str]]
-    definition_rows: Callable[..., list[tuple[str, str, str]]]
+    definition_rows: Callable[..., list[tuple[str, str, str, str]]]
 
 
 @dataclass(frozen=True)
@@ -417,13 +417,13 @@ class EquationRow:
     One equation of a model, rendered and ready to print.
 
     ``block`` is the identifier as the file spells it. The renderers turn it into prose. A ``definitions``
-    entry has no ``equation_id``, because the solver substitutes it away before equations are given ids.
-    ``foc_control`` is the rendered control a first-order condition was taken with respect to, and is None
-    for every other kind of row.
+    entry has the id ``{block}.definitions.{position}``, which is absent from ``Model.equation_ids`` because the
+    solver substitutes definitions away. ``foc_control`` is the rendered control a first-order condition was taken
+    with respect to, and is None for every other kind of row.
     """
 
     block: str
-    equation_id: str | None
+    equation_id: str
     label: str | None
     left: str
     right: str

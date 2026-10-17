@@ -154,7 +154,7 @@ def equation_sides_typst(
 def definition_rows_typst(
     source_ast: GCNModel | None,
     overrides: dict[str, str] | None = None,
-) -> list[tuple[str, str, str]]:
+) -> list[tuple[str, str, str, str]]:
     """
     Recover every ``definitions`` entry as Typst, in source order.
 
@@ -167,14 +167,19 @@ def definition_rows_typst(
 
     Returns
     -------
-    definitions : list of tuple of str
-        The block name and the rendered left and right side of each definition.
+    definitions : list of tuple
+        The block name, the equation id ``{block}.definitions.{position}``, and the rendered left and right side
+        of each definition.
     """
     if source_ast is None:
         return []
 
     return [
-        (block.name, *render_sides(*authored_expressions(equation), overrides, printer=typst, renderer=render_typst))
+        (
+            block.name,
+            f"{block.name}.definitions.{position}",
+            *render_sides(*authored_expressions(equation), overrides, printer=typst, renderer=render_typst),
+        )
         for block in source_ast.blocks
-        for equation in block.definitions
+        for position, equation in enumerate(block.definitions)
     ]

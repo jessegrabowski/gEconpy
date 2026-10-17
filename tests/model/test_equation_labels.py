@@ -50,6 +50,32 @@ def test_every_labelled_id_still_names_a_surviving_equation(labelled_model_path)
     assert set(model._equation_labels) <= set(model._equation_ids)
 
 
+@pytest.mark.parametrize("markup", ["latex", "typst"])
+def test_a_definition_caption_reaches_its_table_row(tmp_path, markup):
+    source = (TEST_GCNS / "one_block_2.gcn").read_text()
+    labelled = source.replace("        u[] = ", '        @name = "Period utility"\n        u[] = ', 1)
+    assert labelled != source, "one_block_2.gcn changed; update the replacement"
+    path = tmp_path / "labelled.gcn"
+    path.write_text(labelled)
+
+    model = model_from_gcn(path, verbose=False)
+    definition = next(
+        row for row in model.table("equations", markup=markup).rows if row.equation_id == "Household.definitions.0"
+    )
+
+    assert definition.label == "Period utility"
+    assert model.equation_label(definition.equation_id) == "Period utility"
+
+
+@pytest.mark.parametrize(
+    "equation_id",
+    ["Household.definitions.0", "Household.definitions.1", "Nonexistent.definitions.0"],
+    ids=["uncaptioned", "past_the_last_definition", "unknown_block"],
+)
+def test_a_definition_id_without_a_caption_has_no_label(equation_id):
+    assert load_and_cache_example("RBC").equation_label(equation_id) is None
+
+
 def test_an_unlabelled_model_carries_no_labels():
     assert load_and_cache_model("open_rbc.gcn")._equation_labels == {}
 
