@@ -376,16 +376,27 @@ class TestDeterministicParameters:
             assert gap[0] > 1e-4 * abs(ss[f"{var}_ss"]), f"the shock should move {var} on impact"
             assert gap[-1] < gap[0] / 10, f"{var} should be most of the way back by period {T}"
 
-    def test_path_on_a_free_parameter_rederives_its_deterministic_children(self, open_rbc_model):
-        """A path for beta must carry rstar with it.
+    @pytest.mark.parametrize(
+        ("solve_kwargs", "override"),
+        [
+            ({"param_paths": {"beta": 0.95}}, {"beta": 0.95}),
+            ({"param_paths": {"gamma_rv": 2.0}}, {"gamma_rv": 2.0}),
+            ({"steady_state_kwargs": {"gamma_rv": 2.0}}, {"gamma_rv": 2.0}),
+        ],
+        ids=["beta_path", "gamma_rv_path", "gamma_rv_steady_state_kwarg"],
+    )
+    def test_path_on_a_free_parameter_rederives_its_deterministic_children(
+        self, open_rbc_model, solve_kwargs, override
+    ):
+        """A free parameter must carry its deterministic children with it.
 
-        ``rstar = 1 / beta - 1``, so leaving rstar at its default would solve one model in the periods
-        and another at the boundaries, and report success anyway.
+        ``rstar = 1 / beta - 1`` and ``gamma = 1 + gamma_rv``, and ``gamma_rv`` appears in no equation, so leaving a
+        child at its default would solve one model in the periods and another at the boundaries, and report success
+        anyway.
         """
-        beta = 0.95
-        ss_override = open_rbc_model.steady_state(verbose=False, beta=beta)
+        ss_override = open_rbc_model.steady_state(verbose=False, **override)
 
-        trajectory, result = solve_perfect_foresight(open_rbc_model, simulation_length=20, param_paths={"beta": beta})
+        trajectory, result = solve_perfect_foresight(open_rbc_model, simulation_length=20, **solve_kwargs)
 
         assert result.success
         for var in trajectory.columns:

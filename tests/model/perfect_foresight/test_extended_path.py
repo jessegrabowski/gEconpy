@@ -27,14 +27,19 @@ def _steady_state_values(model, var_names, **parameter_updates):
     return np.array([steady_state[f"{name}_ss"] for name in var_names])
 
 
-@pytest.mark.parametrize("parameter_updates", [{}, {"beta": 0.98}], ids=["model_parameters", "updated_beta"])
-def test_zero_shocks_stay_at_the_steady_state(rbc_model, parameter_updates):
+@pytest.mark.parametrize(
+    ("gcn", "parameter_updates"),
+    [("one_block_1.gcn", {}), ("one_block_1.gcn", {"beta": 0.98}), ("open_rbc.gcn", {"gamma_rv": 2.0})],
+    ids=["model_parameters", "updated_beta", "free_parameter_behind_a_deterministic_one"],
+)
+def test_zero_shocks_stay_at_the_steady_state(gcn, parameter_updates):
+    model = load_and_cache_model(gcn)
     paths, diagnostics = simulate_extended_path(
-        rbc_model, n_simulations=2, simulation_length=5, shock_std=0.0, steady_state_kwargs=parameter_updates
+        model, n_simulations=2, simulation_length=5, shock_std=0.0, steady_state_kwargs=parameter_updates
     )
 
     var_names = list(paths.coords["variable"].values)
-    steady_state_values = _steady_state_values(rbc_model, var_names, **parameter_updates)
+    steady_state_values = _steady_state_values(model, var_names, **parameter_updates)
     assert diagnostics.success.shape == (2, 5)
     assert diagnostics.success.all()
     assert not diagnostics.nit.any()

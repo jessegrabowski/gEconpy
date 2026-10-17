@@ -16,7 +16,9 @@ from gEconpy.model.perfect_foresight.compile import PerfectForesightProblem, com
 from gEconpy.model.perfect_foresight.solve import (
     _build_param_matrix,
     _normalize_condition_keys,
+    _settable_parameter_names,
     _solve_stacked,
+    _split_parameter_updates,
     _ss_dict_to_array,
 )
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
@@ -149,7 +151,8 @@ def simulate_extended_path(
     # Every period solves the same problem, so it is compiled and its parameter matrix built once. Inside the loop
     # states follow the problem's variable order, and the output is put back in the model's order at the end.
     problem = compile_perfect_foresight_problem(model, horizon, **(compile_kwargs or {}))
-    parameter_updates = {name: value for name, value in steady_state_kwargs.items() if name in problem.param_names}
+    param_names, deterministic_param_names = _settable_parameter_names(model)
+    parameter_updates, _ = _split_parameter_updates(steady_state_kwargs, param_names)
     validate_perfect_foresight_inputs(
         initial_conditions={},
         terminal_conditions={},
@@ -157,8 +160,8 @@ def simulate_extended_path(
         param_paths=parameter_updates,
         var_names=problem.var_names,
         shock_names=problem.shock_names,
-        param_names=problem.param_names,
-        deterministic_param_names=problem.deterministic_param_names,
+        param_names=param_names,
+        deterministic_param_names=deterministic_param_names,
         simulation_length=horizon,
     )
     params = _build_param_matrix(parameter_updates, problem.param_names, model, horizon)
