@@ -191,7 +191,8 @@ jobs:
     runs-on: ubuntu-latest
     name: "Upload coverage"
     needs: [all-checks]
-    if: ${{ needs.all-checks.result == 'success' }}
+    # Dependabot runs get no repository secrets, and codecov rejects a tokenless upload.
+    if: ${{ needs.all-checks.result == 'success' && github.event.pull_request.user.login != 'dependabot[bot]' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
