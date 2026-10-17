@@ -12,6 +12,7 @@ from typing import Any, Literal, NamedTuple, overload
 
 import numpy as np
 import pytensor
+import pytensor.scalar as ps
 import sympy as sp
 
 from better_optimize import minimize, root
@@ -20,6 +21,7 @@ from pymc.distributions.transforms import Interval, Transform, log, logodds
 from pytensor import tensor as pt
 from pytensor.graph.replace import clone_replace, graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
+from pytensor.tensor.elemwise import Elemwise
 from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
 
@@ -67,9 +69,35 @@ _log = logging.getLogger(__name__)
 
 STEADY_STATE_TOL = 1e-8
 
+# Applied to the sum of an equation's term magnitudes, so an equation whose terms are large is held to the
+# accuracy float64 can deliver at that size.
+STEADY_STATE_RTOL = 1e-10
+
 # The gradient is the jacobian times the residual, so it inherits the jacobian's scale. Holding it to the
 # residual tolerance rejects correct answers for a model whose equations are steep at the steady state.
 STEADY_STATE_GRAD_TOL = 1e-6
+
+
+def _residual_scale(equation: TensorVariable) -> TensorVariable:
+    """Sum of the absolute values of an equation's additive terms, the size its rounding error grows with."""
+    node = equation.owner
+    if node is None or not (isinstance(node.op, Elemwise) and isinstance(node.op.scalar_op, ps.Add)):
+        return pt.abs(equation)
+    return pt.stack([pt.abs(term) for term in node.inputs]).sum()
+
+
+def _compile_residual_and_scale(equations: list[TensorVariable], mode: str | None) -> Callable:
+    """Compile one function returning the stacked residuals and the stacked scales of ``equations``."""
+    return compile_for_scipy(
+        [pt.stack(equations), pt.stack([_residual_scale(equation) for equation in equations])], mode=mode
+    )
+
+
+def _residual_within_tolerance(residual: np.ndarray, scale: np.ndarray) -> np.ndarray:
+    """Whether each residual is finite and zero up to the steady-state tolerance at its equation's scale."""
+    return np.isfinite(residual) & (np.abs(residual) <= STEADY_STATE_TOL + STEADY_STATE_RTOL * scale)
+
+
 BOX_BOUND_METHODS = ("trust-constr", "L-BFGS-B", "powell")
 GRADIENT_REQUIRED_METHODS = ("trust-ncg", "trust-krylov", "trust-exact", "dogleg", "newton-cg")
 
@@ -1450,8 +1478,8 @@ class Model:
             residuals = model.evaluate_residual(steady_state, model.parameters())
             print(np.abs(residuals).max())
         """
-        f_resid = self._compile_full_residual()
-        return np.asarray(f_resid(**ss_dict, **param_dict))
+        residual, _ = self._full_residual_and_scale(**ss_dict, **param_dict)
+        return residual
 
     def symbolic_linearization(
         self,
@@ -2142,17 +2170,19 @@ class Model:
             self._full_equation_tensors = self._build_equation_tensors(SymbolDictionary())
         return self._full_equation_tensors
 
-    def _compile_full_residual(self) -> Callable:
+    def _full_residual_and_scale(self, **inputs: float) -> tuple[np.ndarray, np.ndarray]:
+        """Evaluate every steady-state equation's residual and the scale its tolerance is measured against."""
         if self._f_full_residual is None:
-            self._f_full_residual = compile_for_scipy(pt.stack(self.equation_tensors()), mode=self._mode)
-        return self._f_full_residual
+            self._f_full_residual = _compile_residual_and_scale(self.equation_tensors(), mode=self._mode)
+        residual, scale = self._f_full_residual(**inputs)
+        return np.asarray(residual), np.asarray(scale)
 
     def _evaluate_steady_state(self, **updates: float) -> np.ndarray:
         """Evaluate the full residual system at the analytic steady-state values and the given parameters."""
         param_dict = self.parameters(**updates)
-        f_resid = self._compile_full_residual()
         ss_dict = self.f_ss(**param_dict) if self.f_ss else {}
-        return np.asarray(f_resid(**ss_dict, **param_dict))
+        residual, _ = self._full_residual_and_scale(**ss_dict, **param_dict)
+        return residual
 
     def _validate_provided_steady_state_variables(self, user_fixed_variables: Sequence[str]) -> None:
         normalized_names = [x.removesuffix("_ss") for x in user_fixed_variables]
@@ -2190,22 +2220,21 @@ class Model:
         if len(ss_dict) != len(self.variables):
             return None
 
-        f_resid = self._compile_full_residual()
-        residual = np.asarray(f_resid(**ss_dict, **param_dict))
-        success = np.allclose(residual, 0.0, atol=STEADY_STATE_TOL)
+        residual, scale = self._full_residual_and_scale(**ss_dict, **param_dict)
+        success = bool(_residual_within_tolerance(residual, scale).all())
 
         result = SteadyStateResults(ss_dict.to_sympy()).to_string()
         result.success = success
         if not success:
             _log.warning(
                 f"Steady State was not found. Sum of square residuals: {np.square(residual).sum()}"
-                f"{self._worst_residual_note(residual)}"
+                f"{self._worst_residual_note(residual, scale)}"
             )
         return result
 
-    def _worst_residual_note(self, residual: np.ndarray) -> str:
+    def _worst_residual_note(self, residual: np.ndarray, scale: np.ndarray) -> str:
         """
-        Name the equation with the largest residual, so a failure points at a line the author wrote.
+        Name the equation furthest outside its tolerance, so a failure points at a line the author wrote.
 
         The steady-state system is one equation per model equation in the same order, so an equation id indexes
         both. Returns an empty string for a model built without ids.
@@ -2214,8 +2243,12 @@ class Model:
         if len(self._equation_ids) != len(residual):
             return ""
 
-        worst = int(np.argmax(np.abs(residual)))
-        return f". Largest residual {residual[worst]:.3e} in {self._equation_ids[worst]}"
+        scale = np.asarray(scale).ravel()
+        finite = np.isfinite(residual)
+        excess = np.full(residual.shape, np.inf)
+        excess[finite] = np.abs(residual[finite]) / (STEADY_STATE_TOL + STEADY_STATE_RTOL * scale[finite])
+        worst = int(np.argmax(excess))
+        return f". Worst residual {residual[worst]:.3e} in {self._equation_ids[worst]}"
 
     def _provided_steady_state_values(
         self,
@@ -2238,11 +2271,12 @@ class Model:
         """Assemble and validate the steady state when analytic and fixed values together cover every variable."""
         provided_ss_values = self._provided_steady_state_values(f_ss, param_dict, fixed_values)
 
-        f_resid = self._compile_full_residual()
-        residual = np.asarray(f_resid(**{str(k): v for k, v in provided_ss_values.items()}, **param_dict))
+        residual, scale = self._full_residual_and_scale(
+            **{str(k): v for k, v in provided_ss_values.items()}, **param_dict
+        )
 
         result = SteadyStateResults({x: provided_ss_values[x] for x in self._steady_state_symbols()}).to_string()
-        result.success = np.allclose(residual, 0.0, atol=STEADY_STATE_TOL)
+        result.success = bool(_residual_within_tolerance(residual, scale).all())
         return result
 
     def _build_resid_with_fixed_values(
@@ -2289,12 +2323,10 @@ class Model:
         if not fully_determined_indices:
             return
 
-        determined_resid = pt.stack([all_equations[i] for i in fully_determined_indices])
-        f_resid = compile_for_scipy(determined_resid, mode=self._mode)
-        residuals = np.asarray(f_resid(**fixed_kw, **param_dict))
-        bad_indices = [
-            fully_determined_indices[j] for j, value in enumerate(residuals) if abs(value) > STEADY_STATE_TOL
-        ]
+        f_resid = _compile_residual_and_scale([all_equations[i] for i in fully_determined_indices], mode=self._mode)
+        residuals, scales = f_resid(**fixed_kw, **param_dict)
+        within_tolerance = _residual_within_tolerance(np.asarray(residuals), np.asarray(scales))
+        bad_indices = [index for index, ok in zip(fully_determined_indices, within_tolerance, strict=True) if not ok]
         if not bad_indices:
             return
 

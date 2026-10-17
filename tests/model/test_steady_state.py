@@ -11,6 +11,7 @@ from pymc.distributions.transforms import Interval, log, logodds
 from pytensor.graph.traversal import ancestors
 from scipy import optimize
 
+from gEconpy import model_from_gcn
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model import model as model_module
@@ -264,6 +265,65 @@ def test_wrong_user_solutions_raises():
 
     with pytest.raises(ValueError, match=re.escape(expected_msg)):
         model_1.steady_state(fixed_values={"A_ss": 3.0})
+
+
+LARGE_TERM_GCN = """
+block MODEL
+{
+    identities
+    {
+        log(A[]) = rho * log(A[-1]) + epsilon[];
+        X[] = A[] * w ^ 35;
+    };
+
+    shocks
+    {
+        epsilon[];
+    };
+
+    calibration
+    {
+        rho = 0.9;
+        w = 1.75;
+    };
+};
+
+block STEADY_STATE
+{
+    identities
+    {
+        A[ss] = 1;
+        X[ss] = exp(35 * log(w));
+    };
+};
+"""
+
+
+@pytest.fixture
+def large_term_model(tmp_path):
+    """``X_ss`` is about 3e8, where float64 rounding alone leaves an absolute residual near 2e-8."""
+    path = tmp_path / "large_term.gcn"
+    path.write_text(LARGE_TERM_GCN)
+    return model_from_gcn(path, verbose=False)
+
+
+def test_exact_steady_state_with_large_terms_succeeds(large_term_model):
+    result = large_term_model.steady_state(verbose=False, progressbar=False)
+
+    assert result.success
+    assert_allclose(result["X_ss"], 1.75**35)
+
+
+def test_an_infinite_residual_is_never_within_tolerance():
+    assert not model_module._residual_within_tolerance(np.array([np.inf]), scale=np.array([np.inf])).any()
+
+
+def test_large_terms_do_not_hide_a_wrong_fixed_value(large_term_model):
+    result = large_term_model.steady_state(
+        fixed_values={"X_ss": 1.75**35 * (1 + 1e-6)}, verbose=False, progressbar=False
+    )
+
+    assert not result.success
 
 
 def test_print_steady_state_report_solver_successful(caplog):

@@ -72,16 +72,31 @@ def test_a_failed_steady_state_names_the_worst_equation():
     residual[2] = -4.2e-3
     residual[3] = 1.1e-3
 
-    note = model._worst_residual_note(residual)
+    note = model._worst_residual_note(residual, scale=np.ones_like(residual))
 
     assert model._equation_ids[2] in note
     assert "4.200e-03" in note
 
 
+def test_the_worst_equation_is_judged_against_its_own_scale():
+    """A large residual on an equation with large terms can be within tolerance while a smaller one is not."""
+    model = load_and_cache_model("open_rbc.gcn")
+    residual = np.zeros(len(model._equation_ids))
+    residual[2] = 1e-3
+    residual[3] = 1e-6
+    scale = np.ones_like(residual)
+    scale[2] = 1e9
+
+    note = model._worst_residual_note(residual, scale)
+
+    assert model._equation_ids[3] in note
+
+
 def test_the_note_is_empty_when_the_residual_does_not_match_the_ids():
     model = load_and_cache_model("open_rbc.gcn")
+    residual = np.zeros(len(model._equation_ids) + 1)
 
-    assert model._worst_residual_note(np.zeros(len(model._equation_ids) + 1)) == ""
+    assert model._worst_residual_note(residual, scale=np.ones_like(residual)) == ""
 
 
 def test_the_parsed_file_reaches_the_model():
