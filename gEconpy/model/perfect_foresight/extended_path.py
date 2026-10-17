@@ -22,6 +22,7 @@ from gEconpy.model.perfect_foresight.compile import PerfectForesightProblem, com
 from gEconpy.model.perfect_foresight.solve import (
     _build_param_matrix,
     _normalize_condition_keys,
+    _order_for_problem,
     _settable_parameter_names,
     _solve_stacked,
     _split_parameter_updates,
@@ -194,8 +195,7 @@ def simulate_extended_path(
     initial_state = _initial_state(initial_conditions, steady_state_values, list(problem.var_names))
 
     steady_state_guess = np.tile(steady_state_values, (horizon, 1))
-    if solver is None:
-        solver = _default_solver(problem, sparse_root_kwargs)
+    solver = _order_for_problem(solver if solver is not None else _default_solver(sparse_root_kwargs), problem)
     solve_at_weight = partial(
         _solve_at_weight,
         problem=problem,
@@ -376,7 +376,7 @@ class _PeriodOutcome(NamedTuple):
     failure: str | None
 
 
-def _default_solver(problem: PerfectForesightProblem, sparse_root_kwargs: dict) -> RootSolver:
+def _default_solver(sparse_root_kwargs: dict) -> RootSolver:
     """Return a chord solver that carries its factorization between periods, refreshed when progress slows."""
     x_tol = sparse_root_kwargs.get("x_tol", sparse_root_kwargs.get("tol", DEFAULT_TOL))
     direction = ChordDirection(
@@ -384,7 +384,6 @@ def _default_solver(problem: PerfectForesightProblem, sparse_root_kwargs: dict) 
         refresh_ratio=_CHORD_REFRESH_RATIO,
         refresh_step_tol=x_tol,
         keep_across_solves=True,
-        permc_spec="NATURAL" if problem.column_order is None else "COLAMD",
     )
     return chord(direction=direction)
 

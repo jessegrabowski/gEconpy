@@ -8,6 +8,9 @@ import scipy.sparse as sp
 from numpy.testing import assert_allclose
 from scipy.sparse.linalg import spsolve
 
+import gEconpy.model.perfect_foresight.solve as solve_module
+import gEconpy.solvers.sparse_root.direction as direction_module
+
 from gEconpy import impulse_response_function
 from gEconpy.model.perfect_foresight import compile_perfect_foresight_problem, solve_perfect_foresight
 from gEconpy.model.perfect_foresight.solve import (
@@ -18,7 +21,7 @@ from gEconpy.model.perfect_foresight.solve import (
     _ordered_sparse_solver,
     make_piecewise_x0,
 )
-from gEconpy.solvers.sparse_root import LevenbergMarquardt, newton_armijo
+from gEconpy.solvers.sparse_root import LevenbergMarquardt, SparseDogleg, chord, newton_armijo
 from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 
@@ -278,6 +281,38 @@ class TestSolverArgument:
         assert first_result.nit == second_result.nit
         assert_allclose(first.values, reference.values, rtol=1e-8)
         assert_allclose(second.values, reference.values, rtol=1e-8)
+
+    @pytest.mark.parametrize(
+        ("make_solver", "module", "factorize"),
+        [
+            (newton_armijo, solve_module, "spsolve"),
+            (SparseDogleg, solve_module, "spsolve"),
+            (chord, direction_module, "splu"),
+        ],
+        ids=["newton-armijo", "dogleg", "chord"],
+    )
+    def test_a_solver_without_an_ordering_factorizes_in_the_problems_order_on_a_copy(
+        self, rbc_model, monkeypatch, make_solver, module, factorize
+    ):
+        orderings = []
+        original = getattr(module, factorize)
+
+        def record_ordering(*args, permc_spec="COLAMD", **kwargs):
+            orderings.append(permc_spec)
+            return original(*args, permc_spec=permc_spec, **kwargs)
+
+        monkeypatch.setattr(module, factorize, record_ordering)
+        solver = make_solver()
+        steady_state = rbc_model.steady_state(verbose=False)
+        assert compile_perfect_foresight_problem(rbc_model, 20).column_order is None
+
+        _, result = solve_perfect_foresight(
+            rbc_model, simulation_length=20, solver=solver, initial_conditions={"K": 0.9 * steady_state["K_ss"]}
+        )
+
+        assert result.success
+        assert set(orderings) == {"NATURAL"}
+        assert solver == make_solver()
 
 
 class TestSparseRootKwargs:

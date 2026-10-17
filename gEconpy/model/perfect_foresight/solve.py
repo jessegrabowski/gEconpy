@@ -19,7 +19,9 @@ from gEconpy.model.perfect_foresight.compile import (
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
 from gEconpy.solvers.sparse_root import newton_armijo
 from gEconpy.solvers.sparse_root.base import RootSolver
-from gEconpy.solvers.sparse_root.direction import NewtonDirection
+from gEconpy.solvers.sparse_root.direction import ChordDirection, NewtonDirection
+from gEconpy.solvers.sparse_root.dogleg import SparseDogleg
+from gEconpy.solvers.sparse_root.line_search import LineSearchSolver
 from gEconpy.solvers.sparse_root.sparse_root import _run_sparse_root
 
 
@@ -77,8 +79,10 @@ def solve_perfect_foresight(
         Keyword arguments forwarded to :func:`pytensor.function` when compiling the model.
     solver : RootSolver, optional
         The root-finding solver. See :doc:`gEconpy.solvers.sparse_root </api/gEconpy.solvers.sparse_root>` for the
-        available solvers. Defaults to Newton's method with Armijo backtracking, factorizing the stacked Jacobian in
-        the column order of :attr:`~gEconpy.model.perfect_foresight.compile.PerfectForesightProblem.column_order`.
+        available solvers. Defaults to Newton's method with Armijo backtracking. A solver whose linear solver or
+        column ordering is None factorizes the stacked Jacobian in the column order of
+        :attr:`~gEconpy.model.perfect_foresight.compile.PerfectForesightProblem.column_order`, on a copy, so the
+        solver passed in is not changed.
     steady_state_kwargs : dict, optional
         Keyword arguments forwarded to ``model.steady_state()``. A parameter value given here also holds in every
         period of the path, unless ``param_paths`` names the same parameter. ``verbose`` defaults to False.
@@ -233,7 +237,7 @@ def solve_perfect_foresight(
         y_terminal=y_terminal,
         shocks=shock_matrix,
         params=param_matrix,
-        solver=solver,
+        solver=_order_for_problem(solver if solver is not None else newton_armijo(), problem),
         sparse_root_kwargs=sparse_root_kwargs,
     )
 
@@ -489,7 +493,7 @@ def _solve_stacked(
     y_terminal: np.ndarray,
     shocks: np.ndarray,
     params: np.ndarray,
-    solver: RootSolver | None,
+    solver: RootSolver,
     sparse_root_kwargs: dict,
 ) -> OptimizeResult:
     """
@@ -516,9 +520,6 @@ def _solve_stacked(
             y=y, y_initial=y_initial, y_terminal=y_terminal, x=shocks, params=params, problem=problem
         )
 
-    if solver is None:
-        solver = newton_armijo(direction=NewtonDirection(linear_solver=_ordered_sparse_solver(problem.column_order)))
-
     # Trust-region solvers take no globalization strategy, so there is nowhere to put the merit function. A caller's
     # own merit function returns raw residuals, so it is scaled like everything else the line search compares.
     globalization = getattr(solver, "globalization", None)
@@ -535,6 +536,24 @@ def _solve_stacked(
         result.fun = result.fun / row_scale
         result.jac = _scale_rows_in_place(result.jac.copy(), 1 / row_scale)
     return result
+
+
+def _order_for_problem(solver: RootSolver, problem: PerfectForesightProblem) -> RootSolver:
+    """Return ``solver``, or a copy whose unset linear solver or column ordering suits ``problem``'s Jacobian."""
+    if isinstance(solver, SparseDogleg) and solver.linear_solver is None:
+        return replace(solver, linear_solver=_ordered_sparse_solver(problem.column_order))
+    if not isinstance(solver, LineSearchSolver):
+        return solver
+
+    direction = solver.direction
+    if isinstance(direction, NewtonDirection) and direction.linear_solver is None:
+        ordered_direction = replace(direction, linear_solver=_ordered_sparse_solver(problem.column_order))
+        return replace(solver, direction=ordered_direction)
+    if isinstance(direction, ChordDirection) and direction.permc_spec is None:
+        # ChordDirection takes an ordering name only, so a problem that needs its own column order gets COLAMD.
+        permc_spec = "NATURAL" if problem.column_order is None else "COLAMD"
+        return replace(solver, direction=replace(direction, permc_spec=permc_spec))
+    return solver
 
 
 def _ordered_sparse_solver(column_order: np.ndarray | None) -> Callable[[sparse.csc_matrix, np.ndarray], np.ndarray]:
