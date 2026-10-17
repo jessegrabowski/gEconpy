@@ -93,6 +93,14 @@ Trust-region solvers, :class:`~gEconpy.solvers.sparse_root.dogleg.SparseDogleg` 
 :class:`~gEconpy.solvers.sparse_root.levenberg_marquardt.LevenbergMarquardt` adapts a damping parameter. None of
 the three takes a globalization strategy.
 
+The stacked Jacobian usually factorizes fastest in its natural block-tridiagonal column order, and
+:attr:`~gEconpy.model.perfect_foresight.compile.PerfectForesightProblem.column_order` names a fill-reducing order
+for the models where it does not. A solver that leaves the ordering unset, which is ``linear_solver`` on a
+:class:`~gEconpy.solvers.sparse_root.direction.NewtonDirection` or a
+:class:`~gEconpy.solvers.sparse_root.dogleg.SparseDogleg` and ``permc_spec`` on a
+:class:`~gEconpy.solvers.sparse_root.direction.ChordDirection`, solves with a copy that uses that order. The solver
+passed in is not changed, and a solver that sets the ordering keeps it.
+
 Every solver is an object with ``init`` and ``step`` methods, so a new one is a class that implements those two.
 Swapping a component takes one keyword argument. This test replaces the direct sparse factorization inside a
 Newton direction with GMRES:
