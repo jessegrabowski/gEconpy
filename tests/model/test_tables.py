@@ -286,14 +286,44 @@ class TestEstimationTableWithPosterior:
         assert list(rows) == [r"\alpha", r"\beta", r"\rho", r"\sigma_{\varepsilon}", r"\text{error}_{\sigma,C}"]
         assert [rows[symbol].prior_stat("mean") for symbol in [r"\beta", r"\text{error}_{\sigma,C}"]] == [None, None]
 
-    def test_a_shock_standard_deviation_is_a_row_under_the_statespace_name(self, posterior):
-        """The statespace reads ``sigma_epsilon_A``, which is not the ``sigma_A`` the GCN file declares a prior for."""
+    @pytest.mark.parametrize(
+        "sampled_names, expected",
+        [
+            (["sigma_epsilon_A"], [(r"\sigma_{A}", "Gamma")]),
+            (["sigma_A", "sigma_epsilon_A"], [(r"\sigma_{A}", "Gamma"), (r"\sigma_{\varepsilon,A}", "")]),
+        ],
+        ids=["statespace_name_only", "declared_name_sampled_too"],
+    )
+    def test_a_shock_standard_deviation_takes_its_declared_prior_under_the_statespace_name(
+        self, posterior, sampled_names, expected
+    ):
+        """
+        The statespace reads ``sigma_epsilon_A`` for the ``sigma_A`` the GCN file declares.
+
+        A posterior holding ``sigma_A`` as well sampled the declared prior there, so ``sigma_epsilon_A`` is another.
+        """
         model = load_and_cache_model("rbc_linearized.gcn")
-        sampled = xr.Dataset({"alpha": posterior["alpha"], "sigma_epsilon_A": posterior["sigma_epsilon"]})
+        sampled = xr.Dataset({"alpha": posterior["alpha"], **dict.fromkeys(sampled_names, posterior["sigma_epsilon"])})
 
         rows = model.table("estimates", idata=sampled).rows
 
-        assert [(r.symbol, r.prior_family) for r in rows][-1] == (r"\sigma_{\varepsilon,A}", "")
+        assert [(r.symbol, r.prior_family) for r in rows][1:] == expected
+
+    def test_a_shock_standard_deviation_checks_its_statespace_draws_against_the_declared_prior(self, posterior):
+        """The draws are read under ``sigma_epsilon_A`` and compared to the ``sigma_A`` declaration."""
+        model = load_and_cache_model("rbc_linearized.gcn")
+        swapped = preliz.HalfNormal(sigma=0.5).rvs((2, 1000), random_state=0)
+        idata = xr.DataTree.from_dict(
+            {
+                "posterior": xr.Dataset({"sigma_epsilon_A": posterior["sigma_epsilon"]}),
+                "prior": xr.Dataset({"sigma_epsilon_A": (("chain", "draw"), swapped)}),
+            }
+        )
+
+        (row,) = model.table("estimates", idata=idata).rows
+
+        assert (row.symbol, row.prior_family) == (r"\sigma_{A}", "")
+        assert row.prior_stat("mean") == pytest.approx(swapped.mean())
 
     def test_var_names_adds_a_variable_the_model_does_not_name(self, posterior):
         model = load_and_cache_model("one_block_1_dist.gcn")
