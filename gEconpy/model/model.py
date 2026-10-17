@@ -3,7 +3,7 @@ import logging
 import re
 
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from functools import partial
 from inspect import signature
@@ -52,6 +52,8 @@ from gEconpy.model.tables import (
     CalibrationTable,
     EquationRow,
     EquationTable,
+    EstimateRow,
+    EstimationTable,
     Markup,
     ParameterRow,
     SymbolRow,
@@ -670,8 +672,6 @@ class Model:
         values = self.parameters().to_string()
         priors = priors_by_sampled_name(self.param_priors.to_string(), self.shock_priors)
 
-        calibrated = [parameter.name for parameter in self.calibrated_params]
-        names = list(dict.fromkeys([*values, *calibrated, *priors]))
         return CalibrationTable(
             prior_stats=prior_stats,
             include_prior_params=include_prior_params,
@@ -683,7 +683,50 @@ class Model:
                     prior=priors.get(name),
                     source=declarations[name].source if name in declarations else None,
                 )
-                for name in names
+                for name in self._parameter_names(values, priors)
+            ],
+        )
+
+    def _parameter_names(self, values: Mapping[str, Any], priors: Mapping[str, Any]) -> list[str]:
+        """Return every name a parameter table can print: parameters with a value, then calibrated ones, then priors."""
+        calibrated = [parameter.name for parameter in self.calibrated_params]
+        return list(dict.fromkeys([*values, *calibrated, *priors]))
+
+    def _estimation_table(
+        self,
+        prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS,
+        include_prior_params: bool = False,
+        markup: Markup = "latex",
+    ) -> EstimationTable:
+        """
+        Build the model's estimated parameters as table data, for a paper's estimation table.
+
+        A row is every name with a prior, including each shock's estimated hyper-parameters, in the order the
+        parameters table prints them. A parameter with no prior is fixed or calibrated, so it appears in the
+        parameters table only.
+
+        Returns
+        -------
+        table : EstimationTable
+            The rows, renderable as LaTeX or as a dataframe.
+        """
+        overrides = self._markup_overrides(markup)
+        render_name = DIALECTS[markup].render_name
+        declarations = self._declarations_by_name()
+        values = self.parameters().to_string()
+        priors = priors_by_sampled_name(self.param_priors.to_string(), self.shock_priors)
+
+        return EstimationTable(
+            prior_stats=prior_stats,
+            include_prior_params=include_prior_params,
+            rows=[
+                EstimateRow(
+                    symbol=render_name(name, name_override=overrides.get(name)),
+                    description=declarations[name].name if name in declarations else None,
+                    prior=priors[name],
+                )
+                for name in self._parameter_names(values, priors)
+                if name in priors
             ],
         )
 
@@ -715,22 +758,28 @@ class Model:
     @overload
     def table(self, group: Literal["parameters"], **options: Any) -> CalibrationTable: ...
 
-    def table(self, group: TableGroup, **options: Any) -> EquationTable | SymbolTable | CalibrationTable:
+    @overload
+    def table(self, group: Literal["estimates"], **options: Any) -> EstimationTable: ...
+
+    def table(
+        self, group: TableGroup, **options: Any
+    ) -> EquationTable | SymbolTable | CalibrationTable | EstimationTable:
         r"""
         Build one group of the model as table data, for a paper or a notebook.
 
         Parameters
         ----------
         group : str
-            One of ``"equations"``, ``"variables"``, ``"shocks"`` or ``"parameters"``.
+            One of ``"equations"``, ``"variables"``, ``"shocks"``, ``"parameters"`` or ``"estimates"``.
         **options
             Build options for the group. ``"equations"`` takes ``expectations``, which wraps lead-carrying
             terms in :math:`\mathbb{E}_t` except where the author wrote the operator themselves and defaults
-            to True. The other groups take no options.
+            to True. ``"parameters"`` and ``"estimates"`` take ``prior_stats`` and ``include_prior_params``,
+            which choose the prior columns. The other groups take no options.
 
         Returns
         -------
-        table : EquationTable or SymbolTable or CalibrationTable
+        table : EquationTable or SymbolTable or CalibrationTable or EstimationTable
             The rows, renderable as LaTeX or as a dataframe.
         """
         if group not in TABLE_GROUPS:
@@ -739,6 +788,7 @@ class Model:
         builders = {
             "equations": self._equation_table,
             "parameters": self._calibration_table,
+            "estimates": self._estimation_table,
             "variables": partial(self._symbol_table, group),
             "shocks": partial(self._symbol_table, group),
         }
@@ -758,7 +808,7 @@ class Model:
         Parameters
         ----------
         group : str
-            One of ``"equations"``, ``"variables"``, ``"shocks"`` or ``"parameters"``.
+            One of ``"equations"``, ``"variables"``, ``"shocks"``, ``"parameters"`` or ``"estimates"``.
         writer : str, optional
             Markup to emit. Defaults to ``"latex"``.
         path : str or Path, optional

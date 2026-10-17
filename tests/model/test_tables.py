@@ -1,6 +1,7 @@
 import shutil
 import subprocess
 
+import pandas as pd
 import preliz
 import pytest
 
@@ -13,6 +14,7 @@ from gEconpy.model.tables import (
     CalibrationTable,
     EquationRow,
     EquationTable,
+    EstimationTable,
     ParameterRow,
     SymbolTable,
     _format_value,
@@ -224,10 +226,34 @@ class TestCalibrationTable:
         assert len(frame) == len(rbc.table("parameters").rows)
 
 
+class TestEstimationTable:
+    def test_a_row_is_every_prior_in_the_parameters_table_order(self):
+        """``beta`` and ``delta`` have no prior, and ``rho`` precedes ``gamma`` in the file, not the table."""
+        model = load_and_cache_model("one_block_1_dist.gcn")
+
+        symbols = [r.symbol for r in model.table("estimates").rows]
+
+        assert symbols == [r"\alpha", r"\gamma", r"\rho", r"\sigma_{\varepsilon}"]
+
+    def test_a_prior_prints_as_the_parameters_table_prints_it(self):
+        """The two tables read one prior, so a paper printing both cannot report it two ways."""
+        model = load_and_cache_model("one_block_1_dist.gcn")
+        options = {"prior_stats": ["median", "std"], "include_prior_params": True}
+
+        estimates = model.table("estimates", **options).to_frame()
+        parameters = model.table("parameters", **options).to_frame().dropna(subset="prior")
+
+        pd.testing.assert_frame_equal(estimates, parameters[estimates.columns].reset_index(drop=True))
+
+
 class TestEmptyTable:
     """An empty table must not emit a tabular with no columns or an align with no rows; pdflatex rejects both."""
 
-    @pytest.mark.parametrize("table", [EquationTable([]), CalibrationTable([])], ids=["equations", "calibration"])
+    @pytest.mark.parametrize(
+        "table",
+        [EquationTable([]), CalibrationTable([]), EstimationTable([])],
+        ids=["equations", "calibration", "estimates"],
+    )
     def test_an_empty_table_renders_as_nothing(self, table):
         assert table.to_latex() == ""
 
@@ -244,8 +270,9 @@ class TestEmptyTable:
                 CalibrationTable([]),
                 ["symbol", "description", "value", "prior", "prior_mean", "prior_std", "prior_parameters", "source"],
             ),
+            (EstimationTable([]), ["symbol", "description", "prior", "prior_mean", "prior_std", "prior_parameters"]),
         ],
-        ids=["equations", "calibration"],
+        ids=["equations", "calibration", "estimates"],
     )
     def test_an_empty_frame_keeps_its_columns(self, table, columns):
         """Returning a frame with no columns breaks the contract the docstring states."""
@@ -301,7 +328,7 @@ def test_the_rendered_calibration_has_the_expected_shape():
     )
 
 
-@pytest.mark.parametrize("group", ["equations", "parameters"])
+@pytest.mark.parametrize("group", ["equations", "parameters", "estimates"])
 def test_the_rendered_table_compiles(rbc, group, tmp_path):
     r"""
     The feature's whole contract is valid LaTeX, and an empty table once produced output pdflatex rejected.

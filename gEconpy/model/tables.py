@@ -19,7 +19,7 @@ from gEconpy.classes.time_aware_symbol import (
 from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex
 from gEconpy.model.typst import definition_rows_typst, equation_sides_typst
 
-TableGroup = Literal["equations", "variables", "shocks", "parameters"]
+TableGroup = Literal["equations", "variables", "shocks", "parameters", "estimates"]
 Markup = Literal["latex", "typst"]
 # The statistics every preliz family reports, which is the vocabulary a caller may ask a prior for. A name
 # outside it is rejected rather than rendered empty, because an empty column in a paper is not a visible error.
@@ -858,4 +858,68 @@ class CalibrationTable(_TabularTable):
             _Column("Value", "left", lambda dialect, row: _format_value(row.value, times=dialect.times)),
             *_prior_columns(self.prior_stats, include_prior_params=self.include_prior_params),
             _Column("Source", "left", lambda dialect, row: dialect.escape(row.source or ""), width=0.2),
+        ]
+
+
+@dataclass(frozen=True)
+class EstimateRow:
+    """One estimated parameter of a model, with the prior it is estimated under."""
+
+    symbol: str
+    description: str | None
+    prior: Distribution
+
+
+@dataclass(frozen=True)
+class EstimationTable(_TabularTable):
+    """
+    A model's estimated parameters as table data, rendered on demand.
+
+    Parameters
+    ----------
+    rows : sequence of EstimateRow
+        The estimated parameters, in print order.
+    prior_stats : sequence of str, optional
+        Statistics of the prior to print, one column each, from ``PRIOR_STATS``. Defaults to the mean and the
+        standard deviation.
+    include_prior_params : bool, optional
+        Print the distribution's own parameters in a column of their own. Defaults to False.
+    """
+
+    rows: tuple[EstimateRow, ...] | list[EstimateRow]
+    prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS
+    include_prior_params: bool = False
+
+    _row_type: ClassVar[type] = EstimateRow
+
+    def __post_init__(self) -> None:
+        _check_prior_stats(self.prior_stats)
+
+    def to_frame(self) -> pd.DataFrame:
+        """
+        Return the table as a dataframe, one row per estimated parameter.
+
+        Returns
+        -------
+        frame : pandas.DataFrame
+            Columns ``symbol``, ``description``, ``prior``, one ``prior_<stat>`` per requested statistic, and
+            ``prior_parameters``.
+        """
+        return pd.DataFrame(
+            [
+                {
+                    "symbol": row.symbol,
+                    "description": row.description,
+                    **_prior_frame_values(row.prior, self.prior_stats),
+                }
+                for row in self.rows
+            ],
+            columns=["symbol", "description", *_prior_frame_columns(self.prior_stats)],
+        )
+
+    def _columns(self) -> list[_Column]:
+        return [
+            _Column("Parameter", "left", lambda dialect, row: dialect.math(row.symbol)),
+            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.3),
+            *_prior_columns(self.prior_stats, include_prior_params=self.include_prior_params),
         ]

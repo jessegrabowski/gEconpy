@@ -10,6 +10,8 @@ gEconpy.model.tables
     CalibrationTable
     EquationRow
     EquationTable
+    EstimateRow
+    EstimationTable
     ParameterRow
     SymbolRow
     SymbolTable
@@ -21,5 +23,5 @@ gEconpy.model.tables
     typst_escape
 
 .. automodule:: gEconpy.model.tables
-    :members: CalibrationTable, EquationRow, EquationTable, ParameterRow, SymbolRow, SymbolTable, typst_escape
+    :members: CalibrationTable, EquationRow, EquationTable, EstimateRow, EstimationTable, ParameterRow, SymbolRow, SymbolTable, typst_escape
     :undoc-members:
