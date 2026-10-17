@@ -8,7 +8,8 @@ import gEconpy.solvers.sparse_root.direction as direction_module
 from gEconpy import simulate
 from gEconpy.exceptions import NonFiniteInitialGuessError
 from gEconpy.model.perfect_foresight import extended_path, simulate_extended_path, solve_perfect_foresight
-from gEconpy.solvers.sparse_root.line_search import newton_armijo
+from gEconpy.solvers.sparse_root.direction import ChordDirection
+from gEconpy.solvers.sparse_root.line_search import chord, newton_armijo
 from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
 
 
@@ -140,6 +141,19 @@ def test_a_trajectory_does_not_depend_on_the_trajectories_before_it(rbc_model, m
     second_alone, _ = simulate_extended_path(rbc_model, n_simulations=1, simulation_length=10)
 
     np.testing.assert_array_equal(both.values[1], second_alone.values[0])
+
+
+def test_a_solver_holding_a_factorization_can_be_passed_in(rbc_model):
+    solver = chord(direction=ChordDirection(keep_across_solves=True))
+    steady_state = rbc_model.steady_state(verbose=False, progressbar=False)
+    solve_perfect_foresight(
+        rbc_model, simulation_length=50, solver=solver, initial_conditions={"K": 0.9 * steady_state["K_ss"]}
+    )
+    assert solver.direction._factorization.lu is not None
+
+    _, diagnostics = simulate_extended_path(rbc_model, simulation_length=3, shock_std=0.01, solver=solver)
+
+    assert diagnostics.success.all()
 
 
 def test_a_tight_tolerance_needs_no_homotopy_with_the_default_solver():

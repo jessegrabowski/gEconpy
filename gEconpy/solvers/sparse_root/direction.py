@@ -114,6 +114,10 @@ class _ScheduledFactorization:
         self.refreshed = False
         self._updates_since_refresh = 0
 
+    def __reduce__(self):
+        # A SuperLU cannot be copied or pickled, so a copy starts empty and factorizes on its first update.
+        return _ScheduledFactorization, ()
+
     def update(
         self, jac: sp.spmatrix, recompute_every: int | None, permc_spec: str = "COLAMD", force: bool = False
     ) -> tuple[sp.spmatrix, SuperLU | None]:
