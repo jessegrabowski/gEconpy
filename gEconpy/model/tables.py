@@ -310,7 +310,7 @@ def _tabular(
         return ""
 
     top, middle, bottom = _rules(booktabs)
-    header = " & ".join(rf"\textbf{{{column.heading}}}" for column in kept)
+    header = " & ".join(rf"\textbf{{{latex_escape(column.heading)}}}" for column in kept)
     body = " \\\\\n".join(" & ".join(cells[column.heading][index] for column in kept) for index in range(len(rows)))
     alignment = "".join(widths) if widths is not None else "".join(LATEX.column(column) for column in kept)
     return f"\\begin{{tabular}}{{{alignment}}}\n{top}\n{header} \\\\\n{middle}\n{body} \\\\\n{bottom}\n\\end{{tabular}}"
@@ -359,7 +359,7 @@ def _typst_table(
     lines = ["#table(", *(f"  {setting}," for setting in settings)]
     if booktabs:
         lines.append("  table.hline(),")
-    lines.append("  table.header(" + ", ".join(f"[*{column.heading}*]" for column in kept) + "),")
+    lines.append("  table.header(" + ", ".join(f"[*{typst_escape(column.heading)}*]" for column in kept) + "),")
     if booktabs:
         lines.append("  table.hline(),")
     lines += [
