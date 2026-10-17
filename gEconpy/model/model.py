@@ -56,7 +56,7 @@ from gEconpy.model.tables import (
     SymbolTable,
     TableGroup,
 )
-from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
+from gEconpy.parser.ast import GCNBlock, GCNModel, SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
@@ -516,13 +516,18 @@ class Model:
         """
         return self._equation_labels.get(equation_id)
 
-    def _foc_control(self, equation_id: str, overrides: dict[str, str], markup: Markup = "latex") -> str | None:
-        """Return the rendered control a first-order condition was taken with respect to, or None."""
+    def _source_block(self, equation_id: str) -> tuple[GCNBlock | None, str, str]:
+        """Split an equation id into its parsed source block, its component and the suffix after it."""
         # Ids are built in Block.solve_optimization as "{block}.{component}.{suffix}", and
         # test_ids_name_the_block_and_component_they_came_from pins that format.
         block_name, _, remainder = equation_id.partition(".")
-        component, _, control_name = remainder.partition(".")
+        component, _, suffix = remainder.partition(".")
         block = self._source_ast.get_block(block_name) if self._source_ast else None
+        return block, component, suffix
+
+    def _foc_control(self, equation_id: str, overrides: dict[str, str], markup: Markup = "latex") -> str | None:
+        """Return the rendered control a first-order condition was taken with respect to, or None."""
+        block, component, control_name = self._source_block(equation_id)
         if component != "foc" or block is None:
             return None
 
