@@ -15,6 +15,7 @@ import xarray as xr
 from rich.progress import Progress
 from scipy.linalg import LinAlgError
 
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
 from gEconpy.exceptions import PerturbationSolutionNotFoundException
 from gEconpy.model.perturbation import (
     check_bk_condition as _check_bk_condition,
@@ -51,7 +52,7 @@ _PERTURBATION_SOLVERS = ("cycle_reduction", "gensys")
 
 def summarize_perturbation_solution(
     linear_system: Sequence[np.ndarray],
-    perturbation_solution: Sequence[np.ndarray | None],
+    perturbation_solution: FirstOrderPerturbationSolution | Sequence[np.ndarray | None] | None,
     model: "Model",
 ) -> xr.Dataset:
     """
@@ -61,8 +62,9 @@ def summarize_perturbation_solution(
     ----------
     linear_system : sequence of ndarray
         The four Jacobian matrices A, B, C and D of the linearized model.
-    perturbation_solution : sequence of ndarray
-        The transition matrix T and the selection matrix R. Either being None raises
+    perturbation_solution : FirstOrderPerturbationSolution, sequence of ndarray, or None
+        The solution from :meth:`~gEconpy.model.model.Model.solve_model`, or the transition matrix T and the
+        selection matrix R. None, or either matrix being None, raises
         :class:`~gEconpy.exceptions.PerturbationSolutionNotFoundException`.
     model : Model
         Model the solution belongs to, used to label the variable and shock coordinates.
@@ -83,13 +85,19 @@ def summarize_perturbation_solution(
 
         model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
         linear_system = model.linearize_model(verbose=False)
-        policy_function = model.solve_model(verbose=False)
+        policy_function = model.solve_model(verbose=False, return_matrices=False)
 
         summary = summarize_perturbation_solution(linear_system, policy_function, model)
         technology_response = summary["R"].sel(shock="epsilon_A")
     """
     A, B, C, D = linear_system
-    T, R = perturbation_solution
+    if perturbation_solution is None:
+        raise PerturbationSolutionNotFoundException()
+
+    if isinstance(perturbation_solution, FirstOrderPerturbationSolution):
+        T, R = perturbation_solution.T, perturbation_solution.R
+    else:
+        T, R = perturbation_solution
     if T is None or R is None:
         raise PerturbationSolutionNotFoundException()
 

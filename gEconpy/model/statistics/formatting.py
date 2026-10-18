@@ -50,7 +50,7 @@ def matrix_to_dataframe(
 
         model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
         A, B, C, D = model.linearize_model(verbose=False)
-        T, R = model.solve_model(verbose=False)
+        T = model.solve_model(verbose=False, return_matrices=False).T
 
         T_df = matrix_to_dataframe(T, model, round=3)
         B_df = matrix_to_dataframe(B, model, dim1="equation", round=3)

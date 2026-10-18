@@ -15,7 +15,11 @@ from pytensor.graph.traversal import explicit_graph_inputs
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
+from gEconpy.exceptions import (
+    GensysFailedException,
+    ModelUnknownParameterError,
+    PerturbationSolutionNotFoundException,
+)
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import compile_for_scipy, make_cache_key
 from gEconpy.model.perturbation import (
@@ -551,6 +555,7 @@ def test_invalid_solver_raises():
 
     with pytest.raises(NotImplementedError):
         model.solve_model(
+            return_matrices=False,
             solver="invalid_solver",
             steady_state_kwargs={"verbose": False, "progressbar": False},
             verbose=False,
@@ -562,6 +567,7 @@ def test_bad_failure_argument_raises():
 
     with pytest.raises(ValueError, match='on_failure must be one of "error" or "ignore"'):
         model.solve_model(
+            return_matrices=False,
             solver="gensys",
             on_failure="raise",
             steady_state_kwargs={"verbose": False, "progressbar": False},
@@ -578,6 +584,7 @@ def test_unsolvable_model_raises_with_the_solver_message(solver, match):
 
     with pytest.raises(GensysFailedException, match=match):
         model.solve_model(
+            return_matrices=False,
             solver=solver,
             on_failure="error",
             verbose=False,
@@ -587,7 +594,8 @@ def test_unsolvable_model_raises_with_the_solver_message(solver, match):
 
 def test_outputs_after_gensys_failure(caplog):
     model = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
-    T, R = model.solve_model(
+    solution = model.solve_model(
+        return_matrices=False,
         solver="gensys",
         on_failure="ignore",
         verbose=True,
@@ -597,14 +605,104 @@ def test_outputs_after_gensys_failure(caplog):
     assert caplog.messages[-1] == (
         "Gensys return codes: 1 0 2, with the following meaning:\nSolution exists, but is not unique."
     )
+    assert solution is None
+
+
+def test_solve_model_returns_matrices_by_default_with_a_future_warning():
+    model = load_and_cache_model("basic_rbc.gcn")
+    kwargs = {"verbose": False, "steady_state_kwargs": {"verbose": False, "progressbar": False}}
+
+    with pytest.warns(FutureWarning, match="return_matrices"):
+        T, R = model.solve_model(**kwargs)
+    explicit_T, explicit_R = model.solve_model(return_matrices=True, **kwargs)
+    solution = model.solve_model(return_matrices=False, **kwargs)
+
+    assert_allclose(T, solution.T)
+    assert_allclose(R, solution.R)
+    assert_allclose(explicit_T, solution.T)
+    assert_allclose(explicit_R, solution.R)
+
+
+def test_failed_solve_returns_none_matrices_when_returning_matrices():
+    model = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
+
+    T, R = model.solve_model(
+        solver="gensys",
+        on_failure="ignore",
+        return_matrices=True,
+        verbose=False,
+        steady_state_kwargs={"verbose": False, "progressbar": False},
+    )
+
     assert T is None
     assert R is None
+
+
+@pytest.mark.parametrize(
+    "model_name, log_linearize",
+    [
+        ("one_block_1_ss", False),
+        ("rbc_2_block_ss", False),
+        pytest.param("full_nk", False, marks=pytest.mark.include_nk),
+        ("basic_rbc", False),
+        ("basic_rbc", True),
+    ],
+    ids=str,
+)
+def test_solve_matches_dynare(model_name, log_linearize):
+    model = load_and_cache_model(model_name + ".gcn")
+    solution = model.solve_model(
+        return_matrices=False,
+        solver="gensys",
+        verbose=False,
+        log_linearize=log_linearize,
+        steady_state_kwargs={"verbose": False, "progressbar": False},
+    )
+    T, R = solution.T, solution.R
+
+    if log_linearize:
+        model_name = model_name + "_loglinear"
+
+    dynare_T, dynare_R = load_dynare_outputs(model_name).values()
+
+    T = matrix_to_dataframe(T, model).reindex_like(dynare_T)
+    R = matrix_to_dataframe(R, model).reindex_like(dynare_R)
+
+    assert_allclose(T[dynare_T.columns], dynare_T, atol=1e-5, rtol=1e-5)
+    assert_allclose(R[dynare_R.columns], dynare_R, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("solve_kwargs", "expected_log_linearized"),
+    [
+        ({}, [True] * 9),
+        ({"not_loglin_variables": ["K"]}, [True, True, True, False, True, True, True, True, True]),
+        ({"log_linearize": False}, [False] * 9),
+    ],
+    ids=["all_logged", "K_in_levels", "levels"],
+)
+def test_solve_model_returns_a_solution_that_records_log_linearization(solve_kwargs, expected_log_linearized):
+    model = load_and_cache_model("basic_rbc.gcn")
+
+    solution = model.solve_model(
+        return_matrices=False,
+        verbose=False,
+        steady_state_kwargs={"verbose": False, "progressbar": False},
+        **solve_kwargs,
+    )
+
+    assert isinstance(solution, FirstOrderPerturbationSolution)
+    assert solution.dr_order is model.dr_order
+    assert solution.variable_names == ["A", "C", "I", "K", "L", "Y", "lambda", "r", "w"]
+    np.testing.assert_array_equal(solution.log_linearized, expected_log_linearized)
 
 
 def test_a_linear_model_solution_records_no_log_linearization():
     model = load_and_cache_model("rbc_linearized.gcn")
 
-    solution = model.solve_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
+    solution = model.solve_model(
+        return_matrices=False, verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False}
+    )
 
     assert model.is_linear
     assert not solution.log_linearized.any()
@@ -613,6 +711,7 @@ def test_a_linear_model_solution_records_no_log_linearization():
 def test_outputs_after_pert_success(caplog):
     model = load_and_cache_model("rbc_linearized.gcn", on_unused_parameters="ignore")
     model.solve_model(
+        return_matrices=False,
         solver="gensys",
         verbose=True,
         steady_state_kwargs={"verbose": False, "progressbar": False},
@@ -684,7 +783,7 @@ def test_compute_bk_eigenvalues():
 def test_stable_bk_eigenvalues_match_policy_matrix():
     model = load_and_cache_model("rbc_linearized.gcn")
     A, B, C, D = model.linearize_model()
-    T = model.solve_model(verbose=False).T
+    T = model.solve_model(return_matrices=False, verbose=False).T
 
     eigvals_real, eigvals_imag, _ = compute_bk_eigenvalues(A, B, C, D)
     eigvals = eigvals_real + 1j * eigvals_imag
@@ -760,14 +859,20 @@ def test_eigenvalue_sensitivity():
 def test_summarize_perturbation_solution():
     model = load_and_cache_model("rbc_linearized.gcn")
     linear_system = model.linearize_model()
-    policy_function = model.solve_model(solver="gensys", verbose=False)
+    policy_function = model.solve_model(return_matrices=False, solver="gensys", verbose=False)
 
     res = summarize_perturbation_solution(linear_system, policy_function, model)
     matrix_names = ["A", "B", "C", "D", "T", "R"]
     assert isinstance(res, xr.Dataset)
     assert all(name in res.data_vars for name in matrix_names)
-    for matrix, name in zip([*linear_system, *policy_function], matrix_names, strict=True):
+    for matrix, name in zip([*linear_system, policy_function.T, policy_function.R], matrix_names, strict=True):
         assert_allclose(res[name].to_numpy(), matrix)
+
+    from_matrices = summarize_perturbation_solution(linear_system, (policy_function.T, policy_function.R), model)
+    xr.testing.assert_equal(from_matrices, res)
+
+    with pytest.raises(PerturbationSolutionNotFoundException):
+        summarize_perturbation_solution(linear_system, None, model)
 
 
 @pytest.mark.parametrize(
@@ -861,7 +966,7 @@ def test_maybe_linearize_model_relinearizes_partial_input(caplog, verbose):
 
 def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     model = load_and_cache_model("rbc_linearized.gcn")
-    T = model.solve_model(solver="gensys", verbose=False).T
+    T = model.solve_model(return_matrices=False, solver="gensys", verbose=False).T
 
     with pytest.warns(FutureWarning, match="Passing T and R is deprecated"):
         stationary_covariance_matrix(model, T, shock_std=0.1, verbose=False)
@@ -878,7 +983,7 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
 )
 def test_compute_stationary_covariance(caplog, gcn_file):
     model = load_and_cache_model(gcn_file)
-    solution = model.solve_model(solver="gensys", verbose=False)
+    solution = model.solve_model(return_matrices=False, solver="gensys", verbose=False)
     n_variables, _n_shocks = solution.R.shape
 
     Sigma = stationary_covariance_matrix(model, solution, shock_std=0.1, return_df=False)
@@ -947,7 +1052,7 @@ def test_autocovariance_matrix_lag_zero_is_stationary_covariance(gcn_file):
 @pytest.fixture
 def irf_inputs():
     model = load_and_cache_model("one_block_1_ss_2shock.gcn")
-    solution = model.solve_model(solver="gensys", verbose=False)
+    solution = model.solve_model(return_matrices=False, solver="gensys", verbose=False)
     return model, solution
 
 
@@ -1074,7 +1179,7 @@ def test_simulate_accepts_every_shock_specification():
     with one value shared by all of them, a dict read in the wrong order agrees with the other spellings anyway.
     """
     model = load_and_cache_model("full_nk.gcn")
-    solution = model.solve_model(solver="gensys", verbose=False)
+    solution = model.solve_model(return_matrices=False, solver="gensys", verbose=False)
     stds = [0.1, 0.2, 0.3, 0.4]
 
     specifications = {
@@ -1096,7 +1201,7 @@ def test_simulate_accepts_every_shock_specification():
 @pytest.mark.parametrize("gcn_file", ["one_block_1_ss.gcn", "open_rbc.gcn"])
 def test_simulate(gcn_file):
     model = load_and_cache_model(gcn_file)
-    solution = model.solve_model(solver="gensys", verbose=False)
+    solution = model.solve_model(return_matrices=False, solver="gensys", verbose=False)
     n_variables, _n_shocks = solution.R.shape
 
     n_simulations = 3000

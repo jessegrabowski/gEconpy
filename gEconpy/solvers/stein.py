@@ -109,7 +109,7 @@ def solve_policy_stein(
         from gEconpy.solvers.stein import solve_policy_stein
 
         A, B, C, D = model.linearize_model()
-        T, R = model.solve_model()
+        T = model.solve_model(return_matrices=False).T
 
         symbols = [pt.dmatrix(name) for name in ("A1", "C", "T", "Q")]
         solvers = {

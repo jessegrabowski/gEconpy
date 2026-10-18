@@ -202,7 +202,9 @@ def _maybe_solve_model(
         )
 
     if solution is None:
-        return tuple(model.solve_model(**solve_model_kwargs))
+        solution = model.solve_model(**{**solve_model_kwargs, "return_matrices": False})
+        if solution is None:
+            return None, None
 
     return solution.T, solution.R
 

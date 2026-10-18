@@ -1,4 +1,3 @@
-from collections.abc import Iterator
 from dataclasses import dataclass
 
 import numpy as np
@@ -12,8 +11,7 @@ class FirstOrderPerturbationSolution:
     First-order perturbation solution of a DSGE model.
 
     The policy function is stored as Dynare stores it, with rows in decision-rule order and only the state columns
-    of the transition matrix. :attr:`T` and :attr:`R` rebuild the full matrices in model order. Iterating the
-    solution yields ``T`` and ``R``, so ``T, R = model.solve_model()`` keeps working.
+    of the transition matrix. :attr:`T` and :attr:`R` rebuild the full matrices in model order.
 
     Attributes
     ----------
@@ -132,7 +130,3 @@ class FirstOrderPerturbationSolution:
         logged = self.log_linearized
         levels[..., logged] = self.steady_state[logged] * np.exp(deviations[..., logged])
         return levels
-
-    def __iter__(self) -> Iterator[np.ndarray]:
-        yield self.T
-        yield self.R

@@ -41,12 +41,11 @@ def test_policy_matrices_round_trip_through_the_state_columns(dr_order):
     R = rng.normal(size=(4, 1))
 
     solution = _solution(T, R, dr_order)
-    T_out, R_out = solution
 
     assert solution.ghx.shape == (4, dr_order.n_state_var)
     assert_array_equal(solution.ghx, T[np.ix_(dr_order.var_order, state_columns)])
-    assert_array_equal(T_out, T)
-    assert_array_equal(R_out, R)
+    assert_array_equal(solution.T, T)
+    assert_array_equal(solution.R, R)
 
 
 def test_to_levels_exponentiates_only_log_linearized_variables(dr_order):

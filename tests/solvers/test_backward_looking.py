@@ -21,7 +21,7 @@ def sarima_model():
 
 @pytest.fixture(scope="module")
 def sarima_solved(sarima_model):
-    return sarima_model, sarima_model.solve_model(verbose=False)
+    return sarima_model, sarima_model.solve_model(return_matrices=False, verbose=False)
 
 
 class TestBackwardLookingDetection:
@@ -35,14 +35,14 @@ class TestBackwardLookingDetection:
     def test_backward_direct_rejects_forward_looking_model(self):
         model = load_and_cache_model("one_block_1.gcn")
         with pytest.raises(ValueError, match="backward_direct"):
-            model.solve_model(solver="backward_direct", verbose=False)
+            model.solve_model(return_matrices=False, solver="backward_direct", verbose=False)
 
 
 class TestBackwardLookingSolve:
     def test_policy_satisfies_linear_system(self, sarima_model):
         """A + B @ T = 0 and B @ R + D = 0 when C = 0."""
         A, B, C, D = sarima_model.linearize_model()
-        solution = sarima_model.solve_model(verbose=False)
+        solution = sarima_model.solve_model(return_matrices=False, verbose=False)
         T, R = solution.T, solution.R
 
         assert_allclose(C, 0.0)
