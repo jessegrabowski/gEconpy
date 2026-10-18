@@ -59,9 +59,9 @@ folder_title_map = {
 def is_tracked_by_git(filepath):
     """Check if a file is tracked by git."""
     # Git indexes a symlink as one entry and reports nothing for paths that run through it, so resolve first. A git
-    # hook sets GIT_INDEX_FILE to a path relative to the repository root, which does not resolve from the Sphinx
-    # source directory, so the lookup reads the repository's own index instead.
-    env = {key: value for key, value in os.environ.items() if key != "GIT_INDEX_FILE"}
+    # hook exports GIT_DIR, and with GIT_DIR set git takes the current directory, here the Sphinx source directory,
+    # as the top of the work tree, so every notebook would fall outside it. Dropping it lets git find the repository.
+    env = {key: value for key, value in os.environ.items() if key not in ("GIT_DIR", "GIT_WORK_TREE")}
     try:
         result = subprocess.run(
             ["git", "ls-files", "--error-unmatch", str(Path(filepath).resolve())],
