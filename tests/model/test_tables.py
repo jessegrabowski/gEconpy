@@ -515,7 +515,7 @@ def test_the_rendered_calibration_has_the_expected_shape():
     )
 
     assert table.to_latex() == (
-        "\\begin{tabular}{lp{0.3\\linewidth}llrrp{0.2\\linewidth}}\n"
+        "\\begin{tabular}{llllrrp{0.2\\linewidth}}\n"
         "\\hline\n"
         "\\textbf{Parameter} & \\textbf{Description} & \\textbf{Value} & \\textbf{Prior} & "
         "\\textbf{Mean} & \\textbf{S.D.} & \\textbf{Source} \\\\\n"

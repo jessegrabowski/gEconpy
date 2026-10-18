@@ -728,7 +728,7 @@ class SymbolTable(_TabularTable):
     def _columns(self) -> list[_Column]:
         return [
             _Column("Symbol", "left", lambda dialect, row: dialect.math(row.symbol)),
-            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.5),
+            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or "")),
             _Column("Steady state", "right", lambda dialect, row: _format_value(row.steady_state, times=dialect.times)),
         ]
 
@@ -925,10 +925,10 @@ class CalibrationTable(_TabularTable):
         )
 
     def _columns(self) -> list[_Column]:
-        # Prose columns wrap; a symbol or a number does not need to.
+        # A description is a short caption, so it sizes to its content. A citation runs long enough to wrap.
         return [
             _Column("Parameter", "left", lambda dialect, row: dialect.math(row.symbol)),
-            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.3),
+            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or "")),
             _Column("Value", "left", lambda dialect, row: _format_value(row.value, times=dialect.times)),
             *_prior_columns(self.prior_stats, include_prior_params=self.include_prior_params),
             _Column("Source", "left", lambda dialect, row: dialect.escape(row.source or ""), width=0.2),
@@ -1219,7 +1219,7 @@ class EstimationTable(_TabularTable):
     def _columns(self) -> list[_Column]:
         return [
             _Column(self.symbol_heading, "left", lambda dialect, row: dialect.math(row.symbol)),
-            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.3),
+            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or "")),
             *_prior_columns(
                 self.prior_stats, include_prior_params=self.include_prior_params, stat_prefix=self.prior_stat_prefix
             ),
