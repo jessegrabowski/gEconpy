@@ -73,6 +73,13 @@ root. The result is exact for the nonlinear model, so it handles large shocks, o
 and transitions between steady states. :func:`~gEconpy.model.perfect_foresight.solve.make_piecewise_x0`
 builds a starting path that jumps between two steady states, which is the right guess for a permanent shock.
 
+When Newton's method fails on the full problem, the solver retries by homotopy. It scales the shock paths and each
+initial and terminal condition's deviation from its steady state by a weight. The first solve, at a small weight,
+starts from a linear path between the initial and terminal steady states, and each later solve raises the weight
+toward one and starts from the last success. Parameter paths are not scaled.
+``max_homotopy_solves`` caps the number of retries, 100 by default, and zero turns the retry off. The returned
+result records the count in ``homotopy_solves``.
+
 Before solving, each stacked equation is divided by the largest entry of its Jacobian row at the initial guess. A
 model whose equations hold terms of very different sizes, such as a recursive wage-setting auxiliary of order
 :math:`10^5` next to an Euler equation of order one, otherwise has its line search and convergence test dominated
