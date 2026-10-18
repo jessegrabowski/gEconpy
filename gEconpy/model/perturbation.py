@@ -301,14 +301,57 @@ def _log_linear_column_scale(
     column_scale = []
     for j in var_order:
         ss_node = as_tensor(variables[j].to_ss(), cache)
-        assumptions = variables[j].assumptions0
-        if j not in loglin_set or assumptions.get("negative", False):
+        treatment = _log_linear_treatment(variables[j], requested=j in loglin_set)
+        if treatment == "level":
             column_scale.append(pt.ones(()))
-        elif assumptions.get("positive", False):
+        elif treatment == "log":
             column_scale.append(ss_node)
         else:
             column_scale.append(pt.switch(ss_node > 0, ss_node, pt.ones(())))
     return pt.stack(column_scale)
+
+
+def _log_linear_treatment(variable: TimeAwareSymbol, requested: bool) -> Literal["level", "log", "by_sign"]:
+    """Classify a variable as kept in levels, log-linearized, or log-linearized only when its steady state is > 0."""
+    assumptions = variable.assumptions0
+    if not requested or assumptions.get("negative", False):
+        return "level"
+    if assumptions.get("positive", False):
+        return "log"
+    return "by_sign"
+
+
+def log_linearized_mask(
+    variables: list[TimeAwareSymbol],
+    loglin_variables: list[TimeAwareSymbol],
+    steady_state: np.ndarray,
+) -> np.ndarray:
+    """
+    Return which variables :func:`linearize_model` log-linearizes at a given steady state.
+
+    Parameters
+    ----------
+    variables : list of TimeAwareSymbol
+        Model variables, in model order.
+    loglin_variables : list of TimeAwareSymbol
+        Variables requested for log-linearization.
+    steady_state : ndarray
+        Steady-state value of every variable, in model order.
+
+    Returns
+    -------
+    mask : ndarray of bool
+        True for each variable whose Jacobian columns are scaled by its steady state.
+    """
+    requested = {variable.base_name for variable in loglin_variables}
+    treatments = [_log_linear_treatment(variable, requested=variable.base_name in requested) for variable in variables]
+    return np.array(
+        [
+            treatment == "log" or (treatment == "by_sign" and value > 0)
+            for treatment, value in zip(treatments, steady_state, strict=True)
+        ],
+        dtype=bool,
+    )
 
 
 def make_not_loglin_flags(
