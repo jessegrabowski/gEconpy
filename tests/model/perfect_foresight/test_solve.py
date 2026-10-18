@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import scipy.sparse as sp
+import xarray as xr
 
 from numpy.testing import assert_allclose
 from scipy.sparse.linalg import spsolve
@@ -464,10 +465,30 @@ class TestConditionKeyNormalization:
             ({"K_ss": 1.0, "C_ss": 2.0}, {"K": 1.0, "C": 2.0}),
             ({"K": 1.0, "C": 2.0}, {"K": 1.0, "C": 2.0}),
             ({"K_ss": 1.0, "C": 2.0}, {"K": 1.0, "C": 2.0}),
+            (xr.DataArray([1.0, 2.0], dims=["state"], coords={"state": ["K_ss", "C"]}), {"K": 1.0, "C": 2.0}),
         ],
     )
     def test_normalize_strips_ss_suffix(self, input_dict, expected):
         assert _normalize_condition_keys(input_dict) == expected
+
+    def test_a_data_array_with_draws_left_in_raises(self):
+        conditions = xr.DataArray(np.ones((2, 2)), dims=["draw", "state"], coords={"state": ["K", "C"]})
+
+        with pytest.raises(ValueError, match="needs one dimension"):
+            _normalize_condition_keys(conditions)
+
+    def test_only_predetermined_initial_values_change_the_path(self, rbc_model):
+        """``C`` never appears at a lag, so its value at ``t = -1`` cannot enter any equation."""
+        steady_state = rbc_model.steady_state(verbose=False)
+        start = {"K": 0.9 * steady_state["K_ss"]}
+
+        base, _ = solve_perfect_foresight(rbc_model, simulation_length=30, initial_conditions=start)
+        moved, _ = solve_perfect_foresight(
+            rbc_model, simulation_length=30, initial_conditions=start | {"C": 2 * steady_state["C_ss"]}
+        )
+
+        assert "C" not in rbc_model.predetermined_variables
+        assert_allclose(moved.values, base.values)
 
     def test_ss_dict_as_conditions_matches_default(self, rbc_model):
         ss_dict = rbc_model.steady_state(verbose=False)
@@ -483,8 +504,15 @@ class TestConditionKeyNormalization:
             initial_conditions={"K_ss": 0.9 * ss_dict["K_ss"]},
             terminal_conditions=dict(ss_dict),
         )
+        traj_array, _ = solve_perfect_foresight(
+            rbc_model,
+            simulation_length=50,
+            initial_conditions={"K_ss": 0.9 * ss_dict["K_ss"]},
+            terminal_conditions=xr.DataArray(list(ss_dict.values()), dims=["state"], coords={"state": list(ss_dict)}),
+        )
 
         assert_allclose(traj_default.values, traj_explicit.values, rtol=1e-10)
+        assert_allclose(traj_array.values, traj_explicit.values, rtol=1e-10)
 
 
 class TestMakePiecewiseX0:

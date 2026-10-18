@@ -73,6 +73,28 @@ the filtered and smoothed states, and
 :meth:`~gEconpy.model.statespace.DSGEStateSpace.sample_autocorrelation_matrices` and the other post-estimation
 methods compute model moments under the posterior.
 
+The recovered states are deviations from the steady state.
+:meth:`~gEconpy.model.statespace.DSGEStateSpace.in_levels` converts them to levels, at the steady state of each
+draw, following :attr:`~gEconpy.model.statespace.DSGEStateSpace.log_linear_treatment`. A quarter of the smoothed
+states in levels is a starting point for the nonlinear model, since
+:func:`~gEconpy.model.perfect_foresight.solve.solve_perfect_foresight` accepts it as ``initial_conditions`` once
+the draws are reduced to one. Solve at the same parameters the start was reduced to. Otherwise the path ends at
+the steady state of the GCN calibration, and the move between the two steady states reads as the model's
+response to the starting quarter:
+
+.. code-block:: python
+
+    smoothed = ss_mod.sample_conditional_posterior(idata)["smoothed_posterior"]
+    start = ss_mod.in_levels(smoothed, idata).sel(time="2014-10-01").mean(("chain", "draw"))
+    params = {name: float(idata.posterior[name].mean()) for name in model.parameters() if name in idata.posterior}
+    trajectory, result = ge.solve_perfect_foresight(
+        model, simulation_length=400, initial_conditions=start, steady_state_kwargs=params
+    )
+
+The values of :attr:`~gEconpy.model.model.Model.predetermined_variables` are the only ones that change the
+solution, but every value must be finite. Pass a Dataset holding several outputs to ``in_levels`` to re-level
+them with one compilation.
+
 A compact version of the sequence through the simulated data set, from the test suite. The ``pct_missing``
 argument blanks a fraction of the observations, which the Kalman filter imputes:
 

@@ -11,10 +11,11 @@ import pytensor.tensor as pt
 import pytest
 import xarray as xr
 
+from pymc_extras.statespace.utils.constants import ALL_STATE_DIM
 from pytensor.graph.traversal import ancestors
 from pytensor.tensor.variable import TensorConstant
 
-from gEconpy import statespace_from_gcn
+from gEconpy import solve_perfect_foresight, statespace_from_gcn
 from gEconpy.model.statespace import _steady_state_intercept, data_from_prior, prepare_mixed_frequency_data
 from gEconpy.model.statistics import autocorrelation_matrix
 from tests._resources.cache_compiled_models import (
@@ -1075,6 +1076,83 @@ def test_observation_equation_Z_matches_analytical_expectation(
     d, Z = _eval_obs_pieces(ss_mod, params)
     np.testing.assert_allclose(Z, expected_Z, rtol=1e-10, atol=1e-12)
     np.testing.assert_allclose(d[0], expected_d, rtol=1e-10, atol=1e-12)
+
+
+def test_in_levels_relevels_each_draw_at_its_own_steady_state():
+    """
+    ``Y`` is excluded from logs, ``TC`` and ``U`` are in levels by sign, and ``beta`` is a constant parameter.
+
+    Summing ``Y`` adds cumulator states, which have no level, so the result holds the model variables only and
+    one draw of it starts a perfect-foresight path directly.
+    """
+    ss_mod = statespace_from_gcn(TEST_GCNS / NL_GCN, not_loglin_variables=["Y"], verbose=False)
+    ss_mod.configure(
+        observed_states=["Y"],
+        measurement_error=["Y"],
+        constant_params=["beta"],
+        temporal_aggregation={"Y": "sum"},
+        verbose=False,
+    )
+    model = load_and_cache_model(NL_GCN)
+    alphas = [0.33, 0.37]
+    calibration = {name: ss_mod.param_dict.get(name, 0.01) for name in ss_mod.param_names}
+    draws = xr.Dataset(
+        {name: (("chain", "draw"), [[value, value]]) for name, value in calibration.items()}
+        | {"alpha": (("chain", "draw"), [alphas])},
+        coords={"chain": [0], "draw": [0, 1]},
+    )
+    states = list(ss_mod.coords[ALL_STATE_DIM])
+    samples = xr.Dataset(
+        {
+            "smoothed_posterior": (("chain", "draw", "time", ALL_STATE_DIM), np.full((1, 2, 3, len(states)), 0.01)),
+            "smoothed_posterior_observed": (("chain", "draw", "time"), np.zeros((1, 2, 3))),
+        },
+        coords={"chain": [0], "draw": [0, 1], "time": np.arange(3), ALL_STATE_DIM: states},
+    )
+
+    levels = ss_mod.in_levels(samples, draws)
+
+    for draw, alpha in enumerate(alphas):
+        solution = model.solve_model(
+            return_matrices=False, solver="gensys", not_loglin_variables=["Y"], verbose=False, alpha=alpha
+        )
+        expected = solution.to_levels(np.full(len(solution.variable_names), 0.01))
+        actual = (
+            levels["smoothed_posterior"].isel(chain=0, draw=draw, time=0).sel({ALL_STATE_DIM: solution.variable_names})
+        )
+        np.testing.assert_allclose(actual.values, expected)
+
+    assert ss_mod._cumulator_state_names
+    assert list(levels[ALL_STATE_DIM].values) == [variable.base_name for variable in model.variables]
+    xr.testing.assert_equal(levels["smoothed_posterior_observed"], samples["smoothed_posterior_observed"])
+    xr.testing.assert_equal(ss_mod.in_levels(samples["smoothed_posterior"], draws), levels["smoothed_posterior"])
+
+    start = levels["smoothed_posterior"].isel(chain=0, draw=0, time=0)
+    _trajectory, result = solve_perfect_foresight(
+        model, simulation_length=20, initial_conditions=start, steady_state_kwargs={"alpha": alphas[0]}
+    )
+    assert result.success
+
+
+@pytest.mark.parametrize(
+    ("group", "sample_draws", "match"),
+    [("prior", [0], r"no 'prior' group.*Its groups are: posterior"), ("posterior", [0, 7], r"draw \[7\]")],
+    ids=["missing_group", "draw_without_parameters"],
+)
+def test_in_levels_rejects_draws_it_cannot_match(rbc_nonlinear_ss, group, sample_draws, match):
+    """Either mismatch would otherwise re-level samples at the wrong draws, or drop some, with no error."""
+    rbc_nonlinear_ss.configure(observed_states=["Y"], measurement_error=["Y"], verbose=False)
+    calibration = {name: rbc_nonlinear_ss.param_dict.get(name, 0.01) for name in rbc_nonlinear_ss.param_names}
+    posterior = xr.Dataset(
+        {name: (("chain", "draw"), [[value]]) for name, value in calibration.items()},
+        coords={"chain": [0], "draw": [0]},
+    )
+    samples = xr.DataArray(
+        np.zeros((1, len(sample_draws))), dims=("chain", "draw"), coords={"chain": [0], "draw": sample_draws}
+    )
+
+    with pytest.raises(ValueError, match=match):
+        rbc_nonlinear_ss.in_levels(samples, xr.DataTree.from_dict({"posterior": posterior}), group=group)
 
 
 @pytest.mark.include_nk
