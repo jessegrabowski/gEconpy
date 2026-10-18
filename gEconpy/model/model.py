@@ -37,8 +37,10 @@ from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_co
 from gEconpy.model.latex import authored_expressions
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import (
+    CompositionDerivatives,
     DROrder,
     check_perturbation_solution,
+    composition_derivatives,
     log_linearized_mask,
     make_not_loglin_flags,
 )
@@ -410,6 +412,7 @@ class Model:
         self._lead_var_idx: np.ndarray | None = None
         self._dr_order: DROrder | None = None
         self._symbolic_linearize_cache: dict[frozenset[str], tuple] = {}
+        self._second_order_cache: dict[frozenset[str], tuple] = {}
         self._default_steady_state: dict | None = None
         self._linearize_cache: dict[int, Callable] = {}
         self._perfect_foresight_cache: dict[tuple, Any] = {}
@@ -1880,6 +1883,73 @@ class Model:
             )
 
         return self._symbolic_linearize_cache[loglin_key]
+
+    def second_order_derivative_terms(
+        self,
+        log_linearize: bool = True,
+        not_loglin_variables: list[str] | None = None,
+        steady_state: dict | None = None,
+        loglin_negative_ss: bool = False,
+        verbose: bool = True,
+    ) -> tuple[CompositionDerivatives, tuple[TensorVariable, ...]]:
+        r"""
+        Build the derivatives of the model equations composed with a first-order policy, at the steady state.
+
+        The graphs are those of :func:`~gEconpy.model.perturbation.composition_derivatives`, with the policy
+        matrices ``ghx`` and ``ghu`` as inputs. Their Hessian holds the second-order terms the second-order solution
+        is built from. The graphs are cached per set of log-linearized variables.
+
+        Parameters
+        ----------
+        log_linearize : bool, optional
+            If True, log-linearize every variable whose steady state allows it. If False, leave every variable in
+            levels. Default True.
+        not_loglin_variables : list of str, optional
+            Variable names to leave in levels. Ignored if ``log_linearize`` is False. Default None.
+        steady_state : dict, optional
+            Steady-state values used to decide which variables have a non-positive steady state and so cannot be
+            log-linearized. Solved internally at the default parameters when not given. Default None.
+        loglin_negative_ss : bool, optional
+            If True, log-linearize variables with a negative steady state as well. Default False.
+        verbose : bool, optional
+            Log which variables are excluded from log-linearization. Default True.
+
+        Returns
+        -------
+        derivatives : CompositionDerivatives
+            First and second derivatives of the composed residual, rows in :attr:`eq_order`, with their policy and
+            steady-state input nodes.
+        param_input_nodes : tuple of TensorVariable
+            Parameter input nodes consumed by the derivative graphs. Calibrated parameters are included, and take
+            their values from the steady-state solution.
+        """
+        loglin_vars = self._resolve_loglin_variables(
+            log_linearize=log_linearize,
+            not_loglin_variables=not_loglin_variables,
+            steady_state=steady_state,
+            loglin_negative_ss=loglin_negative_ss,
+            verbose=verbose,
+        )
+        loglin_key = frozenset(v.base_name for v in loglin_vars)
+
+        if loglin_key not in self._second_order_cache:
+            derivatives = composition_derivatives(
+                variables=self.variables,
+                equations=self.equations,
+                shocks=self.shocks,
+                dr_order=self.dr_order,
+                cache=self._ensure_cache(),
+                loglin_variables=loglin_vars,
+            )
+            non_parameter_inputs = {derivatives.ghx, derivatives.ghu, *derivatives.ss_inputs}
+            param_input_nodes = tuple(
+                node
+                for node in explicit_graph_inputs([derivatives.jacobian, derivatives.hessian])
+                if node.name is not None and node not in non_parameter_inputs
+            )
+            self._second_order_cache[loglin_key] = (derivatives, param_input_nodes)
+
+        return self._second_order_cache[loglin_key]
 
     def _resolve_loglin_variables(
         self,

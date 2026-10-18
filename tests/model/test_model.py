@@ -715,6 +715,71 @@ def test_solve_model_returns_a_solution_that_records_log_linearization(solve_kwa
     np.testing.assert_array_equal(solution.log_linearized, expected_log_linearized)
 
 
+def test_second_order_derivative_terms_are_cached_per_log_linearization():
+    model = model_from_gcn(TEST_GCNS / "basic_rbc.gcn", verbose=False)
+    kwargs = {"verbose": False}
+
+    derivatives, _param_inputs = model.second_order_derivative_terms(**kwargs)
+    cached, _ = model.second_order_derivative_terms(**kwargs)
+    with_K_in_levels, _ = model.second_order_derivative_terms(not_loglin_variables=["K"], **kwargs)
+
+    n_w = model.dr_order.n_state_var + 2 * len(model.shocks)
+    assert cached.hessian is derivatives.hessian
+    assert with_K_in_levels.hessian is not derivatives.hessian
+    assert derivatives.hessian.type.shape == (len(model.equations), n_w, n_w)
+
+
+def _evaluate_second_order_terms(model, ghx, ghu):
+    derivatives, param_inputs = model.second_order_derivative_terms(verbose=False)
+    inputs = [derivatives.ghx, derivatives.ghu, *derivatives.ss_inputs, *param_inputs]
+    f = pytensor.function(inputs, [derivatives.jacobian, derivatives.hessian], on_unused_input="ignore")
+
+    # A linear model's equations carry steady-state coefficients that only f_ss returns. Calibrated parameters come
+    # from the steady-state solution.
+    if model.is_linear:
+        steady_state = dict(model.f_ss(**model.parameters()))
+    else:
+        steady_state = model.steady_state(verbose=False, progressbar=False).to_string()
+    parameter_values = {**steady_state, **model.parameters()}
+    ss_values = [steady_state[node.name] for node in derivatives.ss_inputs]
+    return f(ghx, ghu, *ss_values, *[parameter_values[node.name] for node in param_inputs])
+
+
+@pytest.mark.parametrize("gcn_file", ["basic_rbc.gcn", "rbc_linearized.gcn"])
+def test_second_order_jacobian_vanishes_on_states_and_shocks_at_the_first_order_solution(gcn_file):
+    model = model_from_gcn(TEST_GCNS / gcn_file, verbose=False)
+    solution = model.solve_model(verbose=False, return_matrices=False)
+
+    jacobian, _ = _evaluate_second_order_terms(model, solution.ghx, solution.ghu)
+
+    n_states_and_shocks = model.dr_order.n_state_var + len(model.shocks)
+    assert_allclose(jacobian[:, :n_states_and_shocks], 0, atol=1e-10)
+
+
+def test_second_order_terms_of_a_linear_model_are_zero():
+    model = model_from_gcn(TEST_GCNS / "rbc_linearized.gcn", verbose=False)
+    solution = model.solve_model(verbose=False, return_matrices=False)
+
+    _, hessian = _evaluate_second_order_terms(model, solution.ghx, solution.ghu)
+
+    n_w = model.dr_order.n_state_var + 2 * len(model.shocks)
+    assert hessian.shape == (len(model.equations), n_w, n_w)
+    assert_allclose(hessian, 0)
+
+
+def test_second_order_parameter_inputs_include_calibrated_parameters():
+    model = model_from_gcn(TEST_GCNS / "one_block_2.gcn", verbose=False)
+    rng = np.random.default_rng(0)
+    ghx = rng.normal(size=(len(model.variables), model.dr_order.n_state_var))
+    ghu = rng.normal(size=(len(model.variables), len(model.shocks)))
+
+    _, param_inputs = model.second_order_derivative_terms(verbose=False)
+    jacobian, hessian = _evaluate_second_order_terms(model, ghx, ghu)
+
+    assert "alpha" in {node.name for node in param_inputs}
+    assert np.isfinite(jacobian).all() and np.isfinite(hessian).all()
+
+
 def test_a_linear_model_solution_records_no_log_linearization():
     model = load_and_cache_model("rbc_linearized.gcn")
 
