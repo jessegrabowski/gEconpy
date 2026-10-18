@@ -112,6 +112,7 @@ gEconpy
     gEconpy.solvers.backward_looking <gEconpy.solvers.backward_looking>
     gEconpy.solvers.cycle_reduction <gEconpy.solvers.cycle_reduction>
     gEconpy.solvers.gensys <gEconpy.solvers.gensys>
+    gEconpy.solvers.second_order <gEconpy.solvers.second_order>
     gEconpy.solvers.shared <gEconpy.solvers.shared>
     gEconpy.solvers.sparse_root <gEconpy.solvers.sparse_root>
     gEconpy.solvers.sparse_root.base <gEconpy.solvers.sparse_root.base>

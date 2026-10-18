@@ -79,6 +79,39 @@ def extract_dr_partition(oo, M) -> DynarePartition:
     )
 
 
+class SecondOrderMatrices(NamedTuple):
+    """Dynare's second-order decision rule, rows in decision-rule order and Kronecker columns folded into axes."""
+
+    names: list[str]
+    state_names: list[str]
+    ghxx: np.ndarray
+    ghxu: np.ndarray
+    ghuu: np.ndarray
+    ghs2: np.ndarray
+    shock_cov: np.ndarray
+
+
+def extract_second_order_matrices(oo, M) -> SecondOrderMatrices:
+    var_names = np.concatenate([x.item() for x in M["endo_names"]])
+    dynare_order = oo["dr"]["order_var"].ravel().astype(int) - 1
+    state_idx = oo["dr"]["state_var"].ravel().astype(int) - 1
+    dr_states = [i for i in dynare_order if i in state_idx]
+
+    n_variables, n_states, n_shocks = len(dynare_order), len(dr_states), oo["dr"]["ghu"].shape[1]
+
+    # MATLAB's kron(P, Q) puts entry (i, j) of a column pair at column i * Q.shape[1] + j, which is the row-major
+    # reshape of the folded axes.
+    return SecondOrderMatrices(
+        names=var_names[dynare_order].tolist(),
+        state_names=var_names[dr_states].tolist(),
+        ghxx=oo["dr"]["ghxx"].reshape(n_variables, n_states, n_states),
+        ghxu=oo["dr"]["ghxu"].reshape(n_variables, n_states, n_shocks),
+        ghuu=oo["dr"]["ghuu"].reshape(n_variables, n_shocks, n_shocks),
+        ghs2=oo["dr"]["ghs2"].ravel(),
+        shock_cov=np.atleast_2d(M["Sigma_e"]),
+    )
+
+
 def load_dynare_outputs(model_name) -> dict[str, pd.DataFrame]:
     models = get_available_models()
     if model_name not in models:
