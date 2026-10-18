@@ -63,6 +63,7 @@ from gEconpy.model.statistics import (
     summarize_perturbation_solution,
 )
 from gEconpy.model.steady_state import print_steady_state
+from gEconpy.rcparams import rc_context, rcParams
 
 _log = _logging.getLogger(__name__)
 if not _log.handlers and not _logging.root.handlers:
@@ -91,6 +92,8 @@ __all__ = [
     "print_gcn_file",
     "print_steady_state",
     "prior_solvability_check",
+    "rcParams",
+    "rc_context",
     "sample_from_priors",
     "sample_from_priors_qmc",
     "sample_perfect_foresight",

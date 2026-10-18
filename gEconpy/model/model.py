@@ -80,6 +80,7 @@ from gEconpy.model.tables import (
 )
 from gEconpy.parser.ast import GCNBlock, GCNModel, SymbolDeclaration, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
+from gEconpy.rcparams import rcParams
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 from gEconpy.solvers.gensys import interpret_gensys_output, solve_policy_function_with_gensys
@@ -90,16 +91,6 @@ _log = logging.getLogger(__name__)
 
 # Heading of the steady-state table of a model built without a parsed file, which has no authored block to name it.
 SOLVED_STEADY_STATE_BLOCK = "Steady_State"
-
-STEADY_STATE_TOL = 1e-8
-
-# Applied to the sum of an equation's term magnitudes, so an equation whose terms are large is held to the
-# accuracy float64 can deliver at that size.
-STEADY_STATE_RTOL = 1e-10
-
-# The gradient is the jacobian times the residual, so it inherits the jacobian's scale. Holding it to the
-# residual tolerance rejects correct answers for a model whose equations are steep at the steady state.
-STEADY_STATE_GRAD_TOL = 1e-6
 
 
 def _residual_scale(equation: TensorVariable) -> TensorVariable:
@@ -117,9 +108,14 @@ def _compile_residual_and_scale(equations: list[TensorVariable], mode: str | Non
     )
 
 
+def _steady_state_tolerance(scale: np.ndarray) -> np.ndarray:
+    """Return the largest residual an equation whose terms sum to ``scale`` in magnitude may have at a steady state."""
+    return rcParams["steady_state.tol"] + rcParams["steady_state.rtol"] * scale
+
+
 def _residual_within_tolerance(residual: np.ndarray, scale: np.ndarray) -> np.ndarray:
     """Whether each residual is finite and zero up to the steady-state tolerance at its equation's scale."""
-    return np.isfinite(residual) & (np.abs(residual) <= STEADY_STATE_TOL + STEADY_STATE_RTOL * scale)
+    return np.isfinite(residual) & (np.abs(residual) <= _steady_state_tolerance(scale))
 
 
 BOX_BOUND_METHODS = ("trust-constr", "L-BFGS-B", "powell")
@@ -1563,7 +1559,7 @@ class Model:
         use_hessp: bool = True,
         progressbar: bool = True,
         optimizer_kwargs: dict | None = None,
-        grad_tol: float = STEADY_STATE_GRAD_TOL,
+        grad_tol: float | None = None,
         verbose: bool = True,
         bounds: dict[str, tuple[float, float]] | None = None,
         prefer_transform: bool = False,
@@ -1611,11 +1607,12 @@ class Model:
             ``how``. ``'method'`` selects the algorithm and defaults to ``'hybr'`` for ``'root'`` and
             ``'trust-ncg'`` for ``'minimize'``. ``'maxiter'`` caps the iterations, defaults to 5000, and is renamed
             to the argument the chosen method expects (``'hybr'`` takes ``maxfev``). ``'tol'`` sets the residual
-            tolerance of the convergence check. Default None.
+            tolerance of the convergence check, and defaults to ``rcParams["steady_state.tol"]``. Default None.
         grad_tol : float, optional
             Tolerance on the gradient of the squared error at the solution. The gradient carries the Jacobian's
             scale, so a system whose residuals are at tolerance can still show a gradient orders of magnitude
-            larger, and judging both against one number reports a converged solve as a failure. Default 1e-6.
+            larger, and judging both against one number reports a converged solve as a failure. Defaults to
+            ``rcParams["steady_state.grad_tol"]``.
         verbose : bool, optional
             Log a convergence report. Default True.
         bounds : dict, optional
@@ -1669,7 +1666,9 @@ class Model:
             raise NotImplementedError(f'how must be one of "analytic", "root", or "minimize", got {how!r}.')
 
         optimizer_kwargs = {} if optimizer_kwargs is None else optimizer_kwargs
-        tol = optimizer_kwargs.get("tol", STEADY_STATE_TOL)
+        tol = optimizer_kwargs.get("tol", rcParams["steady_state.tol"])
+        if grad_tol is None:
+            grad_tol = rcParams["steady_state.grad_tol"]
         param_dict = self.parameters(**updates)
         f_ss = self.f_ss
 
@@ -2198,7 +2197,7 @@ class Model:
         loglin_negative_ss: bool = False,
         steady_state: dict | None = None,
         steady_state_kwargs: dict | None = None,
-        tol: float = 1e-8,
+        tol: float | None = None,
         max_iter: int = 1000,
         verbose: bool = True,
         on_failure: Literal["error", "ignore"] = "error",
@@ -2233,7 +2232,7 @@ class Model:
         steady_state_kwargs : dict, optional
             Keyword arguments passed to :meth:`steady_state`. Ignored when ``steady_state`` is given. Default None.
         tol : float, optional
-            Floating point tolerance of the solution. Default 1e-8.
+            Floating point tolerance of the solution. Defaults to ``rcParams["perturbation.tol"]``.
         max_iter : int, optional
             Maximum number of cycle reduction iterations. Unused by the other solvers. Default 1000.
         verbose : bool, optional
@@ -2480,6 +2479,8 @@ class Model:
                     "Second-order perturbation is not available for models with no forward-looking variables."
                 )
             return_matrices = False
+        if tol is None:
+            tol = rcParams["perturbation.tol"]
         if return_matrices is None:
             warnings.warn(
                 "solve_model will return a FirstOrderPerturbationSolution by default in the next major release. "
@@ -2778,7 +2779,7 @@ class Model:
         scale = np.asarray(scale).ravel()
         finite = np.isfinite(residual)
         excess = np.full(residual.shape, np.inf)
-        excess[finite] = np.abs(residual[finite]) / (STEADY_STATE_TOL + STEADY_STATE_RTOL * scale[finite])
+        excess[finite] = np.abs(residual[finite]) / _steady_state_tolerance(scale[finite])
         worst = int(np.argmax(excess))
         return f". Worst residual {residual[worst]:.3e} in {self._equation_ids[worst]}"
 

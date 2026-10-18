@@ -5,7 +5,6 @@ import numpy as np
 import scipy.sparse as sp
 
 DEFAULT_TOL = 1e-10
-DEFAULT_MAXITER = 1000
 DEFAULT_ARMIJO_C1 = 1e-4
 DEFAULT_ARMIJO_BETA = 0.5
 DEFAULT_ARMIJO_MAX_ITER = 50

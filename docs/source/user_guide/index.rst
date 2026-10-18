@@ -7,3 +7,4 @@ User Guide
    gcn_files/index
    solving
    estimation
+   configuration
