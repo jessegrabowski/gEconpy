@@ -2414,10 +2414,29 @@ class Model:
         if return_matrices:
             return np.ascontiguousarray(T), np.ascontiguousarray(R)
 
-        ss_values = {name.removesuffix("_ss"): value for name, value in ss_dict.items()}
+        return self._perturbation_solution(
+            T=T,
+            R=R,
+            steady_state=ss_dict,
+            log_linearize=log_linearize,
+            not_loglin_variables=not_loglin_variables,
+            loglin_negative_ss=loglin_negative_ss,
+        )
+
+    def _perturbation_solution(
+        self,
+        T: np.ndarray,
+        R: np.ndarray,
+        steady_state: Mapping[str, float],
+        log_linearize: bool = True,
+        not_loglin_variables: list[str] | None = None,
+        loglin_negative_ss: bool = False,
+    ) -> FirstOrderPerturbationSolution:
+        """Wrap policy matrices with the steady state and log-linearization they were solved under."""
+        ss_values = {name.removesuffix("_ss"): value for name, value in steady_state.items()}
         steady_state_values = np.array([ss_values[v.base_name] for v in self.variables])
         loglin_vars = self._loglin_variables(
-            steady_state=ss_dict,
+            steady_state=steady_state,
             log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
             loglin_negative_ss=loglin_negative_ss,
