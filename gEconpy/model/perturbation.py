@@ -65,6 +65,8 @@ class DROrder(NamedTuple):
         Number of equations referencing leads but no lags.
     n_both_eq : int
         Number of equations referencing both lags and leads.
+    var_has_current : ndarray of bool
+        Whether each variable, in model order, appears at time t in some equation.
     """
 
     var_order: np.ndarray
@@ -79,6 +81,12 @@ class DROrder(NamedTuple):
     n_lag_only_eq: int
     n_lead_only_eq: int
     n_both_eq: int
+    var_has_current: np.ndarray
+
+    @property
+    def current_positions(self) -> np.ndarray:
+        """Positions in decision-rule order of the variables that appear at time t. Dynare calls these ``kcurr``."""
+        return np.flatnonzero(self.var_has_current[self.var_order])
 
     @classmethod
     def from_model(cls, variables: list[TimeAwareSymbol], equations: list[sp.Expr]) -> "DROrder":
@@ -98,9 +106,11 @@ class DROrder(NamedTuple):
             Permutations and group sizes for the decision-rule ordering.
         """
         lag_index = {variable.set_t(-1): j for j, variable in enumerate(variables)}
+        current_index = {variable.set_t(0): j for j, variable in enumerate(variables)}
         lead_index = {variable.set_t(1): j for j, variable in enumerate(variables)}
 
         var_has_lag = np.zeros(len(variables), dtype=bool)
+        var_has_current = np.zeros(len(variables), dtype=bool)
         var_has_lead = np.zeros(len(variables), dtype=bool)
         eq_has_lag = np.zeros(len(equations), dtype=bool)
         eq_has_lead = np.zeros(len(equations), dtype=bool)
@@ -108,9 +118,11 @@ class DROrder(NamedTuple):
         for i, equation in enumerate(equations):
             atoms = equation.atoms(TimeAwareSymbol)
             lagged = [lag_index[atom] for atom in atoms if atom in lag_index]
+            current = [current_index[atom] for atom in atoms if atom in current_index]
             led = [lead_index[atom] for atom in atoms if atom in lead_index]
 
             var_has_lag[lagged] = True
+            var_has_current[current] = True
             var_has_lead[led] = True
             eq_has_lag[i] = bool(lagged)
             eq_has_lead[i] = bool(led)
@@ -140,6 +152,7 @@ class DROrder(NamedTuple):
             n_lag_only_eq=len(lag_only_eqs),
             n_lead_only_eq=len(lead_only_eqs),
             n_both_eq=len(both_eqs),
+            var_has_current=var_has_current,
         )
 
 

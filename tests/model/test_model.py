@@ -38,7 +38,7 @@ from gEconpy.model.steady_state import _ss_residual_to_pytensor, build_minimize_
 from gEconpy.utilities import safe_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
 from tests._resources.expected_matrices import expected_linearization_result
-from tests._resources.load_dynare import load_dynare_outputs
+from tests._resources.load_dynare import extract_dr_partition, load_dynare_outputs, read_dynare_output
 from tests.conftest import TEST_GCNS
 
 
@@ -519,6 +519,26 @@ def test_dr_order_groups_variables_and_equations_by_time_shift():
     assert (order.n_static_eq, order.n_lag_only_eq, order.n_lead_only_eq, order.n_both_eq) == (1, 1, 1, 1)
     assert order.var_order[order.inv_var_order].tolist() == [0, 1, 2, 3]
     assert order.eq_order[order.inv_eq_order].tolist() == [0, 1, 2, 3]
+
+    assert order.current_positions.tolist() == [0, 1, 2]
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    ["one_block_1_ss", "rbc_2_block_ss", pytest.param("full_nk", marks=pytest.mark.include_nk), "basic_rbc"],
+)
+def test_dr_order_matches_dynare(model_name):
+    oo, M = read_dynare_output(model_name)
+    dynare = extract_dr_partition(oo, M)
+    model = load_and_cache_model(model_name + ".gcn")
+    order = model.dr_order
+
+    names = [model.variables[i].base_name for i in order.var_order]
+    counts = (order.n_static_var, order.n_pred_only_var, order.n_mixed_var, order.n_forward_only_var)
+
+    assert names == dynare.names
+    assert counts == dynare.counts
+    assert order.current_positions.tolist() == dynare.current_positions.tolist()
 
 
 def test_invalid_solver_raises():
