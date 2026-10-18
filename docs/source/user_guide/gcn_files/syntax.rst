@@ -405,7 +405,8 @@ Publication tables
 ------------------
 
 :meth:`~gEconpy.model.model.Model.table` returns one group of the model as data. The groups are
-``equations``, ``variables``, ``shocks``, ``parameters`` and ``estimates``:
+``equations``, ``variables``, ``shocks``, ``parameters``, ``estimates``, ``steady_state`` and
+``steady_state_estimates``:
 
 .. code-block:: python
 
@@ -484,6 +485,32 @@ so a prior known only from draws leaves them empty.
 arviz's ``stats.ci_prob``, and the column heading names both, as ``89% HDI``. ``diagnostics=True`` adds the
 Monte Carlo standard errors of the mean and standard deviation, the bulk and tail effective sample sizes, and
 :math:`\hat{R}`.
+
+Three tables report the steady state:
+
+.. code-block:: python
+
+    model.write_table("variables", build_options={"steady_state": True}, booktabs=True)
+    model.write_table("steady_state")
+    model.write_table("steady_state_estimates", build_options={"idata": idata}, booktabs=True)
+
+``steady_state=True`` on the ``variables`` group solves the steady state at the current calibration and adds a
+column of values. It also takes the result of :meth:`~gEconpy.model.model.Model.steady_state`, so a steady
+state solved with non-default options prints as it was solved.
+
+The ``steady_state`` group prints the file's ``steady_state`` block as an ``align`` environment, in the form the
+author wrote it. A name the solver eliminated, such as a marginal cost fixed at one, still prints there. A
+model built without a parsed file, or from a file with no ``steady_state`` block, prints the relationships it
+holds instead. Those have every other steady-state value inlined, so each is printed with any subexpression
+that is another variable's solution replaced by that variable. ``K_ss`` prints as ``alpha * Y_ss / r_ss``
+rather than with the expressions for ``Y_ss`` and ``r_ss`` written out.
+
+The ``steady_state_estimates`` group summarizes the steady state that each parameter draw implies. It solves
+the steady state at every draw and reports the prior moments next to the posterior mean, standard deviation
+and interval. The prior draws come from the ``prior`` group of ``idata`` when it has one, and otherwise
+``prior_draws`` draws, 1000 by default, are taken from the GCN file's priors with ``random_seed``. Without
+``idata`` the table has the prior half alone. A draw whose steady state fails to solve is left out, and a
+warning reports how many were. The mode and the entropy need a density estimate, so they stay empty here.
 
 
 The notebook representation

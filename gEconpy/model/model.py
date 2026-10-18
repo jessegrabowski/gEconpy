@@ -5,7 +5,6 @@ import re
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
-from functools import partial
 from inspect import signature
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, overload
@@ -33,9 +32,11 @@ from gEconpy.classes.time_aware_symbol import (
 )
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
+from gEconpy.model.latex import authored_expressions
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import DROrder, check_perturbation_solution, make_not_loglin_flags
 from gEconpy.model.perturbation import linearize_model as _linearize_model
+from gEconpy.model.sampling import sample_from_priors
 from gEconpy.model.statistics.validation import _maybe_solve_steady_state
 from gEconpy.model.steady_state import (
     ERROR_FUNCTIONS,
@@ -43,11 +44,13 @@ from gEconpy.model.steady_state import (
     build_minimize_graphs,
     build_root_graphs,
     compile_known_ss,
+    resubstitute_steady_state,
     system_to_steady_state,
 )
 from gEconpy.model.tables import (
     DEFAULT_PRIOR_STATS,
     DIALECTS,
+    SAMPLE_DIMS,
     TABLE_GROUPS,
     TABLE_WRITERS,
     CalibrationTable,
@@ -73,6 +76,9 @@ from gEconpy.solvers.gensys import interpret_gensys_output, solve_policy_functio
 from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
 
 _log = logging.getLogger(__name__)
+
+# Heading of the steady-state table of a model built without a parsed file, which has no authored block to name it.
+SOLVED_STEADY_STATE_BLOCK = "Steady_State"
 
 STEADY_STATE_TOL = 1e-8
 
@@ -689,27 +695,262 @@ class Model:
             )
         return names
 
-    def _symbol_table(self, group: str, markup: Markup = "latex") -> SymbolTable:
-        """Build the variable or shock rows, resolving each symbol's declared caption and rendering."""
+    def _symbol_rows(
+        self,
+        symbols: Sequence[TimeAwareSymbol],
+        markup: Markup,
+        steady_state: Mapping[str, float] | None = None,
+    ) -> list[SymbolRow]:
+        """Build one row per symbol, resolving its declared caption and rendering, and its steady-state value."""
         overrides = self._markup_overrides(markup)
         declarations = self._declarations_by_name()
-        symbols = {"variables": self.variables, "shocks": self.shocks}[group]
         render = DIALECTS[markup].render_symbol
+        steady_state = steady_state or {}
 
         rows = []
         for symbol in symbols:
             key = variable_key(symbol.base_name)
             declaration = declarations.get(key)
+            value = steady_state.get(symbol.base_name)
             rows.append(
                 SymbolRow(
                     symbol=render(symbol, name_override=overrides.get(key)),
                     description=declaration.name if declaration is not None else None,
+                    steady_state=None if value is None else float(value),
                 )
             )
-        return SymbolTable(rows=rows)
+        return rows
+
+    def _variable_table(
+        self, steady_state: Mapping[str, float] | bool = False, markup: Markup = "latex"
+    ) -> SymbolTable:
+        """
+        Build the variable rows, optionally with each variable's steady-state value.
+
+        Parameters
+        ----------
+        steady_state : mapping or bool, optional
+            Steady-state values keyed by variable name, with or without the ``_ss`` suffix, as
+            :meth:`steady_state` returns them. True solves the steady state at the current calibration. Defaults
+            to False, which prints no values.
+        markup : str, optional
+            Language the cells are rendered in. Defaults to ``"latex"``.
+
+        Returns
+        -------
+        table : SymbolTable
+            The rows, renderable as LaTeX or as a dataframe.
+        """
+        if steady_state is True:
+            steady_state = self.steady_state(verbose=False, progressbar=False)
+            if not steady_state.success:
+                raise ValueError(
+                    "The steady state did not solve at the current calibration, so there are no values to print. "
+                    "Solve it with Model.steady_state and pass the result as steady_state."
+                )
+        values = {} if steady_state is False else _values_by_base_name(steady_state)
+        return SymbolTable(rows=self._symbol_rows(self.variables, markup, values))
+
+    def _shock_table(self, markup: Markup = "latex") -> SymbolTable:
+        """Build the shock rows, resolving each shock's declared caption and rendering."""
+        return SymbolTable(rows=self._symbol_rows(self.shocks, markup))
+
+    def _steady_state_table(self, markup: Markup = "latex") -> EquationTable:
+        """
+        Build the steady-state relationships as table data, as the GCN file's steady-state block writes them.
+
+        A model built without a parsed file, or from a file with no steady-state block, has no authored block. It
+        prints the relationships it holds instead, with each written in terms of the other steady-state variables
+        rather than with their solutions inlined. A model with neither prints an empty table.
+
+        Parameters
+        ----------
+        markup : str, optional
+            Language the cells are rendered in. Defaults to ``"latex"``.
+
+        Returns
+        -------
+        table : EquationTable
+            The rows, under one heading, renderable as LaTeX or as a dataframe.
+        """
+        overrides = self._markup_overrides(markup)
+        render_sides = DIALECTS[markup].render_sides
+
+        blocks = [block for block in self._source_ast.blocks if block.is_steady_state] if self._source_ast else []
+        if not blocks:
+            return EquationTable(
+                rows=[
+                    EquationRow(
+                        block=SOLVED_STEADY_STATE_BLOCK,
+                        equation_id=f"{SOLVED_STEADY_STATE_BLOCK}.relationships.{position}",
+                        label=None,
+                        left=left,
+                        right=right,
+                    )
+                    for position, equation in enumerate(resubstitute_steady_state(self.steady_state_relationships))
+                    for left, right in [render_sides(equation.lhs, equation.rhs, overrides)]
+                ]
+            )
+
+        rows = []
+        for block in blocks:
+            for component in ("definitions", "identities"):
+                for position, equation in enumerate(getattr(block, component)):
+                    left, right = render_sides(*authored_expressions(equation), overrides)
+                    rows.append(
+                        EquationRow(
+                            block=block.name,
+                            equation_id=f"{block.name}.{component}.{position}",
+                            label=equation.declared_name,
+                            left=left,
+                            right=right,
+                        )
+                    )
+        return EquationTable(rows=rows)
+
+    def _steady_state_estimates_table(
+        self,
+        idata: xr.DataTree | xr.Dataset | None = None,
+        prior_draws: int = 1000,
+        random_seed: int | np.random.Generator | None = None,
+        prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS,
+        ci_kind: Literal["hdi", "eti"] = "hdi",
+        ci_prob: float | None = None,
+        markup: Markup = "latex",
+    ) -> EstimationTable:
+        r"""
+        Build the distribution of each variable's steady state under the prior and the posterior.
+
+        Every draw of the parameters is a steady state, so the table solves the steady state once per draw and
+        summarizes the values. The prior draws come from the ``prior`` group of ``idata`` when it has one, and
+        are sampled from the GCN file's priors otherwise. A draw whose steady state fails to solve is left out of
+        the summary, and a warning reports how many there were.
+
+        Parameters
+        ----------
+        idata : DataTree or Dataset, optional
+            Sampler output with a ``posterior`` group, a ``prior`` group or both, or the posterior dataset
+            itself. Defaults to none, which builds the prior half of the table alone.
+        prior_draws : int, optional
+            Number of draws from the GCN file's priors, used only when ``idata`` has no ``prior`` group.
+            Defaults to 1000.
+        random_seed : int or Generator, optional
+            Seed for the draws from the GCN file's priors. Defaults to fresh entropy.
+        prior_stats : sequence of str, optional
+            Statistics of the prior to print. The mode and the entropy need a density estimate, so they stay
+            empty. Defaults to the mean and the standard deviation.
+        ci_kind : str, optional
+            ``"hdi"`` or ``"eti"``, the posterior interval to print. Defaults to ``"hdi"``.
+        ci_prob : float, optional
+            Probability mass of the posterior interval. Defaults to arviz's ``stats.ci_prob``.
+        markup : str, optional
+            Language the cells are rendered in. Defaults to ``"latex"``.
+
+        Returns
+        -------
+        table : EstimationTable
+            One row per variable, renderable as LaTeX or as a dataframe.
+        """
+        free_names = {parameter.name for parameter in self.params}
+        prior_group = None if idata is None else prior_dataset(idata)
+
+        if prior_group is not None:
+            prior_parameters = prior_group[[name for name in prior_group.data_vars if name in free_names]]
+        else:
+            priors = {name: prior for name, prior in self.param_priors.to_string().items() if name in free_names}
+            prior_parameters = (
+                xr.Dataset.from_dataframe(sample_from_priors(priors, n_samples=prior_draws, seed=random_seed))
+                .rename({"index": "draw"})
+                .expand_dims("chain")
+                if priors
+                else None
+            )
+
+        if idata is None and prior_parameters is None:
+            raise ValueError(
+                "The model declares no priors over its free parameters, so the steady state has no prior "
+                "distribution to summarize. Pass sampler output as idata."
+            )
+
+        prior_values = None if prior_parameters is None else self._steady_state_draws(prior_parameters, "prior")
+        # A DataTree holding only a prior group is prior predictive output, which has no posterior half.
+        if idata is None or (isinstance(idata, xr.DataTree) and "posterior" not in idata.children):
+            summary, interval = None, None
+        else:
+            posterior = posterior_dataset(idata)
+            posterior_values = self._steady_state_draws(
+                posterior[[name for name in posterior.data_vars if name in free_names]], "posterior"
+            )
+            summary, interval = summarize_posterior(
+                posterior_values,
+                [variable.base_name for variable in self.variables],
+                ci_kind=ci_kind,
+                ci_prob=ci_prob,
+            )
+
+        overrides = self._markup_overrides(markup)
+        declarations = self._declarations_by_name()
+        render = DIALECTS[markup].render_symbol
+
+        rows = []
+        for variable in self.variables:
+            key = variable_key(variable.base_name)
+            draws = None if prior_values is None else prior_values[variable.base_name].to_numpy().ravel()
+            _, draw_statistics = reconcile_prior(
+                None, None if draws is None else draws[np.isfinite(draws)], prior_stats
+            )
+            rows.append(
+                EstimateRow(
+                    symbol=render(variable.to_ss(), name_override=overrides.get(key)),
+                    description=declarations[key].name if key in declarations else None,
+                    prior=None,
+                    prior_draw_statistics=draw_statistics,
+                    **({} if summary is None else summary.loc[variable.base_name].to_dict()),
+                )
+            )
+        return EstimationTable(
+            rows=rows,
+            prior_stats=prior_stats,
+            interval=interval,
+            symbol_heading="Variable",
+            prior_stat_prefix="Prior ",
+        )
+
+    def _steady_state_draws(self, parameters: xr.Dataset, group: str) -> xr.Dataset:
+        """
+        Solve the steady state at every draw of the parameters, keeping the draws' ``chain`` and ``draw`` dims.
+
+        A parameter the draws leave out takes its GCN value. A draw whose steady state fails to solve is NaN.
+        """
+        shape = (parameters.sizes["chain"], parameters.sizes["draw"])
+        columns = {
+            str(name): parameters[name].transpose(*SAMPLE_DIMS).to_numpy().ravel() for name in parameters.data_vars
+        }
+        names = [variable.base_name for variable in self.variables]
+        values = np.full((int(np.prod(shape)), len(names)), np.nan)
+
+        for index in range(len(values)):
+            result = self.steady_state(
+                verbose=False, progressbar=False, **{name: float(column[index]) for name, column in columns.items()}
+            )
+            if result.success:
+                solved = _values_by_base_name(result)
+                values[index] = [solved[name] for name in names]
+
+        failures = int(np.isnan(values).any(axis=1).sum())
+        if failures:
+            _log.warning(
+                f"The steady state failed to solve at {failures} of {len(values)} {group} draws, which the "
+                "summary leaves out."
+            )
+
+        return xr.Dataset(
+            {name: (SAMPLE_DIMS, values[:, position].reshape(shape)) for position, name in enumerate(names)},
+            coords={dim: parameters[dim] for dim in SAMPLE_DIMS if dim in parameters.coords},
+        )
 
     @overload
-    def table(self, group: Literal["equations"], **options: Any) -> EquationTable: ...
+    def table(self, group: Literal["equations", "steady_state"], **options: Any) -> EquationTable: ...
 
     @overload
     def table(self, group: Literal["variables", "shocks"], **options: Any) -> SymbolTable: ...
@@ -718,7 +959,7 @@ class Model:
     def table(self, group: Literal["parameters"], **options: Any) -> CalibrationTable: ...
 
     @overload
-    def table(self, group: Literal["estimates"], **options: Any) -> EstimationTable: ...
+    def table(self, group: Literal["estimates", "steady_state_estimates"], **options: Any) -> EstimationTable: ...
 
     def table(
         self, group: TableGroup, **options: Any
@@ -729,14 +970,20 @@ class Model:
         Parameters
         ----------
         group : str
-            One of ``"equations"``, ``"variables"``, ``"shocks"``, ``"parameters"`` or ``"estimates"``.
+            One of ``"equations"``, ``"variables"``, ``"shocks"``, ``"parameters"``, ``"estimates"``,
+            ``"steady_state"`` or ``"steady_state_estimates"``.
         **options
             Build options for the group. ``"equations"`` takes ``expectations``, which wraps lead-carrying
             terms in :math:`\mathbb{E}_t` except where the author wrote the operator themselves and defaults
-            to True. ``"parameters"`` and ``"estimates"`` take ``prior_stats`` and ``include_prior_params``,
-            which choose the prior columns. ``"estimates"`` also takes ``idata``, sampler output whose posterior
-            adds the posterior columns and whose prior group, when present, supplies the priors, along with
-            ``var_names``, ``ci_kind``, ``ci_prob`` and ``diagnostics``. The other groups take no options.
+            to True. ``"variables"`` takes ``steady_state``, steady-state values keyed by variable name or True
+            to solve them at the current calibration, which adds a column of values. ``"parameters"`` and
+            ``"estimates"`` take ``prior_stats`` and ``include_prior_params``, which choose the prior columns.
+            ``"estimates"`` also takes ``idata``, sampler output whose posterior adds the posterior columns and
+            whose prior group, when present, supplies the priors, along with ``var_names``, ``ci_kind``,
+            ``ci_prob`` and ``diagnostics``. ``"steady_state_estimates"`` solves the steady state at every
+            parameter draw and summarizes the values. It takes ``idata``, ``prior_stats``, ``ci_kind`` and
+            ``ci_prob`` as ``"estimates"`` does, plus ``prior_draws`` and ``random_seed`` for sampling the GCN
+            file's priors when ``idata`` has no prior group. The other groups take no options.
 
         Returns
         -------
@@ -750,8 +997,10 @@ class Model:
             "equations": self._equation_table,
             "parameters": self._calibration_table,
             "estimates": self._estimation_table,
-            "variables": partial(self._symbol_table, group),
-            "shocks": partial(self._symbol_table, group),
+            "variables": self._variable_table,
+            "shocks": self._shock_table,
+            "steady_state": self._steady_state_table,
+            "steady_state_estimates": self._steady_state_estimates_table,
         }
         return _call_for_group(builders[group], group=group, kind="build option", **options)
 
@@ -769,7 +1018,8 @@ class Model:
         Parameters
         ----------
         group : str
-            One of ``"equations"``, ``"variables"``, ``"shocks"``, ``"parameters"`` or ``"estimates"``.
+            One of ``"equations"``, ``"variables"``, ``"shocks"``, ``"parameters"``, ``"estimates"``,
+            ``"steady_state"`` or ``"steady_state_estimates"``.
         writer : str, optional
             Markup to emit. Defaults to ``"latex"``.
         path : str or Path, optional
@@ -779,7 +1029,8 @@ class Model:
         **style
             Style options for the writer, such as ``caption``, ``label``, ``size``, ``widths`` and
             ``booktabs``. An option the group's renderer does not take raises ``TypeError``, so the
-            ``"equations"`` group, which renders as an ``align`` environment, takes none of them.
+            ``"equations"`` and ``"steady_state"`` groups, which render as an ``align`` environment, take none
+            of them.
 
         Returns
         -------
@@ -2582,6 +2833,11 @@ class _ResidualFunctions(NamedTuple):
     resid: Callable
     jac: Callable | None = None
     grad: Callable | None = None
+
+
+def _values_by_base_name(values: Mapping[Any, Any]) -> dict[str, float]:
+    """Key steady-state values by variable name, whether given as symbols or as names with or without ``_ss``."""
+    return {str(get_name(key)).removesuffix("_ss"): float(value) for key, value in values.items()}
 
 
 def _call_for_group(renderer: Callable[..., Any], group: str, kind: str, **options: Any) -> Any:

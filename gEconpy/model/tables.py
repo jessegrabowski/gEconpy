@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal, Protocol, cast, get_args
 import arviz_stats as azs
 import numpy as np
 import pandas as pd
+import sympy as sp
 import xarray as xr
 
 from arviz_base import rcParams as arviz_rc_params
@@ -22,10 +23,12 @@ from gEconpy.classes.time_aware_symbol import (
     render_name_typst,
     render_typst,
 )
-from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex
-from gEconpy.model.typst import definition_rows_typst, equation_sides_typst
+from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex, render_sides
+from gEconpy.model.typst import definition_rows_typst, equation_sides_typst, typst
 
-TableGroup = Literal["equations", "variables", "shocks", "parameters", "estimates"]
+TableGroup = Literal[
+    "equations", "variables", "shocks", "parameters", "estimates", "steady_state", "steady_state_estimates"
+]
 Markup = Literal["latex", "typst"]
 # The statistics every preliz family reports, which is the vocabulary a caller may ask a prior for. A name
 # outside it is rejected rather than rendered empty, because an empty column in a paper is not a visible error.
@@ -163,6 +166,8 @@ class _Dialect:
         Renders one equation as its two sides.
     definition_rows : callable
         Renders every ``definitions`` entry of a parsed file.
+    render_sides : callable
+        Renders a left and a right expression, taking the declared overrides.
     """
 
     escape: Callable[[str], str]
@@ -173,6 +178,7 @@ class _Dialect:
     render_name: Callable[..., str]
     equation_sides: Callable[..., tuple[str, str]]
     definition_rows: Callable[..., list[tuple[str, str, str, str]]]
+    render_sides: Callable[..., tuple[str, str]]
 
 
 @dataclass(frozen=True)
@@ -224,6 +230,7 @@ LATEX = _Dialect(
     render_name=render_name_latex,
     equation_sides=equation_sides_latex,
     definition_rows=definition_rows,
+    render_sides=partial(render_sides, printer=sp.latex, renderer=render_latex),
 )
 
 TYPST = _Dialect(
@@ -235,6 +242,7 @@ TYPST = _Dialect(
     render_name=render_name_typst,
     equation_sides=equation_sides_typst,
     definition_rows=definition_rows_typst,
+    render_sides=partial(render_sides, printer=typst, renderer=render_typst),
 )
 
 # The markup a writer emits, which is also the language a table's rows are built in.
@@ -667,10 +675,15 @@ class _TabularTable(ABC):
 
 @dataclass(frozen=True)
 class SymbolRow:
-    """One variable or shock of a model, with the caption its ``symbols`` entry declares."""
+    """
+    One variable or shock of a model, with the caption its ``symbols`` entry declares.
+
+    ``steady_state`` is the variable's steady-state value, None for a shock or a table built without one.
+    """
 
     symbol: str
     description: str | None
+    steady_state: float | None = None
 
 
 @dataclass(frozen=True)
@@ -685,6 +698,7 @@ class SymbolTable(_TabularTable):
         return [
             _Column("Symbol", "left", lambda dialect, row: dialect.math(row.symbol)),
             _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.5),
+            _Column("Steady state", "right", lambda dialect, row: _format_value(row.steady_state, times=dialect.times)),
         ]
 
 
@@ -730,12 +744,23 @@ def _check_prior_stats(prior_stats: Sequence[str]) -> None:
         raise ValueError(f"prior_stats must name statistics from {', '.join(PRIOR_STATS)}, got {', '.join(unknown)}.")
 
 
-def _prior_columns(prior_stats: Sequence[str], include_prior_params: bool) -> list[_Column]:
-    """Return the family column, one column per requested statistic, and the parameters when asked for."""
+def _prefixed_heading(prefix: str, heading: str) -> str:
+    """Join a prefix to a heading in sentence case, keeping an abbreviation such as ``S.D.`` as it is."""
+    if not prefix:
+        return heading
+    return prefix + (heading if heading.isupper() else heading.lower())
+
+
+def _prior_columns(prior_stats: Sequence[str], include_prior_params: bool, stat_prefix: str = "") -> list[_Column]:
+    """
+    Return the family column, one column per requested statistic, and the parameters when asked for.
+
+    ``stat_prefix`` heads each statistic, for a table with no family column to say the statistics are the prior's.
+    """
     columns = [_Column("Prior", "left", lambda dialect, row: dialect.escape(row.prior_family))]
     columns += [
         _Column(
-            PRIOR_STAT_HEADINGS.get(name, name.title()),
+            _prefixed_heading(stat_prefix, PRIOR_STAT_HEADINGS.get(name, name.title())),
             "right",
             lambda dialect, row, name=name: _format_statistic(dialect, row.prior_stat(name)),
         )
@@ -1095,12 +1120,19 @@ class EstimationTable(_TabularTable):
         Print the distribution's own parameters in a column of their own. Defaults to False.
     interval : str, optional
         Heading of the posterior interval column, such as ``"89% HDI"``. Defaults to no posterior.
+    symbol_heading : str, optional
+        Heading of the symbol column. Defaults to ``"Parameter"``.
+    prior_stat_prefix : str, optional
+        Prefix of each prior statistic's heading. A table whose priors are known only from draws prints no family
+        column, and passes ``"Prior "`` so its moments are not read as the posterior's. Defaults to none.
     """
 
     rows: tuple[EstimateRow, ...] | list[EstimateRow]
     prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS
     include_prior_params: bool = False
     interval: str | None = None
+    symbol_heading: str = "Parameter"
+    prior_stat_prefix: str = ""
 
     _row_type: ClassVar[type] = EstimateRow
 
@@ -1140,9 +1172,11 @@ class EstimationTable(_TabularTable):
 
     def _columns(self) -> list[_Column]:
         return [
-            _Column("Parameter", "left", lambda dialect, row: dialect.math(row.symbol)),
+            _Column(self.symbol_heading, "left", lambda dialect, row: dialect.math(row.symbol)),
             _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.3),
-            *_prior_columns(self.prior_stats, include_prior_params=self.include_prior_params),
+            *_prior_columns(
+                self.prior_stats, include_prior_params=self.include_prior_params, stat_prefix=self.prior_stat_prefix
+            ),
             _Column("Post. mean", "right", lambda dialect, row: _format_statistic(dialect, row.posterior_mean)),
             _Column("Post. S.D.", "right", lambda dialect, row: _format_statistic(dialect, row.posterior_sd)),
             _Column(

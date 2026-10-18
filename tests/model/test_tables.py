@@ -526,7 +526,7 @@ def test_the_rendered_calibration_has_the_expected_shape():
     )
 
 
-@pytest.mark.parametrize("group", ["equations", "parameters", "estimates"])
+@pytest.mark.parametrize("group", ["equations", "parameters", "estimates", "steady_state", "steady_state_estimates"])
 def test_the_rendered_table_compiles(rbc, group, tmp_path):
     r"""
     The feature's whole contract is valid LaTeX, and an empty table once produced output pdflatex rejected.
@@ -558,8 +558,9 @@ def test_the_rendered_table_compiles(rbc, group, tmp_path):
     "group, columns",
     [
         ("equations", ["block", "equation_id", "label", "equation"]),
-        ("variables", ["symbol", "description"]),
-        ("shocks", ["symbol", "description"]),
+        ("variables", ["symbol", "description", "steady_state"]),
+        ("shocks", ["symbol", "description", "steady_state"]),
+        ("steady_state", ["block", "equation_id", "label", "equation"]),
         (
             "parameters",
             ["symbol", "description", "value", "prior", "prior_mean", "prior_std", "prior_parameters", "source"],
@@ -631,6 +632,91 @@ def test_a_declared_name_replaces_the_whole_variable_name(tmp_path):
     rows = model_from_gcn(path, verbose=False).table("variables").rows
 
     assert [row.symbol for row in rows] == [r"\hat{p}_{H,t}"]
+
+
+def _draws(**values: list[float]) -> xr.Dataset:
+    """One chain of parameter draws, taking each listed value in turn."""
+    return xr.Dataset({name: (("chain", "draw"), [draws]) for name, draws in values.items()})
+
+
+class TestSteadyStateTables:
+    @pytest.mark.parametrize("solved", [False, True], ids=["values_passed", "solved_by_the_table"])
+    def test_a_variable_row_carries_its_steady_state_value(self, rbc, solved):
+        """Values come keyed ``C_ss``, as ``Model.steady_state`` returns them, and match by variable."""
+        steady_state = rbc.steady_state(verbose=False, progressbar=False)
+
+        frame = rbc.table("variables", steady_state=True if solved else steady_state).to_frame().set_index("symbol")
+
+        assert frame.loc["K_{t}", "steady_state"] == pytest.approx(steady_state["K_ss"])
+        assert "Steady state" in rbc.write_table("variables", build_options={"steady_state": steady_state})
+        assert "Steady state" not in rbc.write_table("variables")
+
+    def test_a_shock_has_no_steady_state_to_print(self, rbc):
+        with pytest.raises(TypeError, match="'shocks' takes no build option 'steady_state'"):
+            rbc.table("shocks", steady_state=True)
+
+    def test_the_steady_state_group_prints_the_authored_block(self, rbc):
+        """The authored block keeps names the solved system eliminated, such as ``mc``, and the author's form."""
+        block = next(block for block in rbc._source_ast.blocks if block.is_steady_state)
+
+        rows = rbc.table("steady_state").rows
+
+        assert len(rows) == len(block.definitions) + len(block.identities)
+        assert (rows[1].left, rows[1].right) == (r"\text{mc}_{ss}", "1")
+        assert rows[0].equation_id == f"{block.name}.identities.0"
+
+    def test_a_model_without_a_parsed_file_prints_its_solved_relationships(self, rbc, monkeypatch):
+        """The relationships are printed in terms of each other, the way an author would write them."""
+        monkeypatch.setattr(rbc, "_source_ast", None)
+
+        rows = {row.left: row.right for row in rbc.table("steady_state").rows}
+
+        assert len(rows) == len(rbc.steady_state_relationships)
+        assert rows["K_{ss}"] == r"\frac{\alpha Y_{ss}}{r_{ss}}"
+        assert rows["A_{ss}"] == "1"
+
+    def test_each_half_summarizes_the_steady_state_solved_at_its_own_draws(self, rbc):
+        """Constant draws make the expected summary one steady-state solve, and the prior group beats the GCN priors."""
+        idata = xr.DataTree.from_dict(
+            {"posterior": _draws(alpha=[0.3] * 4), "prior": _draws(alpha=[0.4] * 4, delta=[0.03] * 4)}
+        )
+        posterior_ss = rbc.steady_state(verbose=False, progressbar=False, alpha=0.3)
+        prior_ss = rbc.steady_state(verbose=False, progressbar=False, alpha=0.4, delta=0.03)
+
+        frame = rbc.table("steady_state_estimates", idata=idata).to_frame().set_index("symbol")
+
+        assert frame.loc["K_{ss}", "posterior_mean"] == pytest.approx(posterior_ss["K_ss"])
+        assert frame.loc["K_{ss}", "posterior_sd"] == pytest.approx(0)
+        assert frame.loc["K_{ss}", "prior_mean"] == pytest.approx(prior_ss["K_ss"])
+        assert len(frame) == len(rbc.variables)
+
+    def test_without_a_prior_group_the_prior_is_drawn_from_the_gcn_file(self, rbc):
+        build_options = {"prior_draws": 50, "random_seed": 0}
+
+        rendered = rbc.write_table("steady_state_estimates", build_options=build_options)
+
+        assert rendered == rbc.write_table("steady_state_estimates", build_options=build_options)
+        assert r"\textbf{Variable} & \textbf{Description} & \textbf{Prior mean} & \textbf{Prior S.D.} \\" in rendered
+
+    def test_a_draw_whose_steady_state_fails_is_left_out_of_the_summary(self, rbc, caplog):
+        """``beta = 1.2`` puts the rental rate below zero, where the analytic steady state is NaN."""
+        idata = xr.DataTree.from_dict({"prior": _draws(beta=[0.99, 0.99, 1.2])})
+
+        with caplog.at_level("WARNING"):
+            frame = rbc.table("steady_state_estimates", idata=idata).to_frame().set_index("symbol")
+
+        assert frame.loc["K_{ss}", "prior_mean"] == pytest.approx(
+            rbc.steady_state(verbose=False, progressbar=False, beta=0.99)["K_ss"]
+        )
+        assert "failed to solve at 1 of 3 prior draws" in caplog.text
+        assert "Steady State was not found" not in caplog.text
+
+    def test_a_model_with_no_priors_needs_sampler_output(self, tmp_path):
+        path = tmp_path / "bare.gcn"
+        path.write_text("block H { identities { Y[] = alpha * A[]; A[] = 1; }; calibration { alpha = 0.3; }; };\n")
+
+        with pytest.raises(ValueError, match="declares no priors"):
+            model_from_gcn(path, verbose=False).table("steady_state_estimates")
 
 
 class TestWriteTable:
