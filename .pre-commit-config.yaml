@@ -53,6 +53,15 @@ repos:
       pass_filenames: false
       files: ^(gEconpy/.*\.py|docs/generate_api\.py)$
 
+    - id: docs-xrefs
+      name: Docs cross-references resolve
+      # The dummy builder resolves every reference without writing HTML. The output directory keeps Sphinx's cache, so
+      # only modules whose files changed are re-read.
+      entry: pixi run -e docs python -m sphinx -W --keep-going -q -b dummy docs/source docs/build/xref-check
+      language: system
+      pass_filenames: false
+      files: ^(gEconpy/.*\.py|docs/.*|sphinxext/.*)$
+
     - id: notebook_name
       entry: '\(notebook_name\)='
       language: pygrep
