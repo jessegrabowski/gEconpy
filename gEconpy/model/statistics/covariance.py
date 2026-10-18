@@ -150,7 +150,9 @@ def stationary_covariance_matrix(
     )
 
     T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
-    Sigma = _stationary_covariance(T, R, shocks, shock_std_dict, shock_cov_matrix, shock_std)
+    Sigma = _stationary_covariance(
+        T, R, shocks=shocks, shock_std_dict=shock_std_dict, shock_cov_matrix=shock_cov_matrix, shock_std=shock_std
+    )
 
     if return_df:
         variables = [x.base_name for x in model.variables]
@@ -229,9 +231,9 @@ def autocovariance_matrix(
         model,
         T,
         R,
-        shock_std_dict,
-        shock_cov_matrix,
-        shock_std,
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
         n_lags=n_lags,
         correlation=correlation,
         return_xr=return_xr,
@@ -300,7 +302,15 @@ def autocorrelation_matrix(
     """
     T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
     return _autocovariance(
-        model, T, R, shock_std_dict, shock_cov_matrix, shock_std, n_lags=n_lags, correlation=True, return_xr=return_xr
+        model,
+        T,
+        R,
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
+        n_lags=n_lags,
+        correlation=True,
+        return_xr=return_xr,
     )
 
 
@@ -332,7 +342,9 @@ def _autocovariance(
     correlation: bool,
     return_xr: bool,
 ) -> xr.DataArray | np.ndarray:
-    Sigma = _stationary_covariance(T, R, model.shocks, shock_std_dict, shock_cov_matrix, shock_std)
+    Sigma = _stationary_covariance(
+        T, R, shocks=model.shocks, shock_std_dict=shock_std_dict, shock_cov_matrix=shock_cov_matrix, shock_std=shock_std
+    )
     result = _compute_autocovariance_matrix(T, Sigma, n_lags=n_lags, correlation=correlation)
 
     if not return_xr:
