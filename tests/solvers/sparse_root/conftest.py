@@ -285,7 +285,9 @@ def stacked_system():
     true_stack = np.vstack([y_initial, y_true, y_terminal])
     offsets = period_residual(true_stack[:-2], true_stack[1:-1], true_stack[2:])
 
-    layout = build_stacked_jacobian_layout(_period_sparsity(n_vars), n_vars=n_vars, n_eq=n_vars, T=horizon)
+    sparsity = _period_sparsity(n_vars)
+    pattern_rows, pattern_columns = np.nonzero(sparsity)
+    layout = build_stacked_jacobian_layout(sparsity, n_vars=n_vars, n_eq=n_vars, T=horizon)
 
     def fun(x):
         stack = np.vstack([y_initial, x.reshape(horizon, n_vars), y_terminal])
@@ -297,7 +299,7 @@ def stacked_system():
         jacobians[:, equations, n_vars + equations] = -2.0 + nonlinear_gain * (1.0 - 3.0 * current**2) - coupling_gain
         jacobians[:, equations, n_vars + neighbor] = coupling_gain
         jacobians[:, equations, 2 * n_vars + equations] = 1.0
-        return residuals.ravel(), assemble_stacked_jacobian(jacobians, layout)
+        return residuals.ravel(), assemble_stacked_jacobian(jacobians[:, pattern_rows, pattern_columns], layout)
 
     x_true = y_true.ravel()
     return StackedSystem(

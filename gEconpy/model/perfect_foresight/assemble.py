@@ -14,11 +14,11 @@ class StackedJacobianLayout:
     Attributes
     ----------
     gather : ndarray of int
-        Flat indices into the ``(T, n_eq, 3 * n_vars)`` array of period Jacobians, in compressed-column order.
+        Flat indices into the ``(T, nnz)`` array of period Jacobian entries, in compressed-column order.
     indices, indptr : ndarray of int
         Row indices and column pointers of the compressed-column result.
     period_shape : tuple of int
-        Shape ``(T, n_eq, 3 * n_vars)`` that ``gather`` indexes into.
+        Shape ``(T, nnz)`` that ``gather`` indexes into.
     shape : tuple of int
         Shape of the stacked Jacobian.
     """
@@ -26,7 +26,7 @@ class StackedJacobianLayout:
     gather: np.ndarray
     indices: np.ndarray
     indptr: np.ndarray
-    period_shape: tuple[int, int, int]
+    period_shape: tuple[int, int]
     shape: tuple[int, int]
 
 
@@ -39,8 +39,9 @@ def build_stacked_jacobian_layout(
     """
     Resolve the block-tridiagonal structure of the stacked system once, for reuse across Newton iterations.
 
-    Each period Jacobian has columns ordered ``[y_{t-1}, y_t, y_{t+1}]``. The ``y_{t-1}`` block of the first period
-    and the ``y_{t+1}`` block of the last period multiply the fixed boundary conditions and are dropped.
+    Each period supplies the entries of its Jacobian that ``sparsity_pattern`` marks, in the row-major order of
+    ``np.nonzero(sparsity_pattern)``, with columns ordered ``[y_{t-1}, y_t, y_{t+1}]``. The ``y_{t-1}`` block of the
+    first period and the ``y_{t+1}`` block of the last period multiply the fixed boundary conditions and are dropped.
 
     Parameters
     ----------
@@ -72,22 +73,25 @@ def build_stacked_jacobian_layout(
     # The pattern is supplied rather than read off the period Jacobians because an entry can pass through zero in
     # every period at once (a steady-state initial guess, a parameter path crossing zero). A pattern inferred from
     # those values drops it, leaving Newton to step against a Jacobian that is wrong rather than approximate.
-    blocks = [np.nonzero(sparsity_pattern[:, start : start + n_vars]) for start in (0, n_vars, 2 * n_vars)]
-    placements = ((-1, 0), (0, n_vars), (1, 2 * n_vars))
-    period_shape = (T, n_eq, 3 * n_vars)
+    pattern_rows, pattern_columns = np.nonzero(sparsity_pattern)
+    nnz = pattern_rows.size
+    period_shape = (T, nnz)
+
+    blocks = []
+    for shift, column_offset in ((-1, 0), (0, n_vars), (1, 2 * n_vars)):
+        in_block = (pattern_columns >= column_offset) & (pattern_columns < column_offset + n_vars)
+        blocks.append(
+            (shift, np.flatnonzero(in_block), pattern_rows[in_block], pattern_columns[in_block] - column_offset)
+        )
 
     source_blocks, row_blocks, column_blocks = [], [], []
     for t in range(T):
-        for (block_rows, block_cols), (shift, column_offset) in zip(blocks, placements, strict=True):
+        for shift, block_entries, block_rows, block_columns in blocks:
             if not 0 <= t + shift < T:
                 continue
-            source_blocks.append(
-                np.ravel_multi_index(
-                    (np.full_like(block_rows, t), block_rows, block_cols + column_offset), period_shape
-                )
-            )
+            source_blocks.append(t * nnz + block_entries)
             row_blocks.append(t * n_eq + block_rows)
-            column_blocks.append((t + shift) * n_vars + block_cols)
+            column_blocks.append((t + shift) * n_vars + block_columns)
 
     sources = np.concatenate(source_blocks)
     rows = np.concatenate(row_blocks)
@@ -114,12 +118,13 @@ def assemble_stacked_jacobian(
     layout: StackedJacobianLayout,
 ) -> sparse.csc_matrix:
     """
-    Assemble the block-tridiagonal Jacobian of the stacked system from the Jacobian of every period.
+    Assemble the block-tridiagonal Jacobian of the stacked system from the Jacobian entries of every period.
 
     Parameters
     ----------
     period_jacobians : ndarray or sequence of ndarray
-        Array of shape ``(T, n_eq, 3 * n_vars)``, or a sequence of T matrices of shape ``(n_eq, 3 * n_vars)``.
+        Array of shape ``(T, nnz)``, or a sequence of T vectors of length ``nnz``, holding each period's structurally
+        nonzero entries in the order :func:`build_stacked_jacobian_layout` documents.
     layout : StackedJacobianLayout
         Index arrays from :func:`build_stacked_jacobian_layout`.
 

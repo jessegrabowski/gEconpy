@@ -21,7 +21,13 @@ def _dense_reference(period_jacobians, n_vars, n_eq, T):
     return dense
 
 
-@pytest.mark.parametrize("as_array", [False, True], ids=["list-of-matrices", "stacked-array"])
+def _entries(period_jacobians, pattern):
+    """Pick out each period's structural nonzeros, the format the compiled residual function returns."""
+    rows, columns = np.nonzero(pattern)
+    return np.asarray(period_jacobians)[:, rows, columns]
+
+
+@pytest.mark.parametrize("as_array", [False, True], ids=["list-of-vectors", "stacked-array"])
 @pytest.mark.parametrize("T", [1, 2, 5])
 @pytest.mark.parametrize(("n_eq", "n_vars"), [(3, 3), (2, 4), (4, 2)], ids=["square", "wide", "tall"])
 def test_stacked_jacobian_matches_dense_block_tridiagonal(T, n_eq, n_vars, as_array):
@@ -30,7 +36,8 @@ def test_stacked_jacobian_matches_dense_block_tridiagonal(T, n_eq, n_vars, as_ar
     dense_pattern = np.ones((n_eq, 3 * n_vars), dtype=bool)
 
     layout = build_stacked_jacobian_layout(dense_pattern, n_vars, n_eq, T)
-    stacked = assemble_stacked_jacobian(np.asarray(period_jacobians) if as_array else period_jacobians, layout)
+    entries = _entries(period_jacobians, dense_pattern)
+    stacked = assemble_stacked_jacobian(entries if as_array else list(entries), layout)
 
     assert stacked.shape == (T * n_eq, T * n_vars)
     assert_array_equal(stacked.toarray(), _dense_reference(period_jacobians, n_vars, n_eq, T))
@@ -44,7 +51,7 @@ def test_structurally_nonzero_entry_keeps_its_slot_when_zero_in_every_period():
     dense_pattern = np.ones((n_eq, 3 * n_vars), dtype=bool)
 
     layout = build_stacked_jacobian_layout(dense_pattern, n_vars, n_eq, T)
-    stacked = assemble_stacked_jacobian(period_jacobians, layout)
+    stacked = assemble_stacked_jacobian(_entries(period_jacobians, dense_pattern), layout)
 
     coo = stacked.tocoo()
     stored = set(zip(coo.row.tolist(), coo.col.tolist(), strict=True))
@@ -62,7 +69,7 @@ def test_structurally_zero_entries_are_left_out():
     pattern[1, n_vars] = False
 
     layout = build_stacked_jacobian_layout(pattern, n_vars, n_eq, T)
-    stacked = assemble_stacked_jacobian(period_jacobians, layout)
+    stacked = assemble_stacked_jacobian(_entries(period_jacobians, pattern), layout)
 
     periods = np.arange(T)
     expected = _dense_reference(period_jacobians, n_vars, n_eq, T)
@@ -86,8 +93,8 @@ def test_non_positive_horizon_is_rejected(T):
 
 @pytest.mark.parametrize(
     "bad_shape",
-    [(2, 2, 6), (3, 3, 6), (3, 2, 4), (2, 6)],
-    ids=["too-few-periods", "wrong-equation-count", "wrong-column-count", "missing-period-axis"],
+    [(2, 12), (3, 11), (36,), (3, 2, 6)],
+    ids=["too-few-periods", "wrong-entry-count", "missing-period-axis", "dense-period-jacobian"],
 )
 def test_period_jacobians_of_the_wrong_shape_are_rejected(bad_shape):
     """A silent broadcast here would gather the wrong entries and corrupt the Newton step without failing."""
@@ -106,7 +113,7 @@ def test_pattern_with_an_empty_block_assembles():
     pattern[:, 2 * n_vars :] = False
 
     layout = build_stacked_jacobian_layout(pattern, n_vars, n_eq, T)
-    stacked = assemble_stacked_jacobian(period_jacobians, layout)
+    stacked = assemble_stacked_jacobian(_entries(period_jacobians, pattern), layout)
 
     expected = _dense_reference(period_jacobians, n_vars, n_eq, T)
     for t in range(T - 1):
