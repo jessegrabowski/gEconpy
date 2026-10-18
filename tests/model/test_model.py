@@ -548,6 +548,10 @@ def test_dr_order_matches_dynare(model_name):
     assert counts == dynare.counts
     assert order.current_positions.tolist() == dynare.current_positions.tolist()
 
+    n_static, n_pred_only, n_mixed, _ = dynare.counts
+    lagged = set(dynare.names[n_static : n_static + n_pred_only + n_mixed])
+    assert model.predetermined_variables == [v.base_name for v in model.variables if v.base_name in lagged]
+
 
 def test_invalid_solver_raises():
     model = load_and_cache_model("one_block_1_ss.gcn")

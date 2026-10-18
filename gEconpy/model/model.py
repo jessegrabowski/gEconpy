@@ -1274,6 +1274,17 @@ class Model:
         return self._dr_order
 
     @property
+    def predetermined_variables(self) -> list[str]:
+        """
+        Variables that appear at a lag, in model order.
+
+        Only their values at ``t = -1`` enter a perfect-foresight solve, so they are the ones an initial condition
+        has to set.
+        """
+        lagged = np.sort(self.dr_order.var_order[self.dr_order.lag_positions])
+        return [self._variables[index].base_name for index in lagged]
+
+    @property
     def var_order(self) -> np.ndarray:
         """Column permutation reordering variables as ``[static | pred_only | mixed | forward_only]``."""
         return self.dr_order.var_order
