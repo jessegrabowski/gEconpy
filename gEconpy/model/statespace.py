@@ -1288,7 +1288,7 @@ class DSGEStateSpace(PyMCStateSpace):
             if parameter.name in self.constant_parameters
         }
 
-    def in_levels(
+    def deviations_to_levels(
         self,
         samples: xr.Dataset | xr.DataArray,
         idata: xr.DataTree | xr.Dataset,
@@ -1329,7 +1329,7 @@ class DSGEStateSpace(PyMCStateSpace):
         .. code-block:: python
 
             smoothed = ss_mod.sample_conditional_posterior(idata)
-            levels = ss_mod.in_levels(smoothed["smoothed_posterior"], idata)
+            levels = ss_mod.deviations_to_levels(smoothed["smoothed_posterior"], idata)
             start = levels.isel(time=-1).mean(("chain", "draw"))
             params = {
                 name: float(idata.posterior[name].mean()) for name in model.parameters() if name in idata.posterior

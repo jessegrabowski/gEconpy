@@ -63,7 +63,7 @@ def solve_perfect_foresight(
     initial_conditions : dict mapping str to float, or DataArray, optional
         Variable values at ``t = -1``, keyed by base name such as ``"K"`` or by steady-state name such as
         ``"K_ss"``. A DataArray has one dimension over variable names, such as one draw of
-        :meth:`~gEconpy.model.statespace.DSGEStateSpace.in_levels` output. Only the values of
+        :meth:`~gEconpy.model.statespace.DSGEStateSpace.deviations_to_levels` output. Only the values of
         :attr:`~gEconpy.model.model.Model.predetermined_variables` change the solution, but every value must be
         finite. Variables not listed take their steady-state values.
     terminal_conditions : dict mapping str to float, or DataArray, optional

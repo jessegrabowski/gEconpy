@@ -1078,7 +1078,7 @@ def test_observation_equation_Z_matches_analytical_expectation(
     np.testing.assert_allclose(d[0], expected_d, rtol=1e-10, atol=1e-12)
 
 
-def test_in_levels_relevels_each_draw_at_its_own_steady_state():
+def test_deviations_to_levels_relevels_each_draw_at_its_own_steady_state():
     """
     ``Y`` is excluded from logs, ``TC`` and ``U`` are in levels by sign, and ``beta`` is a constant parameter.
 
@@ -1110,7 +1110,7 @@ def test_in_levels_relevels_each_draw_at_its_own_steady_state():
         coords={"chain": [0], "draw": [0, 1], "time": np.arange(3), ALL_STATE_DIM: states},
     )
 
-    levels = ss_mod.in_levels(samples, draws)
+    levels = ss_mod.deviations_to_levels(samples, draws)
 
     for draw, alpha in enumerate(alphas):
         solution = model.solve_model(
@@ -1125,7 +1125,9 @@ def test_in_levels_relevels_each_draw_at_its_own_steady_state():
     assert ss_mod._cumulator_state_names
     assert list(levels[ALL_STATE_DIM].values) == [variable.base_name for variable in model.variables]
     xr.testing.assert_equal(levels["smoothed_posterior_observed"], samples["smoothed_posterior_observed"])
-    xr.testing.assert_equal(ss_mod.in_levels(samples["smoothed_posterior"], draws), levels["smoothed_posterior"])
+    xr.testing.assert_equal(
+        ss_mod.deviations_to_levels(samples["smoothed_posterior"], draws), levels["smoothed_posterior"]
+    )
 
     start = levels["smoothed_posterior"].isel(chain=0, draw=0, time=0)
     _trajectory, result = solve_perfect_foresight(
@@ -1139,7 +1141,7 @@ def test_in_levels_relevels_each_draw_at_its_own_steady_state():
     [("prior", [0], r"no 'prior' group.*Its groups are: posterior"), ("posterior", [0, 7], r"draw \[7\]")],
     ids=["missing_group", "draw_without_parameters"],
 )
-def test_in_levels_rejects_draws_it_cannot_match(rbc_nonlinear_ss, group, sample_draws, match):
+def test_deviations_to_levels_rejects_draws_it_cannot_match(rbc_nonlinear_ss, group, sample_draws, match):
     """Either mismatch would otherwise re-level samples at the wrong draws, or drop some, with no error."""
     rbc_nonlinear_ss.configure(observed_states=["Y"], measurement_error=["Y"], verbose=False)
     calibration = {name: rbc_nonlinear_ss.param_dict.get(name, 0.01) for name in rbc_nonlinear_ss.param_names}
@@ -1152,7 +1154,7 @@ def test_in_levels_rejects_draws_it_cannot_match(rbc_nonlinear_ss, group, sample
     )
 
     with pytest.raises(ValueError, match=match):
-        rbc_nonlinear_ss.in_levels(samples, xr.DataTree.from_dict({"posterior": posterior}), group=group)
+        rbc_nonlinear_ss.deviations_to_levels(samples, xr.DataTree.from_dict({"posterior": posterior}), group=group)
 
 
 @pytest.mark.include_nk

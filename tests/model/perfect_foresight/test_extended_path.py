@@ -83,7 +83,7 @@ def test_zero_shocks_from_a_displaced_state_follow_the_perfect_foresight_path(rb
     Without surprises each period's plan continues the last, so the path is one PF solution.
 
     The shifted warm start then leaves only the truncated horizon's last period to correct, in one Newton step. The
-    simulator takes the start as a DataArray over variables, the form ``DSGEStateSpace.in_levels`` returns.
+    simulator takes the start as a DataArray over variables, the form ``DSGEStateSpace.deviations_to_levels`` returns.
     """
     steady_state = rbc_model.steady_state(verbose=False, progressbar=False)
     initial_conditions = {"K": 0.9 * steady_state["K_ss"]}
