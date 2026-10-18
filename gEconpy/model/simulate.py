@@ -62,11 +62,17 @@ def impulse_response_function(
     **solve_model_kwargs,
 ) -> xr.Dataset:
     """
-    Compute impulse response functions from the linearized policy function.
+    Compute impulse response functions from the perturbation solution.
 
     An impulse response function traces the path of every model variable after a one-period shock hits the system
     at time zero. The shock is specified by at most one of ``shock_size``, ``shock_cov``, or ``shock_trajectory``.
     With none of them given, every shock receives a unit impulse.
+
+    A second-order solution responds through its pruned recursion, starting from the steady state with no other
+    shocks. This is the expectation of the generalized impulse response that Dynare estimates by simulation, the
+    mean gap between paths with and without the impulse over random draws of the other shocks, so it does not depend
+    on their covariance. Its ``level`` is the steady state plus this response, with no drift toward the stochastic
+    steady state. Responses computed per shock do not add up to the response to the shocks together.
 
     The response comes back both as a deviation from the steady state and in levels. A log-linearized variable's
     deviation is a log deviation, so its level is ``steady_state * exp(deviation)``. Every other variable's level is
@@ -76,7 +82,7 @@ def impulse_response_function(
     ----------
     model : Model
         DSGE model whose variables and shocks label the output.
-    solution : FirstOrderPerturbationSolution, optional
+    solution : FirstOrderPerturbationSolution or SecondOrderPerturbationSolution, optional
         Solution from :meth:`~gEconpy.model.model.Model.solve_model`. Solved from ``model`` when omitted.
     T : ndarray, optional
         Transition matrix of the solved system. Deprecated, pass ``solution`` instead. A bare ``T`` and ``R`` carry
@@ -143,7 +149,6 @@ def impulse_response_function(
         solution = _wrap_policy_matrices(model, T=T, R=R, **solve_model_kwargs)
     elif solution is None:
         solution = _solve_or_raise(model, purpose="compute a response from", **solve_model_kwargs)
-    T, R = solution.T, solution.R
 
     spec = _make_shock_spec(shock_size, shock_cov, shock_trajectory, orthogonalize_shocks)
 
@@ -162,7 +167,7 @@ def impulse_response_function(
 
     if not apply_shocks_individually:
         trajectory = _build_trajectory(spec, simulation_length, n_shocks, selected_shock_names, rng)
-        responses = _simulate_linear_system(T, R, trajectory)
+        responses = _impulse_response(solution, trajectory)
         return _irf_to_dataset(responses, solution=solution, variable_names=variable_names, shock_names=None)
 
     full_trajectory = _build_trajectory(spec, simulation_length, n_shocks, shock_names, rng)
@@ -170,7 +175,7 @@ def impulse_response_function(
     for i, shock_idx in enumerate(selected_shock_idxs):
         single_shock_trajectory = np.zeros_like(full_trajectory)
         single_shock_trajectory[:, shock_idx] = full_trajectory[:, shock_idx]
-        responses[i] = _simulate_linear_system(T, R, single_shock_trajectory)
+        responses[i] = _impulse_response(solution, single_shock_trajectory)
 
     return _irf_to_dataset(
         responses, solution=solution, variable_names=variable_names, shock_names=selected_shock_names
@@ -502,6 +507,14 @@ def _simulate_linear_system(T: np.ndarray, R: np.ndarray, shock_trajectory: np.n
     for t in range(1, n_periods):
         states[..., t, :] = states[..., t - 1, :] @ T.T + shock_trajectory[..., t, :] @ R.T
     return states
+
+
+def _impulse_response(solution: FirstOrderPerturbationSolution, shock_trajectory: np.ndarray) -> np.ndarray:
+    """Respond to ``shock_trajectory`` from the steady state, in model order."""
+    if isinstance(solution, SecondOrderPerturbationSolution):
+        # The risk correction moves the paths with and without the impulse alike, so it drops out of the response.
+        return _simulate_pruned_system(solution, shock_trajectory, ghs2=np.zeros(len(solution.variable_names)))
+    return _simulate_linear_system(solution.T, solution.R, shock_trajectory)
 
 
 def _simulate_pruned_system(

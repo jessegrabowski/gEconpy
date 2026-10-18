@@ -1500,13 +1500,40 @@ def test_second_order_part_of_a_simulation_scales_with_the_shock_variance(scale)
     assert_allclose(second_order_part(scale * np.array([0.01, 0.02])), scale**2 * reference, rtol=1e-8, atol=1e-16)
 
 
-def test_solving_inside_matches_passing_a_second_order_solution():
+@pytest.mark.parametrize(
+    ("function", "kwargs"),
+    [
+        (simulate, {"shock_std": 0.01, "simulation_length": 10, "random_seed": 0}),
+        (impulse_response_function, {"shock_size": 0.01, "simulation_length": 10}),
+    ],
+    ids=["simulate", "irf"],
+)
+def test_solving_inside_matches_passing_a_second_order_solution(function, kwargs):
     model = load_and_cache_model("one_block_1_ss_2shock.gcn")
     solution = model.solve_model(order=2, verbose=False)
-    kwargs = {"shock_std": 0.01, "simulation_length": 10, "random_seed": 0}
 
-    solved_inside = simulate(model, order=2, verbose=False, **kwargs)
-    xr.testing.assert_allclose(solved_inside, simulate(model, solution, **kwargs))
+    solved_inside = function(model, order=2, verbose=False, **kwargs)
+    xr.testing.assert_allclose(solved_inside, function(model, solution, **kwargs))
+
+
+def test_second_order_responses_per_shock_are_responses_to_each_shock_alone():
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=2, verbose=False)
+    shock_size = {"epsilon_A": 0.03, "epsilon_B": -0.04}
+    n_periods = 10
+
+    per_shock = impulse_response_function(model, solution, shock_size=shock_size, simulation_length=n_periods)
+    for shock, size in shock_size.items():
+        trajectory = np.zeros((n_periods, len(solution.shock_names)))
+        trajectory[0, solution.shock_names.index(shock)] = size
+        alone = impulse_response_function(model, solution, shock_trajectory=trajectory)
+        xr.testing.assert_allclose(per_shock.sel(shock=shock, drop=True), alone)
+
+    together = impulse_response_function(
+        model, solution, shock_size=shock_size, simulation_length=n_periods, return_individual_shocks=False
+    )
+    gap = together["deviation"] - per_shock["deviation"].sum("shock")
+    assert np.abs(gap).max() > 1e-6
 
 
 def test_objective_with_complex_discount_factor():
