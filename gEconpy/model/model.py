@@ -1845,17 +1845,10 @@ class Model:
         if order != 1:
             raise NotImplementedError("Only first order linearization is currently supported.")
 
-        if self.is_linear:
-            log_linearize = False
-
-        # The steady state only decides the log-linearization flags, so it is solved only when those are needed.
-        if steady_state is None and log_linearize:
-            steady_state = self.f_ss(**self.parameters()) if self.is_linear else self.steady_state(verbose=verbose)
-
-        loglin_vars = self._loglin_variables(
-            steady_state=steady_state,
+        loglin_vars = self._resolve_loglin_variables(
             log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
+            steady_state=steady_state,
             loglin_negative_ss=loglin_negative_ss,
             verbose=verbose,
         )
@@ -1886,6 +1879,29 @@ class Model:
             )
 
         return self._symbolic_linearize_cache[loglin_key]
+
+    def _resolve_loglin_variables(
+        self,
+        log_linearize: bool,
+        not_loglin_variables: list[str] | None,
+        steady_state: dict | None,
+        loglin_negative_ss: bool,
+        verbose: bool,
+    ) -> list[TimeAwareSymbol]:
+        """Return the variables to log-linearize, solving the steady state only when the decision needs it."""
+        if self.is_linear:
+            log_linearize = False
+
+        if steady_state is None and log_linearize:
+            steady_state = self.f_ss(**self.parameters()) if self.is_linear else self.steady_state(verbose=verbose)
+
+        return self._loglin_variables(
+            steady_state=steady_state,
+            log_linearize=log_linearize,
+            not_loglin_variables=not_loglin_variables,
+            loglin_negative_ss=loglin_negative_ss,
+            verbose=verbose,
+        )
 
     def _loglin_variables(
         self,
