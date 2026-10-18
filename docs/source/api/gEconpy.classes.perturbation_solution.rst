@@ -8,7 +8,8 @@ gEconpy.classes.perturbation_solution
 .. autosummary::
 
     FirstOrderPerturbationSolution
+    SecondOrderPerturbationSolution
 
 .. automodule:: gEconpy.classes.perturbation_solution
-    :members: FirstOrderPerturbationSolution
+    :members: FirstOrderPerturbationSolution, SecondOrderPerturbationSolution
     :undoc-members:
