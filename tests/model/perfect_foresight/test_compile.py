@@ -94,6 +94,25 @@ class TestCompile:
 
         assert_allclose(jacobian[0], numerical, rtol=1e-5, atol=1e-6)
 
+    def test_numba_loop_matches_the_vectorized_horizon(self, rbc_model):
+        """Numba evaluates the horizon as a loop over one period's graph, the other backends as one vectorized graph."""
+        T = 4
+        looped = compile_perfect_foresight_problem(rbc_model, T, mode="NUMBA")
+        vectorized = compile_perfect_foresight_problem(rbc_model, T, mode="FAST_COMPILE")
+        ss = rbc_model.steady_state(verbose=False)
+        X, P = _exogenous_inputs(looped, rbc_model)
+
+        rng = np.random.default_rng(0)
+        y_ss = np.array([ss[f"{name}_ss"] for name in looped.var_names])
+        blocks = [y_ss * (1 + 0.05 * rng.normal(size=(T, looped.n_vars))) for _ in range(3)]
+        P = P * (1 + 0.01 * rng.normal(size=P.shape))
+
+        expected_residuals, expected_jacobian = vectorized.f_resid_and_jac(*blocks, X, P)
+        residuals, jacobian = looped.f_resid_and_jac(*blocks, X, P)
+
+        assert_allclose(residuals, expected_residuals, rtol=1e-12, atol=1e-14)
+        assert_allclose(jacobian, expected_jacobian, rtol=1e-12, atol=1e-14)
+
     def test_both_compiled_functions_agree_on_the_residuals(self, rbc_model):
         """
         The line search trusts the residual-only function to stand in for the fused one.

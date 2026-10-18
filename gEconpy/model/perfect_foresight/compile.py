@@ -7,9 +7,14 @@ import pytensor
 import pytensor.tensor as pt
 import sympy as sp
 
+from pytensor.compile.builders import SymbolicOp
+from pytensor.compile.mode import Mode, get_mode
 from pytensor.graph.basic import Variable
 from pytensor.graph.replace import graph_replace, vectorize_graph
 from pytensor.graph.traversal import explicit_graph_inputs
+from pytensor.link.numba.linker import NumbaLinker
+from pytensor.tensor.blockwise import Blockwise
+from pytensor.tensor.utils import safe_signature
 from scipy import sparse
 from scipy.sparse.linalg import splu
 from sympytensor import as_tensor
@@ -178,6 +183,8 @@ def compile_perfect_foresight_problem(
 
 @dataclass
 class _EquationGraph:
+    """Residuals and Jacobian of one period, as functions of ``y_tm1``, ``y_t``, ``y_tp1``, ``x_t``, and ``p``."""
+
     inputs: list[pt.TensorVariable]
     residuals: pt.TensorVariable
     jacobian: pt.TensorVariable
@@ -199,22 +206,70 @@ class _CompiledEquations:
 def _compile_equations(model: Model, **compile_kwargs) -> _CompiledEquations:
     """Build the horizon-independent half of a :class:`PerfectForesightProblem`."""
     graph = _build_equation_graph(model)
+    horizon_inputs = [pt.dmatrix(name) for name in ("Y_tm1", "Y_t", "Y_tp1", "X", "P")]
+
+    batch = _batch_with_blockwise if _uses_numba(compile_kwargs.get("mode")) else _batch_with_vectorize
+    residuals_and_jacobian = batch(graph.inputs, [graph.residuals, graph.jacobian], horizon_inputs)
+    residuals_only = batch(graph.inputs, [graph.residuals], horizon_inputs)
 
     return _CompiledEquations(
-        f_resid_and_jac=pytensor.function(graph.inputs, [graph.residuals, graph.jacobian], **compile_kwargs),
-        f_resid_only=pytensor.function(graph.inputs, [graph.residuals], **compile_kwargs),
+        f_resid_and_jac=pytensor.function(horizon_inputs, residuals_and_jacobian, **compile_kwargs),
+        f_resid_only=pytensor.function(horizon_inputs, residuals_only, **compile_kwargs),
         graph=graph,
     )
 
 
+class _PeriodEquations(SymbolicOp):
+    """The equations of one period, kept opaque so that ``Blockwise`` evaluates the horizon in a compiled loop."""
+
+    def __init__(self, inputs: list[pt.TensorVariable], outputs: list[pt.TensorVariable]):
+        self._template = (inputs, outputs)
+        super().__init__(input_types=[x.type for x in inputs])
+        # The inner graph now holds the equations. A second copy would more than double what each worker unpickles.
+        del self._template
+
+    def build_inner_graph(self, *inputs) -> list[Variable]:
+        template_inputs, template_outputs = self._template
+        return graph_replace(template_outputs, dict(zip(template_inputs, inputs, strict=True)), strict=False)
+
+
+def _uses_numba(mode: str | Mode | None) -> bool:
+    return isinstance(get_mode(mode).linker, NumbaLinker)
+
+
+def _batch_with_blockwise(
+    period_inputs: list[pt.TensorVariable],
+    period_outputs: list[pt.TensorVariable],
+    horizon_inputs: list[Variable],
+) -> list[Variable]:
+    # Numba compiles the period graph once and calls it for each period. Fused across the horizon instead, the graph
+    # becomes one kernel with an array per Jacobian entry, which numba compiles dozens of times more slowly. The loop
+    # costs a few dozen microseconds per period in allocations.
+    signature = safe_signature(
+        core_inputs_ndim=[x.type.ndim for x in period_inputs],
+        core_outputs_ndim=[x.type.ndim for x in period_outputs],
+    )
+    batched = Blockwise(_PeriodEquations(period_inputs, period_outputs), signature=signature)
+    return batched.make_node(*horizon_inputs).outputs
+
+
+def _batch_with_vectorize(
+    period_inputs: list[pt.TensorVariable],
+    period_outputs: list[pt.TensorVariable],
+    horizon_inputs: list[Variable],
+) -> list[Variable]:
+    # The other backends would run Blockwise as a Python loop over the periods, and the per-call overhead of a compiled
+    # function dominates the arithmetic of one period, so the graph is vectorized over the horizon instead.
+    return vectorize_graph(period_outputs, replace=dict(zip(period_inputs, horizon_inputs, strict=True)))
+
+
 def _build_equation_graph(model: Model) -> _EquationGraph:
     """
-    Build the symbolic residual and Jacobian of the model equations over a whole horizon.
+    Build the symbolic residual and Jacobian of the model equations in one period.
 
-    The equations of one period are converted to pytensor once, differentiated with respect to every variable at
-    ``t-1``, ``t``, and ``t+1``, and rewritten so that each scalar variable reads from an element of ``y_tm1``,
-    ``y_t``, ``y_tp1``, or ``x_t``. That single-period graph is then vectorized over the horizon, so one call
-    evaluates every period. A variable that never appears at some time index gets a structurally zero Jacobian
+    The equations are converted to pytensor once, differentiated with respect to every variable at ``t-1``, ``t``, and
+    ``t+1``, and rewritten so that each scalar variable reads from an element of ``y_tm1``, ``y_t``, ``y_tp1``, ``x_t``,
+    or the parameter vector ``p``. A variable that never appears at some time index gets a structurally zero Jacobian
     column there.
     """
     shock_names = [s.base_name for s in model.shocks]
@@ -275,24 +330,15 @@ def _build_equation_graph(model: Model) -> _EquationGraph:
     params_in_equations, params_pt = _collect_parameters_in_equations(model, cache=ss_cache, inputs=graph_inputs)
     deterministic_names = {p.name for p in model.deterministic_params}
 
-    # The per-call overhead of a compiled function dominates the arithmetic of one period, so vectorizing the
-    # graph over the horizon and paying that overhead once is worth far more than the batching costs.
-    Y_tm1 = pt.dmatrix("Y_tm1")
-    Y_t = pt.dmatrix("Y_t")
-    Y_tp1 = pt.dmatrix("Y_tp1")
-    X = pt.dmatrix("X")
-    P = pt.dmatrix("P")
-
-    batch_replacements: dict = {y_tm1: Y_tm1, y_t: Y_t, y_tp1: Y_tp1, x_t: X}
-    for i, param in enumerate(params_pt):
-        batch_replacements[param] = P[:, i]
-
-    residuals_batched, jacobian_batched = vectorize_graph([residuals_vec, jacobian_vec], replace=batch_replacements)
+    p = pt.dvector("p", shape=(len(params_pt),))
+    residuals_period, jacobian_period = graph_replace(
+        [residuals_vec, jacobian_vec], {param: p[i] for i, param in enumerate(params_pt)}, strict=False
+    )
 
     return _EquationGraph(
-        inputs=[Y_tm1, Y_t, Y_tp1, X, P],
-        residuals=residuals_batched,
-        jacobian=jacobian_batched,
+        inputs=[y_tm1, y_t, y_tp1, x_t, p],
+        residuals=residuals_period,
+        jacobian=jacobian_period,
         sparsity=sparsity,
         var_names=var_names,
         shock_names=[x.base_name for x in shocks_t],
