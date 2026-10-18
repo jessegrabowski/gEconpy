@@ -21,14 +21,15 @@ skip_jax_schur_under_mkl = pytest.mark.skipif(
 BACKENDS = ["NUMBA", "CVM", pytest.param("JAX", marks=requires_jax)]
 
 
-def stein_problem(n=6, seed=0):
+def stein_problem(n=6, n_columns=None, seed=0):
     """Build a random Stein equation A1 S + C' S T' = Q with rho(A1^{-1} C') rho(T) < 1, so every method converges."""
+    n_columns = n if n_columns is None else n_columns
     rng = np.random.default_rng(seed)
     A1 = rng.normal(size=(n, n)) + n * np.eye(n)
     C = 0.5 * rng.normal(size=(n, n))
-    T = rng.normal(size=(n, n))
+    T = rng.normal(size=(n_columns, n_columns))
     T *= 0.8 / np.abs(np.linalg.eigvals(T)).max()
-    Q = rng.normal(size=(n, n))
+    Q = rng.normal(size=(n, n_columns))
     return A1, C, T, Q
 
 
@@ -58,6 +59,17 @@ def test_solution_satisfies_stein_equation(method, mode, dtype, atol):
 
     assert S.dtype == dtype
     assert_allclose(A1 @ S + C.T @ S @ T.T, Q, atol=atol)
+
+
+@pytest.mark.parametrize("n_columns", [3, 9], ids=["narrow", "wide"])
+@pytest.mark.parametrize(("method", "mode"), METHOD_BACKENDS)
+def test_rectangular_solution_satisfies_stein_equation(method, mode, n_columns):
+    A1, C, T, Q = stein_problem(n_columns=n_columns)
+    symbols = stein_symbols()
+    S = pytensor.function(symbols, solve_policy_stein(*symbols, method=method), mode=mode)(A1, C, T, Q)
+
+    assert S.shape == Q.shape
+    assert_allclose(A1 @ S + C.T @ S @ T.T, Q, atol=1e-10)
 
 
 @pytest.mark.include_nk

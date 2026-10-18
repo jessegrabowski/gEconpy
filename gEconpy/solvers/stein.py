@@ -179,7 +179,7 @@ def _no_qz_pullback(inputs, outputs, cotangents):
 def _stein_sylvester(A1, C, T, Q):
     # With M = A1^{-1} C^T and N = T^T, the Cayley transform takes S + M S N = A1^{-1} Q to P S + S R = F, where
     # P = (I - M)^{-1} (I + M) and R = (I - N) (I + N)^{-1}. Writing P on the pencil keeps A1 itself out of any solve.
-    eye = pt.eye(A1.shape[0], dtype=A1.dtype)
+    eye = pt.eye(T.shape[0], dtype=T.dtype)
     N = T.T
     pencil_difference = A1 - C.T
 
@@ -192,10 +192,10 @@ def _stein_sylvester(A1, C, T, Q):
 
 def _stein_direct(A1, C, T, Q):
     # kron(X, Y) vec(S) = vec(Y S X^T) for the column-major vec, and the row-major ravel of S^T is that vec.
-    n = A1.shape[0]
-    system = pt.linalg.kron(T, C.T) + pt.linalg.kron(pt.eye(n, dtype=A1.dtype), A1)
+    n_rows, n_columns = A1.shape[0], T.shape[0]
+    system = pt.linalg.kron(T, C.T) + pt.linalg.kron(pt.eye(n_columns, dtype=A1.dtype), A1)
     vec_S = pt.linalg.solve(system, Q.T.ravel(), assume_a="gen", check_finite=False)
-    return vec_S.reshape((n, n)).T
+    return vec_S.reshape((n_columns, n_rows)).T
 
 
 class TriangularStein(Op):
