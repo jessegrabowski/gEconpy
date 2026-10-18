@@ -410,6 +410,7 @@ class Model:
         self._lead_var_idx: np.ndarray | None = None
         self._dr_order: DROrder | None = None
         self._symbolic_linearize_cache: dict[frozenset[str], tuple] = {}
+        self._default_steady_state: dict | None = None
         self._linearize_cache: dict[int, Callable] = {}
         self._perfect_foresight_cache: dict[tuple, Any] = {}
 
@@ -1893,7 +1894,9 @@ class Model:
             log_linearize = False
 
         if steady_state is None and log_linearize:
-            steady_state = self.f_ss(**self.parameters()) if self.is_linear else self.steady_state(verbose=verbose)
+            if self._default_steady_state is None:
+                self._default_steady_state = self.steady_state(verbose=verbose)
+            steady_state = self._default_steady_state
 
         return self._loglin_variables(
             steady_state=steady_state,
