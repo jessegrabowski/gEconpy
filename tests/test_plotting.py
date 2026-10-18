@@ -360,6 +360,30 @@ def test_plot_irf_axis_and_line_counts(irf_setup):
     assert len(fig.axes[0].get_lines()) == len(model.shocks)
 
 
+@pytest.mark.parametrize("units", ["deviation", "level"])
+def test_plot_irf_draws_the_requested_units(irf_setup, units):
+    _model, irf = irf_setup
+    fig = plot_irf(irf, vars_to_plot="Y", shocks_to_plot="epsilon_Y", units=units)
+
+    np.testing.assert_allclose(
+        fig.axes[0].get_lines()[0].get_ydata(), irf[units].sel(variable="Y", shock="epsilon_Y").values
+    )
+
+
+@pytest.mark.parametrize(
+    ("as_input", "units", "match"),
+    [
+        (lambda irf: irf, "levels", "must be"),
+        (lambda irf: irf["deviation"], "level", "but a DataArray was passed"),
+    ],
+    ids=["unknown_units", "levels_of_a_data_array"],
+)
+def test_plot_irf_rejects_units_it_cannot_plot(irf_setup, as_input, units, match):
+    _model, irf = irf_setup
+    with pytest.raises(ValueError, match=match):
+        plot_irf(as_input(irf), units=units)
+
+
 @pytest.mark.parametrize("shocks_to_plot", ["epsilon_Y", ["epsilon_Y"]], ids=["str", "list"])
 def test_plot_irf_one_shock_line_count(irf_setup, shocks_to_plot):
     model, irf = irf_setup
@@ -440,7 +464,7 @@ def test_plot_irf_keeps_x_ticks_on_bottom_panels_only(irf_setup, n_vars, expecte
 
 def test_plot_irf_rejects_unsupported_container(irf_setup):
     _model, irf = irf_setup
-    with pytest.raises(TypeError, match="irf must be a DataArray, a list of DataArrays, or a dict"):
+    with pytest.raises(TypeError, match="irf must be a Dataset or DataArray, a list of them, or a dict"):
         plot_irf((irf,))
 
 

@@ -592,6 +592,20 @@ def test_unsolvable_model_raises_with_the_solver_message(solver, match):
         )
 
 
+def test_an_impulse_response_of_an_unsolvable_model_raises():
+    """``on_failure="ignore"`` makes ``solve_model`` return None, which has no levels to report."""
+    model = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
+
+    with pytest.raises(ValueError, match="could not be solved"):
+        impulse_response_function(
+            model,
+            solver="gensys",
+            on_failure="ignore",
+            verbose=False,
+            steady_state_kwargs={"verbose": False, "progressbar": False},
+        )
+
+
 def test_outputs_after_gensys_failure(caplog):
     model = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
     solution = model.solve_model(
@@ -1079,6 +1093,23 @@ def test_policy_matrices_by_position_or_keyword_warn_and_match_the_solution(irf_
     xr.testing.assert_equal(by_keyword, expected)
 
 
+@pytest.mark.parametrize("matrices", [("T", "R"), ("T",)], ids=["both", "transition_only"])
+def test_policy_matrices_take_their_levels_from_the_solve_arguments(irf_inputs, matrices):
+    """Matrices solved away from the defaults keep that solve's steady state and log mask, even with one matrix."""
+    model, _ = irf_inputs
+    solve_kwargs = {"solver": "gensys", "verbose": False, "not_loglin_variables": ["C"], "alpha": 0.4}
+    solution = model.solve_model(return_matrices=False, **solve_kwargs)
+    kwargs = {"shock_size": {"epsilon_A": 1.0}, "simulation_length": 5, "return_individual_shocks": False}
+    expected = impulse_response_function(model, solution, **kwargs)
+
+    with pytest.warns(FutureWarning, match="Passing T and R is deprecated"):
+        irf = impulse_response_function(
+            model, **{name: getattr(solution, name) for name in matrices}, **solve_kwargs, **kwargs
+        )
+
+    xr.testing.assert_allclose(irf, expected)
+
+
 def test_passing_a_solution_and_policy_matrices_raises(irf_inputs):
     model, solution = irf_inputs
 
@@ -1116,7 +1147,7 @@ class TestIRF:
 
         irf = impulse_response_function(
             model, solution, simulation_length=1000, shock_size=shock_size, return_individual_shocks=True
-        )
+        )["deviation"]
 
         assert dict(irf.sizes) == {"shock": len(expected_shocks), "time": 1000, "variable": n_variables}
         assert list(irf.coords["shock"].values) == expected_shocks
@@ -1134,7 +1165,7 @@ class TestIRF:
 
         irf = impulse_response_function(
             model, solution, simulation_length=1000, shock_size=shock_size, return_individual_shocks=False
-        )
+        )["deviation"]
 
         assert dict(irf.sizes) == {"time": 1000, "variable": n_variables}
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
@@ -1149,7 +1180,7 @@ class TestIRF:
 
         irf = impulse_response_function(
             model, solution, simulation_length=1000, shock_trajectory=shock_trajectory, return_individual_shocks=True
-        )
+        )["deviation"]
 
         assert dict(irf.sizes) == {"shock": n_shocks, "time": 1000, "variable": n_variables}
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
@@ -1165,10 +1196,38 @@ class TestIRF:
 
         irf = impulse_response_function(
             model, solution, simulation_length=1000, shock_trajectory=shock_trajectory, return_individual_shocks=False
-        )
+        )["deviation"]
 
         assert dict(irf.sizes) == {"time": 1000, "variable": n_variables}
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
+
+    def test_levels_follow_the_solution_passed_in(self, irf_inputs):
+        """The fixture has a negative steady state, kept in levels, and the first variable is excluded by name."""
+        model, _ = irf_inputs
+        solution = model.solve_model(
+            return_matrices=False,
+            solver="gensys",
+            verbose=False,
+            not_loglin_variables=[model.variables[0].base_name],
+        )
+
+        irf = impulse_response_function(model, solution, simulation_length=5, shock_size=0.1)
+
+        logged = irf.coords["log_linearized"].values
+        assert not logged[0]
+        assert logged.sum() == len(logged) - 2
+        assert_allclose(irf.coords["steady_state"].values, solution.steady_state)
+        assert_allclose(irf["level"].values, solution.to_levels(irf["deviation"].values))
+
+    def test_a_forwarded_return_matrices_still_yields_levels(self, irf_inputs):
+        """The response needs the solution object, so a caller's ``return_matrices=True`` is overridden."""
+        model, solution = irf_inputs
+
+        irf = impulse_response_function(
+            model, solver="gensys", verbose=False, return_matrices=True, simulation_length=5, shock_size=0.1
+        )
+
+        assert_allclose(irf.coords["steady_state"].values, solution.steady_state)
 
     def test_size_dict_limits_shock_axis(self, irf_inputs):
         model, solution = irf_inputs

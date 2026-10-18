@@ -49,6 +49,21 @@ autocovariance and autocorrelation matrices at any number of lags. Each of these
 single standard deviation, a dictionary per shock, or a full covariance matrix, and solves the model itself when
 ``T`` and ``R`` are not passed.
 
+An impulse response comes back as a Dataset holding the response twice. ``deviation`` is the distance from the
+steady state, a log deviation for a log-linearized variable. ``level`` is the variable itself, and the
+``steady_state`` and ``log_linearized`` coordinates record how one was turned into the other. Pass the result
+of :meth:`~gEconpy.model.model.Model.solve_model` as ``solution`` to keep the levels consistent with how the
+model was linearized:
+
+.. code-block:: python
+
+    solution = model.solve_model(return_matrices=False, not_loglin_variables=["r"])
+    irf = ge.impulse_response_function(model, solution=solution, shock_size={"epsilon_A": 0.01})
+    irf["level"].sel(variable="r")
+
+The deprecated ``T`` and ``R`` arguments carry no record of the linearization, so their levels are computed from
+the ``solve_model`` arguments passed alongside them, which must match the solve that produced the matrices. :func:`~gEconpy.plotting.plot_irf` plots ``deviation`` unless ``units="level"`` is passed.
+
 Perfect foresight
 -----------------
 
