@@ -41,6 +41,7 @@ gEconpy
 
     gEconpy.classes.containers <gEconpy.classes.containers>
     gEconpy.classes.distributions <gEconpy.classes.distributions>
+    gEconpy.classes.perturbation_solution <gEconpy.classes.perturbation_solution>
     gEconpy.classes.time_aware_symbol <gEconpy.classes.time_aware_symbol>
     gEconpy.data <gEconpy.data>
     gEconpy.data.examples <gEconpy.data.examples>
