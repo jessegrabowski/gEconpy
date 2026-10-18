@@ -21,7 +21,7 @@ from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.compile import build_symbolic_jacobian, make_cache_key
+from gEconpy.model.compile import build_symbolic_jacobian_entries, make_cache_key
 from gEconpy.model.model import Model
 from gEconpy.model.perfect_foresight.assemble import (
     StackedJacobianLayout,
@@ -45,13 +45,15 @@ class PerfectForesightProblem:
         Function returning the residuals and the Jacobian of every period's equations at once. It is called as
         ``f(Y_tm1, Y_t, Y_tp1, X, P)``, where the first three arguments have shape ``(T, n_vars)``, ``X`` has
         shape ``(T, n_shocks)``, and ``P`` has shape ``(T, n_params)``, all float64. The inputs are not checked
-        unless the problem was compiled with ``trust_input=False``. The residuals have shape ``(T, n_eq)`` and the
-        Jacobian has shape ``(T, n_eq, 3 * n_vars)``.
+        unless the problem was compiled with ``trust_input=False``. The residuals have shape ``(T, n_eq)``. The
+        Jacobian holds only the structural nonzeros of each period, in the row-major order of
+        ``np.nonzero(jacobian_sparsity)``, so it has shape ``(T, nnz)``.
     f_resid_only : callable
         Function with the same inputs returning only the residuals.
     jacobian_sparsity : ndarray of bool
-        Structural nonzero mask of one period's Jacobian, of shape ``(n_eq, 3 * n_vars)``. It is derived from the
-        equations, so it holds at every point the solver can visit.
+        Structural nonzero mask of one period's Jacobian, of shape ``(n_eq, 3 * n_vars)``, with columns ordered
+        ``[y_{t-1}, y_t, y_{t+1}]``. It is derived from the equations, so it holds at every point the solver can
+        visit.
     var_names : tuple of str
         Variable names, giving the column order of the stacked system.
     shock_names : tuple of str
@@ -183,7 +185,11 @@ def compile_perfect_foresight_problem(
 
 @dataclass
 class _EquationGraph:
-    """Residuals and Jacobian of one period, as functions of ``y_tm1``, ``y_t``, ``y_tp1``, ``x_t``, and ``p``."""
+    """
+    Residuals and Jacobian of one period, as functions of ``y_tm1``, ``y_t``, ``y_tp1``, ``x_t``, and ``p``.
+
+    ``jacobian`` is a vector of the entries ``sparsity`` marks, in the row-major order of ``np.nonzero(sparsity)``.
+    """
 
     inputs: list[pt.TensorVariable]
     residuals: pt.TensorVariable
@@ -267,10 +273,9 @@ def _build_equation_graph(model: Model) -> _EquationGraph:
     """
     Build the symbolic residual and Jacobian of the model equations in one period.
 
-    The equations are converted to pytensor once, differentiated with respect to every variable at ``t-1``, ``t``, and
-    ``t+1``, and rewritten so that each scalar variable reads from an element of ``y_tm1``, ``y_t``, ``y_tp1``, ``x_t``,
-    or the parameter vector ``p``. A variable that never appears at some time index gets a structurally zero Jacobian
-    column there.
+    The equations are converted to pytensor once, differentiated with respect to each variable at ``t-1``, ``t``, and
+    ``t+1`` that they contain, and rewritten so that each scalar variable reads from an element of ``y_tm1``, ``y_t``,
+    ``y_tp1``, ``x_t``, or the parameter vector ``p``. The Jacobian holds only the entries the sparsity mask marks.
     """
     shock_names = [s.base_name for s in model.shocks]
 
@@ -310,8 +315,9 @@ def _build_equation_graph(model: Model) -> _EquationGraph:
     # The shared cache makes the Jacobian's column nodes the same objects as the vars_*_pt lists wherever the
     # variable appears at that time index, so the vector replacement below lines up.
     jacobian_wrt = [v.set_t(-1) for v in vars_t] + list(vars_t) + [v.set_t(1) for v in vars_t]
-    jacobian = build_symbolic_jacobian(equations, jacobian_wrt, cache, to_ss=False)
     sparsity = _jacobian_sparsity(equations, jacobian_wrt)
+    rows, columns = np.nonzero(sparsity)
+    jacobian = build_symbolic_jacobian_entries(equations, jacobian_wrt, rows=rows, columns=columns, cache=cache)
     residuals = pt.stack(equations_pt)
 
     y_tm1 = pt.dvector("y_tm1", shape=(n_vars,))

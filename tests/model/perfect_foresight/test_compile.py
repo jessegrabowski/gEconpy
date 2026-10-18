@@ -25,6 +25,29 @@ def _exogenous_inputs(problem, model):
     )
 
 
+def _dense_period_jacobian(problem, entries):
+    """Scatter one period's structural nonzeros back into its ``(n_eq, 3 * n_vars)`` Jacobian."""
+    dense = np.zeros(problem.jacobian_sparsity.shape)
+    dense[problem.jacobian_sparsity] = entries
+    return dense
+
+
+def _finite_difference_jacobian(problem, point, X, P, step=1e-6):
+    """Central differences of the first period's residuals with respect to the stacked ``[y_{t-1}, y_t, y_{t+1}]``."""
+
+    def residuals_at(stacked):
+        Y_tm1, Y_t, Y_tp1 = (np.tile(block, (problem.T, 1)) for block in np.split(stacked, 3))
+        return problem.f_resid_and_jac(Y_tm1, Y_t, Y_tp1, X, P)[0][0]
+
+    return np.stack(
+        [
+            (residuals_at(point + step * basis) - residuals_at(point - step * basis)) / (2 * step)
+            for basis in np.eye(point.size)
+        ],
+        axis=1,
+    )
+
+
 class TestCompile:
     def test_problem_has_correct_dimensions(self, rbc_model):
         T = 25
@@ -49,7 +72,7 @@ class TestCompile:
 
         assert_allclose(residuals, 0.0, atol=1e-8)
         assert residuals.shape == (T, problem.n_eq)
-        assert jacobian.shape == (T, problem.n_eq, 3 * problem.n_vars)
+        assert jacobian.shape == (T, problem.jacobian_sparsity.sum())
 
     def test_steady_state_references_follow_each_periods_parameters(self):
         """``full_nk`` uses ``r_G_ss = 1 / beta``, so a period with a different beta needs a different steady state."""
@@ -76,23 +99,12 @@ class TestCompile:
         y_ss = np.array([ss[f"{name}_ss"] for name in problem.var_names])
         point = np.concatenate([y_ss * (1 + 0.05 * rng.normal(size=problem.n_vars)) for _ in range(3)])
 
-        def residuals_at(stacked):
-            Y_tm1, Y_t, Y_tp1 = (np.tile(block, (T, 1)) for block in np.split(stacked, 3))
-            return problem.f_resid_and_jac(Y_tm1, Y_t, Y_tp1, X, P)[0][0]
-
-        step = 1e-6
-        numerical = np.stack(
-            [
-                (residuals_at(point + step * basis) - residuals_at(point - step * basis)) / (2 * step)
-                for basis in np.eye(point.size)
-            ],
-            axis=1,
-        )
+        numerical = _finite_difference_jacobian(problem, point, X, P)
 
         Y_tm1, Y_t, Y_tp1 = (np.tile(block, (T, 1)) for block in np.split(point, 3))
         _, jacobian = problem.f_resid_and_jac(Y_tm1, Y_t, Y_tp1, X, P)
 
-        assert_allclose(jacobian[0], numerical, rtol=1e-5, atol=1e-6)
+        assert_allclose(_dense_period_jacobian(problem, jacobian[0]), numerical, rtol=1e-5, atol=1e-6)
 
     def test_numba_loop_matches_the_vectorized_horizon(self, rbc_model):
         """Numba evaluates the horizon as a loop over one period's graph, the other backends as one vectorized graph."""
@@ -154,7 +166,8 @@ class TestCompile:
             assert_allclose(batched_jacobian[t], jacobian[0], rtol=1e-12)
 
     def test_jacobian_sparsity_covers_every_numerically_nonzero_entry(self, rbc_model):
-        T = 10
+        """The compiled Jacobian holds only the masked entries, so the mask is checked against finite differences."""
+        T = 2
         problem = compile_perfect_foresight_problem(rbc_model, T)
         ss = rbc_model.steady_state(verbose=False)
 
@@ -164,10 +177,10 @@ class TestCompile:
         assert problem.jacobian_sparsity.shape == (problem.n_eq, 3 * problem.n_vars)
 
         rng = np.random.default_rng(0)
-        blocks = [y_ss * (1 + 0.1 * rng.normal(size=(T, problem.n_vars))) for _ in range(3)]
-        _, jacobian = problem.f_resid_and_jac(*blocks, rng.normal(size=(T, problem.n_shocks)), P)
+        point = np.concatenate([y_ss * (1 + 0.1 * rng.normal(size=problem.n_vars)) for _ in range(3)])
+        X = rng.normal(size=(T, problem.n_shocks))
 
-        observed = (jacobian != 0).any(axis=0)
+        observed = np.abs(_finite_difference_jacobian(problem, point, X, P)) > 1e-8
         assert not (observed & ~problem.jacobian_sparsity).any()
 
         # A mask of all True would satisfy the superset check above while carrying no information.
@@ -194,10 +207,7 @@ class TestCompile:
         X, P = _exogenous_inputs(problem, model)
         _, jacobian = problem.f_resid_and_jac(Y_ss, Y_ss, Y_ss, X, P)
 
-        vanishing = problem.jacobian_sparsity & (jacobian[0] == 0)
-        assert vanishing.any(), "expected entries that are structurally nonzero but zero at the steady state"
-
-        assert not ((jacobian[0] != 0) & ~problem.jacobian_sparsity).any()
+        assert (jacobian[0] == 0).any(), "expected entries that are structurally nonzero but zero at the steady state"
 
     def test_deterministic_parameters_are_reported(self):
         problem = compile_perfect_foresight_problem(load_and_cache_model("open_rbc.gcn"), 5)
