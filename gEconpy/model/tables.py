@@ -96,12 +96,15 @@ def _wrap(
     caption: str | None,
     label: str | None,
     size: str | None,
+    landscape: bool = False,
 ) -> str:
     r"""
     Wrap a rendered body in the LaTeX a document needs around it.
 
     A caption or a label puts the body in a ``table`` environment, because neither can be referenced outside
-    one. A size is a declaration, so it applies until the enclosing group ends.
+    one. A size is a declaration, so it applies until the enclosing group ends. ``landscape`` puts the body in a
+    ``sidewaystable``, which ``rotating`` provides, whether or not it has a caption, because rotation is what
+    the environment is for.
 
     Parameters
     ----------
@@ -114,6 +117,8 @@ def _wrap(
         Label for ``\ref``. Defaults to no label.
     size : str, optional
         A LaTeX size command without its backslash, such as ``small``. Defaults to the document's size.
+    landscape : bool, optional
+        Rotate the table onto a page of its own. Defaults to False.
 
     Returns
     -------
@@ -127,16 +132,18 @@ def _wrap(
         # Braced, because a size command is a declaration that would otherwise run to the end of whatever
         # group the caller pasted the table into.
         body = f"{{\\{size}\n{body}\n}}"
-    if caption is None and label is None:
+    if caption is None and label is None and not landscape:
         return body
 
-    lines = ["\\begin{table}[htbp]", "\\centering", body]
+    environment = "sidewaystable" if landscape else "table"
+    # A sidewaystable is a page of its own, so it takes no placement.
+    lines = [f"\\begin{{{environment}}}" if landscape else "\\begin{table}[htbp]", "\\centering", body]
     if caption is not None:
         # Passed through as LaTeX, because a table caption in this literature routinely carries math.
         lines.append(rf"\caption{{{caption}}}")
     if label is not None:
         lines.append(rf"\label{{{label}}}")
-    lines.append("\\end{table}")
+    lines.append(f"\\end{{{environment}}}")
     return "\n".join(lines)
 
 
@@ -386,12 +393,18 @@ def _typst_table(
     return "\n".join(lines)
 
 
-def _wrap_typst(body: str, caption: str | None, label: str | None, size: str | None) -> str:
+def _wrap_typst(
+    body: str,
+    caption: str | None,
+    label: str | None,
+    size: str | None,
+    landscape: bool = False,
+) -> str:
     """
     Wrap a rendered body in the Typst a document needs around it.
 
     A caption or a label puts the body in a ``figure``, because that is what Typst numbers, lists and lets
-    ``@name`` refer to.
+    ``@name`` refer to. ``landscape`` puts the result on a flipped page of its own.
 
     Parameters
     ----------
@@ -404,6 +417,8 @@ def _wrap_typst(body: str, caption: str | None, label: str | None, size: str | N
         Label for ``@``. Defaults to no label.
     size : str, optional
         A Typst text size, such as ``10pt``. Defaults to the document's size.
+    landscape : bool, optional
+        Put the table on a page of its own, turned to landscape. Defaults to False.
 
     Returns
     -------
@@ -412,6 +427,12 @@ def _wrap_typst(body: str, caption: str | None, label: str | None, size: str | N
     """
     if not body:
         return ""
+    wrapped = _wrap_typst_figure(body, caption=caption, label=label, size=size)
+    return f"#page(flipped: true)[\n{wrapped}\n]" if landscape else wrapped
+
+
+def _wrap_typst_figure(body: str, caption: str | None, label: str | None, size: str | None) -> str:
+    """Wrap a non-empty Typst table in a ``figure`` when it has a caption or a label, then in its text size."""
     if caption is None and label is None:
         return f"#text(size: {size})[\n{body}\n]" if size else body
 
@@ -603,6 +624,7 @@ class _TabularTable(ABC):
         size: str | None = None,
         widths: Sequence[str] | None = None,
         booktabs: bool = False,
+        landscape: bool = False,
     ) -> str:
         r"""
         Render the table as a LaTeX ``tabular``, dropping any column that is empty for every row.
@@ -620,6 +642,9 @@ class _TabularTable(ABC):
             One column specifier per printed column. Defaults to each column's own.
         booktabs : bool, optional
             Use booktabs rules instead of ``\hline``. Defaults to False.
+        landscape : bool, optional
+            Rotate the table onto a page of its own in a ``sidewaystable``, for a table wider than the text.
+            The document needs ``\usepackage{rotating}``. Defaults to False.
 
         Returns
         -------
@@ -631,6 +656,7 @@ class _TabularTable(ABC):
             caption=caption,
             label=label,
             size=size,
+            landscape=landscape,
         )
 
     def to_typst(
@@ -640,6 +666,7 @@ class _TabularTable(ABC):
         size: str | None = None,
         widths: Sequence[str] | None = None,
         booktabs: bool = False,
+        landscape: bool = False,
     ) -> str:
         """
         Render the table as a Typst ``table``, dropping any column that is empty for every row.
@@ -660,6 +687,8 @@ class _TabularTable(ABC):
             One Typst column width per printed column, such as ``30%``. Defaults to each column's own.
         booktabs : bool, optional
             Draw three horizontal rules and no grid. Defaults to Typst's own grid.
+        landscape : bool, optional
+            Put the table on a page of its own, turned to landscape. Defaults to False.
 
         Returns
         -------
@@ -671,6 +700,7 @@ class _TabularTable(ABC):
             caption=caption,
             label=label,
             size=size,
+            landscape=landscape,
         )
 
 

@@ -779,6 +779,17 @@ class TestWriteTable:
         with pytest.raises(ValueError, match="one specifier per printed column"):
             rbc.write_table("variables", widths=["c"])
 
+    @pytest.mark.parametrize(
+        "writer, opening, closing",
+        [("latex", "\\begin{sidewaystable}", "\\end{sidewaystable}"), ("typst", "#page(flipped: true)[", "]")],
+    )
+    def test_landscape_turns_the_table_onto_a_page_of_its_own(self, rbc, writer, opening, closing):
+        """Rotation needs the float even without a caption, because the environment is what turns the page."""
+        rendered = rbc.write_table("parameters", writer=writer, landscape=True)
+
+        assert rendered.startswith(opening)
+        assert rendered.endswith(closing)
+
     def test_a_path_receives_the_markup(self, rbc, tmp_path):
         out = tmp_path / "table.tex"
 
@@ -786,7 +797,8 @@ class TestWriteTable:
 
         assert out.read_text() == returned
 
-    def test_a_fully_styled_table_compiles(self, rbc, tmp_path):
+    @pytest.mark.parametrize("landscape", [False, True], ids=["portrait", "landscape"])
+    def test_a_fully_styled_table_compiles(self, rbc, tmp_path, landscape):
         """Every style option at once is the combination most likely to produce invalid LaTeX."""
         pdflatex = shutil.which("pdflatex")
         if pdflatex is None:
@@ -798,10 +810,11 @@ class TestWriteTable:
             label="tab:calib",
             size="small",
             booktabs=True,
+            landscape=landscape,
         )
         source = tmp_path / "styled.tex"
         source.write_text(
-            "\\documentclass{article}\n\\usepackage{amsmath,amssymb,booktabs}\n"
+            "\\documentclass{article}\n\\usepackage{amsmath,amssymb,booktabs,rotating}\n"
             f"\\begin{{document}}\n{body}\n\\end{{document}}\n"
         )
 

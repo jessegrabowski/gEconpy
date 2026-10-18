@@ -420,7 +420,9 @@ Publication tables
 :meth:`~gEconpy.model.model.Model.write_table` renders a group as markup for a document. It takes ``caption``
 and ``label``, which wrap the table so it can be cross-referenced, ``size`` for a font size, ``widths`` to
 replace the column specifiers, and ``booktabs`` for rules above the header, below it and below the last row
-rather than a full grid. Pass ``path`` to write the markup to a file as well as returning it.
+rather than a full grid. ``landscape=True`` turns a table too wide for the text onto a page of its own, in a
+``sidewaystable`` that needs ``\usepackage{rotating}`` and on a flipped page in Typst. Pass ``path`` to write
+the markup to a file as well as returning it.
 
 ``writer`` chooses the language, either ``"latex"`` or ``"typst"``:
 
