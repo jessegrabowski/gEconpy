@@ -11,8 +11,10 @@ from pytensor.graph.traversal import explicit_graph_inputs
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perturbation import (
+    DROrder,
     check_bk_condition,
     check_bk_condition_pt,
+    composition_derivatives,
     linearize_model,
     log_linearized_mask,
     make_not_loglin_flags,
@@ -203,6 +205,190 @@ def test_log_linearized_mask_follows_requests_declared_signs_and_steady_state_si
     )
 
     np.testing.assert_array_equal(mask, [True, False, True, False, False])
+
+
+def _compile_composition(variables, equations, shocks, dr_order, loglin_variables):
+    derivatives = composition_derivatives(
+        variables=variables,
+        equations=equations,
+        shocks=shocks,
+        dr_order=dr_order,
+        cache={},
+        loglin_variables=loglin_variables,
+    )
+    outputs = [derivatives.jacobian, derivatives.hessian]
+    inputs = [node for node in explicit_graph_inputs(outputs) if node.name]
+    f = pytensor.function(inputs, outputs, on_unused_input="ignore")
+
+    def evaluate(values, ghx, ghu):
+        policy = {"ghx": ghx, "ghu": ghu}
+        return f(**{node.name: policy.get(node.name, values.get(node.name)) for node in inputs})
+
+    return evaluate
+
+
+def _numeric_composition(variables, equations, shocks, dr_order, values, ghx, ghu, logged):
+    """Evaluate the composed residual with sympy and numpy, independently of the PyTensor graph."""
+    lags, now, leads = make_all_variable_time_combinations(variables)
+    stacked = [*lags, *now, *leads, *shocks]
+    others = sorted(set().union(*(eq.free_symbols for eq in equations)) - set(stacked), key=lambda s: s.name)
+    residual = sp.lambdify([stacked, others], [equations[i] for i in dr_order.eq_order], modules="numpy")
+    theta = [values[symbol.name] for symbol in others]
+    ss = np.array([values[variable.to_ss().name] for variable in variables])
+    state_columns = dr_order.var_order[dr_order.lag_positions]
+    n_states, n_shocks = ghx.shape[1], ghu.shape[1]
+
+    def level(deviation):
+        return np.where(logged, ss * np.exp(deviation), ss + deviation)
+
+    def phi(w):
+        x, u, u_next = w[:n_states], w[n_states : n_states + n_shocks], w[n_states + n_shocks :]
+        deviation_t = (ghx @ x + ghu @ u)[dr_order.inv_var_order]
+        deviation_tp1 = (ghx @ deviation_t[state_columns] + ghu @ u_next)[dr_order.inv_var_order]
+        deviation_tm1 = np.zeros(len(variables))
+        deviation_tm1[state_columns] = x
+        arguments = [*level(deviation_tm1), *level(deviation_t), *level(deviation_tp1), *u]
+        return np.array(residual(arguments, theta), dtype=float)
+
+    return phi
+
+
+def _central_difference_hessian(phi, m, h):
+    steps = np.eye(m) * h
+    hessian = np.zeros((len(phi(np.zeros(m))), m, m))
+    for i in range(m):
+        for j in range(m):
+            a, b = steps[i], steps[j]
+            hessian[:, i, j] = (phi(a + b) - phi(a - b) - phi(b - a) + phi(-a - b)) / (4 * h * h)
+    return hessian
+
+
+class TestCompositionDerivatives:
+    def test_hessian_of_a_quadratic_model_matches_exact_differences(self):
+        k, c = (TimeAwareSymbol(name, 0) for name in "kc")
+        eps = TimeAwareSymbol("eps", 0)
+        equations = [
+            k - 0.5 * k.set_t(-1) ** 2 - k.set_t(-1) * eps,
+            c * c.set_t(1) - k**2 + 0.3 * c * eps,
+        ]
+        variables, shocks = [k, c], [eps]
+        dr_order = DROrder.from_model(variables, equations)
+        values = {"k_ss": 1.5, "c_ss": 0.7}
+        rng = np.random.default_rng(0)
+        ghx, ghu = rng.normal(size=(2, dr_order.n_state_var)), rng.normal(size=(2, 1))
+
+        _, hessian = _compile_composition(variables, equations, shocks, dr_order, [])(values, ghx, ghu)
+
+        phi = _numeric_composition(variables, equations, shocks, dr_order, values, ghx, ghu, np.zeros(2, dtype=bool))
+        assert_allclose(hessian, _central_difference_hessian(phi, hessian.shape[1], h=0.5), atol=1e-12)
+
+    @pytest.mark.parametrize(
+        ("assumptions", "requested", "y_ss", "logged"),
+        [
+            ({"positive": True}, True, 3.0, True),
+            ({}, True, 3.0, True),
+            ({}, True, -3.0, False),
+            ({}, False, 3.0, False),
+            ({"negative": True}, True, -3.0, False),
+        ],
+        ids=["declared_positive", "no_sign_positive_ss", "no_sign_negative_ss", "not_requested", "declared_negative"],
+    )
+    def test_log_change_of_variables_matches_the_closed_form(self, assumptions, requested, y_ss, logged):
+        y, eps = TimeAwareSymbol("y", 0, **assumptions), TimeAwareSymbol("eps", 0)
+        equations = [y**2 - eps]
+        dr_order = DROrder.from_model([y], equations)
+        g = 0.7
+
+        _, hessian = _compile_composition([y], equations, [eps], dr_order, [y] if requested else [])(
+            {"y_ss": y_ss}, np.zeros((1, 0)), np.array([[g]])
+        )
+
+        expected = 4 * y_ss**2 * g**2 if logged else 2 * g**2
+        assert_allclose(hessian[0, 0, 0], expected, rtol=1e-12)
+
+    @pytest.mark.parametrize("loglin", [True, False], ids=["loglin", "levels"])
+    def test_first_derivative_is_the_linearization_contracted_with_the_policy(self, loglin):
+        model = load_and_cache_model("basic_rbc.gcn")
+        dr_order = model.dr_order
+        loglin_variables = model.variables if loglin else []
+        cache = {}
+        derivatives = composition_derivatives(
+            variables=model.variables,
+            equations=model.equations,
+            shocks=model.shocks,
+            dr_order=dr_order,
+            cache=cache,
+            loglin_variables=loglin_variables,
+        )
+        (A, B, C, D), _, _, _ = linearize_model(
+            variables=model.variables,
+            equations=model.equations,
+            shocks=model.shocks,
+            cache=cache,
+            loglin_variables=loglin_variables,
+            eq_order=dr_order.eq_order,
+            var_order=dr_order.var_order,
+        )
+        outputs = [derivatives.jacobian, A, B, C, D]
+        inputs = [node for node in explicit_graph_inputs(outputs) if node.name]
+        f = pytensor.function(inputs, outputs, on_unused_input="ignore")
+        ss = model.steady_state(verbose=False, progressbar=False).to_string()
+        rng = np.random.default_rng(1)
+        ghx = rng.normal(size=(len(model.variables), dr_order.n_state_var)) * 0.3
+        ghu = rng.normal(size=(len(model.variables), len(model.shocks)))
+        values = {**ss, **model.parameters(), "ghx": ghx, "ghu": ghu}
+
+        jacobian, A, B, C, D = f(**{node.name: values[node.name] for node in inputs})
+
+        ghx_s, ghu_s = ghx[dr_order.lag_positions], ghu[dr_order.lag_positions]
+        expected = np.hstack(
+            [A[:, dr_order.lag_positions] + B @ ghx + C @ ghx @ ghx_s, B @ ghu + C @ ghx @ ghu_s + D, C @ ghu]
+        )
+        assert_allclose(jacobian, expected, atol=1e-12)
+
+    def test_log_linearized_hessian_matches_central_differences(self):
+        model = load_and_cache_model("one_block_1.gcn")
+        dr_order = model.dr_order
+        ss = model.steady_state(verbose=False, progressbar=False).to_string()
+        values = {**ss, **model.parameters()}
+        steady_state = np.array([values[v.to_ss().name] for v in model.variables])
+        assert np.abs(steady_state).max() > 50, (
+            "log scaling is only distinguishable from levels far from a unit steady state"
+        )
+        rng = np.random.default_rng(2)
+        ghx = rng.normal(size=(len(model.variables), dr_order.n_state_var)) * 0.3
+        ghu = rng.normal(size=(len(model.variables), len(model.shocks))) * 0.3
+
+        _, hessian = _compile_composition(model.variables, model.equations, model.shocks, dr_order, model.variables)(
+            values, ghx, ghu
+        )
+
+        logged = log_linearized_mask(model.variables, model.variables, steady_state)
+        phi = _numeric_composition(model.variables, model.equations, model.shocks, dr_order, values, ghx, ghu, logged)
+        assert_allclose(hessian, _central_difference_hessian(phi, hessian.shape[1], h=1e-3), rtol=1e-5, atol=1e-5)
+
+    def test_mixed_log_and_level_treatments_match_central_differences(self):
+        y, z, v = TimeAwareSymbol("y", 0, positive=True), TimeAwareSymbol("z", 0), TimeAwareSymbol("v", 0)
+        eps = TimeAwareSymbol("eps", 0)
+        equations = [
+            y * z - y.set_t(-1) ** 2 - eps,
+            z**2 + v * y.set_t(1) - z.set_t(-1),
+            v**3 - z * v.set_t(1) + y * eps,
+        ]
+        variables = [y, z, v]
+        loglin_variables = [y, v]
+        dr_order = DROrder.from_model(variables, equations)
+        values = {"y_ss": 2.0, "z_ss": 1.5, "v_ss": -0.8}
+        rng = np.random.default_rng(3)
+        ghx = rng.normal(size=(3, dr_order.n_state_var)) * 0.3
+        ghu = rng.normal(size=(3, 1)) * 0.3
+
+        _, hessian = _compile_composition(variables, equations, [eps], dr_order, loglin_variables)(values, ghx, ghu)
+
+        logged = log_linearized_mask(variables, loglin_variables, np.array([2.0, 1.5, -0.8]))
+        phi = _numeric_composition(variables, equations, [eps], dr_order, values, ghx, ghu, logged)
+        np.testing.assert_array_equal(logged, [True, False, False])
+        assert_allclose(hessian, _central_difference_hessian(phi, hessian.shape[1], h=1e-3), rtol=1e-5, atol=1e-5)
 
 
 class TestSolvePolicyFunction:

@@ -7,14 +7,17 @@ import pandas as pd
 import pytensor.tensor as pt
 import sympy as sp
 
-from pytensor.gradient import disconnected_grad
+from pytensor.gradient import disconnected_grad, pushforward
+from pytensor.graph import vectorize_graph
+from pytensor.graph.replace import graph_replace
+from pytensor.graph.traversal import ancestors, explicit_graph_inputs
 from pytensor.tensor import TensorVariable
 from scipy import linalg
 from sympytensor import as_tensor
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.compile import build_symbolic_jacobians
+from gEconpy.model.compile import build_symbolic_jacobians, make_cache_key
 from gEconpy.model.timing import make_all_variable_time_combinations
 from gEconpy.pytensorf.compile import rewrite_pregrad
 from gEconpy.pytensorf.real_eig import real_eig
@@ -284,6 +287,154 @@ def linearize_model(
     # boundary and ``Model.linearize_model`` apply the inverse permutations before returning matrices to the user.
     ss_pt = [as_tensor(v.to_ss(), cache) for v in variables]
     return [A, B, C, D], ss_pt, eq_order_local, var_order_local
+
+
+class CompositionDerivatives(NamedTuple):
+    """
+    Derivatives of the model equations along a linear policy, at the steady state.
+
+    Attributes
+    ----------
+    jacobian : TensorVariable
+        First derivative of the composed residual with respect to :math:`w = (x, u, u')`, of shape ``(n_eq, n_w)``
+        with ``n_w = n_state_variables + 2 * n_shocks``.
+    hessian : TensorVariable
+        Second derivative of the composed residual with respect to :math:`w`, of shape ``(n_eq, n_w, n_w)``.
+    ghx : TensorVariable
+        Input for the response of every variable to the lagged states, of shape ``(n_variables, n_state_variables)``,
+        rows in decision-rule order.
+    ghu : TensorVariable
+        Input for the response of every variable to the current shocks, of shape ``(n_variables, n_shocks)``, rows
+        in decision-rule order.
+    ss_inputs : list of TensorVariable
+        Steady-state value of every variable, in model order.
+    """
+
+    jacobian: TensorVariable
+    hessian: TensorVariable
+    ghx: TensorVariable
+    ghu: TensorVariable
+    ss_inputs: list[TensorVariable]
+
+
+def composition_derivatives(
+    variables: list[TimeAwareSymbol],
+    equations: list[sp.Expr],
+    shocks: list[TimeAwareSymbol],
+    dr_order: DROrder,
+    cache: dict | None = None,
+    loglin_variables: list[TimeAwareSymbol] | None = None,
+) -> CompositionDerivatives:
+    r"""
+    Differentiate the model equations composed with a linear policy, at the steady state.
+
+    The composed residual is
+
+    .. math::
+
+        \Phi(x, u, u') = F\bigl(y_{ss} + S x,\; y_{ss} + g(x, u),\; y_{ss} + g(g_s(x, u), u'),\; u\bigr),
+        \qquad g(x, u) = g_x x + g_u u,
+
+    where :math:`x` is the lagged state, :math:`u` the current shocks, :math:`u'` next period's shocks, :math:`S`
+    places the states among the variables, and :math:`g_s` is the state rows of :math:`g`. A log-linearized variable
+    enters as :math:`y_{ss} e^{d}` in place of :math:`y_{ss} + d`. The derivatives are taken with respect to
+    :math:`w = (x, u, u')` and evaluated at :math:`w = 0`.
+
+    Parameters
+    ----------
+    variables : list of TimeAwareSymbol
+        Model variables at time t, in model order.
+    equations : list of sp.Expr
+        Model equations.
+    shocks : list of TimeAwareSymbol
+        Exogenous shocks.
+    dr_order : DROrder
+        Decision-rule ordering of ``variables`` and ``equations``.
+    cache : dict, optional
+        Sympytensor cache shared with the rest of the model's graphs. A fresh cache is created when None. Defaults to
+        None.
+    loglin_variables : list of TimeAwareSymbol, optional
+        Variables requested for log-linearization. Every variable is requested when None. Defaults to None.
+
+    Returns
+    -------
+    derivatives : CompositionDerivatives
+        First and second derivatives of :math:`\Phi`, rows in ``dr_order.eq_order``, and the graph inputs they take.
+    """
+    if cache is None:
+        cache = {}
+    if loglin_variables is None:
+        loglin_variables = variables
+
+    n_variables, n_shocks, n_states = len(variables), len(shocks), dr_order.n_state_var
+    var_order = dr_order.var_order
+    state_columns = var_order[dr_order.lag_positions]
+
+    ghx = pt.dmatrix("ghx", shape=(n_variables, n_states))
+    ghu = pt.dmatrix("ghu", shape=(n_variables, n_shocks))
+    w = pt.dvector("w", shape=(n_states + 2 * n_shocks,))
+    x, u, u_next = w[:n_states], w[n_states : n_states + n_shocks], w[n_states + n_shocks :]
+
+    deviation_t = (ghx @ x + ghu @ u)[dr_order.inv_var_order]
+    state_t = deviation_t[state_columns]
+    deviation_tp1 = (ghx @ state_t + ghu @ u_next)[dr_order.inv_var_order]
+    deviation_tm1 = pt.set_subtensor(pt.zeros(n_variables)[state_columns], x)
+
+    requested = {variable.base_name for variable in loglin_variables}
+    ss_inputs = [as_tensor(variable.to_ss(), cache) for variable in variables]
+    equations_pt = [as_tensor(equation, cache) for equation in equations]
+
+    replacements = {}
+    lags, now, leads = make_all_variable_time_combinations(variables)
+    for i, variable in enumerate(variables):
+        treatment = _log_linear_treatment(variable, requested=variable.base_name in requested)
+        for symbol, deviation in ((lags[i], deviation_tm1[i]), (now[i], deviation_t[i]), (leads[i], deviation_tp1[i])):
+            key = make_cache_key(symbol.name, cls=TimeAwareSymbol)
+            if key in cache:
+                replacements[cache[key]] = _level(ss_inputs[i], deviation, treatment)
+    for j, shock in enumerate(shocks):
+        key = make_cache_key(shock.name, cls=TimeAwareSymbol)
+        if key in cache:
+            replacements[cache[key]] = u[j]
+
+    residuals = rewrite_pregrad(graph_replace(pt.stack(equations_pt)[dr_order.eq_order], replacements, strict=False))
+
+    time_indexed_names = {symbol.name for symbol in (*lags, *now, *leads, *shocks)}
+    unreplaced = sorted(node.name for node in explicit_graph_inputs([residuals]) if node.name in time_indexed_names)
+    if unreplaced:
+        raise ValueError(f"Time-indexed symbols were not replaced by the policy: {unreplaced}")
+
+    # w is short, so pushing forward along each of its unit directions is far cheaper than pulling back every residual.
+    # The directions stay on the leading axis until the graph is rewritten. A transpose applied earlier is pushed down
+    # to every leaf by the rewrites, multiplying the DimShuffle nodes.
+    n_w = w.type.shape[0]
+    basis = pt.eye(n_w)
+    tangent = w.type("tangent")
+    first = rewrite_pregrad(vectorize_graph(pushforward(residuals, w, tangent), replace={tangent: basis}))
+    # In a model linear in w the first derivative is constant, and pushforward rejects it as disconnected.
+    if w in ancestors([first]):
+        tangent = w.type("tangent")
+        second = vectorize_graph(pushforward(first, w, tangent), replace={tangent: basis})
+    else:
+        second = pt.zeros((n_w, n_w, len(equations)))
+
+    at_steady_state = {w: pt.zeros(n_w)}
+    first, second = rewrite_pregrad(graph_replace([first, second], at_steady_state, strict=False))
+    return CompositionDerivatives(
+        jacobian=first.T, hessian=second.transpose(2, 1, 0), ghx=ghx, ghu=ghu, ss_inputs=ss_inputs
+    )
+
+
+def _level(
+    ss_value: TensorVariable, deviation: TensorVariable, treatment: Literal["level", "log", "by_sign"]
+) -> TensorVariable:
+    in_levels = ss_value + deviation
+    if treatment == "level":
+        return in_levels
+    in_logs = ss_value * pt.exp(deviation)
+    if treatment == "log":
+        return in_logs
+    return pt.switch(ss_value > 0, in_logs, in_levels)
 
 
 def _log_linear_column_scale(
