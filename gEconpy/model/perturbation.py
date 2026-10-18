@@ -84,9 +84,24 @@ class DROrder(NamedTuple):
     var_has_current: np.ndarray
 
     @property
+    def n_state_var(self) -> int:
+        """Number of state variables, those appearing at a lag. Dynare calls this ``nspred``."""
+        return self.n_pred_only_var + self.n_mixed_var
+
+    @property
+    def lag_positions(self) -> np.ndarray:
+        """Positions in decision-rule order of the variables that appear at a lag. Dynare calls these ``klag``."""
+        return np.arange(self.n_static_var, self.n_static_var + self.n_state_var)
+
+    @property
     def current_positions(self) -> np.ndarray:
         """Positions in decision-rule order of the variables that appear at time t. Dynare calls these ``kcurr``."""
         return np.flatnonzero(self.var_has_current[self.var_order])
+
+    @property
+    def lead_positions(self) -> np.ndarray:
+        """Positions in decision-rule order of the variables that appear at a lead. Dynare calls these ``klead``."""
+        return np.arange(self.n_static_var + self.n_pred_only_var, len(self.var_order))
 
     @classmethod
     def from_model(cls, variables: list[TimeAwareSymbol], equations: list[sp.Expr]) -> "DROrder":

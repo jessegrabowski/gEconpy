@@ -520,6 +520,9 @@ def test_dr_order_groups_variables_and_equations_by_time_shift():
     assert order.var_order[order.inv_var_order].tolist() == [0, 1, 2, 3]
     assert order.eq_order[order.inv_eq_order].tolist() == [0, 1, 2, 3]
 
+    assert order.n_state_var == 2
+    assert order.lag_positions.tolist() == [1, 2]
+    assert order.lead_positions.tolist() == [2, 3]
     assert order.current_positions.tolist() == [0, 1, 2]
 
 
