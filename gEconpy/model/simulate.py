@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
 from gEconpy.model.model import Model
 from gEconpy.model.statistics import build_Q_matrix
 from gEconpy.model.statistics.validation import _maybe_solve_model, _validate_shock_options
@@ -42,6 +43,7 @@ class ShockSpec:
 
 def impulse_response_function(
     model: Model,
+    solution: FirstOrderPerturbationSolution | None = None,
     T: np.ndarray | None = None,
     R: np.ndarray | None = None,
     simulation_length: int = 40,
@@ -64,12 +66,12 @@ def impulse_response_function(
     ----------
     model : Model
         DSGE model whose variables and shocks label the output.
+    solution : FirstOrderPerturbationSolution, optional
+        Solution from :meth:`~gEconpy.model.model.Model.solve_model`. Solved from ``model`` when omitted.
     T : ndarray, optional
-        Transition matrix of the solved system. Computed with :meth:`~gEconpy.model.model.Model.solve_model` when
-        omitted.
+        Transition matrix of the solved system. Deprecated, pass ``solution`` instead.
     R : ndarray, optional
-        Selection matrix of the solved system. Computed with :meth:`~gEconpy.model.model.Model.solve_model` when
-        omitted.
+        Selection matrix of the solved system. Deprecated, pass ``solution`` instead.
     simulation_length : int, optional
         Number of periods to compute the response over. Ignored when ``shock_trajectory`` is given, because the
         trajectory sets the length. Defaults to 40.
@@ -94,8 +96,8 @@ def impulse_response_function(
     random_seed : int, RandomState, or Generator, optional
         Seed for the draw taken when ``shock_cov`` is given. Defaults to None.
     **solve_model_kwargs
-        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model`. Ignored when ``T`` and ``R`` are
-        provided.
+        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model`. Ignored when ``solution``, or ``T``
+        and ``R``, are provided.
 
     Returns
     -------
@@ -119,7 +121,7 @@ def impulse_response_function(
     """
     rng = np.random.default_rng(random_seed)
 
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
+    T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
 
     spec = _make_shock_spec(shock_size, shock_cov, shock_trajectory, orthogonalize_shocks)
 
@@ -153,6 +155,7 @@ def impulse_response_function(
 
 def simulate(
     model: Model,
+    solution: FirstOrderPerturbationSolution | None = None,
     T: np.ndarray | None = None,
     R: np.ndarray | None = None,
     n_simulations: int = 1,
@@ -172,12 +175,12 @@ def simulate(
     ----------
     model : Model
         DSGE model whose variables and shocks label the output.
+    solution : FirstOrderPerturbationSolution, optional
+        Solution from :meth:`~gEconpy.model.model.Model.solve_model`. Solved from ``model`` when omitted.
     T : ndarray, optional
-        Transition matrix of the solved system. Computed with :meth:`~gEconpy.model.model.Model.solve_model` when
-        omitted.
+        Transition matrix of the solved system. Deprecated, pass ``solution`` instead.
     R : ndarray, optional
-        Selection matrix of the solved system. Computed with :meth:`~gEconpy.model.model.Model.solve_model` when
-        omitted.
+        Selection matrix of the solved system. Deprecated, pass ``solution`` instead.
     n_simulations : int, optional
         Number of trajectories to simulate. Defaults to 1.
     simulation_length : int, optional
@@ -192,8 +195,8 @@ def simulate(
     random_seed : int, RandomState, or Generator, optional
         Seed for the shock draws. Defaults to None.
     **solve_model_kwargs
-        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model`. Ignored when ``T`` and ``R`` are
-        provided.
+        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model`. Ignored when ``solution``, or ``T``
+        and ``R``, are provided.
 
     Returns
     -------
@@ -223,7 +226,7 @@ def simulate(
         random_seed=random_seed,
     )
 
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
+    T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
     trajectories = _simulate_linear_system(T, R, epsilons)
 
     return xr.DataArray(

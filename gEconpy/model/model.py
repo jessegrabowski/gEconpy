@@ -1,6 +1,7 @@
 import difflib
 import logging
 import re
+import warnings
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
@@ -2099,8 +2100,9 @@ class Model:
         max_iter: int = 1000,
         verbose: bool = True,
         on_failure: Literal["error", "ignore"] = "error",
+        return_matrices: bool | None = None,
         **parameter_updates: float,
-    ) -> FirstOrderPerturbationSolution | tuple[None, None]:
+    ) -> FirstOrderPerturbationSolution | tuple[np.ndarray | None, np.ndarray | None] | None:
         r"""
         Solve for the linear approximation to the policy function via perturbation.
 
@@ -2133,17 +2135,24 @@ class Model:
             Log the solver results and the residual norms of the solution. Default True.
         on_failure : str, optional
             One of ``'error'`` or ``'ignore'``. ``'error'`` raises when the solver fails and ``'ignore'`` returns
-            ``(None, None)`` instead, which suits repeated solves such as sampling. Default ``'error'``.
+            ``(None, None)``, or None when ``return_matrices`` is False, which suits repeated solves such as
+            sampling. Default ``'error'``.
+        return_matrices : bool, optional
+            Return the transition and selection matrices ``(T, R)`` when True, and a
+            :class:`~gEconpy.classes.perturbation_solution.FirstOrderPerturbationSolution` when False. Leaving it
+            unset returns the matrices with a :class:`FutureWarning`, because the default becomes False in the next
+            major release. Pass it explicitly to silence the warning.
         **parameter_updates : float
             Parameter values at which to solve. Unspecified parameters take their GCN defaults.
 
         Returns
         -------
-        solution : FirstOrderPerturbationSolution or tuple of None
-            The policy function, as a :class:`~gEconpy.classes.perturbation_solution.FirstOrderPerturbationSolution`.
-            Unpacking it gives the transition matrix T, mapping the lagged state to the current state, and the
-            selection matrix R, mapping current shocks to the current state. ``(None, None)`` when the solver fails
-            and ``on_failure`` is ``'ignore'``.
+        solution : FirstOrderPerturbationSolution, tuple of ndarray, or None
+            The policy function. With ``return_matrices=False`` it is a
+            :class:`~gEconpy.classes.perturbation_solution.FirstOrderPerturbationSolution`, whose ``T`` is the
+            transition matrix, mapping the lagged state to the current state, and whose ``R`` is the selection
+            matrix, mapping current shocks to the current state. Otherwise it is the tuple ``(T, R)``. On solver
+            failure with ``on_failure='ignore'`` it is None, or ``(None, None)`` when the matrices are returned.
 
         Notes
         -----
@@ -2324,8 +2333,10 @@ class Model:
             from gEconpy.data import get_example_gcn
 
             model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
-            T, R = model.solve_model(verbose=False, steady_state_kwargs={"progressbar": False})
-            print(T.shape, R.shape)
+            solution = model.solve_model(
+                verbose=False, steady_state_kwargs={"progressbar": False}, return_matrices=False
+            )
+            print(solution.T.shape, solution.R.shape)
 
         Solve repeatedly at sampled parameters, skipping draws where the solver fails:
 
@@ -2340,17 +2351,27 @@ class Model:
             rng = np.random.default_rng(0)
 
             for beta in rng.uniform(0.9, 0.999, size=3):
-                T, R = model.solve_model(
+                solution = model.solve_model(
                     beta=beta,
                     solver="gensys",
                     on_failure="ignore",
+                    return_matrices=False,
                     verbose=False,
                     steady_state_kwargs={"progressbar": False},
                 )
-                print(beta, T is not None)
+                print(beta, solution is not None)
         """
         if on_failure not in ("error", "ignore"):
             raise ValueError(f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}')
+        if return_matrices is None:
+            warnings.warn(
+                "solve_model will return a FirstOrderPerturbationSolution by default in the next major release. "
+                "Pass return_matrices=True to keep receiving (T, R), or return_matrices=False to receive the "
+                "solution now.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            return_matrices = True
         if steady_state_kwargs is None:
             steady_state_kwargs = {}
 
@@ -2385,10 +2406,13 @@ class Model:
             )
 
         if T is None or R is None:
-            return None, None
+            return (None, None) if return_matrices else None
 
         if verbose:
             check_perturbation_solution(A, B, C, D, T, R, tol=tol)
+
+        if return_matrices:
+            return np.ascontiguousarray(T), np.ascontiguousarray(R)
 
         ss_values = {name.removesuffix("_ss"): value for name, value in ss_dict.items()}
         steady_state_values = np.array([ss_values[v.base_name] for v in self.variables])

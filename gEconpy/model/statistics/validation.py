@@ -1,4 +1,5 @@
 import logging
+import warnings
 
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import SteadyStateNotFoundError
 
 if TYPE_CHECKING:
+    from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
     from gEconpy.model.model import Model
 
 _log = logging.getLogger(__name__)
@@ -151,42 +153,60 @@ def _maybe_linearize_model(
 
 
 def _maybe_solve_model(
-    model: "Model", T: np.ndarray | None, R: np.ndarray | None, **solve_model_kwargs
-) -> tuple[np.ndarray, np.ndarray]:
+    model: "Model",
+    solution: "FirstOrderPerturbationSolution | np.ndarray | None",
+    T: np.ndarray | None,
+    R: np.ndarray | None,
+    **solve_model_kwargs,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
     """
-    Return the policy matrices, calling ``model.solve_model`` only when either of T and R is missing.
+    Return the policy matrices from ``solution``, from deprecated ``T`` and ``R``, or by solving ``model``.
 
     Parameters
     ----------
     model : Model
-        DSGE model whose solution is T and R.
+        DSGE model to solve when neither ``solution`` nor both of ``T`` and ``R`` are given.
+    solution : FirstOrderPerturbationSolution or ndarray, optional
+        Solution from ``model.solve_model``. An array here is a transition matrix passed positionally in the
+        deprecated ``(model, T, R)`` form, and ``T`` then holds the selection matrix.
     T : ndarray, optional
-        Transition matrix.
+        Transition matrix. Deprecated.
     R : ndarray, optional
-        Selection matrix.
+        Selection matrix. Deprecated.
     **solve_model_kwargs
-        Arguments forwarded to ``model.solve_model``. Ignored when both T and R are provided.
+        Arguments forwarded to ``model.solve_model``.
 
     Returns
     -------
-    T : ndarray
-        Transition matrix.
-    R : ndarray
-        Selection matrix.
+    T : ndarray or None
+        Transition matrix. None when the solve fails and ``on_failure`` is ``'ignore'``.
+    R : ndarray or None
+        Selection matrix. None when the solve fails and ``on_failure`` is ``'ignore'``.
     """
-    n_matrices = sum(x is not None for x in [T, R])
-    if n_matrices == 1:
+    if isinstance(solution, np.ndarray):
+        solution, T, R = None, solution, T
+
+    if T is not None or R is not None:
+        if solution is not None:
+            raise ValueError("Pass either solution or T and R, not both.")
+        warnings.warn(
+            "Passing T and R is deprecated and will be removed. Pass solution=model.solve_model(...) instead.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        if T is not None and R is not None:
+            return T, R
         _log.warning(
             "Passing only one of T or R will still trigger ``model.solve_model`` (which might be expensive). "
             "Pass both to avoid this, or None to silence this warning."
         )
-        T = None
-        R = None
 
-    if T is None and R is None:
-        T, R = model.solve_model(**solve_model_kwargs)
+    if solution is None:
+        solution = model.solve_model(**{**solve_model_kwargs, "return_matrices": False})
+        if solution is None:
+            return None, None
 
-    return T, R
+    return solution.T, solution.R
 
 
 def _validate_shock_options(

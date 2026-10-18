@@ -95,11 +95,10 @@ def simulation_data(rbc_model):
 def irf_setup():
     model = load_and_cache_model("full_nk.gcn")
     model.steady_state(verbose=False)
-    T, R = model.solve_model(verbose=False, solver="gensys")
+    solution = model.solve_model(return_matrices=False, verbose=False, solver="gensys")
     irf = impulse_response_function(
         model,
-        T=T,
-        R=R,
+        solution=solution,
         simulation_length=100,
         shock_size=0.1,
         return_individual_shocks=True,
