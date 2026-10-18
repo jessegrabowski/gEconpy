@@ -708,18 +708,29 @@ class TestSteadyStateTables:
         assert rendered == rbc.write_table("steady_state_estimates", build_options=build_options)
         assert r"\textbf{Variable} & \textbf{Description} & \textbf{Prior mean} & \textbf{Prior S.D.} \\" in rendered
 
-    def test_a_draw_whose_steady_state_fails_is_left_out_of_the_summary(self, rbc, caplog):
+    @pytest.mark.parametrize("group, column", [("prior", "prior_mean"), ("posterior", "posterior_mean")])
+    def test_a_draw_whose_steady_state_fails_is_left_out_of_the_summary(self, rbc, caplog, group, column):
         """``beta = 1.2`` puts the rental rate below zero, where the analytic steady state is NaN."""
-        idata = xr.DataTree.from_dict({"prior": _draws(beta=[0.99, 0.99, 1.2])})
+        idata = xr.DataTree.from_dict({group: _draws(beta=[0.99, 0.99, 1.2])})
 
         with caplog.at_level("WARNING"):
-            frame = rbc.table("steady_state_estimates", idata=idata).to_frame().set_index("symbol")
+            frame = rbc.table("steady_state_estimates", idata=idata, prior_draws=10).to_frame().set_index("symbol")
 
-        assert frame.loc["K_{ss}", "prior_mean"] == pytest.approx(
+        assert frame.loc["K_{ss}", column] == pytest.approx(
             rbc.steady_state(verbose=False, progressbar=False, beta=0.99)["K_ss"]
         )
-        assert "failed to solve at 1 of 3 prior draws" in caplog.text
+        assert f"failed to solve at 1 of 3 {group} draws" in caplog.text
         assert "Steady State was not found" not in caplog.text
+
+    def test_a_posterior_whose_every_draw_fails_raises(self, rbc):
+        """An empty sample has no mean or interval, so the table refuses to print one."""
+        with pytest.raises(ValueError, match="failed to solve at every posterior draw"):
+            rbc.table("steady_state_estimates", idata=_draws(beta=[1.2, 1.2]), prior_draws=10)
+
+    def test_draws_naming_no_free_parameter_raise(self, rbc):
+        """A posterior from some other model would otherwise fail deep inside, on a missing chain dimension."""
+        with pytest.raises(ValueError, match="posterior draws hold none of the model's free parameters"):
+            rbc.table("steady_state_estimates", idata=_draws(unrelated=[1.0, 2.0]), prior_draws=10)
 
     def test_a_model_with_no_priors_needs_sampler_output(self, tmp_path):
         path = tmp_path / "bare.gcn"

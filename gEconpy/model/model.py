@@ -867,6 +867,10 @@ class Model:
             posterior_values = self._steady_state_draws(
                 posterior[[name for name in posterior.data_vars if name in free_names]], group="posterior"
             )
+            if not posterior_values.sizes["draw"]:
+                raise ValueError(
+                    "The steady state failed to solve at every posterior draw, so there is none to summarize."
+                )
             summary, interval = summarize_posterior(
                 posterior_values,
                 [variable.base_name for variable in self.variables],
@@ -883,8 +887,7 @@ class Model:
             key = variable_key(variable.base_name)
             draw_statistics = None
             if prior_values is not None:
-                draws = prior_values[variable.base_name].to_numpy().ravel()
-                draw_statistics = _draw_statistics(draws[np.isfinite(draws)], prior_stats)
+                draw_statistics = _draw_statistics(prior_values[variable.base_name].to_numpy().ravel(), prior_stats)
             rows.append(
                 EstimateRow(
                     symbol=render(variable.to_ss(), name_override=overrides.get(key)),
@@ -927,36 +930,54 @@ class Model:
 
     def _steady_state_draws(self, parameters: xr.Dataset, group: str) -> xr.Dataset:
         """
-        Solve the steady state at every draw of the parameters, keeping the draws' ``chain`` and ``draw`` dims.
+        Solve the steady state at every draw of the parameters and return the draws that solved.
 
-        A parameter the draws leave out takes its GCN value. A draw whose steady state fails to solve is NaN.
+        A parameter the draws leave out takes its GCN value. A draw whose steady state fails to solve is dropped,
+        and a warning reports how many were. The draws that remain form one chain, because the table reports only
+        moments and intervals, which do not depend on how the draws split across chains.
+
+        Parameters
+        ----------
+        parameters : Dataset
+            Draws of the model's free parameters, with ``chain`` and ``draw`` dims.
+        group : str
+            ``"prior"`` or ``"posterior"``, the draws' source, for the messages.
+
+        Returns
+        -------
+        steady_state : Dataset
+            One variable per model variable, with dims ``chain`` of length one and ``draw``.
         """
-        shape = (parameters.sizes["chain"], parameters.sizes["draw"])
+        if not parameters.data_vars:
+            raise ValueError(
+                f"The {group} draws hold none of the model's free parameters, so they imply no distribution over "
+                f"the steady state. The free parameters are: {', '.join(parameter.name for parameter in self.params)}."
+            )
+
         columns = {
             str(name): parameters[name].transpose(*SAMPLE_DIMS).to_numpy().ravel() for name in parameters.data_vars
         }
         names = [variable.base_name for variable in self.variables]
-        values = np.full((int(np.prod(shape)), len(names)), np.nan)
+        n_draws = parameters.sizes["chain"] * parameters.sizes["draw"]
 
-        for index in range(len(values)):
+        solved_draws = []
+        for index in range(n_draws):
             result = self.steady_state(
                 verbose=False, progressbar=False, **{name: float(column[index]) for name, column in columns.items()}
             )
             if result.success:
                 solved = _values_by_base_name(values=result)
-                values[index] = [solved[name] for name in names]
+                solved_draws.append([solved[name] for name in names])
 
-        failures = int(np.isnan(values).any(axis=1).sum())
+        failures = n_draws - len(solved_draws)
         if failures:
             _log.warning(
-                f"The steady state failed to solve at {failures} of {len(values)} {group} draws, which the "
-                "summary leaves out."
+                f"The steady state failed to solve at {failures} of {n_draws} {group} draws, which the summary "
+                "leaves out."
             )
 
-        return xr.Dataset(
-            {name: (SAMPLE_DIMS, values[:, position].reshape(shape)) for position, name in enumerate(names)},
-            coords={dim: parameters[dim] for dim in SAMPLE_DIMS if dim in parameters.coords},
-        )
+        values = np.array(solved_draws, dtype=float).reshape(len(solved_draws), len(names))
+        return xr.Dataset({name: (SAMPLE_DIMS, values[None, :, position]) for position, name in enumerate(names)})
 
     @overload
     def table(self, group: Literal["equations", "steady_state"], **options: Any) -> EquationTable: ...
