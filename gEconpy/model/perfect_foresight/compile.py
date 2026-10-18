@@ -7,7 +7,14 @@ import pytensor
 import pytensor.tensor as pt
 import sympy as sp
 
+from pytensor.compile.builders import SymbolicOp
+from pytensor.compile.mode import Mode, get_mode
+from pytensor.graph.basic import Variable
 from pytensor.graph.replace import graph_replace, vectorize_graph
+from pytensor.graph.traversal import explicit_graph_inputs
+from pytensor.link.numba.linker import NumbaLinker
+from pytensor.tensor.blockwise import Blockwise
+from pytensor.tensor.utils import safe_signature
 from scipy import sparse
 from scipy.sparse.linalg import splu
 from sympytensor import as_tensor
@@ -20,6 +27,7 @@ from gEconpy.model.perfect_foresight.assemble import (
     StackedJacobianLayout,
     build_stacked_jacobian_layout,
 )
+from gEconpy.model.steady_state import known_steady_state_graphs
 from gEconpy.model.timing import classify_variables_by_timing
 from gEconpy.utilities import safe_to_ss
 
@@ -175,6 +183,8 @@ def compile_perfect_foresight_problem(
 
 @dataclass
 class _EquationGraph:
+    """Residuals and Jacobian of one period, as functions of ``y_tm1``, ``y_t``, ``y_tp1``, ``x_t``, and ``p``."""
+
     inputs: list[pt.TensorVariable]
     residuals: pt.TensorVariable
     jacobian: pt.TensorVariable
@@ -196,39 +206,94 @@ class _CompiledEquations:
 def _compile_equations(model: Model, **compile_kwargs) -> _CompiledEquations:
     """Build the horizon-independent half of a :class:`PerfectForesightProblem`."""
     graph = _build_equation_graph(model)
+    horizon_inputs = [pt.dmatrix(name) for name in ("Y_tm1", "Y_t", "Y_tp1", "X", "P")]
+
+    batch = _batch_with_blockwise if _uses_numba(compile_kwargs.get("mode")) else _batch_with_vectorize
+    residuals_and_jacobian = batch(graph.inputs, [graph.residuals, graph.jacobian], horizon_inputs)
+    residuals_only = batch(graph.inputs, [graph.residuals], horizon_inputs)
 
     return _CompiledEquations(
-        f_resid_and_jac=pytensor.function(graph.inputs, [graph.residuals, graph.jacobian], **compile_kwargs),
-        f_resid_only=pytensor.function(graph.inputs, [graph.residuals], **compile_kwargs),
+        f_resid_and_jac=pytensor.function(horizon_inputs, residuals_and_jacobian, **compile_kwargs),
+        f_resid_only=pytensor.function(horizon_inputs, residuals_only, **compile_kwargs),
         graph=graph,
     )
 
 
+class _PeriodEquations(SymbolicOp):
+    """The equations of one period, kept opaque so that ``Blockwise`` evaluates the horizon in a compiled loop."""
+
+    def __init__(self, inputs: list[pt.TensorVariable], outputs: list[pt.TensorVariable]):
+        self._template = (inputs, outputs)
+        super().__init__(input_types=[x.type for x in inputs])
+        # The inner graph now holds the equations. A second copy would more than double what each worker unpickles.
+        del self._template
+
+    def build_inner_graph(self, *inputs) -> list[Variable]:
+        template_inputs, template_outputs = self._template
+        return graph_replace(template_outputs, dict(zip(template_inputs, inputs, strict=True)), strict=False)
+
+
+def _uses_numba(mode: str | Mode | None) -> bool:
+    return isinstance(get_mode(mode).linker, NumbaLinker)
+
+
+def _batch_with_blockwise(
+    period_inputs: list[pt.TensorVariable],
+    period_outputs: list[pt.TensorVariable],
+    horizon_inputs: list[Variable],
+) -> list[Variable]:
+    # Numba compiles the period graph once and calls it for each period. Fused across the horizon instead, the graph
+    # becomes one kernel with an array per Jacobian entry, which numba compiles dozens of times more slowly. The loop
+    # costs a few dozen microseconds per period in allocations.
+    signature = safe_signature(
+        core_inputs_ndim=[x.type.ndim for x in period_inputs],
+        core_outputs_ndim=[x.type.ndim for x in period_outputs],
+    )
+    batched = Blockwise(_PeriodEquations(period_inputs, period_outputs), signature=signature)
+    return batched.make_node(*horizon_inputs).outputs
+
+
+def _batch_with_vectorize(
+    period_inputs: list[pt.TensorVariable],
+    period_outputs: list[pt.TensorVariable],
+    horizon_inputs: list[Variable],
+) -> list[Variable]:
+    # The other backends would run Blockwise as a Python loop over the periods, and the per-call overhead of a compiled
+    # function dominates the arithmetic of one period, so the graph is vectorized over the horizon instead.
+    return vectorize_graph(period_outputs, replace=dict(zip(period_inputs, horizon_inputs, strict=True)))
+
+
 def _build_equation_graph(model: Model) -> _EquationGraph:
     """
-    Build the symbolic residual and Jacobian of the model equations over a whole horizon.
+    Build the symbolic residual and Jacobian of the model equations in one period.
 
-    The equations of one period are converted to pytensor once, differentiated with respect to every variable at
-    ``t-1``, ``t``, and ``t+1``, and rewritten so that each scalar variable reads from an element of ``y_tm1``,
-    ``y_t``, ``y_tp1``, or ``x_t``. That single-period graph is then vectorized over the horizon, so one call
-    evaluates every period. A variable that never appears at some time index gets a structurally zero Jacobian
+    The equations are converted to pytensor once, differentiated with respect to every variable at ``t-1``, ``t``, and
+    ``t+1``, and rewritten so that each scalar variable reads from an element of ``y_tm1``, ``y_t``, ``y_tp1``, ``x_t``,
+    or the parameter vector ``p``. A variable that never appears at some time index gets a structurally zero Jacobian
     column there.
     """
     shock_names = [s.base_name for s in model.shocks]
 
-    equations = _substitute_steady_state_values(model.equations, model._ss_solution_dict)
-    vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(equations, shock_names)
+    equations = model.equations
+    ss_values = _steady_state_values(equations, model._ss_solution_dict)
+    vars_tm1, vars_t, vars_tp1, shocks_t = classify_variables_by_timing(
+        _hide_steady_state_symbols(equations, ss_values), shock_names
+    )
     _check_system_is_solvable(equations=equations, vars_tm1=vars_tm1, vars_t=vars_t, vars_tp1=vars_tp1)
 
     cache: dict = {}
     equations_pt = [as_tensor(eq, cache=cache) for eq in equations]
-    _check_no_calibrated_parameters(calibrated_params=model.calibrated_params, cache=cache)
 
     def get_pt_var(sym: TimeAwareSymbol) -> pt.TensorVariable:
         return cache[make_cache_key(sym.name, cls=TimeAwareSymbol)]
 
-    params_in_equations, params_pt = _collect_parameters_in_equations(model, cache)
-    deterministic_names = {p.name for p in model.deterministic_params}
+    # Steady-state variables stay symbols through differentiation and are bound to their parameter-only graphs after
+    # it. Substituting the closed forms in sympy would copy each into every Jacobian entry it touches, and
+    # differentiating those copies takes minutes. The graphs are built in a copy of the cache so that parameters only
+    # the steady state block references are not mistaken for parameters of the equations.
+    ss_cache = dict(cache)
+    ss_graphs = known_steady_state_graphs(ss_values, model._ss_definitions, ss_cache)
+    ss_replacements = {get_pt_var(symbol): graph for symbol, graph in zip(ss_values, ss_graphs, strict=True)}
 
     var_names = [x.base_name for x in vars_t]
     vars_t_pt = [get_pt_var(x) for x in vars_t]
@@ -256,27 +321,24 @@ def _build_equation_graph(model: Model) -> _EquationGraph:
 
     stacked = ((y_tm1, vars_tm1_pt), (y_t, vars_t_pt), (y_tp1, vars_tp1_pt), (x_t, shocks_pt))
     replacements = {node: vector[i] for vector, nodes in stacked for i, node in enumerate(nodes)}
+    replacements.update(ss_replacements)
 
     residuals_vec, jacobian_vec = graph_replace([residuals, jacobian], replacements, strict=False)
 
-    # The per-call overhead of a compiled function dominates the arithmetic of one period, so vectorizing the
-    # graph over the horizon and paying that overhead once is worth far more than the batching costs.
-    Y_tm1 = pt.dmatrix("Y_tm1")
-    Y_t = pt.dmatrix("Y_t")
-    Y_tp1 = pt.dmatrix("Y_tp1")
-    X = pt.dmatrix("X")
-    P = pt.dmatrix("P")
+    graph_inputs = set(explicit_graph_inputs([residuals_vec, jacobian_vec]))
+    _check_no_calibrated_parameters(calibrated_params=model.calibrated_params, cache=ss_cache, inputs=graph_inputs)
+    params_in_equations, params_pt = _collect_parameters_in_equations(model, cache=ss_cache, inputs=graph_inputs)
+    deterministic_names = {p.name for p in model.deterministic_params}
 
-    batch_replacements: dict = {y_tm1: Y_tm1, y_t: Y_t, y_tp1: Y_tp1, x_t: X}
-    for i, param in enumerate(params_pt):
-        batch_replacements[param] = P[:, i]
-
-    residuals_batched, jacobian_batched = vectorize_graph([residuals_vec, jacobian_vec], replace=batch_replacements)
+    p = pt.dvector("p", shape=(len(params_pt),))
+    residuals_period, jacobian_period = graph_replace(
+        [residuals_vec, jacobian_vec], {param: p[i] for i, param in enumerate(params_pt)}, strict=False
+    )
 
     return _EquationGraph(
-        inputs=[Y_tm1, Y_t, Y_tp1, X, P],
-        residuals=residuals_batched,
-        jacobian=jacobian_batched,
+        inputs=[y_tm1, y_t, y_tp1, x_t, p],
+        residuals=residuals_period,
+        jacobian=jacobian_period,
         sparsity=sparsity,
         var_names=var_names,
         shock_names=[x.base_name for x in shocks_t],
@@ -317,9 +379,22 @@ def _check_system_is_solvable(
         )
 
 
-def _collect_parameters_in_equations(model: Model, cache: dict) -> tuple[list[sp.Symbol], list[pt.TensorVariable]]:
+def _collect_parameters_in_equations(
+    model: Model,
+    cache: dict,
+    inputs: set[Variable],
+) -> tuple[list[sp.Symbol], list[pt.TensorVariable]]:
     """
     Pick out the parameters the equations actually use, in the order the compiled functions expect them.
+
+    Parameters
+    ----------
+    model : Model
+        Model whose free and deterministic parameters are candidates.
+    cache : dict
+        Sympytensor cache holding the node of every parameter the equations or their steady-state values reference.
+    inputs : set of Variable
+        Root inputs of the equation graph, after the steady-state values are bound.
 
     Returns
     -------
@@ -330,15 +405,19 @@ def _collect_parameters_in_equations(model: Model, cache: dict) -> tuple[list[sp
     """
     parameters, nodes = [], []
     for param in model.params + model.deterministic_params:
-        key = make_cache_key(param.name, cls=sp.Symbol)
-        if key in cache:
+        node = cache.get(make_cache_key(param.name, cls=sp.Symbol))
+        if node in inputs:
             parameters.append(param)
-            nodes.append(cache[key])
+            nodes.append(node)
 
     return parameters, nodes
 
 
-def _check_no_calibrated_parameters(calibrated_params: list[sp.Symbol], cache: dict) -> None:
+def _check_no_calibrated_parameters(
+    calibrated_params: list[sp.Symbol],
+    cache: dict,
+    inputs: set[Variable],
+) -> None:
     """
     Check that no calibrated parameter appears in the equations.
 
@@ -350,7 +429,7 @@ def _check_no_calibrated_parameters(calibrated_params: list[sp.Symbol], cache: d
     # A calibrated parameter is solved for alongside the steady state, so its value is not known when the
     # equations are compiled and it never gets an input slot. Caught here, the user learns which parameter and
     # why; left to pytensor, it surfaces as a MissingInputError naming an arbitrary node that uses it.
-    in_equations = [p.name for p in calibrated_params if make_cache_key(p.name, cls=sp.Symbol) in cache]
+    in_equations = [p.name for p in calibrated_params if cache.get(make_cache_key(p.name, cls=sp.Symbol)) in inputs]
     if in_equations:
         raise ValueError(
             f"Perfect foresight simulation does not support calibrated parameters, but the equations use: "
@@ -383,15 +462,15 @@ def _jacobian_sparsity(equations: list[sp.Expr], wrt: list[TimeAwareSymbol]) -> 
     return np.array([[symbol in symbols for symbol in wrt] for symbols in symbols_by_equation], dtype=bool)
 
 
-def _substitute_steady_state_values(
+def _steady_state_values(
     equations: list[sp.Expr],
     ss_solution_dict: SymbolDictionary | None,
-) -> list[sp.Expr]:
+) -> dict[sp.Symbol, sp.Expr | float]:
     """
-    Replace every steady-state variable in the equations with its analytic expression.
+    Look up the analytic expression of every steady-state variable in the equations.
 
-    The expression is in model parameters, so under a parameter path the substituted term takes the parameter
-    values of each period rather than staying fixed at the initial steady state.
+    The expression is in model parameters, so under a parameter path the bound term takes the parameter values of
+    each period rather than staying fixed at the initial steady state.
 
     Parameters
     ----------
@@ -402,25 +481,32 @@ def _substitute_steady_state_values(
 
     Returns
     -------
-    equations : list of sympy.Expr
-        Equations with no steady-state variables left.
+    values : dict mapping sympy Symbol to sympy expression or float
+        Analytic value of each steady-state symbol in the equations, in a deterministic order.
     """
     ss_atoms = {a for eq in equations for a in eq.atoms(TimeAwareSymbol) if a.time_index == "ss"}
     if not ss_atoms:
-        return equations
+        return {}
 
     values_by_name = {}
     if ss_solution_dict:
         values_by_name = {safe_to_ss(key).name: value for key, value in ss_solution_dict.to_sympy().items()}
-    sub_dict = {atom: values_by_name[atom.name] for atom in ss_atoms if atom.name in values_by_name}
 
-    remaining = ss_atoms - set(sub_dict.keys())
+    remaining = sorted(atom.name for atom in ss_atoms if atom.name not in values_by_name)
     if remaining:
-        names = ", ".join(sorted(str(a) for a in remaining))
         raise ValueError(
             f"Perfect foresight simulation requires all steady-state variables to have analytic "
-            f"solutions, but the following do not: {names}. Provide analytic steady-state values "
+            f"solutions, but the following do not: {', '.join(remaining)}. Provide analytic steady-state values "
             f"in the Steady_State block of your GCN file."
         )
 
-    return [eq.subs(sub_dict) for eq in equations]
+    return {atom: values_by_name[atom.name] for atom in sorted(ss_atoms, key=lambda atom: atom.name)}
+
+
+def _hide_steady_state_symbols(
+    equations: list[sp.Expr],
+    ss_values: dict[sp.Symbol, sp.Expr | float],
+) -> list[sp.Expr]:
+    """Swap steady-state symbols for plain ones, so that timing classification sees only t-1, t, and t+1."""
+    placeholders = {symbol: sp.Symbol(symbol.name) for symbol in ss_values}
+    return [eq.xreplace(placeholders) for eq in equations]
