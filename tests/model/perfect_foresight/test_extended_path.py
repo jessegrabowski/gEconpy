@@ -11,7 +11,7 @@ import gEconpy.solvers.sparse_root.direction as direction_module
 
 from gEconpy import simulate
 from gEconpy.exceptions import NonFiniteInitialGuessError
-from gEconpy.model.perfect_foresight import extended_path, simulate_extended_path, solve_perfect_foresight
+from gEconpy.model.perfect_foresight import _parallel, extended_path, simulate_extended_path, solve_perfect_foresight
 from gEconpy.solvers.sparse_root.direction import ChordDirection
 from gEconpy.solvers.sparse_root.line_search import chord, newton_armijo
 from tests._resources.cache_compiled_models import load_and_cache_example, load_and_cache_model
@@ -155,13 +155,13 @@ def test_a_trajectory_does_not_depend_on_the_trajectories_before_it(rbc_model, m
 )
 def test_worker_processes_reproduce_the_serial_simulation(rbc_model, mp_ctx, monkeypatch):
     pools = []
-    simulate_in_workers = extended_path._simulate_in_workers
+    map_in_workers = extended_path._map_in_workers
 
-    def record_pool(simulate_trajectory, trajectory_shocks, workers, context):
+    def record_pool(function, items, workers, context):
         pools.append((workers, context.get_start_method()))
-        return simulate_in_workers(simulate_trajectory, trajectory_shocks, workers, context)
+        return map_in_workers(function, items, workers=workers, context=context)
 
-    monkeypatch.setattr(extended_path, "_simulate_in_workers", record_pool)
+    monkeypatch.setattr(extended_path, "_map_in_workers", record_pool)
     simulation_kwargs = {"n_simulations": 3, "simulation_length": 5, "shock_std": 0.01, "random_seed": 0}
 
     serial_paths, serial_diagnostics = simulate_extended_path(rbc_model, **simulation_kwargs)
@@ -179,9 +179,9 @@ def test_worker_processes_reproduce_the_serial_simulation(rbc_model, mp_ctx, mon
     reason="needs jax and the fork start method",
 )
 def test_a_jax_compile_mode_forks_workers_only_when_asked():
-    assert extended_path._multiprocessing_context(None, mode="JAX").get_start_method() != "fork"
+    assert _parallel._multiprocessing_context(None, mode="JAX").get_start_method() != "fork"
     with pytest.warns(UserWarning, match="JAX compile mode with multiprocessing start method 'fork' is unsafe"):
-        assert extended_path._multiprocessing_context("fork", mode="JAX").get_start_method() == "fork"
+        assert _parallel._multiprocessing_context("fork", mode="JAX").get_start_method() == "fork"
 
 
 def test_a_solver_holding_a_factorization_can_be_passed_in(rbc_model):
