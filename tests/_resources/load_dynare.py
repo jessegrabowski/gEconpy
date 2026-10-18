@@ -1,6 +1,7 @@
 import os
 
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -60,6 +61,24 @@ def extract_policy_matrices(oo, M) -> tuple[pd.DataFrame, pd.DataFrame]:
     dynare_R = pd.DataFrame(oo["dr"]["ghu"], index=var_names[dynare_order], columns=shock_names)
 
     return dynare_T, dynare_R
+
+
+class DynarePartition(NamedTuple):
+    names: list[str]
+    counts: tuple[int, int, int, int]
+    current_positions: np.ndarray
+
+
+def extract_dr_partition(oo, M) -> DynarePartition:
+    var_names = np.concatenate([x.item() for x in M["endo_names"]])
+    dynare_order = oo["dr"]["order_var"].ravel() - 1
+    current_incidence = np.asarray(M["lead_lag_incidence"])[1, dynare_order]
+
+    return DynarePartition(
+        names=var_names[dynare_order].tolist(),
+        counts=(int(M["nstatic"]), int(M["npred"]), int(M["nboth"]), int(M["nfwrd"])),
+        current_positions=np.flatnonzero(current_incidence),
+    )
 
 
 def load_dynare_outputs(model_name) -> dict[str, pd.DataFrame]:
