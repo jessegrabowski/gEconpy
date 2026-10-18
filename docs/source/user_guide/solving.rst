@@ -80,7 +80,8 @@ toward one and starts from the last success. Parameter paths are not scaled.
 ``max_homotopy_solves`` caps the number of retries, 100 by default, and zero turns the retry off. The returned
 result records the count in ``homotopy_solves``. While the retry is on, the first solve stops after 50 iterations
 and each retry after 20, or after the ``maxiter`` in ``sparse_root_kwargs`` if that is smaller. A Newton solve that
-needs more iterations than that is usually not converging, so a hopeless problem fails in seconds.
+needs more iterations than that is usually not converging, and the caps keep a problem the homotopy cannot solve
+from spending ``maxiter`` iterations on every retry.
 
 Before solving, each stacked equation is divided by the largest entry of its Jacobian row at the initial guess. A
 model whose equations hold terms of very different sizes, such as a recursive wage-setting auxiliary of order
