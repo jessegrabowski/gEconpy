@@ -28,11 +28,11 @@ from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution, priors_by_sampled_name
-from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution, SecondOrderPerturbationSolution
 from gEconpy.classes.time_aware_symbol import (
     TimeAwareSymbol,
 )
-from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
+from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError, SecondOrderSolveFailedException
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
 from gEconpy.model.latex import authored_expressions
 from gEconpy.model.parameters import compile_param_dict_func
@@ -83,6 +83,7 @@ from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 from gEconpy.solvers.gensys import interpret_gensys_output, solve_policy_function_with_gensys
+from gEconpy.solvers.second_order import solve_second_order
 from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
 
 _log = logging.getLogger(__name__)
@@ -415,6 +416,7 @@ class Model:
         self._second_order_cache: dict[frozenset[str], tuple] = {}
         self._default_steady_state: dict | None = None
         self._linearize_cache: dict[int, Callable] = {}
+        self._second_order_function_cache: dict[int, tuple[Callable, list[TensorVariable]]] = {}
         self._perfect_foresight_cache: dict[tuple, Any] = {}
 
     @property
@@ -2192,7 +2194,7 @@ class Model:
         solver: Literal["cycle_reduction", "gensys", "backward_direct"] = "cycle_reduction",
         log_linearize: bool = True,
         not_loglin_variables: list[str] | None = None,
-        order: Literal[1] = 1,
+        order: Literal[1, 2] = 1,
         loglin_negative_ss: bool = False,
         steady_state: dict | None = None,
         steady_state_kwargs: dict | None = None,
@@ -2217,8 +2219,11 @@ class Model:
         not_loglin_variables : list of str, optional
             Variable names to leave in levels. Variables with a steady state at or near zero are left in levels
             automatically. Ignored if ``log_linearize`` is False. Default None.
-        order : int, optional
-            Order of the Taylor expansion. Only ``order=1`` is supported. Default 1.
+        order : {1, 2}, optional
+            Order of the Taylor expansion. ``order=2`` returns a
+            :class:`~gEconpy.classes.perturbation_solution.SecondOrderPerturbationSolution` and requires
+            ``return_matrices`` to be False or unset. Models with no forward-looking variables support ``order=1``
+            only. Default 1.
         loglin_negative_ss : bool, optional
             If True, log-linearize variables with a negative steady state as well. The result is not a valid
             approximation. See :func:`~gEconpy.model.perturbation.linearize_model`. Ignored if ``log_linearize`` is
@@ -2251,8 +2256,10 @@ class Model:
             The policy function. With ``return_matrices=False`` it is a
             :class:`~gEconpy.classes.perturbation_solution.FirstOrderPerturbationSolution`, whose ``T`` is the
             transition matrix, mapping the lagged state to the current state, and whose ``R`` is the selection
-            matrix, mapping current shocks to the current state. Otherwise it is the tuple ``(T, R)``. On solver
-            failure with ``on_failure='ignore'`` it is None, or ``(None, None)`` when the matrices are returned.
+            matrix, mapping current shocks to the current state. At ``order=2`` it is a
+            :class:`~gEconpy.classes.perturbation_solution.SecondOrderPerturbationSolution`. Otherwise it is the
+            tuple ``(T, R)``. On solver failure with ``on_failure='ignore'`` it is None, or ``(None, None)`` when the
+            matrices are returned.
 
         Notes
         -----
@@ -2463,6 +2470,16 @@ class Model:
         """
         if on_failure not in ("error", "ignore"):
             raise ValueError(f'Parameter on_failure must be one of "error" or "ignore", found {on_failure}')
+        if order not in (1, 2):
+            raise NotImplementedError("Only first and second order perturbation are supported.")
+        if order == 2:
+            if return_matrices:
+                raise ValueError("A second-order solution has no (T, R) form. Pass return_matrices=False.")
+            if self._backward_looking:
+                raise NotImplementedError(
+                    "Second-order perturbation is not available for models with no forward-looking variables."
+                )
+            return_matrices = False
         if return_matrices is None:
             warnings.warn(
                 "solve_model will return a FirstOrderPerturbationSolution by default in the next major release. "
@@ -2478,7 +2495,6 @@ class Model:
         ss_dict = _maybe_solve_steady_state(self, steady_state, steady_state_kwargs, parameter_updates).to_string()
 
         A, B, C, D = self.linearize_model(
-            order=order,
             log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
             steady_state=ss_dict,
@@ -2514,7 +2530,7 @@ class Model:
         if return_matrices:
             return np.ascontiguousarray(T), np.ascontiguousarray(R)
 
-        return self._perturbation_solution(
+        solution = self._perturbation_solution(
             T=T,
             R=R,
             steady_state=ss_dict,
@@ -2522,6 +2538,69 @@ class Model:
             not_loglin_variables=not_loglin_variables,
             loglin_negative_ss=loglin_negative_ss,
         )
+        if order == 1:
+            return solution
+
+        ghxx, ghxu, ghuu, ghs2_operator = self._solve_second_order(
+            first_order=solution,
+            steady_state=ss_dict,
+            parameters=self.parameters(**parameter_updates),
+            log_linearize=log_linearize,
+            not_loglin_variables=not_loglin_variables,
+            loglin_negative_ss=loglin_negative_ss,
+        )
+        if not all(np.isfinite(term).all() for term in (ghxx, ghxu, ghuu, ghs2_operator)):
+            if on_failure == "error":
+                raise SecondOrderSolveFailedException()
+            return None
+
+        return SecondOrderPerturbationSolution.from_first_order(
+            first_order=solution, ghxx=ghxx, ghxu=ghxu, ghuu=ghuu, ghs2_operator=ghs2_operator
+        )
+
+    def _solve_second_order(
+        self,
+        first_order: FirstOrderPerturbationSolution,
+        steady_state: Mapping[str, float],
+        parameters: Mapping[str, float],
+        log_linearize: bool,
+        not_loglin_variables: list[str] | None,
+        loglin_negative_ss: bool,
+    ) -> list[np.ndarray]:
+        """Evaluate the second-order coefficients at a first-order solution, compiling the solve on first use."""
+        graph_kwargs = {
+            "log_linearize": log_linearize,
+            "not_loglin_variables": not_loglin_variables,
+            "steady_state": steady_state,
+            "loglin_negative_ss": loglin_negative_ss,
+            "verbose": False,
+        }
+        jacobians, ss_inputs, param_inputs, _, _ = self.symbolic_linearization(**graph_kwargs)
+        derivatives, composition_params = self.second_order_derivative_terms(**graph_kwargs)
+
+        # Both methods return the same graph objects for the same log-linearization, so the Hessian's id is a stable
+        # key for the compiled function.
+        cache_key = id(derivatives.hessian)
+        if cache_key not in self._second_order_function_cache:
+            terms = solve_second_order(
+                jacobians=jacobians,
+                composition_hessian=derivatives.hessian,
+                ghx=derivatives.ghx,
+                ghu=derivatives.ghu,
+                dr_order=self.dr_order,
+            )
+            inputs = list(dict.fromkeys([*ss_inputs, *derivatives.ss_inputs, *param_inputs, *composition_params]))
+            f_second_order = compile_pytensor_function(
+                [derivatives.ghx, derivatives.ghu, *inputs], list(terms), mode=self._mode, on_unused_input="ignore"
+            )
+            self._second_order_function_cache[cache_key] = (f_second_order, inputs)
+        f_second_order, inputs = self._second_order_function_cache[cache_key]
+
+        # Calibrated parameters are solved with the steady state, so they are read from it.
+        ss_nodes = set(derivatives.ss_inputs)
+        parameter_values = {**steady_state, **parameters}
+        values = [steady_state[node.name] if node in ss_nodes else parameter_values[node.name] for node in inputs]
+        return f_second_order(first_order.ghx, first_order.ghu, *values)
 
     def _perturbation_solution(
         self,

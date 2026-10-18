@@ -269,6 +269,16 @@ class GensysFailedException(ValueError):
         super().__init__(message or "The perturbation solver did not return a unique stable solution.")
 
 
+class SecondOrderSolveFailedException(ValueError):
+    """Raised when the second-order perturbation solve returns non-finite coefficients."""
+
+    def __init__(self):
+        super().__init__(
+            "The second-order perturbation solve returned non-finite coefficients. The generalized Sylvester "
+            "equation for ghxx did not converge, or a coefficient matrix of the solve is singular."
+        )
+
+
 class TypstPrintError(ValueError):
     """Raised when an expression contains a node the Typst printer has no rendering for."""
 
