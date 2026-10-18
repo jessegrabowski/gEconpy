@@ -209,17 +209,17 @@ def test_build_symbolic_jacobians_at_steady_state_shares_one_cache():
 
 def test_build_symbolic_jacobian_entries_returns_the_requested_entries_in_order():
     x, y, alpha = sp.symbols("x y alpha")
-    equations = [alpha * x * y, sp.log(x) + y**2]
+    equations = [alpha * x * y, sp.log(x) + y**2, 2 * x + y]
 
     cache = {}
     entries = build_symbolic_jacobian_entries(
-        equations, [x, y], rows=np.array([1, 0, 0, 1]), columns=np.array([1, 0, 1, 0]), cache=cache
+        equations, [x, y], rows=np.array([1, 0, 0, 1, 2]), columns=np.array([1, 0, 1, 0, 0]), cache=cache
     )
 
     inputs = [cache[make_cache_key(name, sp.Symbol)] for name in ("x", "y", "alpha")]
     f = pytensor.function(inputs, entries, mode="FAST_COMPILE", on_unused_input="ignore")
 
-    np.testing.assert_allclose(f(2.0, 3.0, 0.5), [2 * 3.0, 0.5 * 3.0, 0.5 * 2.0, 1 / 2.0])
+    np.testing.assert_allclose(f(2.0, 3.0, 0.5), [2 * 3.0, 0.5 * 3.0, 0.5 * 2.0, 1 / 2.0, 2.0])
 
 
 def test_build_symbolic_jacobian_entries_with_no_entries_is_an_empty_vector():
