@@ -10,6 +10,7 @@ from IPython.display import HTML
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
 from gEconpy.model.latex import authored_equation_latex, block_heading
+from gEconpy.model.steady_state import resubstitute_steady_state
 from gEconpy.model.tables import PRIOR_STAT_PRECISION, SymbolTable, _format_value
 from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.parser.ast.nodes import GCNBlock, GCNDistribution, GCNEquation
@@ -368,7 +369,10 @@ def render_model(model: "Model", source_ast: GCNModel | None = None) -> str:
         sections.append(
             _section(
                 SOLVED_STEADY_STATE_TITLE,
-                "".join(_math(f"{sp.latex(eq.lhs)} = {sp.latex(eq.rhs)}") for eq in model.steady_state_relationships),
+                "".join(
+                    _math(f"{sp.latex(eq.lhs)} = {sp.latex(eq.rhs)}")
+                    for eq in resubstitute_steady_state(model.steady_state_relationships)
+                ),
             )
         )
 

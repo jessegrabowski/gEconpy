@@ -30,6 +30,7 @@ from gEconpy.model.steady_state import (
     print_steady_state,
     propagate_steady_state_through_identities,
     pt_error_from_resid,
+    resubstitute_steady_state,
     system_to_steady_state,
 )
 from tests._resources.cache_compiled_models import load_and_cache_model
@@ -170,6 +171,20 @@ def assert_root_and_minimize_agree(model: Model, **steady_state_kwargs):
 
     for k in ss_root:
         assert_allclose(ss_root[k], ss_minimize[k], err_msg=k)
+
+
+def test_resubstitution_names_other_steady_states_without_changing_values():
+    """Every relationship must still evaluate to the solved steady state once the names are folded back in."""
+    model = load_and_cache_model("rbc_2_block_ss.gcn")
+    relationships = model.steady_state_relationships
+    values = {**model.parameters().to_sympy(), **model.steady_state(verbose=False, progressbar=False).to_sympy()}
+
+    resubstituted = resubstitute_steady_state(relationships)
+
+    assert [eq.lhs for eq in resubstituted] == [eq.lhs for eq in relationships]
+    assert sum(sp.count_ops(eq.rhs) for eq in resubstituted) < sum(sp.count_ops(eq.rhs) for eq in relationships)
+    for eq in resubstituted:
+        assert float(eq.rhs.subs(values)) == pytest.approx(float(values[eq.lhs]))
 
 
 def test_system_to_steady_state_collapses_time_indices_and_zeros_shocks():
