@@ -1372,7 +1372,7 @@ class Model:
             return self._linear_steady_state()
 
         if fixed_values is None:
-            analytic_result = self._try_analytic_steady_state(param_dict, f_ss)
+            analytic_result = self._try_analytic_steady_state(param_dict, f_ss, verbose=verbose)
             if analytic_result is not None:
                 return analytic_result
 
@@ -2201,6 +2201,7 @@ class Model:
         self,
         param_dict: SymbolDictionary,
         f_ss: Callable | None,
+        verbose: bool = True,
     ) -> SteadyStateResults | None:
         """Evaluate the analytic steady state, or return None when it does not cover every variable."""
         if f_ss is None:
@@ -2214,7 +2215,7 @@ class Model:
 
         result = SteadyStateResults(ss_dict.to_sympy()).to_string()
         result.success = success
-        if not success:
+        if verbose and not success:
             _log.warning(
                 f"Steady State was not found. Sum of square residuals: {np.square(residual).sum()}"
                 f"{self._worst_residual_note(residual, scale)}"
