@@ -1,4 +1,4 @@
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from functools import partial
 
@@ -447,7 +447,7 @@ def _build_shock_matrix(
 
 
 def _build_param_matrix(
-    param_paths: dict[str, float | Sequence[float] | np.ndarray] | None,
+    param_paths: Mapping[str, float | Sequence[float] | np.ndarray] | None,
     param_names: Sequence[str],
     model: Model,
     T: int,

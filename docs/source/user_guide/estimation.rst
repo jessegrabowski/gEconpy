@@ -92,8 +92,9 @@ response to the starting quarter:
     )
 
 The values of :attr:`~gEconpy.model.model.Model.predetermined_variables` are the only ones that change the
-solution, but every value must be finite. Pass a Dataset holding several outputs to ``deviations_to_levels`` to re-level
-them with one compilation.
+solution, but every value must be finite. To solve at every draw instead of one reduced start, pass the start
+with its draws to :func:`~gEconpy.model.perfect_foresight.sample.sample_perfect_foresight`. Pass a Dataset holding
+several outputs to ``deviations_to_levels`` to re-level them with one compilation.
 
 A compact version of the sequence through the simulated data set, from the test suite. The ``pct_missing``
 argument blanks a fraction of the observations, which the Kalman filter imputes:
