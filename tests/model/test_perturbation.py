@@ -14,6 +14,7 @@ from gEconpy.model.perturbation import (
     check_bk_condition,
     check_bk_condition_pt,
     linearize_model,
+    log_linearized_mask,
     make_not_loglin_flags,
 )
 from gEconpy.model.timing import make_all_variable_time_combinations
@@ -187,6 +188,21 @@ class TestMakeNotLoglinFlags:
             make_not_loglin_flags(
                 [self.K, self.C, self.B], [self.alpha], self.steady_state, not_loglin_variables=["Z"], verbose=False
             )
+
+
+def test_log_linearized_mask_follows_requests_declared_signs_and_steady_state_sign():
+    positive = TimeAwareSymbol("positive", 0, positive=True)
+    negative = TimeAwareSymbol("negative", 0, negative=True)
+    unknown_above, unknown_below, unrequested = (TimeAwareSymbol(name, 0) for name in ["above", "below", "unrequested"])
+    variables = [positive, negative, unknown_above, unknown_below, unrequested]
+
+    mask = log_linearized_mask(
+        variables,
+        loglin_variables=[positive, negative, unknown_above, unknown_below],
+        steady_state=np.array([2.0, -1.0, 0.5, -0.5, 3.0]),
+    )
+
+    np.testing.assert_array_equal(mask, [True, False, True, False, False])
 
 
 class TestSolvePolicyFunction:

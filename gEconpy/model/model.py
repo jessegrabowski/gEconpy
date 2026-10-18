@@ -28,13 +28,19 @@ from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution, priors_by_sampled_name
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
 from gEconpy.classes.time_aware_symbol import (
     TimeAwareSymbol,
 )
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.model.perturbation import DROrder, check_perturbation_solution, make_not_loglin_flags
+from gEconpy.model.perturbation import (
+    DROrder,
+    check_perturbation_solution,
+    log_linearized_mask,
+    make_not_loglin_flags,
+)
 from gEconpy.model.perturbation import linearize_model as _linearize_model
 from gEconpy.model.statistics.validation import _maybe_solve_steady_state
 from gEconpy.model.steady_state import (
@@ -1553,17 +1559,13 @@ class Model:
         if steady_state is None and log_linearize:
             steady_state = self.f_ss(**self.parameters()) if self.is_linear else self.steady_state(verbose=verbose)
 
-        not_loglin_flags = make_not_loglin_flags(
-            variables=self.variables,
-            calibrated_params=self.calibrated_params,
-            steady_state=steady_state if steady_state is not None else {},
+        loglin_vars = self._loglin_variables(
+            steady_state=steady_state,
             log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
             loglin_negative_ss=loglin_negative_ss,
             verbose=verbose,
         )
-
-        loglin_vars = [v for v, flag in zip(self.variables, not_loglin_flags, strict=False) if flag == 0]
         loglin_key = frozenset(v.base_name for v in loglin_vars)
 
         if loglin_key not in self._symbolic_linearize_cache:
@@ -1591,6 +1593,26 @@ class Model:
             )
 
         return self._symbolic_linearize_cache[loglin_key]
+
+    def _loglin_variables(
+        self,
+        steady_state: dict | None,
+        log_linearize: bool,
+        not_loglin_variables: list[str] | None,
+        loglin_negative_ss: bool,
+        verbose: bool,
+    ) -> list[TimeAwareSymbol]:
+        """Return the variables to log-linearize, as decided by :func:`make_not_loglin_flags` at ``steady_state``."""
+        not_loglin_flags = make_not_loglin_flags(
+            variables=self.variables,
+            calibrated_params=self.calibrated_params,
+            steady_state=steady_state if steady_state is not None else {},
+            log_linearize=log_linearize and not self.is_linear,
+            not_loglin_variables=not_loglin_variables,
+            loglin_negative_ss=loglin_negative_ss,
+            verbose=verbose,
+        )
+        return [v for v, flag in zip(self.variables, not_loglin_flags, strict=False) if flag == 0]
 
     def linearize_model(
         self,
@@ -1797,7 +1819,7 @@ class Model:
         verbose: bool = True,
         on_failure: Literal["error", "ignore"] = "error",
         **parameter_updates: float,
-    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+    ) -> FirstOrderPerturbationSolution | tuple[None, None]:
         r"""
         Solve for the linear approximation to the policy function via perturbation.
 
@@ -1836,12 +1858,11 @@ class Model:
 
         Returns
         -------
-        T : ndarray or None
-            Transition matrix of the policy function, mapping the lagged state to the current state. None when the
-            solver fails and ``on_failure`` is ``'ignore'``.
-        R : ndarray or None
-            Selection matrix of the policy function, mapping current shocks to the current state. None when the
-            solver fails and ``on_failure`` is ``'ignore'``.
+        solution : FirstOrderPerturbationSolution or tuple of None
+            The policy function, as a :class:`~gEconpy.classes.perturbation_solution.FirstOrderPerturbationSolution`.
+            Unpacking it gives the transition matrix T, mapping the lagged state to the current state, and the
+            selection matrix R, mapping current shocks to the current state. ``(None, None)`` when the solver fails
+            and ``on_failure`` is ``'ignore'``.
 
         Notes
         -----
@@ -2052,13 +2073,13 @@ class Model:
         if steady_state_kwargs is None:
             steady_state_kwargs = {}
 
-        ss_dict = _maybe_solve_steady_state(self, steady_state, steady_state_kwargs, parameter_updates)
+        ss_dict = _maybe_solve_steady_state(self, steady_state, steady_state_kwargs, parameter_updates).to_string()
 
         A, B, C, D = self.linearize_model(
             order=order,
             log_linearize=log_linearize,
             not_loglin_variables=not_loglin_variables,
-            steady_state=ss_dict.to_string(),
+            steady_state=ss_dict,
             loglin_negative_ss=loglin_negative_ss,
             verbose=verbose,
             **parameter_updates,
@@ -2088,7 +2109,25 @@ class Model:
         if verbose:
             check_perturbation_solution(A, B, C, D, T, R, tol=tol)
 
-        return np.ascontiguousarray(T), np.ascontiguousarray(R)
+        ss_values = {name.removesuffix("_ss"): value for name, value in ss_dict.items()}
+        steady_state_values = np.array([ss_values[v.base_name] for v in self.variables])
+        loglin_vars = self._loglin_variables(
+            steady_state=ss_dict,
+            log_linearize=log_linearize,
+            not_loglin_variables=not_loglin_variables,
+            loglin_negative_ss=loglin_negative_ss,
+            verbose=False,
+        )
+
+        return FirstOrderPerturbationSolution.from_policy_matrices(
+            T=T,
+            R=R,
+            steady_state=steady_state_values,
+            log_linearized=log_linearized_mask(self.variables, loglin_vars, steady_state_values),
+            variable_names=[v.base_name for v in self.variables],
+            shock_names=[shock.base_name for shock in self.shocks],
+            dr_order=self.dr_order,
+        )
 
     def _ensure_cache(self) -> dict:
         """
