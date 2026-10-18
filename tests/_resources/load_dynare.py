@@ -23,7 +23,7 @@ def record_to_dict(x):
 
 def get_available_models():
     dynare_output_dir = Path(__file__).parent / "dynare_outputs"
-    dynare_output_paths = list(dynare_output_dir.iterdir())
+    dynare_output_paths = list(dynare_output_dir.glob("*_results.mat"))
     model_names = [x.name.replace("_results.mat", "") for x in dynare_output_paths]
     return {name: str(mat_path) for name, mat_path in zip(model_names, dynare_output_paths, strict=False)}
 
@@ -110,6 +110,19 @@ def extract_second_order_matrices(oo, M) -> SecondOrderMatrices:
         ghs2=oo["dr"]["ghs2"].ravel(),
         shock_cov=np.atleast_2d(M["Sigma_e"]),
     )
+
+
+def read_pruned_path(model_name) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+    """Return the shocks, shock covariance and pruned ``simult_`` deviations, one column per variable."""
+    _, M = read_dynare_output(model_name)
+    path = sio.loadmat(Path(__file__).parent / "dynare_outputs" / f"{model_name}_pruned_path.mat")
+
+    # The first column of simult_'s output is the initial value, the steady state here.
+    simulated = path["pruned_path"]
+    deviations = pd.DataFrame(
+        (simulated[:, 1:] - simulated[:, :1]).T, columns=np.concatenate([x.item() for x in M["endo_names"]])
+    )
+    return path["pruned_shocks"], np.atleast_2d(M["Sigma_e"]), deviations
 
 
 def load_dynare_outputs(model_name) -> dict[str, pd.DataFrame]:

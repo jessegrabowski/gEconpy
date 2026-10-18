@@ -616,17 +616,23 @@ def test_unsolvable_model_raises_with_the_solver_message(solver, match):
         )
 
 
-def test_an_impulse_response_of_an_unsolvable_model_raises():
-    """``on_failure="ignore"`` makes ``solve_model`` return None, which has no levels to report."""
+@pytest.mark.parametrize(
+    ("function", "kwargs"),
+    [(impulse_response_function, {}), (simulate, {"shock_std": 0.1})],
+    ids=["irf", "simulate"],
+)
+def test_an_unsolvable_model_raises_instead_of_using_a_missing_solution(function, kwargs):
+    """``on_failure="ignore"`` makes ``solve_model`` return None, which has no policy function to use."""
     model = load_and_cache_model("pert_fails.gcn", on_unused_parameters="ignore")
 
     with pytest.raises(ValueError, match="could not be solved"):
-        impulse_response_function(
+        function(
             model,
             solver="gensys",
             on_failure="ignore",
             verbose=False,
             steady_state_kwargs={"verbose": False, "progressbar": False},
+            **kwargs,
         )
 
 
@@ -1287,6 +1293,14 @@ def test_passing_a_solution_and_policy_matrices_raises(irf_inputs):
         impulse_response_function(model, solution, T=solution.T, R=solution.R, shock_size=1.0)
 
 
+def test_simulating_a_second_order_solution_with_policy_matrices_raises():
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=2, verbose=False)
+
+    with pytest.raises(ValueError, match="either solution or T and R"):
+        simulate(model, solution, T=solution.T, R=solution.R, shock_std=0.01, simulation_length=3)
+
+
 @pytest.mark.parametrize(
     ("function", "kwargs"),
     [
@@ -1477,6 +1491,63 @@ def test_simulate(gcn_file):
     assert corr > 0.99
 
     assert_allclose(np.diag(Sigma), np.diag(sigma), rtol=0.1)
+
+
+@pytest.mark.parametrize("scale", [1e-1, 1e-2])
+def test_second_order_part_of_a_simulation_scales_with_the_shock_variance(scale):
+    """
+    Scaling the shocks by ``scale`` scales the pruned second-order part of a path by ``scale ** 2``.
+
+    That part is quadratic in the shocks, risk correction included, and it is the gap from the first-order path.
+    """
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    second_order = model.solve_model(order=2, verbose=False)
+    first_order = model.solve_model(return_matrices=False, verbose=False)
+
+    def second_order_part(shock_std):
+        kwargs = {"simulation_length": 30, "n_simulations": 2, "shock_std": shock_std, "random_seed": 0}
+        return (simulate(model, second_order, **kwargs) - simulate(model, first_order, **kwargs)).values
+
+    reference = second_order_part(np.array([0.01, 0.02]))
+
+    assert np.abs(reference).max() > 1e-4
+    assert_allclose(second_order_part(scale * np.array([0.01, 0.02])), scale**2 * reference, rtol=1e-8, atol=1e-16)
+
+
+@pytest.mark.parametrize(
+    ("function", "kwargs"),
+    [
+        (simulate, {"shock_std": 0.01, "simulation_length": 10, "random_seed": 0}),
+        (impulse_response_function, {"shock_size": 0.01, "simulation_length": 10}),
+    ],
+    ids=["simulate", "irf"],
+)
+def test_solving_inside_matches_passing_a_second_order_solution(function, kwargs):
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=2, verbose=False)
+
+    solved_inside = function(model, order=2, verbose=False, **kwargs)
+    xr.testing.assert_allclose(solved_inside, function(model, solution, **kwargs))
+
+
+def test_second_order_responses_per_shock_are_responses_to_each_shock_alone():
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=2, verbose=False)
+    shock_size = {"epsilon_A": 0.03, "epsilon_B": -0.04}
+    n_periods = 10
+
+    per_shock = impulse_response_function(model, solution, shock_size=shock_size, simulation_length=n_periods)
+    for shock, size in shock_size.items():
+        trajectory = np.zeros((n_periods, len(solution.shock_names)))
+        trajectory[0, solution.shock_names.index(shock)] = size
+        alone = impulse_response_function(model, solution, shock_trajectory=trajectory)
+        xr.testing.assert_allclose(per_shock.sel(shock=shock, drop=True), alone)
+
+    together = impulse_response_function(
+        model, solution, shock_size=shock_size, simulation_length=n_periods, return_individual_shocks=False
+    )
+    gap = together["deviation"] - per_shock["deviation"].sum("shock")
+    assert np.abs(gap).max() > 1e-6
 
 
 def test_objective_with_complex_discount_factor():

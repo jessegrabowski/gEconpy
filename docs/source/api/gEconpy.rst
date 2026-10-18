@@ -68,6 +68,7 @@ gEconpy
     gEconpy.model.perfect_foresight.solve <gEconpy.model.perfect_foresight.solve>
     gEconpy.model.perfect_foresight.validation <gEconpy.model.perfect_foresight.validation>
     gEconpy.model.perturbation <gEconpy.model.perturbation>
+    gEconpy.model.pruning <gEconpy.model.pruning>
     gEconpy.model.sampling <gEconpy.model.sampling>
     gEconpy.model.simplification <gEconpy.model.simplification>
     gEconpy.model.simulate <gEconpy.model.simulate>

@@ -12,8 +12,11 @@ from gEconpy.model.simulate import (
     _make_shock_spec,
     _shock_vector_from_spec,
     _simulate_linear_system,
+    _simulate_pruned_system,
     _validate_irf_shock_arguments,
+    impulse_response_function,
 )
+from tests._resources.cache_compiled_models import load_and_cache_model
 
 CORRELATED_COV = np.array([[0.04, 0.018], [0.018, 0.09]])
 SHOCK_NAMES = ["epsilon_A", "epsilon_B"]
@@ -157,3 +160,40 @@ def test_two_irf_shock_arguments_raise_the_intended_message():
 
 def test_no_irf_shock_argument_passes_validation():
     _validate_irf_shock_arguments(("shock_size", None), ("shock_dict", None), ("shock_cov", None))
+
+
+def test_second_order_impulse_response_is_the_mean_generalized_impulse_response():
+    """
+    The second-order response is the expectation of Dynare's simulated generalized impulse response.
+
+    Dynare averages the gap between simulations with and without the impulse over random draws of the other shocks.
+    """
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=2, verbose=False)
+    shock_std = np.array([0.01, 0.02])
+    impulse = np.zeros((10, 2))
+    impulse[0] = [0.03, -0.04]
+
+    other_shocks = np.random.default_rng(0).normal(size=(2000, 10, 2)) * shock_std
+    ghs2 = solution.ghs2(np.diag(shock_std**2))
+    gaps = _simulate_pruned_system(solution, other_shocks + impulse, ghs2) - _simulate_pruned_system(
+        solution, other_shocks, ghs2
+    )
+    standard_error = gaps.std(axis=0) / np.sqrt(len(gaps))
+
+    response = impulse_response_function(model, solution, shock_trajectory=impulse)["deviation"].values
+    assert np.all(np.abs(gaps.mean(axis=0) - response) <= 4 * standard_error + 1e-12)
+
+
+def test_pruned_paths_in_a_batch_are_simulated_independently():
+    solution = load_and_cache_model("one_block_1_ss_2shock.gcn").solve_model(order=2, verbose=False)
+    shocks = np.random.default_rng(0).normal(scale=0.02, size=(2, 3, 15, 2))
+    ghs2 = solution.ghs2(np.diag([0.01, 0.02]) ** 2)
+
+    batched = _simulate_pruned_system(solution, shocks, ghs2)
+    one_at_a_time = np.stack(
+        [np.stack([_simulate_pruned_system(solution, path, ghs2) for path in group]) for group in shocks]
+    )
+
+    assert batched.shape == (2, 3, 15, len(solution.variable_names))
+    assert_allclose(batched, one_at_a_time, atol=1e-14)
