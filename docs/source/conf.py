@@ -184,6 +184,8 @@ numpydoc_xref_aliases = {
     "TimeAwareSymbol": "gEconpy.classes.time_aware_symbol.TimeAwareSymbol",
     "Block": "gEconpy.model.block.basic.Block",
     "Model": "gEconpy.model.model.Model",
+    "DROrder": "gEconpy.model.perturbation.DROrder",
+    "FirstOrderPerturbationSolution": "gEconpy.classes.perturbation_solution.FirstOrderPerturbationSolution",
     "DSGEStateSpace": "gEconpy.model.statespace.DSGEStateSpace",
     "Variable": "gEconpy.parser.ast.nodes.Variable",
     "Parameter": "gEconpy.parser.ast.nodes.Parameter",
