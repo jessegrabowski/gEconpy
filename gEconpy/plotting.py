@@ -306,8 +306,11 @@ def plot_simulation(
     return fig
 
 
+IRFInput = xr.Dataset | xr.DataArray
+
+
 def plot_irf(
-    irf: xr.DataArray | list[xr.DataArray] | dict[str, xr.DataArray],
+    irf: IRFInput | list[IRFInput] | dict[str, IRFInput],
     vars_to_plot: str | list[str] | None = None,
     shocks_to_plot: str | list[str] | None = None,
     n_cols: int | None = None,
@@ -316,17 +319,18 @@ def plot_irf(
     legend_kwargs: dict | None = None,
     figsize: tuple[int, int] = (14, 10),
     dpi: int = 100,
+    units: Literal["deviation", "level"] = "deviation",
 ) -> Figure:
     """
     Plot impulse response functions, one panel per variable and one line per shock.
 
     Parameters
     ----------
-    irf : DataArray, list of DataArray, or dict mapping str to DataArray
-        Output of :func:`~gEconpy.model.simulate.impulse_response_function`, with ``time`` and ``variable``
-        dimensions and, when computed shock by shock, a ``shock`` dimension. Pass a list or a dictionary of such
-        arrays to overlay several scenarios. Scenarios are distinguished by line style, and dictionary keys are used
-        as the scenario names in the legend.
+    irf : Dataset, DataArray, list, or dict
+        Output of :func:`~gEconpy.model.simulate.impulse_response_function`, or one of its data variables, with
+        ``time`` and ``variable`` dimensions and, when computed shock by shock, a ``shock`` dimension. Pass a list of
+        these, or a dictionary mapping scenario names to them, to overlay several scenarios. Scenarios are
+        distinguished by line style, and dictionary keys are used as the scenario names in the legend.
     vars_to_plot : str or list of str, optional
         Variables to plot. All variables are plotted by default.
     shocks_to_plot : str or list of str, optional
@@ -344,6 +348,9 @@ def plot_irf(
         Figure size in inches. Defaults to (14, 10).
     dpi : int, optional
         Figure resolution in dots per inch. Defaults to 100.
+    units : str, optional
+        Data variable of a Dataset to plot, ``"deviation"`` or ``"level"``. A DataArray has no levels to choose
+        from, so it takes only ``"deviation"``. Defaults to ``"deviation"``.
 
     Returns
     -------
@@ -379,7 +386,7 @@ def plot_irf(
 
         fig = plot_irf({"baseline": baseline, "rho_A = 0.99": persistent}, vars_to_plot=["Y", "C", "I"])
     """
-    irf_map = _irf_to_mapping(irf)
+    irf_map = _irf_to_mapping(irf, units=units)
     vars_to_plot_resolved, shocks_to_plot_resolved = _resolve_vars_and_shocks(irf_map, vars_to_plot, shocks_to_plot)
 
     fig, gs, plot_locs, show_xticks = _prepare_irf_grid(
@@ -1736,18 +1743,30 @@ def _plot_single_variable(
 
 
 def _irf_to_mapping(
-    irf: xr.DataArray | list[xr.DataArray] | dict[str, xr.DataArray],
+    irf: IRFInput | list[IRFInput] | dict[str, IRFInput],
+    units: str,
 ) -> dict[str, xr.DataArray]:
-    if isinstance(irf, xr.DataArray):
-        return {"": irf}
-    if isinstance(irf, list):
-        return {f"Scenario {i}": scenario for i, scenario in enumerate(irf)}
-    if isinstance(irf, dict):
-        return irf
-    raise TypeError(
-        f"irf must be a DataArray, a list of DataArrays, or a dict mapping scenario names to DataArrays, but got "
-        f"{type(irf)}."
-    )
+    if isinstance(irf, IRFInput):
+        scenarios = {"": irf}
+    elif isinstance(irf, list):
+        scenarios = {f"Scenario {i}": scenario for i, scenario in enumerate(irf)}
+    elif isinstance(irf, dict):
+        scenarios = irf
+    else:
+        raise TypeError(
+            f"irf must be a Dataset or DataArray, a list of them, or a dict mapping scenario names to them, but got "
+            f"{type(irf)}."
+        )
+    if units not in ("deviation", "level"):
+        raise ValueError(f'units must be "deviation" or "level", got {units!r}.')
+    if units != "deviation" and any(isinstance(scenario, xr.DataArray) for scenario in scenarios.values()):
+        raise ValueError(
+            f"units={units!r} selects a data variable of the impulse_response_function Dataset, but a DataArray was "
+            "passed. Pass the Dataset itself."
+        )
+    return {
+        name: scenario[units] if isinstance(scenario, xr.Dataset) else scenario for name, scenario in scenarios.items()
+    }
 
 
 def _resolve_list_to_plot(

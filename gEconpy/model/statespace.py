@@ -34,7 +34,7 @@ from sympytensor import as_tensor
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.perturbation import check_bk_condition_pt
+from gEconpy.model.perturbation import _log_linear_treatment, check_bk_condition_pt
 from gEconpy.parser.ast import variable_key
 from gEconpy.parser.grammar.expressions import parse_expression
 from gEconpy.parser.transform.to_sympy import ast_to_sympy
@@ -341,7 +341,8 @@ class DSGEStateSpace(PyMCStateSpace):
 
         An observed state with a user-supplied observation equation takes the linearization's constant term, for
         example :math:`\log Y_{ss}(p) + \log Z_{ss}(p)` for a growth-rate observation. A state listed in
-        ``ss_obs_intercept`` takes :math:`\log v_{ss}(p)` when log-linearized and :math:`v_{ss}(p)` otherwise.
+        ``ss_obs_intercept`` takes :math:`\log v_{ss}(p)` when its state is a log deviation and :math:`v_{ss}(p)`
+        otherwise, as :attr:`log_linear_treatment` decides.
         Every other state takes zero, which is the right intercept for data already in deviation form.
         ``sum``-aggregated observations multiply the per-period intercept by the aggregation period.
 
@@ -352,6 +353,7 @@ class DSGEStateSpace(PyMCStateSpace):
         """
         steady_state_by_name = {k.name: v for k, v in self.steady_state_mapping.items()}
         ss_intercept_states = set(self._ss_obs_intercept_states)
+        treatment = self.log_linear_treatment
 
         entries: list[pt.TensorVariable] = []
         for name in self.observed_states:
@@ -364,8 +366,7 @@ class DSGEStateSpace(PyMCStateSpace):
                         f"ss_obs_intercept requested for {name!r}, but no symbolic steady state is available for "
                         f"it. Give {name!r} an analytic steady state in the GCN file, or remove it from tryreduce."
                     )
-                v_ss = steady_state_by_name[ss_key]
-                per_period_intercept = pt.log(v_ss) if name in self._log_linearized_variables else v_ss
+                per_period_intercept = _steady_state_intercept(steady_state_by_name[ss_key], treatment=treatment[name])
             else:
                 entries.append(pt.zeros((), dtype=floatX))
                 continue
@@ -455,6 +456,7 @@ class DSGEStateSpace(PyMCStateSpace):
             0 for contemporaneous references and negative for lags.
         """
         var_by_name = {v.base_name: v for v in self.variables}
+        treatment = self.log_linear_treatment
         # Sorted because set order follows the per-process string hash seed. The order fixes the order of the
         # design-matrix updates, so an unsorted walk changes the graph, and with it the numba cache key, every session.
         appearing = sorted(
@@ -474,10 +476,13 @@ class DSGEStateSpace(PyMCStateSpace):
             lag_tag = "0" if lag == 0 else f"m{-lag}"
             deviation = sp.Symbol(f"_tilde_{variable_name}_{lag_tag}", real=True)
             deviations[(variable_name, lag)] = deviation
-            if variable_name in self._log_linearized_variables:
-                deviation_form[v_at_t] = v_ss * sp.exp(deviation)
-            else:
-                deviation_form[v_at_t] = v_ss + deviation
+            in_logs = v_ss * sp.exp(deviation)
+            in_levels = v_ss + deviation
+            deviation_form[v_at_t] = {
+                "log": in_logs,
+                "level": in_levels,
+                "by_sign": sp.Piecewise((in_logs, v_ss > 0), (in_levels, True)),
+            }[treatment[variable_name]]
 
         g = expression.xreplace(deviation_form)
         at_steady_state = {deviation: sp.Integer(0) for deviation in deviations.values()}
@@ -540,6 +545,22 @@ class DSGEStateSpace(PyMCStateSpace):
     @property
     def _orig_state_names(self) -> list[str]:
         return [x.base_name for x in self.variables]
+
+    @property
+    def log_linear_treatment(self) -> dict[str, Literal["log", "level", "by_sign"]]:
+        """
+        How each model variable's state measures its distance from the steady state, keyed by variable name.
+
+        A ``"log"`` state is a log deviation and a ``"level"`` state is a level deviation. A ``"by_sign"`` variable
+        has no sign assumption, so its state is a log deviation at parameters where its steady state is positive and
+        a level deviation elsewhere.
+        """
+        return {
+            variable.base_name: _log_linear_treatment(
+                variable, requested=variable.base_name in self._log_linearized_variables
+            )
+            for variable in self.variables
+        }
 
     @property
     def _cumulator_state_names(self) -> list[str]:
@@ -1593,3 +1614,15 @@ def prepare_mixed_frequency_data(
 
     high_freq_data.index.freq = high_freq_data.index.inferred_freq
     return high_freq_data
+
+
+def _steady_state_intercept(
+    v_ss: pt.TensorVariable, treatment: Literal["log", "level", "by_sign"]
+) -> pt.TensorVariable:
+    """Return the observation intercept of a state, in the units its treatment gives the state."""
+    if treatment == "log":
+        return pt.log(v_ss)
+    if treatment == "level":
+        return v_ss
+    # The inner switch keeps the log's argument positive, so the branch not taken adds no NaN to gradients.
+    return pt.switch(v_ss > 0, pt.log(pt.switch(v_ss > 0, v_ss, 1.0)), v_ss)

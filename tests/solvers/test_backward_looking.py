@@ -95,7 +95,7 @@ class TestBackwardLookingIRF:
         n_vars = len(model.variables)
         n_steps = 50
 
-        irf = impulse_response_function(model, solution, simulation_length=n_steps, shock_size=1.0)
+        irf = impulse_response_function(model, solution, simulation_length=n_steps, shock_size=1.0)["deviation"]
 
         # The shock impact lands at t = 0.
         expected = np.zeros((n_steps, n_vars))
@@ -107,7 +107,7 @@ class TestBackwardLookingIRF:
 
     def test_irf_decays_to_zero(self, sarima_solved):
         model, solution = sarima_solved
-        irf = impulse_response_function(model, solution, simulation_length=500, shock_size=1.0)
+        irf = impulse_response_function(model, solution, simulation_length=500, shock_size=1.0)["deviation"]
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
 
 

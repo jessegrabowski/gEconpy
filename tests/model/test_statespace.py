@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor
+import pytensor.tensor as pt
 import pytest
 import xarray as xr
 
@@ -14,7 +15,7 @@ from pytensor.graph.traversal import ancestors
 from pytensor.tensor.variable import TensorConstant
 
 from gEconpy import statespace_from_gcn
-from gEconpy.model.statespace import data_from_prior, prepare_mixed_frequency_data
+from gEconpy.model.statespace import _steady_state_intercept, data_from_prior, prepare_mixed_frequency_data
 from gEconpy.model.statistics import autocorrelation_matrix
 from tests._resources.cache_compiled_models import (
     load_and_cache_model,
@@ -1074,6 +1075,59 @@ def test_observation_equation_Z_matches_analytical_expectation(
     d, Z = _eval_obs_pieces(ss_mod, params)
     np.testing.assert_allclose(Z, expected_Z, rtol=1e-10, atol=1e-12)
     np.testing.assert_allclose(d[0], expected_d, rtol=1e-10, atol=1e-12)
+
+
+@pytest.mark.include_nk
+def test_log_linear_treatment_matches_the_solved_linearization():
+    """``TC`` is declared negative and ``U`` has no sign assumption and a negative steady state."""
+    ss_mod = statespace_from_gcn(TEST_GCNS / "full_nk.gcn", not_loglin_variables=["Y"], verbose=False)
+    solution = load_and_cache_model("full_nk.gcn").solve_model(
+        return_matrices=False, solver="gensys", not_loglin_variables=["Y"], verbose=False
+    )
+
+    treatment = ss_mod.log_linear_treatment
+    in_logs = [
+        treatment[name] == "log" or (treatment[name] == "by_sign" and steady_state > 0)
+        for name, steady_state in zip(solution.variable_names, solution.steady_state, strict=True)
+    ]
+
+    np.testing.assert_array_equal(in_logs, solution.log_linearized)
+    assert (treatment["Y"], treatment["TC"], treatment["U"]) == ("level", "level", "by_sign")
+
+
+@pytest.mark.include_nk
+def test_an_observation_of_a_negative_steady_state_variable_stays_in_levels():
+    """``U`` has no sign assumption and a negative steady state, so the observation sees a level deviation."""
+    model = load_and_cache_model("full_nk.gcn")
+    ss_mod = statespace_from_gcn(TEST_GCNS / "full_nk.gcn", verbose=False)
+    ss_mod.configure(
+        observed_states=["u_obs"],
+        measurement_error=["u_obs"],
+        constant_params="auto",
+        observation_equations={"u_obs": "U[]"},
+        verbose=False,
+    )
+    u_ss = float(model.steady_state(verbose=False, progressbar=False)["U_ss"])
+
+    d, Z = _eval_obs_pieces(ss_mod, model.parameters())
+
+    assert u_ss < 0
+    np.testing.assert_allclose(d[0], u_ss)
+    np.testing.assert_allclose(Z[0, ss_mod._orig_state_names.index("U")], 1.0)
+
+
+@pytest.mark.parametrize(
+    ("treatment", "v_ss", "expected"),
+    [("log", 2.0, np.log(2.0)), ("level", -2.0, -2.0), ("by_sign", 2.0, np.log(2.0)), ("by_sign", -2.0, -2.0)],
+)
+def test_steady_state_intercept_follows_the_state_units(treatment, v_ss, expected):
+    """At a negative steady state the unused log branch must not put NaN into the gradient."""
+    v = pt.dscalar("v")
+    intercept = _steady_state_intercept(v, treatment=treatment)
+    value, gradient = pytensor.function([v], [intercept, pytensor.grad(intercept, v)])(v_ss)
+
+    np.testing.assert_allclose(value, expected)
+    assert np.isfinite(gradient)
 
 
 def test_observation_equation_level_linearized_variable_coefficient():

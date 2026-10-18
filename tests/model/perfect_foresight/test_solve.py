@@ -100,7 +100,7 @@ class TestBackwardOnlyModel:
                 backward_var_model,
                 simulation_length=simulation_length,
                 shock_size={"epsilon_x": 0.1},
-            )
+            )["deviation"]
             .isel(shock=0)
             .to_pandas()
         )
@@ -170,7 +170,7 @@ class TestForwardOnlyModel:
                 forward_model,
                 simulation_length=simulation_length,
                 shock_size={"epsilon_rn": 0.01},
-            )
+            )["deviation"]
             .isel(shock=0)
             .to_pandas()
         )
