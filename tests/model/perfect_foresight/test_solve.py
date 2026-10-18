@@ -388,6 +388,22 @@ class TestHomotopy:
         assert result.homotopy_solves == 2
         assert "Homotopy reached weight" in result.message
 
+    def test_a_failed_homotopy_spends_only_the_capped_iterations(self, open_rbc_model):
+        """Newton cannot start capital at twenty times its steady state, and two homotopy solves are too few."""
+        steady_state = open_rbc_model.steady_state(verbose=False)
+
+        _, result = solve_perfect_foresight(
+            open_rbc_model,
+            initial_conditions={"K": 20 * steady_state["K_ss"]},
+            simulation_length=100,
+            sparse_root_kwargs={"progressbar": False},
+            max_homotopy_solves=2,
+        )
+
+        assert not result.success
+        assert result.homotopy_solves == 2
+        assert result.nit <= 50 + 2 * 20
+
 
 class TestSteadyStateKwargs:
     def test_kwargs_reach_the_steady_state_with_verbose_defaulting_off(self, rbc_model):
