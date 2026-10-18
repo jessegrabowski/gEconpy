@@ -2173,7 +2173,9 @@ class Model:
 
         ss_values = {k.removesuffix("_ss"): v for k, v in steady_state.items()}
         ss_inputs = [ss_values[v.base_name] for v in self.variables]
-        param_inputs = [param_dict[n.name] for n in param_input_nodes]
+        # Calibrated parameters are solved with the steady state, so they are read from it.
+        parameter_values = {**steady_state, **param_dict}
+        param_inputs = [parameter_values[n.name] for n in param_input_nodes]
 
         A, B, C, D = f_jacobians(*ss_inputs, *param_inputs)
 

@@ -168,5 +168,6 @@ def test_worker_processes_reproduce_the_serial_solve(rbc_model, mp_ctx):
     serial = sample_perfect_foresight(rbc_model, trace, simulation_length=30)
     parallel = sample_perfect_foresight(rbc_model, trace, simulation_length=30, cores=2, mp_ctx=mp_ctx)
 
-    xr.testing.assert_identical(parallel[0], serial[0])
+    # MKL's results depend on memory alignment, so a worker's sparse LU can round differently in the last bits.
+    xr.testing.assert_allclose(parallel[0], serial[0], rtol=1e-8)
     xr.testing.assert_identical(parallel[1], serial[1])
