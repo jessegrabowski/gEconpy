@@ -7,6 +7,7 @@ import sympy as sp
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
+    build_symbolic_jacobian_entries,
     build_symbolic_jacobians,
     compile_for_scipy,
     compile_function,
@@ -204,3 +205,29 @@ def test_build_symbolic_jacobians_at_steady_state_shares_one_cache():
     np.testing.assert_allclose(lag_value, [[0.0, -2 * 0.5 * 3.0], [0.0, 0.0]])
     np.testing.assert_allclose(lead_value, [[0.0, 0.0], [-1 / 2.0, 0.0]])
     assert jac_empty.type.shape == (2, 0)
+
+
+def test_build_symbolic_jacobian_entries_returns_the_requested_entries_in_order():
+    x, y, alpha = sp.symbols("x y alpha")
+    equations = [alpha * x * y, sp.log(x) + y**2]
+
+    cache = {}
+    entries = build_symbolic_jacobian_entries(
+        equations, [x, y], rows=np.array([1, 0, 0, 1]), columns=np.array([1, 0, 1, 0]), cache=cache
+    )
+
+    inputs = [cache[make_cache_key(name, sp.Symbol)] for name in ("x", "y", "alpha")]
+    f = pytensor.function(inputs, entries, mode="FAST_COMPILE", on_unused_input="ignore")
+
+    np.testing.assert_allclose(f(2.0, 3.0, 0.5), [2 * 3.0, 0.5 * 3.0, 0.5 * 2.0, 1 / 2.0])
+
+
+def test_build_symbolic_jacobian_entries_with_no_entries_is_an_empty_vector():
+    x = sp.Symbol("x")
+
+    entries = build_symbolic_jacobian_entries(
+        [x**2], [x], rows=np.array([], dtype=int), columns=np.array([], dtype=int), cache={}
+    )
+
+    assert entries.type.shape == (0,)
+    assert entries.eval().shape == (0,)

@@ -236,9 +236,7 @@ def build_symbolic_jacobians(
         for symbol in wrt
     ]
 
-    n_symbolic = sum(1 for entry in entries if isinstance(entry, sp.Basic) and not entry.is_number)
-    if n_symbolic > 1:
-        entries = _plant_cse_intermediates(entries, cache)
+    entries = _reduce_shared_subexpressions(entries, cache)
 
     jacobians = []
     offset = 0
@@ -283,6 +281,43 @@ def build_symbolic_jacobian(
         PyTensor matrix of shape ``(len(equations), len(wrt))``.
     """
     return build_symbolic_jacobians([(equations, wrt)], cache, to_ss=to_ss, shocks=shocks)[0]
+
+
+def build_symbolic_jacobian_entries(
+    equations: list[sp.Expr],
+    wrt: list[sp.Symbol],
+    rows: np.ndarray,
+    columns: np.ndarray,
+    cache: dict,
+) -> TensorVariable:
+    """
+    Build selected entries of a Jacobian by symbolic differentiation, as one vector.
+
+    Parameters
+    ----------
+    equations : list of sympy expression
+        Equations to differentiate, indexed by ``rows``.
+    wrt : list of sympy Symbol
+        Symbols to differentiate with respect to, indexed by ``columns``.
+    rows, columns : ndarray of int
+        Row and column index of each entry to build, such as the output of :func:`numpy.nonzero` on a sparsity mask.
+    cache : dict
+        Sympytensor cache mapping cache keys to PyTensor variables.
+
+    Returns
+    -------
+    entries : TensorVariable
+        PyTensor vector whose element ``k`` is the derivative of ``equations[rows[k]]`` with respect to
+        ``wrt[columns[k]]``.
+    """
+    if len(rows) == 0:
+        return pt.zeros((0,))
+
+    entries = [equations[row].diff(wrt[column]) for row, column in zip(rows, columns, strict=True)]
+    entries = _reduce_shared_subexpressions(entries, cache)
+
+    printer = PytensorPrinter(cache=cache, settings={})
+    return pt.stack([output_to_tensor(entry, cache, printer=printer) for entry in entries])
 
 
 def make_cache_key(name: str, cls: type[sp.Symbol]) -> tuple:
@@ -495,6 +530,14 @@ def _compile_without_ss_inputs(
         return inner(**frozen_params)
 
     return f_frozen
+
+
+def _reduce_shared_subexpressions(entries: list[sp.Basic], cache: dict) -> list[sp.Basic]:
+    """Apply :func:`_plant_cse_intermediates` when at least two entries are symbolic, else return ``entries``."""
+    n_symbolic = sum(1 for entry in entries if isinstance(entry, sp.Basic) and not entry.is_number)
+    if n_symbolic > 1:
+        return _plant_cse_intermediates(entries, cache)
+    return entries
 
 
 def _plant_cse_intermediates(expressions: list[sp.Basic], cache: dict) -> list[sp.Basic]:
