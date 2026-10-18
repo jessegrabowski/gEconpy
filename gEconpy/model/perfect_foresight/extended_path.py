@@ -26,7 +26,8 @@ from gEconpy.model.perfect_foresight.solve import (
 )
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
 from gEconpy.model.simulate import _draw_shocks
-from gEconpy.solvers.sparse_root.base import DEFAULT_TOL, RootSolver
+from gEconpy.rcparams import rcParams
+from gEconpy.solvers.sparse_root.base import RootSolver
 from gEconpy.solvers.sparse_root.direction import ChordDirection
 from gEconpy.solvers.sparse_root.line_search import chord
 
@@ -309,7 +310,7 @@ def _simulate_trajectory(
 
 def _default_solver(sparse_root_kwargs: dict) -> RootSolver:
     """Return a chord solver that carries its factorization between periods, refreshed when progress slows."""
-    x_tol = sparse_root_kwargs.get("x_tol", sparse_root_kwargs.get("tol", DEFAULT_TOL))
+    x_tol = sparse_root_kwargs.get("x_tol", sparse_root_kwargs.get("tol", rcParams["sparse_root.tol"]))
     direction = ChordDirection(
         recompute_every=None,
         refresh_ratio=_CHORD_REFRESH_RATIO,

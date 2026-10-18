@@ -34,6 +34,7 @@ gEconpy
     model.statistics.perturbation_diagnostics.summarize_perturbation_solution
     model.statistics.validation.check_steady_state
     model.steady_state.print_steady_state
+    rcparams.rc_context
 
 .. rubric:: Submodules
 
@@ -109,6 +110,7 @@ gEconpy
     gEconpy.pytensorf.compile <gEconpy.pytensorf.compile>
     gEconpy.pytensorf.real <gEconpy.pytensorf.real>
     gEconpy.pytensorf.real_eig <gEconpy.pytensorf.real_eig>
+    gEconpy.rcparams <gEconpy.rcparams>
     gEconpy.solvers.backward_looking <gEconpy.solvers.backward_looking>
     gEconpy.solvers.cycle_reduction <gEconpy.solvers.cycle_reduction>
     gEconpy.solvers.gensys <gEconpy.solvers.gensys>

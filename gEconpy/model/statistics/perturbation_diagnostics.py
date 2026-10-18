@@ -32,6 +32,7 @@ from gEconpy.model.sampling import (
 )
 from gEconpy.model.statistics.validation import _maybe_linearize_model
 from gEconpy.pytensorf.compile import rewrite_pregrad
+from gEconpy.rcparams import rcParams
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
 from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
 from gEconpy.solvers.gensys import solve_policy_function_with_gensys
@@ -306,7 +307,7 @@ def solvability_check(
     solver: str = "cycle_reduction",
     steady_state_kwargs: dict | None = None,
     linearize_kwargs: dict | None = None,
-    tol: float = 1e-8,
+    tol: float | None = None,
     max_iter: int = 100,
     norm_tol: float = 1e-8,
     progressbar: bool = True,
@@ -336,7 +337,7 @@ def solvability_check(
     linearize_kwargs : dict, optional
         Keyword arguments forwarded to ``model.linearize_model()``. Defaults to None.
     tol : float, optional
-        Solver convergence tolerance. Defaults to 1e-8.
+        Solver convergence tolerance. Defaults to ``rcParams["perturbation.tol"]``.
     max_iter : int, optional
         Maximum number of solver iterations. Defaults to 100.
     norm_tol : float, optional
@@ -373,6 +374,8 @@ def solvability_check(
     if solver not in _PERTURBATION_SOLVERS:
         raise ValueError(f"Unknown solver {solver!r}. Pass one of {', '.join(map(repr, _PERTURBATION_SOLVERS))}.")
 
+    if tol is None:
+        tol = rcParams["perturbation.tol"]
     ss_kwargs = steady_state_kwargs or {}
     lin_kwargs = linearize_kwargs or {}
 

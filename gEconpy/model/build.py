@@ -4,6 +4,7 @@ import warnings
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import sympy as sp
 
@@ -31,6 +32,7 @@ from gEconpy.parser.errors import GCNErrorCollection, GCNParseError
 from gEconpy.parser.formatting import ErrorFormatter
 from gEconpy.parser.loader import load_gcn_file
 from gEconpy.pytensorf.compile import rewrite_pregrad
+from gEconpy.rcparams import rcParams
 from gEconpy.utilities import flatten_substitution_dict, get_name
 
 _log = logging.getLogger(__name__)
@@ -42,11 +44,11 @@ def model_from_gcn(
     simplify_tryreduce: bool = True,
     simplify_constants: bool = True,
     infer_steady_state: bool = True,
-    verbose: bool = True,
+    verbose: bool | None = None,
     mode: str | None = None,
     error_function: ERROR_FUNCTIONS = "squared",
-    on_unused_parameters: str = "raise",
-    show_errors: bool = True,
+    on_unused_parameters: str | None = None,
+    show_errors: bool | None = None,
     backend: str | None = None,
 ) -> Model:
     """
@@ -69,18 +71,18 @@ def model_from_gcn(
     infer_steady_state : bool, optional
         Extend the user-provided steady state by solving single-unknown identities. Default is True.
     verbose : bool, optional
-        Log a build report on completion. Default is True.
+        Log a build report on completion. Defaults to ``rcParams["build.verbose"]``.
     mode : str, optional
-        PyTensor compilation mode for the functions the model compiles. Default is None, which uses the PyTensor
-        default mode.
+        PyTensor compilation mode for the functions the model compiles. Defaults to ``rcParams["build.mode"]``,
+        whose default of None selects the PyTensor default mode.
     error_function : str, optional
         Scalar error metric used when the steady state is found by minimization. One of ``'squared'``,
         ``'mean_squared'``, ``'abs'``, or ``'l2-norm'``. Default is ``'squared'``.
     on_unused_parameters : str, optional
         What to do with parameters that are defined but never used: ``'raise'``, ``'warn'``, or ``'ignore'``.
-        Default is ``'raise'``.
+        Defaults to ``rcParams["build.on_unused_parameters"]``.
     show_errors : bool, optional
-        Print formatted parse errors to stderr before re-raising them. Default is True.
+        Print formatted parse errors to stderr before re-raising them. Defaults to ``rcParams["build.show_errors"]``.
     backend : str, optional
         .. deprecated::
             Use ``mode`` instead. ``backend='numpy'`` maps to ``mode='FAST_COMPILE'`` and ``backend='pytensor'``
@@ -104,6 +106,9 @@ def model_from_gcn(
         steady_state = model.steady_state(verbose=False, progressbar=False)
         ge.print_steady_state(steady_state)
     """
+    verbose, mode, on_unused_parameters, show_errors = _build_settings(
+        verbose=verbose, mode=mode, on_unused_parameters=on_unused_parameters, show_errors=show_errors
+    )
     if backend is not None:
         mode = _mode_from_deprecated_backend(backend)
 
@@ -148,11 +153,11 @@ def statespace_from_gcn(
     simplify_tryreduce: bool = True,
     simplify_constants: bool = True,
     infer_steady_state: bool = True,
-    verbose: bool = True,
-    on_unused_parameters: str = "raise",
+    verbose: bool | None = None,
+    on_unused_parameters: str | None = None,
     log_linearize: bool = True,
     not_loglin_variables: list[str] | None = None,
-    show_errors: bool = True,
+    show_errors: bool | None = None,
     filter_type: str = "standard",
     mode: str | None = None,
     cov_jitter: float = JITTER_DEFAULT,
@@ -178,22 +183,22 @@ def statespace_from_gcn(
     infer_steady_state : bool, optional
         Extend the user-provided steady state by solving single-unknown identities. Default is True.
     verbose : bool, optional
-        Log a build report on completion. Default is True.
+        Log a build report on completion. Defaults to ``rcParams["build.verbose"]``.
     on_unused_parameters : str, optional
         What to do with parameters that are defined but never used: ``'raise'``, ``'warn'``, or ``'ignore'``.
-        Default is ``'raise'``.
+        Defaults to ``rcParams["build.on_unused_parameters"]``.
     log_linearize : bool, optional
         Linearize in logs of the variables. Ignored when the GCN file declares the model linear. Default is True.
     not_loglin_variables : list of str, optional
         Variable names to linearize in levels even when ``log_linearize`` is True. Default is None, which
         log-linearizes every variable.
     show_errors : bool, optional
-        Print formatted parse errors to stderr before re-raising them. Default is True.
+        Print formatted parse errors to stderr before re-raising them. Defaults to ``rcParams["build.show_errors"]``.
     filter_type : str, optional
         Kalman filter variant used by the underlying ``PyMCStateSpace``. Default is ``'standard'``.
     mode : str, optional
-        PyTensor compilation mode for post-estimation sampling functions. Default is None, which uses the PyTensor
-        default mode.
+        PyTensor compilation mode for post-estimation sampling functions. Defaults to ``rcParams["build.mode"]``,
+        whose default of None selects the PyTensor default mode.
     cov_jitter : float, optional
         Jitter added to the diagonal of covariance matrices inside the Kalman filter. Default is ``JITTER_DEFAULT``
         from pymc-extras.
@@ -217,6 +222,9 @@ def statespace_from_gcn(
 
         statespace = ge.statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
     """
+    verbose, mode, on_unused_parameters, show_errors = _build_settings(
+        verbose=verbose, mode=mode, on_unused_parameters=on_unused_parameters, show_errors=show_errors
+    )
     gcn_path = Path(gcn_path)
     primitives = _load_model_primitives(
         gcn_path,
@@ -752,6 +760,22 @@ def _key_declarations_by_symbol(primitives: "_ModelPrimitives") -> SymbolDiction
 
     return SymbolDictionary(
         {by_name[key]: declaration for key, declaration in primitives.symbols.items() if key in by_name}
+    )
+
+
+def _build_settings(
+    verbose: bool | None, mode: str | None, on_unused_parameters: str | None, show_errors: bool | None
+) -> tuple[bool, str | None, str, bool]:
+    """Fill each build setting left as None from ``rcParams``."""
+
+    def setting(name: str, value: Any) -> Any:
+        return rcParams[f"build.{name}"] if value is None else value
+
+    return (
+        setting("verbose", verbose),
+        setting("mode", mode),
+        setting("on_unused_parameters", on_unused_parameters),
+        setting("show_errors", show_errors),
     )
 
 

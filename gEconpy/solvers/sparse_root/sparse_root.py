@@ -7,10 +7,9 @@ import numpy as np
 from better_optimize.wrapper import ObjectiveWrapper, optimizer_early_stopping_wrapper
 from scipy.optimize import OptimizeResult
 
+from gEconpy.rcparams import rcParams
 from gEconpy.solvers.sparse_root.base import (
     DEFAULT_ARMIJO_MAX_ITER,
-    DEFAULT_MAXITER,
-    DEFAULT_TOL,
     RootFunction,
     RootSolver,
     SolverState,
@@ -27,10 +26,10 @@ def sparse_root(
     *,
     solver: RootSolver | None = None,
     args: tuple[Any, ...] = (),
-    tol: float = DEFAULT_TOL,
+    tol: float | None = None,
     f_tol: float | None = None,
     x_tol: float | None = None,
-    maxiter: int = DEFAULT_MAXITER,
+    maxiter: int | None = None,
     progressbar: bool = True,
 ) -> OptimizeResult:
     """Find a root of a nonlinear system whose Jacobian is sparse.
@@ -48,13 +47,14 @@ def sparse_root(
     args : tuple, optional
         Extra positional arguments passed to ``fun``. Defaults to an empty tuple.
     tol : float, optional
-        Tolerance used for both the residual and the step test when neither is given explicitly. Defaults to 1e-10.
+        Tolerance used for both the residual and the step test when neither is given explicitly. Defaults to
+        ``rcParams["sparse_root.tol"]``.
     f_tol : float, optional
         Convergence tolerance on the maximum absolute residual. Defaults to ``tol``.
     x_tol : float, optional
         Convergence tolerance on the relative step size. Defaults to ``tol``.
     maxiter : int, optional
-        Maximum number of solver iterations. Defaults to 1000.
+        Maximum number of solver iterations. Defaults to ``rcParams["sparse_root.maxiter"]``.
     progressbar : bool, optional
         Whether to display a progress bar while iterating. Defaults to True.
 
@@ -125,15 +125,19 @@ def _run_sparse_root(
     *,
     solver: RootSolver | None = None,
     args: tuple[Any, ...] = (),
-    tol: float = DEFAULT_TOL,
+    tol: float | None = None,
     f_tol: float | None = None,
     x_tol: float | None = None,
-    maxiter: int = DEFAULT_MAXITER,
+    maxiter: int | None = None,
     progressbar: bool = True,
 ) -> OptimizeResult:
     """Run :func:`sparse_root` without validating ``fun``, for callers whose ``fun`` is known to be well formed."""
     if solver is None:
         solver = newton_armijo()
+    if tol is None:
+        tol = rcParams["sparse_root.tol"]
+    if maxiter is None:
+        maxiter = rcParams["sparse_root.maxiter"]
     if f_tol is None:
         f_tol = tol
     if x_tol is None:

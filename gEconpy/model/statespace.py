@@ -40,6 +40,7 @@ from gEconpy.parser.ast import variable_key
 from gEconpy.parser.grammar.expressions import parse_expression
 from gEconpy.parser.transform.to_sympy import ast_to_sympy
 from gEconpy.pytensorf.block import block
+from gEconpy.rcparams import rcParams
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct_pt
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
@@ -796,14 +797,14 @@ class DSGEStateSpace(PyMCStateSpace):
         aggregation_period: int = 4,
         ss_obs_intercept: list[str] | None = None,
         observation_equations: dict[str, str] | None = None,
-        solver: str = "gensys",
+        solver: str | None = None,
         mode: str | None = None,
         verbose: bool = True,
-        max_iter: int = 50,
-        tol: float = 1e-6,
-        use_adjoint_gradients: bool = True,
-        adjoint_method: AdjointMethod = "doubling",
-        use_direct_lyapunov: bool = False,
+        max_iter: int | None = None,
+        tol: float | None = None,
+        use_adjoint_gradients: bool | None = None,
+        adjoint_method: AdjointMethod | None = None,
+        use_direct_lyapunov: bool | None = None,
     ) -> None:
         r"""
         Choose the observed series, estimated parameters, and solver, then size the statespace model to match.
@@ -844,27 +845,29 @@ class DSGEStateSpace(PyMCStateSpace):
             Contemporaneous and lagged references are accepted, leads are not. Defaults to none.
         solver : str, optional
             Perturbation solver, one of ``"gensys"``, ``"cycle_reduction"``, ``"scan_cycle_reduction"``, or
-            ``"backward_direct"``. Defaults to ``"gensys"``.
+            ``"backward_direct"``. Defaults to ``rcParams["statespace.solver"]``.
         mode : str, optional
-            PyTensor compilation mode for post-estimation sampling functions. Defaults to None.
+            PyTensor compilation mode for post-estimation sampling functions. Defaults to the mode the model was
+            built with.
         verbose : bool, optional
             Print diagnostic messages. Defaults to True.
         max_iter : int, optional
-            Maximum iterations for the iterative solvers. Defaults to 50.
+            Maximum iterations for the iterative solvers. Defaults to ``rcParams["statespace.max_iter"]``.
         tol : float, optional
-            Convergence tolerance for the solver. Defaults to 1e-6.
+            Convergence tolerance for the solver. Defaults to ``rcParams["statespace.tol"]``.
         use_adjoint_gradients : bool, optional
-            Differentiate ``scan_cycle_reduction`` with the adjoint method. Defaults to True.
+            Differentiate ``scan_cycle_reduction`` with the adjoint method. Defaults to
+            ``rcParams["statespace.use_adjoint_gradients"]``.
         adjoint_method : {"doubling", "qz", "sylvester", "direct"}, optional
             Algorithm for the Stein equation in the policy function adjoint, used by every solver except
             ``"backward_direct"``. ``"doubling"`` runs on every backend. ``"qz"`` is the most accurate but has no
             JAX implementation and gives first derivatives only. ``"sylvester"`` is the fastest but loses accuracy
             on badly conditioned models. ``"direct"`` is an :math:`O(n^6)` Kronecker solve kept as a reference
             only and is not recommended. See :func:`~gEconpy.solvers.stein.solve_policy_stein`. Defaults to
-            ``"doubling"``.
+            ``rcParams["statespace.adjoint_method"]``.
         use_direct_lyapunov : bool, optional
-            Solve the initial-state Lyapunov equation with the direct method. The default uses the bilinear method.
-            Defaults to False.
+            Solve the initial-state Lyapunov equation with the direct method instead of the bilinear method.
+            Defaults to ``rcParams["statespace.use_direct_lyapunov"]``.
 
         Examples
         --------
@@ -901,6 +904,16 @@ class DSGEStateSpace(PyMCStateSpace):
             )
             print(ss_mod.state_names)
         """
+        mode = self.mode if mode is None else mode
+        solver = rcParams["statespace.solver"] if solver is None else solver
+        max_iter = rcParams["statespace.max_iter"] if max_iter is None else max_iter
+        tol = rcParams["statespace.tol"] if tol is None else tol
+        if use_adjoint_gradients is None:
+            use_adjoint_gradients = rcParams["statespace.use_adjoint_gradients"]
+        adjoint_method = rcParams["statespace.adjoint_method"] if adjoint_method is None else adjoint_method
+        if use_direct_lyapunov is None:
+            use_direct_lyapunov = rcParams["statespace.use_direct_lyapunov"]
+
         obs_eq_names = set(observation_equations or {})
         unknown_states = [x for x in observed_states if x not in self.state_names and x not in obs_eq_names]
         if unknown_states:
@@ -1162,7 +1175,7 @@ class DSGEStateSpace(PyMCStateSpace):
         add_norm_check: bool = True,
         add_bk_check: bool = False,
         add_solver_success_check: bool = False,
-        solver_tol: float = 1e-8,
+        solver_tol: float | None = None,
     ) -> None:
         """
         Build the Kalman filter likelihood for ``data`` into the active PyMC model, plus DSGE diagnostics.
@@ -1184,7 +1197,7 @@ class DSGEStateSpace(PyMCStateSpace):
             Register the policy-function residual and a Potential that rejects draws where it exceeds
             ``solver_tol``. Defaults to False.
         solver_tol : float, optional
-            Residual tolerance used by ``add_solver_success_check``. Defaults to 1e-8.
+            Residual tolerance used by ``add_solver_success_check``. Defaults to ``rcParams["statespace.solver_tol"]``.
 
         Examples
         --------
@@ -1216,7 +1229,7 @@ class DSGEStateSpace(PyMCStateSpace):
             "add_norm_check": add_norm_check,
             "add_bk_check": add_bk_check,
             "add_solver_success_check": add_solver_success_check,
-            "solver_tol": solver_tol,
+            "solver_tol": rcParams["statespace.solver_tol"] if solver_tol is None else solver_tol,
         }
         super().build_statespace_graph(data=data)
 
