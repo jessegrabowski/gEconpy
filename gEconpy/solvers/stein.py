@@ -125,6 +125,47 @@ def solve_policy_stein(
     conditioning changes with the parameters, so repeat the check at a few draws from the prior if the sampler will
     explore a wide region.
     """
+    return _solve_stein(A1, C, T, Q, method)
+
+
+def solve_generalized_sylvester(
+    A: TensorVariable,
+    B: TensorVariable,
+    K: TensorVariable,
+    D: TensorVariable,
+    method: AdjointMethod = "doubling",
+) -> TensorVariable:
+    r"""
+    Solve the generalized Sylvester equation :math:`A X + B X K = D` for :math:`X`.
+
+    The second-order perturbation solution satisfies this equation with :math:`K = g_x^s \otimes g_x^s`, where
+    :math:`g_x^s` is the state rows of the first-order policy. It is the Stein equation of
+    :func:`solve_policy_stein` with :math:`A_1 = A`, :math:`C = B^T` and :math:`T = K^T`, and is solved by the same
+    methods.
+
+    Parameters
+    ----------
+    A : TensorVariable
+        Left coefficient, of shape ``(n, n)``.
+    B : TensorVariable
+        Coefficient multiplying :math:`X K`, of shape ``(n, n)``.
+    K : TensorVariable
+        Right coefficient, of shape ``(m, m)``.
+    D : TensorVariable
+        Right-hand side, of shape ``(n, m)``.
+    method : {"doubling", "qz", "sylvester", "direct"}, optional
+        Algorithm for the solve, as described in :func:`solve_policy_stein`. Doubling converges only when
+        :math:`\rho(A^{-1} B) \rho(K) < 1`. Defaults to ``"doubling"``.
+
+    Returns
+    -------
+    X : TensorVariable
+        Solution of shape ``(n, m)``.
+    """
+    return _solve_stein(A, B.T, K.T, D, method)
+
+
+def _solve_stein(A1, C, T, Q, method):
     validate_adjoint_method(method)
 
     if method == "doubling":
@@ -179,7 +220,7 @@ def _no_qz_pullback(inputs, outputs, cotangents):
 def _stein_sylvester(A1, C, T, Q):
     # With M = A1^{-1} C^T and N = T^T, the Cayley transform takes S + M S N = A1^{-1} Q to P S + S R = F, where
     # P = (I - M)^{-1} (I + M) and R = (I - N) (I + N)^{-1}. Writing P on the pencil keeps A1 itself out of any solve.
-    eye = pt.eye(A1.shape[0], dtype=A1.dtype)
+    eye = pt.eye(T.shape[0], dtype=T.dtype)
     N = T.T
     pencil_difference = A1 - C.T
 
@@ -192,10 +233,10 @@ def _stein_sylvester(A1, C, T, Q):
 
 def _stein_direct(A1, C, T, Q):
     # kron(X, Y) vec(S) = vec(Y S X^T) for the column-major vec, and the row-major ravel of S^T is that vec.
-    n = A1.shape[0]
-    system = pt.linalg.kron(T, C.T) + pt.linalg.kron(pt.eye(n, dtype=A1.dtype), A1)
+    n_rows, n_columns = A1.shape[0], T.shape[0]
+    system = pt.linalg.kron(T, C.T) + pt.linalg.kron(pt.eye(n_columns, dtype=A1.dtype), A1)
     vec_S = pt.linalg.solve(system, Q.T.ravel(), assume_a="gen", check_finite=False)
-    return vec_S.reshape((n, n)).T
+    return vec_S.reshape((n_columns, n_rows)).T
 
 
 class TriangularStein(Op):
