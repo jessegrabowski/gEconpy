@@ -13,6 +13,7 @@ from numpy.testing import assert_allclose
 from pytensor.graph.traversal import explicit_graph_inputs
 
 from gEconpy.classes.containers import SymbolDictionary
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.build import model_from_gcn
@@ -630,6 +631,37 @@ def test_solve_matches_dynare(model_name, log_linearize):
 
     assert_allclose(T[dynare_T.columns], dynare_T, atol=1e-5, rtol=1e-5)
     assert_allclose(R[dynare_R.columns], dynare_R, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("solve_kwargs", "expected_log_linearized"),
+    [
+        ({}, [True] * 9),
+        ({"not_loglin_variables": ["K"]}, [True, True, True, False, True, True, True, True, True]),
+        ({"log_linearize": False}, [False] * 9),
+    ],
+    ids=["all_logged", "K_in_levels", "levels"],
+)
+def test_solve_model_returns_a_solution_that_records_log_linearization(solve_kwargs, expected_log_linearized):
+    model = load_and_cache_model("basic_rbc.gcn")
+
+    solution = model.solve_model(
+        verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False}, **solve_kwargs
+    )
+
+    assert isinstance(solution, FirstOrderPerturbationSolution)
+    assert solution.dr_order is model.dr_order
+    assert solution.variable_names == ["A", "C", "I", "K", "L", "Y", "lambda", "r", "w"]
+    np.testing.assert_array_equal(solution.log_linearized, expected_log_linearized)
+
+
+def test_a_linear_model_solution_records_no_log_linearization():
+    model = load_and_cache_model("rbc_linearized.gcn")
+
+    solution = model.solve_model(verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False})
+
+    assert model.is_linear
+    assert not solution.log_linearized.any()
 
 
 def test_outputs_after_pert_success(caplog):
