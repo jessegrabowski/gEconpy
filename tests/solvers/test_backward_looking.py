@@ -21,8 +21,7 @@ def sarima_model():
 
 @pytest.fixture(scope="module")
 def sarima_solved(sarima_model):
-    T, R = sarima_model.solve_model(verbose=False)
-    return sarima_model, T, R
+    return sarima_model, sarima_model.solve_model(verbose=False)
 
 
 class TestBackwardLookingDetection:
@@ -43,14 +42,16 @@ class TestBackwardLookingSolve:
     def test_policy_satisfies_linear_system(self, sarima_model):
         """A + B @ T = 0 and B @ R + D = 0 when C = 0."""
         A, B, C, D = sarima_model.linearize_model()
-        T, R = sarima_model.solve_model(verbose=False)
+        solution = sarima_model.solve_model(verbose=False)
+        T, R = solution.T, solution.R
 
         assert_allclose(C, 0.0)
         assert_allclose(A + B @ T, 0.0, atol=1e-10)
         assert_allclose(B @ R + D, 0.0, atol=1e-10)
 
     def test_direct_solvers_agree_with_model_solution(self, sarima_solved):
-        model, T, R = sarima_solved
+        model, solution = sarima_solved
+        T, R = solution.T, solution.R
         A, B, C, D = model.linearize_model(verbose=False)
 
         T_np, R_np = solve_policy_function_with_backward_direct(A, B, C, D)
@@ -69,7 +70,8 @@ class TestBackwardLookingSolve:
         assert_allclose(R_pt, R, atol=1e-12)
 
     def test_T_encodes_ar_coefficients(self, sarima_solved):
-        model, T, _ = sarima_solved
+        model, solution = sarima_solved
+        T = solution.T
         params = model.parameters()
 
         rho_1, rho_2, rho_12 = params["rho_1"], params["rho_2"], params["rho_12"]
@@ -88,11 +90,12 @@ class TestBackwardLookingSolve:
 
 class TestBackwardLookingIRF:
     def test_irf_matches_manual_simulation(self, sarima_solved):
-        model, T, R = sarima_solved
+        model, solution = sarima_solved
+        T, R = solution.T, solution.R
         n_vars = len(model.variables)
         n_steps = 50
 
-        irf = impulse_response_function(model, T, R, simulation_length=n_steps, shock_size=1.0)
+        irf = impulse_response_function(model, solution, simulation_length=n_steps, shock_size=1.0)
 
         # The shock impact lands at t = 0.
         expected = np.zeros((n_steps, n_vars))
@@ -103,19 +106,19 @@ class TestBackwardLookingIRF:
         assert_allclose(irf.values.squeeze(), expected, atol=1e-10)
 
     def test_irf_decays_to_zero(self, sarima_solved):
-        model, T, R = sarima_solved
-        irf = impulse_response_function(model, T, R, simulation_length=500, shock_size=1.0)
+        model, solution = sarima_solved
+        irf = impulse_response_function(model, solution, simulation_length=500, shock_size=1.0)
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
 
 
 class TestBackwardLookingSimulation:
     def test_simulate_scales_linearly_with_shock_std(self, sarima_solved):
         """A shock standard deviation scales the draws it is applied to, so doubling it doubles every path."""
-        model, T, R = sarima_solved
+        model, solution = sarima_solved
         kwargs = {"simulation_length": 20, "n_simulations": 3, "random_seed": 42}
 
-        data_1 = simulate(model, T, R, shock_std=1.0, **kwargs)
-        data_2 = simulate(model, T, R, shock_std=2.0, **kwargs)
+        data_1 = simulate(model, solution, shock_std=1.0, **kwargs)
+        data_2 = simulate(model, solution, shock_std=2.0, **kwargs)
 
         assert_allclose(data_2.values, 2 * data_1.values, rtol=0, atol=1e-12)
 
@@ -123,7 +126,7 @@ class TestBackwardLookingSimulation:
 class TestBackwardLookingMoments:
     def test_stationary_variance_matches_psd(self, sarima_solved):
         """Sigma[x, x] must match the variance obtained by integrating the power spectral density."""
-        model, T, R = sarima_solved
+        model, solution = sarima_solved
         params = model.parameters()
         rho_1, rho_2, rho_12 = params["rho_1"], params["rho_2"], params["rho_12"]
         sigma = 1.0
@@ -142,7 +145,7 @@ class TestBackwardLookingMoments:
         ar_poly = 1.0 - phi @ np.exp(-1j * np.outer(k, omega))
         psd_variance = sigma**2 * np.mean(1.0 / np.abs(ar_poly) ** 2)
 
-        Sigma = stationary_covariance_matrix(model, T, R, shock_std=sigma, return_df=False)
+        Sigma = stationary_covariance_matrix(model, solution, shock_std=sigma, return_df=False)
         x_idx = [v.base_name for v in model.variables].index("x")
 
         assert_allclose(Sigma[x_idx, x_idx], psd_variance, rtol=1e-6)

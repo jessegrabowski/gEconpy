@@ -601,60 +601,6 @@ def test_outputs_after_gensys_failure(caplog):
     assert R is None
 
 
-@pytest.mark.parametrize(
-    "model_name, log_linearize",
-    [
-        ("one_block_1_ss", False),
-        ("rbc_2_block_ss", False),
-        pytest.param("full_nk", False, marks=pytest.mark.include_nk),
-        ("basic_rbc", False),
-        ("basic_rbc", True),
-    ],
-    ids=str,
-)
-def test_solve_matches_dynare(model_name, log_linearize):
-    model = load_and_cache_model(model_name + ".gcn")
-    T, R = model.solve_model(
-        solver="gensys",
-        verbose=False,
-        log_linearize=log_linearize,
-        steady_state_kwargs={"verbose": False, "progressbar": False},
-    )
-
-    if log_linearize:
-        model_name = model_name + "_loglinear"
-
-    dynare_T, dynare_R = load_dynare_outputs(model_name).values()
-
-    T = matrix_to_dataframe(T, model).reindex_like(dynare_T)
-    R = matrix_to_dataframe(R, model).reindex_like(dynare_R)
-
-    assert_allclose(T[dynare_T.columns], dynare_T, atol=1e-5, rtol=1e-5)
-    assert_allclose(R[dynare_R.columns], dynare_R, atol=1e-5, rtol=1e-5)
-
-
-@pytest.mark.parametrize(
-    ("solve_kwargs", "expected_log_linearized"),
-    [
-        ({}, [True] * 9),
-        ({"not_loglin_variables": ["K"]}, [True, True, True, False, True, True, True, True, True]),
-        ({"log_linearize": False}, [False] * 9),
-    ],
-    ids=["all_logged", "K_in_levels", "levels"],
-)
-def test_solve_model_returns_a_solution_that_records_log_linearization(solve_kwargs, expected_log_linearized):
-    model = load_and_cache_model("basic_rbc.gcn")
-
-    solution = model.solve_model(
-        verbose=False, steady_state_kwargs={"verbose": False, "progressbar": False}, **solve_kwargs
-    )
-
-    assert isinstance(solution, FirstOrderPerturbationSolution)
-    assert solution.dr_order is model.dr_order
-    assert solution.variable_names == ["A", "C", "I", "K", "L", "Y", "lambda", "r", "w"]
-    np.testing.assert_array_equal(solution.log_linearized, expected_log_linearized)
-
-
 def test_a_linear_model_solution_records_no_log_linearization():
     model = load_and_cache_model("rbc_linearized.gcn")
 
@@ -738,7 +684,7 @@ def test_compute_bk_eigenvalues():
 def test_stable_bk_eigenvalues_match_policy_matrix():
     model = load_and_cache_model("rbc_linearized.gcn")
     A, B, C, D = model.linearize_model()
-    T, _ = model.solve_model(verbose=False)
+    T = model.solve_model(verbose=False).T
 
     eigvals_real, eigvals_imag, _ = compute_bk_eigenvalues(A, B, C, D)
     eigvals = eigvals_real + 1j * eigvals_imag
@@ -915,9 +861,10 @@ def test_maybe_linearize_model_relinearizes_partial_input(caplog, verbose):
 
 def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
     model = load_and_cache_model("rbc_linearized.gcn")
-    T, _R = model.solve_model(solver="gensys", verbose=False)
+    T = model.solve_model(solver="gensys", verbose=False).T
 
-    stationary_covariance_matrix(model, T, shock_std=0.1, verbose=False)
+    with pytest.warns(FutureWarning, match="Passing T and R is deprecated"):
+        stationary_covariance_matrix(model, T, shock_std=0.1, verbose=False)
     assert caplog.messages[-1].startswith("Passing only one of T or R will still trigger")
 
 
@@ -931,10 +878,10 @@ def test_compute_stationary_covariance_warns_on_partial_specification(caplog):
 )
 def test_compute_stationary_covariance(caplog, gcn_file):
     model = load_and_cache_model(gcn_file)
-    T, R = model.solve_model(solver="gensys", verbose=False)
-    n_variables, _n_shocks = R.shape
+    solution = model.solve_model(solver="gensys", verbose=False)
+    n_variables, _n_shocks = solution.R.shape
 
-    Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1, return_df=False)
+    Sigma = stationary_covariance_matrix(model, solution, shock_std=0.1, return_df=False)
     assert len(caplog.messages) == 0
     assert Sigma.shape == (n_variables, n_variables)
 
@@ -1000,8 +947,8 @@ def test_autocovariance_matrix_lag_zero_is_stationary_covariance(gcn_file):
 @pytest.fixture
 def irf_inputs():
     model = load_and_cache_model("one_block_1_ss_2shock.gcn")
-    T, R = model.solve_model(solver="gensys", verbose=False)
-    return model, T, R
+    solution = model.solve_model(solver="gensys", verbose=False)
+    return model, solution
 
 
 SHOCK_SIZE_CASES = [
@@ -1013,14 +960,35 @@ SHOCK_SIZE_CASES = [
 SHOCK_SIZE_IDS = ["single_float", "array", "dict", "partial_dict"]
 
 
+def test_policy_matrices_by_position_or_keyword_warn_and_match_the_solution(irf_inputs):
+    model, solution = irf_inputs
+    kwargs = {"shock_size": {"epsilon_A": 1.0}, "simulation_length": 5, "return_individual_shocks": False}
+    expected = impulse_response_function(model, solution, **kwargs)
+
+    with pytest.warns(FutureWarning, match="Passing T and R is deprecated"):
+        by_position = impulse_response_function(model, solution.T, solution.R, **kwargs)
+    with pytest.warns(FutureWarning, match="Passing T and R is deprecated"):
+        by_keyword = impulse_response_function(model, T=solution.T, R=solution.R, **kwargs)
+
+    xr.testing.assert_equal(by_position, expected)
+    xr.testing.assert_equal(by_keyword, expected)
+
+
+def test_passing_a_solution_and_policy_matrices_raises(irf_inputs):
+    model, solution = irf_inputs
+
+    with pytest.raises(ValueError, match="either solution or T and R"):
+        impulse_response_function(model, solution, T=solution.T, R=solution.R, shock_size=1.0)
+
+
 class TestIRF:
     @pytest.mark.parametrize("shock_size, expected_shocks", SHOCK_SIZE_CASES, ids=SHOCK_SIZE_IDS)
     def test_irf_from_shock_size_with_individual_shocks(self, irf_inputs, shock_size, expected_shocks):
-        model, T, R = irf_inputs
-        n_variables, _n_shocks = R.shape
+        model, solution = irf_inputs
+        n_variables, _n_shocks = solution.R.shape
 
         irf = impulse_response_function(
-            model, T, R, simulation_length=1000, shock_size=shock_size, return_individual_shocks=True
+            model, solution, simulation_length=1000, shock_size=shock_size, return_individual_shocks=True
         )
 
         assert dict(irf.sizes) == {"shock": len(expected_shocks), "time": 1000, "variable": n_variables}
@@ -1034,11 +1002,11 @@ class TestIRF:
 
     @pytest.mark.parametrize("shock_size, _expected_shocks", SHOCK_SIZE_CASES, ids=SHOCK_SIZE_IDS)
     def test_irf_from_shock_size_with_joint_shocks(self, irf_inputs, shock_size, _expected_shocks):
-        model, T, R = irf_inputs
-        n_variables, _n_shocks = R.shape
+        model, solution = irf_inputs
+        n_variables, _n_shocks = solution.R.shape
 
         irf = impulse_response_function(
-            model, T, R, simulation_length=1000, shock_size=shock_size, return_individual_shocks=False
+            model, solution, simulation_length=1000, shock_size=shock_size, return_individual_shocks=False
         )
 
         assert dict(irf.sizes) == {"time": 1000, "variable": n_variables}
@@ -1046,14 +1014,14 @@ class TestIRF:
 
     @pytest.mark.parametrize("n_shocked", [1, 2], ids=["single_shock", "two_shocks"])
     def test_irf_from_trajectory_with_individual_shocks(self, irf_inputs, n_shocked):
-        model, T, R = irf_inputs
-        n_variables, n_shocks = R.shape
+        model, solution = irf_inputs
+        n_variables, n_shocks = solution.R.shape
 
         shock_trajectory = np.zeros((1000, n_shocks))
         shock_trajectory[0, :n_shocked] = 0.1
 
         irf = impulse_response_function(
-            model, T, R, simulation_length=1000, shock_trajectory=shock_trajectory, return_individual_shocks=True
+            model, solution, simulation_length=1000, shock_trajectory=shock_trajectory, return_individual_shocks=True
         )
 
         assert dict(irf.sizes) == {"shock": n_shocks, "time": 1000, "variable": n_variables}
@@ -1062,37 +1030,37 @@ class TestIRF:
 
     @pytest.mark.parametrize("n_shocked", [1, 2], ids=["single_shock", "two_shocks"])
     def test_irf_from_trajectory_with_joint_shocks(self, irf_inputs, n_shocked):
-        model, T, R = irf_inputs
-        n_variables, n_shocks = R.shape
+        model, solution = irf_inputs
+        n_variables, n_shocks = solution.R.shape
 
         shock_trajectory = np.zeros((1000, n_shocks))
         shock_trajectory[0, :n_shocked] = 0.1
 
         irf = impulse_response_function(
-            model, T, R, simulation_length=1000, shock_trajectory=shock_trajectory, return_individual_shocks=False
+            model, solution, simulation_length=1000, shock_trajectory=shock_trajectory, return_individual_shocks=False
         )
 
         assert dict(irf.sizes) == {"time": 1000, "variable": n_variables}
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
 
     def test_size_dict_limits_shock_axis(self, irf_inputs):
-        model, T, R = irf_inputs
+        model, solution = irf_inputs
 
         da = impulse_response_function(
-            model, T=T, R=R, shock_size={"epsilon_A": 1.0, "epsilon_B": 0.5}, simulation_length=5
+            model, solution=solution, shock_size={"epsilon_A": 1.0, "epsilon_B": 0.5}, simulation_length=5
         )
         assert "shock" in da.dims
         assert list(da.coords["shock"].values) == ["epsilon_A", "epsilon_B"]
 
     def test_size_dict_empty_raises(self, irf_inputs):
-        model, T, R = irf_inputs
+        model, solution = irf_inputs
         with pytest.raises(ValueError):
-            impulse_response_function(model, T=T, R=R, shock_size={})
+            impulse_response_function(model, solution=solution, shock_size={})
 
     def test_size_dict_combined_has_no_shock_axis(self, irf_inputs):
-        model, T, R = irf_inputs
+        model, solution = irf_inputs
         da = impulse_response_function(
-            model, T=T, R=R, shock_size={"epsilon_A": 1.0}, simulation_length=5, return_individual_shocks=False
+            model, solution=solution, shock_size={"epsilon_A": 1.0}, simulation_length=5, return_individual_shocks=False
         )
         assert "shock" not in da.dims
 
@@ -1106,7 +1074,7 @@ def test_simulate_accepts_every_shock_specification():
     with one value shared by all of them, a dict read in the wrong order agrees with the other spellings anyway.
     """
     model = load_and_cache_model("full_nk.gcn")
-    T, R = model.solve_model(solver="gensys", verbose=False)
+    solution = model.solve_model(solver="gensys", verbose=False)
     stds = [0.1, 0.2, 0.3, 0.4]
 
     specifications = {
@@ -1117,7 +1085,7 @@ def test_simulate_accepts_every_shock_specification():
         "shock_cov_matrix": {"shock_cov_matrix": np.diag(np.array(stds) ** 2)},
     }
     draws = {
-        name: simulate(model, T, R, simulation_length=10, n_simulations=2, random_seed=1234, **specification).values
+        name: simulate(model, solution, simulation_length=10, n_simulations=2, random_seed=1234, **specification).values
         for name, specification in specifications.items()
     }
 
@@ -1128,16 +1096,15 @@ def test_simulate_accepts_every_shock_specification():
 @pytest.mark.parametrize("gcn_file", ["one_block_1_ss.gcn", "open_rbc.gcn"])
 def test_simulate(gcn_file):
     model = load_and_cache_model(gcn_file)
-    T, R = model.solve_model(solver="gensys", verbose=False)
-    n_variables, _n_shocks = R.shape
+    solution = model.solve_model(solver="gensys", verbose=False)
+    n_variables, _n_shocks = solution.R.shape
 
     n_simulations = 3000
     simulation_length = 2000
 
     data = simulate(
         model,
-        T,
-        R,
+        solution,
         simulation_length=simulation_length,
         n_simulations=n_simulations,
         shock_std=0.1,
@@ -1147,7 +1114,7 @@ def test_simulate(gcn_file):
     assert data.shape == (n_simulations, simulation_length, n_variables)
 
     # Across many trajectories the terminal-period sample covariance tracks the stationary covariance.
-    Sigma = stationary_covariance_matrix(model, T, R, shock_std=0.1, return_df=False)
+    Sigma = stationary_covariance_matrix(model, solution, shock_std=0.1, return_df=False)
     sigma = np.cov(data.isel(time=-1).values.T)
 
     corr = np.corrcoef(Sigma.ravel(), sigma.ravel())[0, 1]

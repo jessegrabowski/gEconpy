@@ -6,6 +6,7 @@ import xarray as xr
 
 from scipy import linalg
 
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.statistics.validation import _maybe_solve_model, _validate_shock_options
 
@@ -77,6 +78,7 @@ def build_Q_matrix(
 
 def stationary_covariance_matrix(
     model: "Model",
+    solution: FirstOrderPerturbationSolution | None = None,
     T: np.ndarray | None = None,
     R: np.ndarray | None = None,
     shock_std_dict: dict[str, float] | None = None,
@@ -101,10 +103,13 @@ def stationary_covariance_matrix(
     ----------
     model : Model
         DSGE model whose solution is T and R.
+    solution : FirstOrderPerturbationSolution, optional
+        Solution from :meth:`~gEconpy.model.model.Model.solve_model`. Solved from ``model`` when None. Defaults to
+        None.
     T : ndarray, optional
-        Transition matrix. Solved from ``model`` when None. Defaults to None.
+        Transition matrix. Deprecated, pass ``solution`` instead. Defaults to None.
     R : ndarray, optional
-        Selection matrix. Solved from ``model`` when None. Defaults to None.
+        Selection matrix. Deprecated, pass ``solution`` instead. Defaults to None.
     shock_std_dict : dict of str to float, optional
         Standard deviation of every shock, keyed by shock name. Defaults to None.
     shock_cov_matrix : ndarray, optional
@@ -114,7 +119,7 @@ def stationary_covariance_matrix(
     return_df : bool, optional
         Return a DataFrame labeled with variable names. Defaults to True.
     **solve_model_kwargs
-        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model` when T and R are solved here.
+        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model` when the model is solved here.
 
     Returns
     -------
@@ -144,17 +149,8 @@ def stationary_covariance_matrix(
         shocks=shocks,
     )
 
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-
-    Q = build_Q_matrix(
-        model_shocks=shocks,
-        shock_std_dict=shock_std_dict,
-        shock_cov_matrix=shock_cov_matrix,
-        shock_std=shock_std,
-    )
-
-    RQRT = np.linalg.multi_dot([R, Q, R.T])
-    Sigma = linalg.solve_discrete_lyapunov(T, RQRT)
+    T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
+    Sigma = _stationary_covariance(T, R, shocks, shock_std_dict, shock_cov_matrix, shock_std)
 
     if return_df:
         variables = [x.base_name for x in model.variables]
@@ -165,6 +161,7 @@ def stationary_covariance_matrix(
 
 def autocovariance_matrix(
     model: "Model",
+    solution: FirstOrderPerturbationSolution | None = None,
     T: np.ndarray | None = None,
     R: np.ndarray | None = None,
     shock_std_dict: dict[str, float] | None = None,
@@ -186,10 +183,13 @@ def autocovariance_matrix(
     ----------
     model : Model
         DSGE model whose solution is T and R.
+    solution : FirstOrderPerturbationSolution, optional
+        Solution from :meth:`~gEconpy.model.model.Model.solve_model`. Solved from ``model`` when None. Defaults to
+        None.
     T : ndarray, optional
-        Transition matrix. Solved from ``model`` when None. Defaults to None.
+        Transition matrix. Deprecated, pass ``solution`` instead. Defaults to None.
     R : ndarray, optional
-        Selection matrix. Solved from ``model`` when None. Defaults to None.
+        Selection matrix. Deprecated, pass ``solution`` instead. Defaults to None.
     shock_std_dict : dict of str to float, optional
         Standard deviation of every shock, keyed by shock name. Defaults to None.
     shock_cov_matrix : ndarray, optional
@@ -204,7 +204,7 @@ def autocovariance_matrix(
     return_xr : bool, optional
         Return a DataArray with ``lag``, ``variable``, and ``variable_aux`` coordinates. Defaults to True.
     **solve_model_kwargs
-        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model` when T and R are solved here.
+        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model` when the model is solved here.
 
     Returns
     -------
@@ -224,37 +224,23 @@ def autocovariance_matrix(
         acov = autocovariance_matrix(model, shock_std=0.01, n_lags=5, verbose=False)
         capital_output = acov.sel(variable="K", variable_aux="Y")
     """
-    T, R = _maybe_solve_model(model, T, R, **solve_model_kwargs)
-
-    Sigma = stationary_covariance_matrix(
+    T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
+    return _autocovariance(
         model,
-        T=T,
-        R=R,
-        shock_std_dict=shock_std_dict,
-        shock_cov_matrix=shock_cov_matrix,
-        shock_std=shock_std,
-        return_df=False,
-        **solve_model_kwargs,
+        T,
+        R,
+        shock_std_dict,
+        shock_cov_matrix,
+        shock_std,
+        n_lags=n_lags,
+        correlation=correlation,
+        return_xr=return_xr,
     )
-    result = _compute_autocovariance_matrix(T, Sigma, n_lags=n_lags, correlation=correlation)
-
-    if return_xr:
-        variables = [x.base_name for x in model.variables]
-        result = xr.DataArray(
-            result,
-            dims=["lag", "variable", "variable_aux"],
-            coords={
-                "lag": range(n_lags),
-                "variable": variables,
-                "variable_aux": variables,
-            },
-        )
-
-    return result
 
 
 def autocorrelation_matrix(
     model: "Model",
+    solution: FirstOrderPerturbationSolution | None = None,
     T: np.ndarray | None = None,
     R: np.ndarray | None = None,
     shock_std_dict: dict[str, float] | None = None,
@@ -274,10 +260,13 @@ def autocorrelation_matrix(
     ----------
     model : Model
         DSGE model whose solution is T and R.
+    solution : FirstOrderPerturbationSolution, optional
+        Solution from :meth:`~gEconpy.model.model.Model.solve_model`. Solved from ``model`` when None. Defaults to
+        None.
     T : ndarray, optional
-        Transition matrix. Solved from ``model`` when None. Defaults to None.
+        Transition matrix. Deprecated, pass ``solution`` instead. Defaults to None.
     R : ndarray, optional
-        Selection matrix. Solved from ``model`` when None. Defaults to None.
+        Selection matrix. Deprecated, pass ``solution`` instead. Defaults to None.
     shock_std_dict : dict of str to float, optional
         Standard deviation of every shock, keyed by shock name. Defaults to None.
     shock_cov_matrix : ndarray, optional
@@ -289,7 +278,7 @@ def autocorrelation_matrix(
     return_xr : bool, optional
         Return a DataArray with ``lag``, ``variable``, and ``variable_aux`` coordinates. Defaults to True.
     **solve_model_kwargs
-        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model` when T and R are solved here.
+        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model` when the model is solved here.
 
     Returns
     -------
@@ -309,17 +298,51 @@ def autocorrelation_matrix(
         acorr = autocorrelation_matrix(model, shock_std=0.01, n_lags=5, verbose=False)
         output_persistence = acorr.sel(variable="Y", variable_aux="Y")
     """
-    return autocovariance_matrix(
-        model,
-        T=T,
-        R=R,
+    T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
+    return _autocovariance(
+        model, T, R, shock_std_dict, shock_cov_matrix, shock_std, n_lags=n_lags, correlation=True, return_xr=return_xr
+    )
+
+
+def _stationary_covariance(
+    T: np.ndarray,
+    R: np.ndarray,
+    shocks: list[TimeAwareSymbol],
+    shock_std_dict: dict[str, float] | None,
+    shock_cov_matrix: np.ndarray | None,
+    shock_std: np.ndarray | list | float | None,
+) -> np.ndarray:
+    Q = build_Q_matrix(
+        model_shocks=shocks,
         shock_std_dict=shock_std_dict,
         shock_cov_matrix=shock_cov_matrix,
         shock_std=shock_std,
-        n_lags=n_lags,
-        correlation=True,
-        return_xr=return_xr,
-        **solve_model_kwargs,
+    )
+    return linalg.solve_discrete_lyapunov(T, np.linalg.multi_dot([R, Q, R.T]))
+
+
+def _autocovariance(
+    model: "Model",
+    T: np.ndarray,
+    R: np.ndarray,
+    shock_std_dict: dict[str, float] | None,
+    shock_cov_matrix: np.ndarray | None,
+    shock_std: np.ndarray | list | float | None,
+    n_lags: int,
+    correlation: bool,
+    return_xr: bool,
+) -> xr.DataArray | np.ndarray:
+    Sigma = _stationary_covariance(T, R, model.shocks, shock_std_dict, shock_cov_matrix, shock_std)
+    result = _compute_autocovariance_matrix(T, Sigma, n_lags=n_lags, correlation=correlation)
+
+    if not return_xr:
+        return result
+
+    variables = [x.base_name for x in model.variables]
+    return xr.DataArray(
+        result,
+        dims=["lag", "variable", "variable_aux"],
+        coords={"lag": range(n_lags), "variable": variables, "variable_aux": variables},
     )
 
 
