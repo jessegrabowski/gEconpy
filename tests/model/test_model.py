@@ -1086,6 +1086,28 @@ def test_passing_a_solution_and_policy_matrices_raises(irf_inputs):
         impulse_response_function(model, solution, T=solution.T, R=solution.R, shock_size=1.0)
 
 
+@pytest.mark.parametrize(
+    ("function", "kwargs"),
+    [
+        (impulse_response_function, {"shock_size": 1.0, "simulation_length": 3}),
+        (simulate, {"shock_std": 0.1, "simulation_length": 3, "n_simulations": 1, "random_seed": 0}),
+        (stationary_covariance_matrix, {"shock_std": 0.1}),
+        (autocovariance_matrix, {"shock_std": 0.1, "n_lags": 2}),
+        (autocorrelation_matrix, {"shock_std": 0.1, "n_lags": 2}),
+    ],
+    ids=["irf", "simulate", "stationary_covariance", "autocovariance", "autocorrelation"],
+)
+def test_policy_matrices_warn_once_at_the_caller(irf_inputs, function, kwargs):
+    model, solution = irf_inputs
+
+    with pytest.warns(FutureWarning, match="Passing T and R is deprecated") as record:
+        function(model, T=solution.T, R=solution.R, **kwargs)
+
+    deprecations = [warning for warning in record if "Passing T and R" in str(warning.message)]
+    assert len(deprecations) == 1
+    assert deprecations[0].filename == __file__
+
+
 class TestIRF:
     @pytest.mark.parametrize("shock_size, expected_shocks", SHOCK_SIZE_CASES, ids=SHOCK_SIZE_IDS)
     def test_irf_from_shock_size_with_individual_shocks(self, irf_inputs, shock_size, expected_shocks):
