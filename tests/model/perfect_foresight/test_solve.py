@@ -326,7 +326,7 @@ class TestSparseRootKwargs:
             rbc_model, simulation_length=20, sparse_root_kwargs={"tol": 1e-3}, **conditions
         )
         _, capped_result = solve_perfect_foresight(
-            rbc_model, simulation_length=20, sparse_root_kwargs={"maxiter": 1}, **conditions
+            rbc_model, simulation_length=20, sparse_root_kwargs={"maxiter": 1}, max_homotopy_solves=0, **conditions
         )
 
         assert default_result.success
@@ -334,6 +334,49 @@ class TestSparseRootKwargs:
         assert loose_result.nit < default_result.nit
         assert not capped_result.success
         assert capped_result.nit == 1
+
+
+class TestHomotopy:
+    def test_a_capped_solve_is_rescued_by_scaling_the_boundary_conditions(self, rbc_model):
+        """
+        Three iterations cannot reach the root from the steady state, but can from each homotopy step's predecessor.
+
+        The terminal condition is off its steady state, so the homotopy scales both ends of the path.
+        """
+        steady_state = rbc_model.steady_state(verbose=False)
+        conditions = {
+            "initial_conditions": {"K": 0.5 * steady_state["K_ss"]},
+            "terminal_conditions": {"K": 1.02 * steady_state["K_ss"]},
+            "simulation_length": 30,
+        }
+        expected, _ = solve_perfect_foresight(rbc_model, max_homotopy_solves=0, **conditions)
+
+        _, unrescued_result = solve_perfect_foresight(
+            rbc_model, sparse_root_kwargs={"maxiter": 3}, max_homotopy_solves=0, **conditions
+        )
+        trajectory, result = solve_perfect_foresight(rbc_model, sparse_root_kwargs={"maxiter": 3}, **conditions)
+
+        assert not unrescued_result.success
+        assert unrescued_result.homotopy_solves == 0
+        assert "Homotopy" not in unrescued_result.message
+        assert result.success
+        assert result.homotopy_solves > 0
+        assert_allclose(trajectory.values, expected.values, rtol=1e-6)
+
+    def test_an_exhausted_homotopy_reports_how_far_it_got(self, rbc_model):
+        steady_state = rbc_model.steady_state(verbose=False)
+
+        _, result = solve_perfect_foresight(
+            rbc_model,
+            initial_conditions={"K": 0.5 * steady_state["K_ss"]},
+            simulation_length=30,
+            sparse_root_kwargs={"maxiter": 1},
+            max_homotopy_solves=2,
+        )
+
+        assert not result.success
+        assert result.homotopy_solves == 2
+        assert "Homotopy reached weight" in result.message
 
 
 class TestSteadyStateKwargs:
@@ -769,15 +812,24 @@ class TestInputGuards:
         with pytest.raises(ValueError, match=f"{named_input} contains non-finite values"):
             solve_perfect_foresight(rbc_model, simulation_length=T, **kwargs)
 
-    def test_initial_guess_where_the_model_is_undefined_raises_naming_the_period(self, rbc_model):
+    def test_initial_guess_where_the_model_is_undefined_is_replaced_by_the_steady_state_path(self, rbc_model):
         T = 10
         ss = rbc_model.steady_state(verbose=False)
         var_names = [v.base_name for v in rbc_model.variables]
-        x0 = np.tile([ss[f"{name}_ss"] for name in var_names], (T, 1))
+        steady_state_path = np.tile([ss[f"{name}_ss"] for name in var_names], (T, 1))
+        x0 = steady_state_path.copy()
         x0[3, var_names.index("K")] = -1.0
 
-        with pytest.raises(ValueError, match=r"equation \d+ in period 3 is not finite at the initial guess"):
-            solve_perfect_foresight(rbc_model, simulation_length=T, x0=x0)
+        trajectory, result = solve_perfect_foresight(rbc_model, simulation_length=T, x0=x0)
+
+        assert result.success
+        assert_allclose(trajectory[var_names].values, steady_state_path, rtol=1e-8)
+
+    def test_initial_condition_where_the_model_is_undefined_raises_naming_the_period(self, rbc_model):
+        with pytest.raises(ValueError, match=r"equation \d+ in period 0 is not finite at the initial guess"):
+            solve_perfect_foresight(
+                rbc_model, simulation_length=10, initial_conditions={"K": -1.0}, max_homotopy_solves=0
+            )
 
     def test_unknown_parameter_is_reported_before_the_steady_state_is_computed(self, rbc_model):
         """The model's own error for a bad name does not say which names a parameter path may use."""

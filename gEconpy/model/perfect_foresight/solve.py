@@ -1,6 +1,6 @@
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from functools import partial
+from functools import cache, partial
 
 import numpy as np
 import pandas as pd
@@ -17,6 +17,7 @@ from gEconpy.model.perfect_foresight.compile import (
     PerfectForesightProblem,
     compile_perfect_foresight_problem,
 )
+from gEconpy.model.perfect_foresight.homotopy import _solve_by_homotopy
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
 from gEconpy.solvers.sparse_root import newton_armijo
 from gEconpy.solvers.sparse_root.base import RootSolver
@@ -38,6 +39,7 @@ def solve_perfect_foresight(
     solver: RootSolver | None = None,
     steady_state_kwargs: dict | None = None,
     sparse_root_kwargs: dict | None = None,
+    max_homotopy_solves: int = 100,
 ) -> tuple[pd.DataFrame, OptimizeResult]:
     """
     Solve the nonlinear model under perfect foresight over a finite horizon.
@@ -93,15 +95,25 @@ def solve_perfect_foresight(
     sparse_root_kwargs : dict, optional
         Keyword arguments forwarded to :func:`~gEconpy.solvers.sparse_root.sparse_root.sparse_root`, such as
         ``tol``, ``maxiter``, or ``progressbar``.
+    max_homotopy_solves : int, optional
+        Number of solves a homotopy may spend when the solve from ``x0`` fails. The homotopy scales the shocks and
+        each initial and terminal condition's deviation from its steady state by a weight that rises toward 1. Its
+        first solve starts from a linear path between the initial and terminal steady states, and each later one
+        from the last that succeeded. The same path replaces an ``x0`` at which the model is not finite. Parameter
+        paths are not scaled, so a failure that a parameter path causes is not helped. The homotopy's solves show no
+        progress bar, and a call that fails can spend up to ``max_homotopy_solves`` times ``maxiter`` iterations.
+        Zero turns the homotopy off. Defaults to 100.
 
     Returns
     -------
     trajectory : DataFrame
         Solution path with periods as the index and variables as columns.
     result : OptimizeResult
-        Convergence information from the solver. Each equation is divided by the largest entry of its Jacobian row at
-        the initial guess before solving, so convergence is judged on these scaled residuals. ``fun`` and ``jac`` are
-        reported unscaled, so an equation with large terms can show a residual above the tolerance by its own scale.
+        Convergence information from the last solve of the full problem. Each equation is divided by the largest entry
+        of its Jacobian row at the initial guess before solving, so convergence is judged on these scaled residuals.
+        ``fun`` and ``jac`` are reported unscaled, so an equation with large terms can show a residual above the
+        tolerance by its own scale. ``nit``, ``nfev``, ``njev`` and ``nsolve`` count every solve, homotopy included,
+        and ``homotopy_solves`` counts the homotopy's own.
 
     Examples
     --------
@@ -234,16 +246,56 @@ def solve_perfect_foresight(
         param_paths=param_matrix,
     )
 
-    result = _solve_stacked(
-        problem=problem,
-        x0=x0_vec,
-        y_initial=y_initial,
-        y_terminal=y_terminal,
-        shocks=shock_matrix,
-        params=param_matrix,
-        solver=_order_for_problem(solver if solver is not None else newton_armijo(), problem),
-        sparse_root_kwargs=sparse_root_kwargs,
+    @cache
+    def homotopy_bases() -> tuple[np.ndarray, np.ndarray]:
+        """Return the boundary steady states the homotopy scales the boundary conditions around."""
+        initial = init_ss_dict if init_ss_dict is not None else compute_ss(**init_param_kwargs)
+        if term_ss_dict is not None:
+            terminal = term_ss_dict
+        else:
+            terminal = initial if same_boundary_params else compute_ss(**term_param_kwargs)
+        return _ss_dict_to_array(initial, var_names), _ss_dict_to_array(terminal, var_names)
+
+    def weight_zero_guess() -> np.ndarray:
+        initial_base, terminal_base = homotopy_bases()
+        return np.linspace(initial_base, terminal_base, simulation_length).ravel()
+
+    ordered_solver = _order_for_problem(solver if solver is not None else newton_armijo(), problem)
+
+    def solve_at_weight(weight: float, x0: np.ndarray) -> tuple[np.ndarray, OptimizeResult]:
+        initial, terminal, weighted_shocks, root_kwargs = y_initial, y_terminal, shock_matrix, sparse_root_kwargs
+        if weight != 1.0:
+            initial_base, terminal_base = homotopy_bases()
+            initial = initial_base + weight * (y_initial - initial_base)
+            terminal = terminal_base + weight * (y_terminal - terminal_base)
+            weighted_shocks = weight * shock_matrix
+            root_kwargs = {**sparse_root_kwargs, "progressbar": False}
+        result = _solve_stacked(
+            problem=problem,
+            x0=x0,
+            y_initial=initial,
+            y_terminal=terminal,
+            shocks=weighted_shocks,
+            params=param_matrix,
+            solver=ordered_solver,
+            sparse_root_kwargs=root_kwargs,
+        )
+        return result.x, result
+
+    outcome = _solve_by_homotopy(
+        solve=solve_at_weight,
+        warm_guess=x0_vec,
+        base_guess=weight_zero_guess,
+        max_homotopy_solves=max_homotopy_solves,
     )
+    if outcome.full_weight_result is None:
+        raise outcome.non_finite_guess
+    result = outcome.full_weight_result
+    if outcome.path is None and outcome.homotopy_solves:
+        result.message = outcome.failure
+    for field, count in outcome.work_counts.items():
+        result[field] = count
+    result.homotopy_solves = outcome.homotopy_solves
 
     trajectory = pd.DataFrame(result.x.reshape(simulation_length, problem.n_vars), columns=var_names)
     return trajectory, result
