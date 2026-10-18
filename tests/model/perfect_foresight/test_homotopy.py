@@ -19,11 +19,13 @@ def _result(success: bool, weight: float) -> OptimizeResult:
     )
 
 
-def _steps_of_at_most(largest_step: float, weights: list[float]):
+def _steps_of_at_most(largest_step: float, weights: list[float], maxiters: list[int] | None = None):
     """Return a solve that converges only when the weight is within ``largest_step`` of the guess's weight."""
 
-    def solve(weight: float, x0: np.ndarray) -> tuple[np.ndarray, OptimizeResult]:
+    def solve(weight: float, x0: np.ndarray, maxiter: int) -> tuple[np.ndarray, OptimizeResult]:
         weights.append(weight)
+        if maxiters is not None:
+            maxiters.append(maxiter)
         result = _result(success=weight - x0[0] <= largest_step + 1e-12, weight=weight)
         return result.x, result
 
@@ -38,6 +40,7 @@ def test_the_step_doubles_after_a_success_and_halves_after_a_failure():
         warm_guess=np.array([0.0]),
         base_guess=lambda: np.array([0.0]),
         max_homotopy_solves=100,
+        maxiter=1000,
     )
 
     assert weights == pytest.approx([1.0, 0.1, 0.3, 0.7, 0.5, 0.9, 0.7, 1.0])
@@ -45,6 +48,27 @@ def test_the_step_doubles_after_a_success_and_halves_after_a_failure():
     assert outcome.homotopy_solves == 7
     assert outcome.work_counts == {"nit": 8, "nfev": 8, "njev": 8, "nsolve": 8}
     assert outcome.failure is None
+
+
+@pytest.mark.parametrize(
+    "maxiter, max_homotopy_solves, expected_maxiters",
+    [(1000, 100, [50, 20, 20, 20, 20, 20, 20, 20]), (10, 100, [10] * 8), (1000, 0, [1000])],
+    ids=["capped", "callers_limit_is_smaller", "homotopy_off"],
+)
+def test_the_first_attempt_and_each_homotopy_solve_get_their_own_iteration_cap(
+    maxiter, max_homotopy_solves, expected_maxiters
+):
+    maxiters = []
+
+    _solve_by_homotopy(
+        solve=_steps_of_at_most(0.3, [], maxiters),
+        warm_guess=np.array([0.0]),
+        base_guess=lambda: np.array([0.0]),
+        max_homotopy_solves=max_homotopy_solves,
+        maxiter=maxiter,
+    )
+
+    assert maxiters == expected_maxiters
 
 
 @pytest.mark.parametrize(
@@ -56,6 +80,7 @@ def test_an_unreachable_weight_ends_the_homotopy(max_homotopy_solves, expected_s
         warm_guess=np.array([0.0]),
         base_guess=lambda: np.array([0.0]),
         max_homotopy_solves=max_homotopy_solves,
+        maxiter=1000,
     )
 
     assert outcome.path is None
@@ -73,6 +98,7 @@ def test_the_base_guess_is_not_built_when_the_warm_guess_solves():
         warm_guess=np.array([0.0]),
         base_guess=base_guess,
         max_homotopy_solves=100,
+        maxiter=1000,
     )
 
     assert outcome.path == pytest.approx([1.0])
@@ -81,14 +107,14 @@ def test_the_base_guess_is_not_built_when_the_warm_guess_solves():
 def test_a_non_finite_guess_is_retried_from_the_base_guess():
     base = np.array([0.0])
 
-    def solve(weight: float, x0: np.ndarray) -> tuple[np.ndarray, OptimizeResult]:
+    def solve(weight: float, x0: np.ndarray, **_) -> tuple[np.ndarray, OptimizeResult]:
         if x0 is not base:
             raise NonFiniteInitialGuessError(equation=0, period=0)
         result = _result(success=True, weight=weight)
         return result.x, result
 
     outcome = _solve_by_homotopy(
-        solve=solve, warm_guess=np.array([np.inf]), base_guess=lambda: base, max_homotopy_solves=100
+        solve=solve, warm_guess=np.array([np.inf]), base_guess=lambda: base, max_homotopy_solves=100, maxiter=1000
     )
 
     assert outcome.path == pytest.approx([1.0])
@@ -100,7 +126,7 @@ def test_a_guess_that_is_never_finite_is_reported_without_a_full_weight_result()
         raise NonFiniteInitialGuessError(equation=2, period=5)
 
     outcome = _solve_by_homotopy(
-        solve=solve, warm_guess=np.array([0.0]), base_guess=lambda: np.array([0.0]), max_homotopy_solves=0
+        solve=solve, warm_guess=np.array([0.0]), base_guess=lambda: np.array([0.0]), max_homotopy_solves=0, maxiter=1000
     )
 
     assert outcome.full_weight_result is None

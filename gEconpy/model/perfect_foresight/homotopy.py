@@ -11,6 +11,8 @@ from gEconpy.model.perfect_foresight._parallel import _WORK_COUNT_FIELDS
 
 _HOMOTOPY_INITIAL_STEP = 0.1
 _HOMOTOPY_MIN_STEP = 1e-4
+_HOMOTOPY_FIRST_ATTEMPT_MAXITER = 50
+_HOMOTOPY_STEP_MAXITER = 20
 
 
 class _HomotopyOutcome(NamedTuple):
@@ -27,18 +29,20 @@ def _solve_by_homotopy(
     warm_guess: np.ndarray,
     base_guess: Callable[[], np.ndarray],
     max_homotopy_solves: int,
+    maxiter: int,
 ) -> _HomotopyOutcome:
     """
     Solve a problem at full weight from ``warm_guess``, and by homotopy from ``base_guess`` if that fails.
 
-    ``solve(weight=..., x0=...)`` solves the problem with its departure from the steady state scaled by ``weight``,
-    so weight 0 is close to the steady state and weight 1 is the problem itself. The weight rises from 0 to 1, each
-    solve starting from the last solution. The step doubles after a success and halves after a failure.
+    ``solve(weight=..., x0=..., maxiter=...)`` solves the problem with its departure from the steady state scaled by
+    ``weight``, so weight 0 is close to the steady state and weight 1 is the problem itself. The weight rises from 0 to
+    1, each solve starting from the last solution. The step doubles after a success and halves after a failure. The
+    full-weight attempt is capped at 50 iterations when the homotopy may follow it, and each homotopy solve at 20.
 
     Parameters
     ----------
     solve : callable
-        Takes ``weight`` and ``x0`` and returns the solution and the solver's result.
+        Takes ``weight``, ``x0`` and ``maxiter`` and returns the solution and the solver's result.
     warm_guess : ndarray
         Starting point of the first, full-weight attempt.
     base_guess : callable
@@ -46,6 +50,8 @@ def _solve_by_homotopy(
         finite. It is called only when one of the two is needed, and at most once.
     max_homotopy_solves : int
         Number of solves the homotopy may spend after the full-weight attempt fails. Zero turns it off.
+    maxiter : int
+        The caller's iteration limit. Every solve uses the smaller of it and its own cap.
 
     Returns
     -------
@@ -59,10 +65,12 @@ def _solve_by_homotopy(
     full_weight_result = None
     non_finite_guess = None
 
-    def attempt(weight: float, guess: np.ndarray) -> tuple[np.ndarray | None, str | None]:
+    def attempt(weight: float, guess: np.ndarray, iteration_cap: int) -> tuple[np.ndarray | None, str | None]:
         nonlocal full_weight_result, non_finite_guess
         try:
-            solution, result = _solve_from(solve, weight=weight, guess=guess, base_guess=base_guess)
+            solution, result = _solve_from(
+                solve, weight=weight, guess=guess, base_guess=base_guess, maxiter=min(maxiter, iteration_cap)
+            )
         except NonFiniteInitialGuessError as error:
             non_finite_guess = error
             return None, str(error)
@@ -85,7 +93,8 @@ def _solve_by_homotopy(
             non_finite_guess=non_finite_guess,
         )
 
-    path, failure = attempt(weight=1.0, guess=warm_guess)
+    first_attempt_cap = _HOMOTOPY_FIRST_ATTEMPT_MAXITER if max_homotopy_solves > 0 else maxiter
+    path, failure = attempt(weight=1.0, guess=warm_guess, iteration_cap=first_attempt_cap)
     if path is not None:
         return outcome(path, homotopy_solves=0, failure=None)
 
@@ -96,7 +105,7 @@ def _solve_by_homotopy(
     while homotopy_solves < max_homotopy_solves and step >= _HOMOTOPY_MIN_STEP:
         weight = min(accepted_weight + step, 1.0)
         homotopy_solves += 1
-        path, _ = attempt(weight=weight, guess=guess)
+        path, _ = attempt(weight=weight, guess=guess, iteration_cap=_HOMOTOPY_STEP_MAXITER)
 
         if path is None:
             step /= 2
@@ -115,10 +124,11 @@ def _solve_from(
     weight: float,
     guess: np.ndarray,
     base_guess: Callable[[], np.ndarray],
+    maxiter: int,
 ) -> tuple[np.ndarray, OptimizeResult]:
     try:
-        return solve(weight=weight, x0=guess)
+        return solve(weight=weight, x0=guess, maxiter=maxiter)
     except NonFiniteInitialGuessError:
         if guess is base_guess():
             raise
-        return solve(weight=weight, x0=base_guess())
+        return solve(weight=weight, x0=base_guess(), maxiter=maxiter)
