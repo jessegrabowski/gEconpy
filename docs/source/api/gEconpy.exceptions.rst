@@ -22,9 +22,10 @@ gEconpy.exceptions
     OptimizationProblemNotDefinedException
     OrphanParameterError
     PerturbationSolutionNotFoundException
+    SecondOrderSolveFailedException
     SteadyStateNotFoundError
     TypstPrintError
 
 .. automodule:: gEconpy.exceptions
-    :members: ControlVariableNotFoundException, DeprecatedAssumptionsBlockWarning, DuplicateParameterError, DynamicCalibratingEquationException, ExtraParameterError, ExtraParameterWarning, GCNValidationError, GensysFailedException, InvalidDistributionException, ModelUnknownParameterError, MultipleObjectiveFunctionsException, NonFiniteInitialGuessError, OptimizationProblemNotDefinedException, OrphanParameterError, PerturbationSolutionNotFoundException, SteadyStateNotFoundError, TypstPrintError
+    :members: ControlVariableNotFoundException, DeprecatedAssumptionsBlockWarning, DuplicateParameterError, DynamicCalibratingEquationException, ExtraParameterError, ExtraParameterWarning, GCNValidationError, GensysFailedException, InvalidDistributionException, ModelUnknownParameterError, MultipleObjectiveFunctionsException, NonFiniteInitialGuessError, OptimizationProblemNotDefinedException, OrphanParameterError, PerturbationSolutionNotFoundException, SecondOrderSolveFailedException, SteadyStateNotFoundError, TypstPrintError
     :undoc-members:

@@ -13,12 +13,13 @@ from numpy.testing import assert_allclose
 from pytensor.graph.traversal import explicit_graph_inputs
 
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution, SecondOrderPerturbationSolution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import (
     GensysFailedException,
     ModelUnknownParameterError,
     PerturbationSolutionNotFoundException,
+    SecondOrderSolveFailedException,
 )
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import compile_for_scipy, make_cache_key
@@ -43,7 +44,12 @@ from gEconpy.model.steady_state import _ss_residual_to_pytensor, build_minimize_
 from gEconpy.utilities import safe_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
 from tests._resources.expected_matrices import expected_linearization_result
-from tests._resources.load_dynare import extract_dr_partition, load_dynare_outputs, read_dynare_output
+from tests._resources.load_dynare import (
+    extract_dr_partition,
+    extract_second_order_matrices,
+    load_dynare_outputs,
+    read_dynare_output,
+)
 from tests.conftest import TEST_GCNS
 
 
@@ -778,6 +784,87 @@ def test_second_order_parameter_inputs_include_calibrated_parameters():
 
     assert "alpha" in {node.name for node in param_inputs}
     assert np.isfinite(jacobian).all() and np.isfinite(hessian).all()
+
+
+@pytest.mark.parametrize(
+    ("gcn_name", "dynare_name", "log_linearize"),
+    [
+        ("one_block_1_ss_2shock", "one_block_1_ss_2shock", False),
+        ("basic_rbc", "basic_rbc_logvars", True),
+        pytest.param("full_nk", "full_nk", False, marks=pytest.mark.include_nk),
+    ],
+    ids=["one_block_1_ss_2shock", "basic_rbc_logvars", "full_nk"],
+)
+def test_solve_matches_dynare_second_order(gcn_name, dynare_name, log_linearize):
+    model = load_and_cache_model(gcn_name + ".gcn")
+    solve_kwargs = {"log_linearize": log_linearize, "verbose": False, "steady_state_kwargs": {"progressbar": False}}
+
+    solution = model.solve_model(order=2, **solve_kwargs)
+    first_order = model.solve_model(order=1, return_matrices=False, **solve_kwargs)
+
+    dynare = extract_second_order_matrices(*read_dynare_output(dynare_name))
+    prefix = "LOG_" if log_linearize else ""
+    names = [prefix + model.variables[i].base_name for i in model.dr_order.var_order]
+    rows = [dynare.names.index(name) for name in names]
+    states = [dynare.state_names.index(names[i]) for i in model.dr_order.lag_positions]
+
+    assert isinstance(solution, SecondOrderPerturbationSolution)
+    assert_allclose(solution.ghx, first_order.ghx)
+    assert_allclose(solution.ghxx, dynare.ghxx[rows][:, states][:, :, states], atol=1e-8)
+    assert_allclose(solution.ghxu, dynare.ghxu[rows][:, states], atol=1e-8)
+    assert_allclose(solution.ghuu, dynare.ghuu[rows], atol=1e-8)
+    assert_allclose(solution.ghs2(dynare.shock_cov), dynare.ghs2[rows], atol=1e-10)
+
+
+def test_second_order_solution_uses_parameter_updates(tmp_path):
+    source = (TEST_GCNS / "one_block_1_ss.gcn").read_text()
+    assert "beta  ~ Beta(alpha=1, beta=1) = 0.99;" in source, "one_block_1_ss.gcn changed; update the replacement"
+    gcn_path = tmp_path / "one_block_1_ss_beta.gcn"
+    gcn_path.write_text(
+        source.replace("beta  ~ Beta(alpha=1, beta=1) = 0.99;", "beta  ~ Beta(alpha=1, beta=1) = 0.95;")
+    )
+    solve_kwargs = {"order": 2, "verbose": False, "steady_state_kwargs": {"progressbar": False}}
+
+    updated = load_and_cache_model("one_block_1_ss.gcn").solve_model(beta=0.95, **solve_kwargs)
+    declared = model_from_gcn(gcn_path, verbose=False).solve_model(**solve_kwargs)
+
+    assert_allclose(updated.ghxx, declared.ghxx, atol=1e-10)
+    assert_allclose(updated.ghs2_operator, declared.ghs2_operator, atol=1e-12)
+
+
+def test_second_order_terms_of_a_linear_model_solution_are_zero():
+    model = load_and_cache_model("rbc_linearized.gcn")
+
+    solution = model.solve_model(order=2, verbose=False)
+
+    for term in (solution.ghxx, solution.ghxu, solution.ghuu, solution.ghs2_operator):
+        assert_allclose(term, 0)
+
+
+@pytest.mark.parametrize(
+    ("gcn_file", "solve_kwargs", "error", "match"),
+    [
+        ("backward_var.gcn", {"order": 2}, NotImplementedError, "no forward-looking variables"),
+        ("one_block_1_ss.gcn", {"order": 2, "return_matrices": True}, ValueError, "return_matrices=False"),
+        ("one_block_1_ss.gcn", {"order": 3}, NotImplementedError, "first and second order"),
+    ],
+    ids=["backward_looking", "matrices_requested", "third_order"],
+)
+def test_solve_model_rejects_unsupported_second_order_requests(gcn_file, solve_kwargs, error, match):
+    model = load_and_cache_model(gcn_file)
+
+    with pytest.raises(error, match=match):
+        model.solve_model(verbose=False, **solve_kwargs)
+
+
+def test_non_finite_second_order_terms_fail_by_on_failure(monkeypatch):
+    model = load_and_cache_model("one_block_1_ss.gcn")
+    solve_kwargs = {"order": 2, "verbose": False, "steady_state_kwargs": {"progressbar": False}}
+    monkeypatch.setattr(model, "_solve_second_order", lambda **_: [np.full((1, 1, 1), np.nan)] * 4)
+
+    with pytest.raises(SecondOrderSolveFailedException):
+        model.solve_model(**solve_kwargs)
+    assert model.solve_model(on_failure="ignore", **solve_kwargs) is None
 
 
 def test_a_linear_model_solution_records_no_log_linearization():

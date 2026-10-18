@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import numpy as np
 
@@ -130,3 +130,68 @@ class FirstOrderPerturbationSolution:
         logged = self.log_linearized
         levels[..., logged] = self.steady_state[logged] * np.exp(deviations[..., logged])
         return levels
+
+
+@dataclass(frozen=True, eq=False)
+class SecondOrderPerturbationSolution(FirstOrderPerturbationSolution):
+    r"""
+    Second-order perturbation solution of a DSGE model.
+
+    The policy function is
+
+    .. math::
+
+        \hat{y}_t = g_x \hat{y}^s_{t-1} + g_u \varepsilon_t + \tfrac{1}{2} g_{xx} (\hat{y}^s_{t-1} \otimes
+        \hat{y}^s_{t-1}) + g_{xu} (\hat{y}^s_{t-1} \otimes \varepsilon_t) + \tfrac{1}{2} g_{uu} (\varepsilon_t
+        \otimes \varepsilon_t) + \tfrac{1}{2} g_{\sigma\sigma},
+
+    with every row in ``dr_order.var_order`` and :math:`\hat{y}^s` the state variables in the same order. The
+    first-order attributes are those of :class:`FirstOrderPerturbationSolution`.
+
+    Attributes
+    ----------
+    ghxx : ndarray
+        Second derivative with respect to the states, of shape ``(n_variables, n_state_variables, n_state_variables)``.
+    ghxu : ndarray
+        Cross derivative with respect to the states and the shocks, of shape
+        ``(n_variables, n_state_variables, n_shocks)``.
+    ghuu : ndarray
+        Second derivative with respect to the shocks, of shape ``(n_variables, n_shocks, n_shocks)``.
+    ghs2_operator : ndarray
+        Matrix of shape ``(n_variables, n_shocks ** 2)`` mapping the vectorized shock covariance to
+        :math:`g_{\sigma\sigma}`.
+    """
+
+    ghxx: np.ndarray
+    ghxu: np.ndarray
+    ghuu: np.ndarray
+    ghs2_operator: np.ndarray
+
+    @classmethod
+    def from_first_order(
+        cls,
+        first_order: FirstOrderPerturbationSolution,
+        ghxx: np.ndarray,
+        ghxu: np.ndarray,
+        ghuu: np.ndarray,
+        ghs2_operator: np.ndarray,
+    ) -> "SecondOrderPerturbationSolution":
+        """Extend a first-order solution with the second-order coefficients solved around it."""
+        first_order_fields = {field.name: getattr(first_order, field.name) for field in fields(first_order)}
+        return cls(**first_order_fields, ghxx=ghxx, ghxu=ghxu, ghuu=ghuu, ghs2_operator=ghs2_operator)
+
+    def ghs2(self, shock_cov: np.ndarray) -> np.ndarray:
+        r"""
+        Compute the risk correction :math:`g_{\sigma\sigma}` for a shock covariance.
+
+        Parameters
+        ----------
+        shock_cov : ndarray
+            Covariance of the shocks, of shape ``(n_shocks, n_shocks)``.
+
+        Returns
+        -------
+        ghs2 : ndarray
+            Risk correction of every variable, of shape ``(n_variables,)``, in ``dr_order.var_order``.
+        """
+        return self.ghs2_operator @ np.asarray(shock_cov, dtype=float).ravel()
