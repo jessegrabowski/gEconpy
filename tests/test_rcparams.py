@@ -190,3 +190,4 @@ def test_statespace_configure_reads_its_solver_settings_unless_given():
         "adjoint_method": "qz",
     }
     assert ss_mod.use_direct_lyapunov
+    assert ss_mod.mode == "FAST_COMPILE"

@@ -847,7 +847,8 @@ class DSGEStateSpace(PyMCStateSpace):
             Perturbation solver, one of ``"gensys"``, ``"cycle_reduction"``, ``"scan_cycle_reduction"``, or
             ``"backward_direct"``. Defaults to ``rcParams["statespace.solver"]``.
         mode : str, optional
-            PyTensor compilation mode for post-estimation sampling functions. Defaults to None.
+            PyTensor compilation mode for post-estimation sampling functions. Defaults to the mode the model was
+            built with.
         verbose : bool, optional
             Print diagnostic messages. Defaults to True.
         max_iter : int, optional
@@ -903,6 +904,7 @@ class DSGEStateSpace(PyMCStateSpace):
             )
             print(ss_mod.state_names)
         """
+        mode = self.mode if mode is None else mode
         solver = rcParams["statespace.solver"] if solver is None else solver
         max_iter = rcParams["statespace.max_iter"] if max_iter is None else max_iter
         tol = rcParams["statespace.tol"] if tol is None else tol
