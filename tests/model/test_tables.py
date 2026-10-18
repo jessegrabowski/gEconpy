@@ -486,8 +486,9 @@ class TestValueFormatting:
             (1e-07, r"$1 \times 10^{-7}$"),
             (1.23457e08, r"$1.23457 \times 10^{8}$"),
             (None, ""),
+            (np.nan, ""),
         ],
-        ids=["decimal", "integral", "small", "large", "calibrated"],
+        ids=["decimal", "integral", "small", "large", "calibrated", "undefined"],
     )
     def test_a_value_never_prints_bare_scientific_notation(self, value, expected):
         """``1e-07`` in a tabular cell is outside math mode and prints literally."""
@@ -674,6 +675,15 @@ class TestSteadyStateTables:
         assert len(rows) == len(rbc.steady_state_relationships)
         assert rows["K_{ss}"] == r"\frac{\alpha Y_{ss}}{r_{ss}}"
         assert rows["A_{ss}"] == "1"
+
+    def test_a_constant_steady_state_has_no_shape_statistics(self, rbc):
+        """Productivity is fixed at one under every draw, so its skew is undefined rather than NaN."""
+        table = rbc.table("steady_state_estimates", prior_draws=20, random_seed=0, prior_stats=("std", "skewness"))
+        rows = {row.symbol: row for row in table.rows}
+
+        assert rows["A_{ss}"].prior_stat("skewness") is None
+        assert rows["A_{ss}"].prior_stat("std") == 0
+        assert rows["K_{ss}"].prior_stat("skewness") is not None
 
     def test_each_half_summarizes_the_steady_state_solved_at_its_own_draws(self, rbc):
         """Constant draws make the expected summary one steady-state solve, and the prior group beats the GCN priors."""

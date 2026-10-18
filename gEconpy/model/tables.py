@@ -57,7 +57,8 @@ def _format_value(
     Parameters
     ----------
     value : float, optional
-        The value, or None for a parameter the model solves for.
+        The value, or None for a parameter the model solves for. NaN is a statistic that does not exist for the
+        data, such as the skew of a constant, and prints empty like None.
     math : tuple of (str, str), optional
         Opening and closing math delimiters for scientific notation. Defaults to a LaTeX document's ``$``,
         which an HTML renderer must override because no notebook frontend recognizes it.
@@ -71,7 +72,7 @@ def _format_value(
     rendered : str
         The value, empty for None.
     """
-    if value is None:
+    if value is None or np.isnan(value):
         return ""
 
     rendered = f"{value:.{precision}g}"
@@ -994,9 +995,24 @@ _DRAW_STATISTICS: dict[str, Callable[[np.ndarray], float]] = {
 _PRIOR_AGREEMENT_ERRORS = 4
 
 
+# Standardized by the standard deviation, so neither exists for a constant sample.
+_SHAPE_STATISTICS = frozenset({"skewness", "kurtosis"})
+
+
 def _draw_statistics(draws: np.ndarray, names: Sequence[str]) -> dict[str, float | None]:
-    """Return each named statistic of a sample of prior draws, None for one a sample cannot estimate."""
-    return {name: float(_DRAW_STATISTICS[name](draws)) if name in _DRAW_STATISTICS else None for name in names}
+    """
+    Return each named statistic of a sample of prior draws, None for one a sample cannot estimate.
+
+    An empty sample estimates nothing, and a constant one has no skew or kurtosis. A steady-state variable fixed by
+    the model, such as productivity normalized to one, is the constant case.
+    """
+    constant = draws.size > 0 and np.ptp(draws) == 0
+    return {
+        name: float(_DRAW_STATISTICS[name](draws))
+        if name in _DRAW_STATISTICS and draws.size > 0 and not (constant and name in _SHAPE_STATISTICS)
+        else None
+        for name in names
+    }
 
 
 def _draws_match_prior(prior: Distribution, draws: np.ndarray) -> bool:
