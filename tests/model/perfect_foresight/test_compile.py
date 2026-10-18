@@ -51,6 +51,21 @@ class TestCompile:
         assert residuals.shape == (T, problem.n_eq)
         assert jacobian.shape == (T, problem.n_eq, 3 * problem.n_vars)
 
+    def test_steady_state_references_follow_each_periods_parameters(self):
+        """``full_nk`` uses ``r_G_ss = 1 / beta``, so a period with a different beta needs a different steady state."""
+        betas = [0.97, 0.98, 0.99]
+        model = load_and_cache_model("full_nk.gcn")
+        problem = compile_perfect_foresight_problem(model, len(betas), mode="FAST_COMPILE")
+
+        steady_states = [model.steady_state(verbose=False, beta=beta) for beta in betas]
+        Y = np.array([[ss[f"{name}_ss"] for name in problem.var_names] for ss in steady_states])
+        P = np.array([[model.parameters(beta=beta)[name] for name in problem.param_names] for beta in betas])
+        X = np.zeros((len(betas), problem.n_shocks))
+
+        residuals, _ = problem.f_resid_and_jac(Y, Y, Y, X, P)
+
+        assert_allclose(residuals, 0.0, atol=1e-8)
+
     def test_jacobian_matches_finite_differences(self, rbc_model):
         T = 5
         problem = compile_perfect_foresight_problem(rbc_model, T)
