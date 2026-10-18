@@ -125,6 +125,24 @@ Newton direction with GMRES:
    :pyobject: TestNewtonArmijoSpecific.test_custom_linear_solver
    :dedent: 4
 
+Over an estimated model's trace,
+:func:`~gEconpy.model.perfect_foresight.sample.sample_perfect_foresight` solves the same problem at every parameter
+draw. Each draw solves at its own parameters, from and to its own steady state, and the draws split across
+``cores`` worker processes. ``initial_conditions`` may carry ``chain`` and ``draw`` dimensions, such as one date of
+:meth:`~gEconpy.model.statespace.DSGEStateSpace.deviations_to_levels` output, to start each draw from its own
+filtered state:
+
+.. code-block:: python
+
+    smoothed = ss_mod.sample_conditional_posterior(idata)["smoothed_posterior"]
+    start = ss_mod.deviations_to_levels(smoothed, idata).sel(time="2014-10-01")
+    paths, diagnostics = ge.sample_perfect_foresight(
+        model, idata, simulation_length=400, initial_conditions=start, cores=4
+    )
+
+``paths`` holds one variable per model variable with dimensions ``(chain, draw, time)``. A draw whose steady state
+or solve fails is NaN, and ``diagnostics`` records which draws solved and the solver's work counts.
+
 Nonlinear simulation
 --------------------
 

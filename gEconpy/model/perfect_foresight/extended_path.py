@@ -1,6 +1,4 @@
 import copy
-import multiprocessing
-import platform
 import warnings
 
 from collections.abc import Callable
@@ -8,16 +6,14 @@ from functools import partial
 from multiprocessing.context import BaseContext
 from typing import NamedTuple
 
-import cloudpickle
 import numpy as np
 import xarray as xr
 
-from pytensor.compile.mode import Mode, get_mode
-from pytensor.link.jax.linker import JAXLinker
 from scipy.optimize import OptimizeResult
 
 from gEconpy.exceptions import NonFiniteInitialGuessError
 from gEconpy.model.model import Model
+from gEconpy.model.perfect_foresight._parallel import _WORK_COUNT_FIELDS, _map_in_workers, _multiprocessing_context
 from gEconpy.model.perfect_foresight.compile import PerfectForesightProblem, compile_perfect_foresight_problem
 from gEconpy.model.perfect_foresight.solve import (
     _build_param_matrix,
@@ -34,12 +30,9 @@ from gEconpy.solvers.sparse_root.base import DEFAULT_TOL, RootSolver
 from gEconpy.solvers.sparse_root.direction import ChordDirection
 from gEconpy.solvers.sparse_root.line_search import chord
 
-_WORK_COUNT_FIELDS = ("nit", "nfev", "njev", "nsolve")
 _HOMOTOPY_INITIAL_STEP = 0.1
 _HOMOTOPY_MIN_STEP = 1e-4
 _CHORD_REFRESH_RATIO = 0.1
-
-_WORKER_STATE: dict = {}
 
 
 def simulate_extended_path(
@@ -219,7 +212,9 @@ def simulate_extended_path(
         trajectories = [simulate_trajectory(shocks=shocks) for shocks in trajectory_shocks]
     else:
         context = _multiprocessing_context(mp_ctx, mode=(compile_kwargs or {}).get("mode"))
-        trajectories = _simulate_in_workers(simulate_trajectory, trajectory_shocks, workers, context)
+        trajectories = _map_in_workers(
+            simulate_trajectory, [{"shocks": shocks} for shocks in trajectory_shocks], workers=workers, context=context
+        )
     for simulation, trajectory in enumerate(trajectories):
         if trajectory.failure is not None:
             period, message = trajectory.failure
@@ -311,61 +306,6 @@ def _simulate_trajectory(
 
     return _Trajectory(
         states=states, success=success, work_counts=work_counts, homotopy_solves=homotopy_solves, failure=None
-    )
-
-
-def _simulate_in_workers(
-    simulate_trajectory: Callable[..., _Trajectory],
-    trajectory_shocks: np.ndarray,
-    workers: int,
-    context: BaseContext,
-) -> list[_Trajectory]:
-    """Simulate one trajectory per row of ``trajectory_shocks`` in a pool of ``workers`` processes, in order."""
-    # A forked worker inherits simulate_trajectory through the initializer, unpickled. Under any other start method the
-    # child reads initializer arguments only after importing gEconpy, so passing the problem there would start the
-    # workers one at a time, and it travels pickled with each block instead. cloudpickle also carries a solver class
-    # defined in the user's script.
-    if context.get_start_method() == "fork":
-        payload, initargs = None, (simulate_trajectory,)
-    else:
-        payload, initargs = cloudpickle.dumps(simulate_trajectory, protocol=-1), (None,)
-
-    blocks = np.array_split(trajectory_shocks, workers)
-    with context.Pool(workers, initializer=_initialize_worker, initargs=initargs) as pool:
-        simulated_blocks = pool.starmap(_simulate_block, [(payload, block) for block in blocks])
-    return [trajectory for block in simulated_blocks for trajectory in block]
-
-
-def _initialize_worker(simulate_trajectory: Callable[..., _Trajectory] | None) -> None:
-    _WORKER_STATE["simulate_trajectory"] = simulate_trajectory
-
-
-def _simulate_block(payload: bytes | None, block: np.ndarray) -> list[_Trajectory]:
-    simulate_trajectory = _WORKER_STATE["simulate_trajectory"] if payload is None else cloudpickle.loads(payload)
-    return [simulate_trajectory(shocks=shocks) for shocks in block]
-
-
-def _multiprocessing_context(mp_ctx: str | BaseContext | None, mode: str | Mode | None) -> BaseContext:
-    """Resolve ``mp_ctx`` to a multiprocessing context by the rules :func:`pymc.sample` uses."""
-    user_specified = mp_ctx is not None
-    if mp_ctx is None and platform.system() == "Darwin":
-        mp_ctx = "fork" if platform.processor() == "arm" else "forkserver"
-    if mp_ctx is None or isinstance(mp_ctx, str):
-        mp_ctx = multiprocessing.get_context(mp_ctx)
-
-    jax_mode = mode is not None and isinstance(get_mode(mode).linker, JAXLinker)
-    if not jax_mode or mp_ctx.get_start_method() != "fork":
-        return mp_ctx
-    if user_specified:
-        warnings.warn(
-            "Using a JAX compile mode with multiprocessing start method 'fork' is unsafe and may deadlock. Consider "
-            "passing mp_ctx='forkserver' or mp_ctx='spawn'.",
-            UserWarning,
-            stacklevel=3,
-        )
-        return mp_ctx
-    return multiprocessing.get_context(
-        "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
     )
 
 
