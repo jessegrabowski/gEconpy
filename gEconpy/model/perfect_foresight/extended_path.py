@@ -198,6 +198,10 @@ def simulate_extended_path(
         sparse_root_kwargs=sparse_root_kwargs,
     )
 
+    maxiter = sparse_root_kwargs.get("maxiter")
+    if maxiter is None:
+        maxiter = rcParams["sparse_root.maxiter"]
+
     simulate_trajectory = partial(
         _simulate_trajectory,
         solve_at_weight=solve_at_weight,
@@ -206,7 +210,7 @@ def simulate_extended_path(
         steady_state_values=steady_state_values,
         steady_state_guess=steady_state_guess,
         max_homotopy_solves=max_homotopy_solves,
-        maxiter=sparse_root_kwargs.get("maxiter", rcParams["sparse_root.maxiter"]),
+        maxiter=maxiter,
     )
     trajectory_shocks = epsilons[..., shock_columns]
     workers = min(cores, n_simulations)

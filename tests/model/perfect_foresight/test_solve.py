@@ -337,6 +337,16 @@ class TestSparseRootKwargs:
 
 
 class TestHomotopy:
+    def test_a_maxiter_of_none_uses_the_default(self, rbc_model):
+        steady_state = rbc_model.steady_state(verbose=False)
+        conditions = {"initial_conditions": {"K": 0.5 * steady_state["K_ss"]}, "simulation_length": 20}
+
+        expected, _ = solve_perfect_foresight(rbc_model, **conditions)
+        trajectory, result = solve_perfect_foresight(rbc_model, sparse_root_kwargs={"maxiter": None}, **conditions)
+
+        assert result.success
+        assert_allclose(trajectory.values, expected.values)
+
     def test_a_capped_solve_is_rescued_by_scaling_the_boundary_conditions(self, rbc_model):
         """
         Three iterations cannot reach the root from the steady state, but can from each homotopy step's predecessor.

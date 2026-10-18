@@ -285,12 +285,16 @@ def solve_perfect_foresight(
         )
         return result.x, result
 
+    maxiter = sparse_root_kwargs.get("maxiter")
+    if maxiter is None:
+        maxiter = rcParams["sparse_root.maxiter"]
+
     outcome = _solve_by_homotopy(
         solve=solve_at_weight,
         warm_guess=x0_vec,
         base_guess=weight_zero_guess,
         max_homotopy_solves=max_homotopy_solves,
-        maxiter=sparse_root_kwargs.get("maxiter", rcParams["sparse_root.maxiter"]),
+        maxiter=maxiter,
     )
     if outcome.full_weight_result is None:
         raise outcome.non_finite_guess
