@@ -5,7 +5,8 @@
 %
 % Dynare writes its generated files next to the .mod file, so each model runs in a temporary copy.
 
-fixture_models = {'basic_rbc', 'basic_rbc_loglinear', 'full_nk', 'one_block_1_ss', 'rbc_2_block_ss'};
+fixture_models = {'basic_rbc', 'basic_rbc_loglinear', 'basic_rbc_logvars', 'full_nk', 'one_block_1_ss', ...
+                  'one_block_1_ss_2shock', 'rbc_2_block_ss'};
 
 model_dir = fileparts(mfilename('fullpath'));
 output_dir = fullfile(model_dir, '..', 'dynare_outputs');
