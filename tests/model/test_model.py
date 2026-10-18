@@ -459,6 +459,16 @@ def test_linearize_with_custom_params(rng):
     assert A[technology_eq_idx, A_idx] == rho
 
 
+def test_linearize_reads_calibrated_parameters_from_steady_state():
+    model = load_and_cache_model("one_block_2.gcn")
+    steady_state = model.steady_state(verbose=False, progressbar=False)
+
+    outputs = model.linearize_model(steady_state=steady_state, verbose=False)
+
+    assert "alpha" in steady_state
+    assert all(np.isfinite(out).all() for out in outputs)
+
+
 def test_linearize_steady_state_kwargs_override_verbose(caplog):
     model = _model_without_analytic_steady_state("one_block_1_ss.gcn")
 
