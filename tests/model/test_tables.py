@@ -652,6 +652,17 @@ class TestSteadyStateTables:
         assert "Steady state" in rbc.write_table("variables", build_options={"steady_state": steady_state})
         assert "Steady state" not in rbc.write_table("variables")
 
+    def test_a_steady_state_that_does_not_solve_has_no_values_to_print(self, tmp_path):
+        """``exp(Y) + alpha * Y^2`` is positive, so it never equals -1 and the solver cannot succeed."""
+        path = tmp_path / "unsolvable.gcn"
+        path.write_text(
+            "block H { identities { exp(Y[]) + alpha * Y[-1] ^ 2 = -1; }; calibration { alpha = 0.3; }; };\n"
+        )
+        model = model_from_gcn(path, verbose=False)
+
+        with pytest.raises(ValueError, match="did not solve at the current calibration"):
+            model.table("variables", steady_state=True)
+
     def test_a_shock_has_no_steady_state_to_print(self, rbc):
         with pytest.raises(TypeError, match="'shocks' takes no build option 'steady_state'"):
             rbc.table("shocks", steady_state=True)
@@ -701,12 +712,23 @@ class TestSteadyStateTables:
         assert len(frame) == len(rbc.variables)
 
     def test_without_a_prior_group_the_prior_is_drawn_from_the_gcn_file(self, rbc):
+        """The seed controls the draws, and draws from the declared priors spread the steady state out."""
+        frames = {
+            seed: rbc.table("steady_state_estimates", prior_draws=50, random_seed=seed).to_frame().set_index("symbol")
+            for seed in (0, 1)
+        }
+        rendered = rbc.write_table("steady_state_estimates", build_options={"prior_draws": 50, "random_seed": 0})
+
+        assert frames[0].loc["K_{ss}", "prior_std"] > 0
+        assert frames[0].loc["K_{ss}", "prior_mean"] != frames[1].loc["K_{ss}", "prior_mean"]
+        assert r"\textbf{Variable} & \textbf{Description} & \textbf{Prior mean} & \textbf{Prior S.D.} \\" in rendered
+
+    def test_the_same_seed_draws_the_same_prior(self, rbc):
         build_options = {"prior_draws": 50, "random_seed": 0}
 
-        rendered = rbc.write_table("steady_state_estimates", build_options=build_options)
-
-        assert rendered == rbc.write_table("steady_state_estimates", build_options=build_options)
-        assert r"\textbf{Variable} & \textbf{Description} & \textbf{Prior mean} & \textbf{Prior S.D.} \\" in rendered
+        assert rbc.write_table("steady_state_estimates", build_options=build_options) == rbc.write_table(
+            "steady_state_estimates", build_options=build_options
+        )
 
     @pytest.mark.parametrize("group, column", [("prior", "prior_mean"), ("posterior", "posterior_mean")])
     def test_a_draw_whose_steady_state_fails_is_left_out_of_the_summary(self, rbc, caplog, group, column):
