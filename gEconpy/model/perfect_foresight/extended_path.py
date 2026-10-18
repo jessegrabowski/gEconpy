@@ -109,7 +109,9 @@ def simulate_extended_path(
         Keyword arguments forwarded to :func:`~gEconpy.solvers.sparse_root.sparse_root.sparse_root` for each
         period's problem. ``f_tol`` defaults to 1e-5 unless ``tol`` is given, and ``progressbar`` defaults to False.
     max_homotopy_solves : int, optional
-        Number of solves the homotopy may spend on one failed period. Zero turns homotopy off. Defaults to 100.
+        Number of solves the homotopy may spend on one failed period. While the homotopy is on, a period's first solve
+        stops after 50 iterations and each homotopy solve after 20, or after ``maxiter`` if that is smaller. Zero turns
+        homotopy off. Defaults to 100.
     cores : int, optional
         Number of worker processes that simulate trajectories in parallel, each taking a contiguous block of them. The
         output is the same for any number of cores. Defaults to 1, which simulates in the calling process.
@@ -196,6 +198,10 @@ def simulate_extended_path(
         sparse_root_kwargs=sparse_root_kwargs,
     )
 
+    maxiter = sparse_root_kwargs.get("maxiter")
+    if maxiter is None:
+        maxiter = rcParams["sparse_root.maxiter"]
+
     simulate_trajectory = partial(
         _simulate_trajectory,
         solve_at_weight=solve_at_weight,
@@ -204,6 +210,7 @@ def simulate_extended_path(
         steady_state_values=steady_state_values,
         steady_state_guess=steady_state_guess,
         max_homotopy_solves=max_homotopy_solves,
+        maxiter=maxiter,
     )
     trajectory_shocks = epsilons[..., shock_columns]
     workers = min(cores, n_simulations)
@@ -261,6 +268,7 @@ def _simulate_trajectory(
     steady_state_values: np.ndarray,
     steady_state_guess: np.ndarray,
     max_homotopy_solves: int,
+    maxiter: int,
 ) -> _Trajectory:
     """
     Simulate one trajectory from ``initial_state`` under ``shocks``, one row per period.
@@ -283,6 +291,7 @@ def _simulate_trajectory(
             warm_guess=guess,
             base_guess=lambda: steady_state_guess,
             max_homotopy_solves=max_homotopy_solves,
+            maxiter=maxiter,
         )
 
         for field in _WORK_COUNT_FIELDS:
@@ -323,6 +332,7 @@ def _default_solver(sparse_root_kwargs: dict) -> RootSolver:
 def _solve_at_weight(
     weight: float,
     x0: np.ndarray,
+    maxiter: int,
     state: np.ndarray,
     shock: np.ndarray,
     problem: PerfectForesightProblem,
@@ -343,7 +353,7 @@ def _solve_at_weight(
         shocks=shocks,
         params=params,
         solver=solver,
-        sparse_root_kwargs=sparse_root_kwargs,
+        sparse_root_kwargs={**sparse_root_kwargs, "maxiter": maxiter},
     )
     return result.x.reshape(problem.T, problem.n_vars), result
 

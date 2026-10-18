@@ -337,6 +337,16 @@ class TestSparseRootKwargs:
 
 
 class TestHomotopy:
+    def test_a_maxiter_of_none_uses_the_default(self, rbc_model):
+        steady_state = rbc_model.steady_state(verbose=False)
+        conditions = {"initial_conditions": {"K": 0.5 * steady_state["K_ss"]}, "simulation_length": 20}
+
+        expected, _ = solve_perfect_foresight(rbc_model, **conditions)
+        trajectory, result = solve_perfect_foresight(rbc_model, sparse_root_kwargs={"maxiter": None}, **conditions)
+
+        assert result.success
+        assert_allclose(trajectory.values, expected.values)
+
     def test_a_capped_solve_is_rescued_by_scaling_the_boundary_conditions(self, rbc_model):
         """
         Three iterations cannot reach the root from the steady state, but can from each homotopy step's predecessor.
@@ -377,6 +387,22 @@ class TestHomotopy:
         assert not result.success
         assert result.homotopy_solves == 2
         assert "Homotopy reached weight" in result.message
+
+    def test_a_failed_homotopy_spends_only_the_capped_iterations(self, open_rbc_model):
+        """Newton cannot start capital at twenty times its steady state, and two homotopy solves are too few."""
+        steady_state = open_rbc_model.steady_state(verbose=False)
+
+        _, result = solve_perfect_foresight(
+            open_rbc_model,
+            initial_conditions={"K": 20 * steady_state["K_ss"]},
+            simulation_length=100,
+            sparse_root_kwargs={"progressbar": False},
+            max_homotopy_solves=2,
+        )
+
+        assert not result.success
+        assert result.homotopy_solves == 2
+        assert result.nit <= 50 + 2 * 20
 
 
 class TestSteadyStateKwargs:

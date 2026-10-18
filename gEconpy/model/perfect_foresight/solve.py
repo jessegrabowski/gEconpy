@@ -19,6 +19,7 @@ from gEconpy.model.perfect_foresight.compile import (
 )
 from gEconpy.model.perfect_foresight.homotopy import _solve_by_homotopy
 from gEconpy.model.perfect_foresight.validation import validate_perfect_foresight_inputs
+from gEconpy.rcparams import rcParams
 from gEconpy.solvers.sparse_root import newton_armijo
 from gEconpy.solvers.sparse_root.base import RootSolver
 from gEconpy.solvers.sparse_root.direction import ChordDirection, NewtonDirection
@@ -100,9 +101,10 @@ def solve_perfect_foresight(
         each initial and terminal condition's deviation from its steady state by a weight that rises toward 1. Its
         first solve starts from a linear path between the initial and terminal steady states, and each later one
         from the last that succeeded. The same path replaces an ``x0`` at which the model is not finite. Parameter
-        paths are not scaled, so a failure that a parameter path causes is not helped. The homotopy's solves show no
-        progress bar, and a call that fails can spend up to ``max_homotopy_solves`` times ``maxiter`` iterations.
-        Zero turns the homotopy off. Defaults to 100.
+        paths are not scaled, so a failure that a parameter path causes is not helped. While the homotopy is on, the
+        solve from ``x0`` stops after 50 iterations and each homotopy solve after 20, or after ``maxiter`` if that is
+        smaller. The homotopy's solves show no progress bar. Zero turns the homotopy off, and the solve from ``x0``
+        then runs for up to ``maxiter`` iterations. Defaults to 100.
 
     Returns
     -------
@@ -262,14 +264,15 @@ def solve_perfect_foresight(
 
     ordered_solver = _order_for_problem(solver if solver is not None else newton_armijo(), problem)
 
-    def solve_at_weight(weight: float, x0: np.ndarray) -> tuple[np.ndarray, OptimizeResult]:
-        initial, terminal, weighted_shocks, root_kwargs = y_initial, y_terminal, shock_matrix, sparse_root_kwargs
+    def solve_at_weight(weight: float, x0: np.ndarray, maxiter: int) -> tuple[np.ndarray, OptimizeResult]:
+        initial, terminal, weighted_shocks = y_initial, y_terminal, shock_matrix
+        root_kwargs = {**sparse_root_kwargs, "maxiter": maxiter}
         if weight != 1.0:
             initial_base, terminal_base = homotopy_bases()
             initial = initial_base + weight * (y_initial - initial_base)
             terminal = terminal_base + weight * (y_terminal - terminal_base)
             weighted_shocks = weight * shock_matrix
-            root_kwargs = {**sparse_root_kwargs, "progressbar": False}
+            root_kwargs["progressbar"] = False
         result = _solve_stacked(
             problem=problem,
             x0=x0,
@@ -282,11 +285,16 @@ def solve_perfect_foresight(
         )
         return result.x, result
 
+    maxiter = sparse_root_kwargs.get("maxiter")
+    if maxiter is None:
+        maxiter = rcParams["sparse_root.maxiter"]
+
     outcome = _solve_by_homotopy(
         solve=solve_at_weight,
         warm_guess=x0_vec,
         base_guess=weight_zero_guess,
         max_homotopy_solves=max_homotopy_solves,
+        maxiter=maxiter,
     )
     if outcome.full_weight_result is None:
         raise outcome.non_finite_guess
