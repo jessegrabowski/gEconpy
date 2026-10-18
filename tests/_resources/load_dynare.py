@@ -50,8 +50,8 @@ def read_dynare_output(
 def extract_policy_matrices(oo, M) -> tuple[pd.DataFrame, pd.DataFrame]:
     var_names = np.concatenate([x.item() for x in M["endo_names"]])
     shock_names = np.concatenate([np.atleast_1d(x.item()) for x in np.atleast_1d(M["exo_names"])])
-    state_idx = M["state_var"] - 1
-    dynare_order = oo["dr"]["order_var"].ravel() - 1
+    state_idx = oo["dr"]["state_var"].ravel().astype(int) - 1
+    dynare_order = oo["dr"]["order_var"].ravel().astype(int) - 1
 
     dr_state_idx = np.array([x for x in dynare_order if x in state_idx])
 
@@ -69,7 +69,7 @@ class DynarePartition(NamedTuple):
 
 def extract_dr_partition(oo, M) -> DynarePartition:
     var_names = np.concatenate([x.item() for x in M["endo_names"]])
-    dynare_order = oo["dr"]["order_var"].ravel() - 1
+    dynare_order = oo["dr"]["order_var"].ravel().astype(int) - 1
     current_incidence = np.asarray(M["lead_lag_incidence"])[1, dynare_order]
 
     return DynarePartition(
