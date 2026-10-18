@@ -50,7 +50,7 @@ def simulate_extended_path(
     shock_cov_matrix: np.ndarray | None = None,
     shock_std: np.ndarray | list | float | None = None,
     random_seed: int | np.random.RandomState | None = None,
-    initial_conditions: dict[str, float] | None = None,
+    initial_conditions: dict[str, float] | xr.DataArray | None = None,
     horizon: int = 200,
     solver: RootSolver | None = None,
     compile_kwargs: dict | None = None,
@@ -94,9 +94,9 @@ def simulate_extended_path(
         None.
     random_seed : int, RandomState, or Generator, optional
         Seed for the shock draws. Defaults to None.
-    initial_conditions : dict mapping str to float, optional
-        Variable values before the first simulated period, keyed by base name or steady-state name. Variables not
-        listed start at their steady-state values.
+    initial_conditions : dict mapping str to float, or DataArray, optional
+        Variable values before the first simulated period, keyed by base name or steady-state name, or a DataArray
+        with one dimension over variable names. Variables not listed start at their steady-state values.
     horizon : int, optional
         Number of periods in each period's perfect-foresight problem. It must be long enough for the economy to
         return close to the steady state, which is imposed at its end. Defaults to 200.
@@ -483,12 +483,12 @@ def _solve_at_weight(
 
 
 def _initial_state(
-    initial_conditions: dict[str, float] | None,
+    initial_conditions: dict[str, float] | xr.DataArray | None,
     steady_state_values: np.ndarray,
     var_names: list[str],
 ) -> np.ndarray:
     """Fill the steady state with the user's initial conditions, rejecting names that are not model variables."""
-    conditions = _normalize_condition_keys(initial_conditions or {})
+    conditions = _normalize_condition_keys(initial_conditions)
     unknown = sorted(set(conditions) - set(var_names))
     if unknown:
         raise ValueError(f"initial_conditions has unknown variables: {', '.join(unknown)}")

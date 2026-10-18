@@ -20,6 +20,7 @@ gEconpy.model.tables
 
 .. autosummary::
 
+    group_dataset
     posterior_dataset
     prior_dataset
     reconcile_prior
@@ -27,5 +28,5 @@ gEconpy.model.tables
     typst_escape
 
 .. automodule:: gEconpy.model.tables
-    :members: CalibrationTable, EquationRow, EquationTable, EstimateRow, EstimationTable, ParameterRow, SymbolRow, SymbolTable, posterior_dataset, prior_dataset, reconcile_prior, summarize_posterior, typst_escape
+    :members: CalibrationTable, EquationRow, EquationTable, EstimateRow, EstimationTable, ParameterRow, SymbolRow, SymbolTable, group_dataset, posterior_dataset, prior_dataset, reconcile_prior, summarize_posterior, typst_escape
     :undoc-members:

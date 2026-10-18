@@ -940,14 +940,19 @@ DIAGNOSTIC_FRAME_COLUMNS = ("mcse_mean", "mcse_sd", "ess_bulk", "ess_tail", "r_h
 SAMPLE_DIMS = ("chain", "draw")
 
 
-def posterior_dataset(idata: xr.DataTree | xr.Dataset) -> xr.Dataset:
-    """Return the ``posterior`` group of sampler output, or the dataset itself when it is already a posterior."""
+def group_dataset(idata: xr.DataTree | xr.Dataset, group: str) -> xr.Dataset:
+    """Return one group of sampler output, or the dataset itself when it is already that group."""
     if not isinstance(idata, xr.DataTree):
         return idata
-    if "posterior" not in idata.children:
+    if group not in idata.children:
         groups = ", ".join(idata.children) or "none"
-        raise ValueError(f"idata has no posterior group to summarize. Its groups are: {groups}.")
-    return idata["posterior"].to_dataset()
+        raise ValueError(f"idata has no {group!r} group. Its groups are: {groups}.")
+    return idata[group].to_dataset()
+
+
+def posterior_dataset(idata: xr.DataTree | xr.Dataset) -> xr.Dataset:
+    """Return the ``posterior`` group of sampler output, or the dataset itself when it is already a posterior."""
+    return group_dataset(idata, group="posterior")
 
 
 def summarize_posterior(

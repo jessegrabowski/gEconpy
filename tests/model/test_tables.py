@@ -406,7 +406,7 @@ class TestEstimationTableWithPosterior:
         model = load_and_cache_model("one_block_1_dist.gcn")
         prior_only = xr.DataTree.from_dict({"prior": posterior})
 
-        with pytest.raises(ValueError, match="no posterior group to summarize\\. Its groups are: prior"):
+        with pytest.raises(ValueError, match="no 'posterior' group\\. Its groups are: prior"):
             model.table("estimates", idata=prior_only)
 
     def test_a_posterior_variable_with_extra_dimensions_raises(self, posterior):

@@ -4,6 +4,7 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from scipy import sparse
 from scipy.optimize import OptimizeResult
@@ -29,8 +30,8 @@ def solve_perfect_foresight(
     model: Model,
     simulation_length: int,
     x0: np.ndarray | pd.DataFrame | dict[str, float] | None = None,
-    initial_conditions: dict[str, float] | None = None,
-    terminal_conditions: dict[str, float] | None = None,
+    initial_conditions: dict[str, float] | xr.DataArray | None = None,
+    terminal_conditions: dict[str, float] | xr.DataArray | None = None,
     shocks: dict[str, np.ndarray] | None = None,
     param_paths: dict[str, float | Sequence[float] | np.ndarray] | None = None,
     compile_kwargs: dict | None = None,
@@ -59,10 +60,13 @@ def solve_perfect_foresight(
         periods as rows, and must hold a column for every model variable. This is what :func:`make_piecewise_x0`
         returns. An ndarray of shape ``(T, n_vars)`` must already be in the model's variable order. Defaults to
         the steady state tiled across every period.
-    initial_conditions : dict mapping str to float, optional
+    initial_conditions : dict mapping str to float, or DataArray, optional
         Variable values at ``t = -1``, keyed by base name such as ``"K"`` or by steady-state name such as
-        ``"K_ss"``. Variables not listed take their steady-state values.
-    terminal_conditions : dict mapping str to float, optional
+        ``"K_ss"``. A DataArray has one dimension over variable names, such as one draw of
+        :meth:`~gEconpy.model.statespace.DSGEStateSpace.deviations_to_levels` output. Only the values of
+        :attr:`~gEconpy.model.model.Model.predetermined_variables` change the solution, but every value must be
+        finite. Variables not listed take their steady-state values.
+    terminal_conditions : dict mapping str to float, or DataArray, optional
         Variable values at ``t = T``, keyed like ``initial_conditions``. Variables not listed take their
         steady-state values.
     shocks : dict mapping str to ndarray, optional
@@ -148,8 +152,8 @@ def solve_perfect_foresight(
         )
         print(result.success, trajectory["K"].iloc[[0, -1]].to_numpy())
     """
-    initial_conditions = _normalize_condition_keys(initial_conditions or {})
-    terminal_conditions = _normalize_condition_keys(terminal_conditions or {})
+    initial_conditions = _normalize_condition_keys(initial_conditions)
+    terminal_conditions = _normalize_condition_keys(terminal_conditions)
     compile_kwargs = compile_kwargs or {}
     steady_state_kwargs = {"verbose": False, **(steady_state_kwargs or {})}
     sparse_root_kwargs = sparse_root_kwargs or {}
@@ -319,9 +323,23 @@ def _split_parameter_updates(steady_state_kwargs: dict, param_names: Sequence[st
     return parameter_updates, options
 
 
-def _normalize_condition_keys(conditions: dict[str, float]) -> dict[str, float]:
-    """Strip the ``_ss`` suffix from condition keys so a steady-state dictionary can be passed directly."""
-    return {k.removesuffix("_ss"): v for k, v in conditions.items()}
+def _normalize_condition_keys(conditions: dict[str, float] | xr.DataArray | None) -> dict[str, float]:
+    """
+    Return conditions keyed by base name, from a dict or from a DataArray with one dimension over variable names.
+
+    The ``_ss`` suffix is stripped from every key, so a steady-state dictionary can be passed directly.
+    """
+    if conditions is None:
+        return {}
+    if isinstance(conditions, xr.DataArray):
+        if conditions.ndim != 1:
+            raise ValueError(
+                f"A DataArray of conditions needs one dimension, over variable names, but has {conditions.dims}. "
+                "Select or reduce the others first, for example with .mean(('chain', 'draw'))."
+            )
+        (dim,) = conditions.dims
+        conditions = dict(zip(conditions[dim].values.tolist(), conditions.values.tolist(), strict=True))
+    return {key.removesuffix("_ss"): value for key, value in conditions.items()}
 
 
 def _ss_dict_to_array(ss_dict: dict[str, float], var_names: Sequence[str]) -> np.ndarray:
