@@ -7,7 +7,6 @@ gEconpy.model.model
 
 .. autosummary::
 
-    DROrder
     Model
 
 .. rubric:: Functions
@@ -20,5 +19,5 @@ gEconpy.model.model
     transform_steady_state_system
 
 .. automodule:: gEconpy.model.model
-    :members: DROrder, Model, infer_variable_bounds, infer_variable_transform, steady_state_transforms, transform_steady_state_system
+    :members: Model, infer_variable_bounds, infer_variable_transform, steady_state_transforms, transform_steady_state_system
     :undoc-members:

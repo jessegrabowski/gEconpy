@@ -1,6 +1,6 @@
 import logging
 
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -24,6 +24,123 @@ from gEconpy.utilities import get_name
 _log = logging.getLogger(__name__)
 
 _FLOAT_ZERO_TOL = 1e-8
+
+
+class DROrder(NamedTuple):
+    """
+    Decision-rule ordering of variables and equations.
+
+    Variables are partitioned into static, predetermined-only, mixed, and forward-only groups by their time-shift
+    profile across all equations. Equations are partitioned into static, lag-only, lead-only, and both groups by the
+    time shifts they reference. Reordering A, B, C and D by ``var_order`` on the columns and ``eq_order`` on the rows
+    places their structural-zero blocks contiguously.
+
+    Apply ``inv_var_order`` to the rows and columns of T and to the rows of R before handing results back to the
+    Kalman path or the user, so the user-visible state vector layout is preserved. Equation reordering applies only
+    to the rows of A, B, C and D, never to T or R.
+
+    Attributes
+    ----------
+    var_order : ndarray
+        Variable column permutation into static, predetermined-only, mixed, and forward-only order.
+    inv_var_order : ndarray
+        Inverse of ``var_order``, undoing it on the rows and columns of T and the rows of R.
+    eq_order : ndarray
+        Equation row permutation into static, lag-only, lead-only, and both order.
+    inv_eq_order : ndarray
+        Inverse of ``eq_order``, undoing it on the rows of A, B, C and D.
+    n_static_var : int
+        Number of static variables.
+    n_pred_only_var : int
+        Number of predetermined-only variables.
+    n_mixed_var : int
+        Number of variables appearing at both a lag and a lead.
+    n_forward_only_var : int
+        Number of forward-only variables.
+    n_static_eq : int
+        Number of equations referencing no time shifts.
+    n_lag_only_eq : int
+        Number of equations referencing lags but no leads.
+    n_lead_only_eq : int
+        Number of equations referencing leads but no lags.
+    n_both_eq : int
+        Number of equations referencing both lags and leads.
+    """
+
+    var_order: np.ndarray
+    inv_var_order: np.ndarray
+    eq_order: np.ndarray
+    inv_eq_order: np.ndarray
+    n_static_var: int
+    n_pred_only_var: int
+    n_mixed_var: int
+    n_forward_only_var: int
+    n_static_eq: int
+    n_lag_only_eq: int
+    n_lead_only_eq: int
+    n_both_eq: int
+
+    @classmethod
+    def from_model(cls, variables: list[TimeAwareSymbol], equations: list[sp.Expr]) -> "DROrder":
+        """
+        Classify variables and equations by the time shifts at which the variables appear.
+
+        Parameters
+        ----------
+        variables : list of TimeAwareSymbol
+            Model variables at time t, in model order.
+        equations : list of Expr
+            Model equations as sympy expressions.
+
+        Returns
+        -------
+        order : DROrder
+            Permutations and group sizes for the decision-rule ordering.
+        """
+        lag_index = {variable.set_t(-1): j for j, variable in enumerate(variables)}
+        lead_index = {variable.set_t(1): j for j, variable in enumerate(variables)}
+
+        var_has_lag = np.zeros(len(variables), dtype=bool)
+        var_has_lead = np.zeros(len(variables), dtype=bool)
+        eq_has_lag = np.zeros(len(equations), dtype=bool)
+        eq_has_lead = np.zeros(len(equations), dtype=bool)
+
+        for i, equation in enumerate(equations):
+            atoms = equation.atoms(TimeAwareSymbol)
+            lagged = [lag_index[atom] for atom in atoms if atom in lag_index]
+            led = [lead_index[atom] for atom in atoms if atom in lead_index]
+
+            var_has_lag[lagged] = True
+            var_has_lead[led] = True
+            eq_has_lag[i] = bool(lagged)
+            eq_has_lead[i] = bool(led)
+
+        static_vars = np.flatnonzero(~var_has_lag & ~var_has_lead)
+        pred_only_vars = np.flatnonzero(var_has_lag & ~var_has_lead)
+        mixed_vars = np.flatnonzero(var_has_lag & var_has_lead)
+        forward_only_vars = np.flatnonzero(~var_has_lag & var_has_lead)
+        var_order = np.concatenate([static_vars, pred_only_vars, mixed_vars, forward_only_vars])
+
+        static_eqs = np.flatnonzero(~eq_has_lag & ~eq_has_lead)
+        lag_only_eqs = np.flatnonzero(eq_has_lag & ~eq_has_lead)
+        lead_only_eqs = np.flatnonzero(~eq_has_lag & eq_has_lead)
+        both_eqs = np.flatnonzero(eq_has_lag & eq_has_lead)
+        eq_order = np.concatenate([static_eqs, lag_only_eqs, lead_only_eqs, both_eqs])
+
+        return cls(
+            var_order=var_order,
+            inv_var_order=np.argsort(var_order),
+            eq_order=eq_order,
+            inv_eq_order=np.argsort(eq_order),
+            n_static_var=len(static_vars),
+            n_pred_only_var=len(pred_only_vars),
+            n_mixed_var=len(mixed_vars),
+            n_forward_only_var=len(forward_only_vars),
+            n_static_eq=len(static_eqs),
+            n_lag_only_eq=len(lag_only_eqs),
+            n_lead_only_eq=len(lead_only_eqs),
+            n_both_eq=len(both_eqs),
+        )
 
 
 def linearize_model(
@@ -104,9 +221,12 @@ def linearize_model(
         loglin_names = {v.base_name for v in loglin_variables}
         loglin_set = {i for i, v in enumerate(variables) if v.base_name in loglin_names}
 
-    default_eq_order, default_var_order = _structural_orderings(variables, equations)
-    eq_order_local = default_eq_order if eq_order is None else np.asarray(eq_order, dtype=int)
-    var_order_local = default_var_order if var_order is None else np.asarray(var_order, dtype=int)
+    if eq_order is None or var_order is None:
+        default_order = DROrder.from_model(variables, equations)
+        eq_order = default_order.eq_order if eq_order is None else eq_order
+        var_order = default_order.var_order if var_order is None else var_order
+    eq_order_local = np.asarray(eq_order, dtype=int)
+    var_order_local = np.asarray(var_order, dtype=int)
 
     # Permuting the equations and variables before differentiation yields matrices in [eq_order, var_order] by
     # construction, with no pytensor-side reshuffling.
@@ -136,48 +256,6 @@ def linearize_model(
     # boundary and ``Model.linearize_model`` apply the inverse permutations before returning matrices to the user.
     ss_pt = [as_tensor(v.to_ss(), cache) for v in variables]
     return [A, B, C, D], ss_pt, eq_order_local, var_order_local
-
-
-def _structural_orderings(variables: list[TimeAwareSymbol], equations: list[sp.Expr]) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Order equations and variables so the structural-zero blocks of A and C are contiguous.
-
-    Equations go into ``[static | lag-only | lead-only | both]`` order and variables into
-    ``[static | predetermined-only | mixed | forward-only]`` order.
-    """
-    n_vars = len(variables)
-    lag_syms = [v.set_t(-1) for v in variables]
-    lead_syms = [v.set_t(1) for v in variables]
-
-    eq_has_lag = np.zeros(len(equations), dtype=bool)
-    eq_has_lead = np.zeros(len(equations), dtype=bool)
-    var_has_lag = np.zeros(n_vars, dtype=bool)
-    var_has_lead = np.zeros(n_vars, dtype=bool)
-    for i, eq in enumerate(equations):
-        atoms = eq.atoms(TimeAwareSymbol)
-        for j in range(n_vars):
-            if lag_syms[j] in atoms:
-                eq_has_lag[i] = var_has_lag[j] = True
-            if lead_syms[j] in atoms:
-                eq_has_lead[i] = var_has_lead[j] = True
-
-    eq_order = np.concatenate(
-        [
-            np.where(~eq_has_lag & ~eq_has_lead)[0],
-            np.where(eq_has_lag & ~eq_has_lead)[0],
-            np.where(~eq_has_lag & eq_has_lead)[0],
-            np.where(eq_has_lag & eq_has_lead)[0],
-        ]
-    )
-    var_order = np.concatenate(
-        [
-            np.where(~var_has_lag & ~var_has_lead)[0],
-            np.where(var_has_lag & ~var_has_lead)[0],
-            np.where(var_has_lag & var_has_lead)[0],
-            np.where(~var_has_lag & var_has_lead)[0],
-        ]
-    )
-    return eq_order, var_order
 
 
 def _log_linear_column_scale(
