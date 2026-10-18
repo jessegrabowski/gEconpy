@@ -11,10 +11,10 @@ import xarray as xr
 
 from scipy.optimize import OptimizeResult
 
-from gEconpy.exceptions import NonFiniteInitialGuessError
 from gEconpy.model.model import Model
 from gEconpy.model.perfect_foresight._parallel import _WORK_COUNT_FIELDS, _map_in_workers, _multiprocessing_context
 from gEconpy.model.perfect_foresight.compile import PerfectForesightProblem, compile_perfect_foresight_problem
+from gEconpy.model.perfect_foresight.homotopy import _solve_by_homotopy
 from gEconpy.model.perfect_foresight.solve import (
     _build_param_matrix,
     _normalize_condition_keys,
@@ -30,8 +30,6 @@ from gEconpy.solvers.sparse_root.base import DEFAULT_TOL, RootSolver
 from gEconpy.solvers.sparse_root.direction import ChordDirection
 from gEconpy.solvers.sparse_root.line_search import chord
 
-_HOMOTOPY_INITIAL_STEP = 0.1
-_HOMOTOPY_MIN_STEP = 1e-4
 _CHORD_REFRESH_RATIO = 0.1
 
 
@@ -279,10 +277,10 @@ def _simulate_trajectory(
     state = initial_state
     guess = steady_state_guess
     for t in range(simulation_length):
-        outcome = _solve_period(
+        outcome = _solve_by_homotopy(
             solve=partial(solve, state=state, shock=shocks[t]),
             warm_guess=guess,
-            steady_state_guess=steady_state_guess,
+            base_guess=lambda: steady_state_guess,
             max_homotopy_solves=max_homotopy_solves,
         )
 
@@ -309,13 +307,6 @@ def _simulate_trajectory(
     )
 
 
-class _PeriodOutcome(NamedTuple):
-    path: np.ndarray | None
-    work_counts: dict[str, int]
-    homotopy_solves: int
-    failure: str | None
-
-
 def _default_solver(sparse_root_kwargs: dict) -> RootSolver:
     """Return a chord solver that carries its factorization between periods, refreshed when progress slows."""
     x_tol = sparse_root_kwargs.get("x_tol", sparse_root_kwargs.get("tol", DEFAULT_TOL))
@@ -326,72 +317,6 @@ def _default_solver(sparse_root_kwargs: dict) -> RootSolver:
         keep_across_solves=True,
     )
     return chord(direction=direction)
-
-
-def _solve_period(
-    solve: Callable[..., tuple[np.ndarray, OptimizeResult]],
-    warm_guess: np.ndarray,
-    steady_state_guess: np.ndarray,
-    max_homotopy_solves: int,
-) -> _PeriodOutcome:
-    """
-    Solve one period from the warm start, and by homotopy if that fails.
-
-    The homotopy scales the period's shock and the initial state's deviation from the steady state by a weight. At
-    weight 0 the steady state solves the problem, so the weight rises from there to 1, each solve starting from the
-    last solution. The step doubles after a success and halves after a failure.
-    """
-    work_counts: dict[str, int] = dict.fromkeys(_WORK_COUNT_FIELDS, 0)
-
-    def attempt(weight: float, guess: np.ndarray) -> tuple[np.ndarray | None, str | None]:
-        try:
-            solution, result = _solve_from(solve, weight=weight, guess=guess, steady_state_guess=steady_state_guess)
-        except NonFiniteInitialGuessError as error:
-            return None, str(error)
-
-        for field in _WORK_COUNT_FIELDS:
-            work_counts[field] += result[field]
-        if not result.success:
-            return None, f"The solver reported: {result.message}"
-        return solution, None
-
-    path, failure = attempt(weight=1.0, guess=warm_guess)
-    if path is not None:
-        return _PeriodOutcome(path=path, work_counts=work_counts, homotopy_solves=0, failure=None)
-
-    accepted_weight = 0.0
-    step = _HOMOTOPY_INITIAL_STEP
-    guess = steady_state_guess
-    homotopy_solves = 0
-    while homotopy_solves < max_homotopy_solves and step >= _HOMOTOPY_MIN_STEP:
-        weight = min(accepted_weight + step, 1.0)
-        homotopy_solves += 1
-        path, _ = attempt(weight=weight, guess=guess)
-
-        if path is None:
-            step /= 2
-        elif weight == 1.0:
-            return _PeriodOutcome(path=path, work_counts=work_counts, homotopy_solves=homotopy_solves, failure=None)
-        else:
-            accepted_weight, guess = weight, path
-            step *= 2
-
-    failure = f"{failure.rstrip('.')}. Homotopy reached weight {accepted_weight:.3g} in {homotopy_solves} solves."
-    return _PeriodOutcome(path=None, work_counts=work_counts, homotopy_solves=homotopy_solves, failure=failure)
-
-
-def _solve_from(
-    solve: Callable[..., tuple[np.ndarray, OptimizeResult]],
-    weight: float,
-    guess: np.ndarray,
-    steady_state_guess: np.ndarray,
-) -> tuple[np.ndarray, OptimizeResult]:
-    try:
-        return solve(weight=weight, x0=guess)
-    except NonFiniteInitialGuessError:
-        if guess is steady_state_guess:
-            raise
-        return solve(weight=weight, x0=steady_state_guess)
 
 
 def _solve_at_weight(
