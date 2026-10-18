@@ -1,5 +1,3 @@
-import os
-
 from pathlib import Path
 from typing import NamedTuple
 
@@ -24,7 +22,7 @@ def record_to_dict(x):
 
 
 def get_available_models():
-    dynare_output_dir = Path("tests") / "_resources" / "dynare_outputs"
+    dynare_output_dir = Path(__file__).parent / "dynare_outputs"
     dynare_output_paths = list(dynare_output_dir.iterdir())
     model_names = [x.name.replace("_results.mat", "") for x in dynare_output_paths]
     return {name: str(mat_path) for name, mat_path in zip(model_names, dynare_output_paths, strict=False)}
