@@ -63,6 +63,7 @@ from gEconpy.model.tables import (
     SymbolRow,
     SymbolTable,
     TableGroup,
+    _draw_statistics,
     posterior_dataset,
     prior_dataset,
     reconcile_prior,
@@ -748,12 +749,12 @@ class Model:
                     "The steady state did not solve at the current calibration, so there are no values to print. "
                     "Solve it with Model.steady_state and pass the result as steady_state."
                 )
-        values = {} if steady_state is False else _values_by_base_name(steady_state)
-        return SymbolTable(rows=self._symbol_rows(self.variables, markup, values))
+        values = {} if steady_state is False else _values_by_base_name(values=steady_state)
+        return SymbolTable(rows=self._symbol_rows(symbols=self.variables, markup=markup, steady_state=values))
 
     def _shock_table(self, markup: Markup = "latex") -> SymbolTable:
         """Build the shock rows, resolving each shock's declared caption and rendering."""
-        return SymbolTable(rows=self._symbol_rows(self.shocks, markup))
+        return SymbolTable(rows=self._symbol_rows(symbols=self.shocks, markup=markup))
 
     def _steady_state_table(self, markup: Markup = "latex") -> EquationTable:
         """
@@ -776,37 +777,32 @@ class Model:
         overrides = self._markup_overrides(markup)
         render_sides = DIALECTS[markup].render_sides
 
+        rows = []
+        for block, equation_id, label, sides in self._printed_steady_state_relationships():
+            left, right = render_sides(*sides, overrides)
+            rows.append(EquationRow(block=block, equation_id=equation_id, label=label, left=left, right=right))
+        return EquationTable(rows=rows)
+
+    def _printed_steady_state_relationships(self) -> list[tuple[str, str, str | None, tuple[sp.Basic, sp.Basic]]]:
+        """Return the block, id, caption and two sides of every steady-state relationship the table prints."""
         blocks = [block for block in self._source_ast.blocks if block.is_steady_state] if self._source_ast else []
         if not blocks:
-            return EquationTable(
-                rows=[
-                    EquationRow(
-                        block=SOLVED_STEADY_STATE_BLOCK,
-                        equation_id=f"{SOLVED_STEADY_STATE_BLOCK}.relationships.{position}",
-                        label=None,
-                        left=left,
-                        right=right,
-                    )
-                    for position, equation in enumerate(resubstitute_steady_state(self.steady_state_relationships))
-                    for left, right in [render_sides(equation.lhs, equation.rhs, overrides)]
-                ]
-            )
+            return [
+                (
+                    SOLVED_STEADY_STATE_BLOCK,
+                    f"{SOLVED_STEADY_STATE_BLOCK}.relationships.{position}",
+                    None,
+                    (equation.lhs, equation.rhs),
+                )
+                for position, equation in enumerate(resubstitute_steady_state(self.steady_state_relationships))
+            ]
 
-        rows = []
-        for block in blocks:
-            for component in ("definitions", "identities"):
-                for position, equation in enumerate(getattr(block, component)):
-                    left, right = render_sides(*authored_expressions(equation), overrides)
-                    rows.append(
-                        EquationRow(
-                            block=block.name,
-                            equation_id=f"{block.name}.{component}.{position}",
-                            label=equation.declared_name,
-                            left=left,
-                            right=right,
-                        )
-                    )
-        return EquationTable(rows=rows)
+        return [
+            (block.name, f"{block.name}.{component}.{position}", equation.declared_name, authored_expressions(equation))
+            for block in blocks
+            for component in ("definitions", "identities")
+            for position, equation in enumerate(getattr(block, component))
+        ]
 
     def _steady_state_estimates_table(
         self,
@@ -818,10 +814,10 @@ class Model:
         ci_prob: float | None = None,
         markup: Markup = "latex",
     ) -> EstimationTable:
-        r"""
+        """
         Build the distribution of each variable's steady state under the prior and the posterior.
 
-        Every draw of the parameters is a steady state, so the table solves the steady state once per draw and
+        Each draw of the parameters implies a steady state, so the table solves the steady state once per draw and
         summarizes the values. The prior draws come from the ``prior`` group of ``idata`` when it has one, and
         are sampled from the GCN file's priors otherwise. A draw whose steady state fails to solve is left out of
         the summary, and a warning reports how many there were.
@@ -852,19 +848,9 @@ class Model:
             One row per variable, renderable as LaTeX or as a dataframe.
         """
         free_names = {parameter.name for parameter in self.params}
-        prior_group = None if idata is None else prior_dataset(idata)
-
-        if prior_group is not None:
-            prior_parameters = prior_group[[name for name in prior_group.data_vars if name in free_names]]
-        else:
-            priors = {name: prior for name, prior in self.param_priors.to_string().items() if name in free_names}
-            prior_parameters = (
-                xr.Dataset.from_dataframe(sample_from_priors(priors, n_samples=prior_draws, seed=random_seed))
-                .rename({"index": "draw"})
-                .expand_dims("chain")
-                if priors
-                else None
-            )
+        prior_parameters = self._prior_parameter_draws(
+            idata=idata, free_names=free_names, prior_draws=prior_draws, random_seed=random_seed
+        )
 
         if idata is None and prior_parameters is None:
             raise ValueError(
@@ -872,14 +858,14 @@ class Model:
                 "distribution to summarize. Pass sampler output as idata."
             )
 
-        prior_values = None if prior_parameters is None else self._steady_state_draws(prior_parameters, "prior")
+        prior_values = None if prior_parameters is None else self._steady_state_draws(prior_parameters, group="prior")
         # A DataTree holding only a prior group is prior predictive output, which has no posterior half.
         if idata is None or (isinstance(idata, xr.DataTree) and "posterior" not in idata.children):
             summary, interval = None, None
         else:
             posterior = posterior_dataset(idata)
             posterior_values = self._steady_state_draws(
-                posterior[[name for name in posterior.data_vars if name in free_names]], "posterior"
+                posterior[[name for name in posterior.data_vars if name in free_names]], group="posterior"
             )
             summary, interval = summarize_posterior(
                 posterior_values,
@@ -895,10 +881,10 @@ class Model:
         rows = []
         for variable in self.variables:
             key = variable_key(variable.base_name)
-            draws = None if prior_values is None else prior_values[variable.base_name].to_numpy().ravel()
-            _, draw_statistics = reconcile_prior(
-                None, None if draws is None else draws[np.isfinite(draws)], prior_stats
-            )
+            draw_statistics = None
+            if prior_values is not None:
+                draws = prior_values[variable.base_name].to_numpy().ravel()
+                draw_statistics = _draw_statistics(draws[np.isfinite(draws)], prior_stats)
             rows.append(
                 EstimateRow(
                     symbol=render(variable.to_ss(), name_override=overrides.get(key)),
@@ -915,6 +901,29 @@ class Model:
             symbol_heading="Variable",
             prior_stat_prefix="Prior ",
         )
+
+    def _prior_parameter_draws(
+        self,
+        idata: xr.DataTree | xr.Dataset | None,
+        free_names: set[str],
+        prior_draws: int,
+        random_seed: int | np.random.Generator | None,
+    ) -> xr.Dataset | None:
+        """
+        Return draws of the free parameters under the prior, with ``chain`` and ``draw`` dims.
+
+        The draws are the ``prior`` group of ``idata`` when it has one, and are sampled from the GCN file's priors
+        otherwise. None means neither exists.
+        """
+        prior_group = None if idata is None else prior_dataset(idata)
+        if prior_group is not None:
+            return prior_group[[name for name in prior_group.data_vars if name in free_names]]
+
+        priors = {name: prior for name, prior in self.param_priors.to_string().items() if name in free_names}
+        if not priors:
+            return None
+        samples = sample_from_priors(priors, n_samples=prior_draws, seed=random_seed)
+        return xr.Dataset.from_dataframe(samples).rename({"index": "draw"}).expand_dims("chain")
 
     def _steady_state_draws(self, parameters: xr.Dataset, group: str) -> xr.Dataset:
         """
@@ -934,7 +943,7 @@ class Model:
                 verbose=False, progressbar=False, **{name: float(column[index]) for name, column in columns.items()}
             )
             if result.success:
-                solved = _values_by_base_name(result)
+                solved = _values_by_base_name(values=result)
                 values[index] = [solved[name] for name in names]
 
         failures = int(np.isnan(values).any(axis=1).sum())
