@@ -187,6 +187,20 @@ def test_resubstitution_names_other_steady_states_without_changing_values():
         assert float(eq.rhs.subs(values)) == pytest.approx(float(values[eq.lhs]))
 
 
+def test_resubstitution_rebuilds_a_piecewise_relationship():
+    """A Piecewise's condition pairs take no evaluate keyword, which once made the rebuild raise."""
+    alpha, beta = sp.symbols("alpha beta", positive=True)
+    a_ss, b_ss = sp.symbols("A_ss B_ss")
+    relationships = [
+        sp.Eq(a_ss, alpha + beta, evaluate=False),
+        sp.Eq(b_ss, sp.Piecewise((alpha + beta, alpha > 1), (beta, True)), evaluate=False),
+    ]
+
+    resubstituted = resubstitute_steady_state(relationships)
+
+    assert resubstituted[1].rhs == sp.Piecewise((a_ss, alpha > 1), (beta, True))
+
+
 def test_system_to_steady_state_collapses_time_indices_and_zeros_shocks():
     x, eps = TimeAwareSymbol("x", 0), TimeAwareSymbol("eps", 0)
     rho = sp.Symbol("rho")

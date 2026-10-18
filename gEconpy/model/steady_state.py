@@ -120,6 +120,8 @@ def _drop_identity_terms(expr: sp.Basic, cache: dict[sp.Basic, sp.Basic]) -> sp.
     """
     Remove the ones and zeros substitution leaves in an unevaluated tree, and print an integral float as an integer.
 
+    Call it inside ``sympy.evaluate(False)``, which is what keeps the rebuilt nodes unevaluated.
+
     A one is a factor of a product or the base of a power, and a zero is a term of a sum.
 
     The cache is keyed on subtrees, because an inlined tree shares them and a plain recursion revisits each share.
@@ -141,7 +143,8 @@ def _drop_identity_terms(expr: sp.Basic, cache: dict[sp.Basic, sp.Basic]) -> sp.
         elif identity is not None and len(args) == 1:
             cleaned = args[0]
         else:
-            cleaned = expr.func(*args, evaluate=False)
+            # No evaluate keyword: the caller's context already applies, and Piecewise's condition pairs reject it.
+            cleaned = expr.func(*args)
 
     cache[expr] = cleaned
     return cleaned
