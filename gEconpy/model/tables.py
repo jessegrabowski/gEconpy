@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal, Protocol, cast, get_args
 import arviz_stats as azs
 import numpy as np
 import pandas as pd
+import sympy as sp
 import xarray as xr
 
 from arviz_base import rcParams as arviz_rc_params
@@ -22,10 +23,12 @@ from gEconpy.classes.time_aware_symbol import (
     render_name_typst,
     render_typst,
 )
-from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex
-from gEconpy.model.typst import definition_rows_typst, equation_sides_typst
+from gEconpy.model.latex import block_heading, definition_rows, equation_sides_latex, render_sides
+from gEconpy.model.typst import definition_rows_typst, equation_sides_typst, typst
 
-TableGroup = Literal["equations", "variables", "shocks", "parameters", "estimates"]
+TableGroup = Literal[
+    "equations", "variables", "shocks", "parameters", "estimates", "steady_state", "steady_state_estimates"
+]
 Markup = Literal["latex", "typst"]
 # The statistics every preliz family reports, which is the vocabulary a caller may ask a prior for. A name
 # outside it is rejected rather than rendered empty, because an empty column in a paper is not a visible error.
@@ -54,7 +57,8 @@ def _format_value(
     Parameters
     ----------
     value : float, optional
-        The value, or None for a parameter the model solves for.
+        The value, or None for a parameter the model solves for. NaN is a statistic that does not exist for the
+        data, such as the skew of a constant, and prints empty like None.
     math : tuple of (str, str), optional
         Opening and closing math delimiters for scientific notation. Defaults to a LaTeX document's ``$``,
         which an HTML renderer must override because no notebook frontend recognizes it.
@@ -68,7 +72,7 @@ def _format_value(
     rendered : str
         The value, empty for None.
     """
-    if value is None:
+    if value is None or np.isnan(value):
         return ""
 
     rendered = f"{value:.{precision}g}"
@@ -92,12 +96,15 @@ def _wrap(
     caption: str | None,
     label: str | None,
     size: str | None,
+    landscape: bool = False,
 ) -> str:
     r"""
     Wrap a rendered body in the LaTeX a document needs around it.
 
     A caption or a label puts the body in a ``table`` environment, because neither can be referenced outside
-    one. A size is a declaration, so it applies until the enclosing group ends.
+    one. A size is a declaration, so it applies until the enclosing group ends. ``landscape`` puts the body in a
+    ``sidewaystable``, which ``rotating`` provides, whether or not it has a caption, because rotation is what
+    the environment is for.
 
     Parameters
     ----------
@@ -110,6 +117,8 @@ def _wrap(
         Label for ``\ref``. Defaults to no label.
     size : str, optional
         A LaTeX size command without its backslash, such as ``small``. Defaults to the document's size.
+    landscape : bool, optional
+        Rotate the table onto a page of its own. Defaults to False.
 
     Returns
     -------
@@ -123,16 +132,18 @@ def _wrap(
         # Braced, because a size command is a declaration that would otherwise run to the end of whatever
         # group the caller pasted the table into.
         body = f"{{\\{size}\n{body}\n}}"
-    if caption is None and label is None:
+    if caption is None and label is None and not landscape:
         return body
 
-    lines = ["\\begin{table}[htbp]", "\\centering", body]
+    environment = "sidewaystable" if landscape else "table"
+    # A sidewaystable is a page of its own, so it takes no placement.
+    lines = [f"\\begin{{{environment}}}" if landscape else "\\begin{table}[htbp]", "\\centering", body]
     if caption is not None:
         # Passed through as LaTeX, because a table caption in this literature routinely carries math.
         lines.append(rf"\caption{{{caption}}}")
     if label is not None:
         lines.append(rf"\label{{{label}}}")
-    lines.append("\\end{table}")
+    lines.append(f"\\end{{{environment}}}")
     return "\n".join(lines)
 
 
@@ -163,6 +174,8 @@ class _Dialect:
         Renders one equation as its two sides.
     definition_rows : callable
         Renders every ``definitions`` entry of a parsed file.
+    render_sides : callable
+        Renders a left and a right expression, taking the declared overrides.
     """
 
     escape: Callable[[str], str]
@@ -173,6 +186,7 @@ class _Dialect:
     render_name: Callable[..., str]
     equation_sides: Callable[..., tuple[str, str]]
     definition_rows: Callable[..., list[tuple[str, str, str, str]]]
+    render_sides: Callable[..., tuple[str, str]]
 
 
 @dataclass(frozen=True)
@@ -224,6 +238,7 @@ LATEX = _Dialect(
     render_name=render_name_latex,
     equation_sides=equation_sides_latex,
     definition_rows=definition_rows,
+    render_sides=partial(render_sides, printer=sp.latex, renderer=render_latex),
 )
 
 TYPST = _Dialect(
@@ -235,6 +250,7 @@ TYPST = _Dialect(
     render_name=render_name_typst,
     equation_sides=equation_sides_typst,
     definition_rows=definition_rows_typst,
+    render_sides=partial(render_sides, printer=typst, renderer=render_typst),
 )
 
 # The markup a writer emits, which is also the language a table's rows are built in.
@@ -377,12 +393,18 @@ def _typst_table(
     return "\n".join(lines)
 
 
-def _wrap_typst(body: str, caption: str | None, label: str | None, size: str | None) -> str:
+def _wrap_typst(
+    body: str,
+    caption: str | None,
+    label: str | None,
+    size: str | None,
+    landscape: bool = False,
+) -> str:
     """
     Wrap a rendered body in the Typst a document needs around it.
 
     A caption or a label puts the body in a ``figure``, because that is what Typst numbers, lists and lets
-    ``@name`` refer to.
+    ``@name`` refer to. ``landscape`` puts the result on a flipped page of its own.
 
     Parameters
     ----------
@@ -395,6 +417,8 @@ def _wrap_typst(body: str, caption: str | None, label: str | None, size: str | N
         Label for ``@``. Defaults to no label.
     size : str, optional
         A Typst text size, such as ``10pt``. Defaults to the document's size.
+    landscape : bool, optional
+        Put the table on a page of its own, turned to landscape. Defaults to False.
 
     Returns
     -------
@@ -403,6 +427,12 @@ def _wrap_typst(body: str, caption: str | None, label: str | None, size: str | N
     """
     if not body:
         return ""
+    wrapped = _wrap_typst_figure(body, caption=caption, label=label, size=size)
+    return f"#page(flipped: true)[\n{wrapped}\n]" if landscape else wrapped
+
+
+def _wrap_typst_figure(body: str, caption: str | None, label: str | None, size: str | None) -> str:
+    """Wrap a non-empty Typst table in a ``figure`` when it has a caption or a label, then in its text size."""
     if caption is None and label is None:
         return f"#text(size: {size})[\n{body}\n]" if size else body
 
@@ -594,6 +624,7 @@ class _TabularTable(ABC):
         size: str | None = None,
         widths: Sequence[str] | None = None,
         booktabs: bool = False,
+        landscape: bool = False,
     ) -> str:
         r"""
         Render the table as a LaTeX ``tabular``, dropping any column that is empty for every row.
@@ -611,6 +642,9 @@ class _TabularTable(ABC):
             One column specifier per printed column. Defaults to each column's own.
         booktabs : bool, optional
             Use booktabs rules instead of ``\hline``. Defaults to False.
+        landscape : bool, optional
+            Rotate the table onto a page of its own in a ``sidewaystable``, for a table wider than the text.
+            The document needs ``\usepackage{rotating}``. Defaults to False.
 
         Returns
         -------
@@ -622,6 +656,7 @@ class _TabularTable(ABC):
             caption=caption,
             label=label,
             size=size,
+            landscape=landscape,
         )
 
     def to_typst(
@@ -631,6 +666,7 @@ class _TabularTable(ABC):
         size: str | None = None,
         widths: Sequence[str] | None = None,
         booktabs: bool = False,
+        landscape: bool = False,
     ) -> str:
         """
         Render the table as a Typst ``table``, dropping any column that is empty for every row.
@@ -651,6 +687,8 @@ class _TabularTable(ABC):
             One Typst column width per printed column, such as ``30%``. Defaults to each column's own.
         booktabs : bool, optional
             Draw three horizontal rules and no grid. Defaults to Typst's own grid.
+        landscape : bool, optional
+            Put the table on a page of its own, turned to landscape. Defaults to False.
 
         Returns
         -------
@@ -662,15 +700,21 @@ class _TabularTable(ABC):
             caption=caption,
             label=label,
             size=size,
+            landscape=landscape,
         )
 
 
 @dataclass(frozen=True)
 class SymbolRow:
-    """One variable or shock of a model, with the caption its ``symbols`` entry declares."""
+    """
+    One variable or shock of a model, with the caption its ``symbols`` entry declares.
+
+    ``steady_state`` is the variable's steady-state value, None for a shock or a table built without one.
+    """
 
     symbol: str
     description: str | None
+    steady_state: float | None = None
 
 
 @dataclass(frozen=True)
@@ -684,7 +728,8 @@ class SymbolTable(_TabularTable):
     def _columns(self) -> list[_Column]:
         return [
             _Column("Symbol", "left", lambda dialect, row: dialect.math(row.symbol)),
-            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.5),
+            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or "")),
+            _Column("Steady state", "right", lambda dialect, row: _format_value(row.steady_state, times=dialect.times)),
         ]
 
 
@@ -730,12 +775,23 @@ def _check_prior_stats(prior_stats: Sequence[str]) -> None:
         raise ValueError(f"prior_stats must name statistics from {', '.join(PRIOR_STATS)}, got {', '.join(unknown)}.")
 
 
-def _prior_columns(prior_stats: Sequence[str], include_prior_params: bool) -> list[_Column]:
-    """Return the family column, one column per requested statistic, and the parameters when asked for."""
+def _prefixed_heading(prefix: str, heading: str) -> str:
+    """Join a prefix to a heading in sentence case, keeping an abbreviation such as ``S.D.`` as it is."""
+    if not prefix:
+        return heading
+    return prefix + (heading if heading.isupper() else heading.lower())
+
+
+def _prior_columns(prior_stats: Sequence[str], include_prior_params: bool, stat_prefix: str = "") -> list[_Column]:
+    """
+    Return the family column, one column per requested statistic, and the parameters when asked for.
+
+    ``stat_prefix`` heads each statistic, for a table with no family column to say the statistics are the prior's.
+    """
     columns = [_Column("Prior", "left", lambda dialect, row: dialect.escape(row.prior_family))]
     columns += [
         _Column(
-            PRIOR_STAT_HEADINGS.get(name, name.title()),
+            _prefixed_heading(stat_prefix, PRIOR_STAT_HEADINGS.get(name, name.title())),
             "right",
             lambda dialect, row, name=name: _format_statistic(dialect, row.prior_stat(name)),
         )
@@ -869,10 +925,10 @@ class CalibrationTable(_TabularTable):
         )
 
     def _columns(self) -> list[_Column]:
-        # Prose columns wrap; a symbol or a number does not need to.
+        # A description is a short caption, so it sizes to its content. A citation runs long enough to wrap.
         return [
             _Column("Parameter", "left", lambda dialect, row: dialect.math(row.symbol)),
-            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.3),
+            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or "")),
             _Column("Value", "left", lambda dialect, row: _format_value(row.value, times=dialect.times)),
             *_prior_columns(self.prior_stats, include_prior_params=self.include_prior_params),
             _Column("Source", "left", lambda dialect, row: dialect.escape(row.source or ""), width=0.2),
@@ -969,9 +1025,24 @@ _DRAW_STATISTICS: dict[str, Callable[[np.ndarray], float]] = {
 _PRIOR_AGREEMENT_ERRORS = 4
 
 
+# Standardized by the standard deviation, so neither exists for a constant sample.
+_SHAPE_STATISTICS = frozenset({"skewness", "kurtosis"})
+
+
 def _draw_statistics(draws: np.ndarray, names: Sequence[str]) -> dict[str, float | None]:
-    """Return each named statistic of a sample of prior draws, None for one a sample cannot estimate."""
-    return {name: float(_DRAW_STATISTICS[name](draws)) if name in _DRAW_STATISTICS else None for name in names}
+    """
+    Return each named statistic of a sample of prior draws, None for one a sample cannot estimate.
+
+    An empty sample estimates nothing, and a constant one has no skew or kurtosis. A steady-state variable fixed by
+    the model, such as productivity normalized to one, is the constant case.
+    """
+    constant = draws.size > 0 and np.ptp(draws) == 0
+    return {
+        name: float(_DRAW_STATISTICS[name](draws))
+        if name in _DRAW_STATISTICS and draws.size > 0 and not (constant and name in _SHAPE_STATISTICS)
+        else None
+        for name in names
+    }
 
 
 def _draws_match_prior(prior: Distribution, draws: np.ndarray) -> bool:
@@ -1095,12 +1166,19 @@ class EstimationTable(_TabularTable):
         Print the distribution's own parameters in a column of their own. Defaults to False.
     interval : str, optional
         Heading of the posterior interval column, such as ``"89% HDI"``. Defaults to no posterior.
+    symbol_heading : str, optional
+        Heading of the symbol column. Defaults to ``"Parameter"``.
+    prior_stat_prefix : str, optional
+        Prefix of each prior statistic's heading. A table whose priors are known only from draws prints no family
+        column, and passes ``"Prior "`` so its moments are not read as the posterior's. Defaults to none.
     """
 
     rows: tuple[EstimateRow, ...] | list[EstimateRow]
     prior_stats: Sequence[str] = DEFAULT_PRIOR_STATS
     include_prior_params: bool = False
     interval: str | None = None
+    symbol_heading: str = "Parameter"
+    prior_stat_prefix: str = ""
 
     _row_type: ClassVar[type] = EstimateRow
 
@@ -1140,9 +1218,11 @@ class EstimationTable(_TabularTable):
 
     def _columns(self) -> list[_Column]:
         return [
-            _Column("Parameter", "left", lambda dialect, row: dialect.math(row.symbol)),
-            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or ""), width=0.3),
-            *_prior_columns(self.prior_stats, include_prior_params=self.include_prior_params),
+            _Column(self.symbol_heading, "left", lambda dialect, row: dialect.math(row.symbol)),
+            _Column("Description", "left", lambda dialect, row: dialect.escape(row.description or "")),
+            *_prior_columns(
+                self.prior_stats, include_prior_params=self.include_prior_params, stat_prefix=self.prior_stat_prefix
+            ),
             _Column("Post. mean", "right", lambda dialect, row: _format_statistic(dialect, row.posterior_mean)),
             _Column("Post. S.D.", "right", lambda dialect, row: _format_statistic(dialect, row.posterior_sd)),
             _Column(

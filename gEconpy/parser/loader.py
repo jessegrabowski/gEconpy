@@ -12,7 +12,6 @@ from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.model.block import Block
 from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node, SymbolDeclaration
 from gEconpy.parser.ast.validation import check_declared_symbols_exist
-from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
 from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_metadata
@@ -336,7 +335,7 @@ def _block_dict_to_variables_and_shocks(
 def _extract_ss_solution_dict(
     model: GCNModel, assumptions: dict[str, dict[str, bool]]
 ) -> tuple[SymbolDictionary, dict[sp.Expr, sp.Expr]]:
-    ss_blocks = [b for b in model.blocks if b.name.upper().replace("_", "") in STEADY_STATE_BLOCK_KEYS]
+    ss_blocks = [b for b in model.blocks if b.is_steady_state]
     if not ss_blocks:
         return SymbolDictionary(), {}
 

@@ -1,5 +1,6 @@
 import logging
 
+from collections.abc import Sequence
 from typing import Literal
 
 import pytensor.tensor as pt
@@ -78,6 +79,75 @@ def print_steady_state(ss_dict: SteadyStateResults) -> None:
         output.extend(calibrated_outputs)
 
     _log.info("\n".join(output))
+
+
+def resubstitute_steady_state(relationships: Sequence[sp.Eq]) -> list[sp.Eq]:
+    """
+    Rewrite each steady-state relationship in terms of the other steady-state variables, for printing.
+
+    A relationship the model holds has every other steady-state value inlined into it, so ``K_ss`` repeats the
+    whole expression for ``r_ss``. Wherever a subexpression is exactly another relationship's right side, it is
+    replaced by that relationship's variable. Matching is structural and top-down, so the largest match wins and
+    no new names are introduced. A right side that is a single number or symbol is never a replacement target,
+    because a constant such as ``A_ss = 1`` would otherwise rename every literal one.
+
+    The trees are rebuilt unevaluated: evaluating an inlined steady-state tree costs time exponential in its
+    depth.
+
+    Parameters
+    ----------
+    relationships : sequence of Eq
+        Steady-state variables equal to their solutions, as ``Model.steady_state_relationships`` holds them.
+
+    Returns
+    -------
+    relationships : list of Eq
+        The same relationships, in the same order, with every other variable's solution folded back in.
+    """
+    targets = {eq.rhs: eq.lhs for eq in relationships if not (eq.rhs.is_Number or eq.rhs.is_Symbol)}
+    cache: dict[sp.Basic, sp.Basic] = {}
+
+    resubstituted = []
+    with sp.evaluate(False):
+        for eq in relationships:
+            others = {rhs: lhs for rhs, lhs in targets.items() if lhs != eq.lhs}
+            rhs = _drop_identity_terms(eq.rhs.xreplace(others), cache)
+            resubstituted.append(sp.Eq(eq.lhs, rhs, evaluate=False))
+    return resubstituted
+
+
+def _drop_identity_terms(expr: sp.Basic, cache: dict[sp.Basic, sp.Basic]) -> sp.Basic:
+    """
+    Remove the ones and zeros substitution leaves in an unevaluated tree, and print an integral float as an integer.
+
+    Call it inside ``sympy.evaluate(False)``, which is what keeps the rebuilt nodes unevaluated.
+
+    A one is a factor of a product or the base of a power, and a zero is a term of a sum.
+
+    The cache is keyed on subtrees, because an inlined tree shares them and a plain recursion revisits each share.
+    """
+    if expr in cache:
+        return cache[expr]
+
+    if isinstance(expr, sp.Float) and float(expr).is_integer():
+        cleaned = sp.Integer(int(expr))
+    elif expr.is_Atom or not expr.args:
+        cleaned = expr
+    else:
+        args = [_drop_identity_terms(arg, cache) for arg in expr.args]
+        identity = {sp.Mul: sp.Integer(1), sp.Add: sp.Integer(0)}.get(type(expr))
+        if identity is not None:
+            args = [arg for arg in args if arg != identity] or [identity]
+        if isinstance(expr, sp.Pow) and args[0] == 1:
+            cleaned = sp.Integer(1)
+        elif identity is not None and len(args) == 1:
+            cleaned = args[0]
+        else:
+            # No evaluate keyword: the caller's context already applies, and Piecewise's condition pairs reject it.
+            cleaned = expr.func(*args)
+
+    cache[expr] = cleaned
+    return cleaned
 
 
 def make_steady_state_shock_dict(shocks: list[TimeAwareSymbol]) -> SymbolDictionary:

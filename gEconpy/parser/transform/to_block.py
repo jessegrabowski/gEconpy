@@ -17,7 +17,6 @@ from gEconpy.parser.ast import (
     Variable,
     variable_key,
 )
-from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.errors import ParseLocation
 from gEconpy.parser.transform.expand_time_indices import expand_block_time_indices
 from gEconpy.parser.transform.to_sympy import ASTToSympyConverter, _checked_eq, ast_to_sympy
@@ -63,7 +62,7 @@ def ast_model_to_block_dict(
 
     block_dict = {}
     for ast_block in model.blocks:
-        if _is_steady_state_block(ast_block):
+        if ast_block.is_steady_state:
             continue
 
         expanded_block = expand_block_time_indices(ast_block)
@@ -164,10 +163,6 @@ class _ConvertedEquation:
 
 def _variable_to_symbol(var: Variable, assumptions: dict[str, dict[str, bool]]) -> TimeAwareSymbol:
     return cast(TimeAwareSymbol, ast_to_sympy(var, assumptions))
-
-
-def _is_steady_state_block(block: GCNBlock) -> bool:
-    return block.name.upper().replace("_", "") in STEADY_STATE_BLOCK_KEYS
 
 
 def _convert_equation(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) -> _ConvertedEquation:

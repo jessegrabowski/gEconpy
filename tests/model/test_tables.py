@@ -486,8 +486,9 @@ class TestValueFormatting:
             (1e-07, r"$1 \times 10^{-7}$"),
             (1.23457e08, r"$1.23457 \times 10^{8}$"),
             (None, ""),
+            (np.nan, ""),
         ],
-        ids=["decimal", "integral", "small", "large", "calibrated"],
+        ids=["decimal", "integral", "small", "large", "calibrated", "undefined"],
     )
     def test_a_value_never_prints_bare_scientific_notation(self, value, expected):
         """``1e-07`` in a tabular cell is outside math mode and prints literally."""
@@ -514,7 +515,7 @@ def test_the_rendered_calibration_has_the_expected_shape():
     )
 
     assert table.to_latex() == (
-        "\\begin{tabular}{lp{0.3\\linewidth}llrrp{0.2\\linewidth}}\n"
+        "\\begin{tabular}{llllrrp{0.2\\linewidth}}\n"
         "\\hline\n"
         "\\textbf{Parameter} & \\textbf{Description} & \\textbf{Value} & \\textbf{Prior} & "
         "\\textbf{Mean} & \\textbf{S.D.} & \\textbf{Source} \\\\\n"
@@ -526,7 +527,7 @@ def test_the_rendered_calibration_has_the_expected_shape():
     )
 
 
-@pytest.mark.parametrize("group", ["equations", "parameters", "estimates"])
+@pytest.mark.parametrize("group", ["equations", "parameters", "estimates", "steady_state", "steady_state_estimates"])
 def test_the_rendered_table_compiles(rbc, group, tmp_path):
     r"""
     The feature's whole contract is valid LaTeX, and an empty table once produced output pdflatex rejected.
@@ -558,8 +559,9 @@ def test_the_rendered_table_compiles(rbc, group, tmp_path):
     "group, columns",
     [
         ("equations", ["block", "equation_id", "label", "equation"]),
-        ("variables", ["symbol", "description"]),
-        ("shocks", ["symbol", "description"]),
+        ("variables", ["symbol", "description", "steady_state"]),
+        ("shocks", ["symbol", "description", "steady_state"]),
+        ("steady_state", ["block", "equation_id", "label", "equation"]),
         (
             "parameters",
             ["symbol", "description", "value", "prior", "prior_mean", "prior_std", "prior_parameters", "source"],
@@ -633,6 +635,133 @@ def test_a_declared_name_replaces_the_whole_variable_name(tmp_path):
     assert [row.symbol for row in rows] == [r"\hat{p}_{H,t}"]
 
 
+def _draws(**values: list[float]) -> xr.Dataset:
+    """One chain of parameter draws, taking each listed value in turn."""
+    return xr.Dataset({name: (("chain", "draw"), [draws]) for name, draws in values.items()})
+
+
+class TestSteadyStateTables:
+    @pytest.mark.parametrize("solved", [False, True], ids=["values_passed", "solved_by_the_table"])
+    def test_a_variable_row_carries_its_steady_state_value(self, rbc, solved):
+        """Values come keyed ``C_ss``, as ``Model.steady_state`` returns them, and match by variable."""
+        steady_state = rbc.steady_state(verbose=False, progressbar=False)
+
+        frame = rbc.table("variables", steady_state=True if solved else steady_state).to_frame().set_index("symbol")
+
+        assert frame.loc["K_{t}", "steady_state"] == pytest.approx(steady_state["K_ss"])
+        assert "Steady state" in rbc.write_table("variables", build_options={"steady_state": steady_state})
+        assert "Steady state" not in rbc.write_table("variables")
+
+    def test_a_steady_state_that_does_not_solve_has_no_values_to_print(self, tmp_path):
+        """``exp(Y) + alpha * Y^2`` is positive, so it never equals -1 and the solver cannot succeed."""
+        path = tmp_path / "unsolvable.gcn"
+        path.write_text(
+            "block H { identities { exp(Y[]) + alpha * Y[-1] ^ 2 = -1; }; calibration { alpha = 0.3; }; };\n"
+        )
+        model = model_from_gcn(path, verbose=False)
+
+        with pytest.raises(ValueError, match="did not solve at the current calibration"):
+            model.table("variables", steady_state=True)
+
+    def test_a_shock_has_no_steady_state_to_print(self, rbc):
+        with pytest.raises(TypeError, match="'shocks' takes no build option 'steady_state'"):
+            rbc.table("shocks", steady_state=True)
+
+    def test_the_steady_state_group_prints_the_authored_block(self, rbc):
+        """The authored block keeps names the solved system eliminated, such as ``mc``, and the author's form."""
+        block = next(block for block in rbc._source_ast.blocks if block.is_steady_state)
+
+        rows = rbc.table("steady_state").rows
+
+        assert len(rows) == len(block.definitions) + len(block.identities)
+        assert (rows[1].left, rows[1].right) == (r"\text{mc}_{ss}", "1")
+        assert rows[0].equation_id == f"{block.name}.identities.0"
+
+    def test_a_model_without_a_parsed_file_prints_its_solved_relationships(self, rbc, monkeypatch):
+        """The relationships are printed in terms of each other, the way an author would write them."""
+        monkeypatch.setattr(rbc, "_source_ast", None)
+
+        rows = {row.left: row.right for row in rbc.table("steady_state").rows}
+
+        assert len(rows) == len(rbc.steady_state_relationships)
+        assert rows["K_{ss}"] == r"\frac{\alpha Y_{ss}}{r_{ss}}"
+        assert rows["A_{ss}"] == "1"
+
+    def test_a_constant_steady_state_has_no_shape_statistics(self, rbc):
+        """Productivity is fixed at one under every draw, so its skew is undefined rather than NaN."""
+        table = rbc.table("steady_state_estimates", prior_draws=20, random_seed=0, prior_stats=("std", "skewness"))
+        rows = {row.symbol: row for row in table.rows}
+
+        assert rows["A_{ss}"].prior_stat("skewness") is None
+        assert rows["A_{ss}"].prior_stat("std") == 0
+        assert rows["K_{ss}"].prior_stat("skewness") is not None
+
+    def test_each_half_summarizes_the_steady_state_solved_at_its_own_draws(self, rbc):
+        """Constant draws make the expected summary one steady-state solve, and the prior group beats the GCN priors."""
+        idata = xr.DataTree.from_dict(
+            {"posterior": _draws(alpha=[0.3] * 4), "prior": _draws(alpha=[0.4] * 4, delta=[0.03] * 4)}
+        )
+        posterior_ss = rbc.steady_state(verbose=False, progressbar=False, alpha=0.3)
+        prior_ss = rbc.steady_state(verbose=False, progressbar=False, alpha=0.4, delta=0.03)
+
+        frame = rbc.table("steady_state_estimates", idata=idata).to_frame().set_index("symbol")
+
+        assert frame.loc["K_{ss}", "posterior_mean"] == pytest.approx(posterior_ss["K_ss"])
+        assert frame.loc["K_{ss}", "posterior_sd"] == pytest.approx(0)
+        assert frame.loc["K_{ss}", "prior_mean"] == pytest.approx(prior_ss["K_ss"])
+        assert len(frame) == len(rbc.variables)
+
+    def test_without_a_prior_group_the_prior_is_drawn_from_the_gcn_file(self, rbc):
+        """The seed controls the draws, and draws from the declared priors spread the steady state out."""
+        frames = {
+            seed: rbc.table("steady_state_estimates", prior_draws=50, random_seed=seed).to_frame().set_index("symbol")
+            for seed in (0, 1)
+        }
+        rendered = rbc.write_table("steady_state_estimates", build_options={"prior_draws": 50, "random_seed": 0})
+
+        assert frames[0].loc["K_{ss}", "prior_std"] > 0
+        assert frames[0].loc["K_{ss}", "prior_mean"] != frames[1].loc["K_{ss}", "prior_mean"]
+        assert r"\textbf{Variable} & \textbf{Description} & \textbf{Prior mean} & \textbf{Prior S.D.} \\" in rendered
+
+    def test_the_same_seed_draws_the_same_prior(self, rbc):
+        build_options = {"prior_draws": 50, "random_seed": 0}
+
+        assert rbc.write_table("steady_state_estimates", build_options=build_options) == rbc.write_table(
+            "steady_state_estimates", build_options=build_options
+        )
+
+    @pytest.mark.parametrize("group, column", [("prior", "prior_mean"), ("posterior", "posterior_mean")])
+    def test_a_draw_whose_steady_state_fails_is_left_out_of_the_summary(self, rbc, caplog, group, column):
+        """``beta = 1.2`` puts the rental rate below zero, where the analytic steady state is NaN."""
+        idata = xr.DataTree.from_dict({group: _draws(beta=[0.99, 0.99, 1.2])})
+
+        with caplog.at_level("WARNING"):
+            frame = rbc.table("steady_state_estimates", idata=idata, prior_draws=10).to_frame().set_index("symbol")
+
+        assert frame.loc["K_{ss}", column] == pytest.approx(
+            rbc.steady_state(verbose=False, progressbar=False, beta=0.99)["K_ss"]
+        )
+        assert f"failed to solve at 1 of 3 {group} draws" in caplog.text
+        assert "Steady State was not found" not in caplog.text
+
+    def test_a_posterior_whose_every_draw_fails_raises(self, rbc):
+        """An empty sample has no mean or interval, so the table refuses to print one."""
+        with pytest.raises(ValueError, match="failed to solve at every posterior draw"):
+            rbc.table("steady_state_estimates", idata=_draws(beta=[1.2, 1.2]), prior_draws=10)
+
+    def test_draws_naming_no_free_parameter_raise(self, rbc):
+        """A posterior from some other model would otherwise fail deep inside, on a missing chain dimension."""
+        with pytest.raises(ValueError, match="posterior draws hold none of the model's free parameters"):
+            rbc.table("steady_state_estimates", idata=_draws(unrelated=[1.0, 2.0]), prior_draws=10)
+
+    def test_a_model_with_no_priors_needs_sampler_output(self, tmp_path):
+        path = tmp_path / "bare.gcn"
+        path.write_text("block H { identities { Y[] = alpha * A[]; A[] = 1; }; calibration { alpha = 0.3; }; };\n")
+
+        with pytest.raises(ValueError, match="declares no priors"):
+            model_from_gcn(path, verbose=False).table("steady_state_estimates")
+
+
 class TestWriteTable:
     def test_an_unknown_writer_raises(self, rbc):
         with pytest.raises(ValueError, match="writer must be one of latex, typst"):
@@ -683,6 +812,17 @@ class TestWriteTable:
         with pytest.raises(ValueError, match="one specifier per printed column"):
             rbc.write_table("variables", widths=["c"])
 
+    @pytest.mark.parametrize(
+        "writer, opening, closing",
+        [("latex", "\\begin{sidewaystable}", "\\end{sidewaystable}"), ("typst", "#page(flipped: true)[", "]")],
+    )
+    def test_landscape_turns_the_table_onto_a_page_of_its_own(self, rbc, writer, opening, closing):
+        """Rotation needs the float even without a caption, because the environment is what turns the page."""
+        rendered = rbc.write_table("parameters", writer=writer, landscape=True)
+
+        assert rendered.startswith(opening)
+        assert rendered.endswith(closing)
+
     def test_a_path_receives_the_markup(self, rbc, tmp_path):
         out = tmp_path / "table.tex"
 
@@ -690,7 +830,8 @@ class TestWriteTable:
 
         assert out.read_text() == returned
 
-    def test_a_fully_styled_table_compiles(self, rbc, tmp_path):
+    @pytest.mark.parametrize("landscape", [False, True], ids=["portrait", "landscape"])
+    def test_a_fully_styled_table_compiles(self, rbc, tmp_path, landscape):
         """Every style option at once is the combination most likely to produce invalid LaTeX."""
         pdflatex = shutil.which("pdflatex")
         if pdflatex is None:
@@ -702,10 +843,11 @@ class TestWriteTable:
             label="tab:calib",
             size="small",
             booktabs=True,
+            landscape=landscape,
         )
         source = tmp_path / "styled.tex"
         source.write_text(
-            "\\documentclass{article}\n\\usepackage{amsmath,amssymb,booktabs}\n"
+            "\\documentclass{article}\n\\usepackage{amsmath,amssymb,booktabs,rotating}\n"
             f"\\begin{{document}}\n{body}\n\\end{{document}}\n"
         )
 

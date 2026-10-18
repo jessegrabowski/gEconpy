@@ -3,6 +3,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from typing import Self, cast
 
+from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.errors import ParseLocation
 
 
@@ -450,6 +451,11 @@ class GCNBlock:
 
     def has_optimization_problem(self) -> bool:
         return len(self.controls) > 0 and len(self.objective) > 0
+
+    @property
+    def is_steady_state(self) -> bool:
+        """Whether this is the block of steady-state relationships, under any spelling its name accepts."""
+        return self.name.upper().replace("_", "") in STEADY_STATE_BLOCK_KEYS
 
     def all_equations(self) -> list[GCNEquation]:
         """
