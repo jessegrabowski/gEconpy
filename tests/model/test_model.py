@@ -17,8 +17,8 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError
 from gEconpy.model.build import model_from_gcn
 from gEconpy.model.compile import compile_for_scipy, make_cache_key
-from gEconpy.model.model import DROrder
 from gEconpy.model.perturbation import (
+    DROrder,
     check_bk_condition,
     compute_bk_eigenvalues,
     compute_bk_eigenvalues_pt,

@@ -64,6 +64,8 @@ def test_statespace_matrices_agree_with_model(gcn_file):
     param_dict = model.parameters()
     ss_matrices = f(**{k: param_dict[k] for k in input_names})
 
+    np.testing.assert_array_equal(ss_mod.var_order, model.var_order)
+
     # ``ss_mod.linearized_system`` keeps the rows in ``model.eq_order`` and the columns of A, B, and C in
     # ``ss_mod.var_order``, whereas ``model.linearize_model`` undoes both permutations before returning.
     inv_eq = np.argsort(model.eq_order)
