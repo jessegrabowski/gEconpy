@@ -980,7 +980,7 @@ class Model:
 
     @property
     def dr_order(self) -> DROrder:
-        """Decision-rule ordering of variables and equations. See :class:`DROrder` for the layout."""
+        """Decision-rule ordering of variables and equations, as a :class:`~gEconpy.model.perturbation.DROrder`."""
         if self._dr_order is None:
             self._dr_order = DROrder.from_model(self._variables, self._equations)
         return self._dr_order
