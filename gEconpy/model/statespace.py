@@ -716,11 +716,7 @@ class DSGEStateSpace(PyMCStateSpace):
                 _log.info("Statespace model construction complete, but call the .configure method to finalize.")
             return
 
-        constant_replacements = {
-            parameter: pt.constant(np.array(self.param_dict[parameter.name]).astype(floatX), name=parameter.name)
-            for parameter in self.input_parameters
-            if parameter.name in self.constant_parameters
-        }
+        constant_replacements = self._constant_replacements()
 
         self._linearized_system_subbed = [A, B, C, D] = graph_replace(
             self.linearized_system, constant_replacements, strict=False
@@ -1279,6 +1275,14 @@ class DSGEStateSpace(PyMCStateSpace):
                 "policy_resid_within_tol",
                 pt.switch(pt.lt(policy_resid, solver_tol), 0.0, -np.inf),
             )
+
+    def _constant_replacements(self) -> dict[pt.TensorVariable, pt.TensorConstant]:
+        """Map each constant parameter's placeholder to its calibrated value."""
+        return {
+            parameter: pt.constant(np.array(self.param_dict[parameter.name]).astype(floatX), name=parameter.name)
+            for parameter in self.input_parameters
+            if parameter.name in self.constant_parameters
+        }
 
     def sample_autocorrelation_matrices(
         self,
