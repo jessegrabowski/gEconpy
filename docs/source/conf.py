@@ -187,6 +187,7 @@ numpydoc_xref_aliases = {
     "DROrder": "gEconpy.model.perturbation.DROrder",
     "CompositionDerivatives": "gEconpy.model.perturbation.CompositionDerivatives",
     "FirstOrderPerturbationSolution": "gEconpy.classes.perturbation_solution.FirstOrderPerturbationSolution",
+    "SecondOrderPerturbationSolution": "gEconpy.classes.perturbation_solution.SecondOrderPerturbationSolution",
     "DSGEStateSpace": "gEconpy.model.statespace.DSGEStateSpace",
     "Variable": "gEconpy.parser.ast.nodes.Variable",
     "Parameter": "gEconpy.parser.ast.nodes.Parameter",

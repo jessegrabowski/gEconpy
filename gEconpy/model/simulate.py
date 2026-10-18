@@ -8,8 +8,9 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution, SecondOrderPerturbationSolution
 from gEconpy.model.model import Model
+from gEconpy.model.pruning import compile_pruned_second_order_path
 from gEconpy.model.statistics import build_Q_matrix
 from gEconpy.model.statistics.validation import (
     _maybe_solve_model,
@@ -137,12 +138,11 @@ def impulse_response_function(
     if T is not None or R is not None or isinstance(solution, np.ndarray):
         # Called from here so the deprecation warning points at the caller's line.
         T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
-        solution = None if T is None or R is None else _wrap_policy_matrices(model, T=T, R=R, **solve_model_kwargs)
+        if T is None or R is None:
+            raise _unsolved_model_error("compute a response from")
+        solution = _wrap_policy_matrices(model, T=T, R=R, **solve_model_kwargs)
     elif solution is None:
-        solved = model.solve_model(**{**solve_model_kwargs, "return_matrices": False})
-        solution = solved if isinstance(solved, FirstOrderPerturbationSolution) else None
-    if solution is None:
-        raise ValueError("The model could not be solved, so there is no policy function to compute a response from.")
+        solution = _solve_or_raise(model, purpose="compute a response from", **solve_model_kwargs)
     T, R = solution.T, solution.R
 
     spec = _make_shock_spec(shock_size, shock_cov, shock_trajectory, orthogonalize_shocks)
@@ -191,15 +191,16 @@ def simulate(
     **solve_model_kwargs,
 ) -> xr.DataArray:
     """
-    Simulate trajectories of the linearized model driven by Gaussian shocks.
+    Simulate trajectories of the perturbation solution driven by Gaussian shocks.
 
-    The shock covariance comes from exactly one of ``shock_std_dict``, ``shock_cov_matrix``, or ``shock_std``.
+    The shock covariance comes from exactly one of ``shock_std_dict``, ``shock_cov_matrix``, or ``shock_std``. A
+    second-order solution is simulated with pruning, and its risk correction is evaluated at that covariance.
 
     Parameters
     ----------
     model : Model
         DSGE model whose variables and shocks label the output.
-    solution : FirstOrderPerturbationSolution, optional
+    solution : FirstOrderPerturbationSolution or SecondOrderPerturbationSolution, optional
         Solution from :meth:`~gEconpy.model.model.Model.solve_model`. Solved from ``model`` when omitted.
     T : ndarray, optional
         Transition matrix of the solved system. Deprecated, pass ``solution`` instead.
@@ -225,7 +226,7 @@ def simulate(
     Returns
     -------
     simulations : DataArray
-        Simulated trajectories with dimensions ``(simulation, time, variable)``.
+        Simulated deviations from the steady state, with dimensions ``(simulation, time, variable)``.
 
     Examples
     --------
@@ -250,8 +251,22 @@ def simulate(
         random_seed=random_seed,
     )
 
-    T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
-    trajectories = _simulate_linear_system(T, R, epsilons)
+    if isinstance(solution, FirstOrderPerturbationSolution) and (T is not None or R is not None):
+        raise ValueError("Pass either solution or T and R, not both.")
+    if solution is None and T is None and R is None:
+        solution = _solve_or_raise(model, purpose="simulate", **solve_model_kwargs)
+
+    if isinstance(solution, SecondOrderPerturbationSolution):
+        shock_cov = build_Q_matrix(
+            model_shocks=model.shocks,
+            shock_std_dict=shock_std_dict,
+            shock_cov_matrix=shock_cov_matrix,
+            shock_std=shock_std,
+        )
+        trajectories = _simulate_pruned_system(solution, epsilons, ghs2=solution.ghs2(shock_cov))
+    else:
+        T, R = _maybe_solve_model(model, solution, T, R, **solve_model_kwargs)
+        trajectories = _simulate_linear_system(T, R, epsilons)
 
     return xr.DataArray(
         trajectories,
@@ -297,6 +312,18 @@ def _wrap_policy_matrices(
         not_loglin_variables=solve_model_kwargs.get("not_loglin_variables"),
         loglin_negative_ss=solve_model_kwargs.get("loglin_negative_ss", False),
     )
+
+
+def _solve_or_raise(model: Model, purpose: str, **solve_model_kwargs) -> FirstOrderPerturbationSolution:
+    """Solve ``model``, raising when the solve fails under ``on_failure="ignore"``."""
+    solved = model.solve_model(**{**solve_model_kwargs, "return_matrices": False})
+    if not isinstance(solved, FirstOrderPerturbationSolution):
+        raise _unsolved_model_error(purpose)
+    return solved
+
+
+def _unsolved_model_error(purpose: str) -> ValueError:
+    return ValueError(f"The model could not be solved, so there is no policy function to {purpose}.")
 
 
 def _draw_shocks(
@@ -475,6 +502,32 @@ def _simulate_linear_system(T: np.ndarray, R: np.ndarray, shock_trajectory: np.n
     for t in range(1, n_periods):
         states[..., t, :] = states[..., t - 1, :] @ T.T + shock_trajectory[..., t, :] @ R.T
     return states
+
+
+def _simulate_pruned_system(
+    solution: SecondOrderPerturbationSolution, shock_trajectory: np.ndarray, ghs2: np.ndarray
+) -> np.ndarray:
+    """
+    Simulate the pruned second-order solution from the steady state along the shock path.
+
+    ``shock_trajectory`` has shape ``(..., n_periods, n_shocks)`` and any leading dimensions are simulated
+    independently, giving deviations of shape ``(..., n_periods, n_vars)`` in model order.
+    """
+    shock_trajectory = np.asarray(shock_trajectory, dtype=float)
+    batch_shape = shock_trajectory.shape[:-2]
+
+    deviations = compile_pruned_second_order_path()(
+        ghx=solution.ghx,
+        ghu=solution.ghu,
+        ghxx=solution.ghxx,
+        ghxu=solution.ghxu,
+        ghuu=solution.ghuu,
+        ghs2=ghs2,
+        shocks=shock_trajectory.reshape(-1, *shock_trajectory.shape[-2:]),
+        state_positions=solution.dr_order.lag_positions,
+    )
+    deviations = deviations.reshape(*batch_shape, *deviations.shape[-2:])
+    return deviations[..., solution.dr_order.inv_var_order]
 
 
 def _irf_to_dataset(
