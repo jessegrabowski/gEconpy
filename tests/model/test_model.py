@@ -1385,7 +1385,8 @@ class TestIRF:
         assert dict(irf.sizes) == {"time": 1000, "variable": n_variables}
         assert np.all(np.abs(irf.isel(time=-1).values) < 1e-3)
 
-    def test_levels_follow_the_solution_passed_in(self, irf_inputs):
+    @pytest.mark.parametrize("individual_shocks", [True, False], ids=["individual", "joint"])
+    def test_levels_follow_the_solution_passed_in(self, irf_inputs, individual_shocks):
         """The fixture has a negative steady state, kept in levels, and the first variable is excluded by name."""
         model, _ = irf_inputs
         solution = model.solve_model(
@@ -1395,7 +1396,9 @@ class TestIRF:
             not_loglin_variables=[model.variables[0].base_name],
         )
 
-        irf = impulse_response_function(model, solution, simulation_length=5, shock_size=0.1)
+        irf = impulse_response_function(
+            model, solution, simulation_length=5, shock_size=0.1, return_individual_shocks=individual_shocks
+        )
 
         logged = irf.coords["log_linearized"].values
         assert not logged[0]
