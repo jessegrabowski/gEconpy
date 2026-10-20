@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import sympy as sp
+import sympy.core.parameters
 
 from scipy.optimize import OptimizeResult
 
@@ -9,6 +10,7 @@ from gEconpy.utilities import (
     drop_equations,
     flatten_substitution_dict,
     postprocess_optimizer_res,
+    substitute_unevaluated,
     topological_order,
 )
 
@@ -48,6 +50,18 @@ def test_flatten_substitution_dict_unevaluated_is_the_same_function():
     assert unevaluated[b] == 3 * psi
     point = {psi: sp.Rational(1, 4)}
     assert float(unevaluated[a].xreplace(point)) == pytest.approx(float(evaluated[a].xreplace(point)), rel=1e-14)
+
+
+def test_substitute_unevaluated_keeps_the_sympy_cache(monkeypatch):
+    """Switching sympy's global evaluate flag clears its cache, so the rebuild must not touch the flag."""
+    clears = []
+    monkeypatch.setattr(sympy.core.parameters, "clear_cache", lambda: clears.append(None))
+    a, b = sp.symbols("a b")
+
+    substituted = substitute_unevaluated(a * b, {a: sp.Integer(1)})
+
+    assert substituted.args == (1, b)
+    assert clears == []
 
 
 def test_topological_order_places_dependencies_first():

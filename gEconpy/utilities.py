@@ -7,6 +7,9 @@ import numpy as np
 import sympy as sp
 
 from scipy.optimize import OptimizeResult
+from sympy.core.function import Application
+from sympy.core.operations import AssocOp
+from sympy.core.relational import Relational
 
 from gEconpy.classes.containers import (
     SteadyStateResults,
@@ -506,10 +509,36 @@ def substitute_unevaluated(expr: sp.Basic, mapping: dict[sp.Expr, sp.Expr]) -> s
     """
     # Evaluating Pow(base, e) where e has a symbolic denominator makes sympy take re() or im() of the base, which
     # expands it. On inlined steady-state chains that costs minutes.
-    with sp.evaluate(False):
-        substituted = expr.xreplace(mapping)
+    substituted = _xreplace_unevaluated(expr, mapping)
 
     return substituted.doit() if not substituted.free_symbols else substituted
+
+
+def _rebuild_unevaluated(expr: sp.Basic, args: Sequence[sp.Basic]) -> sp.Basic:
+    """Rebuild ``expr`` from ``args`` without putting it in canonical form."""
+    # The keyword stands in for sympy.evaluate(False), which clears sympy's global cache on entry and exit. Every
+    # constructor that reads that flag belongs to one of these classes, and the rest never evaluate.
+    if isinstance(expr, AssocOp | sp.Pow | Application | Relational):
+        return expr.func(*args, evaluate=False)
+    return expr.func(*args)
+
+
+def _xreplace_unevaluated(expr: sp.Basic, mapping: dict[sp.Expr, sp.Expr]) -> sp.Basic:
+    """Apply :meth:`sympy.core.basic.Basic.xreplace`, rebuilding changed nodes with :func:`_rebuild_unevaluated`."""
+    rebuilt: dict[sp.Basic, sp.Basic] = {}
+
+    def replace(node: sp.Basic) -> sp.Basic:
+        if node in mapping:
+            return mapping[node]
+        if not node.args:
+            return node
+        if node not in rebuilt:
+            args = [replace(arg) for arg in node.args]
+            changed = any(new is not old for new, old in zip(args, node.args, strict=True))
+            rebuilt[node] = _rebuild_unevaluated(node, args) if changed else node
+        return rebuilt[node]
+
+    return replace(expr)
 
 
 def _substitution_dependencies(sub_dict: dict[sp.Expr, sp.Expr]) -> dict[sp.Expr, set[sp.Basic]]:
