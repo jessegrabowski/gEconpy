@@ -550,26 +550,17 @@ def _irf_to_dataset(
     shock_names: list[str] | None,
 ) -> xr.Dataset:
     """Package deviations and their levels together, with the steady state and log flags on ``variable``."""
-    deviation = _irf_to_xarray(responses, variable_names, shock_names=shock_names)
-    level = deviation.copy(data=solution.to_levels(responses))
-    return xr.Dataset({"deviation": deviation, "level": level}).assign_coords(
-        steady_state=("variable", solution.steady_state),
-        log_linearized=("variable", solution.log_linearized),
-    )
-
-
-def _irf_to_xarray(
-    responses: np.ndarray,
-    variable_names: list[str],
-    shock_names: list[str] | None,
-) -> xr.DataArray:
-    if shock_names is None:
-        coords = {"time": np.arange(responses.shape[0]), "variable": list(variable_names)}
-        return xr.DataArray(responses, dims=["time", "variable"], coords=coords)
-
-    coords = {
-        "shock": list(shock_names),
-        "time": np.arange(responses.shape[1]),
+    # A single Dataset call is several times faster than building DataArrays and merging them.
+    dims = ("time", "variable") if shock_names is None else ("shock", "time", "variable")
+    coords = {} if shock_names is None else {"shock": list(shock_names)}
+    coords |= {
+        "time": np.arange(responses.shape[-2]),
         "variable": list(variable_names),
+        "steady_state": ("variable", solution.steady_state),
+        "log_linearized": ("variable", solution.log_linearized),
     }
-    return xr.DataArray(responses, dims=["shock", "time", "variable"], coords=coords)
+
+    return xr.Dataset(
+        {"deviation": (dims, responses), "level": (dims, solution.to_levels(responses))},
+        coords=coords,
+    )
