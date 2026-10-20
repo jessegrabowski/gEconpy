@@ -5,6 +5,7 @@ import pytensor
 import pytensor.tensor as pt
 import pytest
 import sympy as sp
+import sympy.core.parameters
 
 from numpy.testing import assert_allclose
 from pymc.distributions.transforms import Interval, log, logodds
@@ -199,6 +200,23 @@ def test_resubstitution_rebuilds_a_piecewise_relationship():
     resubstituted = resubstitute_steady_state(relationships)
 
     assert resubstituted[1].rhs == sp.Piecewise((a_ss, alpha > 1), (beta, True))
+
+
+def test_resubstitution_keeps_the_sympy_cache(monkeypatch):
+    """Switching sympy's global evaluate flag clears its cache, so the rebuild must not touch the flag."""
+    clears = []
+    monkeypatch.setattr(sympy.core.parameters, "clear_cache", lambda: clears.append(None))
+    alpha, beta = sp.symbols("alpha beta", positive=True)
+    a_ss, b_ss = sp.symbols("A_ss B_ss")
+    relationships = [
+        sp.Eq(a_ss, alpha + beta, evaluate=False),
+        sp.Eq(b_ss, (alpha + beta) ** 2, evaluate=False),
+    ]
+
+    resubstituted = resubstitute_steady_state(relationships)
+
+    assert resubstituted[1].rhs == sp.Pow(a_ss, 2, evaluate=False)
+    assert clears == []
 
 
 def test_system_to_steady_state_collapses_time_indices_and_zeros_shocks():

@@ -25,6 +25,8 @@ from gEconpy.model.compile import (
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.utilities import (
+    _rebuild_unevaluated,
+    _xreplace_unevaluated,
     eq_to_ss,
     flatten_substitution_dict,
     safe_to_ss,
@@ -108,19 +110,16 @@ def resubstitute_steady_state(relationships: Sequence[sp.Eq]) -> list[sp.Eq]:
     cache: dict[sp.Basic, sp.Basic] = {}
 
     resubstituted = []
-    with sp.evaluate(False):
-        for eq in relationships:
-            others = {rhs: lhs for rhs, lhs in targets.items() if lhs != eq.lhs}
-            rhs = _drop_identity_terms(eq.rhs.xreplace(others), cache)
-            resubstituted.append(sp.Eq(eq.lhs, rhs, evaluate=False))
+    for eq in relationships:
+        others = {rhs: lhs for rhs, lhs in targets.items() if lhs != eq.lhs}
+        rhs = _drop_identity_terms(_xreplace_unevaluated(eq.rhs, others), cache)
+        resubstituted.append(sp.Eq(eq.lhs, rhs, evaluate=False))
     return resubstituted
 
 
 def _drop_identity_terms(expr: sp.Basic, cache: dict[sp.Basic, sp.Basic]) -> sp.Basic:
     """
     Remove the ones and zeros substitution leaves in an unevaluated tree, and print an integral float as an integer.
-
-    Call it inside ``sympy.evaluate(False)``, which is what keeps the rebuilt nodes unevaluated.
 
     A one is a factor of a product or the base of a power, and a zero is a term of a sum.
 
@@ -143,8 +142,7 @@ def _drop_identity_terms(expr: sp.Basic, cache: dict[sp.Basic, sp.Basic]) -> sp.
         elif identity is not None and len(args) == 1:
             cleaned = args[0]
         else:
-            # No evaluate keyword: the caller's context already applies, and Piecewise's condition pairs reject it.
-            cleaned = expr.func(*args)
+            cleaned = _rebuild_unevaluated(expr, args)
 
     cache[expr] = cleaned
     return cleaned
