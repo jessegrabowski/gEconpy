@@ -4,6 +4,9 @@ import pytensor.tensor as pt
 import pytest
 import sympy as sp
 
+from pytensor.graph.basic import equal_computations
+from pytensor.graph.replace import clone_replace
+
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
@@ -11,6 +14,7 @@ from gEconpy.model.compile import (
     build_symbolic_jacobians,
     compile_for_scipy,
     compile_function,
+    compile_packed,
     dictionary_return_wrapper,
     make_cache_key,
     make_return_dict_and_update_cache,
@@ -179,6 +183,40 @@ def test_pack_and_compile_without_steady_state_inputs_ignores_flat_vector(freeze
     f = pack_and_compile(alpha * 2.0, [x], param_dict=param_dict, mode="FAST_COMPILE")
 
     np.testing.assert_allclose(f(np.array([123.0]), *param_args), 20.0)
+
+
+def test_compile_packed_reads_nodes_from_x_and_finds_the_remaining_inputs():
+    x, y, alpha = pt.dscalars("x", "y", "alpha")
+
+    f, args = compile_packed(pt.stack([x * alpha, y + alpha]), [x, y], mode="FAST_COMPILE")
+
+    assert [arg.name for arg in args] == ["alpha"]
+    np.testing.assert_allclose(f(np.array([1.0, 2.0]), 10.0), [10.0, 12.0])
+
+
+def test_compile_packed_shares_argument_order_and_takes_leading_inputs():
+    x, alpha, beta = pt.dscalars("x", "alpha", "beta")
+    direction = pt.dvector("direction")
+
+    _, args = compile_packed(x * alpha + beta, [x], mode="FAST_COMPILE")
+    f, shared_args = compile_packed(
+        x * direction[0] * beta, [x], leading_inputs=(direction,), args=args, mode="FAST_COMPILE"
+    )
+
+    assert shared_args == args
+    values = {"alpha": 2.0, "beta": 3.0}
+    np.testing.assert_allclose(f(np.array([5.0]), np.array([7.0]), *[values[arg.name] for arg in args]), 105.0)
+
+
+def test_compile_packed_leaves_the_callers_graph_intact():
+    """Compilation rewrites its graph in place, which would change a graph the caller compiles again."""
+    x, alpha = pt.dscalars("x", "alpha")
+    row = alpha * 2.0 * 3.0 - alpha
+    before = clone_replace(row)
+
+    compile_packed(row, [x], mode="FAST_COMPILE")
+
+    assert equal_computations([row], [before])
 
 
 def test_build_symbolic_jacobians_at_steady_state_shares_one_cache():

@@ -6,7 +6,7 @@ import pytensor
 import sympy as sp
 
 from pytensor import tensor as pt
-from pytensor.graph.replace import graph_replace
+from pytensor.graph.replace import clone_replace, graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor import TensorVariable
 from sympytensor import as_tensor
@@ -435,6 +435,52 @@ def compile_for_scipy(
         return f(*args, **{k: v for k, v in kwargs.items() if k in accepted_names})
 
     return wrapper
+
+
+def compile_packed(
+    outputs: TensorVariable | list[TensorVariable],
+    nodes: list[TensorVariable],
+    leading_inputs: tuple[TensorVariable, ...] = (),
+    args: list[TensorVariable] | None = None,
+    mode: str | None = None,
+) -> tuple[Callable, list[TensorVariable]]:
+    """
+    Compile ``outputs`` as a function of one flat vector holding ``nodes``, followed by the graph's other inputs.
+
+    This is the inner function layout of :mod:`pytensor.tensor.optimize`: ``f(x, *leading_inputs, *args)``, where
+    ``args`` are the remaining graph inputs. Pass ``args`` positionally in the returned order.
+
+    Parameters
+    ----------
+    outputs : TensorVariable or list of TensorVariable
+        Graph outputs to compile.
+    nodes : list of TensorVariable
+        Scalar nodes read from ``x``, in the positional order of ``x``.
+    leading_inputs : tuple of TensorVariable, optional
+        Inputs placed between ``x`` and ``args``, such as the direction of a Hessian-vector product. Default none.
+    args : list of TensorVariable, optional
+        The trailing inputs, in order. Pass the ``args`` of another compiled function so both take the same
+        positional arguments. Default None, which finds them from the graph.
+    mode : str, optional
+        PyTensor compilation mode. Default is None, which uses the PyTensor default mode.
+
+    Returns
+    -------
+    f : callable
+        Compiled function ``f(x, *leading_inputs, *args)``.
+    args : list of TensorVariable
+        The trailing inputs, in positional order.
+    """
+    x = pt.vector("x", shape=(len(nodes),), dtype=nodes[0].dtype if nodes else pytensor.config.floatX)
+    # Compilation rewrites its graph in place, so every intermediate node is cloned to leave the caller's graph
+    # intact for the next compile that shares it.
+    packed = clone_replace(outputs, replace={node: x[i] for i, node in enumerate(nodes)})
+
+    if args is None:
+        excluded = {x, *leading_inputs}
+        args = [node for node in explicit_graph_inputs(packed) if node not in excluded]
+    f = compile_pytensor_function([x, *leading_inputs, *args], packed, mode=mode, on_unused_input="ignore")
+    return f, args
 
 
 def pack_and_compile(
