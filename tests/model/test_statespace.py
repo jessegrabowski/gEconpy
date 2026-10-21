@@ -11,11 +11,14 @@ import pytensor.tensor as pt
 import pytest
 import xarray as xr
 
+from numpy.testing import assert_allclose
 from pymc_extras.statespace.utils.constants import ALL_STATE_DIM
 from pytensor.graph.traversal import ancestors
 from pytensor.tensor.variable import TensorConstant
+from scipy import stats
 
 from gEconpy import solve_perfect_foresight, statespace_from_gcn
+from gEconpy.model.pruning import compile_pruned_second_order_moments, compile_pruned_second_order_system
 from gEconpy.model.statespace import _steady_state_intercept, data_from_prior, prepare_mixed_frequency_data
 from gEconpy.model.statistics import autocorrelation_matrix
 from tests._resources.cache_compiled_models import (
@@ -294,7 +297,7 @@ def test_temporal_aggregation_sum_accumulates_over_window(rbc_statespace):
     )
     T, _R, Z = _eval_augmented_matrices(rbc_statespace)
 
-    k_orig = rbc_statespace._k_orig_states
+    k_orig = rbc_statespace._k_model_states
     y_idx = rbc_statespace._orig_state_names.index("Y")
 
     rng = np.random.default_rng(0)
@@ -332,7 +335,7 @@ def test_aggregated_and_direct_variables_have_correct_design_rows(rbc_statespace
     )
     _T, _R, Z = _eval_augmented_matrices(rbc_statespace)
 
-    k_orig = rbc_statespace._k_orig_states
+    k_orig = rbc_statespace._k_model_states
     y_idx = rbc_statespace._orig_state_names.index("Y")
     k_idx = rbc_statespace._orig_state_names.index("K")
 
@@ -388,7 +391,7 @@ def test_cumulator_shift_matrix_shape_matches_aggregation_period(rbc_statespace,
         verbose=False,
     )
     T, _R, _Z = _eval_augmented_matrices(rbc_statespace)
-    k_orig = rbc_statespace._k_orig_states
+    k_orig = rbc_statespace._k_model_states
     C = T[k_orig:, k_orig:]
     assert C.shape == expected_shape
 
@@ -404,7 +407,7 @@ def test_multiple_aggregated_variables_produce_block_diagonal_structure(rbc_stat
     )
     T, _R, _Z = _eval_augmented_matrices(rbc_statespace)
 
-    k_orig = rbc_statespace._k_orig_states
+    k_orig = rbc_statespace._k_model_states
     C = T[k_orig:, k_orig:]
 
     shift = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
@@ -461,7 +464,7 @@ def test_mixed_sum_and_mean_aggregation_weights(rbc_statespace):
     )
     _T, _R, Z = _eval_augmented_matrices(rbc_statespace)
 
-    k_orig = rbc_statespace._k_orig_states
+    k_orig = rbc_statespace._k_model_states
     y_idx = rbc_statespace._orig_state_names.index("Y")
     c_idx = rbc_statespace._orig_state_names.index("C")
 
@@ -1362,7 +1365,7 @@ def test_observation_equations_lag_chain_propagates_correctly(rbc_nonlinear_ss):
 
     rng = np.random.default_rng(0)
     x = np.zeros(T_aug.shape[0])
-    x[: ss_mod._k_orig_states] = rng.normal(0, 0.1, size=ss_mod._k_orig_states)
+    x[: ss_mod._k_model_states] = rng.normal(0, 0.1, size=ss_mod._k_model_states)
 
     y_orig = ss_mod._orig_state_names.index("Y")
     history_Y = [x[y_orig]]
@@ -1542,6 +1545,275 @@ def test_sample_autocorrelation_matches_analytical_acf(autocorrelation_setup):
         )
 
 
+@pytest.fixture(scope="module")
+def two_shock_order_2_statespace():
+    return statespace_from_gcn(TEST_GCNS / "one_block_1_ss_2shock.gcn", order=2, verbose=False)
+
+
+@pytest.fixture(scope="module")
+def two_shock_order_2_unjittered_statespace():
+    """Build without covariance jitter, which the filter adds to every state, for exact likelihood checks."""
+    return statespace_from_gcn(TEST_GCNS / "one_block_1_ss_2shock.gcn", order=2, cov_jitter=0.0, verbose=False)
+
+
+TWO_SHOCK_COV = np.array([[1e-4, 2e-5], [2e-5, 4e-4]])
+TWO_SHOCK_ERROR_SIGMAS = {"error_sigma_Y": 0.003, "error_sigma_C": 0.002}
+
+
+TWO_SHOCK_EXACT_CONFIGURATION = {
+    "observed_states": ["Y", "C"],
+    "measurement_error": ["Y", "C"],
+    "ss_obs_intercept": ["Y"],
+    "constant_params": ["beta"],
+    "full_shock_covariance": True,
+    "verbose": False,
+}
+
+
+def _two_shock_exact_values():
+    return dict(load_and_cache_model("one_block_1_ss_2shock.gcn").parameters()) | {
+        "state_cov": TWO_SHOCK_COV,
+        **TWO_SHOCK_ERROR_SIGMAS,
+    }
+
+
+def _two_shock_pruned_moments(n_lags):
+    """Stationary mean and autocovariances of every variable of the second-order solution, by variable name."""
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=2, verbose=False)
+    mean, autocovariances = compile_pruned_second_order_moments()(
+        ghx=solution.ghx,
+        ghu=solution.ghu,
+        ghxx=solution.ghxx,
+        ghxu=solution.ghxu,
+        ghuu=solution.ghuu,
+        ghs2_operator=solution.ghs2_operator,
+        shock_cov=TWO_SHOCK_COV,
+        state_positions=solution.dr_order.lag_positions,
+        n_lags=n_lags,
+    )
+    dr_names = [solution.variable_names[i] for i in solution.dr_order.var_order]
+    return model, dr_names, mean, autocovariances
+
+
+def _evaluate_with_shocks_at(ss_mod, outputs):
+    """Evaluate ``outputs`` at the GCN parameter values and shock standard deviations of 0.01 and 0.02."""
+    values = load_and_cache_model("one_block_1_ss_2shock.gcn").parameters() | {
+        "sigma_epsilon_A": 0.01,
+        "sigma_epsilon_B": 0.02,
+    }
+    names = [name for name in ss_mod.param_names if name in values]
+    inputs = [ss_mod._name_to_variable[name] for name in names]
+    return pytensor.function(inputs, outputs, on_unused_input="ignore")(*[values[name] for name in names])
+
+
+def test_second_order_statespace_is_the_pruned_system_of_the_solved_model(two_shock_order_2_statespace):
+    ss_mod = two_shock_order_2_statespace
+    ss_mod.configure(observed_states=["Y", "C"], measurement_error=["Y", "C"], verbose=False)
+    names = ["state_intercept", "transition", "selection", "state_cov", "initial_state", "design"]
+    intercept, transition, selection, innovation_cov, initial_state, design = _evaluate_with_shocks_at(
+        ss_mod, [ss_mod.ssm[name] for name in names]
+    )
+
+    solution = load_and_cache_model("one_block_1_ss_2shock.gcn").solve_model(order=2, verbose=False)
+    inputs = {
+        "ghx": solution.ghx,
+        "ghu": solution.ghu,
+        "ghxx": solution.ghxx,
+        "ghxu": solution.ghxu,
+        "ghuu": solution.ghuu,
+        "ghs2_operator": solution.ghs2_operator,
+        "shock_cov": np.diag([0.01, 0.02]) ** 2,
+        "state_positions": solution.dr_order.lag_positions,
+    }
+    expected = compile_pruned_second_order_system()(**inputs)
+    mean, _ = compile_pruned_second_order_moments()(**inputs, n_lags=1)
+
+    # The pruned system's rows follow the decision rule, so its states are matched to the statespace's by name.
+    dr_names = [solution.variable_names[i] for i in solution.dr_order.var_order]
+    lagged = [dr_names[i] for i in solution.dr_order.lag_positions]
+    pruned_names = [
+        *(f"{name}_first_order" for name in dr_names),
+        *(f"{name}_second_order" for name in dr_names),
+        *(f"{lagged[i]} * {lagged[j]}" for i, j in zip(*np.tril_indices(len(lagged)), strict=True)),
+    ]
+    model_order = [pruned_names.index(name) for name in ss_mod.state_names[: len(pruned_names)]]
+
+    assert_allclose(intercept, expected[0][model_order], atol=1e-12)
+    assert_allclose(transition, expected[1][model_order][:, model_order], atol=1e-10)
+    assert_allclose(selection, expected[2][model_order], atol=1e-10)
+    assert_allclose(innovation_cov, expected[3], rtol=1e-8, atol=1e-20)
+    assert_allclose(design @ initial_state, mean[[dr_names.index(name) for name in ["Y", "C"]]], rtol=1e-8)
+
+
+def test_second_order_likelihood_is_the_gaussian_density_of_the_stationary_moments(
+    two_shock_order_2_unjittered_statespace,
+):
+    """
+    Compare the filter's likelihood with the Gaussian density of the observations' exact moments.
+
+    Started from its stationary distribution, the filter gives the Gaussian density with the exact mean and
+    autocovariances of the observations, which the pruned moments compute without the filter.
+    """
+    ss_mod = two_shock_order_2_unjittered_statespace
+    ss_mod.configure(**TWO_SHOCK_EXACT_CONFIGURATION)
+    values = _two_shock_exact_values()
+    n_periods = 6
+    model, dr_names, mean, autocovariances = _two_shock_pruned_moments(n_lags=n_periods)
+
+    observed = [dr_names.index(name) for name in ["Y", "C"]]
+    log_steady_output = np.log(model.steady_state(verbose=False, progressbar=False)["Y_ss"])
+    observed_mean = mean[observed] + np.array([log_steady_output, 0.0])
+    observed_autocovariances = autocovariances[:, observed][:, :, observed]
+    errors = np.diag([TWO_SHOCK_ERROR_SIGMAS["error_sigma_Y"], TWO_SHOCK_ERROR_SIGMAS["error_sigma_C"]]) ** 2
+
+    blocks = [
+        [observed_autocovariances[t - s] if t >= s else observed_autocovariances[s - t].T for s in range(n_periods)]
+        for t in range(n_periods)
+    ]
+    stacked_cov = np.block(blocks) + np.kron(np.eye(n_periods), errors)
+    data = observed_mean + np.random.default_rng(0).normal(scale=0.01, size=(n_periods, 2))
+    expected = stats.multivariate_normal(np.tile(observed_mean, n_periods), stacked_cov).logpdf(data.ravel())
+
+    frame = pd.DataFrame(data, columns=["Y", "C"], index=pd.date_range("2000-01-01", periods=n_periods, freq="QS"))
+    with pm.Model(coords=ss_mod.coords) as m:
+        for name in ss_mod.param_names:
+            pm.Data(name, values[name], dims=ss_mod.param_dims.get(name))
+        ss_mod.build_statespace_graph(frame, add_norm_check=False)
+
+    assert_allclose(m.compile_logp()({}), expected, rtol=1e-8)
+
+
+def test_second_order_observed_autocorrelations_are_those_of_the_pruned_moments(
+    two_shock_order_2_unjittered_statespace,
+):
+    ss_mod = two_shock_order_2_unjittered_statespace
+    ss_mod.configure(**TWO_SHOCK_EXACT_CONFIGURATION)
+    values = _two_shock_exact_values()
+    n_lags = 3
+    _, dr_names, _, autocovariances = _two_shock_pruned_moments(n_lags=n_lags + 1)
+
+    observed = [dr_names.index(name) for name in ["Y", "C"]]
+    expected = autocovariances[:, observed][:, :, observed]
+    expected[0] += np.diag([TWO_SHOCK_ERROR_SIGMAS["error_sigma_Y"], TWO_SHOCK_ERROR_SIGMAS["error_sigma_C"]]) ** 2
+    standard_deviations = np.sqrt(np.diag(expected[0]))
+    expected = expected / np.outer(standard_deviations, standard_deviations)
+
+    posterior = xr.Dataset(
+        {
+            name: (("chain", "draw", *(ss_mod.param_dims.get(name) or ())), np.asarray(values[name])[None, None])
+            for name in ss_mod.param_names
+        },
+        coords={"chain": [0], "draw": [0], **{dim: list(labels) for dim, labels in ss_mod.coords.items()}},
+    )
+    sampled = ss_mod.sample_autocorrelation_matrices(posterior, n_lags=n_lags, observed=True).isel(chain=0, draw=0)
+
+    assert_allclose(sampled.values, expected, rtol=1e-6)
+
+
+def test_second_order_likelihood_of_a_linear_model_is_the_first_order_likelihood():
+    """
+    A linear model has no second-order terms, so its second-order state parts stay at zero.
+
+    The covariance jitter is off because the filter adds it to every state, and the second-order model has more.
+    """
+    data = pd.DataFrame(
+        np.random.default_rng(0).normal(scale=0.01, size=(50, 1)),
+        columns=["Y"],
+        index=pd.date_range("2000-01-01", periods=50, freq="QS"),
+    )
+
+    def logp(order):
+        ss_mod = statespace_from_gcn(TEST_GCNS / "rbc_linearized.gcn", order=order, cov_jitter=0.0, verbose=False)
+        ss_mod.configure(observed_states=["Y"], measurement_error=["Y"], constant_params="auto", verbose=False)
+        with pm.Model(coords=ss_mod.coords) as m:
+            ss_mod.to_pymc()
+            pm.Gamma("sigma_epsilon_A", alpha=2, beta=100)
+            pm.Gamma("error_sigma_Y", alpha=2, beta=100)
+            ss_mod.build_statespace_graph(data, add_norm_check=False)
+        return m.compile_logp()(m.initial_point())
+
+    assert_allclose(logp(order=2), logp(order=1), rtol=1e-10)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "exception", "match"),
+    [
+        ({"observed_states": ["Y"], "temporal_aggregation": {"Y": "sum"}}, NotImplementedError, "Temporal aggregation"),
+        (
+            {"observed_states": ["Y_growth"], "observation_equations": {"Y_growth": "log(Y[]) - log(Y[-1])"}},
+            NotImplementedError,
+            "lagged variable",
+        ),
+        ({"observed_states": ["Y", "C", "I"]}, ValueError, "only 2 sources of stochastic variation"),
+    ],
+    ids=["temporal_aggregation", "lagged_observation_equation", "more_series_than_shocks"],
+)
+def test_second_order_configure_rejects_unsupported_setups_and_keeps_the_last_configuration(
+    two_shock_order_2_statespace, kwargs, exception, match
+):
+    ss_mod = two_shock_order_2_statespace
+    ss_mod.configure(observed_states=["C"], measurement_error=["C"], verbose=False)
+    configuration = (ss_mod.observed_states, ss_mod.param_names, ss_mod.k_states)
+
+    with pytest.raises(exception, match=match):
+        ss_mod.configure(verbose=False, **kwargs)
+
+    assert (ss_mod.observed_states, ss_mod.param_names, ss_mod.k_states) == configuration
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "sample_unconditional_prior",
+        "sample_unconditional_posterior",
+        "forecast",
+        "impulse_response_function",
+        "deviations_to_levels",
+    ],
+)
+def test_second_order_statespace_raises_from_methods_that_need_first_order_states(two_shock_order_2_statespace, method):
+    two_shock_order_2_statespace.configure(observed_states=["Y"], measurement_error=["Y"], verbose=False)
+    with pytest.raises(NotImplementedError, match=f"{method} is not supported at order 2"):
+        getattr(two_shock_order_2_statespace, method)(None, None)
+
+
+def test_second_order_full_shock_covariance_is_over_the_structural_shocks(two_shock_order_2_statespace):
+    ss_mod = two_shock_order_2_statespace
+    ss_mod.configure(observed_states=["Y"], measurement_error=["Y"], full_shock_covariance=True, verbose=False)
+
+    assert ss_mod.param_info["state_cov"]["shape"] == (2, 2)
+    assert ss_mod.param_dims["state_cov"] == ("structural_shock", "structural_shock_aux")
+    assert ss_mod.coords["structural_shock"] == ("epsilon_A", "epsilon_B")
+    assert ss_mod.shock_names[:3] == ("epsilon_A", "epsilon_B", "epsilon_A * epsilon_A")
+
+
+def test_second_order_statespace_observes_variables_not_their_parts(two_shock_order_2_statespace):
+    with pytest.raises(ValueError, match="unknown to the model"):
+        two_shock_order_2_statespace.configure(observed_states=["Y_first_order"], verbose=False)
+
+
+def test_second_order_observation_equation_loads_both_parts_of_a_variable(two_shock_order_2_statespace):
+    ss_mod = two_shock_order_2_statespace
+    ss_mod.configure(
+        observed_states=["log_output"],
+        measurement_error=["log_output"],
+        observation_equations={"log_output": "log(Y[])"},
+        verbose=False,
+    )
+    (design,) = _evaluate_with_shocks_at(ss_mod, [ss_mod.ssm["design"]])
+
+    first_order = ss_mod.state_names.index("Y_first_order")
+    second_order = ss_mod.state_names.index("Y_second_order")
+    assert np.flatnonzero(design[0]).tolist() == [first_order, second_order]
+    assert design[0, first_order] == design[0, second_order]
+
+
+def test_statespace_order_must_be_one_or_two():
+    with pytest.raises(ValueError, match="order must be 1 or 2"):
+        statespace_from_gcn(TEST_GCNS / "rbc_linearized.gcn", order=3, verbose=False)
+
+
 def test_every_test_sharing_a_statespace_configures_it_first():
     """
     The module-scoped statespace fixtures are shared, and ``configure`` fully overwrites what came before.
@@ -1549,7 +1821,13 @@ def test_every_test_sharing_a_statespace_configures_it_first():
     That is only safe while every test configures before it reads. One that reads without configuring would
     silently inherit whatever the previous test set up, which is why this is checked rather than commented.
     """
-    shared_fixtures = {"rbc_statespace", "rbc_nonlinear_ss", "open_rbc_statespace"}
+    shared_fixtures = {
+        "rbc_statespace",
+        "rbc_nonlinear_ss",
+        "open_rbc_statespace",
+        "two_shock_order_2_statespace",
+        "two_shock_order_2_unjittered_statespace",
+    }
     source = Path(__file__).read_text()
     blocks = re.split(r"\n(?=def |@pytest)", source)
 

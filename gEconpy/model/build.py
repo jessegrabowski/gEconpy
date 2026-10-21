@@ -16,7 +16,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import ExtraParameterError, ExtraParameterWarning, OrphanParameterError
 from gEconpy.model.model import Model
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.model.perturbation import linearize_model
+from gEconpy.model.perturbation import DROrder, composition_derivatives, linearize_model
 from gEconpy.model.simplification import simplify_constants, simplify_tryreduce
 from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.steady_state import (
@@ -157,6 +157,7 @@ def statespace_from_gcn(
     on_unused_parameters: str | None = None,
     log_linearize: bool = True,
     not_loglin_variables: list[str] | None = None,
+    order: int = 1,
     show_errors: bool | None = None,
     filter_type: str = "standard",
     mode: str | None = None,
@@ -192,6 +193,14 @@ def statespace_from_gcn(
     not_loglin_variables : list of str, optional
         Variable names to linearize in levels even when ``log_linearize`` is True. Default is None, which
         log-linearizes every variable.
+    order : {1, 2}, optional
+        Order of the perturbation solution. At order 2 the likelihood is the Kalman filter's quasi-likelihood of the
+        pruned state-space system from :func:`~gEconpy.model.pruning.pruned_second_order_system`. Its states are the
+        first- and second-order parts of every variable, named ``<variable>_first_order`` and
+        ``<variable>_second_order``, which sum to the variable's deviation, followed by the products of the lagged
+        first-order states. ``sum`` and ``mean`` temporal aggregation, lagged observation equations, unconditional
+        sampling, forecasting, impulse responses, ``deviations_to_levels`` and ``data_from_prior`` are not supported
+        at order 2. Default is 1.
     show_errors : bool, optional
         Print formatted parse errors to stderr before re-raising them. Defaults to ``rcParams["build.show_errors"]``.
     filter_type : str, optional
@@ -222,6 +231,9 @@ def statespace_from_gcn(
 
         statespace = ge.statespace_from_gcn(get_example_gcn("RBC"), verbose=False)
     """
+    if order not in (1, 2):
+        raise ValueError(f"order must be 1 or 2, got {order}.")
+
     verbose, mode, on_unused_parameters, show_errors = _build_settings(
         verbose=verbose, mode=mode, on_unused_parameters=on_unused_parameters, show_errors=show_errors
     )
@@ -275,8 +287,9 @@ def statespace_from_gcn(
         not_loglin_variables=not_loglin_variables,
     )
 
-    # The equation permutation is dropped because the downstream solvers index T and R by variable, so only the
-    # variable permutation has to be carried on to the state-space model.
+    # The equation permutation is dropped because the first-order solvers index T and R by variable. The second-order
+    # solve combines these Jacobian rows with Hessian rows, which ``composition_derivatives`` builds in the same
+    # default ``DROrder`` equation order.
     [A, B, C, D], _ss_inputs, _eq_order, var_order = linearize_model(
         variables=variables,
         equations=primitives.equations,
@@ -294,6 +307,20 @@ def statespace_from_gcn(
     replacements = parameter_mapping | steady_state_mapping
     A, B, C, D = rewrite_pregrad(graph_replace([A, B, C, D], replacements, strict=False))
 
+    second_order_derivatives = None
+    if order == 2:
+        derivatives = composition_derivatives(
+            variables=variables,
+            equations=primitives.equations,
+            shocks=primitives.shocks,
+            dr_order=DROrder.from_model(variables=variables, equations=primitives.equations),
+            cache=cache,
+            loglin_variables=loglin_variables,
+        )
+        # Only the Hessian enters the second-order solve, so the Jacobian is left in the placeholder inputs.
+        hessian = rewrite_pregrad(graph_replace(derivatives.hessian, replacements, strict=False))
+        second_order_derivatives = derivatives._replace(hessian=hessian)
+
     return DSGEStateSpace(
         variables=variables,
         shocks=primitives.shocks,
@@ -307,6 +334,7 @@ def statespace_from_gcn(
         linearized_system=[A, B, C, D],
         var_order=var_order,
         log_linearized_variables=[variable.base_name for variable in loglin_variables],
+        second_order_derivatives=second_order_derivatives,
         sympytensor_cache=cache,
         filter_type=filter_type,
         mode=mode,

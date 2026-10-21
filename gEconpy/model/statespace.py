@@ -1,6 +1,9 @@
+import inspect
 import logging
 import warnings
 
+from collections.abc import Callable
+from functools import wraps
 from typing import Literal
 
 import numpy as np
@@ -26,6 +29,7 @@ from pymc_extras.statespace.utils.constants import (
     OBS_STATE_DIM,
     SHOCK_AUX_DIM,
     SHOCK_DIM,
+    STRUCTURAL_SHOCK_DIM,
 )
 from pytensor.assumptions import assume
 from pytensor.graph.replace import graph_replace
@@ -34,7 +38,8 @@ from sympytensor import as_tensor
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model.perturbation import _log_linear_treatment, check_bk_condition_pt
+from gEconpy.model.perturbation import CompositionDerivatives, DROrder, _log_linear_treatment, check_bk_condition_pt
+from gEconpy.model.pruning import pruned_second_order_system
 from gEconpy.model.tables import group_dataset
 from gEconpy.parser.ast import variable_key
 from gEconpy.parser.grammar.expressions import parse_expression
@@ -44,6 +49,7 @@ from gEconpy.rcparams import rcParams
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct_pt
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
+from gEconpy.solvers.second_order import solve_second_order
 from gEconpy.solvers.stein import AdjointMethod, validate_adjoint_method
 
 _log = logging.getLogger(__name__)
@@ -55,6 +61,25 @@ CUMULATOR_AGGREGATIONS = ("sum", "mean")
 
 
 STEADY_STATE_DIM = "steady_state_variable"
+STRUCTURAL_SHOCK_AUX_DIM = "structural_shock_aux"
+
+
+def _first_order_only(method: Callable) -> Callable:
+    """Wrap a :class:`PyMCStateSpace` method so that it raises for a second-order model, and say so in its docstring."""
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        self._raise_if_pruned(method.__name__)
+        return method(self, *args, **kwargs)
+
+    # pymc-extras' docstrings use cross-reference targets this project's docs cannot resolve, so only the summary is
+    # kept.
+    summary = inspect.cleandoc(method.__doc__ or "").partition("\n\n")[0]
+    wrapper.__doc__ = (
+        f"{summary}\n\nCalls ``{method.__name__}`` of :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace`, "
+        f"which documents the arguments. Raises NotImplementedError for a second-order model."
+    )
+    return wrapper
 
 
 class DSGEStateSpace(PyMCStateSpace):
@@ -96,6 +121,11 @@ class DSGEStateSpace(PyMCStateSpace):
         Base names of variables that were log-linearized when building ``linearized_system``. The
         ``ss_obs_intercept`` option of :meth:`configure` uses it to decide whether an intercept entry is
         ``log(v_ss(p))`` or ``v_ss(p)``. Defaults to no variables.
+    second_order_derivatives : CompositionDerivatives, optional
+        Derivatives of the model equations composed with the first-order policy, in the free parameters, from
+        :func:`~gEconpy.model.perturbation.composition_derivatives`. When given, the model is solved to second
+        order and filtered as the pruned state-space system of
+        :func:`~gEconpy.model.pruning.pruned_second_order_system`. Defaults to None, a first-order model.
     sympytensor_cache : dict, optional
         Sympytensor cache mapping cache keys to pytensor nodes, shared with the graphs that built the model.
         Defaults to a new, empty cache.
@@ -127,6 +157,7 @@ class DSGEStateSpace(PyMCStateSpace):
         linearized_system: list[pt.TensorVariable],
         var_order: np.ndarray | None = None,
         log_linearized_variables: list[str] | None = None,
+        second_order_derivatives: CompositionDerivatives | None = None,
         sympytensor_cache: dict | None = None,
         filter_type: str = "standard",
         mode: str | None = None,
@@ -156,6 +187,10 @@ class DSGEStateSpace(PyMCStateSpace):
         self.var_order = np.asarray(var_order, dtype=int)
         self.inv_var_order = np.argsort(self.var_order)
 
+        self._second_order_derivatives = second_order_derivatives
+        self.order = 1 if second_order_derivatives is None else 2
+        self._dr_order = DROrder.from_model(variables=variables, equations=equations) if self.order == 2 else None
+
         self.full_covariance = False
         self.constant_parameters = []
         self._configured = False
@@ -174,7 +209,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self._temporal_aggregation: dict[str, str] = {}
         self._aggregation_period: int = 4
-        self._k_orig_states: int = len(variables)
+        self._k_model_states: int = len(self._model_state_names)
 
         self._log_linearized_variables: set[str] = set(log_linearized_variables or [])
         self._ss_obs_intercept_states: list[str] = []
@@ -192,13 +227,11 @@ class DSGEStateSpace(PyMCStateSpace):
         self.verbose = verbose
 
         k_endog = 1
-        k_states = len(variables)
-        k_posdef = len(shocks)
 
         super().__init__(
             k_endog,
-            k_states,
-            k_posdef,
+            self._k_model_states,
+            len(self._innovation_names),
             filter_type=filter_type,
             verbose=False,
             measurement_error=False,
@@ -251,19 +284,16 @@ class DSGEStateSpace(PyMCStateSpace):
         return len(self.lead_var_idx)
 
     def _setup_state_covariance(self) -> pt.TensorVariable:
-        """Register the shock covariance parameters, store ``state_cov`` in ``ssm``, and return it."""
+        """Register the shock covariance parameters and return the covariance of the structural shocks."""
+        n_shocks = len(self.shocks)
         if self.full_covariance:
-            state_cov = self.make_and_register_variable("state_cov", shape=(self.k_posdef, self.k_posdef))
-            Q = assume(state_cov, positive_definite=True)
-            self.ssm["state_cov"] = Q
-            return Q
+            state_cov = self.make_and_register_variable("state_cov", shape=(n_shocks, n_shocks))
+            return assume(state_cov, positive_definite=True)
 
         # AssumptionFeature tags ``pt.diag(stack(...))`` as diagonal and propagates symmetric/PSD through the
         # congruence R Q R', so the compiled logp and its gradient can use Cholesky-based solves.
         sigmas = [self.make_and_register_variable(self._shock_sd_name(shock), shape=()) for shock in self.shocks]
-        Q = pt.diag(pt.stack([s**2 for s in sigmas]))
-        self.ssm["state_cov"] = Q
-        return Q
+        return pt.diag(pt.stack([s**2 for s in sigmas]))
 
     def _shock_sd_name(self, shock: TimeAwareSymbol) -> str:
         """Return the name the GCN file gives a shock's standard deviation, or ``sigma_<shock>`` when it gives none."""
@@ -279,13 +309,13 @@ class DSGEStateSpace(PyMCStateSpace):
         variable also loads on its cumulator slots, with weight :math:`1/s` for ``mean`` over an aggregation
         period of :math:`s`.
         """
-        columns = [self._orig_state_names.index(name)]
+        columns = self._variable_columns(name)
         agg_method = self._temporal_aggregation.get(name)
         if agg_method not in CUMULATOR_AGGREGATIONS:
             return columns, 1.0
 
         n_cum_lags = self._aggregation_period - 1
-        cum_start = self._k_orig_states + self._cumulator_variables.index(name) * n_cum_lags
+        cum_start = self._k_model_states + self._cumulator_variables.index(name) * n_cum_lags
         columns += list(range(cum_start, cum_start + n_cum_lags))
         weight = 1.0 / self._aggregation_period if agg_method == "mean" else 1.0
         return columns, weight
@@ -334,11 +364,32 @@ class DSGEStateSpace(PyMCStateSpace):
                 for d in range(n_periods):
                     effective_lag = lag - d
                     if effective_lag == 0:
-                        col = self._orig_state_names.index(variable_name)
+                        col = self._variable_columns(variable_name)
                     else:
                         col = self._obs_lag_column(variable_name, effective_lag)
                     Z = Z[i, col].inc(coeff_weight * coeff)
         return Z
+
+    def _variable_columns(self, name: str) -> list[int]:
+        """Return the state columns that sum to a model variable's deviation: one at first order, two at second."""
+        column = self._orig_state_names.index(name)
+        if self.order == 1:
+            return [column]
+        return list(self._pruned_part_columns(column))
+
+    def _pruned_part_columns(self, variables: np.ndarray | int) -> tuple[np.ndarray | int, np.ndarray | int]:
+        """
+        Return the state columns of the first- and second-order parts of ``variables``, given as model positions.
+
+        The pruned state stacks the first-order parts of every variable, then the second-order parts, then the products
+        of the lagged first-order states.
+        """
+        return variables, len(self.variables) + variables
+
+    @property
+    def _n_pruned_pairs(self) -> int:
+        n_states = self._dr_order.n_state_var
+        return n_states * (n_states + 1) // 2
 
     def _make_obs_intercept(self) -> pt.TensorVariable:
         r"""
@@ -552,6 +603,49 @@ class DSGEStateSpace(PyMCStateSpace):
         return [x.base_name for x in self.variables]
 
     @property
+    def _lagged_state_names(self) -> list[str]:
+        """Names of the variables that enter the decision rule at a lag, in decision-rule order."""
+        return [self._orig_state_names[i] for i in self._dr_order.var_order[self._dr_order.lag_positions]]
+
+    @property
+    def _model_state_names(self) -> list[str]:
+        """
+        Names of the states the perturbation solution defines, before cumulator and observation-lag states.
+
+        At second order these are the first- and second-order parts of every variable and the distinct products of
+        the first-order lagged states, in the order of :func:`~gEconpy.model.pruning.pruned_second_order_system`.
+        """
+        if self.order == 1:
+            return self._orig_state_names
+
+        states = self._lagged_state_names
+        rows, columns = np.tril_indices(len(states))
+        return [
+            *(f"{name}_first_order" for name in self._orig_state_names),
+            *(f"{name}_second_order" for name in self._orig_state_names),
+            *(f"{states[i]} * {states[j]}" for i, j in zip(rows, columns, strict=True)),
+        ]
+
+    @property
+    def _innovation_names(self) -> list[str]:
+        """
+        Names of the innovations the selection matrix loads.
+
+        At second order these are the shocks, the distinct centered shock products, and the products of the lagged
+        first-order states with the shocks, in the order of :func:`~gEconpy.model.pruning.pruned_second_order_system`.
+        """
+        shocks = [shock.base_name for shock in self.shocks]
+        if self.order == 1:
+            return shocks
+
+        rows, columns = np.tril_indices(len(shocks))
+        return [
+            *shocks,
+            *(f"{shocks[i]} * {shocks[j]}" for i, j in zip(rows, columns, strict=True)),
+            *(f"{state}[-1] * {shock}" for state in self._lagged_state_names for shock in shocks),
+        ]
+
+    @property
     def log_linear_treatment(self) -> dict[str, Literal["log", "level", "by_sign"]]:
         """
         How each model variable's state measures its distance from the steady state, keyed by variable name.
@@ -615,7 +709,7 @@ class DSGEStateSpace(PyMCStateSpace):
         if not cumulator_vars:
             return T
 
-        k_orig = self._k_orig_states
+        k_orig = self._k_model_states
         n_agg = len(cumulator_vars)
         n_cum_lags = self._aggregation_period - 1
         n_cum = self._n_cumulator_states
@@ -661,7 +755,7 @@ class DSGEStateSpace(PyMCStateSpace):
         if n_obs_lag == 0:
             return T_aug
 
-        k_prev = self._k_orig_states + self._n_cumulator_states
+        k_prev = self._k_model_states + self._n_cumulator_states
         F_lag = pt.zeros((n_obs_lag, k_prev), dtype=floatX)
         C_lag = pt.zeros((n_obs_lag, n_obs_lag), dtype=floatX)
         for vname, depth in self._obs_lag_depths.items():
@@ -710,11 +804,12 @@ class DSGEStateSpace(PyMCStateSpace):
 
     def make_symbolic_graph(self):
         """
-        Build the symbolic statespace matrices of the linearized DSGE model into ``ssm``.
+        Build the symbolic statespace matrices of the DSGE model into ``ssm``.
 
-        The transition and selection matrices come from the perturbation solution, augmented with any cumulator
-        and observation-lag states. The design matrix, intercept, and covariances follow from the options passed
-        to :meth:`configure`, which has to run first.
+        At first order the transition and selection matrices come from the perturbation solution, augmented with any
+        cumulator and observation-lag states. At second order they are those of the pruned system, which also sets the
+        state intercept, and the initial state is that system's stationary mean. The design matrix, intercept, and
+        covariances follow from the options passed to :meth:`configure`, which has to run first.
         """
         if not self._configured:
             if self.verbose:
@@ -751,12 +846,20 @@ class DSGEStateSpace(PyMCStateSpace):
         self._policy_graph = [T, R]
         self._policy_resid = resid
 
-        T_aug = self._augment_transition(T)
-        T_aug = self._append_obs_lag_block(T_aug)
-        R_aug = self._augment_selection(R)
+        shock_cov = self._setup_state_covariance()
+        if self.order == 1:
+            transition = self._append_obs_lag_block(self._augment_transition(T))
+            selection = self._augment_selection(R)
+            innovation_cov = shock_cov
+            initial_state = pt.zeros(self.k_states)
+        else:
+            intercept, transition, selection, innovation_cov = self._pruned_system(T, R, shock_cov)
+            initial_state = pt.linalg.solve(pt.eye(self.k_states) - transition, intercept)
+            self.ssm["state_intercept"] = intercept
 
-        self.ssm["transition"] = T_aug
-        self.ssm["selection"] = R_aug
+        self.ssm["transition"] = transition
+        self.ssm["selection"] = selection
+        self.ssm["state_cov"] = innovation_cov
         self.ssm["design"] = self._make_design_matrix()
         if self._ss_obs_intercept_states or self._obs_equations:
             obs_intercept = self._make_obs_intercept()
@@ -765,8 +868,6 @@ class DSGEStateSpace(PyMCStateSpace):
             if constant_replacements:
                 obs_intercept = graph_replace(obs_intercept, constant_replacements, strict=False)
             self.ssm["obs_intercept"] = obs_intercept
-
-        Q = self._setup_state_covariance()
 
         if self.measurement_error:
             sigmas = [self.make_and_register_variable(f"error_sigma_{state}", shape=()) for state in self.error_states]
@@ -778,14 +879,57 @@ class DSGEStateSpace(PyMCStateSpace):
                 error_variances = pt.zeros((self.k_endog,), dtype=floatX)[error_positions].set(variances)
             self.ssm["obs_cov"] = pt.diag(error_variances)
 
-        self.ssm["initial_state"] = pt.zeros(self.k_states)
+        self.ssm["initial_state"] = initial_state
 
         method = "direct" if self.use_direct_lyapunov else "bilinear"
-        P0 = pt.linalg.solve_discrete_lyapunov(T_aug, R_aug @ Q @ R_aug.T, method=method)
-        # Deterministic cumulator and observation-lag copies make the stationary covariance singular.
-        if self._n_cumulator_states == 0 and self._n_obs_lag_states == 0:
+        P0 = pt.linalg.solve_discrete_lyapunov(transition, selection @ innovation_cov @ selection.T, method=method)
+        if self._stationary_covariance_is_positive_definite:
             P0 = assume(P0, positive_definite=True)
         self.ssm["initial_state_cov"] = P0
+
+    def _pruned_system(
+        self, T: pt.TensorVariable, R: pt.TensorVariable, shock_cov: pt.TensorVariable
+    ) -> tuple[pt.TensorVariable, pt.TensorVariable, pt.TensorVariable, pt.TensorVariable]:
+        """Solve the model to second order around the first-order ``T`` and ``R``, and build its pruned system."""
+        dr_order = self._dr_order
+        derivatives = self._second_order_derivatives
+        ghx = T[dr_order.var_order][:, dr_order.var_order[dr_order.lag_positions]]
+        ghu = R[dr_order.var_order]
+
+        hessian = graph_replace(
+            derivatives.hessian,
+            {derivatives.ghx: ghx, derivatives.ghu: ghu} | self._constant_replacements(),
+            strict=False,
+        )
+        terms = solve_second_order(
+            jacobians=self._linearized_system_subbed,
+            composition_hessian=hessian,
+            ghx=ghx,
+            ghu=ghu,
+            dr_order=dr_order,
+        )
+        intercept, transition, selection, innovation_cov = pruned_second_order_system(
+            ghx=ghx,
+            ghu=ghu,
+            ghxx=terms.ghxx,
+            ghxu=terms.ghxu,
+            ghuu=terms.ghuu,
+            ghs2_operator=terms.ghs2_operator,
+            shock_cov=shock_cov,
+            state_positions=dr_order.lag_positions,
+        )
+
+        # The variable blocks of the pruned system follow the decision rule. The states follow the model's variables.
+        first_order, second_order = self._pruned_part_columns(dr_order.inv_var_order)
+        pairs = 2 * len(self.variables) + np.arange(self._n_pruned_pairs)
+        model_order = np.concatenate([first_order, second_order, pairs])
+        return intercept[model_order], transition[model_order][:, model_order], selection[model_order], innovation_cov
+
+    @property
+    def _stationary_covariance_is_positive_definite(self) -> bool:
+        # Deterministic cumulator and observation-lag copies make the stationary covariance singular. The pruned
+        # system's is singular whenever the covariance of the first-order states is.
+        return self.order == 1 and self._n_cumulator_states == 0 and self._n_obs_lag_states == 0
 
     def configure(
         self,
@@ -935,6 +1079,8 @@ class DSGEStateSpace(PyMCStateSpace):
         if temporal_aggregation is None:
             temporal_aggregation = {}
         self._validate_temporal_aggregation(temporal_aggregation, aggregation_period, observed_states)
+        if self.order == 2 and any(method in CUMULATOR_AGGREGATIONS for method in temporal_aggregation.values()):
+            raise NotImplementedError("Temporal aggregation by 'sum' or 'mean' is not supported at order 2.")
 
         if ss_obs_intercept is None:
             ss_obs_intercept = []
@@ -980,7 +1126,7 @@ class DSGEStateSpace(PyMCStateSpace):
             raise ValueError(f"Unknown solver {solver!r}, expected one of {', '.join(repr(s) for s in VALID_SOLVERS)}")
 
         k_endog = len(observed_states)
-        n_stochastic_sources = len(measurement_error) + len(self.shock_names)
+        n_stochastic_sources = len(measurement_error) + len(self.shocks)
         if k_endog > n_stochastic_sources:
             verb = "are" if n_stochastic_sources != 1 else "is"
             suffix = "s" if n_stochastic_sources != 1 else ""
@@ -1012,6 +1158,11 @@ class DSGEStateSpace(PyMCStateSpace):
         for obs_name, expr_str in observation_equations.items():
             expression = self._parse_observation_equation(obs_name, expr_str)
             intercept_sym, coeffs_sym = self._linearize_observation_equation(expression)
+            if self.order == 2 and any(lag != 0 for _, lag in coeffs_sym):
+                raise NotImplementedError(
+                    f"The observation equation for {obs_name!r} references a lagged variable, which is not supported "
+                    f"at order 2."
+                )
             obs_equations[obs_name] = self._obs_eq_to_pytensor(intercept_sym, coeffs_sym)
 
         self._obs_state_names = observed_states
@@ -1042,11 +1193,11 @@ class DSGEStateSpace(PyMCStateSpace):
 
         n_cumulator = self._n_cumulator_states
         n_obs_lag = self._n_obs_lag_states
-        k_states_aug = self._k_orig_states + n_cumulator + n_obs_lag
+        k_states_aug = self._k_model_states + n_cumulator + n_obs_lag
 
         # Each variable's observation-lag slots run consecutively, in insertion order of ``_obs_lag_depths``.
         self._obs_lag_starts = {}
-        offset = self._k_orig_states + n_cumulator
+        offset = self._k_model_states + n_cumulator
         for variable_name, depth in self._obs_lag_depths.items():
             self._obs_lag_starts[variable_name] = offset
             offset += depth
@@ -1100,7 +1251,7 @@ class DSGEStateSpace(PyMCStateSpace):
             Hidden model variables, cumulator states, observation lag states, and observed states, in that order.
         """
         observed_names = self._obs_state_names if self._obs_state_names is not None else []
-        hidden_states = [State(name=x.base_name, observed=False) for x in self.variables]
+        hidden_states = [State(name=name, observed=False) for name in self._model_state_names]
         cumulator_states = [State(name=name, observed=False) for name in self._cumulator_state_names]
         obs_lag_states = [State(name=name, observed=False) for name in self._obs_lag_state_names]
         observed_states = [State(name=name, observed=True) for name in observed_names]
@@ -1124,8 +1275,8 @@ class DSGEStateSpace(PyMCStateSpace):
             parameters += [
                 Parameter(
                     name="state_cov",
-                    shape=(self.k_posdef, self.k_posdef),
-                    dims=(SHOCK_DIM, SHOCK_AUX_DIM),
+                    shape=(len(self.shocks), len(self.shocks)),
+                    dims=self._shock_cov_dims,
                     constraints="Positive Semi-Definite",
                 ),
             ]
@@ -1148,9 +1299,10 @@ class DSGEStateSpace(PyMCStateSpace):
         Returns
         -------
         shocks : tuple
-            One shock per exogenous shock in the model.
+            One shock per exogenous shock in the model, or at second order one per innovation of the pruned
+            system.
         """
-        return tuple(Shock(name=x.base_name) for x in self.shocks)
+        return tuple(Shock(name=name) for name in self._innovation_names)
 
     def set_coords(self) -> tuple[Coord, ...]:
         """
@@ -1159,9 +1311,18 @@ class DSGEStateSpace(PyMCStateSpace):
         Returns
         -------
         coords : tuple
-            The default coordinates implied by the model states, shocks, and observed states.
+            The default coordinates implied by the model states, shocks, and observed states. At second order the
+            structural shocks get their own coordinates, because the ``shock`` coordinate lists the innovations.
         """
-        return self.default_coords()
+        if self.order == 1:
+            return self.default_coords()
+
+        shocks = tuple(shock.base_name for shock in self.shocks)
+        return (
+            *self.default_coords(),
+            Coord(dimension=STRUCTURAL_SHOCK_DIM, labels=shocks),
+            Coord(dimension=STRUCTURAL_SHOCK_AUX_DIM, labels=shocks),
+        )
 
     @property
     def param_dims(self) -> dict[str, tuple[str, ...] | None]:
@@ -1169,7 +1330,13 @@ class DSGEStateSpace(PyMCStateSpace):
         if not self._configured:
             return {}
 
-        return {param: None if param != "state_cov" else (SHOCK_DIM, SHOCK_AUX_DIM) for param in self.param_names}
+        return {param: None if param != "state_cov" else self._shock_cov_dims for param in self.param_names}
+
+    @property
+    def _shock_cov_dims(self) -> tuple[str, str]:
+        if self.order == 1:
+            return SHOCK_DIM, SHOCK_AUX_DIM
+        return STRUCTURAL_SHOCK_DIM, STRUCTURAL_SHOCK_AUX_DIM
 
     def build_statespace_graph(
         self,
@@ -1353,6 +1520,7 @@ class DSGEStateSpace(PyMCStateSpace):
                 model, simulation_length=400, initial_conditions=start, steady_state_kwargs=params
             )
         """
+        self._raise_if_pruned("deviations_to_levels")
         draws = group_dataset(idata, group=group)
         _check_samples_have_draws(samples, draws=draws, group=group)
         steady_state = self._sample_steady_state(draws, compile_kwargs=compile_kwargs)
@@ -1491,8 +1659,7 @@ class DSGEStateSpace(PyMCStateSpace):
             _, _, _, _, T, Z, R, H, Q = self.unpack_statespace()
 
             Sigma = pt.linalg.solve_discrete_lyapunov(T, R @ Q @ R.T)
-            # Deterministic cumulator and observation-lag copies make the stationary covariance singular.
-            if self._n_cumulator_states == 0 and self._n_obs_lag_states == 0:
+            if self._stationary_covariance_is_positive_definite:
                 Sigma = assume(Sigma, positive_definite=True)
 
             T_step = pt.linalg.matrix_power(T, lag_step)
@@ -1521,6 +1688,17 @@ class DSGEStateSpace(PyMCStateSpace):
         return pm.compute_deterministics(
             posterior, var_names=[name], model=acf_model, compile_kwargs=compile_kwargs, progressbar=False
         )[name]
+
+    sample_unconditional_prior = _first_order_only(PyMCStateSpace.sample_unconditional_prior)
+    sample_unconditional_posterior = _first_order_only(PyMCStateSpace.sample_unconditional_posterior)
+    forecast = _first_order_only(PyMCStateSpace.forecast)
+    impulse_response_function = _first_order_only(PyMCStateSpace.impulse_response_function)
+
+    def _raise_if_pruned(self, method: str) -> None:
+        # The innovations of the pruned system are not Gaussian, so the simulating methods would draw from a different
+        # model, and its states are not the model's variables, so they cannot be releveled one by one.
+        if self.order == 2:
+            raise NotImplementedError(f"{method} is not supported at order 2.")
 
     def to_pymc(self, exclude_priors: list[str] | None = None) -> None:
         """
@@ -1632,6 +1810,7 @@ def data_from_prior(
         true_params, data, prior_idata = data_from_prior(ss_mod, pm_mod, n_samples=10, pct_missing=0.1, random_seed=0)
         print(float(true_params["sigma_epsilon_A"]), data["Y"].isna().mean())
     """
+    statespace_mod._raise_if_pruned("data_from_prior")
     rng = np.random.default_rng(random_seed)
     if build_statespace_kwargs is None:
         build_statespace_kwargs = {}
