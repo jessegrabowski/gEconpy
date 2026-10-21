@@ -26,6 +26,7 @@ from gEconpy.model.model import (
 )
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.steady_state import (
+    build_steady_state_system,
     compile_known_ss,
     known_steady_state_graphs,
     print_steady_state,
@@ -713,6 +714,25 @@ def test_declared_bounds_find_a_parameter_by_its_own_name():
 def test_steady_state_transforms_fall_back_to_assumptions():
     variable = TimeAwareSymbol("x", "ss", positive=True)
     assert isinstance(steady_state_transforms([variable], {}, {})[0], type(log))
+
+
+def test_build_steady_state_system_splits_rows_and_lets_fixed_values_win():
+    x, y, z, p = pt.dscalars("x_ss", "y_ss", "z_ss", "p")
+    equations = [x - p, y - 2 * x, z - y, z - 3.0]
+    known = {x: 2.0 * p, z: p + 1.0}
+
+    system = build_steady_state_system(equations, [x, y, z], known, fixed=[z])
+
+    assert system.unknowns == [y]
+    assert system.check_indices == [0, 3]
+    assert len(system.residuals) == 2
+    assert system.steady_state[1] is y
+    assert system.steady_state[2] is z
+
+    values = {p: 0.5, y: 2.0, z: 3.0}
+    assert_allclose([row.eval(values, on_unused_input="ignore") for row in system.checks], [0.5, 0.0])
+    assert_allclose([row.eval(values, on_unused_input="ignore") for row in system.residuals], [0.0, 1.0])
+    assert_allclose(system.steady_state[0].eval({p: 0.5}), 1.0)
 
 
 def test_transform_steady_state_system_round_trips_and_preserves_residuals():

@@ -1,6 +1,7 @@
 import logging
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Literal
 
 import pytensor.tensor as pt
@@ -603,6 +604,126 @@ def _ss_residual_to_pytensor(
     return resid_pt, cache
 
 
+def known_steady_state_replacements(
+    ss_solution_dict: SymbolDictionary,
+    ss_variables: list[sp.Symbol],
+    parameters: list[sp.Symbol],
+    cache: dict,
+    ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
+) -> dict[TensorVariable, TensorVariable]:
+    """
+    Map each analytically known steady-state node to its graph in the parameters.
+
+    Parameters
+    ----------
+    ss_solution_dict : SymbolDictionary
+        Analytically known steady-state values.
+    ss_variables : list of sympy Symbol
+        All steady-state variable symbols. Known values for other symbols are ignored.
+    parameters : list of sympy Symbol
+        Parameter symbols the known values may reference.
+    cache : dict
+        Sympytensor cache, extended in place with the parameter nodes the known values need.
+    ss_definitions : dict mapping sympy symbol to sympy expression, optional
+        Entries of the steady state block as written; see :func:`known_steady_state_graphs`. Default is None.
+
+    Returns
+    -------
+    replacements : dict mapping TensorVariable to TensorVariable
+        Steady-state input node to the graph of its known value. Only nodes already in the cache are included.
+    """
+    ss_variable_set = set(ss_variables)
+    known = {
+        safe_to_ss(symbol): expression
+        for symbol, expression in ss_solution_dict.to_sympy().items()
+        if safe_to_ss(symbol) in ss_variable_set
+    }
+    if not known:
+        return {}
+
+    _, _, cache = sympy_to_pytensor(parameters, [], cache)
+    known_pt = known_steady_state_graphs(known, ss_definitions, cache)
+
+    replacements = {}
+    for symbol, expression_pt in zip(known.keys(), known_pt, strict=True):
+        cache_key = make_cache_key(symbol.name, type(symbol))
+        if cache_key in cache:
+            replacements[cache[cache_key]] = expression_pt
+    return replacements
+
+
+@dataclass(frozen=True)
+class SteadyStateSystem:
+    """
+    The steady-state residual system with known values substituted and fixed values left as inputs, as graphs only.
+
+    Attributes
+    ----------
+    unknowns : list of TensorVariable
+        Steady-state nodes left to solve for, in model order.
+    residuals : list of TensorVariable
+        Residual rows that depend on at least one unknown.
+    checks : list of TensorVariable
+        Residual rows that depend on no unknown. They are zero at a steady state but play no part in the solve.
+    check_indices : list of int
+        Position of each check row in the full residual system.
+    steady_state : list of TensorVariable
+        One graph per steady-state node, in model order: the known graph, the fixed node itself, or the unknown.
+    """
+
+    unknowns: list[TensorVariable]
+    residuals: list[TensorVariable]
+    checks: list[TensorVariable]
+    check_indices: list[int]
+    steady_state: list[TensorVariable]
+
+
+def build_steady_state_system(
+    equations: Sequence[TensorVariable],
+    ss_nodes: Sequence[TensorVariable],
+    known: dict[TensorVariable, TensorVariable],
+    fixed: Sequence[TensorVariable] = (),
+) -> SteadyStateSystem:
+    """
+    Split the steady-state residual system into rows to solve and rows to check.
+
+    Known nodes are replaced by their graphs. Fixed nodes stay in the graph as inputs, so their values are supplied
+    at call time like parameters. A fixed node takes precedence over a known graph for the same node. Every other
+    steady-state node is an unknown.
+
+    Parameters
+    ----------
+    equations : list of TensorVariable
+        The full residual system, one scalar graph per equation, over every steady-state node.
+    ss_nodes : list of TensorVariable
+        Every steady-state node, in model order.
+    known : dict mapping TensorVariable to TensorVariable
+        Steady-state node to the graph of its analytically known value.
+    fixed : list of TensorVariable, optional
+        Steady-state nodes whose values the caller supplies. Default is none.
+
+    Returns
+    -------
+    system : SteadyStateSystem
+        The split system.
+    """
+    fixed_set = set(fixed)
+    replacements = {node: graph for node, graph in known.items() if node not in fixed_set}
+    unknowns = [node for node in ss_nodes if node not in replacements and node not in fixed_set]
+    unknown_set = set(unknowns)
+
+    replaced = graph_replace(list(equations), replacements, strict=False) if replacements else list(equations)
+    depends_on_unknown = [any(node in unknown_set for node in explicit_graph_inputs(row)) for row in replaced]
+
+    return SteadyStateSystem(
+        unknowns=unknowns,
+        residuals=[row for row, solve in zip(replaced, depends_on_unknown, strict=True) if solve],
+        checks=[row for row, solve in zip(replaced, depends_on_unknown, strict=True) if not solve],
+        check_indices=[index for index, solve in enumerate(depends_on_unknown) if not solve],
+        steady_state=[replacements.get(node, node) for node in ss_nodes],
+    )
+
+
 def _substitute_and_filter(
     equations: list[TensorVariable],
     ss_solution_dict: SymbolDictionary,
@@ -639,23 +760,11 @@ def _substitute_and_filter(
     cache : dict
         The extended cache.
     """
-    ss_variable_set = set(ss_variables)
-    known = {
-        safe_to_ss(symbol): expression
-        for symbol, expression in ss_solution_dict.to_sympy().items()
-        if safe_to_ss(symbol) in ss_variable_set
-    }
-    if not known:
+    replacements = known_steady_state_replacements(
+        ss_solution_dict, ss_variables, parameters, cache, ss_definitions=ss_definitions
+    )
+    if not replacements:
         return equations, cache
-
-    _, _, cache = sympy_to_pytensor(parameters, [], cache)
-    known_pt = known_steady_state_graphs(known, ss_definitions, cache)
-
-    replacements = {}
-    for symbol, expression_pt in zip(known.keys(), known_pt, strict=True):
-        cache_key = make_cache_key(symbol.name, type(symbol))
-        if cache_key in cache:
-            replacements[cache[cache_key]] = expression_pt
 
     unknown_nodes = set()
     for variable in ss_variables:
