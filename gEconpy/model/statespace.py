@@ -915,7 +915,8 @@ class DSGEStateSpace(PyMCStateSpace):
             use_direct_lyapunov = rcParams["statespace.use_direct_lyapunov"]
 
         obs_eq_names = set(observation_equations or {})
-        unknown_states = [x for x in observed_states if x not in self.state_names and x not in obs_eq_names]
+        known_states = set(self._orig_state_names) | obs_eq_names
+        unknown_states = [x for x in observed_states if x not in known_states]
         if unknown_states:
             raise ValueError(
                 f"The following states are unknown to the model and cannot be set as observed: "
@@ -1005,6 +1006,14 @@ class DSGEStateSpace(PyMCStateSpace):
                 "adjoint_method": adjoint_method,
             }
 
+        # Parsing and linearizing here surfaces a malformed observation equation at configure time, before the graph
+        # build starts and before any setting changes, so a configure that raises leaves the model as it was.
+        obs_equations = {}
+        for obs_name, expr_str in observation_equations.items():
+            expression = self._parse_observation_equation(obs_name, expr_str)
+            intercept_sym, coeffs_sym = self._linearize_observation_equation(expression)
+            obs_equations[obs_name] = self._obs_eq_to_pytensor(intercept_sym, coeffs_sym)
+
         self._obs_state_names = observed_states
         self.error_states = measurement_error
         self.constant_parameters = constant_params
@@ -1012,14 +1021,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self._temporal_aggregation = temporal_aggregation
         self._aggregation_period = aggregation_period
         self._ss_obs_intercept_states = ss_obs_intercept
-
-        # Parsing and linearizing here surfaces a malformed observation equation at configure time, before the graph
-        # build starts.
-        self._obs_equations = {}
-        for obs_name, expr_str in observation_equations.items():
-            expression = self._parse_observation_equation(obs_name, expr_str)
-            intercept_sym, coeffs_sym = self._linearize_observation_equation(expression)
-            self._obs_equations[obs_name] = self._obs_eq_to_pytensor(intercept_sym, coeffs_sym)
+        self._obs_equations = obs_equations
 
         # A reference at lag k in an observation equation aggregated over s periods contributes at effective lags
         # k, k+1, ..., k+(s-1), so the lag chain needs s-1 extra slots of headroom.
