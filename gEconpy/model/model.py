@@ -34,7 +34,7 @@ from gEconpy.classes.time_aware_symbol import (
     TimeAwareSymbol,
 )
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError, SecondOrderSolveFailedException
-from gEconpy.model.compile import compile_for_scipy, compile_packed, make_cache_key
+from gEconpy.model.compile import compile_for_scipy, compile_packed, dictionary_return_wrapper, make_cache_key
 from gEconpy.model.latex import authored_expressions
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import (
@@ -55,7 +55,6 @@ from gEconpy.model.steady_state import (
     build_minimize_graphs,
     build_root_graphs,
     build_steady_state_system,
-    compile_known_ss,
     known_steady_state_replacements,
     pt_error_from_resid,
     resubstitute_steady_state,
@@ -1325,19 +1324,15 @@ class Model:
     def f_ss(self) -> Callable | None:
         """Compiled function mapping parameters to the known steady-state values, or None without analytic solutions."""
         if self._f_ss is None:
-            if not self._ss_solution_dict:
+            known = self._known_steady_state_nodes()
+            if not known:
                 return None
 
-            _, cache = compile_param_dict_func(self._param_dict, self._deterministic_dict, mode=self._mode)
-            all_params = list(self._param_dict.to_sympy().keys()) + list(self._deterministic_dict.to_sympy().keys())
-            self._f_ss, _ = compile_known_ss(
-                self._ss_solution_dict,
-                self._variables,
-                all_params,
-                mode=self._mode,
-                cache=cache,
-                ss_definitions=self._ss_definitions,
-            )
+            symbol_by_node = dict(zip(self.ss_tensors(), self._steady_state_symbols(), strict=True))
+            known_nodes = [node for node in symbol_by_node if node in known]
+            known_graph = clone_replace(pt.stack([known[node] for node in known_nodes]))
+            f_known = compile_for_scipy(known_graph, mode=self._mode)
+            self._f_ss = dictionary_return_wrapper(f_known, [symbol_by_node[node] for node in known_nodes])
         return self._f_ss
 
     @property

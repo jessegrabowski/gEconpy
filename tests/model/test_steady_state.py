@@ -9,6 +9,8 @@ import sympy.core.parameters
 
 from numpy.testing import assert_allclose
 from pymc.distributions.transforms import Interval, log, logodds
+from pytensor.graph.basic import equal_computations
+from pytensor.graph.replace import clone_replace
 from pytensor.graph.traversal import ancestors
 from scipy import optimize
 
@@ -522,6 +524,17 @@ def test_bounds_reparametrize_the_minimize_solve_whether_tuple_or_list(bound):
 
     assert res.success
     assert res["lambda_ss"] > 0
+
+
+def test_f_ss_leaves_the_shared_known_graphs_intact():
+    """The steady-state system reuses these graphs, and compilation would otherwise rewrite them in place."""
+    model = model_from_gcn(TEST_GCNS / "full_nk.gcn", verbose=False)
+    known = list(model._known_steady_state_nodes().values())
+    before = clone_replace(known)
+
+    model.f_ss(**model.parameters())
+
+    assert equal_computations(known, before)
 
 
 def test_incomplete_ss_relationship_raises_with_root():
