@@ -406,7 +406,6 @@ class Model:
         self._f_params: Callable | None = None
         self._f_ss: Callable | None = None
         self._equation_tensors: list[TensorVariable] | None = None
-        self._full_equation_tensors: list[TensorVariable] | None = None
         self._f_full_residual: Callable | None = None
         self._known_ss_nodes: dict[TensorVariable, TensorVariable] | None = None
         self._ss_systems: dict[tuple[str, ...], SteadyStateSystem] = {}
@@ -1350,19 +1349,13 @@ class Model:
         """
         return self._ensure_cache()
 
-    def ss_tensors(self, filter_known: bool = False) -> list[TensorVariable]:
+    def ss_tensors(self) -> list[TensorVariable]:
         """
         Pytensor scalar variables for the model's steady-state symbols.
 
         Return one scalar ``TensorVariable`` per model variable and calibrated parameter, in model order. The
         variables live in the shared sympytensor cache, so repeated calls and downstream graph building share the
         same objects.
-
-        Parameters
-        ----------
-        filter_known : bool, optional
-            If True, exclude variables whose steady-state values are analytically known from the ``STEADY_STATE``
-            block. Default False.
 
         Returns
         -------
@@ -1382,8 +1375,7 @@ class Model:
             ss_nodes = model.ss_tensors()
             print([node.name for node in ss_nodes])
         """
-        known_names = self._known_steady_state_names() if filter_known else set()
-        return [self._scalar_node(symbol) for symbol in self._steady_state_symbols() if symbol.name not in known_names]
+        return [self._scalar_node(symbol) for symbol in self._steady_state_symbols()]
 
     def param_tensors(
         self,
@@ -1431,7 +1423,7 @@ class Model:
 
         return [self._scalar_node(symbol) for symbol in param_symbols]
 
-    def equation_tensors(self, filter_known: bool = False) -> list[TensorVariable]:
+    def equation_tensors(self) -> list[TensorVariable]:
         """
         Pytensor graphs for the model's steady-state equations.
 
@@ -1441,12 +1433,6 @@ class Model:
 
         Each call returns a fresh clone with shared input leaves. Compilation rewrites graphs in place, so handing
         out the memoized master graph would let one consumer corrupt it for the next.
-
-        Parameters
-        ----------
-        filter_known : bool, optional
-            If True, substitute the analytically known steady-state values and drop the equations they fully
-            determine. Default False.
 
         Returns
         -------
@@ -1474,8 +1460,7 @@ class Model:
             values = {**steady_state, **model.parameters()}
             print(f_residual(*[values[node.name] for node in inputs]))
         """
-        master = self._ensure_equation_tensors(filter_known=filter_known)
-        return clone_replace(master)
+        return clone_replace(self._ensure_equation_tensors())
 
     def parameters(self, **updates: float) -> SymbolDictionary[str, float]:
         """
@@ -2661,46 +2646,23 @@ class Model:
     def _steady_state_symbols(self) -> list[sp.Symbol]:
         return [x.to_ss() for x in self._variables] + list(self.calibrated_params)
 
-    def _known_steady_state_names(self) -> set[str]:
-        if not self._ss_solution_dict:
-            return set()
-        return {safe_to_ss(k).name for k in self._ss_solution_dict.to_sympy()}
-
     @property
     def _vars_to_solve(self) -> list[sp.Symbol]:
         """Steady-state symbols with no analytic solution."""
-        known_names = self._known_steady_state_names()
-        return [v for v in self._steady_state_symbols() if v.name not in known_names]
+        return self._unknown_symbols(self._steady_state_system(()))
 
-    def _build_equation_tensors(self, known_steady_state: SymbolDictionary) -> list[TensorVariable]:
-        equations, _ = _ss_residual_to_pytensor(
-            self._steady_state_equations,
-            known_steady_state,
-            self._variables,
-            self._param_dict,
-            self._deterministic_dict,
-            self._calib_dict,
-            cache=self._ensure_cache(),
-            ss_definitions=self._ss_definitions,
-        )
-        return equations
-
-    def _ensure_equation_tensors(self, filter_known: bool = False) -> list[TensorVariable]:
-        """
-        Build and memoize the master equation graphs.
-
-        With ``filter_known`` the analytically known steady-state values are substituted in and the equations they
-        fully determine are dropped. Without it every equation is returned with every steady-state variable as a free
-        input. The two variants are memoized separately.
-        """
-        if filter_known:
-            if self._equation_tensors is None:
-                self._equation_tensors = self._build_equation_tensors(self._ss_solution_dict)
-            return self._equation_tensors
-
-        if self._full_equation_tensors is None:
-            self._full_equation_tensors = self._build_equation_tensors(SymbolDictionary())
-        return self._full_equation_tensors
+    def _ensure_equation_tensors(self) -> list[TensorVariable]:
+        """Build and memoize the master equation graphs, with every steady-state node as a free input."""
+        if self._equation_tensors is None:
+            self._equation_tensors, _ = _ss_residual_to_pytensor(
+                self._steady_state_equations,
+                self._variables,
+                self._param_dict,
+                self._deterministic_dict,
+                self._calib_dict,
+                cache=self._ensure_cache(),
+            )
+        return self._equation_tensors
 
     def _full_residual_and_scale(self, **inputs: float) -> tuple[np.ndarray, np.ndarray]:
         """Evaluate every steady-state equation's residual and the scale its tolerance is measured against."""

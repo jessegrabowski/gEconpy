@@ -538,27 +538,24 @@ def build_minimize_graphs(
 
 def _ss_residual_to_pytensor(
     steady_state_equations: list[sp.Expr],
-    ss_solution_dict: SymbolDictionary,
     variables: list[TimeAwareSymbol],
     param_dict: SymbolDictionary,
     deterministic_dict: SymbolDictionary,
     calib_dict: SymbolDictionary,
     cache: dict | None = None,
-    ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
 ) -> tuple[list[TensorVariable], dict]:
     """
     Convert the steady-state residual system from sympy to PyTensor graphs.
 
-    This is the only place the steady-state solvers touch sympy. Every derivative they need is built from the returned
-    equations by PyTensor autodiff in :func:`build_root_graphs` and :func:`build_minimize_graphs`. Callers recover
-    the parameter and variable nodes from the returned cache with :func:`~gEconpy.model.compile.make_cache_key`.
+    Every derivative the steady-state solvers need is built from the returned equations by PyTensor autodiff in
+    :func:`build_root_graphs` and :func:`build_minimize_graphs`. Callers recover the parameter and variable nodes
+    from the returned cache with :func:`~gEconpy.model.compile.make_cache_key`. Known steady-state values are applied
+    to the returned graphs by :func:`build_steady_state_system`.
 
     Parameters
     ----------
     steady_state_equations : list of sympy expression
         Steady-state equations in residual form, each equal to zero.
-    ss_solution_dict : SymbolDictionary
-        Analytically known steady-state values, from the ``STEADY_STATE`` block and identity propagation.
     variables : list of TimeAwareSymbol
         Model variables, without calibrated parameter symbols.
     param_dict : SymbolDictionary
@@ -570,18 +567,14 @@ def _ss_residual_to_pytensor(
     cache : dict, optional
         Sympytensor cache to extend, so that PyTensor nodes are shared across graph-building calls. Default is a new
         empty cache.
-    ss_definitions : dict mapping sympy symbol to sympy expression, optional
-        Entries of the steady state block as written, so the substituted known values share the block's
-        subexpressions; see :func:`known_steady_state_graphs`. Default is None.
 
     Returns
     -------
     equations : list of TensorVariable
-        Scalar equation graphs, each equal to zero at the steady state. Equations that no longer contain an unknown
-        after substituting the known steady-state values are dropped.
+        Scalar equation graphs, one per steady-state and calibrating equation, each equal to zero at the steady state.
     cache : dict
-        The cache, extended with every parameter, deterministic parameter, steady-state variable, and known
-        steady-state graph created during conversion.
+        The cache, extended with every parameter, deterministic parameter, and steady-state variable created during
+        conversion.
     """
     if cache is None:
         cache = {}
@@ -595,12 +588,6 @@ def _ss_residual_to_pytensor(
     ss_variables = [safe_to_ss(variable) for variable in [*variables, *calib_symbols.keys()]]
 
     _input_pt, resid_pt, cache = sympy_to_pytensor(ss_variables + parameters, full_equations, cache)
-
-    if ss_solution_dict:
-        resid_pt, cache = _substitute_and_filter(
-            resid_pt, ss_solution_dict, ss_variables, parameters, cache, ss_definitions=ss_definitions
-        )
-
     return resid_pt, cache
 
 
@@ -722,60 +709,6 @@ def build_steady_state_system(
         check_indices=[index for index, solve in enumerate(depends_on_unknown) if not solve],
         steady_state=[replacements.get(node, node) for node in ss_nodes],
     )
-
-
-def _substitute_and_filter(
-    equations: list[TensorVariable],
-    ss_solution_dict: SymbolDictionary,
-    ss_variables: list[sp.Symbol],
-    parameters: list[sp.Symbol],
-    cache: dict,
-    ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
-) -> tuple[list[TensorVariable], dict]:
-    """
-    Replace known steady-state variables in each equation and drop equations with no remaining unknowns.
-
-    Dropping the equations that depend on parameters alone keeps the system square when some variables are
-    analytically known.
-
-    Parameters
-    ----------
-    equations : list of TensorVariable
-        Scalar equation graphs, each equal to zero at the steady state.
-    ss_solution_dict : SymbolDictionary
-        Analytically known steady-state values.
-    ss_variables : list of sympy Symbol
-        All steady-state variable symbols.
-    parameters : list of sympy Symbol
-        Free parameter symbols.
-    cache : dict
-        Sympytensor cache, extended in place with the parameter nodes the known values need.
-    ss_definitions : dict mapping sympy symbol to sympy expression, optional
-        Entries of the steady state block as written; see :func:`known_steady_state_graphs`. Default is None.
-
-    Returns
-    -------
-    filtered_equations : list of TensorVariable
-        Equations that still contain at least one unknown after substitution.
-    cache : dict
-        The extended cache.
-    """
-    replacements = known_steady_state_replacements(
-        ss_solution_dict, ss_variables, parameters, cache, ss_definitions=ss_definitions
-    )
-    if not replacements:
-        return equations, cache
-
-    unknown_nodes = set()
-    for variable in ss_variables:
-        cache_key = make_cache_key(variable.name, type(variable))
-        if cache_key in cache and cache[cache_key] not in replacements:
-            unknown_nodes.add(cache[cache_key])
-
-    substituted = graph_replace(equations, replacements, strict=False)
-    filtered = [eq for eq in substituted if any(inp in unknown_nodes for inp in explicit_graph_inputs(eq))]
-
-    return filtered, cache
 
 
 def _try_solve_for_unknown(

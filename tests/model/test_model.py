@@ -65,7 +65,6 @@ def _model_without_analytic_steady_state(gcn_file):
     model = model_from_gcn(TEST_GCNS / gcn_file, verbose=False)
     model._ss_solution_dict = SymbolDictionary()
     model._f_ss = None
-    model._equation_tensors = None
     return model
 
 
@@ -240,7 +239,6 @@ def _compile_ss_derivative_funcs(gcn_file):
 
     equations, cache = _ss_residual_to_pytensor(
         model._steady_state_equations,
-        SymbolDictionary(),
         model._variables,
         model._param_dict,
         model._deterministic_dict,
