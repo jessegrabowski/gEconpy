@@ -1301,6 +1301,17 @@ def test_simulating_a_second_order_solution_with_policy_matrices_raises():
         simulate(model, solution, T=solution.T, R=solution.R, shock_std=0.01, simulation_length=3)
 
 
+def test_one_policy_matrix_cannot_stand_in_for_a_second_order_solution():
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(return_matrices=False, verbose=False)
+
+    with (
+        pytest.warns(FutureWarning, match="Passing T and R is deprecated"),
+        pytest.raises(ValueError, match="first-order solution only"),
+    ):
+        stationary_covariance_matrix(model, T=solution.T, order=2, shock_std=0.01, verbose=False)
+
+
 @pytest.mark.parametrize(
     ("function", "kwargs"),
     [

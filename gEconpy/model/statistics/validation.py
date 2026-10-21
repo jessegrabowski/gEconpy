@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gEconpy.classes.containers import SteadyStateResults
-from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution, SecondOrderPerturbationSolution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import SteadyStateNotFoundError
 
@@ -205,6 +205,10 @@ def _maybe_solve_model(
         solution = model.solve_model(**{**solve_model_kwargs, "return_matrices": False})
         if solution is None:
             return None, None
+        if isinstance(solution, SecondOrderPerturbationSolution):
+            raise ValueError(
+                "T and R describe a first-order solution only. Pass solution=model.solve_model(order=2) instead."
+            )
 
     return solution.T, solution.R
 
