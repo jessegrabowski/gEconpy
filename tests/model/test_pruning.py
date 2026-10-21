@@ -6,8 +6,10 @@ from pytensor.gradient import verify_grad
 from scipy import linalg
 
 from gEconpy.model.pruning import (
+    compile_pruned_second_order_moments,
     compile_pruned_second_order_path,
     compile_pruned_second_order_system,
+    pruned_second_order_moments,
     pruned_second_order_path,
     pruned_second_order_system,
 )
@@ -151,12 +153,61 @@ def test_pruned_innovations_have_the_stated_covariance():
     assert np.linalg.eigvalsh(innovation_cov).min() > 0
 
 
+def test_pruned_moments_without_second_order_terms_are_first_order_moments():
+    solution = load_and_cache_model("one_block_1_ss_2shock.gcn").solve_model(order=2, verbose=False)
+    shock_cov = np.diag([1e-4, 4e-4])
+    n_variables, n_states = solution.ghx.shape
+    n_shocks = solution.ghu.shape[1]
+
+    mean, autocovariances = compile_pruned_second_order_moments()(
+        ghx=solution.ghx,
+        ghu=solution.ghu,
+        ghxx=np.zeros((n_variables, n_states, n_states)),
+        ghxu=np.zeros((n_variables, n_states, n_shocks)),
+        ghuu=np.zeros((n_variables, n_shocks, n_shocks)),
+        ghs2_operator=np.zeros((n_variables, n_shocks**2)),
+        shock_cov=shock_cov,
+        state_positions=solution.dr_order.lag_positions,
+        n_lags=3,
+    )
+
+    T, R = solution.T, solution.R
+    first_order_cov = linalg.solve_discrete_lyapunov(T, R @ shock_cov @ R.T)
+    expected = np.stack([np.linalg.matrix_power(T, lag) @ first_order_cov for lag in range(3)])
+    model_order = solution.dr_order.inv_var_order
+
+    assert_allclose(mean, 0, atol=1e-16)
+    assert_allclose(autocovariances[:, model_order][:, :, model_order], expected, atol=1e-14)
+
+
+def test_pruned_mean_matches_the_expectation_of_the_pruned_recursion():
+    """Taking expectations of the second-order recursion gives the mean without building the augmented system."""
+    solution = load_and_cache_model("one_block_1_ss_2shock.gcn").solve_model(order=2, verbose=False)
+    shock_cov = np.array([[1e-4, 2e-5], [2e-5, 4e-4]])
+    mean, _ = compile_pruned_second_order_moments()(**_solution_inputs(solution), shock_cov=shock_cov, n_lags=1)
+
+    states = solution.dr_order.lag_positions
+    n_variables = len(solution.variable_names)
+    state_transition, state_impact = solution.ghx[states], solution.ghu[states]
+    state_cov = linalg.solve_discrete_lyapunov(state_transition, state_impact @ shock_cov @ state_impact.T)
+    forcing = 0.5 * (
+        solution.ghs2(shock_cov)
+        + solution.ghxx.reshape(n_variables, -1) @ state_cov.ravel()
+        + solution.ghuu.reshape(n_variables, -1) @ shock_cov.ravel()
+    )
+    state_mean = np.linalg.solve(np.eye(len(states)) - state_transition, forcing[states])
+
+    assert np.abs(mean).max() > 1e-6
+    assert_allclose(mean, solution.ghx @ state_mean + forcing, rtol=1e-10, atol=1e-16)
+
+
 @pytest.mark.parametrize(
     "total",
     [
         lambda *inputs: sum(output.sum() for output in pruned_second_order_system(*inputs)),
+        lambda *inputs: sum(moment.sum() for moment in pruned_second_order_moments(*inputs, n_lags=2)),
     ],
-    ids=["system"],
+    ids=["system", "moments"],
 )
 def test_pruned_graph_gradients_match_finite_differences(total):
     rng = np.random.default_rng(0)

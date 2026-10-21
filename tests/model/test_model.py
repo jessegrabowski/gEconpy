@@ -1,3 +1,4 @@
+import dataclasses
 import itertools
 import re
 
@@ -618,8 +619,14 @@ def test_unsolvable_model_raises_with_the_solver_message(solver, match):
 
 @pytest.mark.parametrize(
     ("function", "kwargs"),
-    [(impulse_response_function, {}), (simulate, {"shock_std": 0.1})],
-    ids=["irf", "simulate"],
+    [
+        (impulse_response_function, {}),
+        (simulate, {"shock_std": 0.1}),
+        (stationary_covariance_matrix, {"shock_std": 0.1}),
+        (autocovariance_matrix, {"shock_std": 0.1}),
+        (autocorrelation_matrix, {"shock_std": 0.1}),
+    ],
+    ids=["irf", "simulate", "covariance", "autocovariance", "autocorrelation"],
 )
 def test_an_unsolvable_model_raises_instead_of_using_a_missing_solution(function, kwargs):
     """``on_failure="ignore"`` makes ``solve_model`` return None, which has no policy function to use."""
@@ -1530,8 +1537,9 @@ def test_second_order_part_of_a_simulation_scales_with_the_shock_variance(scale)
     [
         (simulate, {"shock_std": 0.01, "simulation_length": 10, "random_seed": 0}),
         (impulse_response_function, {"shock_size": 0.01, "simulation_length": 10}),
+        (autocovariance_matrix, {"shock_std": 0.01, "n_lags": 3}),
     ],
-    ids=["simulate", "irf"],
+    ids=["simulate", "irf", "autocovariance"],
 )
 def test_solving_inside_matches_passing_a_second_order_solution(function, kwargs):
     model = load_and_cache_model("one_block_1_ss_2shock.gcn")
@@ -1539,6 +1547,42 @@ def test_solving_inside_matches_passing_a_second_order_solution(function, kwargs
 
     solved_inside = function(model, order=2, verbose=False, **kwargs)
     xr.testing.assert_allclose(solved_inside, function(model, solution, **kwargs))
+
+
+@pytest.mark.parametrize("order", [1, 2])
+@pytest.mark.parametrize("function", [autocovariance_matrix, autocorrelation_matrix], ids=["cov", "corr"])
+def test_zero_lags_give_no_autocovariances(function, order):
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=order, return_matrices=False, verbose=False)
+
+    autocovariances = function(model, solution, shock_std=0.01, n_lags=0, return_xr=False)
+
+    assert autocovariances.shape == (0, len(model.variables), len(model.variables))
+
+
+@pytest.mark.parametrize("order", [1, 2])
+def test_autocorrelations_are_autocovariances_scaled_by_the_standard_deviations(order):
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=order, return_matrices=False, verbose=False)
+    kwargs = {"shock_std": 0.01, "n_lags": 3, "return_xr": False}
+
+    autocorrelations = autocorrelation_matrix(model, solution, **kwargs)
+    autocovariances = autocovariance_matrix(model, solution, **kwargs)
+    standard_deviations = np.sqrt(np.diag(autocovariances[0]))
+
+    assert_allclose(np.diag(autocorrelations[0]), 1)
+    assert_allclose(autocorrelations, autocovariances / np.outer(standard_deviations, standard_deviations))
+    assert_allclose(autocovariance_matrix(model, solution, correlation=True, **kwargs), autocorrelations)
+
+
+def test_second_order_moments_of_an_unstable_solution_raise():
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=2, verbose=False)
+    spectral_radius = np.abs(np.linalg.eigvals(solution.ghx[solution.dr_order.lag_positions])).max()
+    unstable = dataclasses.replace(solution, ghx=solution.ghx * 1.5 / spectral_radius)
+
+    with pytest.raises(ValueError, match="not stable"):
+        stationary_covariance_matrix(model, unstable, shock_std=0.01)
 
 
 def test_second_order_responses_per_shock_are_responses_to_each_shock_alone():

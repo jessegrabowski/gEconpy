@@ -252,6 +252,80 @@ def compile_pruned_second_order_system() -> Function:
     return pytensor.function(inputs, pruned_second_order_system(*inputs))
 
 
+def pruned_second_order_moments(
+    ghx: TensorLike,
+    ghu: TensorLike,
+    ghxx: TensorLike,
+    ghxu: TensorLike,
+    ghuu: TensorLike,
+    ghs2_operator: TensorLike,
+    shock_cov: TensorLike,
+    state_positions: TensorLike,
+    n_lags: TensorLike,
+) -> tuple[TensorVariable, TensorVariable]:
+    r"""
+    Compute the stationary mean and autocovariances of the pruned second-order deviations.
+
+    The moments are those of the system from :func:`pruned_second_order_system`. The state has mean
+    :math:`(I - A)^{-1} c` and covariance :math:`V` solving :math:`V = A V A^\top + B \Omega B^\top`, with
+    :math:`\Omega` the innovation covariance, and the state's autocovariance at lag :math:`k` is :math:`A^k V`.
+
+    Parameters
+    ----------
+    ghx, ghu, ghxx, ghxu, ghuu, ghs2_operator, shock_cov, state_positions : TensorVariable
+        As in :func:`pruned_second_order_system`.
+    n_lags : TensorVariable
+        Number of lags, starting from lag 0.
+
+    Returns
+    -------
+    mean : TensorVariable
+        Stationary mean of every deviation from the steady state, of shape ``(n_variables,)``, in decision-rule
+        order.
+    autocovariances : TensorVariable
+        :math:`\operatorname{Cov}(\hat{y}_{t+k}, \hat{y}_t)` for :math:`k` from 0 to ``n_lags - 1``, of shape
+        ``(n_lags, n_variables, n_variables)``, in decision-rule order.
+    """
+    intercept, transition, selection, innovation_cov = pruned_second_order_system(
+        ghx, ghu, ghxx, ghxu, ghuu, ghs2_operator, shock_cov, state_positions
+    )
+    n_variables = pt.as_tensor(ghx).shape[0]
+    n_augmented = transition.shape[0]
+
+    state_mean = pt.linalg.solve(pt.eye(n_augmented) - transition, intercept)
+    state_cov = pt.linalg.solve_discrete_lyapunov(transition, selection @ innovation_cov @ selection.T)
+
+    identity = pt.eye(n_variables)
+    observe = pt.horizontal_stack(identity, identity, pt.zeros((n_variables, n_augmented - 2 * n_variables)))
+
+    def lag_step(lagged_cov):
+        return transition @ lagged_cov, observe @ lagged_cov @ observe.T
+
+    _, autocovariances = pytensor.scan(lag_step, outputs_info=[state_cov, None], n_steps=n_lags, return_updates=False)
+    return observe @ state_mean, autocovariances
+
+
+@cache
+def compile_pruned_second_order_moments() -> Function:
+    """
+    Compile :func:`pruned_second_order_moments` once, for solutions of any model.
+
+    The compiled function takes the arguments of :func:`pruned_second_order_moments` in order.
+    """
+    inputs = [
+        pt.matrix("ghx"),
+        pt.matrix("ghu"),
+        pt.tensor3("ghxx"),
+        pt.tensor3("ghxu"),
+        pt.tensor3("ghuu"),
+        pt.matrix("ghs2_operator"),
+        pt.matrix("shock_cov"),
+        pt.lvector("state_positions"),
+        pt.lscalar("n_lags"),
+    ]
+    return pytensor.function(inputs, pruned_second_order_moments(*inputs))
+
+
 def _quadratic_form(coefficients: TensorVariable, left: TensorVariable, right: TensorVariable) -> TensorVariable:
     """Contract ``(n, p, q)`` coefficients with ``(..., p)`` and ``(..., q)`` vectors into ``(..., n)``."""
     return (pt.tensordot(left, coefficients, axes=[[-1], [1]]) * right[..., None, :]).sum(axis=-1)

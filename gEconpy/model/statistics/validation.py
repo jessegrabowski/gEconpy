@@ -157,6 +157,7 @@ def _maybe_solve_model(
     solution: "FirstOrderPerturbationSolution | np.ndarray | None",
     T: np.ndarray | None,
     R: np.ndarray | None,
+    stacklevel: int = 3,
     **solve_model_kwargs,
 ) -> tuple[np.ndarray | None, np.ndarray | None]:
     """
@@ -173,6 +174,8 @@ def _maybe_solve_model(
         Transition matrix. Deprecated.
     R : ndarray, optional
         Selection matrix. Deprecated.
+    stacklevel : int, optional
+        Stack level of the deprecation warning, which must point at the user's call. Defaults to 3.
     **solve_model_kwargs
         Arguments forwarded to ``model.solve_model``.
 
@@ -192,7 +195,7 @@ def _maybe_solve_model(
         warnings.warn(
             "Passing T and R is deprecated and will be removed. Pass solution=model.solve_model(...) instead.",
             FutureWarning,
-            stacklevel=3,
+            stacklevel=stacklevel,
         )
         if T is not None and R is not None:
             return T, R
