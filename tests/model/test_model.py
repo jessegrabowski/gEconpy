@@ -38,6 +38,7 @@ from gEconpy.model.statistics import (
     eigenvalue_sensitivity,
     matrix_to_dataframe,
     stationary_covariance_matrix,
+    stationary_mean,
     summarize_perturbation_solution,
 )
 from gEconpy.model.statistics.validation import _maybe_linearize_model
@@ -625,8 +626,9 @@ def test_unsolvable_model_raises_with_the_solver_message(solver, match):
         (stationary_covariance_matrix, {"shock_std": 0.1}),
         (autocovariance_matrix, {"shock_std": 0.1}),
         (autocorrelation_matrix, {"shock_std": 0.1}),
+        (stationary_mean, {"shock_std": 0.1}),
     ],
-    ids=["irf", "simulate", "covariance", "autocovariance", "autocorrelation"],
+    ids=["irf", "simulate", "covariance", "autocovariance", "autocorrelation", "mean"],
 )
 def test_an_unsolvable_model_raises_instead_of_using_a_missing_solution(function, kwargs):
     """``on_failure="ignore"`` makes ``solve_model`` return None, which has no policy function to use."""
@@ -1538,8 +1540,9 @@ def test_second_order_part_of_a_simulation_scales_with_the_shock_variance(scale)
         (simulate, {"shock_std": 0.01, "simulation_length": 10, "random_seed": 0}),
         (impulse_response_function, {"shock_size": 0.01, "simulation_length": 10}),
         (autocovariance_matrix, {"shock_std": 0.01, "n_lags": 3}),
+        (stationary_mean, {"shock_std": 0.01}),
     ],
-    ids=["simulate", "irf", "autocovariance"],
+    ids=["simulate", "irf", "autocovariance", "mean"],
 )
 def test_solving_inside_matches_passing_a_second_order_solution(function, kwargs):
     model = load_and_cache_model("one_block_1_ss_2shock.gcn")
@@ -1583,6 +1586,68 @@ def test_second_order_moments_of_an_unstable_solution_raise():
 
     with pytest.raises(ValueError, match="not stable"):
         stationary_covariance_matrix(model, unstable, shock_std=0.01)
+
+
+def test_second_order_moments_scale_with_the_shock_variance():
+    """
+    The pruned mean is linear in the shock covariance, and the covariance is first order plus a quartic term.
+
+    Scaling the shocks by ``scale`` therefore scales the mean by ``scale ** 2`` and the gap from the first-order
+    covariance by ``scale ** 4``.
+    """
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    second_order = model.solve_model(order=2, verbose=False)
+    first_order = model.solve_model(return_matrices=False, verbose=False)
+
+    def moments(scale):
+        shock_std = scale * np.array([0.01, 0.02])
+        mean = stationary_mean(model, second_order, shock_std=shock_std)["deviation"].values
+        cov_gap = stationary_covariance_matrix(
+            model, second_order, shock_std=shock_std, return_df=False
+        ) - stationary_covariance_matrix(model, first_order, shock_std=shock_std, return_df=False)
+        return mean, cov_gap
+
+    mean, cov_gap = moments(1.0)
+    scaled_mean, scaled_cov_gap = moments(0.1)
+
+    assert np.abs(mean).max() > 1e-4
+    assert np.abs(cov_gap).max() > 1e-8
+    assert_allclose(scaled_mean, 1e-2 * mean, rtol=1e-8, atol=1e-18)
+    assert_allclose(scaled_cov_gap, 1e-4 * cov_gap, rtol=1e-6, atol=1e-6 * np.abs(1e-4 * cov_gap).max())
+
+
+def test_second_order_moments_match_long_simulations():
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    solution = model.solve_model(order=2, verbose=False)
+    shock_std = np.array([0.01, 0.02])
+
+    paths = simulate(
+        model, solution, shock_std=shock_std, n_simulations=200, simulation_length=2000, random_seed=0
+    ).values[:, 500:]
+    path_means = paths.mean(axis=1)
+    standard_error = path_means.std(axis=0) / np.sqrt(len(path_means))
+    centered = paths - path_means.mean(axis=0)
+    sample_cov = np.einsum("sti,stj->ij", centered, centered) / (centered.shape[0] * centered.shape[1])
+    sample_lag_1 = np.einsum("sti,stj->ij", centered[:, 1:], centered[:, :-1]) / (
+        centered.shape[0] * (centered.shape[1] - 1)
+    )
+
+    mean = stationary_mean(model, solution, shock_std=shock_std)["deviation"].values
+    autocovariances = autocovariance_matrix(model, solution, shock_std=shock_std, n_lags=2, return_xr=False)
+
+    assert np.all(np.abs(path_means.mean(axis=0) - mean) <= 4 * standard_error + 1e-12)
+    assert_allclose(sample_cov, autocovariances[0], atol=0.05 * np.abs(autocovariances[0]).max())
+    assert_allclose(sample_lag_1, autocovariances[1], atol=0.05 * np.abs(autocovariances[1]).max())
+
+
+def test_the_stationary_mean_of_a_first_order_solution_is_the_steady_state():
+    model = load_and_cache_model("basic_rbc.gcn")
+    solution = model.solve_model(return_matrices=False, log_linearize=True, verbose=False)
+
+    mean = stationary_mean(model, solution, shock_std=0.01)
+
+    assert_allclose(mean["deviation"], 0)
+    assert_allclose(mean["level"], mean["steady_state"])
 
 
 def test_second_order_responses_per_shock_are_responses_to_each_shock_alone():

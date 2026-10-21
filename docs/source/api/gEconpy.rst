@@ -27,6 +27,7 @@ gEconpy
     model.statistics.covariance.autocovariance_matrix
     model.statistics.covariance.build_Q_matrix
     model.statistics.covariance.stationary_covariance_matrix
+    model.statistics.covariance.stationary_mean
     model.statistics.formatting.matrix_to_dataframe
     model.statistics.perturbation_diagnostics.check_bk_condition
     model.statistics.perturbation_diagnostics.prior_solvability_check

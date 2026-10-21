@@ -60,6 +60,7 @@ from gEconpy.model.statistics import (
     prior_solvability_check,
     solvability_check,
     stationary_covariance_matrix,
+    stationary_mean,
     summarize_perturbation_solution,
 )
 from gEconpy.model.steady_state import print_steady_state
@@ -106,6 +107,7 @@ __all__ = [
     "solvers",
     "statespace_from_gcn",
     "stationary_covariance_matrix",
+    "stationary_mean",
     "summarize_perturbation_solution",
     "utilities",
 ]

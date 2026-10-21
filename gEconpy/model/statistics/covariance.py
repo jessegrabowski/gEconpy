@@ -172,6 +172,91 @@ def stationary_covariance_matrix(
     return Sigma
 
 
+def stationary_mean(
+    model: "Model",
+    solution: FirstOrderPerturbationSolution | None = None,
+    shock_std_dict: dict[str, float] | None = None,
+    shock_cov_matrix: np.ndarray | None = None,
+    shock_std: np.ndarray | list | float | None = None,
+    **solve_model_kwargs,
+) -> xr.Dataset:
+    r"""
+    Compute the stationary mean of the solved model, as a deviation from the steady state and in levels.
+
+    A first-order solution has a stationary mean of zero deviation, the steady state. A second-order solution's mean
+    is that of its pruned deviations, which the risk correction and the variance of the shocks move away from the
+    steady state. Exactly one of ``shock_std_dict``, ``shock_cov_matrix``, and ``shock_std`` must be given.
+
+    A log-linearized variable's deviation is a log deviation, so its mean deviation is
+    :math:`E[\log y] - \log y_{ss}`, and its ``level`` is ``steady_state * exp(deviation)``, the exponential of the
+    mean log. That is not the mean of the level, which also depends on the variance. Every other variable's level is
+    ``steady_state + deviation``.
+
+    Parameters
+    ----------
+    model : Model
+        DSGE model whose variables label the output.
+    solution : FirstOrderPerturbationSolution or SecondOrderPerturbationSolution, optional
+        Solution from :meth:`~gEconpy.model.model.Model.solve_model`. Solved from ``model`` when None. Defaults to
+        None.
+    shock_std_dict : dict of str to float, optional
+        Standard deviation of every shock, keyed by shock name. Defaults to None.
+    shock_cov_matrix : ndarray, optional
+        Covariance matrix of shape ``(n_shocks, n_shocks)``. Defaults to None.
+    shock_std : float or sequence of float, optional
+        Standard deviation shared by every shock, or one standard deviation per shock. Defaults to None.
+    **solve_model_kwargs
+        Arguments forwarded to :meth:`~gEconpy.model.model.Model.solve_model` when the model is solved here.
+
+    Returns
+    -------
+    mean : Dataset
+        Variables ``deviation`` and ``level`` over ``variable``, with the steady state and the log-linearization
+        flags as coordinates.
+
+    Examples
+    --------
+    Compute the stationary mean of a second-order solution as a deviation from the steady state:
+
+    .. code-block:: python
+
+        from gEconpy import model_from_gcn, stationary_mean
+        from gEconpy.data import get_example_gcn
+
+        model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+        mean = stationary_mean(model, shock_std=0.01, order=2, verbose=False)
+        mean_deviation = mean["deviation"]
+    """
+    _validate_shock_options(
+        shock_std_dict=shock_std_dict,
+        shock_cov_matrix=shock_cov_matrix,
+        shock_std=shock_std,
+        shocks=model.shocks,
+    )
+    solution = _given_or_solved(model, solution, T=None, R=None, purpose="compute moments from", **solve_model_kwargs)
+
+    if isinstance(solution, SecondOrderPerturbationSolution):
+        deviation, _ = _pruned_moments(
+            model,
+            solution,
+            n_lags=1,
+            shock_std_dict=shock_std_dict,
+            shock_cov_matrix=shock_cov_matrix,
+            shock_std=shock_std,
+        )
+    else:
+        deviation = np.zeros(len(solution.variable_names))
+
+    return xr.Dataset(
+        {"deviation": ("variable", deviation), "level": ("variable", solution.to_levels(deviation))},
+        coords={
+            "variable": solution.variable_names,
+            "steady_state": ("variable", solution.steady_state),
+            "log_linearized": ("variable", solution.log_linearized),
+        },
+    )
+
+
 def autocovariance_matrix(
     model: "Model",
     solution: FirstOrderPerturbationSolution | None = None,
