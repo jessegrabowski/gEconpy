@@ -8,8 +8,10 @@ gEconpy.model.pruning
 .. autosummary::
 
     compile_pruned_second_order_path
+    compile_pruned_second_order_system
     pruned_second_order_path
+    pruned_second_order_system
 
 .. automodule:: gEconpy.model.pruning
-    :members: compile_pruned_second_order_path, pruned_second_order_path
+    :members: compile_pruned_second_order_path, compile_pruned_second_order_system, pruned_second_order_path, pruned_second_order_system
     :undoc-members:
