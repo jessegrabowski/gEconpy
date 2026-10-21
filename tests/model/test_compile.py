@@ -18,7 +18,6 @@ from gEconpy.model.compile import (
     dictionary_return_wrapper,
     make_cache_key,
     make_return_dict_and_update_cache,
-    pack_and_compile,
     sympy_to_pytensor,
 )
 
@@ -160,29 +159,6 @@ def test_compile_for_scipy_ignores_unknown_keywords():
     f = compile_for_scipy(x * y, mode="FAST_COMPILE")
 
     np.testing.assert_allclose(f(x=2.0, y=3.0, z=100.0), 6.0)
-
-
-@pytest.mark.parametrize("freeze_params", [True, False], ids=["frozen_params", "positional_params"])
-def test_pack_and_compile_reads_only_active_nodes_from_flat_vector(freeze_params):
-    x, y, z, alpha = pt.dscalars("x", "y", "z", "alpha")
-    param_dict = SymbolDictionary({"alpha": 10.0}) if freeze_params else None
-    param_args = () if freeze_params else (10.0,)
-
-    # y is not a graph input, so x_flat[1] is skipped and z is read from x_flat[2].
-    f = pack_and_compile(pt.stack([x * alpha, z + alpha]), [x, y, z], param_dict=param_dict, mode="FAST_COMPILE")
-
-    np.testing.assert_allclose(f(np.array([1.0, 999.0, 2.0]), *param_args), [10.0, 12.0])
-
-
-@pytest.mark.parametrize("freeze_params", [True, False], ids=["frozen_params", "positional_params"])
-def test_pack_and_compile_without_steady_state_inputs_ignores_flat_vector(freeze_params):
-    x, alpha = pt.dscalars("x", "alpha")
-    param_dict = SymbolDictionary({"alpha": 10.0, "unused": 1.0}) if freeze_params else None
-    param_args = () if freeze_params else (10.0,)
-
-    f = pack_and_compile(alpha * 2.0, [x], param_dict=param_dict, mode="FAST_COMPILE")
-
-    np.testing.assert_allclose(f(np.array([123.0]), *param_args), 20.0)
 
 
 def test_compile_packed_reads_nodes_from_x_and_finds_the_remaining_inputs():

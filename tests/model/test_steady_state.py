@@ -35,7 +35,9 @@ from gEconpy.model.steady_state import (
     resubstitute_steady_state,
     system_to_steady_state,
 )
+from gEconpy.pytensorf.compile import compile_cache_info
 from tests._resources.cache_compiled_models import load_and_cache_model
+from tests.conftest import TEST_GCNS
 
 
 class TestPropagateSteadyStateThroughIdentities:
@@ -456,14 +458,70 @@ def test_unknown_how_raises():
         model_1.steady_state(how="newton")
 
 
-def test_fixed_values_completing_analytic_steady_state_skip_the_solver():
+def test_fixed_values_completing_analytic_steady_state_skip_the_solver(monkeypatch):
     model = load_and_cache_model("one_block_1_ss.gcn")
     analytic = model.steady_state(verbose=False, progressbar=False)
 
+    def no_solve(**_):
+        raise AssertionError("the steady state is fully determined, so no solver should run")
+
+    monkeypatch.setattr(model_module, "root", no_solve)
+    monkeypatch.setattr(model_module, "minimize", no_solve)
     res = model.steady_state(fixed_values={"K_ss": analytic["K_ss"]}, verbose=False, progressbar=False)
 
     assert res.success
-    assert res.to_string() == analytic.to_string()
+    assert res.keys() == analytic.keys()
+    assert_allclose([res[key] for key in analytic], list(analytic.values()), rtol=1e-14)
+
+
+def test_fixed_value_that_squares_the_system_solves_with_root():
+    """Fixing ``A_ss`` turns the technology equation into a check row, which leaves a square system for root."""
+    model = model_from_gcn(TEST_GCNS / "one_block_1.gcn", verbose=False, infer_steady_state=False)
+    reference = model.steady_state(how="minimize", verbose=False, progressbar=False)
+
+    res = model.steady_state(how="root", fixed_values={"A_ss": 1.0}, verbose=False, progressbar=False)
+
+    assert res.success
+    assert_allclose([res[key] for key in reference], list(reference.values()), rtol=1e-8)
+
+
+def test_violated_check_row_fails_the_verdict_and_names_the_equation(caplog):
+    """A fixed value inconsistent with a known one breaks a row the solve never sees, and the log has to say so."""
+    k_ss = load_and_cache_model("one_block_1_ss.gcn").steady_state(verbose=False, progressbar=False)["K_ss"]
+
+    # The known values are read on the first solve, so they are dropped before the model ever solves.
+    model = model_from_gcn(TEST_GCNS / "one_block_1_ss.gcn", verbose=False)
+    known = model._ss_solution_dict.to_sympy()
+    model._ss_solution_dict = SymbolDictionary({key: value for key, value in known.items() if key.base_name != "U"})
+
+    with caplog.at_level("WARNING"):
+        res = model.steady_state(fixed_values={"K_ss": 1.1 * k_ss}, verbose=True, progressbar=False)
+
+    assert not res.success
+    assert any("equations the solve does not involve are violated" in message for message in caplog.messages)
+    assert any("in Household.foc.L" in message for message in caplog.messages)
+
+
+def test_repeat_solves_at_new_parameters_compile_nothing():
+    model = model_from_gcn(TEST_GCNS / "one_block_1.gcn", verbose=False)
+    model.steady_state(how="root", verbose=False, progressbar=False)
+    # A recompile of a structurally identical graph is a cache hit, so hits and misses are both counted.
+    compiles = compile_cache_info().hits + compile_cache_info().misses
+
+    for beta in [0.97, 0.98]:
+        assert model.steady_state(how="root", beta=beta, verbose=False, progressbar=False).success
+
+    assert compile_cache_info().hits + compile_cache_info().misses == compiles
+
+
+@pytest.mark.parametrize("bound", [(1e-8, None), [1e-8, None]], ids=["tuple", "list"])
+def test_bounds_reparametrize_the_minimize_solve_whether_tuple_or_list(bound):
+    model = load_and_cache_model("one_block_1.gcn")
+
+    res = model.steady_state(how="minimize", bounds={"lambda_ss": bound}, verbose=False, progressbar=False)
+
+    assert res.success
+    assert res["lambda_ss"] > 0
 
 
 def test_incomplete_ss_relationship_raises_with_root():
@@ -635,7 +693,8 @@ def test_solver_does_not_pass_inferred_bounds_to_the_transform(monkeypatch):
 
     monkeypatch.setattr(model_module, "transform_steady_state_system", record)
 
-    model = load_and_cache_model("one_block_2_no_extra.gcn")
+    # A cached model may already hold a compiled solver, which would skip the transform choice.
+    model = model_from_gcn(TEST_GCNS / "one_block_2_no_extra.gcn", verbose=False)
     model.steady_state(how="minimize", verbose=False, progressbar=False)
 
     chosen = dict(zip(model._vars_to_solve, captured, strict=True))
@@ -661,7 +720,7 @@ def test_declared_bounds_choose_the_transform(monkeypatch):
 
     monkeypatch.setattr(model_module, "transform_steady_state_system", record)
 
-    model = load_and_cache_model("one_block_2_symbols.gcn")
+    model = model_from_gcn(TEST_GCNS / "one_block_2_symbols.gcn", verbose=False)
     alpha = next(v for v in model._vars_to_solve if getattr(v, "base_name", v.name) == "alpha")
 
     model.steady_state(how="minimize", verbose=False, progressbar=False)
