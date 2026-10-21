@@ -3,6 +3,7 @@ from gEconpy.model.statistics.covariance import (
     autocovariance_matrix,
     build_Q_matrix,
     stationary_covariance_matrix,
+    stationary_mean,
 )
 from gEconpy.model.statistics.formatting import matrix_to_dataframe
 from gEconpy.model.statistics.perturbation_diagnostics import (
@@ -25,5 +26,6 @@ __all__ = [
     "prior_solvability_check",
     "solvability_check",
     "stationary_covariance_matrix",
+    "stationary_mean",
     "summarize_perturbation_solution",
 ]

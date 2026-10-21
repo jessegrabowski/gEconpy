@@ -13,8 +13,11 @@ from gEconpy.model.model import Model
 from gEconpy.model.pruning import compile_pruned_second_order_path
 from gEconpy.model.statistics import build_Q_matrix
 from gEconpy.model.statistics.validation import (
+    _given_or_solved,
     _maybe_solve_model,
     _maybe_solve_steady_state,
+    _solve_or_raise,
+    _unsolved_model_error,
     _validate_shock_options,
 )
 
@@ -256,10 +259,7 @@ def simulate(
         random_seed=random_seed,
     )
 
-    if isinstance(solution, FirstOrderPerturbationSolution) and (T is not None or R is not None):
-        raise ValueError("Pass either solution or T and R, not both.")
-    if solution is None and T is None and R is None:
-        solution = _solve_or_raise(model, purpose="simulate", **solve_model_kwargs)
+    solution = _given_or_solved(model, solution, T, R, purpose="simulate", **solve_model_kwargs)
 
     if isinstance(solution, SecondOrderPerturbationSolution):
         shock_cov = build_Q_matrix(
@@ -317,18 +317,6 @@ def _wrap_policy_matrices(
         not_loglin_variables=solve_model_kwargs.get("not_loglin_variables"),
         loglin_negative_ss=solve_model_kwargs.get("loglin_negative_ss", False),
     )
-
-
-def _solve_or_raise(model: Model, purpose: str, **solve_model_kwargs) -> FirstOrderPerturbationSolution:
-    """Solve ``model``, raising when the solve fails under ``on_failure="ignore"``."""
-    solved = model.solve_model(**{**solve_model_kwargs, "return_matrices": False})
-    if not isinstance(solved, FirstOrderPerturbationSolution):
-        raise _unsolved_model_error(purpose)
-    return solved
-
-
-def _unsolved_model_error(purpose: str) -> ValueError:
-    return ValueError(f"The model could not be solved, so there is no policy function to {purpose}.")
 
 
 def _draw_shocks(

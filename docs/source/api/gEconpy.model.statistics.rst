@@ -11,6 +11,7 @@ gEconpy.model.statistics
     covariance.autocovariance_matrix
     covariance.build_Q_matrix
     covariance.stationary_covariance_matrix
+    covariance.stationary_mean
     formatting.matrix_to_dataframe
     perturbation_diagnostics.check_bk_condition
     perturbation_diagnostics.eigenvalue_sensitivity

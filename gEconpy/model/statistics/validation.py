@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gEconpy.classes.containers import SteadyStateResults
+from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution, SecondOrderPerturbationSolution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.exceptions import SteadyStateNotFoundError
 
 if TYPE_CHECKING:
-    from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution
     from gEconpy.model.model import Model
 
 _log = logging.getLogger(__name__)
@@ -157,6 +157,7 @@ def _maybe_solve_model(
     solution: "FirstOrderPerturbationSolution | np.ndarray | None",
     T: np.ndarray | None,
     R: np.ndarray | None,
+    stacklevel: int = 3,
     **solve_model_kwargs,
 ) -> tuple[np.ndarray | None, np.ndarray | None]:
     """
@@ -173,6 +174,8 @@ def _maybe_solve_model(
         Transition matrix. Deprecated.
     R : ndarray, optional
         Selection matrix. Deprecated.
+    stacklevel : int, optional
+        Stack level of the deprecation warning, which must point at the user's call. Defaults to 3.
     **solve_model_kwargs
         Arguments forwarded to ``model.solve_model``.
 
@@ -192,7 +195,7 @@ def _maybe_solve_model(
         warnings.warn(
             "Passing T and R is deprecated and will be removed. Pass solution=model.solve_model(...) instead.",
             FutureWarning,
-            stacklevel=3,
+            stacklevel=stacklevel,
         )
         if T is not None and R is not None:
             return T, R
@@ -205,8 +208,40 @@ def _maybe_solve_model(
         solution = model.solve_model(**{**solve_model_kwargs, "return_matrices": False})
         if solution is None:
             return None, None
+        if isinstance(solution, SecondOrderPerturbationSolution):
+            raise ValueError(
+                "T and R describe a first-order solution only. Pass solution=model.solve_model(order=2) instead."
+            )
 
     return solution.T, solution.R
+
+
+def _given_or_solved(
+    model: "Model",
+    solution: "FirstOrderPerturbationSolution | np.ndarray | None",
+    T: np.ndarray | None,
+    R: np.ndarray | None,
+    purpose: str,
+    **solve_model_kwargs,
+) -> "FirstOrderPerturbationSolution | np.ndarray | None":
+    """Return ``solution``, or solve ``model`` when neither ``solution`` nor ``T`` and ``R`` are given."""
+    if isinstance(solution, FirstOrderPerturbationSolution) and (T is not None or R is not None):
+        raise ValueError("Pass either solution or T and R, not both.")
+    if solution is None and T is None and R is None:
+        return _solve_or_raise(model, purpose=purpose, **solve_model_kwargs)
+    return solution
+
+
+def _solve_or_raise(model: "Model", purpose: str, **solve_model_kwargs) -> FirstOrderPerturbationSolution:
+    """Solve ``model``, raising when the solve fails under ``on_failure="ignore"``."""
+    solved = model.solve_model(**{**solve_model_kwargs, "return_matrices": False})
+    if not isinstance(solved, FirstOrderPerturbationSolution):
+        raise _unsolved_model_error(purpose)
+    return solved
+
+
+def _unsolved_model_error(purpose: str) -> ValueError:
+    return ValueError(f"The model could not be solved, so there is no policy function to {purpose}.")
 
 
 def _validate_shock_options(
