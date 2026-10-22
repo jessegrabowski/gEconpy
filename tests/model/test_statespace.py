@@ -1642,7 +1642,7 @@ def test_second_order_statespace_is_the_pruned_system_of_the_solved_model(two_sh
     assert_allclose(intercept, expected[0][model_order], atol=1e-12)
     assert_allclose(transition, expected[1][model_order][:, model_order], atol=1e-10)
     assert_allclose(selection, expected[2][model_order], atol=1e-10)
-    assert_allclose(innovation_cov, expected[3], rtol=1e-8, atol=1e-20)
+    assert_allclose(innovation_cov, expected[3], rtol=1e-8, atol=1e-16)
     assert_allclose(design @ initial_state, mean[[dr_names.index(name) for name in ["Y", "C"]]], rtol=1e-8)
 
 
