@@ -198,9 +198,10 @@ def statespace_from_gcn(
         pruned state-space system from :func:`~gEconpy.model.pruning.pruned_second_order_system`. Its states are the
         first- and second-order parts of every variable, named ``<variable>_first_order`` and
         ``<variable>_second_order``, which sum to the variable's deviation, followed by the products of the lagged
-        first-order states. ``sum`` and ``mean`` temporal aggregation, lagged observation equations, unconditional
-        sampling, forecasting, impulse responses, ``deviations_to_levels`` and ``data_from_prior`` are not supported
-        at order 2. Default is 1.
+        first-order states. Unconditional sampling and impulse responses follow the pruned solution and return model
+        variables on a ``variable`` dimension, with orthogonalized impulse responses on an ``impulse`` dimension and
+        the full shock covariance on ``structural_shock`` and ``structural_shock_aux``. ``sum`` and ``mean`` temporal
+        aggregation, lagged observation equations and forecasting are not supported at order 2. Default is 1.
     show_errors : bool, optional
         Print formatted parse errors to stderr before re-raising them. Defaults to ``rcParams["build.show_errors"]``.
     filter_type : str, optional
