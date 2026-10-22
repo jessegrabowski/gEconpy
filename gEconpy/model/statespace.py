@@ -1702,8 +1702,101 @@ class DSGEStateSpace(PyMCStateSpace):
             posterior, var_names=[name], model=acf_model, compile_kwargs=compile_kwargs, progressbar=False
         )[name]
 
-    sample_unconditional_prior = _first_order_only(PyMCStateSpace.sample_unconditional_prior)
-    sample_unconditional_posterior = _first_order_only(PyMCStateSpace.sample_unconditional_posterior)
+    def sample_unconditional_prior(
+        self,
+        idata: xr.DataTree,
+        steps: int | None = None,
+        use_data_time_dim: bool = False,
+        random_seed: RandomState | None = None,
+        mvn_method: Literal["cholesky", "eigh", "svd"] = "svd",
+        **kwargs,
+    ) -> xr.DataTree:
+        """
+        Draw trajectories of the model from its dynamics, at parameter draws from the prior.
+
+        At first order this calls ``sample_unconditional_prior`` of
+        :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace`. At second order it works as
+        :meth:`sample_unconditional_posterior` does, on the ``prior`` group.
+        """
+        if self.order == 1:
+            return super().sample_unconditional_prior(
+                idata,
+                steps=steps,
+                use_data_time_dim=use_data_time_dim,
+                random_seed=random_seed,
+                mvn_method=mvn_method,
+                **kwargs,
+            )
+        return self._sample_pruned_trajectories(
+            idata,
+            group="prior",
+            steps=steps,
+            use_data_time_dim=use_data_time_dim,
+            random_seed=random_seed,
+            mvn_method=mvn_method,
+            **kwargs,
+        )
+
+    def sample_unconditional_posterior(
+        self,
+        idata: xr.DataTree,
+        steps: int | None = None,
+        use_data_time_dim: bool = False,
+        random_seed: RandomState | None = None,
+        mvn_method: Literal["cholesky", "eigh", "svd"] = "svd",
+        **kwargs,
+    ) -> xr.DataTree:
+        """
+        Draw trajectories of the model from its dynamics, at parameter draws from the posterior.
+
+        At first order this calls ``sample_unconditional_posterior`` of
+        :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace`. At second order every trajectory starts at
+        the steady state and follows the pruned second-order solution, driven by structural shocks drawn from their
+        covariance at each parameter draw.
+
+        Parameters
+        ----------
+        idata : DataTree
+            Inference data with a ``posterior`` group of parameter draws and the ``observed_data`` group the model was
+            fit to.
+        steps : int, optional
+            Number of periods to simulate after the initial one. Periods are then labeled by integers. Defaults to
+            one fewer than the length of the data, with the periods labeled by the data's time coordinate.
+        use_data_time_dim : bool, optional
+            Label the periods with the data's time coordinate, which requires ``steps`` to match the data. Defaults to
+            False.
+        random_seed : int or Generator, optional
+            Seed for the shock draws. Defaults to None.
+        mvn_method : {"cholesky", "eigh", "svd"}, optional
+            Factorization used to draw multivariate normal shocks and measurement errors. Defaults to ``"svd"``.
+        **kwargs
+            Passed to :func:`pymc.sample_posterior_predictive`.
+
+        Returns
+        -------
+        trajectories : DataTree
+            ``posterior_latent`` and ``posterior_observed`` trajectories. At second order ``posterior_latent`` is the
+            deviation of every model variable from the steady state, over the ``variable`` dimension, and
+            ``posterior_shocks`` holds the structural shocks that hit each period, zero in the first.
+        """
+        if self.order == 1:
+            return super().sample_unconditional_posterior(
+                idata,
+                steps=steps,
+                use_data_time_dim=use_data_time_dim,
+                random_seed=random_seed,
+                mvn_method=mvn_method,
+                **kwargs,
+            )
+        return self._sample_pruned_trajectories(
+            idata,
+            group="posterior",
+            steps=steps,
+            use_data_time_dim=use_data_time_dim,
+            random_seed=random_seed,
+            mvn_method=mvn_method,
+            **kwargs,
+        )
 
     def impulse_response_function(
         self,
@@ -1837,6 +1930,79 @@ class DSGEStateSpace(PyMCStateSpace):
         )
         (deviations,) = self._in_model(pymc_model, [deviations[..., self._dr_order.inv_var_order]])
         return deviations
+
+    def _sample_pruned_trajectories(
+        self,
+        idata: xr.DataTree,
+        group: str,
+        steps: int | None,
+        use_data_time_dim: bool,
+        random_seed: RandomState | None,
+        mvn_method: Literal["cholesky", "eigh", "svd"],
+        **kwargs,
+    ) -> xr.DataTree:
+        verify_group(group)
+        compile_kwargs = kwargs.pop("compile_kwargs", {})
+        compile_kwargs.setdefault("mode", self.mode)
+
+        fit_coords = coords_from_idata(self, idata, "observed_data")
+        fit_dims = dims_from_idata(self, idata, group)
+        data_steps = len(fit_coords[TIME_DIM]) - 1
+        coords = {**fit_coords, VARIABLE_DIM: self._orig_state_names}
+        if use_data_time_dim and steps is not None and steps != data_steps:
+            raise ValueError(
+                f"steps={steps} does not match the time dimension in idata, which spans {data_steps} steps. Pass "
+                f"steps={data_steps}, or steps=None to take it from the data."
+            )
+        if steps is None or use_data_time_dim:
+            steps = data_steps
+        else:
+            coords[TIME_DIM] = np.arange(steps + 1)
+
+        n_shocks = len(self.shocks)
+        with pm.Model(coords=coords) as forward_model:
+            dummy_graph.build_dummy_graph(self, coords=fit_coords, dims=fit_dims)
+            _, _, _, obs_intercept, _, design, _, obs_cov, _ = self._insert_random_variables()
+            (shock_cov,) = self._in_model(forward_model, [self._shock_cov_graph])
+            shocks = pm.MvNormal(
+                "structural_shocks",
+                mu=pt.zeros(n_shocks),
+                cov=shock_cov,
+                shape=(steps, n_shocks),
+                method=mvn_method,
+            )
+            deviations = self._pruned_deviations(forward_model, shocks, include_risk_correction=True)
+            latent = pt.concatenate([pt.zeros((1, len(self.variables))), deviations], axis=0)
+            pm.Deterministic(f"{group}_latent", latent, dims=(TIME_DIM, VARIABLE_DIM))
+            # The shock in each period moves the latent state of the same period, and none hits the initial one.
+            shocks_by_period = pt.concatenate([pt.zeros((1, n_shocks)), shocks], axis=0)
+            pm.Deterministic(f"{group}_shocks", shocks_by_period, dims=(TIME_DIM, STRUCTURAL_SHOCK_DIM))
+
+            # Each observed variable loads equally on its first- and second-order parts, so the first-order columns
+            # of the design matrix map the variables to the observations.
+            observed_mean = obs_intercept + latent @ pt.as_tensor(design)[:, : len(self.variables)].T
+            if self.measurement_error:
+                pm.MvNormal(
+                    f"{group}_observed",
+                    mu=observed_mean,
+                    cov=obs_cov,
+                    dims=(TIME_DIM, OBS_STATE_DIM),
+                    method=mvn_method,
+                )
+            else:
+                pm.Deterministic(f"{group}_observed", observed_mean, dims=(TIME_DIM, OBS_STATE_DIM))
+
+        # The dummy graph's Flat parameters carry initial values that sample_posterior_predictive cannot use.
+        forward_model.rvs_to_initial_values = dict.fromkeys(forward_model.rvs_to_initial_values)
+        with freeze_dims_and_data(forward_model):
+            trajectories = pm.sample_posterior_predictive(
+                idata[group],
+                var_names=[f"{group}_latent", f"{group}_observed", f"{group}_shocks"],
+                random_seed=random_seed,
+                compile_kwargs=compile_kwargs,
+                **kwargs,
+            )
+        return trajectories.posterior_predictive
 
     def _pruned_impulse_responses(
         self,
@@ -2026,7 +2192,6 @@ def data_from_prior(
         true_params, data, prior_idata = data_from_prior(ss_mod, pm_mod, n_samples=10, pct_missing=0.1, random_seed=0)
         print(float(true_params["sigma_epsilon_A"]), data["Y"].isna().mean())
     """
-    statespace_mod._raise_if_pruned("data_from_prior")
     rng = np.random.default_rng(random_seed)
     if build_statespace_kwargs is None:
         build_statespace_kwargs = {}

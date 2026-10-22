@@ -1769,8 +1769,6 @@ def test_second_order_configure_rejects_unsupported_setups_and_keeps_the_last_co
 @pytest.mark.parametrize(
     "method",
     [
-        "sample_unconditional_prior",
-        "sample_unconditional_posterior",
         "forecast",
         "deviations_to_levels",
     ],
@@ -1858,6 +1856,55 @@ def test_second_order_impulse_responses_need_an_impulse(two_shock_order_2_states
 
     with pytest.raises(ValueError, match="no impulse to apply"):
         ss_mod.impulse_response_function(None, use_posterior_cov=False)
+
+
+@pytest.mark.parametrize("group", ["prior", "posterior"])
+def test_second_order_unconditional_trajectories_are_pruned_paths_of_their_shocks(
+    two_shock_order_2_unjittered_statespace, group
+):
+    ss_mod = two_shock_order_2_unjittered_statespace
+    ss_mod.configure(**TWO_SHOCK_EXACT_CONFIGURATION)
+    idata = _two_shock_draws(ss_mod, n_draws=3, group=group)
+    sample = getattr(ss_mod, f"sample_unconditional_{group}")
+
+    trajectories = sample(idata, random_seed=0, progressbar=False).to_dataset()
+    latent = trajectories[f"{group}_latent"].isel(chain=0)
+    shocks = trajectories[f"{group}_shocks"].isel(chain=0).values
+
+    solution = load_and_cache_model("one_block_1_ss_2shock.gcn").solve_model(order=2, verbose=False)
+    expected = compile_pruned_second_order_path()(
+        ghx=solution.ghx,
+        ghu=solution.ghu,
+        ghxx=solution.ghxx,
+        ghxu=solution.ghxu,
+        ghuu=solution.ghuu,
+        ghs2=solution.ghs2(TWO_SHOCK_COV),
+        shocks=shocks[:, 1:],
+        state_positions=solution.dr_order.lag_positions,
+    )[..., solution.dr_order.inv_var_order]
+
+    assert np.abs(shocks[:, 1:]).min() > 0
+    assert_allclose(shocks[:, 0], 0)
+    assert_allclose(latent.isel(time=0).values, 0)
+    assert_allclose(latent.isel(time=slice(1, None)).sel(variable=solution.variable_names).values, expected, atol=1e-12)
+    np.testing.assert_array_equal(latent["time"].values, idata.observed_data["time"].values)
+
+
+@pytest.mark.filterwarnings("ignore:Provided data contains missing values and will be automatically imputed")
+def test_second_order_data_from_prior_keeps_the_requested_index(two_shock_order_2_statespace):
+    ss_mod = two_shock_order_2_statespace
+    ss_mod.configure(observed_states=["Y", "C"], measurement_error=["Y", "C"], constant_params="auto", verbose=False)
+    with pm.Model(coords=ss_mod.coords) as pm_mod:
+        ss_mod.to_pymc()
+        for name in ["sigma_epsilon_A", "sigma_epsilon_B", "error_sigma_Y", "error_sigma_C"]:
+            pm.Gamma(name, alpha=2, beta=100)
+
+    index = pd.date_range("1990-01-01", periods=12, freq="QS")
+    _, data, _ = data_from_prior(statespace_mod=ss_mod, pymc_model=pm_mod, index=index, n_samples=3, random_seed=0)
+
+    assert list(data.columns) == ["Y", "C"]
+    assert data.index.equals(index)
+    assert data.notna().all().all()
 
 
 def test_second_order_full_shock_covariance_is_over_the_structural_shocks(two_shock_order_2_statespace):
