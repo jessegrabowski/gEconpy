@@ -4,6 +4,7 @@ import warnings
 
 from collections.abc import Callable
 from functools import wraps
+from types import EllipsisType
 from typing import Literal
 
 import numpy as np
@@ -17,7 +18,10 @@ import xarray as xr
 from preliz.distributions.distributions import Distribution
 from pymc.model.transform.optimization import freeze_dims_and_data
 from pymc.pytensorf import rewrite_pregrad
+from pymc.util import RandomState
 from pymc_extras.statespace.core import dummy_graph
+from pymc_extras.statespace.core.fit_recovery import coords_from_idata, dims_from_idata, verify_group
+from pymc_extras.statespace.core.irf import DEFAULT_IRF_STEPS, _orthogonal_impulse_matrix, _shock_permutation
 from pymc_extras.statespace.core.properties import Coord, Parameter, Shock, State, SymbolicVariable
 from pymc_extras.statespace.core.statespace import PyMCStateSpace
 from pymc_extras.statespace.utils.constants import (
@@ -30,6 +34,7 @@ from pymc_extras.statespace.utils.constants import (
     SHOCK_AUX_DIM,
     SHOCK_DIM,
     STRUCTURAL_SHOCK_DIM,
+    TIME_DIM,
 )
 from pytensor.assumptions import assume
 from pytensor.graph.replace import graph_replace
@@ -39,7 +44,7 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.perturbation import CompositionDerivatives, DROrder, _log_linear_treatment, check_bk_condition_pt
-from gEconpy.model.pruning import pruned_second_order_system
+from gEconpy.model.pruning import pruned_second_order_path, pruned_second_order_system
 from gEconpy.model.tables import group_dataset
 from gEconpy.parser.ast import variable_key
 from gEconpy.parser.grammar.expressions import parse_expression
@@ -49,7 +54,7 @@ from gEconpy.rcparams import rcParams
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct_pt
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
-from gEconpy.solvers.second_order import solve_second_order
+from gEconpy.solvers.second_order import SecondOrderTerms, solve_second_order
 from gEconpy.solvers.stein import AdjointMethod, validate_adjoint_method
 
 _log = logging.getLogger(__name__)
@@ -62,6 +67,8 @@ CUMULATOR_AGGREGATIONS = ("sum", "mean")
 
 STEADY_STATE_DIM = "steady_state_variable"
 STRUCTURAL_SHOCK_AUX_DIM = "structural_shock_aux"
+VARIABLE_DIM = "variable"
+IMPULSE_DIM = "impulse"
 
 
 def _first_order_only(method: Callable) -> Callable:
@@ -201,6 +208,9 @@ class DSGEStateSpace(PyMCStateSpace):
         self._graph_checks: dict = {}
         self._linearized_system_subbed: list | None = None
         self._policy_graph: list | None = None
+        self._first_order_policy_graph: tuple | None = None
+        self._second_order_terms_graph: SecondOrderTerms | None = None
+        self._shock_cov_graph: pt.TensorVariable | None = None
 
         self._bk_output = None
         self._policy_resid = None
@@ -908,6 +918,9 @@ class DSGEStateSpace(PyMCStateSpace):
             ghu=ghu,
             dr_order=dr_order,
         )
+        self._first_order_policy_graph = (ghx, ghu)
+        self._second_order_terms_graph = terms
+        self._shock_cov_graph = shock_cov
         intercept, transition, selection, innovation_cov = pruned_second_order_system(
             ghx=ghx,
             ghu=ghu,
@@ -1691,14 +1704,217 @@ class DSGEStateSpace(PyMCStateSpace):
 
     sample_unconditional_prior = _first_order_only(PyMCStateSpace.sample_unconditional_prior)
     sample_unconditional_posterior = _first_order_only(PyMCStateSpace.sample_unconditional_posterior)
+
+    def impulse_response_function(
+        self,
+        idata: xr.DataTree,
+        n_steps: int | None = None,
+        use_posterior_cov: bool = True,
+        shock_size: float | np.ndarray | None = None,
+        shock_cov: np.ndarray | None = None,
+        shock_trajectory: np.ndarray | None = None,
+        orthogonalize_shocks: bool = False,
+        shock_order: list[str | EllipsisType] | None = None,
+        random_seed: RandomState | None = None,
+        mvn_method: Literal["cholesky", "eigh", "svd"] = "svd",
+        group: str = "posterior",
+        **kwargs,
+    ) -> xr.DataTree:
+        """
+        Compute impulse responses at each parameter draw.
+
+        At first order this calls ``impulse_response_function`` of
+        :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace`. At second order the response is the pruned
+        second-order path from the steady state after the impulse, without the risk correction, as in
+        :func:`~gEconpy.model.simulate.impulse_response_function`. Every shock argument then refers to the structural
+        shocks.
+
+        Parameters
+        ----------
+        idata : DataTree
+            Inference data holding parameter draws in ``group``.
+        n_steps : int, optional
+            Number of periods in each response. Defaults to the length of ``shock_trajectory``, or to 40.
+        use_posterior_cov : bool, optional
+            Draw the impulse from the shock covariance at each parameter draw. Ignored when ``shock_size``,
+            ``shock_cov`` or ``shock_trajectory`` is given. Defaults to True.
+        shock_size : float or ndarray, optional
+            Impulse to every shock, or one impulse per shock. Defaults to None.
+        shock_cov : ndarray, optional
+            Shock covariance to draw or factor the impulse from. Defaults to None.
+        shock_trajectory : ndarray, optional
+            Shocks in every period, of shape ``(n_steps, n_shocks)``. Defaults to None.
+        orthogonalize_shocks : bool, optional
+            Return one response per shock, identified by a Cholesky factor of the shock covariance in the order
+            ``shock_order`` gives. Defaults to False.
+        shock_order : list of str, optional
+            Recursive ordering of the shocks for ``orthogonalize_shocks``, as in pymc-extras. Defaults to the model's
+            shock order.
+        random_seed : int or Generator, optional
+            Seed for the impulse draws. Defaults to None.
+        mvn_method : {"cholesky", "eigh", "svd"}, optional
+            Factorization used to draw a multivariate normal impulse. Defaults to ``"svd"``.
+        group : str, optional
+            Group of ``idata`` holding the parameter draws. Defaults to ``"posterior"``.
+        **kwargs
+            Passed to :func:`pymc.sample_posterior_predictive`.
+
+        Returns
+        -------
+        responses : DataTree
+            The ``irf`` variable. At second order its dimensions are ``(time, variable)``, or
+            ``(impulse, time, variable)`` with ``orthogonalize_shocks``, where ``impulse`` lists the shocks in the
+            recursive order.
+        """
+        if self.order == 1:
+            return super().impulse_response_function(
+                idata,
+                n_steps=n_steps,
+                use_posterior_cov=use_posterior_cov,
+                shock_size=shock_size,
+                shock_cov=shock_cov,
+                shock_trajectory=shock_trajectory,
+                orthogonalize_shocks=orthogonalize_shocks,
+                shock_order=shock_order,
+                random_seed=random_seed,
+                mvn_method=mvn_method,
+                group=group,
+                **kwargs,
+            )
+        return self._pruned_impulse_responses(
+            idata,
+            n_steps=n_steps,
+            use_posterior_cov=use_posterior_cov,
+            shock_size=shock_size,
+            shock_cov=shock_cov,
+            shock_trajectory=shock_trajectory,
+            orthogonalize_shocks=orthogonalize_shocks,
+            shock_order=shock_order,
+            random_seed=random_seed,
+            mvn_method=mvn_method,
+            group=group,
+            **kwargs,
+        )
+
     forecast = _first_order_only(PyMCStateSpace.forecast)
-    impulse_response_function = _first_order_only(PyMCStateSpace.impulse_response_function)
 
     def _raise_if_pruned(self, method: str) -> None:
         # The innovations of the pruned system are not Gaussian, so the simulating methods would draw from a different
         # model, and its states are not the model's variables, so they cannot be releveled one by one.
         if self.order == 2:
             raise NotImplementedError(f"{method} is not supported at order 2.")
+
+    def _in_model(self, pymc_model: pm.Model, graphs: list[pt.TensorVariable]) -> list[pt.TensorVariable]:
+        """Replace the parameter placeholders in ``graphs`` with ``pymc_model``'s variables of the same names."""
+        replacements = {
+            variable: pymc_model[name]
+            for name, variable in self._name_to_variable.items()
+            if name in pymc_model.named_vars
+        }
+        return graph_replace(graphs, replacements, strict=False)
+
+    def _pruned_deviations(
+        self, pymc_model: pm.Model, shocks: pt.TensorVariable, include_risk_correction: bool
+    ) -> pt.TensorVariable:
+        """Run ``(..., n_periods, n_shocks)`` shocks through the pruned policy from the steady state, in model order."""
+        # The path's scan has to be built on the placeholders. Built on PyMC variables, it would take their random
+        # generators into its inner graph, which PyMC cannot sample.
+        ghx, ghu = self._first_order_policy_graph
+        terms = self._second_order_terms_graph
+        if include_risk_correction:
+            ghs2 = terms.ghs2_operator @ self._shock_cov_graph.ravel()
+        else:
+            ghs2 = pt.zeros(len(self.variables))
+        deviations = pruned_second_order_path(
+            ghx=ghx,
+            ghu=ghu,
+            ghxx=terms.ghxx,
+            ghxu=terms.ghxu,
+            ghuu=terms.ghuu,
+            ghs2=ghs2,
+            shocks=shocks,
+            state_positions=self._dr_order.lag_positions,
+        )
+        (deviations,) = self._in_model(pymc_model, [deviations[..., self._dr_order.inv_var_order]])
+        return deviations
+
+    def _pruned_impulse_responses(
+        self,
+        idata: xr.DataTree,
+        n_steps: int | None,
+        use_posterior_cov: bool,
+        shock_size: float | np.ndarray | None,
+        shock_cov: np.ndarray | None,
+        shock_trajectory: np.ndarray | None,
+        orthogonalize_shocks: bool,
+        shock_order: list[str | EllipsisType] | None,
+        random_seed: RandomState | None,
+        mvn_method: Literal["cholesky", "eigh", "svd"],
+        group: str,
+        **kwargs,
+    ) -> xr.DataTree:
+        verify_group(group)
+        if sum(option is not None for option in (shock_size, shock_cov, shock_trajectory)) > 1:
+            raise ValueError("Specify exactly 0 or 1 of shock_size, shock_cov, or shock_trajectory")
+        if orthogonalize_shocks and (shock_size is not None or shock_trajectory is not None):
+            raise ValueError(
+                "orthogonalize_shocks=True identifies shocks from a covariance matrix, so it cannot be combined with "
+                "shock_size or shock_trajectory. Pass shock_cov, or use the posterior covariance."
+            )
+        if shock_order is not None and not orthogonalize_shocks:
+            raise ValueError("shock_order is only meaningful when orthogonalize_shocks=True.")
+        if not use_posterior_cov and shock_size is None and shock_cov is None and shock_trajectory is None:
+            raise ValueError(
+                "With use_posterior_cov=False there is no impulse to apply. Pass shock_size, shock_cov, or "
+                "shock_trajectory."
+            )
+
+        n_shocks = len(self.shocks)
+        if shock_trajectory is not None:
+            if shock_trajectory.shape[1] != n_shocks:
+                raise ValueError(
+                    f"shock_trajectory must have one column per shock, {n_shocks}, but has {shock_trajectory.shape[1]}."
+                )
+            n_steps = shock_trajectory.shape[0]
+        n_steps = DEFAULT_IRF_STEPS if n_steps is None else n_steps
+
+        compile_kwargs = kwargs.pop("compile_kwargs", {})
+        compile_kwargs.setdefault("mode", self.mode)
+        fit_coords = coords_from_idata(self, idata, "observed_data")
+        fit_dims = dims_from_idata(self, idata, group)
+        coords = {**fit_coords, TIME_DIM: np.arange(n_steps), VARIABLE_DIM: self._orig_state_names}
+
+        shock_names = [shock.base_name for shock in self.shocks]
+        if orthogonalize_shocks:
+            order = _shock_permutation(shock_names, shock_order)
+            coords[IMPULSE_DIM] = [shock_names[i] for i in order]
+
+        with pm.Model(coords=coords) as irf_model:
+            dummy_graph.build_dummy_graph(self, coords=fit_coords, dims=fit_dims)
+            (posterior_shock_cov,) = self._in_model(irf_model, [self._shock_cov_graph])
+            impulse_cov = pt.as_tensor(shock_cov) if shock_cov is not None else posterior_shock_cov
+
+            if shock_trajectory is not None:
+                shocks = pt.as_tensor(shock_trajectory)
+            elif orthogonalize_shocks:
+                # Column j of the impact matrix is the impulse that isolates the j-th shock in the recursive order.
+                impulses = _orthogonal_impulse_matrix(impulse_cov, order).T
+                shocks = pt.zeros((len(order), n_steps, n_shocks))[:, 0].set(impulses)
+            elif shock_size is not None:
+                impulse = pt.as_tensor(np.broadcast_to(shock_size, (n_shocks,)).astype(float))
+                shocks = pt.zeros((n_steps, n_shocks))[0].set(impulse)
+            else:
+                impulse = pm.MvNormal("initial_shock", mu=pt.zeros(n_shocks), cov=impulse_cov, method=mvn_method)
+                shocks = pt.zeros((n_steps, n_shocks))[0].set(impulse)
+
+            responses = self._pruned_deviations(irf_model, shocks, include_risk_correction=False)
+            dims = (IMPULSE_DIM, TIME_DIM, VARIABLE_DIM) if orthogonalize_shocks else (TIME_DIM, VARIABLE_DIM)
+            pm.Deterministic("irf", responses, dims=dims)
+
+            irf_idata = pm.sample_posterior_predictive(
+                idata[group], var_names=["irf"], random_seed=random_seed, compile_kwargs=compile_kwargs, **kwargs
+            )
+        return irf_idata.posterior_predictive
 
     def to_pymc(self, exclude_priors: list[str] | None = None) -> None:
         """

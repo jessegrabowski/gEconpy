@@ -18,7 +18,11 @@ from pytensor.tensor.variable import TensorConstant
 from scipy import stats
 
 from gEconpy import solve_perfect_foresight, statespace_from_gcn
-from gEconpy.model.pruning import compile_pruned_second_order_moments, compile_pruned_second_order_system
+from gEconpy.model.pruning import (
+    compile_pruned_second_order_moments,
+    compile_pruned_second_order_path,
+    compile_pruned_second_order_system,
+)
 from gEconpy.model.statespace import _steady_state_intercept, data_from_prior, prepare_mixed_frequency_data
 from gEconpy.model.statistics import autocorrelation_matrix
 from tests._resources.cache_compiled_models import (
@@ -1768,7 +1772,6 @@ def test_second_order_configure_rejects_unsupported_setups_and_keeps_the_last_co
         "sample_unconditional_prior",
         "sample_unconditional_posterior",
         "forecast",
-        "impulse_response_function",
         "deviations_to_levels",
     ],
 )
@@ -1776,6 +1779,85 @@ def test_second_order_statespace_raises_from_methods_that_need_first_order_state
     two_shock_order_2_statespace.configure(observed_states=["Y"], measurement_error=["Y"], verbose=False)
     with pytest.raises(NotImplementedError, match=f"{method} is not supported at order 2"):
         getattr(two_shock_order_2_statespace, method)(None, None)
+
+
+def _two_shock_draws(ss_mod, n_draws, group):
+    """Inference data holding ``n_draws`` copies of the GCN parameters and the exact configuration's shocks."""
+    values = _two_shock_exact_values()
+    draws = xr.Dataset(
+        {
+            name: (
+                ("chain", "draw", *(ss_mod.param_dims.get(name) or ())),
+                np.repeat(np.asarray(values[name])[None, None], n_draws, axis=1),
+            )
+            for name in ss_mod.param_names
+        },
+        coords={
+            "chain": [0],
+            "draw": np.arange(n_draws),
+            **{dim: list(labels) for dim, labels in ss_mod.coords.items()},
+        },
+    )
+    observed = xr.Dataset(
+        {"obs": (("time", "observed_state"), np.zeros((10, 2)))},
+        coords={"time": pd.date_range("2000-01-01", periods=10, freq="QS"), "observed_state": ["Y", "C"]},
+    )
+    return xr.DataTree.from_dict({group: draws, "observed_data": observed})
+
+
+IRF_STEPS = 8
+TWO_SHOCK_TRAJECTORY = np.zeros((IRF_STEPS, 2))
+TWO_SHOCK_TRAJECTORY[[0, 3]] = [[0.01, 0.0], [0.0, -0.02]]
+REORDERED_SHOCK_COV = np.array([[9e-4, -3e-5], [-3e-5, 1e-4]])
+
+
+@pytest.mark.parametrize(
+    ("irf_kwargs", "impulse_paths"),
+    [
+        (
+            {"shock_size": np.array([0.01, -0.02])},
+            np.eye(IRF_STEPS, 1)[None] * [0.01, -0.02],
+        ),
+        ({"orthogonalize_shocks": True}, np.eye(IRF_STEPS, 1)[None] * np.linalg.cholesky(TWO_SHOCK_COV).T[:, None]),
+        ({"shock_trajectory": TWO_SHOCK_TRAJECTORY}, TWO_SHOCK_TRAJECTORY[None]),
+        (
+            {"orthogonalize_shocks": True, "shock_order": ["epsilon_B", ...], "shock_cov": REORDERED_SHOCK_COV},
+            np.eye(IRF_STEPS, 1)[None] * np.linalg.cholesky(REORDERED_SHOCK_COV[::-1, ::-1])[::-1].T[:, None],
+        ),
+    ],
+    ids=["shock_size", "orthogonalized", "shock_trajectory", "reordered"],
+)
+def test_second_order_impulse_responses_are_pruned_paths_from_the_steady_state(
+    two_shock_order_2_unjittered_statespace, irf_kwargs, impulse_paths
+):
+    ss_mod = two_shock_order_2_unjittered_statespace
+    ss_mod.configure(**TWO_SHOCK_EXACT_CONFIGURATION)
+    idata = _two_shock_draws(ss_mod, n_draws=1, group="posterior")
+
+    responses = ss_mod.impulse_response_function(idata, n_steps=IRF_STEPS, progressbar=False, **irf_kwargs)["irf"]
+
+    solution = load_and_cache_model("one_block_1_ss_2shock.gcn").solve_model(order=2, verbose=False)
+    expected = compile_pruned_second_order_path()(
+        ghx=solution.ghx,
+        ghu=solution.ghu,
+        ghxx=solution.ghxx,
+        ghxu=solution.ghxu,
+        ghuu=solution.ghuu,
+        ghs2=np.zeros(len(solution.variable_names)),
+        shocks=impulse_paths,
+        state_positions=solution.dr_order.lag_positions,
+    )[..., solution.dr_order.inv_var_order]
+    if "orthogonalize_shocks" not in irf_kwargs:
+        expected = expected[0]
+    assert_allclose(responses.isel(chain=0, draw=0).values, expected, atol=1e-12)
+
+
+def test_second_order_impulse_responses_need_an_impulse(two_shock_order_2_statespace):
+    ss_mod = two_shock_order_2_statespace
+    ss_mod.configure(observed_states=["Y"], measurement_error=["Y"], verbose=False)
+
+    with pytest.raises(ValueError, match="no impulse to apply"):
+        ss_mod.impulse_response_function(None, use_posterior_cov=False)
 
 
 def test_second_order_full_shock_covariance_is_over_the_structural_shocks(two_shock_order_2_statespace):
