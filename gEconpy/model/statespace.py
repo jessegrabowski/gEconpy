@@ -1497,7 +1497,8 @@ class DSGEStateSpace(PyMCStateSpace):
         ``"level"`` state becomes ``steady_state + state``, and a ``"by_sign"`` state takes whichever form its
         steady state at that draw calls for. Cumulator and observation-lag states have no level, so the ``state``
         dimension of the result holds the model variables only. A variable without a ``state`` dimension passes
-        through unchanged.
+        through unchanged. At order 2 the model variables are on the ``variable`` dimension, as the unconditional
+        samplers and impulse responses return them, and filtered or smoothed states raise NotImplementedError.
 
         Parameters
         ----------
@@ -1514,7 +1515,8 @@ class DSGEStateSpace(PyMCStateSpace):
         Returns
         -------
         levels : Dataset or DataArray
-            ``samples`` with its ``state`` dimension restricted to the model variables, in levels.
+            ``samples`` with its ``state`` dimension, or ``variable`` at order 2, restricted to the model variables, in
+            levels.
 
         Examples
         --------
@@ -1533,21 +1535,28 @@ class DSGEStateSpace(PyMCStateSpace):
                 model, simulation_length=400, initial_conditions=start, steady_state_kwargs=params
             )
         """
-        self._raise_if_pruned("deviations_to_levels")
         draws = group_dataset(idata, group=group)
         _check_samples_have_draws(samples, draws=draws, group=group)
-        steady_state = self._sample_steady_state(draws, compile_kwargs=compile_kwargs)
+        # At second order only the simulating methods return model variables, on their own dimension.
+        variable_dim = ALL_STATE_DIM if self.order == 1 else VARIABLE_DIM
+        steady_state = self._sample_steady_state(draws, variable_dim=variable_dim, compile_kwargs=compile_kwargs)
 
         treatment_by_name = self.log_linear_treatment
         treatment = xr.DataArray(
-            [treatment_by_name[name] for name in steady_state[ALL_STATE_DIM].values], dims=[ALL_STATE_DIM]
+            [treatment_by_name[name] for name in steady_state[variable_dim].values], dims=[variable_dim]
         )
         in_logs = (treatment == "log") | ((treatment == "by_sign") & (steady_state > 0))
 
         def relevel(states: xr.DataArray) -> xr.DataArray:
-            if ALL_STATE_DIM not in states.dims:
+            if self.order == 2 and ALL_STATE_DIM in states.dims:
+                raise NotImplementedError(
+                    f"At order 2, deviations_to_levels takes model variables over the {VARIABLE_DIM!r} dimension, "
+                    f"as the unconditional samplers and impulse responses return them. Filtered and smoothed states "
+                    f"are parts of the pruned state, which have no level of their own."
+                )
+            if variable_dim not in states.dims:
                 return states
-            deviation = states.sel({ALL_STATE_DIM: steady_state[ALL_STATE_DIM].values})
+            deviation = states.sel({variable_dim: steady_state[variable_dim].values})
             level = xr.where(in_logs, steady_state * np.exp(deviation), steady_state + deviation)
             return level.transpose(*deviation.dims)
 
@@ -1555,9 +1564,11 @@ class DSGEStateSpace(PyMCStateSpace):
             return relevel(samples)
         return samples.map(relevel)
 
-    def _sample_steady_state(self, draws: xr.Dataset, compile_kwargs: dict | None = None) -> xr.DataArray:
+    def _sample_steady_state(
+        self, draws: xr.Dataset, variable_dim: str, compile_kwargs: dict | None = None
+    ) -> xr.DataArray:
         """
-        Evaluate every model variable's steady state at each parameter draw, with dims ``(chain, draw, state)``.
+        Evaluate every model variable's steady state at each parameter draw, with dims ``(chain, draw, variable_dim)``.
 
         The statespace's own steady-state graph is the point the filter linearized around, so it is the one its
         states are deviations from. ``Model.steady_state`` solves numerically and can disagree where it falls back.
@@ -1574,14 +1585,8 @@ class DSGEStateSpace(PyMCStateSpace):
         # The state coordinate also lists cumulator and observation-lag states, which have no steady state.
         with pm.Model(coords={**self.coords, STEADY_STATE_DIM: names}) as steady_state_model:
             dummy_graph.build_dummy_graph(self, coords=self.coords, dims=param_dims)
-            replacements = {
-                variable: steady_state_model[name]
-                for name, variable in self._name_to_variable.items()
-                if name in steady_state_model.named_vars
-            }
-            pm.Deterministic(
-                "steady_state", graph_replace(steady_state, replacements, strict=False), dims=(STEADY_STATE_DIM,)
-            )
+            (steady_state,) = self._in_model(steady_state_model, [steady_state])
+            pm.Deterministic("steady_state", steady_state, dims=(STEADY_STATE_DIM,))
 
         return pm.compute_deterministics(
             draws,
@@ -1589,7 +1594,7 @@ class DSGEStateSpace(PyMCStateSpace):
             model=steady_state_model,
             compile_kwargs=compile_kwargs,
             progressbar=False,
-        )["steady_state"].rename({STEADY_STATE_DIM: ALL_STATE_DIM})
+        )["steady_state"].rename({STEADY_STATE_DIM: variable_dim})
 
     def sample_autocorrelation_matrices(
         self,
@@ -1892,8 +1897,8 @@ class DSGEStateSpace(PyMCStateSpace):
     forecast = _first_order_only(PyMCStateSpace.forecast)
 
     def _raise_if_pruned(self, method: str) -> None:
-        # The innovations of the pruned system are not Gaussian, so the simulating methods would draw from a different
-        # model, and its states are not the model's variables, so they cannot be releveled one by one.
+        # Forecasting starts from the filtered state, and the pruned path cannot yet start anywhere but the steady
+        # state.
         if self.order == 2:
             raise NotImplementedError(f"{method} is not supported at order 2.")
 

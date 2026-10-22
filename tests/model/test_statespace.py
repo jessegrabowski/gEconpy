@@ -1766,17 +1766,10 @@ def test_second_order_configure_rejects_unsupported_setups_and_keeps_the_last_co
     assert (ss_mod.observed_states, ss_mod.param_names, ss_mod.k_states) == configuration
 
 
-@pytest.mark.parametrize(
-    "method",
-    [
-        "forecast",
-        "deviations_to_levels",
-    ],
-)
-def test_second_order_statespace_raises_from_methods_that_need_first_order_states(two_shock_order_2_statespace, method):
+def test_second_order_statespace_cannot_forecast(two_shock_order_2_statespace):
     two_shock_order_2_statespace.configure(observed_states=["Y"], measurement_error=["Y"], verbose=False)
-    with pytest.raises(NotImplementedError, match=f"{method} is not supported at order 2"):
-        getattr(two_shock_order_2_statespace, method)(None, None)
+    with pytest.raises(NotImplementedError, match="forecast is not supported at order 2"):
+        two_shock_order_2_statespace.forecast(None)
 
 
 def _two_shock_draws(ss_mod, n_draws, group):
@@ -1849,6 +1842,9 @@ def test_second_order_impulse_responses_are_pruned_paths_from_the_steady_state(
         expected = expected[0]
     assert_allclose(responses.isel(chain=0, draw=0).values, expected, atol=1e-12)
 
+    levels = ss_mod.deviations_to_levels(responses, idata).isel(chain=0, draw=0)
+    assert_allclose(levels.sel(variable=solution.variable_names).values, solution.to_levels(expected))
+
 
 def test_second_order_impulse_responses_need_an_impulse(two_shock_order_2_statespace):
     ss_mod = two_shock_order_2_statespace
@@ -1888,6 +1884,35 @@ def test_second_order_unconditional_trajectories_are_pruned_paths_of_their_shock
     assert_allclose(latent.isel(time=0).values, 0)
     assert_allclose(latent.isel(time=slice(1, None)).sel(variable=solution.variable_names).values, expected, atol=1e-12)
     np.testing.assert_array_equal(latent["time"].values, idata.observed_data["time"].values)
+
+    levels = ss_mod.deviations_to_levels(trajectories, idata, group=group)[f"{group}_latent"]
+    final_draw = {"chain": 0, "draw": 0, "time": -1}
+    deviation = trajectories[f"{group}_latent"].isel(final_draw).sel(variable=solution.variable_names).values
+    assert_allclose(levels.isel(final_draw).sel(variable=solution.variable_names), solution.to_levels(deviation))
+
+
+def test_second_order_levels_refuse_filtered_states(two_shock_order_2_statespace):
+    """Filtered and smoothed states at order 2 are parts of the pruned state, which have no level of their own."""
+    ss_mod = two_shock_order_2_statespace
+    ss_mod.configure(observed_states=["Y"], measurement_error=["Y"], verbose=False)
+    calibration = dict(load_and_cache_model("one_block_1_ss_2shock.gcn").parameters()) | {
+        "sigma_epsilon_A": 0.01,
+        "sigma_epsilon_B": 0.02,
+        "error_sigma_Y": 0.01,
+    }
+    draws = xr.Dataset(
+        {name: (("chain", "draw"), [[calibration[name]]]) for name in ss_mod.param_names},
+        coords={"chain": [0], "draw": [0]},
+    )
+    states = list(ss_mod.coords[ALL_STATE_DIM])
+    smoothed = xr.DataArray(
+        np.zeros((1, 1, 3, len(states))),
+        dims=("chain", "draw", "time", ALL_STATE_DIM),
+        coords={"chain": [0], "draw": [0], ALL_STATE_DIM: states},
+    )
+
+    with pytest.raises(NotImplementedError, match="Filtered and smoothed states"):
+        ss_mod.deviations_to_levels(smoothed, draws)
 
 
 @pytest.mark.filterwarnings("ignore:Provided data contains missing values and will be automatically imputed")
