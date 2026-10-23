@@ -12,6 +12,7 @@ from gEconpy.parser.ast import (
     GCNModel,
     Node,
     Operator,
+    SteadyStateSolverCall,
     SymbolDeclaration,
     UnaryOp,
     Variable,
@@ -61,6 +62,9 @@ def print_expression(node: Node, parent_precedence: int = 0) -> str:
 
         case Expectation(expr=expr):
             return f"E[][{print_expression(expr)}]"
+
+        case SteadyStateSolverCall(func_name=func_name, expr=expr):
+            return f"{func_name}({print_expression(expr)}, {node.format_keywords()})"
 
         case _:
             return str(node)
