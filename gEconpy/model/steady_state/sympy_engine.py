@@ -1,9 +1,11 @@
 from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 
 import sympy as sp
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
+from gEconpy.parser.ast import SteadyStateSolverCall
 from gEconpy.utilities import (
     _rebuild_unevaluated,
     _xreplace_unevaluated,
@@ -11,6 +13,23 @@ from gEconpy.utilities import (
     flatten_substitution_dict,
     substitute_unevaluated,
 )
+
+
+@dataclass(frozen=True)
+class SteadyStateSolve:
+    """
+    A steady-state variable the steady state block solves for numerically with ``root`` or ``minimize``.
+
+    Attributes
+    ----------
+    call : SteadyStateSolverCall
+        The call as written, which carries the method and its starting point.
+    expression : sympy expression
+        The call's expression, in which the solved variable and other steady-state variables appear as symbols.
+    """
+
+    call: SteadyStateSolverCall
+    expression: sp.Expr
 
 
 def resubstitute_steady_state(relationships: Sequence[sp.Eq]) -> list[sp.Eq]:

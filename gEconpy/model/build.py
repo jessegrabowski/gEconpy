@@ -21,6 +21,7 @@ from gEconpy.model.simplification import simplify_constants, simplify_tryreduce
 from gEconpy.model.statespace import DSGEStateSpace
 from gEconpy.model.steady_state.pytensor_engine import ERROR_FUNCTIONS, compile_known_ss
 from gEconpy.model.steady_state.sympy_engine import (
+    SteadyStateSolve,
     propagate_steady_state_through_identities,
     simplify_provided_ss_equations,
     system_to_steady_state,
@@ -131,6 +132,7 @@ def model_from_gcn(
         steady_state_equations=primitives.steady_state_equations,
         ss_solution_dict=primitives.ss_solution_dict,
         ss_definitions=primitives.ss_definitions,
+        ss_solver_calls=primitives.ss_solver_calls,
         param_dict=primitives.param_dict,
         hyper_param_dict=primitives.hyper_param_dict,
         deterministic_dict=primitives.deterministic_dict,
@@ -609,6 +611,7 @@ class _ModelPrimitives:
     steady_state_equations: list[sp.Expr]
     ss_solution_dict: SymbolDictionary
     ss_definitions: dict[sp.Expr, sp.Expr]
+    ss_solver_calls: dict[TimeAwareSymbol, SteadyStateSolve]
     param_dict: SymbolDictionary
     hyper_param_dict: SymbolDictionary
     deterministic_dict: SymbolDictionary
@@ -709,7 +712,7 @@ def _derive_model_primitives(
     user_provided_ss_vars = list(ss_solution_dict.to_sympy().keys())
     if infer_steady_state:
         ss_solution_dict = propagate_steady_state_through_identities(
-            ss_solution_dict, steady_state_equations, variables
+            ss_solution_dict, steady_state_equations, variables, solved_numerically=parsed.ss_solver_calls.keys()
         )
 
     all_ss_vars = list(ss_solution_dict.to_sympy().keys())
@@ -743,6 +746,7 @@ def _derive_model_primitives(
         steady_state_equations=steady_state_equations,
         ss_solution_dict=ss_solution_dict,
         ss_definitions=parsed.ss_definitions,
+        ss_solver_calls=parsed.ss_solver_calls,
         param_dict=param_dict,
         hyper_param_dict=hyper_param_dict,
         deterministic_dict=deterministic_dict,

@@ -5,6 +5,8 @@ from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.data.examples import get_example_gcn
 from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.parser.ast import GCNBlock
+from gEconpy.parser.error_catalog import ErrorCode
+from gEconpy.parser.errors import GCNSemanticError
 from gEconpy.parser.loader import (
     ast_block_to_calibration,
     ast_block_to_variables_and_shocks,
@@ -145,6 +147,83 @@ class TestAstModelToPrimitives:
         primitives = ast_model_to_primitives(quick_parse(source))
 
         assert primitives.ss_solution_dict == {"C_ss": 6.0, "K_ss": 7.0}
+
+    def test_a_solver_call_is_kept_apart_from_the_formulas(self):
+        source = """
+        block Steady_State { identities { K[ss] = 2 * w[ss]; w[ss] = root(K[ss] - 4, method=newton, x0=1); }; };
+        block TEST { identities { K[] = 2 * w[]; w[] = 2; }; };
+        """
+        primitives = ast_model_to_primitives(quick_parse(source))
+        (solved_variable, solve), *others = primitives.ss_solver_calls.items()
+
+        assert not others
+        assert solved_variable.name == "w_ss"
+        assert (solve.call.method, solve.call.x0) == ("newton", 1.0)
+        assert str(solve.expression) == "K_ss - 4"
+        assert {str(k): str(v) for k, v in primitives.ss_solution_dict.to_sympy().items()} == {"K_ss": "2*w_ss"}
+
+    def test_a_solver_call_that_does_not_depend_on_its_variable_is_an_error(self):
+        source = """
+        block Steady_State { identities { K[ss] = 2; w[ss] = root(K[ss] - 4, method=newton, x0=1); }; };
+        block TEST { identities { K[] = 2; w[] = 2; }; };
+        """
+        with pytest.raises(GCNSemanticError, match="does not depend on 'w\\[ss\\]'") as excinfo:
+            ast_model_to_primitives(quick_parse(source))
+
+        assert excinfo.value.code == ErrorCode.E105
+
+    def test_solver_calls_that_read_each_other_in_one_direction_load(self):
+        source = """
+        block Steady_State
+        {
+            identities
+            {
+                u[ss] = root(u[ss] - v[ss] - 1, method=newton, x0=1);
+                v[ss] = root(v[ss] - 3, method=newton, x0=1);
+            };
+        };
+        block TEST { identities { u[] = v[] + 1; v[] = 3; }; };
+        """
+        primitives = ast_model_to_primitives(quick_parse(source))
+
+        assert sorted(symbol.name for symbol in primitives.ss_solver_calls) == ["u_ss", "v_ss"]
+
+    def test_solver_calls_that_read_each_other_are_an_error(self):
+        source = """
+        block Steady_State
+        {
+            identities
+            {
+                u[ss] = root(u[ss] - v[ss] - 1, method=newton, x0=1);
+                v[ss] = root(v[ss] + u[ss] - 3, method=newton, x0=1);
+                x[ss] = root(x[ss] - u[ss], method=newton, x0=1);
+            };
+        };
+        block TEST { identities { u[] = v[] + 1; v[] = 3 - u[]; x[] = u[]; }; };
+        """
+        with pytest.raises(
+            GCNSemanticError, match="calls for 'u\\[ss\\]', 'v\\[ss\\]' depend on each other"
+        ) as excinfo:
+            ast_model_to_primitives(quick_parse(source))
+
+        assert excinfo.value.code == ErrorCode.E106
+
+    def test_a_call_reaching_its_variable_only_through_another_call_is_a_cycle(self):
+        source = """
+        block Steady_State
+        {
+            identities
+            {
+                u[ss] = root(v[ss] - 1, method=newton, x0=1);
+                v[ss] = root(v[ss] - u[ss], method=newton, x0=1);
+            };
+        };
+        block TEST { identities { u[] = v[] + 1; v[] = u[]; }; };
+        """
+        with pytest.raises(GCNSemanticError) as excinfo:
+            ast_model_to_primitives(quick_parse(source))
+
+        assert excinfo.value.code == ErrorCode.E106
 
     def test_shock_distribution_links_to_parameter_prior(self):
         source = """

@@ -440,6 +440,33 @@ class ErrorCode(Enum):
         fixes=("Move the call into the identities of the steady-state block",),
     )
 
+    E105 = ErrorInfo(
+        title="Solver call that does not depend on its variable",
+        explanation=(
+            "A solver call's expression must depend on the variable it solves for, directly or through the other "
+            "entries of the steady-state block."
+        ),
+        common_causes=(
+            "The wrong variable on the left-hand side",
+            "An expression whose entries give their values without reference to the solved variable",
+        ),
+        fixes=("Write the expression in terms of the solved variable, or of entries that use it",),
+    )
+
+    E106 = ErrorInfo(
+        title="Solver calls that depend on each other",
+        explanation=(
+            "Solver calls are solved one at a time, each after the calls whose variables it reads. Calls whose "
+            "expressions read each other's variables, directly or through the steady-state block, need a joint "
+            "solve, which is not supported."
+        ),
+        common_causes=("Two implicit variables pinned by two equations that each involve both",),
+        fixes=(
+            "Write one of the variables as a formula in the other, leaving a single call",
+            "Leave both variables out of the steady-state block so the numeric steady-state solver finds them",
+        ),
+    )
+
     W001 = ErrorInfo(
         title="Unused parameter",
         explanation="A parameter is calibrated but never used in any equation.",

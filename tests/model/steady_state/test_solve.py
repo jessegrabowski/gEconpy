@@ -725,3 +725,16 @@ def test_steady_state_matches_analytic_NK():
     for k in ss_vars:
         answer = float(answer_dict[k.name].subs(param_dict))
         assert_allclose(answer, numerical_ss_dict[k.name], err_msg=k.name)
+
+
+@pytest.mark.filterwarnings("ignore:Numba will use object mode:UserWarning")
+def test_a_root_call_solves_its_variable_inside_the_known_steady_state():
+    model = model_from_gcn(TEST_GCNS / "tank_informal_root.gcn", verbose=False)
+
+    result = model.steady_state(verbose=False, progressbar=False)
+    known = model.f_ss(**model.parameters())
+
+    assert result.success
+    # The informal wage at which informal labor demand meets hand-to-mouth supply, from a one-dimensional brentq solve.
+    assert_allclose(result["w_I_ss"], 0.679473, rtol=1e-6)
+    assert_allclose(known["w_I_ss"], result["w_I_ss"])
