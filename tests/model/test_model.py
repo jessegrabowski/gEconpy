@@ -11,6 +11,8 @@ import pytest
 import xarray as xr
 
 from numpy.testing import assert_allclose
+from pytensor.graph.basic import equal_computations
+from pytensor.graph.replace import clone_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -42,7 +44,11 @@ from gEconpy.model.statistics import (
     summarize_perturbation_solution,
 )
 from gEconpy.model.statistics.validation import _maybe_linearize_model
-from gEconpy.model.steady_state import _ss_residual_to_pytensor, build_minimize_graphs, build_root_graphs
+from gEconpy.model.steady_state.pytensor_engine import (
+    _ss_residual_to_pytensor,
+    build_minimize_graphs,
+    build_root_graphs,
+)
 from gEconpy.utilities import safe_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
 from tests._resources.expected_matrices import expected_linearization_result
@@ -65,7 +71,6 @@ def _model_without_analytic_steady_state(gcn_file):
     model = model_from_gcn(TEST_GCNS / gcn_file, verbose=False)
     model._ss_solution_dict = SymbolDictionary()
     model._f_ss = None
-    model._equation_tensors = None
     return model
 
 
@@ -233,6 +238,17 @@ def test_steady_state(gcn_file: str, expected_result: dict[str, float]):
     assert ss_result.success
 
 
+def test_f_ss_leaves_the_shared_known_graphs_intact():
+    """The steady-state system reuses these graphs, and compilation would otherwise rewrite them in place."""
+    model = model_from_gcn(TEST_GCNS / "full_nk.gcn", verbose=False)
+    known = list(model._known_steady_state_nodes().values())
+    before = clone_replace(known)
+
+    model.f_ss(**model.parameters())
+
+    assert equal_computations(known, before)
+
+
 def _compile_ss_derivative_funcs(gcn_file):
     # These graphs are evaluated only a handful of times, so FAST_COMPILE avoids paying for C compilation.
     model = load_and_cache_model(gcn_file)
@@ -240,7 +256,6 @@ def _compile_ss_derivative_funcs(gcn_file):
 
     equations, cache = _ss_residual_to_pytensor(
         model._steady_state_equations,
-        SymbolDictionary(),
         model._variables,
         model._param_dict,
         model._deterministic_dict,

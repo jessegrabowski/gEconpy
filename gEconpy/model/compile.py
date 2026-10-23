@@ -6,13 +6,13 @@ import pytensor
 import sympy as sp
 
 from pytensor import tensor as pt
-from pytensor.graph.replace import graph_replace
+from pytensor.graph.replace import clone_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor import TensorVariable
 from sympytensor import as_tensor
 from sympytensor.pytensor import PytensorPrinter
 
-from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
+from gEconpy.classes.containers import SteadyStateResults
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.utilities import eq_to_ss
@@ -412,7 +412,7 @@ def compile_for_scipy(
     """
     Compile a PyTensor graph into a callable that takes every input by keyword and ignores unknown keywords.
 
-    Use it for one-off evaluations. For hot-loop scipy calls, use :func:`~gEconpy.model.compile.pack_and_compile`.
+    Use it for one-off evaluations. For hot-loop scipy calls, use :func:`~gEconpy.model.compile.compile_packed`.
 
     Parameters
     ----------
@@ -437,99 +437,50 @@ def compile_for_scipy(
     return wrapper
 
 
-def pack_and_compile(
+def compile_packed(
     outputs: TensorVariable | list[TensorVariable],
-    ss_nodes: list[TensorVariable],
-    param_dict: SymbolDictionary | None = None,
+    nodes: list[TensorVariable],
+    leading_inputs: tuple[TensorVariable, ...] = (),
+    args: list[TensorVariable] | None = None,
     mode: str | None = None,
-) -> Callable:
+) -> tuple[Callable, list[TensorVariable]]:
     """
-    Compile a graph whose steady-state inputs are read from one flat vector ``x_flat``.
+    Compile ``outputs`` as a function of one flat vector holding ``nodes``, followed by the graph's other inputs.
 
-    Only steady-state nodes that are graph inputs are replaced by ``x_flat[i]``. With ``param_dict`` given, the
-    parameter values are frozen into the closure and the returned function has signature ``f(x_flat)``. Without it,
-    the signature is ``f(x_flat, *param_args)``.
+    This is the inner function layout of :mod:`pytensor.tensor.optimize`: ``f(x, *leading_inputs, *args)``, where
+    ``args`` are the remaining graph inputs. Pass ``args`` positionally in the returned order.
 
     Parameters
     ----------
     outputs : TensorVariable or list of TensorVariable
         Graph outputs to compile.
-    ss_nodes : list of TensorVariable
-        Every scalar steady-state variable node, in the positional order of ``x_flat``.
-    param_dict : SymbolDictionary, optional
-        Parameter values to freeze into the closure. Default is None.
+    nodes : list of TensorVariable
+        Scalar nodes read from ``x``, in the positional order of ``x``.
+    leading_inputs : tuple of TensorVariable, optional
+        Inputs placed between ``x`` and ``args``, such as the direction of a Hessian-vector product. Default none.
+    args : list of TensorVariable, optional
+        The trailing inputs, in order. Pass the ``args`` of another compiled function so both take the same
+        positional arguments. Default None, which finds them from the graph.
     mode : str, optional
         PyTensor compilation mode. Default is None, which uses the PyTensor default mode.
 
     Returns
     -------
     f : callable
-        Compiled function of ``x_flat``.
+        Compiled function ``f(x, *leading_inputs, *args)``.
+    args : list of TensorVariable
+        The trailing inputs, in positional order.
     """
-    graph_inputs = set(explicit_graph_inputs(outputs))
-    active_indices = [i for i, node in enumerate(ss_nodes) if node in graph_inputs]
-    active_nodes = [ss_nodes[i] for i in active_indices]
+    x = pt.vector("x", shape=(len(nodes),), dtype=nodes[0].dtype if nodes else pytensor.config.floatX)
+    # Compilation rewrites its graph in place, so every intermediate node is cloned to leave the caller's graph
+    # intact for the next compile that shares it.
+    packed = clone_replace(outputs, replace={node: x[i] for i, node in enumerate(nodes)})
 
-    if not active_nodes:
-        return _compile_without_ss_inputs(outputs, param_dict, mode)
-
-    x_flat = pt.dvector("x_flat")
-    replacements = {node: x_flat[i] for i, node in enumerate(active_nodes)}
-    new_outputs = graph_replace(outputs, replacements, strict=False)
-
-    active_set = set(active_nodes)
-    param_inputs = [inp for inp in explicit_graph_inputs(outputs) if inp not in active_set]
-    inner = compile_pytensor_function([x_flat, *param_inputs], new_outputs, mode=mode, on_unused_input="ignore")
-
-    if len(active_nodes) == len(ss_nodes):
-
-        def select_active(x_flat: np.ndarray) -> np.ndarray:
-            return x_flat
-
-    else:
-        active_index_array = np.array(active_indices)
-
-        def select_active(x_flat: np.ndarray) -> np.ndarray:
-            return x_flat[active_index_array]
-
-    if param_dict is None:
-
-        def f(x_flat: np.ndarray, *args) -> np.ndarray:
-            return inner(select_active(x_flat), *args)
-
-        return f
-
-    frozen_args = tuple(float(param_dict[inp.name]) for inp in param_inputs)
-
-    def f_frozen(x_flat: np.ndarray) -> np.ndarray:
-        return inner(select_active(x_flat), *frozen_args)
-
-    return f_frozen
-
-
-def _compile_without_ss_inputs(
-    outputs: TensorVariable | list[TensorVariable],
-    param_dict: SymbolDictionary | None,
-    mode: str | None,
-) -> Callable:
-    inner = compile_pytensor_function(
-        list(explicit_graph_inputs(outputs)), outputs, mode=mode, on_unused_input="ignore"
-    )
-
-    if param_dict is None:
-
-        def f(_x_flat: np.ndarray, *args) -> np.ndarray:
-            return inner(*args)
-
-        return f
-
-    accepted = frozenset(inp.name for inp in inner.input_storage)
-    frozen_params = {name: value for name, value in param_dict.items() if name in accepted}
-
-    def f_frozen(_x_flat: np.ndarray) -> np.ndarray:
-        return inner(**frozen_params)
-
-    return f_frozen
+    if args is None:
+        excluded = {x, *leading_inputs}
+        args = [node for node in explicit_graph_inputs(packed) if node not in excluded]
+    f = compile_pytensor_function([x, *leading_inputs, *args], packed, mode=mode, on_unused_input="ignore")
+    return f, args
 
 
 def _reduce_shared_subexpressions(entries: list[sp.Basic], cache: dict) -> list[sp.Basic]:

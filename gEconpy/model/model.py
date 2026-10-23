@@ -8,21 +8,16 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from inspect import signature
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, overload
+from typing import Any, Literal, overload
 
 import numpy as np
-import pytensor
-import pytensor.scalar as ps
 import sympy as sp
 import xarray as xr
 
-from better_optimize import minimize, root
 from preliz.distributions.distributions import Distribution
-from pymc.distributions.transforms import Interval, Transform, log, logodds
 from pytensor import tensor as pt
-from pytensor.graph.replace import clone_replace, graph_replace
+from pytensor.graph.replace import clone_replace
 from pytensor.graph.traversal import explicit_graph_inputs
-from pytensor.tensor.elemwise import Elemwise
 from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
 
@@ -33,7 +28,7 @@ from gEconpy.classes.time_aware_symbol import (
     TimeAwareSymbol,
 )
 from gEconpy.exceptions import GensysFailedException, ModelUnknownParameterError, SecondOrderSolveFailedException
-from gEconpy.model.compile import compile_for_scipy, make_cache_key, pack_and_compile
+from gEconpy.model.compile import compile_for_scipy, dictionary_return_wrapper, make_cache_key
 from gEconpy.model.latex import authored_expressions
 from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import (
@@ -47,15 +42,28 @@ from gEconpy.model.perturbation import (
 from gEconpy.model.perturbation import linearize_model as _linearize_model
 from gEconpy.model.sampling import sample_from_priors
 from gEconpy.model.statistics.validation import _maybe_solve_steady_state
-from gEconpy.model.steady_state import (
+from gEconpy.model.steady_state.pytensor_engine import (
     ERROR_FUNCTIONS,
+    SteadyStateSystem,
     _ss_residual_to_pytensor,
-    build_minimize_graphs,
-    build_root_graphs,
-    compile_known_ss,
-    resubstitute_steady_state,
-    system_to_steady_state,
+    build_steady_state_system,
+    known_steady_state_replacements,
 )
+from gEconpy.model.steady_state.solve import (
+    MinimizeSolver,
+    _compile_residual_and_scale,
+    _positional,
+    _residual_within_tolerance,
+    _steady_state_tolerance,
+    compile_check_rows,
+    compile_diagnostics,
+    compile_minimize_solver,
+    compile_root_objective,
+    prepare_minimize,
+    solve_minimize,
+    solve_root,
+)
+from gEconpy.model.steady_state.sympy_engine import resubstitute_steady_state, system_to_steady_state
 from gEconpy.model.tables import (
     DEFAULT_PRIOR_STATS,
     DIALECTS,
@@ -91,192 +99,6 @@ _log = logging.getLogger(__name__)
 
 # Heading of the steady-state table of a model built without a parsed file, which has no authored block to name it.
 SOLVED_STEADY_STATE_BLOCK = "Steady_State"
-
-
-def _residual_scale(equation: TensorVariable) -> TensorVariable:
-    """Sum of the absolute values of an equation's additive terms, the size its rounding error grows with."""
-    node = equation.owner
-    if node is None or not (isinstance(node.op, Elemwise) and isinstance(node.op.scalar_op, ps.Add)):
-        return pt.abs(equation)
-    return pt.stack([pt.abs(term) for term in node.inputs]).sum()
-
-
-def _compile_residual_and_scale(equations: list[TensorVariable], mode: str | None) -> Callable:
-    """Compile one function returning the stacked residuals and the stacked scales of ``equations``."""
-    return compile_for_scipy(
-        [pt.stack(equations), pt.stack([_residual_scale(equation) for equation in equations])], mode=mode
-    )
-
-
-def _steady_state_tolerance(scale: np.ndarray) -> np.ndarray:
-    """Return the largest residual an equation whose terms sum to ``scale`` in magnitude may have at a steady state."""
-    return rcParams["steady_state.tol"] + rcParams["steady_state.rtol"] * scale
-
-
-def _residual_within_tolerance(residual: np.ndarray, scale: np.ndarray) -> np.ndarray:
-    """Whether each residual is finite and zero up to the steady-state tolerance at its equation's scale."""
-    return np.isfinite(residual) & (np.abs(residual) <= _steady_state_tolerance(scale))
-
-
-BOX_BOUND_METHODS = ("trust-constr", "L-BFGS-B", "powell")
-GRADIENT_REQUIRED_METHODS = ("trust-ncg", "trust-krylov", "trust-exact", "dogleg", "newton-cg")
-
-
-def infer_variable_bounds(variable: TimeAwareSymbol | sp.Symbol) -> tuple[float | None, float | None]:
-    """
-    Read a variable's sign assumptions and return a bound that keeps it strictly signed.
-
-    Parameters
-    ----------
-    variable : TimeAwareSymbol or Symbol
-        Variable whose ``assumptions0`` are inspected.
-
-    Returns
-    -------
-    lower : float or None
-        Lower bound, 1e-8 for a positive variable and None otherwise.
-    upper : float or None
-        Upper bound, -1e-8 for a negative variable and None otherwise.
-    """
-    assumptions = variable.assumptions0
-    lower = 1e-8 if assumptions.get("positive", False) else None
-    upper = -1e-8 if assumptions.get("negative", False) else None
-
-    return lower, upper
-
-
-def infer_variable_transform(
-    variable: TimeAwareSymbol | sp.Symbol,
-    user_bound: tuple[float | None, float | None] | None = None,
-) -> Transform | None:
-    """
-    Pick a bijection from the real line onto a variable's feasible region for unconstrained solving.
-
-    The feasible region comes from ``user_bound`` when given, then from the variable's GCN-declared sympy
-    assumptions, and is otherwise the whole real line. The returned transform's ``backward`` maps an unconstrained
-    real input onto the region: ``log`` for a positive variable, ``logodds`` for the unit interval, and ``Interval``
-    for general bounds.
-
-    Parameters
-    ----------
-    variable : TimeAwareSymbol or Symbol
-        The steady-state variable. Its ``assumptions0`` supply the fallback region.
-    user_bound : tuple of float or None, optional
-        Explicit ``(lower, upper)`` bound. Either side may be None for a one-sided bound. Takes precedence over
-        assumptions. Default None.
-
-    Returns
-    -------
-    transform : Transform or None
-        The bijection, or None for an unconstrained variable.
-    """
-    if user_bound is not None and user_bound != (None, None):
-        lower, upper = user_bound
-        return Interval(lower, upper)
-
-    assumptions = variable.assumptions0
-    if assumptions.get("unit_interval"):
-        return logodds
-    if assumptions.get("positive"):
-        return log
-    if assumptions.get("negative"):
-        return Interval(None, 0.0)
-    return None
-
-
-def steady_state_transforms(
-    variables: Sequence[TimeAwareSymbol | sp.Symbol],
-    declared_bounds: dict[str, tuple[float | None, float | None]] | None = None,
-    user_bounds: dict[str, tuple[float, float]] | None = None,
-) -> list[Transform | None]:
-    """
-    Choose one transform per steady-state variable, preferring the most specific support available.
-
-    A bound passed by the caller wins, then the bound the GCN ``symbols`` block declares for that symbol, then the
-    variable's own sympy assumptions through :func:`infer_variable_transform`.
-
-    Parameters
-    ----------
-    variables : list of TimeAwareSymbol or Symbol
-        The steady-state variables, in solve order.
-    declared_bounds : dict mapping str to tuple of (float or None, float or None), optional
-        Bounds declared in the ``symbols`` block, keyed by symbol name. Default None.
-    user_bounds : dict mapping str to tuple of (float, float), optional
-        Explicit bounds keyed by the steady-state symbol's name. Default None.
-
-    Returns
-    -------
-    transforms : list of Transform or None
-        One entry per variable, None where the variable is unconstrained.
-    """
-    declared_bounds = {} if declared_bounds is None else declared_bounds
-    user_bounds = {} if user_bounds is None else user_bounds
-
-    def bound_for(variable: TimeAwareSymbol | sp.Symbol) -> tuple[float | None, float | None] | None:
-        if variable.name in user_bounds:
-            return user_bounds[variable.name]
-        key = variable_key(variable.base_name) if isinstance(variable, TimeAwareSymbol) else variable.name
-        return declared_bounds.get(key)
-
-    return [infer_variable_transform(variable, bound_for(variable)) for variable in variables]
-
-
-def transform_steady_state_system(
-    equations: Sequence[TensorVariable],
-    ss_nodes: Sequence[TensorVariable],
-    transforms: Sequence[Transform | None],
-) -> tuple[
-    list[TensorVariable], list[TensorVariable], Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray]
-]:
-    """
-    Reparametrize a steady-state system onto unconstrained variables.
-
-    For each steady-state node ``x`` with transform ``t``, substitute ``x -> t.backward(y)`` (identity for an
-    unconstrained variable), so the returned equations are functions of fresh unconstrained inputs ``y``.
-
-    Parameters
-    ----------
-    equations : list of TensorVariable
-        Scalar equation graphs, each zero at the steady state.
-    ss_nodes : list of TensorVariable
-        Scalar input node for each steady-state variable.
-    transforms : list of Transform or None
-        One transform per variable, as returned by :func:`infer_variable_transform`.
-
-    Returns
-    -------
-    transformed_equations : list of TensorVariable
-        The equations rewritten in terms of the unconstrained inputs.
-    y_nodes : list of TensorVariable
-        The unconstrained input nodes, one per variable.
-    to_unconstrained : callable
-        Map a constrained point ``x`` to its unconstrained image ``y``.
-    to_constrained : callable
-        Map an unconstrained point ``y`` back to the constrained ``x``.
-    """
-    y_nodes, x_nodes, backward_exprs, forward_exprs, replace = [], [], [], [], {}
-    for ss_node, transform in zip(ss_nodes, transforms, strict=True):
-        y, x = ss_node.type(), ss_node.type()
-        y.name = x.name = ss_node.name
-        y_nodes.append(y)
-        x_nodes.append(x)
-
-        x_of_y = y if transform is None else transform.backward(y)
-        backward_exprs.append(x_of_y)
-        forward_exprs.append(x if transform is None else transform.forward(x))
-        replace[ss_node] = x_of_y
-
-    transformed_equations = graph_replace(list(equations), replace, strict=False)
-    f_to_x = pytensor.function(y_nodes, backward_exprs, on_unused_input="ignore")
-    f_to_y = pytensor.function(x_nodes, forward_exprs, on_unused_input="ignore")
-
-    def to_constrained(y: np.ndarray) -> np.ndarray:
-        return np.asarray(f_to_x(*np.asarray(y, dtype=float)), dtype=float)
-
-    def to_unconstrained(x: np.ndarray) -> np.ndarray:
-        return np.asarray(f_to_y(*np.asarray(x, dtype=float)), dtype=float)
-
-    return transformed_equations, y_nodes, to_unconstrained, to_constrained
 
 
 class Model:
@@ -401,8 +223,11 @@ class Model:
         self._f_params: Callable | None = None
         self._f_ss: Callable | None = None
         self._equation_tensors: list[TensorVariable] | None = None
-        self._full_equation_tensors: list[TensorVariable] | None = None
         self._f_full_residual: Callable | None = None
+        self._known_ss_nodes: dict[TensorVariable, TensorVariable] | None = None
+        self._ss_systems: dict[tuple[str, ...], SteadyStateSystem] = {}
+        self._ss_functions: dict[tuple, tuple[Callable, list[str]]] = {}
+        self._ss_minimize_solvers: dict[tuple, MinimizeSolver] = {}
 
         self._backward_variables: list[TimeAwareSymbol] | None = None
         self._forward_variables: list[TimeAwareSymbol] | None = None
@@ -1317,19 +1142,15 @@ class Model:
     def f_ss(self) -> Callable | None:
         """Compiled function mapping parameters to the known steady-state values, or None without analytic solutions."""
         if self._f_ss is None:
-            if not self._ss_solution_dict:
+            known = self._known_steady_state_nodes()
+            if not known:
                 return None
 
-            _, cache = compile_param_dict_func(self._param_dict, self._deterministic_dict, mode=self._mode)
-            all_params = list(self._param_dict.to_sympy().keys()) + list(self._deterministic_dict.to_sympy().keys())
-            self._f_ss, _ = compile_known_ss(
-                self._ss_solution_dict,
-                self._variables,
-                all_params,
-                mode=self._mode,
-                cache=cache,
-                ss_definitions=self._ss_definitions,
-            )
+            symbol_by_node = dict(zip(self.ss_tensors(), self._steady_state_symbols(), strict=True))
+            known_nodes = [node for node in symbol_by_node if node in known]
+            known_graph = clone_replace(pt.stack([known[node] for node in known_nodes]))
+            f_known = compile_for_scipy(known_graph, mode=self._mode)
+            self._f_ss = dictionary_return_wrapper(f_known, [symbol_by_node[node] for node in known_nodes])
         return self._f_ss
 
     @property
@@ -1341,19 +1162,13 @@ class Model:
         """
         return self._ensure_cache()
 
-    def ss_tensors(self, filter_known: bool = False) -> list[TensorVariable]:
+    def ss_tensors(self) -> list[TensorVariable]:
         """
         Pytensor scalar variables for the model's steady-state symbols.
 
         Return one scalar ``TensorVariable`` per model variable and calibrated parameter, in model order. The
         variables live in the shared sympytensor cache, so repeated calls and downstream graph building share the
         same objects.
-
-        Parameters
-        ----------
-        filter_known : bool, optional
-            If True, exclude variables whose steady-state values are analytically known from the ``STEADY_STATE``
-            block. Default False.
 
         Returns
         -------
@@ -1373,8 +1188,7 @@ class Model:
             ss_nodes = model.ss_tensors()
             print([node.name for node in ss_nodes])
         """
-        known_names = self._known_steady_state_names() if filter_known else set()
-        return [self._scalar_node(symbol) for symbol in self._steady_state_symbols() if symbol.name not in known_names]
+        return [self._scalar_node(symbol) for symbol in self._steady_state_symbols()]
 
     def param_tensors(
         self,
@@ -1422,7 +1236,7 @@ class Model:
 
         return [self._scalar_node(symbol) for symbol in param_symbols]
 
-    def equation_tensors(self, filter_known: bool = False) -> list[TensorVariable]:
+    def equation_tensors(self) -> list[TensorVariable]:
         """
         Pytensor graphs for the model's steady-state equations.
 
@@ -1432,12 +1246,6 @@ class Model:
 
         Each call returns a fresh clone with shared input leaves. Compilation rewrites graphs in place, so handing
         out the memoized master graph would let one consumer corrupt it for the next.
-
-        Parameters
-        ----------
-        filter_known : bool, optional
-            If True, substitute the analytically known steady-state values and drop the equations they fully
-            determine. Default False.
 
         Returns
         -------
@@ -1465,8 +1273,7 @@ class Model:
             values = {**steady_state, **model.parameters()}
             print(f_residual(*[values[node.name] for node in inputs]))
         """
-        master = self._ensure_equation_tensors(filter_known=filter_known)
-        return clone_replace(master)
+        return clone_replace(self._ensure_equation_tensors())
 
     def parameters(self, **updates: float) -> SymbolDictionary[str, float]:
         """
@@ -1665,79 +1472,74 @@ class Model:
         if how not in ("analytic", "root", "minimize"):
             raise NotImplementedError(f'how must be one of "analytic", "root", or "minimize", got {how!r}.')
 
-        optimizer_kwargs = {} if optimizer_kwargs is None else optimizer_kwargs
+        optimizer_kwargs = deepcopy({} if optimizer_kwargs is None else optimizer_kwargs)
         tol = optimizer_kwargs.get("tol", rcParams["steady_state.tol"])
         if grad_tol is None:
             grad_tol = rcParams["steady_state.grad_tol"]
-        param_dict = self.parameters(**updates)
-        f_ss = self.f_ss
 
         if self.is_linear:
             return self._linear_steady_state()
 
-        if fixed_values is None:
-            analytic_result = self._try_analytic_steady_state(param_dict, f_ss, verbose=verbose)
-            if analytic_result is not None:
-                return analytic_result
+        fixed_values = {} if fixed_values is None else fixed_values
+        if fixed_values:
+            self._validate_provided_steady_state_variables(list(fixed_values))
+        fixed_inputs = {safe_to_ss(self.get(name)).name: float(value) for name, value in fixed_values.items()}
+        inputs = {**self.parameters(**updates), **fixed_inputs}
 
-        if fixed_values is not None:
-            self._validate_provided_steady_state_variables(list(fixed_values.keys()))
-            equations, vars_to_solve, ss_nodes = self._build_resid_with_fixed_values(fixed_values, param_dict)
-        else:
-            equations = self.equation_tensors(filter_known=True)
-            ss_nodes = self.ss_tensors(filter_known=True)
-            vars_to_solve = self._vars_to_solve
+        fixed_names = tuple(sorted(fixed_inputs))
+        system = self._steady_state_system(fixed_names)
+        checks, check_scale = self._evaluate_check_rows(fixed_names, inputs)
+        self._raise_on_inconsistent_fixed_values(fixed_names, checks, check_scale)
 
-        if not vars_to_solve:
-            return self._evaluate_all_resolved(f_ss, param_dict, fixed_values)
+        if not system.unknowns:
+            return self._evaluate_determined_steady_state(fixed_names, inputs, checks, check_scale, verbose=verbose)
 
         if how == "root":
-            n_eqs = len(equations)
-            n_vars = len(vars_to_solve)
-            if n_eqs != n_vars:
-                raise ValueError(
-                    'Solving a partially provided steady state with how = "root" is only allowed if applying '
-                    f"the given values results in a new square system.\n"
-                    f"Remaining: {n_vars} variable{'s' if n_vars != 1 else ''}, "
-                    f"{n_eqs} equation{'s' if n_eqs != 1 else ''}."
-                )
-            res, residual_functions = self._solve_steady_state_with_root(
-                equations,
-                ss_nodes,
-                vars_to_solve,
-                param_dict,
+            x_star, res = self._root_steady_state(
+                fixed_names,
+                inputs,
                 use_jac=use_jac,
                 progressbar=progressbar,
                 optimizer_kwargs=optimizer_kwargs,
                 jitter_x0=jitter_x0,
             )
+            gradient_error_func = "squared" if use_jac else None
         else:
-            res, residual_functions = self._solve_steady_state_with_minimize(
-                equations,
-                ss_nodes,
-                vars_to_solve,
-                param_dict,
+            x_star, res = self._minimize_steady_state(
+                fixed_names,
+                inputs,
                 use_jac=use_jac,
                 use_hess=use_hess,
                 use_hessp=use_hessp,
-                progressbar=progressbar,
                 bounds=bounds,
                 prefer_transform=prefer_transform,
+                progressbar=progressbar,
                 optimizer_kwargs=optimizer_kwargs,
                 jitter_x0=jitter_x0,
             )
+            gradient_error_func = self._error_func if use_jac or use_hess or use_hessp else None
 
-        return self._postprocess_numerical_result(
-            res,
-            residual_functions,
-            vars_to_solve,
-            f_ss,
-            param_dict,
-            fixed_values,
-            tol,
-            grad_tol,
-            verbose,
+        diagnostics, arg_names = self._steady_state_diagnostics(fixed_names, gradient_error_func=gradient_error_func)
+        steady_state, residual, gradient = diagnostics(x_star, *_positional(arg_names, inputs))
+
+        result = postprocess_optimizer_res(
+            res=res,
+            res_dict=self._steady_state_results(steady_state),
+            f_resid=lambda **_: residual,
+            f_grad=lambda **_: gradient,
+            tol=tol,
+            grad_tol=grad_tol,
+            verbose=verbose,
         )
+        if not _residual_within_tolerance(checks, check_scale).all():
+            if verbose:
+                _log.warning(
+                    "Steady state NOT found: equations the solve does not involve are violated. Sum of square "
+                    f"residuals: {np.square(checks).sum()}"
+                    f"{self._worst_residual_note(checks, check_scale, system.check_indices)}"
+                )
+            result.success = False
+        return result
 
     def evaluate_residual(self, ss_dict: dict[str, float], param_dict: SymbolDictionary) -> np.ndarray:
         """
@@ -2654,55 +2456,26 @@ class Model:
             cache[cache_key] = pt.scalar(name=symbol.name, dtype="floatX")
         return cache[cache_key]
 
-    def _cached_nodes(self, symbols: list[sp.Symbol]) -> list[TensorVariable]:
-        """Look up the pytensor nodes of ``symbols`` that already exist in the cache, skipping the rest."""
-        cache = self._ensure_cache()
-        cache_keys = (make_cache_key(symbol.name, type(symbol)) for symbol in symbols)
-        return [cache[key] for key in cache_keys if key in cache]
-
     def _steady_state_symbols(self) -> list[sp.Symbol]:
         return [x.to_ss() for x in self._variables] + list(self.calibrated_params)
-
-    def _known_steady_state_names(self) -> set[str]:
-        if not self._ss_solution_dict:
-            return set()
-        return {safe_to_ss(k).name for k in self._ss_solution_dict.to_sympy()}
 
     @property
     def _vars_to_solve(self) -> list[sp.Symbol]:
         """Steady-state symbols with no analytic solution."""
-        known_names = self._known_steady_state_names()
-        return [v for v in self._steady_state_symbols() if v.name not in known_names]
+        return self._unknown_symbols(self._steady_state_system(()))
 
-    def _build_equation_tensors(self, known_steady_state: SymbolDictionary) -> list[TensorVariable]:
-        equations, _ = _ss_residual_to_pytensor(
-            self._steady_state_equations,
-            known_steady_state,
-            self._variables,
-            self._param_dict,
-            self._deterministic_dict,
-            self._calib_dict,
-            cache=self._ensure_cache(),
-            ss_definitions=self._ss_definitions,
-        )
-        return equations
-
-    def _ensure_equation_tensors(self, filter_known: bool = False) -> list[TensorVariable]:
-        """
-        Build and memoize the master equation graphs.
-
-        With ``filter_known`` the analytically known steady-state values are substituted in and the equations they
-        fully determine are dropped. Without it every equation is returned with every steady-state variable as a free
-        input. The two variants are memoized separately.
-        """
-        if filter_known:
-            if self._equation_tensors is None:
-                self._equation_tensors = self._build_equation_tensors(self._ss_solution_dict)
-            return self._equation_tensors
-
-        if self._full_equation_tensors is None:
-            self._full_equation_tensors = self._build_equation_tensors(SymbolDictionary())
-        return self._full_equation_tensors
+    def _ensure_equation_tensors(self) -> list[TensorVariable]:
+        """Build and memoize the master equation graphs, with every steady-state node as a free input."""
+        if self._equation_tensors is None:
+            self._equation_tensors, _ = _ss_residual_to_pytensor(
+                self._steady_state_equations,
+                self._variables,
+                self._param_dict,
+                self._deterministic_dict,
+                self._calib_dict,
+                cache=self._ensure_cache(),
+            )
+        return self._equation_tensors
 
     def _full_residual_and_scale(self, **inputs: float) -> tuple[np.ndarray, np.ndarray]:
         """Evaluate every steady-state equation's residual and the scale its tolerance is measured against."""
@@ -2742,126 +2515,118 @@ class Model:
         ss_dict.success = True
         return ss_dict
 
-    def _try_analytic_steady_state(
-        self,
-        param_dict: SymbolDictionary,
-        f_ss: Callable | None,
-        verbose: bool = True,
-    ) -> SteadyStateResults | None:
-        """Evaluate the analytic steady state, or return None when it does not cover every variable."""
-        if f_ss is None:
-            return None
-        ss_dict = f_ss(**param_dict)
-        if len(ss_dict) != len(self.variables):
-            return None
+    def _steady_state_results(self, values: np.ndarray) -> SteadyStateResults:
+        return SteadyStateResults(dict(zip(self._steady_state_symbols(), values, strict=True))).to_string()
 
-        residual, scale = self._full_residual_and_scale(**ss_dict, **param_dict)
-        success = bool(_residual_within_tolerance(residual, scale).all())
-
-        result = SteadyStateResults(ss_dict.to_sympy()).to_string()
-        result.success = success
-        if verbose and not success:
-            _log.warning(
-                f"Steady State was not found. Sum of square residuals: {np.square(residual).sum()}"
-                f"{self._worst_residual_note(residual, scale)}"
+    def _known_steady_state_nodes(self) -> dict[TensorVariable, TensorVariable]:
+        """Map each steady-state node with an analytic value to its graph in the parameters, built once."""
+        if self._known_ss_nodes is None:
+            # Only nodes already in the cache get a replacement, so every steady-state node is created first.
+            self.ss_tensors()
+            parameters = list((self._param_dict | self._deterministic_dict).to_sympy())
+            self._known_ss_nodes = (
+                known_steady_state_replacements(
+                    self._ss_solution_dict,
+                    self._steady_state_symbols(),
+                    parameters,
+                    self._ensure_cache(),
+                    ss_definitions=self._ss_definitions,
+                )
+                if self._ss_solution_dict
+                else {}
             )
-        return result
+        return self._known_ss_nodes
 
-    def _worst_residual_note(self, residual: np.ndarray, scale: np.ndarray) -> str:
-        """
-        Name the equation furthest outside its tolerance, so a failure points at a line the author wrote.
+    def _steady_state_system(self, fixed_names: tuple[str, ...]) -> SteadyStateSystem:
+        """Build and memoize the steady-state system in which the named steady-state values are supplied as inputs."""
+        if fixed_names not in self._ss_systems:
+            nodes_by_name = dict(zip(self._steady_state_names(), self.ss_tensors(), strict=True))
+            self._ss_systems[fixed_names] = build_steady_state_system(
+                self.equation_tensors(),
+                list(nodes_by_name.values()),
+                self._known_steady_state_nodes(),
+                fixed=[nodes_by_name[name] for name in fixed_names],
+            )
+        return self._ss_systems[fixed_names]
 
-        The steady-state system is one equation per model equation in the same order, so an equation id indexes
-        both. Returns an empty string for a model built without ids.
-        """
-        residual = np.asarray(residual).ravel()
-        if len(self._equation_ids) != len(residual):
-            return ""
+    def _steady_state_names(self) -> list[str]:
+        return [symbol.name for symbol in self._steady_state_symbols()]
 
-        scale = np.asarray(scale).ravel()
-        finite = np.isfinite(residual)
-        excess = np.full(residual.shape, np.inf)
-        excess[finite] = np.abs(residual[finite]) / _steady_state_tolerance(scale[finite])
-        worst = int(np.argmax(excess))
-        return f". Worst residual {residual[worst]:.3e} in {self._equation_ids[worst]}"
+    def _unknown_symbols(self, system: SteadyStateSystem) -> list[sp.Symbol]:
+        symbol_by_node = dict(zip(self.ss_tensors(), self._steady_state_symbols(), strict=True))
+        return [symbol_by_node[node] for node in system.unknowns]
 
-    def _provided_steady_state_values(
+    def _evaluate_check_rows(
+        self, fixed_names: tuple[str, ...], inputs: dict[str, float]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return the check rows' residuals and scales, compiling their function once per system."""
+        key = ("checks", fixed_names)
+        if key not in self._ss_functions:
+            self._ss_functions[key] = compile_check_rows(self._steady_state_system(fixed_names), mode=self._mode)
+        f_checks, arg_names = self._ss_functions[key]
+        checks, check_scale = f_checks(np.zeros(0), *_positional(arg_names, inputs))
+        return checks, check_scale
+
+    def _steady_state_diagnostics(
+        self, fixed_names: tuple[str, ...], gradient_error_func: str | None
+    ) -> tuple[Callable, list[str]]:
+        """Return the compiled diagnostics of :func:`compile_diagnostics`, compiled once per system and metric."""
+        key = ("diagnostics", fixed_names, gradient_error_func)
+        if key not in self._ss_functions:
+            self._ss_functions[key] = compile_diagnostics(
+                self._steady_state_system(fixed_names), gradient_error_func, mode=self._mode
+            )
+        return self._ss_functions[key]
+
+    def _evaluate_determined_steady_state(
         self,
-        f_ss: Callable | None,
-        param_dict: SymbolDictionary,
-        fixed_values: dict[str, float] | None,
-    ) -> dict[sp.Symbol, float]:
-        """Merge the analytic steady-state values with the user-fixed values, keyed by steady-state symbol."""
-        provided_ss_values = f_ss(**param_dict).to_sympy() if f_ss is not None else {}
-        if fixed_values is not None:
-            provided_ss_values.update({safe_to_ss(self.get(k)): v for k, v in fixed_values.items()})
-        return provided_ss_values
-
-    def _evaluate_all_resolved(
-        self,
-        f_ss: Callable | None,
-        param_dict: SymbolDictionary,
-        fixed_values: dict[str, float] | None,
+        fixed_names: tuple[str, ...],
+        inputs: dict[str, float],
+        checks: np.ndarray,
+        check_scale: np.ndarray,
+        verbose: bool,
     ) -> SteadyStateResults:
-        """Assemble and validate the steady state when analytic and fixed values together cover every variable."""
-        provided_ss_values = self._provided_steady_state_values(f_ss, param_dict, fixed_values)
+        """Evaluate a steady state that analytic and fixed values determine completely, where every row is a check."""
+        diagnostics, arg_names = self._steady_state_diagnostics(fixed_names, gradient_error_func=None)
+        steady_state, _, _ = diagnostics(np.zeros(0), *_positional(arg_names, inputs))
 
-        residual, scale = self._full_residual_and_scale(
-            **{str(k): v for k, v in provided_ss_values.items()}, **param_dict
-        )
-
-        result = SteadyStateResults({x: provided_ss_values[x] for x in self._steady_state_symbols()}).to_string()
-        result.success = bool(_residual_within_tolerance(residual, scale).all())
+        success = bool(_residual_within_tolerance(checks, check_scale).all())
+        if verbose and not success:
+            system = self._steady_state_system(fixed_names)
+            _log.warning(
+                f"Steady State was not found. Sum of square residuals: {np.square(checks).sum()}"
+                f"{self._worst_residual_note(checks, check_scale, system.check_indices)}"
+            )
+        result = self._steady_state_results(steady_state)
+        result.success = success
         return result
 
-    def _build_resid_with_fixed_values(
-        self,
-        fixed_values: dict[str, float],
-        param_dict: SymbolDictionary,
-    ) -> tuple[list[TensorVariable], list[sp.Symbol], list[TensorVariable]]:
+    def _raise_on_inconsistent_fixed_values(
+        self, fixed_names: tuple[str, ...], checks: np.ndarray, check_scale: np.ndarray
+    ) -> None:
         """
-        Build the residual system with the user-fixed values merged into the known steady state.
+        Raise when an equation the fixed values alone determine is outside its tolerance.
 
-        Equations fully determined by the fixed values alone are checked for consistency. The remaining system is
-        returned for numerical solving along with the symbols and nodes still to be solved.
+        An equation that also involves an analytically known value is left to the convergence verdict, since the
+        fault may lie with either value.
         """
-        merged_ss = SymbolDictionary(self._ss_solution_dict.copy() if self._ss_solution_dict else {})
-        for name, value in fixed_values.items():
-            merged_ss[safe_to_ss(self.get(name))] = float(value)
-
-        equations = self._build_equation_tensors(merged_ss)
-        self._validate_fixed_value_equations(fixed_values, param_dict)
-
-        merged_names = {safe_to_ss(k).name for k in merged_ss.to_sympy()}
-        vars_to_solve = [v for v in self._steady_state_symbols() if v.name not in merged_names]
-        ss_nodes = self._cached_nodes(vars_to_solve)
-
-        return equations, vars_to_solve, ss_nodes
-
-    def _validate_fixed_value_equations(self, fixed_values: dict[str, float], param_dict: SymbolDictionary) -> None:
-        """
-        Check that the equations fully determined by the fixed values have zero residuals.
-
-        An equation that references any unfixed steady-state variable is skipped.
-        """
-        all_equations = self.equation_tensors()
-        fixed_kw = {safe_to_ss(self.get(k)).name: float(v) for k, v in fixed_values.items()}
-
-        unfixed_symbols = [symbol for symbol in self._steady_state_symbols() if symbol.name not in fixed_kw]
-        unfixed_node_ids = {id(node) for node in self._cached_nodes(unfixed_symbols)}
-
-        fully_determined_indices = [
-            i
-            for i, eq in enumerate(all_equations)
-            if not any(id(node) in unfixed_node_ids for node in explicit_graph_inputs(eq))
-        ]
-        if not fully_determined_indices:
+        if not fixed_names:
             return
+        system = self._steady_state_system(fixed_names)
+        nodes_by_name = dict(zip(self._steady_state_names(), self.ss_tensors(), strict=True))
+        fixed = {nodes_by_name[name] for name in fixed_names}
+        steady_state_nodes = set(nodes_by_name.values())
+        equations = self._ensure_equation_tensors()
 
-        f_resid = _compile_residual_and_scale([all_equations[i] for i in fully_determined_indices], mode=self._mode)
-        residuals, scales = f_resid(**fixed_kw, **param_dict)
-        within_tolerance = _residual_within_tolerance(np.asarray(residuals), np.asarray(scales))
-        bad_indices = [index for index, ok in zip(fully_determined_indices, within_tolerance, strict=True) if not ok]
+        def determined_by_fixed_values(index: int) -> bool:
+            return all(node in fixed for node in explicit_graph_inputs(equations[index]) if node in steady_state_nodes)
+
+        within_tolerance = _residual_within_tolerance(checks, check_scale)
+        bad_indices = [
+            index
+            for index, ok in zip(system.check_indices, within_tolerance, strict=True)
+            if not ok and determined_by_fixed_values(index)
+        ]
         if not bad_indices:
             return
 
@@ -2872,206 +2637,114 @@ class Model:
             "after substitution:\n" + "\n".join(bad_strs)
         )
 
-    def _solve_steady_state_with_root(
+    def _root_steady_state(
         self,
-        equations: list[TensorVariable],
-        ss_nodes: list[TensorVariable],
-        vars_to_solve: list[sp.Symbol],
-        param_dict: SymbolDictionary,
-        use_jac: bool = True,
-        progressbar: bool = True,
-        optimizer_kwargs: dict | None = None,
-        jitter_x0: bool = False,
-    ) -> tuple[OptimizeResult, "_ResidualFunctions"]:
-        optimizer_kwargs = deepcopy({} if optimizer_kwargs is None else optimizer_kwargs)
-
-        maxiter = optimizer_kwargs.pop("maxiter", 5000)
-        method = optimizer_kwargs.pop("method", "hybr")
-        options = optimizer_kwargs.setdefault("options", {})
-        options["maxfev" if method in ("hybr", "df-sane") else "maxiter"] = maxiter
-
-        x0 = _initialize_x0(optimizer_kwargs, vars_to_solve, jitter_x0)
-
-        resid, jac_graph = build_root_graphs(equations, ss_nodes, use_jac=use_jac)
-
-        f_resid = pack_and_compile(resid, ss_nodes, param_dict=param_dict, mode=self._mode)
-        f_jac = None
-        f_jac_kw = None
-        if jac_graph is not None:
-            f_jac = pack_and_compile(jac_graph, ss_nodes, param_dict=param_dict, mode=self._mode)
-            f_jac_kw = compile_for_scipy(jac_graph, mode=self._mode)
-
-        with np.errstate(all="ignore"):
-            res = root(f=f_resid, x0=x0, jac=f_jac, method=method, progressbar=progressbar, **optimizer_kwargs)
-
-        residual_functions = _ResidualFunctions(resid=compile_for_scipy(resid, mode=self._mode), jac=f_jac_kw)
-        return res, residual_functions
-
-    def _solve_steady_state_with_minimize(
-        self,
-        equations: list[TensorVariable],
-        ss_nodes: list[TensorVariable],
-        vars_to_solve: list[sp.Symbol],
-        param_dict: SymbolDictionary,
-        use_jac: bool = True,
-        use_hess: bool = False,
-        use_hessp: bool = True,
-        progressbar: bool = True,
-        optimizer_kwargs: dict | None = None,
-        jitter_x0: bool = False,
-        bounds: dict[str, tuple[float, float]] | None = None,
-        prefer_transform: bool = False,
-    ) -> tuple[OptimizeResult, "_ResidualFunctions"]:
-        optimizer_kwargs = deepcopy({} if optimizer_kwargs is None else optimizer_kwargs)
-
-        x0 = _initialize_x0(optimizer_kwargs, vars_to_solve, jitter_x0)
-        tol = optimizer_kwargs.pop("tol", 1e-30)
-
-        box_bounds = {x.name: infer_variable_bounds(x) for x in vars_to_solve}
-        box_bounds.update({} if bounds is None else bounds)
-
-        # Box-constrained solvers crawl an ill-conditioned interior-point central path on DSGE steady states, so they
-        # run only when the caller names one and leaves ``prefer_transform`` off. Otherwise each bounded variable is
-        # reparametrized onto the real line (x = transform.backward(y)) and the unconstrained problem is solved, which
-        # also lets a bounds-capable method such as L-BFGS-B run on the transformed space when ``prefer_transform``
-        # is set.
-        requested_method = optimizer_kwargs.pop("method", None)
-        use_box_bounds = (not prefer_transform) and requested_method in BOX_BOUND_METHODS
-
-        if use_box_bounds:
-            method = requested_method
-            solve_equations, solve_nodes = equations, ss_nodes
-            x0_solve = x0
-            bounds_arg = [box_bounds[x.name] for x in vars_to_solve]
-            to_constrained = None
-        else:
-            method = requested_method or "trust-ncg"
-            transforms = steady_state_transforms(vars_to_solve, self._declared_bounds(), bounds)
-            solve_equations, solve_nodes, to_unconstrained, to_constrained = transform_steady_state_system(
-                equations, ss_nodes, transforms
-            )
-            x0_solve = to_unconstrained(x0)
-            bounds_arg = None
-
-        gradient_available = use_jac or use_hess or use_hessp
-        if not gradient_available and method.lower() in GRADIENT_REQUIRED_METHODS:
+        fixed_names: tuple[str, ...],
+        inputs: dict[str, float],
+        use_jac: bool,
+        progressbar: bool,
+        optimizer_kwargs: dict,
+        jitter_x0: bool,
+    ) -> tuple[np.ndarray, OptimizeResult]:
+        system = self._steady_state_system(fixed_names)
+        n_eqs, n_vars = len(system.residuals), len(system.unknowns)
+        if n_eqs != n_vars:
             raise ValueError(
-                f"Method {method!r} requires a gradient, but use_jac, use_hess, and use_hessp are all False. Pass "
-                f"use_jac=True, or choose a gradient-free method such as 'nelder-mead' or 'powell' via "
-                f"optimizer_kwargs={{'method': ...}}."
+                'Solving a partially provided steady state with how = "root" is only allowed if applying '
+                f"the given values results in a new square system.\n"
+                f"Remaining: {n_vars} variable{'s' if n_vars != 1 else ''}, "
+                f"{n_eqs} equation{'s' if n_eqs != 1 else ''}."
             )
 
-        maxiter = optimizer_kwargs.pop("maxiter", 5000)
-        options = optimizer_kwargs.setdefault("options", {})
-        options["maxiter"] = maxiter
-        if method == "L-BFGS-B":
-            options["maxfun"] = maxiter
+        key = ("root", fixed_names, use_jac)
+        if key not in self._ss_functions:
+            self._ss_functions[key] = compile_root_objective(system, use_jac, mode=self._mode)
+        objective, arg_names = self._ss_functions[key]
 
-        if use_hess and use_hessp:
-            _log.warning("Both use_hess and use_hessp are set to True. use_hessp will be used.")
-            use_hess = False
+        return solve_root(
+            objective,
+            _positional(arg_names, inputs),
+            self._unknown_symbols(system),
+            progressbar=progressbar,
+            optimizer_kwargs=optimizer_kwargs,
+            jitter_x0=jitter_x0,
+        )
 
-        error_graph, grad_graph, hess_graph, hessp_graph, hessp_p = build_minimize_graphs(
-            solve_equations,
-            solve_nodes,
-            error_func=self._error_func,
+    def _minimize_steady_state(
+        self,
+        fixed_names: tuple[str, ...],
+        inputs: dict[str, float],
+        use_jac: bool,
+        use_hess: bool,
+        use_hessp: bool,
+        bounds: dict[str, tuple[float, float]] | None,
+        prefer_transform: bool,
+        progressbar: bool,
+        optimizer_kwargs: dict,
+        jitter_x0: bool,
+    ) -> tuple[np.ndarray, OptimizeResult]:
+        system = self._steady_state_system(fixed_names)
+        unknown_symbols = self._unknown_symbols(system)
+        method, use_box_bounds, use_hess = prepare_minimize(
+            optimizer_kwargs,
+            prefer_transform=prefer_transform,
             use_jac=use_jac,
             use_hess=use_hess,
             use_hessp=use_hessp,
         )
 
-        def pack(graph: TensorVariable | None) -> Callable | None:
-            if graph is None:
-                return None
-            return pack_and_compile(graph, solve_nodes, param_dict=param_dict, mode=self._mode)
-
-        f_error = pack(error_graph)
-        f_grad = pack(grad_graph)
-        f_hess = pack(hess_graph)
-
-        # The Hessian-vector product takes a direction vector at call time, which pack_and_compile cannot bake in.
-        f_hessp: Callable | None = None
-        if hessp_graph is not None:
-            f_hessp_inner = compile_for_scipy(hessp_graph, mode=self._mode)
-            var_names = [v.name for v in solve_nodes]
-
-            def hessian_vector_product(x: np.ndarray, p: np.ndarray) -> np.ndarray:
-                kw = dict(zip(var_names, x, strict=True))
-                kw[hessp_p.name] = p
-                return np.asarray(f_hessp_inner(**kw, **param_dict))
-
-            f_hessp = hessian_vector_product
-
-        res = minimize(
-            f=f_error,
-            x0=x0_solve,
-            jac=f_grad,
-            hess=f_hess,
-            hessp=f_hessp,
-            method=method,
-            bounds=bounds_arg,
-            tol=tol,
-            progressbar=progressbar,
-            **optimizer_kwargs,
+        bounds = {} if bounds is None else bounds
+        transform_key = (
+            None if use_box_bounds else tuple(sorted((name, tuple(bound)) for name, bound in bounds.items()))
         )
-        if to_constrained is not None:
-            res.x = to_constrained(res.x)
-
-        # Postprocessing evaluates the original constrained system at the mapped-back solution, so its functions stay
-        # in x-space even when the solve ran in y-space.
-        resid = pt.stack(equations) if equations else pt.zeros(0)
-        if use_box_bounds:
-            grad_graph_x = grad_graph
-        else:
-            _, grad_graph_x, *_ = build_minimize_graphs(
-                equations, ss_nodes, error_func=self._error_func, use_jac=use_jac, use_hess=False, use_hessp=False
+        key = (fixed_names, transform_key, use_jac, use_hess, use_hessp)
+        if key not in self._ss_minimize_solvers:
+            self._ss_minimize_solvers[key] = compile_minimize_solver(
+                system,
+                unknown_symbols,
+                transform_bounds=None if use_box_bounds else bounds,
+                declared_bounds=self._declared_bounds(),
+                error_func=self._error_func,
+                use_jac=use_jac,
+                use_hess=use_hess,
+                use_hessp=use_hessp,
+                mode=self._mode,
             )
+        solver = self._ss_minimize_solvers[key]
 
-        residual_functions = _ResidualFunctions(
-            resid=compile_for_scipy(resid, mode=self._mode),
-            grad=compile_for_scipy(grad_graph_x, mode=self._mode) if grad_graph_x is not None else None,
+        return solve_minimize(
+            solver,
+            _positional(solver.arg_names, inputs),
+            unknown_symbols,
+            method=method,
+            bounds=bounds,
+            use_box_bounds=use_box_bounds,
+            progressbar=progressbar,
+            optimizer_kwargs=optimizer_kwargs,
+            jitter_x0=jitter_x0,
         )
-        return res, residual_functions
 
-    def _postprocess_numerical_result(
-        self,
-        res: OptimizeResult,
-        residual_functions: "_ResidualFunctions",
-        vars_to_solve: list[sp.Symbol],
-        f_ss: Callable | None,
-        param_dict: SymbolDictionary,
-        fixed_values: dict[str, float] | None,
-        tol: float,
-        grad_tol: float,
-        verbose: bool,
-    ) -> SteadyStateResults:
-        """Assemble the steady-state dict from the optimizer result and run the convergence diagnostics."""
-        provided_ss_values = self._provided_steady_state_values(f_ss, param_dict, fixed_values)
-        optimizer_results = SymbolDictionary(dict(zip(vars_to_solve, res.x, strict=True)))
-        all_values = optimizer_results | provided_ss_values
-        res_dict = SteadyStateResults({x: all_values[x] for x in self._steady_state_symbols()}).to_string()
+    def _worst_residual_note(self, residual: np.ndarray, scale: np.ndarray, equation_indices: Sequence[int]) -> str:
+        """
+        Name the equation furthest outside its tolerance, so a failure points at a line the author wrote.
 
-        def f_resid(**kw: float) -> np.ndarray:
-            return np.asarray(residual_functions.resid(**kw, **param_dict))
+        ``equation_indices`` gives each residual's position in the full steady-state system, whose leading rows are
+        the model equations in order, so an equation id indexes them. Returns an empty string when the worst row
+        has no id, as for a calibrating equation or a model built without ids.
+        """
+        residual = np.asarray(residual).ravel()
+        if residual.size == 0:
+            return ""
 
-        def f_grad(**kw: float) -> np.ndarray:
-            if residual_functions.grad is not None:
-                return np.asarray(residual_functions.grad(**kw, **param_dict))
-            if residual_functions.jac is not None:
-                resid_val = np.asarray(residual_functions.resid(**kw, **param_dict)).ravel()
-                jac_val = np.asarray(residual_functions.jac(**kw, **param_dict))
-                return 2.0 * jac_val.T @ resid_val
-            return np.zeros(len(vars_to_solve))
-
-        return postprocess_optimizer_res(
-            res=res,
-            res_dict=res_dict,
-            f_resid=f_resid,
-            f_grad=f_grad,
-            tol=tol,
-            grad_tol=grad_tol,
-            verbose=verbose,
-        )
+        scale = np.asarray(scale).ravel()
+        finite = np.isfinite(residual)
+        excess = np.full(residual.shape, np.inf)
+        excess[finite] = np.abs(residual[finite]) / _steady_state_tolerance(scale[finite])
+        worst = int(np.argmax(excess))
+        index = equation_indices[worst]
+        if index >= len(self._equation_ids):
+            return ""
+        return f". Worst residual {residual[worst]:.3e} in {self._equation_ids[index]}"
 
     def _solve_with_gensys(
         self,
@@ -3121,14 +2794,6 @@ class Model:
         return T, R
 
 
-class _ResidualFunctions(NamedTuple):
-    """Keyword-argument residual system functions used by the steady-state convergence diagnostics."""
-
-    resid: Callable
-    jac: Callable | None = None
-    grad: Callable | None = None
-
-
 def _values_by_base_name(values: Mapping[Any, Any]) -> dict[str, float]:
     """Key steady-state values by variable name, whether given as symbols or as names with or without ``_ss``."""
     return {str(get_name(key)).removesuffix("_ss"): float(value) for key, value in values.items()}
@@ -3150,21 +2815,3 @@ def _call_for_group(renderer: Callable[..., Any], group: str, kind: str, **optio
         accepted = [name for name in signature(renderer).parameters if name != "self"]
         accepted_text = ", ".join(accepted) if accepted else "none"
         raise TypeError(f"{group!r} takes no {kind} {unexpected.group(1)!r}. Accepted: {accepted_text}.") from error
-
-
-def _initialize_x0(optimizer_kwargs: dict, variables: list[sp.Symbol], jitter_x0: bool) -> np.ndarray:
-    n_variables = len(variables)
-    user_x0 = optimizer_kwargs.pop("x0", None)
-
-    if user_x0 is None:
-        x0 = np.full(n_variables, 0.8)
-        is_negative = np.array([x.assumptions0.get("negative", False) for x in variables], dtype=bool)
-        x0[is_negative] = -x0[is_negative]
-    else:
-        x0 = np.array(user_x0, dtype=float)
-
-    if jitter_x0:
-        rng = np.random.default_rng()
-        x0 += rng.normal(scale=1e-4, size=n_variables)
-
-    return x0

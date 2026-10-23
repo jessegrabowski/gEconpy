@@ -327,11 +327,35 @@ class TestDeclaredSymbolsExist:
 
         assert not list(check_declared_symbols_exist(quick_parse(source)))
 
+    def test_a_named_lagrange_multiplier_counts_as_declared(self):
+        source = """
+        symbols { lambda[] { positive = True; }; };
+        block TEST { controls { C[]; }; objective { U[] = log(C[]); }; constraints { C[] = Y[] : lambda[]; }; };
+        """
+
+        assert not list(check_declared_symbols_exist(quick_parse(source)))
+
     def test_loading_a_model_raises_on_an_unmatched_declaration(self):
         source = "symbols { alpa { bounds = (0, 1); }; }; block TEST { identities { Y[] = alpha * K[]; }; };"
 
         with pytest.raises(GCNSemanticError, match="'alpa' is declared but the model has no such"):
             load_gcn_string(source)
+
+    def test_a_declared_multiplier_carries_its_assumptions_into_the_model(self):
+        source = """
+        symbols { lambda[] { positive = True; }; };
+        block TEST
+        {
+            controls { C[]; };
+            objective { U[] = log(C[]) + beta * E[][U[1]]; };
+            constraints { C[] = Y[] : lambda[]; };
+            calibration { beta = 0.99; };
+        };
+        """
+
+        multiplier = next(variable for variable in load_gcn_string(source).variables if variable.base_name == "lambda")
+
+        assert multiplier.is_positive
 
 
 class TestDistributionValidation:

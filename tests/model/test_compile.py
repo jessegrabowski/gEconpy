@@ -4,6 +4,9 @@ import pytensor.tensor as pt
 import pytest
 import sympy as sp
 
+from pytensor.graph.basic import equal_computations
+from pytensor.graph.replace import clone_replace
+
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
@@ -11,10 +14,10 @@ from gEconpy.model.compile import (
     build_symbolic_jacobians,
     compile_for_scipy,
     compile_function,
+    compile_packed,
     dictionary_return_wrapper,
     make_cache_key,
     make_return_dict_and_update_cache,
-    pack_and_compile,
     sympy_to_pytensor,
 )
 
@@ -158,27 +161,38 @@ def test_compile_for_scipy_ignores_unknown_keywords():
     np.testing.assert_allclose(f(x=2.0, y=3.0, z=100.0), 6.0)
 
 
-@pytest.mark.parametrize("freeze_params", [True, False], ids=["frozen_params", "positional_params"])
-def test_pack_and_compile_reads_only_active_nodes_from_flat_vector(freeze_params):
-    x, y, z, alpha = pt.dscalars("x", "y", "z", "alpha")
-    param_dict = SymbolDictionary({"alpha": 10.0}) if freeze_params else None
-    param_args = () if freeze_params else (10.0,)
+def test_compile_packed_reads_nodes_from_x_and_finds_the_remaining_inputs():
+    x, y, alpha = pt.dscalars("x", "y", "alpha")
 
-    # y is not a graph input, so x_flat[1] is skipped and z is read from x_flat[2].
-    f = pack_and_compile(pt.stack([x * alpha, z + alpha]), [x, y, z], param_dict=param_dict, mode="FAST_COMPILE")
+    f, args = compile_packed(pt.stack([x * alpha, y + alpha]), [x, y], mode="FAST_COMPILE")
 
-    np.testing.assert_allclose(f(np.array([1.0, 999.0, 2.0]), *param_args), [10.0, 12.0])
+    assert [arg.name for arg in args] == ["alpha"]
+    np.testing.assert_allclose(f(np.array([1.0, 2.0]), 10.0), [10.0, 12.0])
 
 
-@pytest.mark.parametrize("freeze_params", [True, False], ids=["frozen_params", "positional_params"])
-def test_pack_and_compile_without_steady_state_inputs_ignores_flat_vector(freeze_params):
+def test_compile_packed_shares_argument_order_and_takes_leading_inputs():
+    x, alpha, beta = pt.dscalars("x", "alpha", "beta")
+    direction = pt.dvector("direction")
+
+    _, args = compile_packed(x * alpha + beta, [x], mode="FAST_COMPILE")
+    f, shared_args = compile_packed(
+        x * direction[0] * beta, [x], leading_inputs=(direction,), args=args, mode="FAST_COMPILE"
+    )
+
+    assert shared_args == args
+    values = {"alpha": 2.0, "beta": 3.0}
+    np.testing.assert_allclose(f(np.array([5.0]), np.array([7.0]), *[values[arg.name] for arg in args]), 105.0)
+
+
+def test_compile_packed_leaves_the_callers_graph_intact():
+    """Compilation rewrites its graph in place, which would change a graph the caller compiles again."""
     x, alpha = pt.dscalars("x", "alpha")
-    param_dict = SymbolDictionary({"alpha": 10.0, "unused": 1.0}) if freeze_params else None
-    param_args = () if freeze_params else (10.0,)
+    row = alpha * 2.0 * 3.0 - alpha
+    before = clone_replace(row)
 
-    f = pack_and_compile(alpha * 2.0, [x], param_dict=param_dict, mode="FAST_COMPILE")
+    compile_packed(row, [x], mode="FAST_COMPILE")
 
-    np.testing.assert_allclose(f(np.array([123.0]), *param_args), 20.0)
+    assert equal_computations([row], [before])
 
 
 def test_build_symbolic_jacobians_at_steady_state_shares_one_cache():

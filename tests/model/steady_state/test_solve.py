@@ -1,162 +1,20 @@
 import re
 
 import numpy as np
-import pytensor
-import pytensor.tensor as pt
 import pytest
 import sympy as sp
-import sympy.core.parameters
 
 from numpy.testing import assert_allclose
-from pymc.distributions.transforms import Interval, log, logodds
-from pytensor.graph.traversal import ancestors
 from scipy import optimize
 
 from gEconpy import model_from_gcn
 from gEconpy.classes.containers import SymbolDictionary
-from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
-from gEconpy.model import model as model_module
-from gEconpy.model.compile import make_cache_key, sympy_to_pytensor
-from gEconpy.model.model import (
-    Model,
-    infer_variable_bounds,
-    infer_variable_transform,
-    steady_state_transforms,
-    transform_steady_state_system,
-)
-from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.model.steady_state import (
-    compile_known_ss,
-    known_steady_state_graphs,
-    print_steady_state,
-    propagate_steady_state_through_identities,
-    pt_error_from_resid,
-    resubstitute_steady_state,
-    system_to_steady_state,
-)
+from gEconpy.model.model import Model
+from gEconpy.model.steady_state import solve as solve_module
+from gEconpy.model.steady_state.solve import print_steady_state
+from gEconpy.pytensorf.compile import compile_cache_info
 from tests._resources.cache_compiled_models import load_and_cache_model
-
-
-class TestPropagateSteadyStateThroughIdentities:
-    def test_propagates_through_lag_chain(self):
-        """Chained identities x__lag1 = x[-1], x__lag2 = x__lag1[-1] all resolve to x_ss."""
-        x = TimeAwareSymbol("x", 0)
-        x_lag1 = TimeAwareSymbol("x__lag1", 0)
-        x_lag2 = TimeAwareSymbol("x__lag2", 0)
-
-        result = propagate_steady_state_through_identities(
-            ss_solution_dict=SymbolDictionary({x.to_ss(): sp.Float(0.0)}),
-            steady_state_equations=[x_lag1.to_ss() - x.to_ss(), x_lag2.to_ss() - x_lag1.to_ss()],
-            variables=[x, x_lag1, x_lag2],
-        )
-
-        assert len(result) == 3
-        assert all(float(result[v.to_ss()]) == 0.0 for v in [x, x_lag1, x_lag2])
-
-    def test_propagates_affine_relationships(self):
-        """Affine equation y = 2*x + 3 is solved when x is known."""
-        x = TimeAwareSymbol("x", 0)
-        y = TimeAwareSymbol("y", 0)
-
-        result = propagate_steady_state_through_identities(
-            ss_solution_dict=SymbolDictionary({x.to_ss(): sp.Float(1.0)}),
-            steady_state_equations=[y.to_ss() - 2 * x.to_ss() - 3],
-            variables=[x, y],
-        )
-
-        assert float(result[y.to_ss()]) == 5.0
-
-    def test_propagates_log_exp_bijections(self):
-        """Bijection log(y) = x is inverted to y = exp(x)."""
-        x = TimeAwareSymbol("x", 0)
-        y = TimeAwareSymbol("y", 0)
-
-        result = propagate_steady_state_through_identities(
-            ss_solution_dict=SymbolDictionary({x.to_ss(): sp.Float(0.0)}),
-            steady_state_equations=[sp.log(y.to_ss()) - x.to_ss()],
-            variables=[x, y],
-        )
-
-        assert float(result[y.to_ss()]) == 1.0
-
-    def test_rejects_multi_solution_equations(self):
-        """Equation x^2 = 4 has two solutions, so neither is chosen."""
-        x = TimeAwareSymbol("x", 0)
-        y = TimeAwareSymbol("y", 0)
-
-        result = propagate_steady_state_through_identities(
-            ss_solution_dict=SymbolDictionary({y.to_ss(): sp.Float(4.0)}),
-            steady_state_equations=[x.to_ss() ** 2 - y.to_ss()],
-            variables=[x, y],
-        )
-
-        assert x.to_ss() not in result
-
-    def test_rejects_underdetermined_equations(self):
-        """Equation x + y = z with only z known cannot determine x or y."""
-        x = TimeAwareSymbol("x", 0)
-        y = TimeAwareSymbol("y", 0)
-        z = TimeAwareSymbol("z", 0)
-
-        result = propagate_steady_state_through_identities(
-            ss_solution_dict=SymbolDictionary({z.to_ss(): sp.Float(5.0)}),
-            steady_state_equations=[x.to_ss() + y.to_ss() - z.to_ss()],
-            variables=[x, y, z],
-        )
-
-        assert x.to_ss() not in result
-        assert y.to_ss() not in result
-
-    def test_rejects_complex_ces_production_function(self):
-        """CES production function inversion is too complex to attempt."""
-        Y = TimeAwareSymbol("Y", 0)
-        A = TimeAwareSymbol("A", 0)
-        x1 = TimeAwareSymbol("x1", 0)
-        x2 = TimeAwareSymbol("x2", 0)
-        alpha, psi = sp.Symbol("alpha"), sp.Symbol("psi")
-
-        ces_aggregator = (
-            alpha ** (1 / psi) * x1.to_ss() ** ((psi - 1) / psi)
-            + (1 - alpha) ** (1 / psi) * x2.to_ss() ** ((psi - 1) / psi)
-        ) ** (psi / (psi - 1))
-
-        result = propagate_steady_state_through_identities(
-            ss_solution_dict=SymbolDictionary(
-                {
-                    Y.to_ss(): sp.Float(1.0),
-                    A.to_ss(): sp.Float(1.0),
-                    x1.to_ss(): sp.Float(0.5),
-                }
-            ),
-            steady_state_equations=[Y.to_ss() - A.to_ss() * ces_aggregator],
-            variables=[Y, A, x1, x2],
-        )
-
-        assert x2.to_ss() not in result
-
-    def test_empty_input_with_underdetermined_system(self):
-        """Empty input with multiple unknowns per equation returns empty."""
-        x = TimeAwareSymbol("x", 0)
-        y = TimeAwareSymbol("y", 0)
-
-        result = propagate_steady_state_through_identities(SymbolDictionary(), [x.to_ss() + y.to_ss()], [x, y])
-        assert len(result) == 0
-
-    def test_solves_ar1_log_process(self):
-        """AR(1) in logs: log(A) = rho*log(A[-1]) + epsilon solves to A_ss = 1 when epsilon_ss = 0."""
-        A = TimeAwareSymbol("A", 0)
-        rho = sp.Symbol("rho")
-
-        steady_state_eq = sp.log(A.to_ss()) - rho * sp.log(A.to_ss())
-
-        result = propagate_steady_state_through_identities(
-            ss_solution_dict=SymbolDictionary(),
-            steady_state_equations=[steady_state_eq],
-            variables=[A],
-        )
-
-        assert A.to_ss() in result
-        assert float(result[A.to_ss()]) == 1.0
+from tests.conftest import TEST_GCNS
 
 
 def _collapse_whitespace(text: str) -> str:
@@ -172,134 +30,6 @@ def assert_root_and_minimize_agree(model: Model, **steady_state_kwargs):
 
     for k in ss_root:
         assert_allclose(ss_root[k], ss_minimize[k], err_msg=k)
-
-
-def test_resubstitution_names_other_steady_states_without_changing_values():
-    """Every relationship must still evaluate to the solved steady state once the names are folded back in."""
-    model = load_and_cache_model("rbc_2_block_ss.gcn")
-    relationships = model.steady_state_relationships
-    values = {**model.parameters().to_sympy(), **model.steady_state(verbose=False, progressbar=False).to_sympy()}
-
-    resubstituted = resubstitute_steady_state(relationships)
-
-    assert [eq.lhs for eq in resubstituted] == [eq.lhs for eq in relationships]
-    assert sum(sp.count_ops(eq.rhs) for eq in resubstituted) < sum(sp.count_ops(eq.rhs) for eq in relationships)
-    for eq in resubstituted:
-        assert float(eq.rhs.subs(values)) == pytest.approx(float(values[eq.lhs]))
-
-
-def test_resubstitution_rebuilds_a_piecewise_relationship():
-    """A Piecewise's condition pairs take no evaluate keyword, which once made the rebuild raise."""
-    alpha, beta = sp.symbols("alpha beta", positive=True)
-    a_ss, b_ss = sp.symbols("A_ss B_ss")
-    relationships = [
-        sp.Eq(a_ss, alpha + beta, evaluate=False),
-        sp.Eq(b_ss, sp.Piecewise((alpha + beta, alpha > 1), (beta, True)), evaluate=False),
-    ]
-
-    resubstituted = resubstitute_steady_state(relationships)
-
-    assert resubstituted[1].rhs == sp.Piecewise((a_ss, alpha > 1), (beta, True))
-
-
-def test_resubstitution_keeps_the_sympy_cache(monkeypatch):
-    """Switching sympy's global evaluate flag clears its cache, so the rebuild must not touch the flag."""
-    clears = []
-    monkeypatch.setattr(sympy.core.parameters, "clear_cache", lambda: clears.append(None))
-    alpha, beta = sp.symbols("alpha beta", positive=True)
-    a_ss, b_ss = sp.symbols("A_ss B_ss")
-    relationships = [
-        sp.Eq(a_ss, alpha + beta, evaluate=False),
-        sp.Eq(b_ss, (alpha + beta) ** 2, evaluate=False),
-    ]
-
-    resubstituted = resubstitute_steady_state(relationships)
-
-    assert resubstituted[1].rhs == sp.Pow(a_ss, 2, evaluate=False)
-    assert clears == []
-
-
-def test_system_to_steady_state_collapses_time_indices_and_zeros_shocks():
-    x, eps = TimeAwareSymbol("x", 0), TimeAwareSymbol("eps", 0)
-    rho = sp.Symbol("rho")
-
-    (steady_state_eq,) = system_to_steady_state([x - rho * x.set_t(-1) - eps + x.set_t(1) ** 2], [eps])
-
-    assert sp.expand(steady_state_eq - (x.to_ss() ** 2 + x.to_ss() * (1 - rho))) == 0
-
-
-@pytest.mark.parametrize(
-    "error_function, expected",
-    [("squared", 14.0), ("mean_squared", 14.0 / 3), ("abs", 6.0), ("l2-norm", np.sqrt(14.0))],
-    ids=str,
-)
-def test_pt_error_from_resid(error_function, expected):
-    resid = pt.dvector("resid")
-    f = pytensor.function([resid], pt_error_from_resid(resid, error_function), mode="FAST_COMPILE")
-
-    assert_allclose(f(np.array([1.0, -2.0, 3.0])), expected)
-
-
-def test_pt_error_from_resid_rejects_unknown_function():
-    with pytest.raises(NotImplementedError, match="Error function huber not implemented"):
-        pt_error_from_resid(pt.dvector("resid"), "huber")
-
-
-def test_compile_known_ss_symbolic_keys_only_known_variables():
-    model = load_and_cache_model("rbc_2_block_partial_ss.gcn")
-    _, cache = compile_param_dict_func(model._param_dict, model._deterministic_dict, return_symbolic=True)
-    parameters = list(model._param_dict.to_sympy().keys()) + list(model._deterministic_dict.to_sympy().keys())
-
-    mapping, _ = compile_known_ss(
-        model._ss_solution_dict, model.variables, parameters, cache=cache, return_symbolic=True
-    )
-
-    known_names = [symbol.name for symbol in model._ss_solution_dict.to_sympy()]
-    assert [node.name for node in mapping] == known_names
-
-
-class TestKnownSteadyStateGraphs:
-    alpha = sp.Symbol("alpha", positive=True)
-    a_ss, b_ss = sp.symbols("a_ss b_ss", positive=True)
-    definitions = {b_ss: a_ss ** (1 / (1 - alpha)) + a_ss, a_ss: 2 * alpha}
-    flat = {a_ss: 2 * alpha, b_ss: (2 * alpha) ** (1 / (1 - alpha)) + 2 * alpha}
-
-    def _evaluate(self, known, definitions):
-        cache = {}
-        (alpha_pt,), _, cache = sympy_to_pytensor([self.alpha], [], cache)
-        graphs = known_steady_state_graphs(known, definitions, cache)
-        return graphs, pytensor.function([alpha_pt], graphs)(0.3)
-
-    def test_matches_inlined_values_and_reuses_definition_graphs(self):
-        graphs, values = self._evaluate(self.flat, self.definitions)
-        _, expected = self._evaluate(self.flat, None)
-
-        assert_allclose(values, expected)
-        a_graph, b_graph = graphs
-        assert a_graph in ancestors([b_graph])
-
-    def test_numeric_value_overrides_only_its_own_entry(self):
-        _, values = self._evaluate({self.a_ss: 5.0, self.b_ss: self.flat[self.b_ss]}, self.definitions)
-
-        assert values[0] == 5.0
-        assert_allclose(values[1], 0.6 ** (1 / 0.7) + 0.6)
-
-    def test_value_without_a_block_entry_is_converted_directly(self):
-        c_ss = sp.Symbol("c_ss", positive=True)
-
-        _, values = self._evaluate({c_ss: 3 * self.alpha}, self.definitions)
-
-        assert_allclose(values, [0.9])
-
-    def test_shared_cache_keeps_steady_state_symbol_as_input(self):
-        cache = {}
-        sympy_to_pytensor([self.alpha, self.a_ss], [], cache)
-        key = make_cache_key(self.a_ss.name, type(self.a_ss))
-        input_node = cache[key]
-
-        known_steady_state_graphs(self.flat, self.definitions, cache)
-
-        assert cache[key] is input_node
 
 
 def test_wrong_user_solutions_raises():
@@ -362,7 +92,7 @@ def test_exact_steady_state_with_large_terms_succeeds(large_term_model):
 
 
 def test_an_infinite_residual_is_never_within_tolerance():
-    assert not model_module._residual_within_tolerance(np.array([np.inf]), scale=np.array([np.inf])).any()
+    assert not solve_module._residual_within_tolerance(np.array([np.inf]), scale=np.array([np.inf])).any()
 
 
 def test_large_terms_do_not_hide_a_wrong_fixed_value(large_term_model):
@@ -455,14 +185,70 @@ def test_unknown_how_raises():
         model_1.steady_state(how="newton")
 
 
-def test_fixed_values_completing_analytic_steady_state_skip_the_solver():
+def test_fixed_values_completing_analytic_steady_state_skip_the_solver(monkeypatch):
     model = load_and_cache_model("one_block_1_ss.gcn")
     analytic = model.steady_state(verbose=False, progressbar=False)
 
+    def no_solve(**_):
+        raise AssertionError("the steady state is fully determined, so no solver should run")
+
+    monkeypatch.setattr(solve_module, "root", no_solve)
+    monkeypatch.setattr(solve_module, "minimize", no_solve)
     res = model.steady_state(fixed_values={"K_ss": analytic["K_ss"]}, verbose=False, progressbar=False)
 
     assert res.success
-    assert res.to_string() == analytic.to_string()
+    assert res.keys() == analytic.keys()
+    assert_allclose([res[key] for key in analytic], list(analytic.values()), rtol=1e-14)
+
+
+def test_fixed_value_that_squares_the_system_solves_with_root():
+    """Fixing ``A_ss`` turns the technology equation into a check row, which leaves a square system for root."""
+    model = model_from_gcn(TEST_GCNS / "one_block_1.gcn", verbose=False, infer_steady_state=False)
+    reference = model.steady_state(how="minimize", verbose=False, progressbar=False)
+
+    res = model.steady_state(how="root", fixed_values={"A_ss": 1.0}, verbose=False, progressbar=False)
+
+    assert res.success
+    assert_allclose([res[key] for key in reference], list(reference.values()), rtol=1e-8)
+
+
+def test_violated_check_row_fails_the_verdict_and_names_the_equation(caplog):
+    """A fixed value inconsistent with a known one breaks a row the solve never sees, and the log has to say so."""
+    k_ss = load_and_cache_model("one_block_1_ss.gcn").steady_state(verbose=False, progressbar=False)["K_ss"]
+
+    # The known values are read on the first solve, so they are dropped before the model ever solves.
+    model = model_from_gcn(TEST_GCNS / "one_block_1_ss.gcn", verbose=False)
+    known = model._ss_solution_dict.to_sympy()
+    model._ss_solution_dict = SymbolDictionary({key: value for key, value in known.items() if key.base_name != "U"})
+
+    with caplog.at_level("WARNING"):
+        res = model.steady_state(fixed_values={"K_ss": 1.1 * k_ss}, verbose=True, progressbar=False)
+
+    assert not res.success
+    assert any("equations the solve does not involve are violated" in message for message in caplog.messages)
+    assert any("in Household.foc.L" in message for message in caplog.messages)
+
+
+def test_repeat_solves_at_new_parameters_compile_nothing():
+    model = model_from_gcn(TEST_GCNS / "one_block_1.gcn", verbose=False)
+    model.steady_state(how="root", verbose=False, progressbar=False)
+    # A recompile of a structurally identical graph is a cache hit, so hits and misses are both counted.
+    compiles = compile_cache_info().hits + compile_cache_info().misses
+
+    for beta in [0.97, 0.98]:
+        assert model.steady_state(how="root", beta=beta, verbose=False, progressbar=False).success
+
+    assert compile_cache_info().hits + compile_cache_info().misses == compiles
+
+
+@pytest.mark.parametrize("bound", [(1e-8, None), [1e-8, None]], ids=["tuple", "list"])
+def test_bounds_reparametrize_the_minimize_solve_whether_tuple_or_list(bound):
+    model = load_and_cache_model("one_block_1.gcn")
+
+    res = model.steady_state(how="minimize", bounds={"lambda_ss": bound}, verbose=False, progressbar=False)
+
+    assert res.success
+    assert res["lambda_ss"] > 0
 
 
 def test_incomplete_ss_relationship_raises_with_root():
@@ -592,32 +378,6 @@ def test_numerical_solvers_succeed_and_agree_w_calibrated_params():
         assert_allclose(ss_root[k], ss_minimize[k], err_msg=k)
 
 
-@pytest.mark.parametrize(
-    "assumptions, user_bound, expected_type",
-    [
-        ({"positive": True}, (0.0, 1.0), Interval),
-        ({"unit_interval": True, "positive": True}, None, type(logodds)),
-        ({"positive": True}, None, type(log)),
-        ({"negative": True}, None, Interval),
-        ({}, None, type(None)),
-    ],
-    ids=["explicit_bound_wins", "unit_interval", "positive", "negative", "unconstrained"],
-)
-def test_infer_variable_transform_waterfall(assumptions, user_bound, expected_type):
-    variable = sp.Symbol("x", **assumptions)
-    transform = infer_variable_transform(variable, user_bound=user_bound)
-    assert isinstance(transform, expected_type)
-
-
-@pytest.mark.parametrize(
-    "assumptions, expected",
-    [({"positive": True}, (1e-8, None)), ({"negative": True}, (None, -1e-8)), ({}, (None, None))],
-    ids=["positive", "negative", "unconstrained"],
-)
-def test_infer_variable_bounds(assumptions, expected):
-    assert infer_variable_bounds(TimeAwareSymbol("x", 0, **assumptions)) == expected
-
-
 def test_solver_does_not_pass_inferred_bounds_to_the_transform(monkeypatch):
     """
     The inferred box bounds guard the sign for box-constrained methods only.
@@ -626,15 +386,16 @@ def test_solver_does_not_pass_inferred_bounds_to_the_transform(monkeypatch):
     was reparametrized under a shifted log instead of a logit.
     """
     captured: list = []
-    original = model_module.transform_steady_state_system
+    original = solve_module.transform_steady_state_system
 
     def record(equations, ss_nodes, transforms):
         captured.extend(transforms)
         return original(equations, ss_nodes, transforms)
 
-    monkeypatch.setattr(model_module, "transform_steady_state_system", record)
+    monkeypatch.setattr(solve_module, "transform_steady_state_system", record)
 
-    model = load_and_cache_model("one_block_2_no_extra.gcn")
+    # A cached model may already hold a compiled solver, which would skip the transform choice.
+    model = model_from_gcn(TEST_GCNS / "one_block_2_no_extra.gcn", verbose=False)
     model.steady_state(how="minimize", verbose=False, progressbar=False)
 
     chosen = dict(zip(model._vars_to_solve, captured, strict=True))
@@ -652,15 +413,15 @@ def test_declared_bounds_choose_the_transform(monkeypatch):
     midpoint.
     """
     captured: list = []
-    original = model_module.transform_steady_state_system
+    original = solve_module.transform_steady_state_system
 
     def record(equations, ss_nodes, transforms):
         captured.extend(transforms)
         return original(equations, ss_nodes, transforms)
 
-    monkeypatch.setattr(model_module, "transform_steady_state_system", record)
+    monkeypatch.setattr(solve_module, "transform_steady_state_system", record)
 
-    model = load_and_cache_model("one_block_2_symbols.gcn")
+    model = model_from_gcn(TEST_GCNS / "one_block_2_symbols.gcn", verbose=False)
     alpha = next(v for v in model._vars_to_solve if getattr(v, "base_name", v.name) == "alpha")
 
     model.steady_state(how="minimize", verbose=False, progressbar=False)
@@ -683,55 +444,6 @@ def test_grad_tol_is_a_named_argument_and_never_reaches_the_optimizer():
 
     assert loose.success
     assert not tight.success
-
-
-@pytest.mark.parametrize(
-    "declared, user, expected_midpoint",
-    [
-        ({"x_t": (0.0, 1.0)}, None, 0.5),
-        ({"x_t": (0.0, 1.0)}, {"x_ss": (2.0, 4.0)}, 3.0),
-        ({}, {"x_ss": (2.0, 4.0)}, 3.0),
-        ({"x_t": (0.0, 1.0)}, {"x": (2.0, 4.0)}, 0.5),
-    ],
-    ids=["declared_bound", "caller_bound_wins", "caller_bound_only", "caller_bound_needs_the_steady_state_name"],
-)
-def test_steady_state_transforms_precedence(declared, user, expected_midpoint):
-    """A declared bound is keyed by the variable's time-t name and a caller bound by the steady-state name."""
-    variable = TimeAwareSymbol("x", "ss")
-    transform = steady_state_transforms([variable], declared, user)[0]
-
-    assert float(transform.backward(0.0).eval()) == pytest.approx(expected_midpoint)
-
-
-def test_declared_bounds_find_a_parameter_by_its_own_name():
-    """A calibrated parameter is a plain Symbol with no base name, so the declared bound is keyed by name."""
-    transform = steady_state_transforms([sp.Symbol("psi")], {"psi": (1.0, 3.0)}, {})[0]
-
-    assert float(transform.backward(0.0).eval()) == pytest.approx(2.0)
-
-
-def test_steady_state_transforms_fall_back_to_assumptions():
-    variable = TimeAwareSymbol("x", "ss", positive=True)
-    assert isinstance(steady_state_transforms([variable], {}, {})[0], type(log))
-
-
-def test_transform_steady_state_system_round_trips_and_preserves_residuals():
-    x, y = pt.dscalars("x", "y")
-    equations = [x - 2.0, y + x]
-
-    transformed, y_nodes, to_unconstrained, to_constrained = transform_steady_state_system(
-        equations, [x, y], [log, None]
-    )
-
-    f_original = pytensor.function([x, y], equations, mode="FAST_COMPILE")
-    f_transformed = pytensor.function(y_nodes, transformed, mode="FAST_COMPILE")
-
-    constrained_point = np.array([3.0, -1.5])
-    unconstrained_point = to_unconstrained(constrained_point)
-
-    assert_allclose(unconstrained_point, [np.log(3.0), -1.5])
-    assert_allclose(to_constrained(unconstrained_point), constrained_point)
-    assert_allclose(f_transformed(*unconstrained_point), f_original(*constrained_point))
 
 
 def test_prefer_transform_solves_unconstrained():
