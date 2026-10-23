@@ -212,6 +212,8 @@ def check_declared_symbols_exist(model: GCNModel) -> ErrorCollector:
             for side in (eq.lhs, eq.rhs):
                 known |= {variable_key(name) for name in collect_variable_names(side)}
                 known |= collect_parameter_names(side)
+            if eq.lagrange_multiplier:
+                known.add(variable_key(eq.lagrange_multiplier))
 
     for declared in sorted(set(model.symbols) - known):
         errors.add(
