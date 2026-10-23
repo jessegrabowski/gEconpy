@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 import sympy as sp
 
@@ -157,6 +157,7 @@ def propagate_steady_state_through_identities(
     ss_solution_dict: SymbolDictionary,
     steady_state_equations: list[sp.Expr],
     variables: list[TimeAwareSymbol],
+    solved_numerically: Collection[sp.Symbol] = (),
     max_iterations: int = 100,
 ) -> SymbolDictionary:
     """
@@ -174,6 +175,9 @@ def propagate_steady_state_through_identities(
         Model equations in steady-state residual form, each equal to zero.
     variables : list of TimeAwareSymbol
         Model variables.
+    solved_numerically : iterable of sympy Symbol, optional
+        Steady-state variables solved numerically elsewhere, such as by a ``root`` call in the steady state block.
+        They are never solved for, so an equation counts them as known. Default is none.
     max_iterations : int, optional
         Maximum number of passes over the equation system. Default is 100.
 
@@ -184,6 +188,7 @@ def propagate_steady_state_through_identities(
     """
     ss_variables = {variable.to_ss() for variable in variables}
     known = ss_solution_dict.to_sympy().copy() if ss_solution_dict else {}
+    never_solved = set(solved_numerically)
 
     for _ in range(max_iterations):
         progress = False
@@ -192,7 +197,7 @@ def propagate_steady_state_through_identities(
             if not isinstance(eq, sp.Basic):
                 continue
 
-            unknowns = (eq.free_symbols & ss_variables) - set(known.keys())
+            unknowns = (eq.free_symbols & ss_variables) - set(known.keys()) - never_solved
             if len(unknowns) != 1:
                 continue
 
