@@ -44,7 +44,7 @@ jobs:
           - subset-name: "Other Model Tests"
             os: ubuntu-latest
             environment: default
-            test-subset: "tests/model --ignore=tests/model/steady_state --ignore=tests/model/test_statespace.py --ignore=tests/model/test_perturbation.py --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state_with_calibrated_params --deselect tests/model/test_model.py::test_partially_analytical_steady_state"
+            test-subset: "tests/model --ignore=tests/model/steady_state --ignore=tests/model/test_statespace.py --ignore=tests/model/test_perturbation.py --deselect tests/model/test_model.py::test_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state_with_calibrated_params --deselect tests/model/test_model.py::test_partially_analytical_steady_state"
             test-marker: ""
 
           - subset-name: "Other Tests"
