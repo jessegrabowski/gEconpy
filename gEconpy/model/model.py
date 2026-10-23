@@ -1773,7 +1773,8 @@ class Model:
         The steady state, the linearization, the first-order solve and, at ``order=2``, the second-order solve form
         one graph, so a function of the solution can be compiled, differentiated or vectorized over parameter values.
         Every steady-state value must have an analytic solution in the GCN file, because a numerical steady-state
-        solve has no graph.
+        solve has no graph. The graph does not check that the model has a unique stable solution at the parameters it
+        is evaluated at, as :meth:`solve_model` does.
 
         Parameters
         ----------
@@ -1813,6 +1814,8 @@ class Model:
         """
         if order not in (1, 2):
             raise NotImplementedError("Only first and second order perturbation are supported.")
+        if solver not in ("cycle_reduction", "gensys"):
+            raise ValueError(f'Parameter solver must be one of "cycle_reduction" or "gensys", found {solver}')
 
         system = self._steady_state_system(())
         if system.unknowns:
@@ -1833,15 +1836,13 @@ class Model:
         A, B, C, D = graph_replace(jacobians, steady_state_graphs, strict=False)
         if solver == "gensys":
             T, R, _ = gensys_pt(A, B, C, D)
-        elif solver == "cycle_reduction":
-            T, R = cycle_reduction_pt(A, B, C, D)
         else:
-            raise ValueError(f'Parameter solver must be one of "cycle_reduction" or "gensys", found {solver}')
+            T, R = cycle_reduction_pt(A, B, C, D)
 
         # The solvers return T and R in decision-rule variable order, the basis of A, B and C.
         ghx = T[:, self.dr_order.lag_positions]
         ghu = R
-        second_order_terms = [None] * 4
+        ghxx = ghxu = ghuu = ghs2_operator = None
         if order == 2:
             derivatives, _ = self.second_order_derivative_terms(**linearization_kwargs)
             hessian = graph_replace(
@@ -1849,13 +1850,14 @@ class Model:
                 {derivatives.ghx: ghx, derivatives.ghu: ghu} | steady_state_graphs,
                 strict=False,
             )
-            second_order_terms = solve_second_order(
+            ghxx, ghxu, ghuu, ghs2_operator = solve_second_order(
                 jacobians=[A, B, C, D], composition_hessian=hessian, ghx=ghx, ghu=ghu, dr_order=self.dr_order
             )
 
         n_variables = len(self.variables)
         steady_state = pt.stack(system.steady_state[:n_variables])
-        outputs = [ghx, ghu, steady_state, *(term for term in second_order_terms if term is not None)]
+        second_order_terms = [term for term in (ghxx, ghxu, ghuu, ghs2_operator) if term is not None]
+        outputs = [ghx, ghu, steady_state, *second_order_terms]
         parameters = {node.name: node for node in explicit_graph_inputs(outputs) if node.name is not None}
         loglin_names = {
             variable.base_name
@@ -1871,10 +1873,10 @@ class Model:
         return SymbolicPerturbationSolution(
             ghx=ghx,
             ghu=ghu,
-            ghxx=second_order_terms[0],
-            ghxu=second_order_terms[1],
-            ghuu=second_order_terms[2],
-            ghs2_operator=second_order_terms[3],
+            ghxx=ghxx,
+            ghxu=ghxu,
+            ghuu=ghuu,
+            ghs2_operator=ghs2_operator,
             steady_state=steady_state,
             parameters=parameters,
             log_linearized=np.array([variable.base_name in loglin_names for variable in self.variables]),
