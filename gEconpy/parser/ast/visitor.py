@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import Any
 
 from gEconpy.parser.ast.nodes import (
@@ -6,6 +7,7 @@ from gEconpy.parser.ast.nodes import (
     FunctionCall,
     GCNEquation,
     Node,
+    SteadyStateSolverCall,
     UnaryOp,
 )
 
@@ -80,7 +82,7 @@ class NodeVisitor:
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 self.visit(arg)
-        elif isinstance(node, Expectation):
+        elif isinstance(node, Expectation | SteadyStateSolverCall):
             self.visit(node.expr)
         elif isinstance(node, GCNEquation):
             self.visit(node.lhs)
@@ -153,6 +155,12 @@ class NodeTransformer(NodeVisitor):
             if new_expr is node.expr:
                 return node
             return Expectation(expr=new_expr, location=node.location)
+
+        if isinstance(node, SteadyStateSolverCall):
+            new_expr = self.visit(node.expr)
+            if new_expr is node.expr:
+                return node
+            return replace(node, expr=new_expr)
 
         if isinstance(node, GCNEquation):
             new_lhs = self.visit(node.lhs)

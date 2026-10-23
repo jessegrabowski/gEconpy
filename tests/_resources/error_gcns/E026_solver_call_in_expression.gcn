@@ -1,0 +1,8 @@
+# Error: Misplaced steady-state solver call (the call is one term of a larger expression)
+block STEADY_STATE
+{
+    identities
+    {
+        w[ss] = 2 * root(alpha * Y[ss] - w[ss], method=brentq, bounds=[0.1, 5]);
+    };
+};

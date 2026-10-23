@@ -8,6 +8,7 @@ from gEconpy.parser.constants import (
     GCN_ASSUMPTIONS,
     PRELIZ_DIST_WRAPPERS,
     SIGN_ASSUMPTION_SUPPORTS,
+    SOLVER_METHODS,
     SYMBOL_FIELDS,
     VALUE_TAGS,
 )
@@ -44,6 +45,13 @@ _ASSUMPTION_NAMES = ", ".join(GCN_ASSUMPTIONS)
 _WRAPPER_NAMES = ", ".join(PRELIZ_DIST_WRAPPERS)
 _SYMBOL_FIELD_NAMES = ", ".join(SYMBOL_FIELDS)
 _SIGN_ASSUMPTION_NAMES = ", ".join(SIGN_ASSUMPTION_SUPPORTS)
+_SOLVER_METHOD_NAMES = "; ".join(
+    f"{function} takes "
+    + ", ".join(
+        f"{method} ({keyword}{'' if required else ', optional'})" for method, (keyword, required) in methods.items()
+    )
+    for function, methods in SOLVER_METHODS.items()
+)
 
 
 class ErrorCode(Enum):
@@ -347,6 +355,36 @@ class ErrorCode(Enum):
             f"Write the tag as one of: {_CONTROL_TAG_NAMES}",
             "Give each tagged control its own entry, ending in a semicolon",
         ),
+    )
+
+    E025 = ErrorInfo(
+        title="Invalid steady-state solver call",
+        explanation=(
+            f"A solver call names its method and starts from what that method needs: {_SOLVER_METHOD_NAMES}. The "
+            "left-hand side is the steady-state variable being solved for."
+        ),
+        common_causes=(
+            "Typo in a method name",
+            "A bracket method such as 'brentq' written without 'bounds', or 'newton' without 'x0'",
+            "A parameter, an expression, or an infinite value in a keyword that takes finite numbers",
+            "An interval written high to low, or with equal ends: 'bounds=[5, 0.1]'",
+            "A Lagrange multiplier, a calibrating parameter, or an expectation on a solver identity",
+            "Writing the method positionally: 'root(expr, brentq)'",
+        ),
+        fixes=(
+            "Write the call as 'w[ss] = root(expr, method=brentq, bounds=[0.1, 5])'",
+            "Give the keyword the method needs, as listed above",
+        ),
+    )
+
+    E026 = ErrorInfo(
+        title="Misplaced steady-state solver call",
+        explanation="A solver call is the whole right-hand side of an identity, not one term of a larger expression.",
+        common_causes=(
+            "Scaling or shifting the result: '2 * root(...)' or 'root(...) + 1'",
+            "Writing the call on the left-hand side",
+        ),
+        fixes=("Move the arithmetic into the call's expression, or into another identity that uses the variable",),
     )
 
     E100 = ErrorInfo(

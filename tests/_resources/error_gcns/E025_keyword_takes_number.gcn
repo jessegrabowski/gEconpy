@@ -1,0 +1,12 @@
+# Error: Invalid steady-state solver call (a parameter where a number belongs)
+block STEADY_STATE
+{
+    identities
+    {
+        w[ss] = root(
+            alpha * Y[ss] - w[ss],
+            method=newton,
+            x0=beta
+        );
+    };
+};

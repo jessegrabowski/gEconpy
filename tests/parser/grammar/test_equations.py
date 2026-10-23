@@ -3,10 +3,12 @@ import pytest
 from pyparsing import ParseBaseException, ParseException
 
 from gEconpy.parser.ast import (
+    STEADY_STATE,
     BinaryOp,
     Number,
     Operator,
     Parameter,
+    SteadyStateSolverCall,
     T,
     Tag,
     Variable,
@@ -412,3 +414,105 @@ class TestEquationLocation:
         location = parse_equation(text).location
         assert (location.line, location.column, location.end_line, location.end_column) == span
         assert location.source_line == text.splitlines()[location.line - 1]
+
+
+class TestSteadyStateSolverCalls:
+    def test_root_call_is_the_right_hand_side(self):
+        eq = parse_equation("w[ss] = root(alpha * Y[ss] / L[ss] - w[ss], method=brentq, bounds=[1e-4, 5]);")
+
+        assert eq.lhs == Variable(name="w", time_index=STEADY_STATE)
+        assert eq.rhs == SteadyStateSolverCall(
+            func_name="root",
+            expr=parse_equation("x[] = alpha * Y[ss] / L[ss] - w[ss];").rhs,
+            method="brentq",
+            bounds=(1e-4, 5.0),
+        )
+
+    @pytest.mark.parametrize(
+        "call, keywords",
+        [
+            ("root(x[ss] - 1, method=newton, x0=-0.5)", {"x0": -0.5}),
+            ("minimize((x[ss] - a) ^ 2, method=bounded, bounds=[0, 2])", {"bounds": (0.0, 2.0)}),
+            ("minimize((x[ss] - a) ^ 2, method=golden, bracket=[0, 2])", {"bracket": (0.0, 2.0)}),
+            ("minimize((x[ss] - a) ^ 2, method=brent)", {}),
+        ],
+        ids=["open_method_from_x0", "bounded", "bracket", "bracket_left_out"],
+    )
+    def test_each_method_takes_its_starting_keyword(self, call, keywords):
+        assert parse_equation(f"x[ss] = {call};").rhs.keywords == keywords
+
+    def test_a_function_named_like_a_solver_needs_parentheses_to_be_a_call(self):
+        eq = parse_equation("Y[] = root * minimize;")
+        assert eq.rhs == BinaryOp(left=Parameter(name="root"), op=Operator.MUL, right=Parameter(name="minimize"))
+
+    @pytest.mark.parametrize(
+        "text, message, suggestions",
+        [
+            ("w[ss] = root(w[ss], method=brentqq, bounds=[0, 1]);", "Unknown root method", ["brentq", "brenth"]),
+            ("w[ss] = root(w[ss], bounds=[0, 1]);", "takes a method name", []),
+            ("w[ss] = root(w[ss], method=2, bounds=[0, 1]);", "takes a method name", []),
+            ("w[ss] = root(w[ss], method=brentq);", "needs 'bounds'", []),
+            ("w[ss] = root(w[ss], method=brentq, x0=1);", "takes 'bounds', not 'x0'", []),
+            ("w[ss] = root(w[ss], method=brentq, bounds=[0, beta]);", "takes two finite numbers", []),
+            ("w[ss] = root(w[ss], method=brentq, bounds=[0, 1, 2]);", "takes two finite numbers", []),
+            ("w[ss] = root(w[ss], method=brentq, bounds=[0, 1e400]);", "takes two finite numbers", []),
+            ("w[ss] = root(w[ss], method=brentq, bounds=[5, 0.1]);", "first number is smaller than its second", []),
+            ("w[ss] = minimize(w[ss], method=golden, bracket=[1, 1]);", "first number is smaller than its second", []),
+            ("w[ss] = root(w[ss], method=newton, x0=[1, 2]);", "takes a finite number", []),
+            ("w[ss] = root(w[ss], method=newton, x0=1e400);", "takes a finite number", []),
+            ("w[ss] = root(w[ss], method=brentq, bounds=[0, 1], bounds=[0, 2]);", "'bounds' is given twice", []),
+            ("w[ss] = root(w[ss], brentq);", "every other argument by keyword", []),
+            ("w[ss] = root(w[ss], method=newton, x0=1,);", "without a comma after its last argument", []),
+            ("w[] = root(w[], method=brentq, bounds=[0, 1]);", "is the steady-state variable it solves for", []),
+            ("w[ss] = root(w[ss] - 1, method=newton, x0=1) : lam[];", "takes no Lagrange multiplier", []),
+            ("w[ss] = root(w[ss] - 1, method=newton, x0=1) -> alpha;", "calibrates no parameter", []),
+            ("w[ss] = root(E[][w[ss]] - 1, method=newton, x0=1);", "takes no expectation", []),
+        ],
+        ids=[
+            "unknown_method",
+            "missing_method",
+            "method_not_a_name",
+            "missing_bounds",
+            "wrong_keyword_for_method",
+            "parameter_in_bounds",
+            "three_bounds",
+            "infinite_bound",
+            "reversed_bounds",
+            "empty_bracket",
+            "list_for_x0",
+            "infinite_x0",
+            "repeated_keyword",
+            "positional_method",
+            "trailing_comma",
+            "lhs_not_steady_state",
+            "lagrange_multiplier",
+            "calibrating_arrow",
+            "expectation",
+        ],
+    )
+    def test_malformed_call_is_rejected(self, text, message, suggestions):
+        with pytest.raises(ParseBaseException, match=message) as excinfo:
+            parse_equation(text)
+
+        _message, code, _found, found_suggestions = GCNParseFailure.decode(excinfo.value)
+        assert code == ErrorCode.E025
+        assert found_suggestions == suggestions
+
+    def test_negative_interval_endpoints_parse(self):
+        assert parse_equation("w[ss] = root(w[ss] + 1, method=brentq, bounds=[-2, -0.5]);").rhs.bounds == (-2.0, -0.5)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "w[ss] = 2 * root(w[ss], method=brentq, bounds=[0, 1]);",
+            "w[ss] = root(w[ss], method=brentq, bounds=[0, 1]) + 1;",
+            "root(w[ss], method=brentq, bounds=[0, 1]) = w[ss];",
+        ],
+        ids=["scaled", "shifted", "on_the_lhs"],
+    )
+    def test_call_inside_an_expression_is_rejected(self, text):
+        with pytest.raises(ParseBaseException, match="whole right-hand side") as excinfo:
+            parse_equation(text)
+
+        _message, code, _found, _suggestions = GCNParseFailure.decode(excinfo.value)
+        assert code == ErrorCode.E026
