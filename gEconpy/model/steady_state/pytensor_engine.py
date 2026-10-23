@@ -1,20 +1,23 @@
-import logging
-
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+import numpy as np
+import pytensor
+import pytensor.scalar as ps
 import pytensor.tensor as pt
 import sympy as sp
 
+from pymc.distributions.transforms import Interval, Transform, log, logodds
 from pytensor.gradient import hessian_vector_product
 from pytensor.gradient import jacobian as pt_jacobian
 from pytensor.graph.replace import graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor import TensorVariable
+from pytensor.tensor.elemwise import Elemwise
 from sympytensor.pytensor import PytensorPrinter
 
-from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
+from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import (
     dictionary_return_wrapper,
@@ -24,261 +27,179 @@ from gEconpy.model.compile import (
     sympy_to_pytensor,
 )
 from gEconpy.model.parameters import compile_param_dict_func
+from gEconpy.parser.ast import variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.utilities import (
-    _rebuild_unevaluated,
-    _xreplace_unevaluated,
-    eq_to_ss,
-    flatten_substitution_dict,
     safe_to_ss,
-    substitute_unevaluated,
     topological_order,
 )
-
-_log = logging.getLogger(__name__)
 
 ERROR_FUNCTIONS = Literal["squared", "mean_squared", "abs", "l2-norm"]
 
 
-def print_steady_state(ss_dict: SteadyStateResults) -> None:
+def _residual_scale(equation: TensorVariable) -> TensorVariable:
+    """Sum of the absolute values of an equation's additive terms, the size its rounding error grows with."""
+    node = equation.owner
+    if node is None or not (isinstance(node.op, Elemwise) and isinstance(node.op.scalar_op, ps.Add)):
+        return pt.abs(equation)
+    return pt.stack([pt.abs(term) for term in node.inputs]).sum()
+
+
+def infer_variable_bounds(variable: TimeAwareSymbol | sp.Symbol) -> tuple[float | None, float | None]:
     """
-    Log a table of steady-state values, listing calibrated parameters after the variables.
+    Read a variable's sign assumptions and return a bound that keeps it strictly signed.
 
     Parameters
     ----------
-    ss_dict : SteadyStateResults
-        Steady-state values to print. The table is prefixed with a warning when the results are not flagged as
-        successful.
-
-    Examples
-    --------
-    Solve the packaged RBC model for its steady state and print the result:
-
-    .. code-block:: python
-
-        import gEconpy as ge
-        from gEconpy.data import get_example_gcn
-
-        model = ge.model_from_gcn(get_example_gcn("RBC"), verbose=False)
-        steady_state = model.steady_state(verbose=False, progressbar=False)
-        ge.print_steady_state(steady_state)
-    """
-    output = []
-    if not ss_dict.success:
-        output.append("Values come from the latest solver iteration but are NOT a valid steady state.")
-
-    name_width = max(len(name) for name in ss_dict) + 5
-
-    calibrated_outputs = []
-    for key, value in ss_dict.to_sympy().items():
-        line = f"{key.name:{name_width}}{value:>10.3f}"
-        if isinstance(key, TimeAwareSymbol):
-            output.append(line)
-        else:
-            calibrated_outputs.append(line)
-
-    if calibrated_outputs:
-        output.append("\n")
-        output.extend(calibrated_outputs)
-
-    _log.info("\n".join(output))
-
-
-def resubstitute_steady_state(relationships: Sequence[sp.Eq]) -> list[sp.Eq]:
-    """
-    Rewrite each steady-state relationship in terms of the other steady-state variables, for printing.
-
-    A relationship the model holds has every other steady-state value inlined into it, so ``K_ss`` repeats the
-    whole expression for ``r_ss``. Wherever a subexpression is exactly another relationship's right side, it is
-    replaced by that relationship's variable. Matching is structural and top-down, so the largest match wins and
-    no new names are introduced. A right side that is a single number or symbol is never a replacement target,
-    because a constant such as ``A_ss = 1`` would otherwise rename every literal one.
-
-    The trees are rebuilt unevaluated: evaluating an inlined steady-state tree costs time exponential in its
-    depth.
-
-    Parameters
-    ----------
-    relationships : sequence of Eq
-        Steady-state variables equal to their solutions, as ``Model.steady_state_relationships`` holds them.
+    variable : TimeAwareSymbol or Symbol
+        Variable whose ``assumptions0`` are inspected.
 
     Returns
     -------
-    relationships : list of Eq
-        The same relationships, in the same order, with every other variable's solution folded back in.
+    lower : float or None
+        Lower bound, 1e-8 for a positive variable and None otherwise.
+    upper : float or None
+        Upper bound, -1e-8 for a negative variable and None otherwise.
     """
-    targets = {eq.rhs: eq.lhs for eq in relationships if not (eq.rhs.is_Number or eq.rhs.is_Symbol)}
-    cache: dict[sp.Basic, sp.Basic] = {}
+    assumptions = variable.assumptions0
+    lower = 1e-8 if assumptions.get("positive", False) else None
+    upper = -1e-8 if assumptions.get("negative", False) else None
 
-    resubstituted = []
-    for eq in relationships:
-        others = {rhs: lhs for rhs, lhs in targets.items() if lhs != eq.lhs}
-        rhs = _drop_identity_terms(_xreplace_unevaluated(eq.rhs, others), cache)
-        resubstituted.append(sp.Eq(eq.lhs, rhs, evaluate=False))
-    return resubstituted
+    return lower, upper
 
 
-def _drop_identity_terms(expr: sp.Basic, cache: dict[sp.Basic, sp.Basic]) -> sp.Basic:
+def infer_variable_transform(
+    variable: TimeAwareSymbol | sp.Symbol,
+    user_bound: tuple[float | None, float | None] | None = None,
+) -> Transform | None:
     """
-    Remove the ones and zeros substitution leaves in an unevaluated tree, and print an integral float as an integer.
+    Pick a bijection from the real line onto a variable's feasible region for unconstrained solving.
 
-    A one is a factor of a product or the base of a power, and a zero is a term of a sum.
-
-    The cache is keyed on subtrees, because an inlined tree shares them and a plain recursion revisits each share.
-    """
-    if expr in cache:
-        return cache[expr]
-
-    if isinstance(expr, sp.Float) and float(expr).is_integer():
-        cleaned = sp.Integer(int(expr))
-    elif expr.is_Atom or not expr.args:
-        cleaned = expr
-    else:
-        args = [_drop_identity_terms(arg, cache) for arg in expr.args]
-        identity = {sp.Mul: sp.Integer(1), sp.Add: sp.Integer(0)}.get(type(expr))
-        if identity is not None:
-            args = [arg for arg in args if arg != identity] or [identity]
-        if isinstance(expr, sp.Pow) and args[0] == 1:
-            cleaned = sp.Integer(1)
-        elif identity is not None and len(args) == 1:
-            cleaned = args[0]
-        else:
-            cleaned = _rebuild_unevaluated(expr, args)
-
-    cache[expr] = cleaned
-    return cleaned
-
-
-def make_steady_state_shock_dict(shocks: list[TimeAwareSymbol]) -> SymbolDictionary:
-    """
-    Build a substitution dictionary setting every shock to zero in the steady state.
+    The feasible region comes from ``user_bound`` when given, then from the variable's GCN-declared sympy
+    assumptions, and is otherwise the whole real line. The returned transform's ``backward`` maps an unconstrained
+    real input onto the region: ``log`` for a positive variable, ``logodds`` for the unit interval, and ``Interval``
+    for general bounds.
 
     Parameters
     ----------
-    shocks : list of TimeAwareSymbol
-        Model shocks.
+    variable : TimeAwareSymbol or Symbol
+        The steady-state variable. Its ``assumptions0`` supply the fallback region.
+    user_bound : tuple of float or None, optional
+        Explicit ``(lower, upper)`` bound. Either side may be None for a one-sided bound. Takes precedence over
+        assumptions. Default None.
 
     Returns
     -------
-    shock_dict : SymbolDictionary
-        Mapping from each steady-state shock symbol to 0.0.
+    transform : Transform or None
+        The bijection, or None for an unconstrained variable.
     """
-    return SymbolDictionary.fromkeys(shocks, 0.0).to_ss()
+    if user_bound is not None and user_bound != (None, None):
+        lower, upper = user_bound
+        return Interval(lower, upper)
+
+    assumptions = variable.assumptions0
+    if assumptions.get("unit_interval"):
+        return logodds
+    if assumptions.get("positive"):
+        return log
+    if assumptions.get("negative"):
+        return Interval(None, 0.0)
+    return None
 
 
-def system_to_steady_state(system: list[sp.Expr], shocks: list[TimeAwareSymbol]) -> list[sp.Expr]:
+def steady_state_transforms(
+    variables: Sequence[TimeAwareSymbol | sp.Symbol],
+    declared_bounds: dict[str, tuple[float | None, float | None]] | None = None,
+    user_bounds: dict[str, tuple[float, float]] | None = None,
+) -> list[Transform | None]:
     """
-    Rewrite a dynamic system of equations in steady-state form.
+    Choose one transform per steady-state variable, preferring the most specific support available.
+
+    A bound passed by the caller wins, then the bound the GCN ``symbols`` block declares for that symbol, then the
+    variable's own sympy assumptions through :func:`infer_variable_transform`.
 
     Parameters
     ----------
-    system : list of sympy expression
-        Model equations in time-indexed variables.
-    shocks : list of TimeAwareSymbol
-        Model shocks, which are set to zero.
+    variables : list of TimeAwareSymbol or Symbol
+        The steady-state variables, in solve order.
+    declared_bounds : dict mapping str to tuple of (float or None, float or None), optional
+        Bounds declared in the ``symbols`` block, keyed by symbol name. Default None.
+    user_bounds : dict mapping str to tuple of (float, float), optional
+        Explicit bounds keyed by the steady-state symbol's name. Default None.
 
     Returns
     -------
-    system : list of sympy expression
-        Simplified steady-state equations.
+    transforms : list of Transform or None
+        One entry per variable, None where the variable is unconstrained.
     """
-    # One steady-state equation per dynamic equation, in the same order, so an equation id indexes both lists.
-    shock_dict = make_steady_state_shock_dict(shocks)
-    return [eq_to_ss(eq).subs(shock_dict).simplify() for eq in system]
+    declared_bounds = {} if declared_bounds is None else declared_bounds
+    user_bounds = {} if user_bounds is None else user_bounds
+
+    def bound_for(variable: TimeAwareSymbol | sp.Symbol) -> tuple[float | None, float | None] | None:
+        if variable.name in user_bounds:
+            return user_bounds[variable.name]
+        key = variable_key(variable.base_name) if isinstance(variable, TimeAwareSymbol) else variable.name
+        return declared_bounds.get(key)
+
+    return [infer_variable_transform(variable, bound_for(variable)) for variable in variables]
 
 
-def simplify_provided_ss_equations(
-    ss_solution_dict: SymbolDictionary, variables: list[TimeAwareSymbol]
-) -> SymbolDictionary:
+def transform_steady_state_system(
+    equations: Sequence[TensorVariable],
+    ss_nodes: Sequence[TensorVariable],
+    transforms: Sequence[Transform | None],
+) -> tuple[
+    list[TensorVariable], list[TensorVariable], Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray]
+]:
     """
-    Substitute intermediate definitions out of the user-provided steady-state equations.
+    Reparametrize a steady-state system onto unconstrained variables.
+
+    For each steady-state node ``x`` with transform ``t``, substitute ``x -> t.backward(y)`` (identity for an
+    unconstrained variable), so the returned equations are functions of fresh unconstrained inputs ``y``.
 
     Parameters
     ----------
-    ss_solution_dict : SymbolDictionary
-        Steady-state equations from the ``STEADY_STATE`` block.
-    variables : list of TimeAwareSymbol
-        Model variables.
+    equations : list of TensorVariable
+        Scalar equation graphs, each zero at the steady state.
+    ss_nodes : list of TensorVariable
+        Scalar input node for each steady-state variable.
+    transforms : list of Transform or None
+        One transform per variable, as returned by :func:`infer_variable_transform`.
 
     Returns
     -------
-    ss_solution_dict : SymbolDictionary
-        Steady-state equations keyed by model variables only.
+    transformed_equations : list of TensorVariable
+        The equations rewritten in terms of the unconstrained inputs.
+    y_nodes : list of TensorVariable
+        The unconstrained input nodes, one per variable.
+    to_unconstrained : callable
+        Map a constrained point ``x`` to its unconstrained image ``y``.
+    to_constrained : callable
+        Map an unconstrained point ``y`` back to the constrained ``x``.
     """
-    if not ss_solution_dict:
-        return SymbolDictionary()
+    y_nodes, x_nodes, backward_exprs, forward_exprs, replace = [], [], [], [], {}
+    for ss_node, transform in zip(ss_nodes, transforms, strict=True):
+        y, x = ss_node.type(), ss_node.type()
+        y.name = x.name = ss_node.name
+        y_nodes.append(y)
+        x_nodes.append(x)
 
-    ss_variables = [variable.to_ss() for variable in variables]
-    ss_dict_sympy = ss_solution_dict.to_sympy()
+        x_of_y = y if transform is None else transform.backward(y)
+        backward_exprs.append(x_of_y)
+        forward_exprs.append(x if transform is None else transform.forward(x))
+        replace[ss_node] = x_of_y
 
-    intermediates = {key: value for key, value in ss_dict_sympy.items() if key not in ss_variables}
-    if not intermediates:
-        return ss_solution_dict
+    transformed_equations = graph_replace(list(equations), replace, strict=False)
+    f_to_x = pytensor.function(y_nodes, backward_exprs, on_unused_input="ignore")
+    f_to_y = pytensor.function(x_nodes, forward_exprs, on_unused_input="ignore")
 
-    simplified = SymbolDictionary({key: value for key, value in ss_dict_sympy.items() if key in ss_variables})
-    flat_intermediates = flatten_substitution_dict(intermediates, evaluate=False)
-    for variable, eq in simplified.items():
-        if isinstance(eq, sp.Basic):
-            simplified[variable] = substitute_unevaluated(eq, flat_intermediates)
+    def to_constrained(y: np.ndarray) -> np.ndarray:
+        return np.asarray(f_to_x(*np.asarray(y, dtype=float)), dtype=float)
 
-    return simplified
+    def to_unconstrained(x: np.ndarray) -> np.ndarray:
+        return np.asarray(f_to_y(*np.asarray(x, dtype=float)), dtype=float)
 
-
-def propagate_steady_state_through_identities(
-    ss_solution_dict: SymbolDictionary,
-    steady_state_equations: list[sp.Expr],
-    variables: list[TimeAwareSymbol],
-    max_iterations: int = 100,
-) -> SymbolDictionary:
-    """
-    Extend the user-provided steady state by solving equations with a single remaining unknown.
-
-    Each pass substitutes the known values into every equation and solves those left with exactly one unknown. Passes
-    repeat until one makes no progress. A solution is accepted only if it is unique and simple: no conditionals, no
-    unevaluated integrals or derivatives, no complex numbers, and limited nesting depth.
-
-    Parameters
-    ----------
-    ss_solution_dict : SymbolDictionary
-        User-provided steady-state values.
-    steady_state_equations : list of sympy expression
-        Model equations in steady-state residual form, each equal to zero.
-    variables : list of TimeAwareSymbol
-        Model variables.
-    max_iterations : int, optional
-        Maximum number of passes over the equation system. Default is 100.
-
-    Returns
-    -------
-    ss_solution_dict : SymbolDictionary
-        The provided values plus every value that could be inferred.
-    """
-    ss_variables = {variable.to_ss() for variable in variables}
-    known = ss_solution_dict.to_sympy().copy() if ss_solution_dict else {}
-
-    for _ in range(max_iterations):
-        progress = False
-
-        for eq in steady_state_equations:
-            if not isinstance(eq, sp.Basic):
-                continue
-
-            unknowns = (eq.free_symbols & ss_variables) - set(known.keys())
-            if len(unknowns) != 1:
-                continue
-
-            unknown = next(iter(unknowns))
-            solution = _try_solve_for_unknown(eq, unknown, known, ss_variables)
-            if solution is None:
-                continue
-
-            known[unknown] = float(solution) if solution.is_number else solution
-            progress = True
-
-        if not progress:
-            break
-
-    return SymbolDictionary(known)
+    return transformed_equations, y_nodes, to_unconstrained, to_constrained
 
 
 def known_steady_state_graphs(
@@ -709,39 +630,3 @@ def build_steady_state_system(
         check_indices=[index for index, solve in enumerate(depends_on_unknown) if not solve],
         steady_state=[replacements.get(node, node) for node in ss_nodes],
     )
-
-
-def _try_solve_for_unknown(
-    eq: sp.Expr,
-    unknown: sp.Symbol,
-    known_values: dict[sp.Symbol, sp.Expr],
-    ss_variables: set[sp.Symbol],
-) -> sp.Expr | None:
-    """Solve ``eq`` for ``unknown`` after substituting the known values, or return None if no simple unique solution."""
-    eq_substituted = eq.subs(known_values)
-
-    remaining_ss_vars = eq_substituted.free_symbols & ss_variables
-    if remaining_ss_vars != {unknown}:
-        return None
-
-    try:
-        solutions = sp.solve(eq_substituted, unknown, dict=False)
-    except (NotImplementedError, ValueError, TypeError):
-        return None
-
-    if len(solutions) != 1:
-        return None
-
-    solution = solutions[0]
-    return solution if _solution_is_simple(solution) else None
-
-
-def _solution_is_simple(expr: sp.Expr, max_nesting_depth: int = 5) -> bool:
-    """Reject solutions with conditionals, unevaluated calculus, complex numbers, or deep nesting."""
-    if expr.has(sp.Piecewise, sp.Integral, sp.Derivative, sp.I):
-        return False
-
-    def depth(node: sp.Basic, current: int = 0) -> int:
-        return current if not node.args else max(depth(arg, current + 1) for arg in node.args)
-
-    return depth(expr) <= max_nesting_depth

@@ -27,7 +27,7 @@ from gEconpy.model.perfect_foresight.assemble import (
     StackedJacobianLayout,
     build_stacked_jacobian_layout,
 )
-from gEconpy.model.steady_state import known_steady_state_graphs
+from gEconpy.model.steady_state.pytensor_engine import known_steady_state_graphs
 from gEconpy.model.timing import classify_variables_by_timing
 from gEconpy.utilities import safe_to_ss
 

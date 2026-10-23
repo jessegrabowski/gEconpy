@@ -42,7 +42,11 @@ from gEconpy.model.statistics import (
     summarize_perturbation_solution,
 )
 from gEconpy.model.statistics.validation import _maybe_linearize_model
-from gEconpy.model.steady_state import _ss_residual_to_pytensor, build_minimize_graphs, build_root_graphs
+from gEconpy.model.steady_state.pytensor_engine import (
+    _ss_residual_to_pytensor,
+    build_minimize_graphs,
+    build_root_graphs,
+)
 from gEconpy.utilities import safe_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
 from tests._resources.expected_matrices import expected_linearization_result

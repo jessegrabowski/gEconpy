@@ -19,9 +19,8 @@ from gEconpy.model.parameters import compile_param_dict_func
 from gEconpy.model.perturbation import DROrder, composition_derivatives, linearize_model
 from gEconpy.model.simplification import simplify_constants, simplify_tryreduce
 from gEconpy.model.statespace import DSGEStateSpace
-from gEconpy.model.steady_state import (
-    ERROR_FUNCTIONS,
-    compile_known_ss,
+from gEconpy.model.steady_state.pytensor_engine import ERROR_FUNCTIONS, compile_known_ss
+from gEconpy.model.steady_state.sympy_engine import (
     propagate_steady_state_through_identities,
     simplify_provided_ss_equations,
     system_to_steady_state,

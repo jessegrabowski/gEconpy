@@ -34,7 +34,7 @@ gEconpy
     model.statistics.perturbation_diagnostics.solvability_check
     model.statistics.perturbation_diagnostics.summarize_perturbation_solution
     model.statistics.validation.check_steady_state
-    model.steady_state.print_steady_state
+    model.steady_state.solve.print_steady_state
     rcparams.rc_context
 
 .. rubric:: Submodules
@@ -80,6 +80,9 @@ gEconpy
     gEconpy.model.statistics.perturbation_diagnostics <gEconpy.model.statistics.perturbation_diagnostics>
     gEconpy.model.statistics.validation <gEconpy.model.statistics.validation>
     gEconpy.model.steady_state <gEconpy.model.steady_state>
+    gEconpy.model.steady_state.pytensor_engine <gEconpy.model.steady_state.pytensor_engine>
+    gEconpy.model.steady_state.solve <gEconpy.model.steady_state.solve>
+    gEconpy.model.steady_state.sympy_engine <gEconpy.model.steady_state.sympy_engine>
     gEconpy.model.tables <gEconpy.model.tables>
     gEconpy.model.timing <gEconpy.model.timing>
     gEconpy.model.typst <gEconpy.model.typst>

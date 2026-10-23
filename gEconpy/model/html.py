@@ -10,7 +10,7 @@ from IPython.display import HTML
 
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, render_latex
 from gEconpy.model.latex import authored_equation_latex, block_heading
-from gEconpy.model.steady_state import resubstitute_steady_state
+from gEconpy.model.steady_state.sympy_engine import resubstitute_steady_state
 from gEconpy.model.tables import PRIOR_STAT_PRECISION, SymbolTable, _format_value
 from gEconpy.parser.ast import GCNModel, SymbolDeclaration, variable_key
 from gEconpy.parser.ast.nodes import GCNBlock, GCNDistribution, GCNEquation

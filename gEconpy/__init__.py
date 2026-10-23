@@ -63,7 +63,7 @@ from gEconpy.model.statistics import (
     stationary_mean,
     summarize_perturbation_solution,
 )
-from gEconpy.model.steady_state import print_steady_state
+from gEconpy.model.steady_state.solve import print_steady_state
 from gEconpy.rcparams import rc_context, rcParams
 
 _log = _logging.getLogger(__name__)
