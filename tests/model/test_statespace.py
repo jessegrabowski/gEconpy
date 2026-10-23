@@ -12,6 +12,7 @@ import pytest
 import xarray as xr
 
 from numpy.testing import assert_allclose
+from pymc_extras.statespace.core.statespace import PyMCStateSpace
 from pymc_extras.statespace.utils.constants import ALL_STATE_DIM
 from pytensor.graph.traversal import ancestors
 from pytensor.tensor.variable import TensorConstant
@@ -22,6 +23,7 @@ from gEconpy.model.pruning import (
     compile_pruned_second_order_moments,
     compile_pruned_second_order_path,
     compile_pruned_second_order_system,
+    pruned_second_order_path,
 )
 from gEconpy.model.statespace import _steady_state_intercept, data_from_prior, prepare_mixed_frequency_data
 from gEconpy.model.statistics import autocorrelation_matrix
@@ -1766,14 +1768,8 @@ def test_second_order_configure_rejects_unsupported_setups_and_keeps_the_last_co
     assert (ss_mod.observed_states, ss_mod.param_names, ss_mod.k_states) == configuration
 
 
-def test_second_order_statespace_cannot_forecast(two_shock_order_2_statespace):
-    two_shock_order_2_statespace.configure(observed_states=["Y"], measurement_error=["Y"], verbose=False)
-    with pytest.raises(NotImplementedError, match="forecast is not supported at order 2"):
-        two_shock_order_2_statespace.forecast(None)
-
-
 def _two_shock_draws(ss_mod, n_draws, group):
-    """Inference data holding ``n_draws`` copies of the GCN parameters and the exact configuration's shocks."""
+    """Inference data holding ``n_draws`` copies of the GCN parameters and the exact shocks, fit to zero data."""
     values = _two_shock_exact_values()
     draws = xr.Dataset(
         {
@@ -1793,7 +1789,9 @@ def _two_shock_draws(ss_mod, n_draws, group):
         {"obs": (("time", "observed_state"), np.zeros((10, 2)))},
         coords={"time": pd.date_range("2000-01-01", periods=10, freq="QS"), "observed_state": ["Y", "C"]},
     )
-    return xr.DataTree.from_dict({group: draws, "observed_data": observed})
+    return xr.DataTree.from_dict(
+        {group: draws, "observed_data": observed, "constant_data": observed.rename({"obs": "data"})}
+    )
 
 
 IRF_STEPS = 8
@@ -1889,6 +1887,118 @@ def test_second_order_unconditional_trajectories_are_pruned_paths_of_their_shock
     final_draw = {"chain": 0, "draw": 0, "time": -1}
     deviation = trajectories[f"{group}_latent"].isel(final_draw).sel(variable=solution.variable_names).values
     assert_allclose(levels.isel(final_draw).sel(variable=solution.variable_names), solution.to_levels(deviation))
+
+
+FORECAST_PERIODS = 5
+
+
+def test_second_order_forecasts_are_pruned_paths_from_their_initial_state(two_shock_order_2_unjittered_statespace):
+    ss_mod = two_shock_order_2_unjittered_statespace
+    ss_mod.configure(**TWO_SHOCK_EXACT_CONFIGURATION | {"measurement_error": None})
+    solution = load_and_cache_model("one_block_1_ss_2shock.gcn").solve_model(order=2, verbose=False)
+    n_states = len(solution.dr_order.lag_positions)
+
+    # Forecasting takes the initial state and the shocks from the draws, which pins the paths exactly.
+    rng = np.random.default_rng(0)
+    initial_state = rng.normal(scale=0.01, size=2 * n_states)
+    shocks = rng.normal(scale=0.01, size=(FORECAST_PERIODS, 2))
+    idata = _two_shock_draws(ss_mod, n_draws=1, group="posterior")
+    idata["posterior"] = idata.posterior.to_dataset().assign(
+        forecast_initial_state=(("chain", "draw", "part"), initial_state[None, None]),
+        forecast_shocks=(("chain", "draw", "period", "shock_name"), shocks[None, None]),
+    )
+
+    forecasts = ss_mod.forecast(idata, periods=FORECAST_PERIODS, verbose=False, random_seed=0, progressbar=False)
+    latent = forecasts["forecast_latent"].isel(chain=0, draw=0)
+    observed = forecasts["forecast_observed"].isel(chain=0, draw=0)
+
+    expected = pruned_second_order_path(
+        ghx=solution.ghx,
+        ghu=solution.ghu,
+        ghxx=solution.ghxx,
+        ghxu=solution.ghxu,
+        ghuu=solution.ghuu,
+        ghs2=solution.ghs2(TWO_SHOCK_COV),
+        shocks=shocks,
+        state_positions=solution.dr_order.lag_positions,
+        initial_first_order_states=initial_state[:n_states],
+        initial_second_order_states=initial_state[n_states:],
+    ).eval()[..., solution.dr_order.inv_var_order]
+    assert_allclose(latent.sel(variable=solution.variable_names).values, expected, atol=1e-12)
+
+    last_date = idata.observed_data["time"].values[-1]
+    expected_dates = pd.date_range(last_date, periods=FORECAST_PERIODS + 1, freq="QS")[1:]
+    np.testing.assert_array_equal(latent["time"].values, expected_dates.values)
+
+    y_steady_state = solution.steady_state[solution.variable_names.index("Y")]
+    y_intercept = _steady_state_intercept(pt.as_tensor(y_steady_state), ss_mod.log_linear_treatment["Y"]).eval()
+    assert_allclose(observed.sel(observed_state="Y"), latent.sel(variable="Y") + y_intercept, atol=1e-12)
+    assert_allclose(observed.sel(observed_state="C"), latent.sel(variable="C"), atol=1e-12)
+
+
+def test_second_order_forecasts_start_from_the_filter_output_at_the_start_date(two_shock_order_2_unjittered_statespace):
+    ss_mod = two_shock_order_2_unjittered_statespace
+    ss_mod.configure(**TWO_SHOCK_EXACT_CONFIGURATION)
+    idata = _two_shock_draws(ss_mod, n_draws=1, group="posterior")
+    data = np.random.default_rng(0).normal(scale=0.01, size=idata.constant_data["data"].shape)
+    idata["constant_data"] = idata.constant_data.to_dataset().assign(data=idata.constant_data["data"].copy(data=data))
+
+    time_index = ss_mod._get_fit_time_index(idata)
+    t0, forecast_index = ss_mod._build_forecast_index(time_index=time_index, start=time_index[4], periods=2)
+    hook_arguments = {
+        "idata": idata,
+        "group": "posterior",
+        "time_index": time_index,
+        "t0": t0,
+        "forecast_index": forecast_index,
+        "scenario": None,
+        "filter_output": "filtered",
+        "mvn_method": "svd",
+    }
+
+    def sample(model, name):
+        return pm.sample_posterior_predictive(idata.posterior, var_names=[name], model=model, progressbar=False)[
+            "posterior_predictive"
+        ][name]
+
+    initial_mean = sample(ss_mod._build_forecast_model(**hook_arguments), "forecast_initial_state_mean")
+    full_state_mean = sample(PyMCStateSpace._build_forecast_model(ss_mod, **hook_arguments), "x0_slice")
+
+    parts = [f"{name}_{part}" for part in ("first_order", "second_order") for name in ss_mod._lagged_state_names]
+    states = list(ss_mod.coords[ALL_STATE_DIM])
+    assert_allclose(initial_mean.values, full_state_mean.values[..., [states.index(name) for name in parts]])
+
+
+def test_second_order_forecasts_refuse_scenarios(two_shock_order_2_statespace):
+    ss_mod = two_shock_order_2_statespace
+    ss_mod.configure(observed_states=["Y"], measurement_error=["Y"], verbose=False)
+
+    with pytest.raises(NotImplementedError, match="Scenario forecasts are not supported at order 2"):
+        ss_mod._build_forecast_model(
+            idata=None,
+            group="posterior",
+            time_index=None,
+            t0=None,
+            forecast_index=None,
+            scenario={},
+            filter_output="smoothed",
+            mvn_method="svd",
+        )
+
+
+def test_first_order_forecasts_follow_the_start_date():
+    ss_mod = statespace_from_gcn(TEST_GCNS / "one_block_1_ss_2shock.gcn", verbose=False)
+    ss_mod.configure(**TWO_SHOCK_EXACT_CONFIGURATION)
+    idata = _two_shock_draws(ss_mod, n_draws=2, group="posterior")
+
+    forecasts = ss_mod.forecast(idata, periods=FORECAST_PERIODS, verbose=False, random_seed=0, progressbar=False)
+    latent = forecasts["forecast_latent"]
+
+    assert latent.dims == ("chain", "draw", "time", ALL_STATE_DIM)
+    last_date = idata.observed_data["time"].values[-1]
+    expected_dates = pd.date_range(last_date, periods=FORECAST_PERIODS + 1, freq="QS")[1:]
+    np.testing.assert_array_equal(latent["time"].values, expected_dates.values)
+    assert np.isfinite(latent.values).all()
 
 
 def test_second_order_levels_refuse_filtered_states(two_shock_order_2_statespace):
