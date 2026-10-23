@@ -16,13 +16,15 @@ def pruned_second_order_path(
     ghs2: TensorLike,
     shocks: TensorLike,
     state_positions: TensorLike,
+    initial_first_order_states: TensorLike | None = None,
+    initial_second_order_states: TensorLike | None = None,
 ) -> TensorVariable:
     r"""
     Build the pruned second-order simulation of a perturbation solution as a graph.
 
-    The path starts from the steady state and splits each period's deviation into a first-order part
-    :math:`\hat{y}^{(1)}` and a second-order part :math:`\hat{y}^{(2)}`, with the quadratic terms evaluated on the
-    first-order part only:
+    The path starts from the given first- and second-order parts of the state variables, the steady state by default.
+    It splits each period's deviation into a first-order part :math:`\hat{y}^{(1)}` and a second-order part
+    :math:`\hat{y}^{(2)}`, with the quadratic terms evaluated on the first-order part only:
 
     .. math::
 
@@ -52,6 +54,14 @@ def pruned_second_order_path(
         Shock path, of shape ``(..., n_periods, n_shocks)``. Leading dimensions are simulated independently.
     state_positions : TensorVariable
         Positions of the state variables in decision-rule order.
+    initial_first_order_states : TensorVariable, optional
+        First-order part of the state variables in the period before the first shock, in decision-rule order. Its
+        shape broadcasts to ``(..., n_states)``, with the leading dimensions of ``shocks``. Defaults to zero, the
+        steady state.
+    initial_second_order_states : TensorVariable, optional
+        Second-order part of the state variables in the period before the first shock, in decision-rule order. Its
+        shape broadcasts to ``(..., n_states)``, with the leading dimensions of ``shocks``. Defaults to zero, the
+        steady state.
 
     Returns
     -------
@@ -61,6 +71,11 @@ def pruned_second_order_path(
     """
     ghx, ghu, ghxx, ghxu, ghuu, ghs2, shocks = map(pt.as_tensor, (ghx, ghu, ghxx, ghxu, ghuu, ghs2, shocks))
     state_positions = pt.as_tensor(state_positions)
+    state_shape = (*shocks.shape[:-2], ghx.shape[1])
+    initial_first_order_states, initial_second_order_states = (
+        pt.zeros(state_shape) if states is None else pt.broadcast_to(states, state_shape)
+        for states in (initial_first_order_states, initial_second_order_states)
+    )
 
     def step(shock, first_order_states, second_order_states):
         first_order = first_order_states @ ghx.T + shock @ ghu.T
@@ -73,11 +88,10 @@ def pruned_second_order_path(
         )
         return first_order[..., state_positions], second_order[..., state_positions], first_order + second_order
 
-    initial_states = pt.zeros((*shocks.shape[:-2], ghx.shape[1]))
     _, _, deviations = pytensor.scan(
         step,
         sequences=[pt.moveaxis(shocks, -2, 0)],
-        outputs_info=[initial_states, initial_states, None],
+        outputs_info=[initial_first_order_states, initial_second_order_states, None],
         return_updates=False,
     )
     return pt.moveaxis(deviations, 0, -2)
@@ -88,8 +102,8 @@ def compile_pruned_second_order_path() -> Function:
     """
     Compile :func:`pruned_second_order_path` once, for solutions of any model.
 
-    The compiled function takes the arguments of :func:`pruned_second_order_path` in order, with ``shocks`` of shape
-    ``(n_paths, n_periods, n_shocks)``.
+    The compiled function takes the arguments of :func:`pruned_second_order_path` up to ``state_positions``, in order,
+    with ``shocks`` of shape ``(n_paths, n_periods, n_shocks)``. Its paths start from the steady state.
     """
     inputs = [
         pt.matrix("ghx"),

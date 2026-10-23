@@ -41,12 +41,18 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_codeautolink",
     "generate_gallery",
+    "simplebib",
     "sphinx.ext.autodoc",
     "sphinx.ext.doctest",
     "numpydoc",
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.autosummary",
 ]
+
+# Bibliographic citations: drop new entries into docs/source/references.bib and
+# cite from prose with `{cite:t}` / `{cite:p}`. Each page renders its own numbered
+# reference list via `{bibliography}` (see sphinxext/simplebib.py).
+simplebib_bibfiles = ["references.bib"]
 
 # Make autosectionlabel use document path as prefix to avoid duplicate labels
 autosectionlabel_prefix_document = True
@@ -188,6 +194,7 @@ numpydoc_xref_aliases = {
     "CompositionDerivatives": "gEconpy.model.perturbation.CompositionDerivatives",
     "FirstOrderPerturbationSolution": "gEconpy.classes.perturbation_solution.FirstOrderPerturbationSolution",
     "SecondOrderPerturbationSolution": "gEconpy.classes.perturbation_solution.SecondOrderPerturbationSolution",
+    "SymbolicPerturbationSolution": "gEconpy.classes.perturbation_solution.SymbolicPerturbationSolution",
     "DSGEStateSpace": "gEconpy.model.statespace.DSGEStateSpace",
     "Variable": "gEconpy.parser.ast.nodes.Variable",
     "Parameter": "gEconpy.parser.ast.nodes.Parameter",
