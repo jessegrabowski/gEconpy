@@ -58,13 +58,13 @@ jobs:
           # below exercise only the OS-sensitive machinery — pytensor's compile toolchain,
           # .gcn file loading, multiprocessing — across the core solve/linearize/simulate
           # pipeline. Pure-algebra suites (parser grammar, block FOCs, plotting, classes) and
-          # the steady-state / statespace / build files run on Ubuntu only. The
-          # test_*_backends_agree and steady-state deselects stay because Windows BLAS
-          # produces slightly different numbers, not because the tests are uninteresting.
+          # the steady-state / statespace / build files run on Ubuntu only. The steady-state
+          # deselects stay because Windows BLAS produces slightly different numbers, not because
+          # the tests are uninteresting.
           - subset-name: "Windows Model Integration"
             os: windows-latest
             environment: py313
-            test-subset: "tests/model/test_model.py --deselect tests/model/test_model.py::test_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_partially_analytical_steady_state --deselect tests/model/test_model.py::test_all_backends_agree_on_functions --deselect tests/model/test_model.py::test_scipy_wrapped_functions_agree --deselect tests/model/test_model.py::test_all_backends_agree_on_parameters"
+            test-subset: "tests/model/test_model.py --deselect tests/model/test_model.py::test_steady_state --deselect tests/model/test_model.py::test_numerical_steady_state --deselect tests/model/test_model.py::test_partially_analytical_steady_state"
             test-marker: "not include_nk"
 
           - subset-name: "Windows Model Solve & Diagnostics"
