@@ -11,6 +11,8 @@ import pytest
 import xarray as xr
 
 from numpy.testing import assert_allclose
+from pytensor.graph.basic import equal_computations
+from pytensor.graph.replace import clone_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 
 from gEconpy.classes.containers import SymbolDictionary
@@ -234,6 +236,17 @@ def test_steady_state(gcn_file: str, expected_result: dict[str, float]):
 
     ss_result = model.steady_state(verbose=False, progressbar=False)
     assert ss_result.success
+
+
+def test_f_ss_leaves_the_shared_known_graphs_intact():
+    """The steady-state system reuses these graphs, and compilation would otherwise rewrite them in place."""
+    model = model_from_gcn(TEST_GCNS / "full_nk.gcn", verbose=False)
+    known = list(model._known_steady_state_nodes().values())
+    before = clone_replace(known)
+
+    model.f_ss(**model.parameters())
+
+    assert equal_computations(known, before)
 
 
 def _compile_ss_derivative_funcs(gcn_file):
