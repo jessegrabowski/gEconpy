@@ -17,6 +17,7 @@ from gEconpy.parser.ast import (
 )
 from gEconpy.parser.ast.validation import (
     check_declared_symbols_exist,
+    check_solver_call_placement,
     check_undefined_parameters,
     check_undefined_variables,
     full_validation,
@@ -356,6 +357,36 @@ class TestDeclaredSymbolsExist:
         multiplier = next(variable for variable in load_gcn_string(source).variables if variable.base_name == "lambda")
 
         assert multiplier.is_positive
+
+
+class TestSolverCallPlacement:
+    SOLVER_CALL = "w[ss] = root(alpha * Y[ss] - w[ss], method=brentq, bounds=[0.1, 5]);"
+
+    def test_a_call_in_the_steady_state_identities_passes(self):
+        source = f"block STEADY_STATE {{ identities {{ {self.SOLVER_CALL} }}; }};"
+
+        assert not list(check_solver_call_placement(quick_parse(source)))
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            f"block STEADY_STATE {{ definitions {{ {SOLVER_CALL} }}; }};",
+            f"block FIRM {{ identities {{ {SOLVER_CALL} }}; }};",
+            f"block FIRM {{ calibration {{ {SOLVER_CALL} }}; }};",
+            f"block FIRM {{ objective {{ {SOLVER_CALL} }}; }};",
+            f"block FIRM {{ constraints {{ {SOLVER_CALL} }}; }};",
+        ],
+        ids=["steady_state_definitions", "model_block_identities", "calibration", "objective", "constraints"],
+    )
+    def test_a_call_anywhere_else_is_an_error(self, source):
+        errors = list(check_solver_call_placement(quick_parse(source)))
+
+        assert len(errors) == 1
+        assert str(errors[0]).startswith("[E104] 'w[ss] = root(...)'")
+
+    def test_loading_a_model_raises_on_a_misplaced_call(self):
+        with pytest.raises(GCNSemanticError, match="outside the identities of the steady-state block"):
+            load_gcn_string(f"block FIRM {{ identities {{ {self.SOLVER_CALL} }}; }};")
 
 
 class TestDistributionValidation:

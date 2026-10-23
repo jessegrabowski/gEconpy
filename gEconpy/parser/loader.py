@@ -11,7 +11,7 @@ from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, merge_assumptions
 from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.model.block import Block
 from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node, SymbolDeclaration
-from gEconpy.parser.ast.validation import check_declared_symbols_exist
+from gEconpy.parser.ast.validation import check_declared_symbols_exist, check_solver_call_placement
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
 from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_metadata
@@ -151,6 +151,7 @@ def ast_model_to_primitives(
     # A declaration the model cannot match is dropped further down, so it has to be caught before its bounds and
     # metadata silently stop applying.
     check_declared_symbols_exist(model).raise_first()
+    check_solver_call_placement(model).raise_first()
 
     # Both blocks describe the same thing, so they write into one store. A symbol declared in both takes its
     # assumptions from ``symbols``.

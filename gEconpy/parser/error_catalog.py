@@ -430,6 +430,16 @@ class ErrorCode(Enum):
         fixes=(f"Rename the wrapper to one of: {_WRAPPER_NAMES}",),
     )
 
+    E104 = ErrorInfo(
+        title="Solver call outside the steady-state identities",
+        explanation="Solver calls are allowed only in the identities of the steady-state block.",
+        common_causes=(
+            "A solver call in a model block's identities or constraints",
+            "A solver call in the definitions of the steady-state block",
+        ),
+        fixes=("Move the call into the identities of the steady-state block",),
+    )
+
     W001 = ErrorInfo(
         title="Unused parameter",
         explanation="A parameter is calibrated but never used in any equation.",

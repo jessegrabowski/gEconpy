@@ -7,7 +7,9 @@ from gEconpy.parser.ast import (
     GCNEquation,
     GCNModel,
     Parameter,
+    SteadyStateSolverCall,
     Variable,
+    collect_nodes_of_type,
     collect_parameter_names,
     collect_variable_names,
     gcn_spelling,
@@ -227,6 +229,44 @@ def check_declared_symbols_exist(model: GCNModel) -> ErrorCollector:
     return errors
 
 
+def check_solver_call_placement(model: GCNModel) -> ErrorCollector:
+    """
+    Report solver calls written anywhere but the identities of the steady-state block.
+
+    Parameters
+    ----------
+    model : GCNModel
+        The model to check.
+
+    Returns
+    -------
+    errors : ErrorCollector
+        One error per misplaced call, in block order.
+    """
+    errors = ErrorCollector()
+
+    for block in model.blocks:
+        forbidden = [
+            *block.definitions,
+            *block.objective,
+            *block.constraints,
+            *([] if block.is_steady_state else block.identities),
+            *(item for item in block.calibration if isinstance(item, GCNEquation)),
+        ]
+        for eq in forbidden:
+            for call in collect_nodes_of_type(eq, SteadyStateSolverCall):
+                errors.add(
+                    GCNSemanticError(
+                        f"'{eq.lhs} = {call.func_name}(...)' in block {block.name} is outside the identities of the "
+                        "steady-state block",
+                        code=ErrorCode.E104,
+                        location=eq.location,
+                    )
+                )
+
+    return errors
+
+
 def full_validation(
     model: GCNModel,
     external_variables: set[str] | None = None,
@@ -236,7 +276,8 @@ def full_validation(
     Run every validation check and collect their errors and warnings together.
 
     The checks are :func:`validate_model`, :func:`check_undefined_variables`,
-    :func:`check_undefined_parameters`, and :func:`check_declared_symbols_exist`.
+    :func:`check_undefined_parameters`, :func:`check_declared_symbols_exist`, and
+    :func:`check_solver_call_placement`.
 
     Parameters
     ----------
@@ -250,7 +291,7 @@ def full_validation(
     Returns
     -------
     errors : ErrorCollector
-        All errors and warnings from the four checks, in that order.
+        All errors and warnings from the five checks, in that order.
     """
     errors = ErrorCollector()
 
@@ -259,6 +300,7 @@ def full_validation(
         check_undefined_variables(model, external_variables),
         check_undefined_parameters(model, external_parameters),
         check_declared_symbols_exist(model),
+        check_solver_call_placement(model),
     ):
         for error in check_errors:
             errors.add(error)
