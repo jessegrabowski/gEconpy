@@ -9,7 +9,8 @@ gEconpy.classes.perturbation_solution
 
     FirstOrderPerturbationSolution
     SecondOrderPerturbationSolution
+    SymbolicPerturbationSolution
 
 .. automodule:: gEconpy.classes.perturbation_solution
-    :members: FirstOrderPerturbationSolution, SecondOrderPerturbationSolution
+    :members: FirstOrderPerturbationSolution, SecondOrderPerturbationSolution, SymbolicPerturbationSolution
     :undoc-members:
