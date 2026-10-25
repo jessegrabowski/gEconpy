@@ -3,6 +3,7 @@ import warnings
 from types import SimpleNamespace
 
 import arviz_base as azb
+import arviz_stats as azs
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -758,6 +759,20 @@ def test_plot_acf_forest_axis_count(posterior_acf):
     # A tensor carrying chain/draw renders one panel per variable as a forest.
     fig = plot_acf(posterior_acf)
     assert len(fig.axes) == posterior_acf.sizes["variable"]
+
+
+def test_plot_acf_intervals_use_sample_dims_and_skip_nan_draws(posterior_acf):
+    # Regression: the interval sticks ignored sample_dims (raising for any dimension other than chain/draw) and a
+    # single NaN draw turned that lag's interval into NaN.
+    samples = posterior_acf.stack(sample=["chain", "draw"]).drop_vars(["sample", "chain", "draw"])
+    samples[{"lag": 1, "variable": 0, "variable_aux": 0, "sample": 0}] = np.nan
+
+    fig = plot_acf(samples, vars_to_plot=["Y"], sample_dims=("sample",), ci_probs=(0.5, 0.94))
+    outer_sticks = fig.axes[0].collections[0].get_segments()
+
+    clean = samples.sel(variable="Y", variable_aux="Y", lag=1).dropna("sample")
+    expected = azs.hdi(clean, prob=0.94, dim=["sample"]).values
+    np.testing.assert_allclose(outer_sticks[1][:, 1], expected)
 
 
 def test_plot_acf_reference_adds_data_legend(posterior_acf, reference_acf):

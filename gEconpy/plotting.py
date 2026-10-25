@@ -2148,9 +2148,9 @@ def _draw_eigenvalue_panel(
         ax.legend(loc="best", fontsize="small", framealpha=0.9)
 
 
-def _acf_hdi_bounds(series: xr.DataArray, prob: float) -> tuple[np.ndarray, np.ndarray]:
+def _acf_hdi_bounds(series: xr.DataArray, prob: float, sample_dims: list[str]) -> tuple[np.ndarray, np.ndarray]:
     """Return the per-lag lower and upper bounds of the ``prob`` highest-density interval of ``series``."""
-    hdi = azs.hdi(series, prob=prob)
+    hdi = azs.hdi(series, prob=prob, dim=sample_dims, skipna=True)
     ci_dim = next(dim for dim in hdi.dims if dim != "lag")
     return hdi.isel({ci_dim: 0}).values, hdi.isel({ci_dim: 1}).values
 
@@ -2170,8 +2170,8 @@ def _plot_acf_intervals(
     """Draw a posterior-mean point plus two nested credible-interval sticks at each lag."""
     inner_prob, outer_prob = sorted(ci_probs)
     mean = series.mean(sample_dims).values
-    outer_lo, outer_hi = _acf_hdi_bounds(series, outer_prob)
-    inner_lo, inner_hi = _acf_hdi_bounds(series, inner_prob)
+    outer_lo, outer_hi = _acf_hdi_bounds(series, outer_prob, sample_dims)
+    inner_lo, inner_hi = _acf_hdi_bounds(series, inner_prob, sample_dims)
 
     x = lags + offset
     axis.vlines(x, outer_lo, outer_hi, **{"color": color, "lw": 1.0, **(outer_hdi_kwargs or {})})
