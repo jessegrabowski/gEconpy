@@ -1299,6 +1299,7 @@ def plot_kalman_filter(
     figsize: tuple[int, int] = (14, 6),
     dpi: int = 144,
     observed: bool = False,
+    ylabel: str | None = "% Deviation from SS",
 ) -> Figure:
     """
     Plot the mean and 95 percent credible band of the Kalman filter output for each state.
@@ -1327,6 +1328,9 @@ def plot_kalman_filter(
     observed : bool, optional
         If True, plot the observed states from the ``*_observed`` variables of ``idata``. If False, plot the
         latent states. Defaults to False.
+    ylabel : str, optional
+        Label for the y-axis of every panel. Pass None to leave the axes unlabeled. Defaults to
+        "% Deviation from SS".
 
     Returns
     -------
@@ -1399,7 +1403,7 @@ def plot_kalman_filter(
         if variable in data.columns:
             axis.plot(time_idx, data[variable].values, color="k", ls="--")
 
-        axis.set(title=variable, xlabel=None, ylabel="% Deviation from SS")
+        axis.set(title=variable, xlabel=None, ylabel=ylabel)
         axis.tick_params(axis="x", rotation=45)
         _style_panel(axis)
 

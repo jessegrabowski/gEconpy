@@ -831,6 +831,15 @@ def test_plot_kalman_filter_accepts_mixed_case_output(prior_idata):
     assert len(fig.axes) == 1
 
 
+@pytest.mark.parametrize("ylabel, expected", [("Level", "Level"), (None, "")], ids=["custom", "none"])
+def test_plot_kalman_filter_ylabel(prior_idata, ylabel, expected):
+    idata, fake_data = prior_idata
+    fig = plot_kalman_filter(
+        idata["conditional_prior"], fake_data, group="prior", vars_to_plot=["Y", "C"], ylabel=ylabel
+    )
+    assert [axis.get_ylabel() for axis in fig.axes] == [expected, expected]
+
+
 def test_plot_kalman_filter_bad_output_raises(prior_idata):
     idata, fake_data = prior_idata
     with pytest.raises(ValueError, match='kalman_output must be one of "filtered", "predicted", "smoothed"'):
