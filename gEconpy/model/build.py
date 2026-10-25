@@ -276,13 +276,14 @@ def statespace_from_gcn(
         cache=cache,
         return_symbolic=True,
         ss_definitions=primitives.ss_definitions,
+        ss_solver_calls=primitives.ss_solver_calls,
     )
 
     if steady_state_mapping is None or len(steady_state_mapping) != len(variables):
         raise NotImplementedError(
             "DSGEStateSpace requires an analytic steady state for every variable. Add the missing steady-state "
-            "expressions to the Steady_State block of the GCN file, or use model_from_gcn to solve the steady state "
-            "numerically."
+            "expressions, or root and minimize calls for them, to the Steady_State block of the GCN file, or use "
+            "model_from_gcn to solve the steady state numerically."
         )
 
     loglin_variables = _select_loglin_variables(
