@@ -16,14 +16,18 @@ import xarray as xr
 
 from preliz.distributions.distributions import Distribution
 from pytensor import tensor as pt
-from pytensor.graph.replace import clone_replace
+from pytensor.graph.replace import clone_replace, graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.tensor.variable import TensorVariable
 from scipy.optimize import OptimizeResult
 
 from gEconpy.classes.containers import SteadyStateResults, SymbolDictionary
 from gEconpy.classes.distributions import CompositeDistribution, priors_by_sampled_name
-from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution, SecondOrderPerturbationSolution
+from gEconpy.classes.perturbation_solution import (
+    FirstOrderPerturbationSolution,
+    SecondOrderPerturbationSolution,
+    SymbolicPerturbationSolution,
+)
 from gEconpy.classes.time_aware_symbol import (
     TimeAwareSymbol,
 )
@@ -90,8 +94,8 @@ from gEconpy.parser.ast import GCNBlock, GCNModel, SymbolDeclaration, variable_k
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.rcparams import rcParams
 from gEconpy.solvers.backward_looking import solve_policy_function_with_backward_direct
-from gEconpy.solvers.cycle_reduction import solve_policy_function_with_cycle_reduction
-from gEconpy.solvers.gensys import interpret_gensys_output, solve_policy_function_with_gensys
+from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, solve_policy_function_with_cycle_reduction
+from gEconpy.solvers.gensys import gensys_pt, interpret_gensys_output, solve_policy_function_with_gensys
 from gEconpy.solvers.second_order import solve_second_order
 from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
 
@@ -1753,6 +1757,133 @@ class Model:
             self._second_order_cache[loglin_key] = (derivatives, param_input_nodes)
 
         return self._second_order_cache[loglin_key]
+
+    def symbolic_solution(
+        self,
+        order: Literal[1, 2] = 1,
+        log_linearize: bool = True,
+        not_loglin_variables: list[str] | None = None,
+        loglin_negative_ss: bool = False,
+        solver: Literal["cycle_reduction", "gensys"] = "cycle_reduction",
+        verbose: bool = True,
+    ) -> SymbolicPerturbationSolution:
+        r"""
+        Build the perturbation solution as PyTensor graphs of the free parameters.
+
+        The steady state, the linearization, the first-order solve and, at ``order=2``, the second-order solve form
+        one graph, so a function of the solution can be compiled, differentiated or vectorized over parameter values.
+        Every steady-state value must have an analytic solution in the GCN file, because a numerical steady-state
+        solve has no graph. The graph does not check that the model has a unique stable solution at the parameters it
+        is evaluated at, as :meth:`solve_model` does.
+
+        Parameters
+        ----------
+        order : {1, 2}, optional
+            Order of the perturbation solution. Default 1.
+        log_linearize : bool, optional
+            If True, log-linearize every variable whose steady state allows it. If False, leave every variable in
+            levels. Default True.
+        not_loglin_variables : list of str, optional
+            Variable names to leave in levels. Ignored if ``log_linearize`` is False. Default None.
+        loglin_negative_ss : bool, optional
+            If True, log-linearize variables with a negative steady state as well. Default False.
+        solver : {"cycle_reduction", "gensys"}, optional
+            First-order solver, as in :meth:`solve_model`. Default ``"cycle_reduction"``.
+        verbose : bool, optional
+            Log which variables are excluded from log-linearization. Default True.
+
+        Returns
+        -------
+        solution : SymbolicPerturbationSolution
+            The solution graphs, with the second-order coefficients set to None at ``order=1``.
+
+        Examples
+        --------
+        Compile the response of every variable to the shocks as a function of the parameters:
+
+        .. code-block:: python
+
+            import pytensor
+
+            from gEconpy import model_from_gcn
+            from gEconpy.data import get_example_gcn
+
+            model = model_from_gcn(get_example_gcn("RBC"), verbose=False)
+            solution = model.symbolic_solution(verbose=False)
+            f_ghu = pytensor.function(list(solution.parameters.values()), solution.ghu)
+        """
+        if order not in (1, 2):
+            raise NotImplementedError("Only first and second order perturbation are supported.")
+        if solver not in ("cycle_reduction", "gensys"):
+            raise ValueError(f'Parameter solver must be one of "cycle_reduction" or "gensys", found {solver}')
+
+        system = self._steady_state_system(())
+        if system.unknowns:
+            names = ", ".join(sorted(node.name for node in system.unknowns))
+            raise ValueError(
+                f"symbolic_solution needs an analytic steady state, but these values have none: {names}. Add them to "
+                f"the steady state block of the GCN file."
+            )
+        steady_state_graphs = dict(zip(self.ss_tensors(), system.steady_state, strict=True))
+
+        linearization_kwargs = {
+            "log_linearize": log_linearize,
+            "not_loglin_variables": not_loglin_variables,
+            "loglin_negative_ss": loglin_negative_ss,
+            "verbose": verbose,
+        }
+        jacobians, *_ = self.symbolic_linearization(**linearization_kwargs)
+        A, B, C, D = graph_replace(jacobians, steady_state_graphs, strict=False)
+        if solver == "gensys":
+            T, R, _ = gensys_pt(A, B, C, D)
+        else:
+            T, R = cycle_reduction_pt(A, B, C, D)
+
+        # The solvers return T and R in decision-rule variable order, the basis of A, B and C.
+        ghx = T[:, self.dr_order.lag_positions]
+        ghu = R
+        ghxx = ghxu = ghuu = ghs2_operator = None
+        if order == 2:
+            derivatives, _ = self.second_order_derivative_terms(**linearization_kwargs)
+            hessian = graph_replace(
+                derivatives.hessian,
+                {derivatives.ghx: ghx, derivatives.ghu: ghu} | steady_state_graphs,
+                strict=False,
+            )
+            ghxx, ghxu, ghuu, ghs2_operator = solve_second_order(
+                jacobians=[A, B, C, D], composition_hessian=hessian, ghx=ghx, ghu=ghu, dr_order=self.dr_order
+            )
+
+        n_variables = len(self.variables)
+        steady_state = pt.stack(system.steady_state[:n_variables])
+        second_order_terms = [term for term in (ghxx, ghxu, ghuu, ghs2_operator) if term is not None]
+        outputs = [ghx, ghu, steady_state, *second_order_terms]
+        parameters = {node.name: node for node in explicit_graph_inputs(outputs) if node.name is not None}
+        loglin_names = {
+            variable.base_name
+            for variable in self._resolve_loglin_variables(
+                log_linearize=log_linearize,
+                not_loglin_variables=not_loglin_variables,
+                steady_state=None,
+                loglin_negative_ss=loglin_negative_ss,
+                verbose=False,
+            )
+        }
+
+        return SymbolicPerturbationSolution(
+            ghx=ghx,
+            ghu=ghu,
+            ghxx=ghxx,
+            ghxu=ghxu,
+            ghuu=ghuu,
+            ghs2_operator=ghs2_operator,
+            steady_state=steady_state,
+            parameters=parameters,
+            log_linearized=np.array([variable.base_name in loglin_names for variable in self.variables]),
+            variable_names=[variable.base_name for variable in self.variables],
+            shock_names=[shock.base_name for shock in self.shocks],
+            dr_order=self.dr_order,
+        )
 
     def _resolve_loglin_variables(
         self,

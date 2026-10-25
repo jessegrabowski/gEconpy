@@ -2,6 +2,8 @@ from dataclasses import dataclass, fields
 
 import numpy as np
 
+from pytensor.tensor.variable import TensorVariable
+
 from gEconpy.model.perturbation import DROrder
 
 
@@ -195,3 +197,53 @@ class SecondOrderPerturbationSolution(FirstOrderPerturbationSolution):
             Risk correction of every variable, of shape ``(n_variables,)``, in ``dr_order.var_order``.
         """
         return self.ghs2_operator @ np.asarray(shock_cov, dtype=float).ravel()
+
+
+@dataclass(frozen=True, eq=False)
+class SymbolicPerturbationSolution:
+    """
+    Perturbation solution of a DSGE model as PyTensor graphs of its free parameters.
+
+    The coefficients follow :class:`FirstOrderPerturbationSolution` and :class:`SecondOrderPerturbationSolution`,
+    with rows in decision-rule order, but each is a graph that ``parameters`` feed.
+
+    Attributes
+    ----------
+    ghx : TensorVariable
+        Response of every variable to the lagged state variables, of shape ``(n_variables, n_state_variables)``.
+    ghu : TensorVariable
+        Response of every variable to the current shocks, of shape ``(n_variables, n_shocks)``.
+    ghxx : TensorVariable or None
+        Second derivative with respect to the states. None for a first-order solution.
+    ghxu : TensorVariable or None
+        Cross derivative with respect to the states and the shocks. None for a first-order solution.
+    ghuu : TensorVariable or None
+        Second derivative with respect to the shocks. None for a first-order solution.
+    ghs2_operator : TensorVariable or None
+        Matrix mapping the vectorized shock covariance to the risk correction. None for a first-order solution.
+    steady_state : TensorVariable
+        Steady-state value of every variable, in model order.
+    parameters : dict of str to TensorVariable
+        The free parameter inputs of the graphs, keyed by name.
+    log_linearized : ndarray of bool
+        Whether each variable, in model order, was log-linearized.
+    variable_names : list of str
+        Variable names in model order.
+    shock_names : list of str
+        Shock names in model order.
+    dr_order : DROrder
+        Decision-rule ordering of the model.
+    """
+
+    ghx: TensorVariable
+    ghu: TensorVariable
+    ghxx: TensorVariable | None
+    ghxu: TensorVariable | None
+    ghuu: TensorVariable | None
+    ghs2_operator: TensorVariable | None
+    steady_state: TensorVariable
+    parameters: dict[str, TensorVariable]
+    log_linearized: np.ndarray
+    variable_names: list[str]
+    shock_names: list[str]
+    dr_order: DROrder

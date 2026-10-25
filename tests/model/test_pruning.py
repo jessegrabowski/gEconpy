@@ -1,4 +1,5 @@
 import numpy as np
+import pytensor
 import pytest
 
 from numpy.testing import assert_allclose
@@ -37,6 +38,35 @@ def test_pruned_path_without_second_order_terms_is_the_first_order_path():
 
     expected = _simulate_linear_system(solution.T, solution.R, shocks)
     assert_allclose(deviations[..., solution.dr_order.inv_var_order], expected, atol=1e-14)
+
+
+def test_pruned_path_from_a_later_state_continues_the_path_from_the_steady_state():
+    solution = load_and_cache_model("one_block_1_ss_2shock.gcn").solve_model(order=2, verbose=False)
+    shocks = np.random.default_rng(0).normal(scale=0.01, size=(6, 2))
+    ghs2 = solution.ghs2(np.array([[1e-4, 2e-5], [2e-5, 4e-4]]))
+    inputs = {
+        "ghx": solution.ghx,
+        "ghu": solution.ghu,
+        "ghxx": solution.ghxx,
+        "ghxu": solution.ghxu,
+        "ghuu": solution.ghuu,
+        "ghs2": ghs2,
+        "state_positions": solution.dr_order.lag_positions,
+    }
+
+    # From the steady state, one shock leaves only its own first- and second-order effects.
+    first_order = solution.ghu @ shocks[0]
+    second_order = 0.5 * ghs2 + 0.5 * np.einsum("nij,i,j->n", solution.ghuu, shocks[0], shocks[0])
+    continued = pruned_second_order_path(
+        **inputs,
+        shocks=shocks[1:],
+        initial_first_order_states=first_order[solution.dr_order.lag_positions],
+        initial_second_order_states=second_order[solution.dr_order.lag_positions],
+    )
+    full_path = pruned_second_order_path(**inputs, shocks=shocks)
+
+    continued, full_path = pytensor.function([], [continued, full_path])()
+    assert_allclose(continued, full_path[1:], atol=1e-14)
 
 
 @pytest.mark.parametrize(

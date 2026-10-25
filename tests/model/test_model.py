@@ -885,6 +885,32 @@ def test_second_order_terms_of_a_linear_model_solution_are_zero():
         assert_allclose(term, 0)
 
 
+@pytest.mark.parametrize("solver", ["cycle_reduction", "gensys"])
+def test_symbolic_solution_evaluates_to_the_numerical_solution(solver):
+    model = load_and_cache_model("one_block_1_ss_2shock.gcn")
+    parameters = model.parameters(beta=0.95)
+    symbolic = model.symbolic_solution(order=2, solver=solver, verbose=False)
+    numerical = model.solve_model(
+        order=2, solver=solver, verbose=False, steady_state_kwargs={"progressbar": False}, beta=0.95
+    )
+
+    inputs = list(symbolic.parameters.values())
+    names = ["ghx", "ghu", "ghxx", "ghxu", "ghuu", "ghs2_operator", "steady_state"]
+    evaluate = pytensor.function(inputs, [getattr(symbolic, name) for name in names])
+    values = evaluate(*[parameters[node.name] for node in inputs])
+
+    for name, value in zip(names, values, strict=True):
+        assert_allclose(value, getattr(numerical, name), atol=1e-9, err_msg=name)
+    assert_allclose(symbolic.log_linearized, numerical.log_linearized)
+
+
+def test_symbolic_solution_needs_an_analytic_steady_state():
+    model = load_and_cache_model("one_block_1.gcn")
+
+    with pytest.raises(ValueError, match="needs an analytic steady state"):
+        model.symbolic_solution(verbose=False)
+
+
 @pytest.mark.parametrize(
     ("gcn_file", "solve_kwargs", "error", "match"),
     [

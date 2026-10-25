@@ -24,6 +24,7 @@ dependencies:
   - sphinx-copybutton
   - sphinx-design
   - sphinx-codeautolink
+  - pybtex
   - pydata-sphinx-theme
   - watermark
   - -e .

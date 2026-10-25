@@ -1,9 +1,6 @@
-import inspect
 import logging
 import warnings
 
-from collections.abc import Callable
-from functools import wraps
 from types import EllipsisType
 from typing import Literal
 
@@ -20,13 +17,20 @@ from pymc.model.transform.optimization import freeze_dims_and_data
 from pymc.pytensorf import rewrite_pregrad
 from pymc.util import RandomState
 from pymc_extras.statespace.core import dummy_graph
-from pymc_extras.statespace.core.fit_recovery import coords_from_idata, dims_from_idata, verify_group
+from pymc_extras.statespace.core.fit_recovery import (
+    coords_from_idata,
+    data_from_idata,
+    dims_from_idata,
+    exog_from_idata,
+    verify_group,
+)
 from pymc_extras.statespace.core.irf import DEFAULT_IRF_STEPS, _orthogonal_impulse_matrix, _shock_permutation
 from pymc_extras.statespace.core.properties import Coord, Parameter, Shock, State, SymbolicVariable
 from pymc_extras.statespace.core.statespace import PyMCStateSpace
 from pymc_extras.statespace.utils.constants import (
     ALL_STATE_AUX_DIM,
     ALL_STATE_DIM,
+    FILTER_OUTPUT_TYPES,
     JITTER_DEFAULT,
     MISSING_FILL,
     OBS_STATE_AUX_DIM,
@@ -69,24 +73,6 @@ STEADY_STATE_DIM = "steady_state_variable"
 STRUCTURAL_SHOCK_AUX_DIM = "structural_shock_aux"
 VARIABLE_DIM = "variable"
 IMPULSE_DIM = "impulse"
-
-
-def _first_order_only(method: Callable) -> Callable:
-    """Wrap a :class:`PyMCStateSpace` method so that it raises for a second-order model, and say so in its docstring."""
-
-    @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        self._raise_if_pruned(method.__name__)
-        return method(self, *args, **kwargs)
-
-    # pymc-extras' docstrings use cross-reference targets this project's docs cannot resolve, so only the summary is
-    # kept.
-    summary = inspect.cleandoc(method.__doc__ or "").partition("\n\n")[0]
-    wrapper.__doc__ = (
-        f"{summary}\n\nCalls ``{method.__name__}`` of :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace`, "
-        f"which documents the arguments. Raises NotImplementedError for a second-order model."
-    )
-    return wrapper
 
 
 class DSGEStateSpace(PyMCStateSpace):
@@ -1498,7 +1484,8 @@ class DSGEStateSpace(PyMCStateSpace):
         steady state at that draw calls for. Cumulator and observation-lag states have no level, so the ``state``
         dimension of the result holds the model variables only. A variable without a ``state`` dimension passes
         through unchanged. At order 2 the model variables are on the ``variable`` dimension, as the unconditional
-        samplers and impulse responses return them, and filtered or smoothed states raise NotImplementedError.
+        samplers, forecasts and impulse responses return them, and filtered or smoothed states raise
+        NotImplementedError.
 
         Parameters
         ----------
@@ -1551,8 +1538,8 @@ class DSGEStateSpace(PyMCStateSpace):
             if self.order == 2 and ALL_STATE_DIM in states.dims:
                 raise NotImplementedError(
                     f"At order 2, deviations_to_levels takes model variables over the {VARIABLE_DIM!r} dimension, "
-                    f"as the unconditional samplers and impulse responses return them. Filtered and smoothed states "
-                    f"are parts of the pruned state, which have no level of their own."
+                    f"as the unconditional samplers, forecasts and impulse responses return them. Filtered and "
+                    f"smoothed states are parts of the pruned state, which have no level of their own."
                 )
             if variable_dim not in states.dims:
                 return states
@@ -1894,29 +1881,123 @@ class DSGEStateSpace(PyMCStateSpace):
             **kwargs,
         )
 
-    forecast = _first_order_only(PyMCStateSpace.forecast)
+    def forecast(
+        self,
+        idata: xr.DataTree,
+        start: int | pd.Timestamp | None = None,
+        periods: int | None = None,
+        end: int | pd.Timestamp | None = None,
+        scenario: pd.DataFrame | np.ndarray | dict[str, pd.DataFrame | np.ndarray] | None = None,
+        use_scenario_index: bool = False,
+        filter_output: Literal["filtered", "predicted", "smoothed"] = "smoothed",
+        random_seed: RandomState | None = None,
+        verbose: bool = True,
+        mvn_method: Literal["cholesky", "eigh", "svd"] = "svd",
+        group: str = "posterior",
+        **kwargs,
+    ) -> xr.DataTree:
+        """
+        Forecast the model from the state the filter output implies at ``start``, at each parameter draw.
 
-    def _raise_if_pruned(self, method: str) -> None:
-        # Forecasting starts from the filtered state, and the pruned path cannot yet start anywhere but the steady
-        # state.
-        if self.order == 2:
-            raise NotImplementedError(f"{method} is not supported at order 2.")
+        At first order this is ``forecast`` of :class:`~pymc_extras.statespace.core.statespace.PyMCStateSpace`. At
+        second order every forecast draws the first- and second-order parts of the state variables at ``start`` from
+        the ``filter_output`` mean and covariance, and then follows the pruned second-order solution, driven by
+        structural shocks drawn from their covariance.
 
-    def _in_model(self, pymc_model: pm.Model, graphs: list[pt.TensorVariable]) -> list[pt.TensorVariable]:
-        """Replace the parameter placeholders in ``graphs`` with ``pymc_model``'s variables of the same names."""
+        Parameters
+        ----------
+        idata : DataTree
+            Inference data with parameter draws in ``group`` and the ``observed_data`` and ``constant_data`` groups of
+            the fit.
+        start : int or pandas.Timestamp, optional
+            Period to forecast from, which must be in the data. With a datetime index an integer is a position.
+            Defaults to the last period of the data.
+        periods : int, optional
+            Number of periods to forecast. Pass ``periods`` or ``end``.
+        end : int or pandas.Timestamp, optional
+            Last period to forecast. Pass ``periods`` or ``end``.
+        scenario : DataFrame, ndarray or dict, optional
+            Exogenous data over the forecast periods. Not supported at second order. Defaults to None.
+        use_scenario_index : bool, optional
+            Take the forecast periods from the index of ``scenario``. Defaults to False.
+        filter_output : {"filtered", "predicted", "smoothed"}, optional
+            Kalman filter output whose mean and covariance at ``start`` the forecasts start from. Defaults to
+            ``"smoothed"``.
+        random_seed : int or Generator, optional
+            Seed for the forecast draws. Defaults to None.
+        verbose : bool, optional
+            Log warnings about the forecast arguments, such as a ``start`` taken from the data. Defaults to True.
+        mvn_method : {"cholesky", "eigh", "svd"}, optional
+            Factorization used to draw multivariate normal states, shocks and measurement errors. Defaults to
+            ``"svd"``.
+        group : str, optional
+            Group of ``idata`` holding the parameter draws. Defaults to ``"posterior"``.
+        **kwargs
+            Passed to :func:`pymc.sample_posterior_predictive`.
+
+        Returns
+        -------
+        forecasts : DataTree
+            ``forecast_latent`` and ``forecast_observed`` over the periods after ``start``. At second order
+            ``forecast_latent`` is the deviation of every model variable from the steady state, over the ``variable``
+            dimension.
+        """
+        return super().forecast(
+            idata,
+            start=start,
+            periods=periods,
+            end=end,
+            scenario=scenario,
+            use_scenario_index=use_scenario_index,
+            filter_output=filter_output,
+            random_seed=random_seed,
+            verbose=verbose,
+            mvn_method=mvn_method,
+            group=group,
+            **kwargs,
+        )
+
+    def _in_model(
+        self,
+        pymc_model: pm.Model,
+        graphs: list[pt.TensorVariable],
+        extra_replacements: dict[pt.TensorVariable, pt.TensorVariable] | None = None,
+    ) -> list[pt.TensorVariable]:
+        """
+        Replace the parameter placeholders in ``graphs`` with ``pymc_model``'s variables of the same names.
+
+        ``extra_replacements`` are applied in the same pass.
+        """
         replacements = {
             variable: pymc_model[name]
             for name, variable in self._name_to_variable.items()
             if name in pymc_model.named_vars
         }
-        return graph_replace(graphs, replacements, strict=False)
+        return graph_replace(graphs, replacements | (extra_replacements or {}), strict=False)
 
     def _pruned_deviations(
-        self, pymc_model: pm.Model, shocks: pt.TensorVariable, include_risk_correction: bool
+        self,
+        pymc_model: pm.Model,
+        shocks: pt.TensorVariable,
+        include_risk_correction: bool,
+        initial_first_order_states: pt.TensorVariable | None = None,
+        initial_second_order_states: pt.TensorVariable | None = None,
     ) -> pt.TensorVariable:
-        """Run ``(..., n_periods, n_shocks)`` shocks through the pruned policy from the steady state, in model order."""
+        """
+        Run ``(..., n_periods, n_shocks)`` shocks through the pruned policy, in model order.
+
+        The path starts from the given parts of the state variables, in decision-rule order, or from the steady state.
+        """
         # The path's scan has to be built on the placeholders. Built on PyMC variables, it would take their random
-        # generators into its inner graph, which PyMC cannot sample.
+        # generators into its inner graph, which PyMC cannot sample. The shocks and initial states enter as stand-ins
+        # too, because graph_replace can rebuild a random variable that sits between the replaced placeholders and
+        # the output, and the rebuilt copy is no longer the model's variable.
+        inputs = {
+            "shocks": shocks,
+            "initial_first_order_states": initial_first_order_states,
+            "initial_second_order_states": initial_second_order_states,
+        }
+        stand_ins = {name: value.type() for name, value in inputs.items() if value is not None}
         ghx, ghu = self._first_order_policy_graph
         terms = self._second_order_terms_graph
         if include_risk_correction:
@@ -1930,10 +2011,14 @@ class DSGEStateSpace(PyMCStateSpace):
             ghxu=terms.ghxu,
             ghuu=terms.ghuu,
             ghs2=ghs2,
-            shocks=shocks,
             state_positions=self._dr_order.lag_positions,
+            **stand_ins,
         )
-        (deviations,) = self._in_model(pymc_model, [deviations[..., self._dr_order.inv_var_order]])
+        (deviations,) = self._in_model(
+            pymc_model,
+            [deviations[..., self._dr_order.inv_var_order]],
+            extra_replacements={stand_in: inputs[name] for name, stand_in in stand_ins.items()},
+        )
         return deviations
 
     def _sample_pruned_trajectories(
@@ -1983,19 +2068,14 @@ class DSGEStateSpace(PyMCStateSpace):
             shocks_by_period = pt.concatenate([pt.zeros((1, n_shocks)), shocks], axis=0)
             pm.Deterministic(f"{group}_shocks", shocks_by_period, dims=(TIME_DIM, STRUCTURAL_SHOCK_DIM))
 
-            # Each observed variable loads equally on its first- and second-order parts, so the first-order columns
-            # of the design matrix map the variables to the observations.
-            observed_mean = obs_intercept + latent @ pt.as_tensor(design)[:, : len(self.variables)].T
-            if self.measurement_error:
-                pm.MvNormal(
-                    f"{group}_observed",
-                    mu=observed_mean,
-                    cov=obs_cov,
-                    dims=(TIME_DIM, OBS_STATE_DIM),
-                    method=mvn_method,
-                )
-            else:
-                pm.Deterministic(f"{group}_observed", observed_mean, dims=(TIME_DIM, OBS_STATE_DIM))
+            self._observe_variables(
+                f"{group}_observed",
+                latent,
+                obs_intercept=obs_intercept,
+                design=design,
+                obs_cov=obs_cov,
+                mvn_method=mvn_method,
+            )
 
         # The dummy graph's Flat parameters carry initial values that sample_posterior_predictive cannot use.
         forward_model.rvs_to_initial_values = dict.fromkeys(forward_model.rvs_to_initial_values)
@@ -2086,6 +2166,109 @@ class DSGEStateSpace(PyMCStateSpace):
                 idata[group], var_names=["irf"], random_seed=random_seed, compile_kwargs=compile_kwargs, **kwargs
             )
         return irf_idata.posterior_predictive
+
+    def _observe_variables(
+        self,
+        name: str,
+        variables: pt.TensorVariable,
+        obs_intercept: pt.TensorVariable,
+        design: pt.TensorVariable,
+        obs_cov: pt.TensorVariable,
+        mvn_method: Literal["cholesky", "eigh", "svd"],
+    ) -> None:
+        """Register observations of a ``(time, variable)`` path of model variables as ``name``."""
+        # Each observed variable loads equally on its first- and second-order parts, so the first-order columns of the
+        # design matrix map the variables to the observations.
+        observed_mean = obs_intercept + variables @ pt.as_tensor(design)[:, : len(self.variables)].T
+        if self.measurement_error:
+            pm.MvNormal(name, mu=observed_mean, cov=obs_cov, dims=(TIME_DIM, OBS_STATE_DIM), method=mvn_method)
+        else:
+            pm.Deterministic(name, observed_mean, dims=(TIME_DIM, OBS_STATE_DIM))
+
+    def _build_forecast_model(
+        self,
+        idata: xr.DataTree,
+        group: str,
+        time_index: pd.Index,
+        t0: int | pd.Timestamp,
+        forecast_index: pd.Index,
+        scenario: dict | None,
+        filter_output: Literal["filtered", "predicted", "smoothed"],
+        mvn_method: Literal["cholesky", "eigh", "svd"],
+    ) -> pm.Model:
+        """Build the model :meth:`forecast` samples from, which follows the pruned path at second order."""
+        if self.order == 1:
+            return super()._build_forecast_model(
+                idata=idata,
+                group=group,
+                time_index=time_index,
+                t0=t0,
+                forecast_index=forecast_index,
+                scenario=scenario,
+                filter_output=filter_output,
+                mvn_method=mvn_method,
+            )
+
+        if scenario is not None:
+            raise NotImplementedError("Scenario forecasts are not supported at order 2.")
+
+        fit_coords = coords_from_idata(self, idata, "observed_data")
+        fit_dims = dims_from_idata(self, idata, group)
+        coords = {**fit_coords, "data_time": time_index, TIME_DIM: forecast_index, VARIABLE_DIM: self._orig_state_names}
+        n_shocks = len(self.shocks)
+        t0_position = np.flatnonzero(time_index == t0)[0]
+
+        # The pruned state leads with the first-order parts of the variables, then their second-order parts, both in
+        # model order. The products of the first-order states that follow are rebuilt by the path from the first-order
+        # part.
+        state_rows = self._dr_order.var_order[self._dr_order.lag_positions]
+        part_rows = np.concatenate([state_rows, len(self.variables) + state_rows])
+        n_states = len(state_rows)
+
+        with pm.Model(coords=coords) as forecast_model:
+            matrices, filter_outputs = self._kalman_filter_outputs_from_dummy_graph(
+                data_from_idata(idata, "constant_data"),
+                coords=fit_coords,
+                dims=fit_dims,
+                exog=exog_from_idata(self, idata, "constant_data"),
+                data_dims=["data_time", OBS_STATE_DIM],
+            )
+            _, _, _, obs_intercept, _, design, _, obs_cov, _ = matrices
+            state_mean, state_cov = filter_outputs[FILTER_OUTPUT_TYPES.index(filter_output)]
+
+            initial_mean = pm.Deterministic("forecast_initial_state_mean", state_mean[t0_position, part_rows])
+            initial_parts = pm.MvNormal(
+                "forecast_initial_state",
+                mu=initial_mean,
+                cov=state_cov[t0_position][part_rows][:, part_rows],
+                method=mvn_method,
+            )
+            (shock_cov,) = self._in_model(forecast_model, [self._shock_cov_graph])
+            shocks = pm.MvNormal(
+                "forecast_shocks",
+                mu=pt.zeros(n_shocks),
+                cov=shock_cov,
+                shape=(len(forecast_index), n_shocks),
+                method=mvn_method,
+            )
+            latent = self._pruned_deviations(
+                forecast_model,
+                shocks,
+                include_risk_correction=True,
+                initial_first_order_states=initial_parts[:n_states],
+                initial_second_order_states=initial_parts[n_states:],
+            )
+            pm.Deterministic("forecast_latent", latent, dims=(TIME_DIM, VARIABLE_DIM))
+            self._observe_variables(
+                "forecast_observed",
+                latent,
+                obs_intercept=obs_intercept,
+                design=design,
+                obs_cov=obs_cov,
+                mvn_method=mvn_method,
+            )
+
+        return forecast_model
 
     def to_pymc(self, exclude_priors: list[str] | None = None) -> None:
         """
