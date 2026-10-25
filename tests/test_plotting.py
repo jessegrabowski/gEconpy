@@ -762,8 +762,6 @@ def test_plot_acf_forest_axis_count(posterior_acf):
 
 
 def test_plot_acf_intervals_use_sample_dims_and_skip_nan_draws(posterior_acf):
-    # Regression: the interval sticks ignored sample_dims (raising for any dimension other than chain/draw) and a
-    # single NaN draw turned that lag's interval into NaN.
     samples = posterior_acf.stack(sample=["chain", "draw"]).drop_vars(["sample", "chain", "draw"])
     samples[{"lag": 1, "variable": 0, "variable_aux": 0, "sample": 0}] = np.nan
 
