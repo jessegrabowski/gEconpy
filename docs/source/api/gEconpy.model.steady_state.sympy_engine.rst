@@ -3,6 +3,12 @@ gEconpy.model.steady_state.sympy_engine
 
 .. currentmodule:: gEconpy.model.steady_state.sympy_engine
 
+.. rubric:: Classes
+
+.. autosummary::
+
+    SteadyStateSolve
+
 .. rubric:: Functions
 
 .. autosummary::
@@ -14,5 +20,5 @@ gEconpy.model.steady_state.sympy_engine
     system_to_steady_state
 
 .. automodule:: gEconpy.model.steady_state.sympy_engine
-    :members: make_steady_state_shock_dict, propagate_steady_state_through_identities, resubstitute_steady_state, simplify_provided_ss_equations, system_to_steady_state
+    :members: SteadyStateSolve, make_steady_state_shock_dict, propagate_steady_state_through_identities, resubstitute_steady_state, simplify_provided_ss_equations, system_to_steady_state
     :undoc-members:

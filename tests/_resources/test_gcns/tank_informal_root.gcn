@@ -1,0 +1,315 @@
+# Two-agent New Keynesian model with an informal sector.
+#
+# Ricardian households own capital and the formal firms and work in the formal sector. Hand-to-mouth households
+# own the informal firms and split their hours between formal and informal work, which they treat as imperfect
+# substitutes. Both households have GHH preferences, so hours depend only on wages. The formal wage follows from the
+# rental rate and the markup, as in the RBC. The informal wage clears the informal labor market, and that condition
+# has no closed form because hand-to-mouth hours depend on both wages through a CES wage index.
+#
+# The steady state block writes every other value as a formula in the informal wage, and solves the informal firm's
+# labor demand condition for it with a root call.
+
+symbols
+{
+    TC[] { negative = True; };
+    TC_I[] { negative = True; };
+    TFP[] { positive = True; };
+    A_I[] { positive = True; };
+    pi[] { positive = True; };
+    pi_star[] { positive = True; };
+    r[] { positive = True; };
+    r_G[] { positive = True; };
+    mc[] { positive = True; };
+    w_F[] { positive = True; };
+    w_I[] { positive = True; };
+    Y[] { positive = True; };
+    Y_F[] { positive = True; };
+    Y_I[] { positive = True; };
+    C[] { positive = True; };
+    C_R[] { positive = True; };
+    C_H[] { positive = True; };
+    I[] { positive = True; };
+    I_R[] { positive = True; };
+    K[] { positive = True; };
+    K_R[] { positive = True; };
+    L_F[] { positive = True; };
+    L_I[] { positive = True; };
+    L_R[] { positive = True; };
+    L_HF[] { positive = True; };
+    L_HI[] { positive = True; };
+    alpha { positive = True; };
+    beta { positive = True; };
+    delta { positive = True; };
+    omega { positive = True; };
+    sigma_C { positive = True; };
+    sigma_L { positive = True; };
+    nu { positive = True; };
+    gamma_I { positive = True; };
+    A_I_bar { positive = True; };
+    psi_p { positive = True; };
+};
+
+tryreduce
+{
+    U_R[], U_H[], TC[], TC_I[];
+};
+
+block Steady_State
+{
+    definitions
+    {
+        W_H[ss] = (w_F[ss] ^ (1 + nu) + w_I[ss] ^ (1 + nu)) ^ (1 / (1 + nu));
+        L_H[ss] = W_H[ss] ^ (1 / sigma_L);
+    };
+
+    identities
+    {
+        TFP[ss] = 1;
+        A_I[ss] = A_I_bar;
+        pi[ss] = 1;
+        pi_star[ss] = 1;
+        B_R[ss] = 0;
+
+        r[ss] = 1 / beta - (1 - delta);
+        r_G[ss] = 1 / beta;
+
+        w_I[ss] = root(gamma_I * Y_I[ss] / L_I[ss] - w_I[ss], method=newton, x0=0.7);
+
+        mc[ss] = 1 / (1 + psi_p);
+        w_F[ss] = (1 - alpha) * mc[ss] ^ (1 / (1 - alpha)) * (alpha / r[ss]) ^ (alpha / (1 - alpha));
+        L_R[ss] = w_F[ss] ^ (1 / sigma_L);
+
+        L_HF[ss] = (w_F[ss] / W_H[ss]) ^ nu * L_H[ss];
+        L_HI[ss] = (w_I[ss] / W_H[ss]) ^ nu * L_H[ss];
+        L_I[ss] = (1 - omega) * L_HI[ss];
+        Y_I[ss] = A_I[ss] * L_I[ss] ^ gamma_I;
+        Pi_I[ss] = Y_I[ss] - w_I[ss] * L_I[ss];
+        C_H[ss] = w_F[ss] * L_HF[ss] + w_I[ss] * L_HI[ss] + Pi_I[ss] / (1 - omega);
+
+        L_F[ss] = omega * L_R[ss] + (1 - omega) * L_HF[ss];
+        K[ss] = (alpha * mc[ss] / r[ss]) ^ (1 / (1 - alpha)) * L_F[ss];
+        Y_F[ss] = K[ss] ^ alpha * L_F[ss] ^ (1 - alpha);
+        Div[ss] = Y_F[ss] - w_F[ss] * L_F[ss] - r[ss] * K[ss];
+        K_R[ss] = K[ss] / omega;
+        I_R[ss] = delta * K_R[ss];
+        I[ss] = omega * I_R[ss];
+        C_R[ss] = (r[ss] - delta) * K_R[ss] + w_F[ss] * L_R[ss] + Div[ss] / omega;
+        C[ss] = omega * C_R[ss] + (1 - omega) * C_H[ss];
+        Y[ss] = Y_F[ss] + Y_I[ss];
+
+        lambda_R[ss] = (C_R[ss] - L_R[ss] ^ (1 + sigma_L) / (1 + sigma_L)) ^ (-sigma_C);
+        q_R[ss] = lambda_R[ss];
+        lambda_H[ss] = (C_H[ss] - L_H[ss] ^ (1 + sigma_L) / (1 + sigma_L)) ^ (-sigma_C);
+        LHS[ss] = lambda_R[ss] * Y_F[ss] * pi_star[ss] / (1 - beta * eta_p);
+        RHS[ss] = LHS[ss] / (1 + psi_p);
+    };
+};
+
+block Ricardian_Household
+{
+    definitions
+    {
+        u_R[] = (C_R[] - L_R[] ^ (1 + sigma_L) / (1 + sigma_L)) ^ (1 - sigma_C) / (1 - sigma_C);
+    };
+
+    controls
+    {
+        C_R[], L_R[], I_R[], K_R[], B_R[];
+    };
+
+    objective
+    {
+        U_R[] = u_R[] + beta * E[][U_R[1]];
+    };
+
+    constraints
+    {
+        @exclude
+        C_R[] + I_R[] + B_R[] / r_G[] = r[] * K_R[-1] + w_F[] * L_R[] + B_R[-1] / pi[] + Div[] / omega : lambda_R[];
+
+        K_R[] = (1 - delta) * K_R[-1] + I_R[] : q_R[];
+    };
+
+    calibration
+    {
+        beta = 0.99;
+        delta = 0.025;
+        sigma_C = 1.5;
+        sigma_L = 2.0;
+    };
+};
+
+block Hand_to_Mouth_Household
+{
+    definitions
+    {
+        L_H[] = (L_HF[] ^ ((1 + nu) / nu) + L_HI[] ^ ((1 + nu) / nu)) ^ (nu / (1 + nu));
+        u_H[] = (C_H[] - L_H[] ^ (1 + sigma_L) / (1 + sigma_L)) ^ (1 - sigma_C) / (1 - sigma_C);
+    };
+
+    controls
+    {
+        C_H[], L_HF[], L_HI[];
+    };
+
+    objective
+    {
+        U_H[] = u_H[] + beta * E[][U_H[1]];
+    };
+
+    constraints
+    {
+        C_H[] = w_F[] * L_HF[] + w_I[] * L_HI[] + Pi_I[] / (1 - omega) : lambda_H[];
+    };
+
+    calibration
+    {
+        # Elasticity of substitution between formal and informal hours
+        nu = 1.0;
+    };
+};
+
+block Formal_Firm
+{
+    controls
+    {
+        K[-1], L_F[];
+    };
+
+    objective
+    {
+        TC[] = -(w_F[] * L_F[] + r[] * K[-1]);
+    };
+
+    constraints
+    {
+        Y_F[] = TFP[] * K[-1] ^ alpha * L_F[] ^ (1 - alpha) : mc[];
+    };
+
+    identities
+    {
+        Div[] = Y_F[] + TC[];
+    };
+
+    calibration
+    {
+        alpha = 0.35;
+    };
+};
+
+block Formal_Price_Setting
+{
+    identities
+    {
+        LHS[] = (1 + psi_p) * RHS[];
+
+        LHS[] = lambda_R[] * Y_F[] * pi_star[] +
+            beta * eta_p * E[][pi_star[] / pi_star[1] * pi[1] ^ (1 / psi_p) * LHS[1]];
+
+        RHS[] = lambda_R[] * mc[] * Y_F[] +
+            beta * eta_p * E[][pi[1] ^ ((1 + psi_p) / psi_p) * RHS[1]];
+
+        1 = eta_p * pi[] ^ (1 / psi_p) + (1 - eta_p) * pi_star[] ^ (-1 / psi_p);
+    };
+
+    calibration
+    {
+        psi_p = 0.2;
+        eta_p = 0.75;
+    };
+};
+
+block Informal_Firm
+{
+    controls
+    {
+        L_I[];
+    };
+
+    objective
+    {
+        TC_I[] = -(w_I[] * L_I[]);
+    };
+
+    constraints
+    {
+        Y_I[] = A_I[] * L_I[] ^ gamma_I : mc_I[];
+    };
+
+    identities
+    {
+        # Informal goods are a perfect substitute for formal goods and sell at flexible prices
+        mc_I[] = 1;
+        Pi_I[] = Y_I[] + TC_I[];
+    };
+
+    calibration
+    {
+        # Decreasing returns to informal labor
+        gamma_I = 0.7;
+    };
+};
+
+block Monetary_Policy
+{
+    identities
+    {
+        log(r_G[] / r_G[ss]) = gamma_R * log(r_G[-1] / r_G[ss]) +
+            (1 - gamma_R) * (gamma_pi * log(pi[]) + gamma_Y * log(Y[] / Y[-1])) +
+            epsilon_R[];
+    };
+
+    shocks
+    {
+        epsilon_R[];
+    };
+
+    calibration
+    {
+        gamma_R = 0.8;
+        gamma_pi = 1.5;
+        gamma_Y = 0.1;
+    };
+};
+
+block Exogenous_Processes
+{
+    identities
+    {
+        log(TFP[]) = rho_TFP * log(TFP[-1]) + epsilon_TFP[];
+        log(A_I[]) = (1 - rho_A_I) * log(A_I_bar) + rho_A_I * log(A_I[-1]) + epsilon_A_I[];
+    };
+
+    shocks
+    {
+        epsilon_TFP[], epsilon_A_I[];
+    };
+
+    calibration
+    {
+        rho_TFP = 0.95;
+        rho_A_I = 0.9;
+        A_I_bar = 0.6;
+    };
+};
+
+block Equilibrium
+{
+    identities
+    {
+        Y[] = Y_F[] + Y_I[];
+        Y[] = C[] + I[];
+        C[] = omega * C_R[] + (1 - omega) * C_H[];
+        I[] = omega * I_R[];
+        K[] = omega * K_R[];
+        L_F[] = omega * L_R[] + (1 - omega) * L_HF[];
+        L_I[] = (1 - omega) * L_HI[];
+        B_R[] = 0;
+    };
+
+    calibration
+    {
+        # Population share of Ricardian households
+        omega = 0.6;
+    };
+};

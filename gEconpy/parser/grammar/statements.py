@@ -1,3 +1,4 @@
+import math
 import operator
 
 from collections.abc import Callable
@@ -6,22 +7,38 @@ from typing import Any
 import pyparsing as pp
 
 from gEconpy.parser.ast import (
+    STEADY_STATE,
+    Expectation,
     GCNDistribution,
     GCNEquation,
     Node,
+    Number,
+    Operator,
+    Parameter,
+    SteadyStateSolverCall,
     Tag,
+    UnaryOp,
     Variable,
+    collect_nodes_of_type,
 )
 from gEconpy.parser.constants import (
     CONTROL_TAGS,
     EQUATION_TAGS,
+    INTERVAL_SOLVER_KEYWORDS,
     PRELIZ_DIST_WRAPPERS,
     PRELIZ_DISTS,
+    SOLVER_METHODS,
     VALUE_TAGS,
 )
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNParseFailure, ParseLocation
-from gEconpy.parser.grammar.expressions import EXPR, location_at, parse_time_index
+from gEconpy.parser.grammar.expressions import (
+    EXPR,
+    SOLVER_NAME,
+    location_at,
+    misplaced_solver_call_fail,
+    parse_time_index,
+)
 from gEconpy.parser.grammar.tokens import (
     ARROW,
     COLON,
@@ -38,7 +55,7 @@ from gEconpy.parser.grammar.tokens import (
     TILDE,
     TIME_INDEX_CONTENT,
 )
-from gEconpy.parser.suggestions import suggest_distribution, suggest_wrapper
+from gEconpy.parser.suggestions import find_similar_names, suggest_distribution, suggest_wrapper
 
 
 def parse_equation(text: str) -> GCNEquation:
@@ -255,11 +272,122 @@ def _brace_before_semicolon_fail(s: str, loc: int, _toks: pp.ParseResults) -> No
 _UNMATCHED_CLOSE = pp.Regex(r"[)\]]").copy().set_parse_action(_unmatched_close_fail)
 _BRACE_BEFORE_SEMICOLON = pp.Literal("}").copy().set_parse_action(_brace_before_semicolon_fail)
 
+
+def _literal_number(node: Node) -> float | None:
+    if isinstance(node, Number):
+        return node.value
+    if isinstance(node, UnaryOp) and node.op == Operator.NEG and isinstance(node.operand, Number):
+        return -node.operand.value
+    return None
+
+
+def _solver_keyword_value(
+    s: str, loc: int, call: str, keyword: str, value: Node | pp.ParseResults
+) -> float | tuple[float, float]:
+    if keyword in INTERVAL_SOLVER_KEYWORDS:
+        numbers = [_literal_number(node) for node in value] if isinstance(value, pp.ParseResults) else []
+        if len(numbers) != 2 or not all(number is not None and math.isfinite(number) for number in numbers):
+            message = f"'{keyword}' in '{call}' takes two finite numbers, as in '{keyword}=[0.1, 5]'"
+            raise GCNParseFailure(s, loc, message, code=ErrorCode.E025, found=keyword)
+        low, high = numbers
+        if low >= high:
+            message = f"'{keyword}' in '{call}' takes an interval whose first number is smaller than its second"
+            raise GCNParseFailure(s, loc, message, code=ErrorCode.E025, found=keyword)
+        return low, high
+
+    number = None if isinstance(value, pp.ParseResults) else _literal_number(value)
+    if number is None or not math.isfinite(number):
+        message = f"'{keyword}' in '{call}' takes a finite number, as in '{keyword}=1'"
+        raise GCNParseFailure(s, loc, message, code=ErrorCode.E025, found=keyword)
+    return number
+
+
+def _build_solver_call(s: str, loc: int, toks: pp.ParseResults) -> SteadyStateSolverCall:
+    name = toks.solver_name
+    call = f"{name}(...)"
+    methods = SOLVER_METHODS[name]
+
+    def fail(at: int, message: str, found: str, suggestions: list[str] | None = None) -> GCNParseFailure:
+        return GCNParseFailure(s, at, message, code=ErrorCode.E025, found=found, suggestions=suggestions)
+
+    # Each keyword keeps the offset it starts at, so an error about it points at the keyword rather than the call.
+    arguments: dict[str, tuple[int, Node | pp.ParseResults]] = {}
+    for argument in toks.solver_args:
+        if argument.arg_name in arguments:
+            raise fail(argument.arg_loc, f"'{argument.arg_name}' is given twice in '{call}'", argument.arg_name)
+        value = argument.arg_list if "arg_list" in argument else argument.arg_value
+        arguments[argument.arg_name] = (argument.arg_loc, value)
+
+    method_loc, method_value = arguments.pop("method", (loc, None))
+    if not isinstance(method_value, Parameter):
+        raise fail(method_loc, f"'{call}' takes a method name, as in 'method={next(iter(methods))}'", name)
+    method = method_value.name
+    if method not in methods:
+        raise fail(method_loc, f"Unknown {name} method '{method}'", method, find_similar_names(method, methods))
+
+    keyword, required = methods[method]
+    unexpected = sorted(arguments.keys() - {keyword})
+    if unexpected:
+        message = f"Method '{method}' of '{call}' takes '{keyword}', not '{unexpected[0]}'"
+        raise fail(arguments[unexpected[0]][0], message, unexpected[0])
+    if required and keyword not in arguments:
+        raise fail(method_loc, f"Method '{method}' of '{call}' needs '{keyword}'", method)
+
+    values = {key: _solver_keyword_value(s, at, call, key, value) for key, (at, value) in arguments.items()}
+    return SteadyStateSolverCall(
+        func_name=name,
+        expr=toks.solver_expr,
+        method=method,
+        **values,
+        location=location_at(s, loc, length=len(name)),
+    )
+
+
+def _positional_solver_argument_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
+    raise GCNParseFailure(
+        s,
+        loc,
+        "A solver call takes its expression first and every other argument by keyword, as in "
+        "'root(expr, method=brentq, bounds=[0.1, 5])'",
+        code=ErrorCode.E025,
+        found=",",
+    )
+
+
+def _trailing_solver_comma_fail(s: str, loc: int, _toks: pp.ParseResults) -> None:
+    raise GCNParseFailure(
+        s, loc, "A solver call ends without a comma after its last argument", code=ErrorCode.E025, found=")"
+    )
+
+
+_ARGUMENT_START = pp.Empty().set_parse_action(lambda _s, loc, _toks: loc)
+
+# Each alternative carries its own results name. A name on the alternation as a whole would wrap the matched node in a
+# ParseResults instead of returning the node.
+_SOLVER_LIST = pp.Group(pp.Suppress("[") + pp.Optional(pp.DelimitedList(EXPR)) + pp.Suppress("]"))
+_SOLVER_ARG = pp.Group(
+    _ARGUMENT_START("arg_loc") + IDENTIFIER("arg_name") + EQUALS + (_SOLVER_LIST("arg_list") | EXPR("arg_value"))
+)
+_POSITIONAL_SOLVER_ARG = EXPR.copy().set_parse_action(_positional_solver_argument_fail)
+_TRAILING_SOLVER_COMMA = pp.FollowedBy(pp.Literal(")")).set_parse_action(_trailing_solver_comma_fail)
+
+SOLVER_CALL = (
+    SOLVER_NAME("solver_name")
+    + LPAREN
+    - EXPR("solver_expr")
+    - pp.ZeroOrMore(COMMA + (_SOLVER_ARG | _TRAILING_SOLVER_COMMA | _POSITIONAL_SOLVER_ARG))("solver_args")
+    - RPAREN
+).set_parse_action(_build_solver_call)
+
+# The lookahead leaves the calibrating arrow '->' to the equation grammar instead of reading its '-' as an operator.
+_TRAILING_OPERATOR = pp.Regex(r"(?!->)[-+*/^]").set_parse_action(misplaced_solver_call_fail)
+_SOLVER_RHS = SOLVER_CALL("rhs") + pp.Optional(_TRAILING_OPERATOR)
+
 _VALID_EQUATION = (
     pp.ZeroOrMore(ANY_TAG)("tags")
     + EXPR("lhs")
     + pp.Suppress(pp.Literal("="))
-    + EXPR("rhs")
+    + (_SOLVER_RHS | EXPR("rhs"))
     + pp.Optional(_UNMATCHED_CLOSE | _BRACE_BEFORE_SEMICOLON)
     + pp.Optional(LAGRANGE_MULT)("lagrange")
     + pp.Optional(CALIBRATING_PARAM)("calibrating")
@@ -302,6 +430,16 @@ def _build_equation(s: str, loc: int, tokens: pp.ParseResults) -> GCNEquation:
     calibrating_param = tokens.calibrating[0] if tokens.calibrating else None
 
     lhs_location = _find_location_in_node(tokens.lhs) or location_at(s, loc, length=0)
+    if isinstance(tokens.rhs, SteadyStateSolverCall):
+        _check_solver_identity(
+            s,
+            _offset_of(s, lhs_location),
+            lhs=tokens.lhs,
+            call=tokens.rhs,
+            lagrange_name=lagrange_name,
+            calibrating_param=calibrating_param,
+        )
+
     line, col, source_line = lhs_location.line, lhs_location.column, lhs_location.source_line
 
     # A calibrating equation is underlined up to its arrow, a regular one through its semicolon.
@@ -326,6 +464,33 @@ def _build_equation(s: str, loc: int, tokens: pp.ParseResults) -> GCNEquation:
         annotations=annotations,
         location=location,
     )
+
+
+def _check_solver_identity(
+    s: str,
+    loc: int,
+    lhs: Node,
+    call: SteadyStateSolverCall,
+    lagrange_name: str | None,
+    calibrating_param: str | None,
+) -> None:
+    def fail(message: str) -> GCNParseFailure:
+        return GCNParseFailure(s, loc, message, code=ErrorCode.E025, found=str(lhs))
+
+    if not (isinstance(lhs, Variable) and lhs.time_index == STEADY_STATE):
+        raise fail(
+            f"The left-hand side of '{call.func_name}(...)' is the steady-state variable it solves for, such as 'w[ss]'"
+        )
+    if lagrange_name or calibrating_param:
+        raise fail(f"A '{call.func_name}(...)' identity takes no Lagrange multiplier and calibrates no parameter")
+    if collect_nodes_of_type(call.expr, Expectation):
+        raise fail(f"The expression of '{call.func_name}(...)' is a steady-state relation and takes no expectation")
+
+
+def _offset_of(s: str, location: ParseLocation) -> int:
+    """Return the character offset in ``s`` of a 1-based line and column."""
+    preceding_lines = s.split("\n")[: location.line - 1]
+    return sum(len(line) + 1 for line in preceding_lines) + location.column - 1
 
 
 EQUATION.set_parse_action(_build_equation)
@@ -486,6 +651,7 @@ __all__ = [
     "EQUATION",
     "LAGRANGE_MULT",
     "MISSING_TILDE",
+    "SOLVER_CALL",
     "TAG",
     "VARIABLE_LIST",
     "VARIABLE_REF",

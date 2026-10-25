@@ -1,0 +1,12 @@
+error[E025]: 'x0' in 'root(...)' takes a finite number, as in 'x0=1'. Found 'x0'
+  --> E025_keyword_takes_number.gcn:9:13
+     |
+   7 |             alpha * Y[ss] - w[ss],
+   8 |             method=newton,
+   9 |             x0=beta
+     |             ^^ invalid steady-state solver call
+  10 |         );
+  11 |     };
+     |
+   = note: Write the call as 'w[ss] = root(expr, method=brentq, bounds=[0.1, 5])'
+   = note: Give the keyword the method needs, as listed above

@@ -14,6 +14,7 @@ from gEconpy.parser.ast import (
     Number,
     Operator,
     Parameter,
+    SteadyStateSolverCall,
     T,
     Tag,
     TimeIndex,
@@ -108,6 +109,9 @@ class TestWithLocation:
             UnaryOp(op=Operator.NEG, operand=Parameter(name="a")),
             FunctionCall(func_name="log", args=(Parameter(name="a"), Parameter(name="b"))),
             Expectation(expr=Variable(name="U", time_index=T_PLUS_1)),
+            SteadyStateSolverCall(
+                func_name="root", expr=Variable(name="w", time_index=STEADY_STATE), method="brentq", bounds=(0.1, 5.0)
+            ),
             GCNEquation(
                 lhs=Variable(name="Y"),
                 rhs=Variable(name="C"),
@@ -135,6 +139,26 @@ class TestWithLocation:
         assert {k: v for k, v in vars(relocated).items() if k != "location"} == {
             k: v for k, v in vars(node).items() if k != "location"
         }
+
+
+class TestSteadyStateSolverCall:
+    @pytest.mark.parametrize(
+        "func_name, method, keywords, message",
+        [
+            ("root", "golden", {"bracket": (0.0, 1.0)}, "Unknown root method 'golden'"),
+            ("root", "brentq", {"x0": 1.0}, "takes 'bounds'"),
+            ("root", "brentq", {}, "takes 'bounds'"),
+            ("root", "brentq", {"bounds": (0.0, 1.0), "x0": 1.0}, "takes 'bounds'"),
+        ],
+        ids=["method_of_the_other_function", "wrong_keyword", "missing_required_keyword", "extra_keyword"],
+    )
+    def test_construction_rejects_what_the_parser_rejects(self, func_name, method, keywords, message):
+        with pytest.raises(ValueError, match=message):
+            SteadyStateSolverCall(func_name=func_name, expr=Parameter(name="a"), method=method, **keywords)
+
+    def test_an_optional_keyword_may_be_left_out(self):
+        call = SteadyStateSolverCall(func_name="minimize", expr=Parameter(name="a"), method="brent")
+        assert call.keywords == {}
 
 
 class TestExpressionNodes:

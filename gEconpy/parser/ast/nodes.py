@@ -1,9 +1,9 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
-from typing import Self, cast
+from typing import Literal, Self, cast
 
-from gEconpy.parser.constants import STEADY_STATE_BLOCK_KEYS
+from gEconpy.parser.constants import SOLVER_METHODS, STEADY_STATE_BLOCK_KEYS
 from gEconpy.parser.errors import ParseLocation
 
 
@@ -280,6 +280,55 @@ class Expectation(Node):
 
     def __str__(self) -> str:
         return f"E[][{self.expr}]"
+
+
+@dataclass(frozen=True)
+class SteadyStateSolverCall(Node):
+    """
+    A numeric solve for one steady-state variable, written as the right-hand side of a steady-state identity.
+
+    ``root(expr, ...)`` solves ``expr = 0`` and ``minimize(expr, ...)`` minimizes ``expr``, each over the variable on
+    the left-hand side, as in ``w[ss] = root(alpha * Y[ss] / L[ss] - w[ss], method=brentq, bounds=[0.1, 5])``.
+    """
+
+    func_name: Literal["root", "minimize"]
+    expr: Node
+    method: str
+    bounds: tuple[float, float] | None = None
+    bracket: tuple[float, float] | None = None
+    x0: float | None = None
+
+    def __post_init__(self) -> None:
+        methods = SOLVER_METHODS.get(self.func_name, {})
+        if self.method not in methods:
+            raise ValueError(f"Unknown {self.func_name} method '{self.method}'")
+
+        keyword, required = methods[self.method]
+        given = self.keywords.keys()
+        if given - {keyword} or (required and keyword not in given):
+            raise ValueError(f"Method '{self.method}' takes '{keyword}', got {sorted(given)}")
+
+    def with_location(self, location: ParseLocation) -> Self:
+        return replace(self, location=location)
+
+    @property
+    def keywords(self) -> dict[str, float | tuple[float, float]]:
+        """The starting-point keywords the call was written with, in the order ``bounds``, ``bracket``, ``x0``."""
+        values = {"bounds": self.bounds, "bracket": self.bracket, "x0": self.x0}
+        return {name: value for name, value in values.items() if value is not None}
+
+    def format_keywords(self) -> str:
+        """Render the keyword arguments as GCN source, starting with ``method=``."""
+        arguments = [f"method={self.method}"]
+        for name, value in self.keywords.items():
+            if isinstance(value, tuple):
+                arguments.append(f"{name}=[{Number(value=value[0])}, {Number(value=value[1])}]")
+            else:
+                arguments.append(f"{name}={Number(value=value)}")
+        return ", ".join(arguments)
+
+    def __str__(self) -> str:
+        return f"{self.func_name}({self.expr}, {self.format_keywords()})"
 
 
 @dataclass(frozen=True)

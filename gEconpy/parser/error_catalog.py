@@ -8,6 +8,7 @@ from gEconpy.parser.constants import (
     GCN_ASSUMPTIONS,
     PRELIZ_DIST_WRAPPERS,
     SIGN_ASSUMPTION_SUPPORTS,
+    SOLVER_METHODS,
     SYMBOL_FIELDS,
     VALUE_TAGS,
 )
@@ -44,6 +45,13 @@ _ASSUMPTION_NAMES = ", ".join(GCN_ASSUMPTIONS)
 _WRAPPER_NAMES = ", ".join(PRELIZ_DIST_WRAPPERS)
 _SYMBOL_FIELD_NAMES = ", ".join(SYMBOL_FIELDS)
 _SIGN_ASSUMPTION_NAMES = ", ".join(SIGN_ASSUMPTION_SUPPORTS)
+_SOLVER_METHOD_NAMES = "; ".join(
+    f"{function} takes "
+    + ", ".join(
+        f"{method} ({keyword}{'' if required else ', optional'})" for method, (keyword, required) in methods.items()
+    )
+    for function, methods in SOLVER_METHODS.items()
+)
 
 
 class ErrorCode(Enum):
@@ -349,6 +357,36 @@ class ErrorCode(Enum):
         ),
     )
 
+    E025 = ErrorInfo(
+        title="Invalid steady-state solver call",
+        explanation=(
+            f"A solver call names its method and starts from what that method needs: {_SOLVER_METHOD_NAMES}. The "
+            "left-hand side is the steady-state variable being solved for."
+        ),
+        common_causes=(
+            "Typo in a method name",
+            "A bracket method such as 'brentq' written without 'bounds', or 'newton' without 'x0'",
+            "A parameter, an expression, or an infinite value in a keyword that takes finite numbers",
+            "An interval written high to low, or with equal ends: 'bounds=[5, 0.1]'",
+            "A Lagrange multiplier, a calibrating parameter, or an expectation on a solver identity",
+            "Writing the method positionally: 'root(expr, brentq)'",
+        ),
+        fixes=(
+            "Write the call as 'w[ss] = root(expr, method=brentq, bounds=[0.1, 5])'",
+            "Give the keyword the method needs, as listed above",
+        ),
+    )
+
+    E026 = ErrorInfo(
+        title="Misplaced steady-state solver call",
+        explanation="A solver call is the whole right-hand side of an identity, not one term of a larger expression.",
+        common_causes=(
+            "Scaling or shifting the result: '2 * root(...)' or 'root(...) + 1'",
+            "Writing the call on the left-hand side",
+        ),
+        fixes=("Move the arithmetic into the call's expression, or into another identity that uses the variable",),
+    )
+
     E100 = ErrorInfo(
         title="Duplicate block name",
         explanation="Each block must have a unique name within the model.",
@@ -390,6 +428,43 @@ class ErrorCode(Enum):
         explanation=f"The distribution wrapper must be one of: {_WRAPPER_NAMES}.",
         common_causes=("Typo in wrapper name: 'Truncatd' for 'Truncated'",),
         fixes=(f"Rename the wrapper to one of: {_WRAPPER_NAMES}",),
+    )
+
+    E104 = ErrorInfo(
+        title="Solver call outside the steady-state identities",
+        explanation="Solver calls are allowed only in the identities of the steady-state block.",
+        common_causes=(
+            "A solver call in a model block's identities or constraints",
+            "A solver call in the definitions of the steady-state block",
+        ),
+        fixes=("Move the call into the identities of the steady-state block",),
+    )
+
+    E105 = ErrorInfo(
+        title="Solver call that does not depend on its variable",
+        explanation=(
+            "A solver call's expression must depend on the variable it solves for, directly or through the other "
+            "entries of the steady-state block."
+        ),
+        common_causes=(
+            "The wrong variable on the left-hand side",
+            "An expression whose entries give their values without reference to the solved variable",
+        ),
+        fixes=("Write the expression in terms of the solved variable, or of entries that use it",),
+    )
+
+    E106 = ErrorInfo(
+        title="Solver calls that depend on each other",
+        explanation=(
+            "Solver calls are solved one at a time, each after the calls whose variables it reads. Calls whose "
+            "expressions read each other's variables, directly or through the steady-state block, need a joint "
+            "solve, which is not supported."
+        ),
+        common_causes=("Two implicit variables pinned by two equations that each involve both",),
+        fixes=(
+            "Write one of the variables as a formula in the other, leaving a single call",
+            "Leave both variables out of the steady-state block so the numeric steady-state solver finds them",
+        ),
     )
 
     W001 = ErrorInfo(

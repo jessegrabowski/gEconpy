@@ -41,6 +41,20 @@ class TestPropagateSteadyStateThroughIdentities:
 
         assert float(result[y.to_ss()]) == 5.0
 
+    def test_a_variable_solved_numerically_is_never_solved_for(self):
+        """``w`` is solved elsewhere, so ``w = 4`` does not set it. ``y = 3`` does not involve ``w`` and propagates."""
+        w = TimeAwareSymbol("w", 0)
+        y = TimeAwareSymbol("y", 0)
+
+        result = propagate_steady_state_through_identities(
+            ss_solution_dict=SymbolDictionary(),
+            steady_state_equations=[w.to_ss() - 4, y.to_ss() - 3],
+            variables=[w, y],
+            solved_numerically={w.to_ss()},
+        )
+
+        assert result.to_sympy() == {y.to_ss(): 3.0}
+
     def test_propagates_log_exp_bijections(self):
         """Bijection log(y) = x is inverted to y = exp(x)."""
         x = TimeAwareSymbol("x", 0)

@@ -10,8 +10,19 @@ from gEconpy.classes.distributions import CompositeDistribution
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol, merge_assumptions
 from gEconpy.exceptions import DuplicateParameterError
 from gEconpy.model.block import Block
-from gEconpy.parser.ast import GCNBlock, GCNDistribution, GCNEquation, GCNModel, Node, SymbolDeclaration
-from gEconpy.parser.ast.validation import check_declared_symbols_exist
+from gEconpy.model.steady_state.sympy_engine import SteadyStateSolve
+from gEconpy.parser.ast import (
+    GCNBlock,
+    GCNDistribution,
+    GCNEquation,
+    GCNModel,
+    Node,
+    SteadyStateSolverCall,
+    SymbolDeclaration,
+)
+from gEconpy.parser.ast.validation import check_declared_symbols_exist, check_solver_call_placement
+from gEconpy.parser.error_catalog import ErrorCode
+from gEconpy.parser.errors import GCNSemanticError
 from gEconpy.parser.preprocessor import preprocess, preprocess_file
 from gEconpy.parser.transform.to_block import ast_model_to_block_dict
 from gEconpy.parser.transform.to_distribution import ast_to_distribution_with_metadata
@@ -55,6 +66,9 @@ class ModelPrimitives:
     ss_definitions : dict mapping sympy symbol to sympy expression
         Every entry of the steady state block, intermediate definitions included, as written. Values reference other
         entries, so the block's shared subexpressions appear once.
+    ss_solver_calls : dict mapping TimeAwareSymbol to SteadyStateSolve
+        Steady-state variables the steady state block solves for with ``root`` or ``minimize``. They are left out of
+        ``ss_solution_dict`` and ``ss_definitions``, where they appear only as symbols.
     options : dict mapping str to str or bool
         Entries of the ``options`` block.
     tryreduce : list of TimeAwareSymbol
@@ -81,6 +95,7 @@ class ModelPrimitives:
     distribution_param_names: set[str]
     ss_solution_dict: SymbolDictionary
     ss_definitions: dict[sp.Expr, sp.Expr]
+    ss_solver_calls: dict[TimeAwareSymbol, SteadyStateSolve]
     options: dict[str, str | bool]
     tryreduce: list[TimeAwareSymbol]
     assumptions: dict[str, dict[str, bool]]
@@ -151,6 +166,7 @@ def ast_model_to_primitives(
     # A declaration the model cannot match is dropped further down, so it has to be caught before its bounds and
     # metadata silently stop applying.
     check_declared_symbols_exist(model).raise_first()
+    check_solver_call_placement(model).raise_first()
 
     # Both blocks describe the same thing, so they write into one store. A symbol declared in both takes its
     # assumptions from ``symbols``.
@@ -185,6 +201,7 @@ def ast_model_to_primitives(
         distribution_param_names=distribution_param_names,
         ss_solution_dict=ss_solution_dict,
         ss_definitions=ss_definitions,
+        ss_solver_calls=_extract_ss_solver_calls(model, assumptions, ss_definitions),
         options=model.options,
         tryreduce=_extract_tryreduce(model, variables),
         assumptions=assumptions,
@@ -351,7 +368,11 @@ def _extract_ss_solution_dict(
         sympy_eq = _equation_to_sympy_eq(eq, assumptions)
         sub_dict[sympy_eq.lhs] = sympy_eq.rhs
 
+    # A solver call's expression references entries that reference the call's own variable, so it cannot join the
+    # substitution dict without a cycle. Its variable stays a free symbol in the other entries instead.
     for eq in ss_block.identities:
+        if isinstance(eq.rhs, SteadyStateSolverCall):
+            continue
         sympy_eq = _equation_to_sympy_eq(eq, assumptions)
         sub_dict[sympy_eq.lhs] = sympy_eq.rhs
         identity_keys.append(sympy_eq.lhs)
@@ -360,6 +381,79 @@ def _extract_ss_solution_dict(
 
     steady_state_dict = SymbolDictionary({k: flat[k] for k in identity_keys})
     return steady_state_dict.sort_keys().to_string().values_to_float(), sub_dict
+
+
+def _extract_ss_solver_calls(
+    model: GCNModel, assumptions: dict[str, dict[str, bool]], ss_definitions: dict[sp.Expr, sp.Expr]
+) -> dict[TimeAwareSymbol, SteadyStateSolve]:
+    identities = {
+        ast_to_sympy(eq.lhs, assumptions): eq
+        for block in model.blocks
+        if block.is_steady_state
+        for eq in block.identities
+        if isinstance(eq.rhs, SteadyStateSolverCall)
+    }
+    calls = {
+        variable: SteadyStateSolve(call=eq.rhs, expression=ast_to_sympy(eq.rhs.expr, assumptions))
+        for variable, eq in identities.items()
+    }
+
+    reads = {
+        variable: {
+            other for other in calls if other != variable and _depends_on(solve.expression, other, ss_definitions)
+        }
+        for variable, solve in calls.items()
+    }
+    cycle = _variables_in_cycles(reads)
+    if cycle:
+        names = ", ".join(f"'{identities[variable].lhs}'" for variable in cycle)
+        raise GCNSemanticError(
+            f"The solver calls for {names} depend on each other. Each call can read the variables of other calls "
+            "in one direction only",
+            code=ErrorCode.E106,
+            location=identities[cycle[0]].location,
+        )
+
+    # A call that reaches its own variable only through another call's expression is on a cycle, which the check above
+    # reports, so here a missing dependency means the expression never reads the variable at all.
+    for variable, solve in calls.items():
+        if not _depends_on(solve.expression, variable, ss_definitions):
+            eq = identities[variable]
+            raise GCNSemanticError(
+                f"The expression of '{eq.lhs} = {eq.rhs.func_name}(...)' does not depend on '{eq.lhs}', so there is "
+                "nothing to solve for",
+                code=ErrorCode.E105,
+                location=eq.location,
+            )
+
+    return calls
+
+
+def _variables_in_cycles(reads: dict[sp.Symbol, set[sp.Symbol]]) -> list[sp.Symbol]:
+    """Return the variables on a cycle of ``reads``, in input order."""
+    resolved: set[sp.Symbol] = set()
+    while ready := {variable for variable, needed in reads.items() if variable not in resolved and needed <= resolved}:
+        resolved |= ready
+
+    # What is left is on a cycle or reads one. A variable no other remaining variable reads is the latter.
+    remaining = set(reads) - resolved
+    while unread := remaining - set().union(*(reads[variable] for variable in remaining)):
+        remaining -= unread
+    return [variable for variable in reads if variable in remaining]
+
+
+def _depends_on(expression: sp.Expr, variable: sp.Symbol, ss_definitions: dict[sp.Expr, sp.Expr]) -> bool:
+    """Return whether ``expression`` references ``variable`` directly or through the steady state block entries."""
+    seen = set()
+    pending = list(expression.free_symbols)
+    while pending:
+        symbol = pending.pop()
+        if symbol == variable:
+            return True
+        if symbol not in seen and symbol in ss_definitions:
+            seen.add(symbol)
+            pending.extend(ss_definitions[symbol].free_symbols)
+    return False
 
 
 def _equation_to_sympy_eq(eq: GCNEquation, assumptions: dict[str, dict[str, bool]]) -> sp.Eq:

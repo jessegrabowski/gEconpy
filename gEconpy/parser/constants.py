@@ -106,6 +106,20 @@ WRAPPER_TO_PARAM_NAMES = {
     "Hurdle": ["psi"],
 }
 
+# Each steady-state solver method, mapped to the keyword that gives it a starting point and whether a call must give
+# it. The method names are scipy's, from ``scipy.optimize.root_scalar`` and ``minimize_scalar``. ``bounds`` is the
+# bracket of a ``root`` bracket method, which scipy calls ``bracket``, and the interval of ``bounded``. ``bracket`` is
+# the starting bracket of ``brent`` and ``golden``, which search outward from a default one when given none. Both take
+# two numbers, so scipy's three-point bracket is not available.
+SOLVER_METHODS = {
+    "root": {
+        **dict.fromkeys(("brentq", "brenth", "bisect", "ridder", "toms748"), ("bounds", True)),
+        **dict.fromkeys(("newton", "secant", "halley"), ("x0", True)),
+    },
+    "minimize": {"bounded": ("bounds", True), "brent": ("bracket", False), "golden": ("bracket", False)},
+}
+INTERVAL_SOLVER_KEYWORDS = frozenset({"bounds", "bracket"})
+
 PRELIZ_DISTS = list(DIST_TO_PARAM_NAMES.keys())
 PRELIZ_DIST_WRAPPERS = list(WRAPPER_TO_PARAM_NAMES.keys())
 

@@ -67,7 +67,11 @@ from gEconpy.model.steady_state.solve import (
     solve_minimize,
     solve_root,
 )
-from gEconpy.model.steady_state.sympy_engine import resubstitute_steady_state, system_to_steady_state
+from gEconpy.model.steady_state.sympy_engine import (
+    SteadyStateSolve,
+    resubstitute_steady_state,
+    system_to_steady_state,
+)
 from gEconpy.model.tables import (
     DEFAULT_PRIOR_STATS,
     DIALECTS,
@@ -161,6 +165,9 @@ class Model:
         Entries of the GCN file's steady state block as written, intermediate definitions included. Compiled
         steady-state graphs reuse their shared subexpressions instead of rebuilding each inlined value. Default None,
         meaning each value of ``ss_solution_dict`` is compiled alone.
+    ss_solver_calls : dict mapping TimeAwareSymbol to SteadyStateSolve, optional
+        Steady-state variables the steady state block solves for numerically with ``root`` or ``minimize``. Their
+        solutions join the analytic values. Default None, meaning there are none.
     """
 
     def __init__(
@@ -184,6 +191,7 @@ class Model:
         equation_labels: dict[str, str] | None = None,
         source_ast: GCNModel | None = None,
         ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
+        ss_solver_calls: dict[TimeAwareSymbol, SteadyStateSolve] | None = None,
     ) -> None:
         self._variables = variables
         self._equation_ids = [] if equation_ids is None else equation_ids
@@ -217,6 +225,7 @@ class Model:
         self._steady_state_equations = steady_state_equations
         self._ss_solution_dict = ss_solution_dict
         self._ss_definitions = ss_definitions
+        self._ss_solver_calls = {} if ss_solver_calls is None else ss_solver_calls
         self._param_dict = param_dict
         self._deterministic_dict = deterministic_dict
         self._calib_dict = calib_dict
@@ -2662,8 +2671,9 @@ class Model:
                     parameters,
                     self._ensure_cache(),
                     ss_definitions=self._ss_definitions,
+                    ss_solver_calls=self._ss_solver_calls,
                 )
-                if self._ss_solution_dict
+                if self._ss_solution_dict or self._ss_solver_calls
                 else {}
             )
         return self._known_ss_nodes

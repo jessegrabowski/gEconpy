@@ -281,6 +281,16 @@ class TestPrintModel:
                 Y[ss] / K[ss] = 0.36 -> delta;
             };
         };
+
+        block STEADY_STATE
+        {
+            identities
+            {
+                Y[ss] = root(Y[ss] - A[ss] * K[ss] ^ alpha, method=brentq, bounds=[0.0001, 5]);
+                K[ss] = minimize((K[ss] - 1) ^ 2, method=golden, bracket=[0, 2]);
+                A[ss] = root(A[ss] - 1, method=newton, x0=-0.5);
+            };
+        };
         """
         model = quick_parse(source)
         reparsed = quick_parse(print_model(model))

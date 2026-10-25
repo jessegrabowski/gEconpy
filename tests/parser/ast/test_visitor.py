@@ -1,4 +1,5 @@
 from gEconpy.parser.ast import (
+    STEADY_STATE,
     BinaryOp,
     Expectation,
     FunctionCall,
@@ -7,6 +8,7 @@ from gEconpy.parser.ast import (
     NodeVisitor,
     Operator,
     Parameter,
+    SteadyStateSolverCall,
     T,
     TimeIndex,
     UnaryOp,
@@ -98,6 +100,26 @@ class TestNodeTransformer:
         assert result.rhs.left.operand.name == "a_new"
         assert result.rhs.right.expr.args[0].name == "b_new"
 
+    def test_transforms_inside_a_solver_call_and_keeps_its_keywords(self):
+        class Renamer(NodeTransformer):
+            def visit_Variable(self, node):
+                return Variable(name=f"{node.name}_new", time_index=node.time_index)
+
+        call = SteadyStateSolverCall(
+            func_name="root",
+            expr=Variable(name="w", time_index=STEADY_STATE),
+            method="brentq",
+            bounds=(0.1, 5.0),
+        )
+        result = Renamer().visit(call)
+
+        assert result == SteadyStateSolverCall(
+            func_name="root",
+            expr=Variable(name="w_new", time_index=STEADY_STATE),
+            method="brentq",
+            bounds=(0.1, 5.0),
+        )
+
     def test_rebuilt_nodes_keep_their_locations(self):
         class Renamer(NodeTransformer):
             def visit_Variable(self, node):
@@ -168,3 +190,13 @@ class TestCollectNodesOfType:
 
         assert {v.name for v in variables} == {"Y", "K", "C"}
         assert {p.name for p in params} == {"alpha"}
+
+    def test_collects_from_inside_a_solver_call(self):
+        call = SteadyStateSolverCall(
+            func_name="minimize",
+            expr=BinaryOp(left=Variable(name="x", time_index=STEADY_STATE), op=Operator.SUB, right=Parameter(name="a")),
+            method="brent",
+        )
+
+        assert collect_nodes_of_type(call, Variable) == {Variable(name="x", time_index=STEADY_STATE)}
+        assert collect_nodes_of_type(call, Parameter) == {Parameter(name="a")}

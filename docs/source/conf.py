@@ -205,6 +205,8 @@ numpydoc_xref_aliases = {
     "GCNBlock": "gEconpy.parser.ast.nodes.GCNBlock",
     "GCNEquation": "gEconpy.parser.ast.nodes.GCNEquation",
     "GCNDistribution": "gEconpy.parser.ast.nodes.GCNDistribution",
+    "SteadyStateSolverCall": "gEconpy.parser.ast.nodes.SteadyStateSolverCall",
+    "SteadyStateSolve": "gEconpy.model.steady_state.sympy_engine.SteadyStateSolve",
     "SymbolDeclaration": "gEconpy.parser.ast.nodes.SymbolDeclaration",
     "ErrorCollector": "gEconpy.parser.errors.ErrorCollector",
     "ParseLocation": "gEconpy.parser.errors.ParseLocation",

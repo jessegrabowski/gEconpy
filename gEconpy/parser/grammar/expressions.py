@@ -14,6 +14,7 @@ from gEconpy.parser.ast import (
     UnaryOp,
     Variable,
 )
+from gEconpy.parser.constants import SOLVER_METHODS
 from gEconpy.parser.error_catalog import ErrorCode
 from gEconpy.parser.errors import GCNGrammarError, GCNParseFailure, ParseLocation
 from gEconpy.parser.grammar.tokens import (
@@ -149,11 +150,28 @@ FUNC_CALL = EMPTY_FUNC_CALL | (IDENTIFIER("func_name") + LPAREN - FUNC_ARGS - RP
     lambda t: FunctionCall(func_name=t[0], args=tuple(t.args))
 )
 
+SOLVER_NAME = pp.one_of(list(SOLVER_METHODS), as_keyword=True)
+
+SOLVER_CALL_PLACEMENT_MESSAGE = (
+    "A solver call is the whole right-hand side of a steady-state identity, as in "
+    "'w[ss] = root(alpha * Y[ss] / L[ss] - w[ss], method=brentq, bounds=[0.1, 5])'"
+)
+
+
+def misplaced_solver_call_fail(s: str, loc: int, toks: pp.ParseResults) -> None:
+    raise GCNParseFailure(s, loc, SOLVER_CALL_PLACEMENT_MESSAGE, code=ErrorCode.E026, found=toks[0])
+
+
+# The equation grammar tries a whole-right-hand-side solver call before an expression, so this only matches a call
+# nested inside an expression or written on a left-hand side. Without it, the call's keyword arguments would fail as
+# an unbalanced function call.
+NESTED_SOLVER_CALL = (SOLVER_NAME + pp.FollowedBy(pp.Literal("("))).set_parse_action(misplaced_solver_call_fail)
+
 PAREN_EXPR = LPAREN - EXPR - RPAREN
 
-ATOM = (EXPECTATION | FUNC_CALL | VARIABLE | INVALID_TIME_INDEX_VAR | NUMBER | PARAMETER | PAREN_EXPR).set_name(
-    "operand"
-)
+ATOM = (
+    NESTED_SOLVER_CALL | EXPECTATION | FUNC_CALL | VARIABLE | INVALID_TIME_INDEX_VAR | NUMBER | PARAMETER | PAREN_EXPR
+).set_name("operand")
 
 _OP_MAP = {
     "+": Operator.ADD,

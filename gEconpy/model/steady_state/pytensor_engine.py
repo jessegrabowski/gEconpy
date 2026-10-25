@@ -1,4 +1,4 @@
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -27,7 +27,8 @@ from gEconpy.model.compile import (
     sympy_to_pytensor,
 )
 from gEconpy.model.parameters import compile_param_dict_func
-from gEconpy.parser.ast import variable_key
+from gEconpy.model.steady_state.sympy_engine import SteadyStateSolve
+from gEconpy.parser.ast import SteadyStateSolverCall, variable_key
 from gEconpy.pytensorf.compile import compile_pytensor_function
 from gEconpy.utilities import (
     safe_to_ss,
@@ -35,6 +36,9 @@ from gEconpy.utilities import (
 )
 
 ERROR_FUNCTIONS = Literal["squared", "mean_squared", "abs", "l2-norm"]
+
+# Root methods that step along the expression's derivatives, and how many derivatives each one needs.
+_DERIVATIVE_ORDER = {"newton": 1, "halley": 2}
 
 
 def _residual_scale(equation: TensorVariable) -> TensorVariable:
@@ -203,7 +207,7 @@ def transform_steady_state_system(
 
 
 def known_steady_state_graphs(
-    known_values: dict[sp.Symbol, sp.Expr | float],
+    known_values: Mapping[sp.Symbol, sp.Expr | float | SteadyStateSolve],
     ss_definitions: dict[sp.Expr, sp.Expr] | None,
     cache: dict,
 ) -> list[TensorVariable]:
@@ -212,11 +216,14 @@ def known_steady_state_graphs(
 
     With ``ss_definitions``, each entry of the block is converted once, in dependency order, and the values reuse
     those graphs. A value that is a plain number, or whose symbol has no entry in the block, is converted directly.
+    A :class:`~gEconpy.model.steady_state.sympy_engine.SteadyStateSolve` value is solved for numerically, and its
+    solution replaces the variable in every other graph.
 
     Parameters
     ----------
-    known_values : dict mapping sympy symbol to sympy expression or float
-        Known steady-state values, keyed by steady-state symbol, each a function of the parameters only.
+    known_values : dict mapping sympy symbol to sympy expression, float, or SteadyStateSolve
+        Known steady-state values, keyed by steady-state symbol. An expression may reference the variables that
+        ``SteadyStateSolve`` values solve for, and no other steady-state variable.
     ss_definitions : dict mapping sympy symbol to sympy expression, or None
         Entries of the steady state block as written, whose values may reference other entries. None converts each
         value of ``known_values`` alone.
@@ -229,6 +236,10 @@ def known_steady_state_graphs(
     graphs : list of TensorVariable
         One graph per entry of ``known_values``, in the same order.
     """
+    solves = {symbol: value for symbol, value in known_values.items() if isinstance(value, SteadyStateSolve)}
+    if solves:
+        return _solve_known_steady_state(known_values, solves, ss_definitions, cache)
+
     if not ss_definitions:
         printer = PytensorPrinter(cache=cache, settings={})
         return [output_to_tensor(value, cache, printer=printer) for value in known_values.values()]
@@ -264,6 +275,80 @@ def known_steady_state_graphs(
     ]
 
 
+def _solve_known_steady_state(
+    known_values: Mapping[sp.Symbol, sp.Expr | float | SteadyStateSolve],
+    solves: dict[sp.Symbol, SteadyStateSolve],
+    ss_definitions: dict[sp.Expr, sp.Expr] | None,
+    cache: dict,
+) -> list[TensorVariable]:
+    # A call's variable has no entry in the block, so converting its expression under the variable's own key gives the
+    # residual or objective as a graph of the block's entries, with the variable left as an input node.
+    expressions = {
+        symbol: solves[symbol].expression if symbol in solves else value for symbol, value in known_values.items()
+    }
+    graphs = dict(zip(expressions, known_steady_state_graphs(expressions, ss_definitions, cache), strict=True))
+
+    variables = {symbol: cache[make_cache_key(symbol.name, type(symbol))] for symbol in solves}
+
+    # Each call is solved after the calls whose variables its expression reads, with their solutions substituted, so
+    # every solution is a graph of the parameters alone.
+    solutions = {}
+    for symbol in _solve_order(graphs, variables):
+        expression = graph_replace(graphs[symbol], solutions, strict=False) if solutions else graphs[symbol]
+        solutions[variables[symbol]] = _solve_steady_state_call(expression, variables[symbol], solves[symbol].call)
+        graphs[symbol] = solutions[variables[symbol]]
+
+    return graph_replace(list(graphs.values()), solutions, strict=False)
+
+
+def _solve_order(
+    graphs: dict[sp.Symbol, TensorVariable], variables: dict[sp.Symbol, TensorVariable]
+) -> list[sp.Symbol]:
+    """Order the solved symbols so that each follows every other solved variable its expression reads."""
+    reads = {}
+    for symbol in variables:
+        inputs = set(explicit_graph_inputs(graphs[symbol]))
+        reads[symbol] = {other for other, node in variables.items() if other != symbol and node in inputs}
+    order: list[sp.Symbol] = []
+    while reads:
+        ready = [symbol for symbol, needed in reads.items() if needed <= set(order)]
+        if not ready:
+            raise ValueError(f"The solver calls for {sorted(map(str, reads))} depend on each other")
+        order.extend(ready)
+        for symbol in ready:
+            del reads[symbol]
+    return order
+
+
+def _solve_steady_state_call(
+    expression: TensorVariable, variable: TensorVariable, call: SteadyStateSolverCall
+) -> TensorVariable:
+    """Return the graph of the value of ``variable`` that solves ``call``, as a function of the parameters."""
+    if call.func_name == "root":
+        order = _DERIVATIVE_ORDER.get(call.method, 0)
+        solution, _ = pt.optimize.root_scalar(
+            expression,
+            variable,
+            method=call.method,
+            jac=order >= 1,
+            hess=order >= 2,
+            optimizer_kwargs={"bracket": call.bounds} if call.bounds else None,
+        )
+    else:
+        optimizer_kwargs = (
+            {"bounds": call.bounds} if call.bounds else {"bracket": call.bracket} if call.bracket else None
+        )
+        solution, _ = pt.optimize.minimize_scalar(
+            expression, variable, method=call.method, optimizer_kwargs=optimizer_kwargs
+        )
+
+    # The Op's first input is its starting point. scipy ignores it for the bracketing and scalar-minimize methods,
+    # which start from their interval, so any value in that interval serves.
+    interval = call.bounds or call.bracket
+    start = call.x0 if call.x0 is not None else sum(interval) / 2 if interval else 1.0
+    return graph_replace(solution, {variable: pt.constant(start, dtype=variable.dtype)}, strict=False)
+
+
 def compile_known_ss(
     ss_solution_dict: SymbolDictionary,
     variables: list[TimeAwareSymbol | sp.Symbol],
@@ -272,6 +357,7 @@ def compile_known_ss(
     return_symbolic: bool = False,
     stack_return: bool | None = None,
     ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
+    ss_solver_calls: Mapping[sp.Symbol, SteadyStateSolve] | None = None,
     **kwargs,
 ):
     """
@@ -294,6 +380,9 @@ def compile_known_ss(
     ss_definitions : dict mapping sympy symbol to sympy expression, optional
         Entries of the steady state block as written. When given, the outputs share the block's subexpressions; see
         :func:`known_steady_state_graphs`. Default is None, which converts each value of ``ss_solution_dict`` alone.
+    ss_solver_calls : dict mapping sympy symbol to SteadyStateSolve, optional
+        Steady-state variables the steady state block solves for numerically. Each one is an output alongside the
+        analytic values. Default is None.
     **kwargs
         Forwarded to :func:`~gEconpy.pytensorf.compile.compile_pytensor_function`.
 
@@ -301,19 +390,17 @@ def compile_known_ss(
     -------
     f_ss : callable, dict, or None
         Function mapping parameter values to steady-state values, or a dictionary from each variable's PyTensor node
-        to its steady-state graph when ``return_symbolic`` is True. None when ``ss_solution_dict`` is empty.
+        to its steady-state graph when ``return_symbolic`` is True. None when there are no known values and no calls.
     cache : dict
         The cache, extended with every variable created during conversion.
     """
     cache = {} if cache is None else cache
-    if not ss_solution_dict:
+    known = ss_solution_dict.to_sympy() | dict(ss_solver_calls or {})
+    if not known:
         return None, cache
 
-    ss_solution_dict = ss_solution_dict.to_sympy()
     ss_variables = [safe_to_ss(variable) for variable in variables]
-    ordered_solutions = {
-        variable: ss_solution_dict[variable] for variable in ss_variables if variable in ss_solution_dict
-    }
+    ordered_solutions = {variable: known[variable] for variable in ss_variables if variable in known}
 
     if stack_return is None:
         stack_return = not return_symbolic
@@ -518,6 +605,7 @@ def known_steady_state_replacements(
     parameters: list[sp.Symbol],
     cache: dict,
     ss_definitions: dict[sp.Expr, sp.Expr] | None = None,
+    ss_solver_calls: Mapping[sp.Symbol, SteadyStateSolve] | None = None,
 ) -> dict[TensorVariable, TensorVariable]:
     """
     Map each analytically known steady-state node to its graph in the parameters.
@@ -534,6 +622,8 @@ def known_steady_state_replacements(
         Sympytensor cache, extended in place with the parameter nodes the known values need.
     ss_definitions : dict mapping sympy symbol to sympy expression, optional
         Entries of the steady state block as written; see :func:`known_steady_state_graphs`. Default is None.
+    ss_solver_calls : dict mapping sympy symbol to SteadyStateSolve, optional
+        Steady-state variables the steady state block solves for numerically. Default is None.
 
     Returns
     -------
@@ -542,8 +632,8 @@ def known_steady_state_replacements(
     """
     ss_variable_set = set(ss_variables)
     known = {
-        safe_to_ss(symbol): expression
-        for symbol, expression in ss_solution_dict.to_sympy().items()
+        safe_to_ss(symbol): value
+        for symbol, value in (ss_solution_dict.to_sympy() | dict(ss_solver_calls or {})).items()
         if safe_to_ss(symbol) in ss_variable_set
     }
     if not known:

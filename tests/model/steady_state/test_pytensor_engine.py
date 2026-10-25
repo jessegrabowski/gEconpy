@@ -21,6 +21,8 @@ from gEconpy.model.steady_state.pytensor_engine import (
     steady_state_transforms,
     transform_steady_state_system,
 )
+from gEconpy.model.steady_state.sympy_engine import SteadyStateSolve
+from gEconpy.parser.grammar import parse_equation
 from tests._resources.cache_compiled_models import load_and_cache_model
 
 
@@ -96,6 +98,92 @@ class TestKnownSteadyStateGraphs:
         known_steady_state_graphs(self.flat, self.definitions, cache)
 
         assert cache[key] is input_node
+
+
+def _pytensor_solves_bracket_methods() -> bool:
+    x = pt.dscalar("x")
+    solution, _ = pt.optimize.root_scalar(x - 1, x, method="brentq", optimizer_kwargs={"bracket": (0.0, 2.0)})
+    try:
+        pytensor.function([x], solution, mode="FAST_COMPILE")(0.5)
+    except AttributeError:
+        return False
+    return True
+
+
+requires_bracket_methods = pytest.mark.skipif(
+    not _pytensor_solves_bracket_methods(),
+    reason="pytensor's RootScalarOp cannot evaluate the Python floats scipy's bracketing methods pass",
+)
+
+
+@pytest.mark.filterwarnings("ignore:Numba will use object mode:UserWarning")
+class TestSolvedSteadyStateGraphs:
+    alpha = sp.Symbol("alpha", positive=True)
+    k_ss, w_ss = sp.symbols("k_ss w_ss", positive=True)
+    definitions = {k_ss: 2 * w_ss}
+
+    def _evaluate(self, call: str, expression: sp.Expr, alpha: float = 0.3):
+        solve = SteadyStateSolve(call=parse_equation(f"w[ss] = {call};").rhs, expression=expression)
+        cache = {}
+        (alpha_pt,), _, cache = sympy_to_pytensor([self.alpha], [], cache)
+        w_graph, k_graph = known_steady_state_graphs(
+            {self.w_ss: solve, self.k_ss: 2 * self.w_ss}, self.definitions, cache
+        )
+        return alpha_pt, w_graph, pytensor.function([alpha_pt], [w_graph, k_graph])(alpha)
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "root(w[ss], method=newton, x0=1)",
+            "root(w[ss], method=secant, x0=1)",
+            "root(w[ss], method=halley, x0=1)",
+            pytest.param("root(w[ss], method=brentq, bounds=[0.01, 5])", marks=requires_bracket_methods),
+        ],
+        ids=["newton", "secant", "halley", "brentq"],
+    )
+    def test_root_solves_through_the_entries_and_replaces_the_variable(self, call):
+        _, _, (w_value, k_value) = self._evaluate(call, self.k_ss**2 / 4 - self.alpha)
+
+        assert_allclose([w_value, k_value], [np.sqrt(0.3), 2 * np.sqrt(0.3)], rtol=1e-8)
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "minimize(w[ss], method=bounded, bounds=[0.01, 5])",
+            "minimize(w[ss], method=brent)",
+            "minimize(w[ss], method=golden, bracket=[0, 1])",
+        ],
+        ids=["bounded", "brent", "golden"],
+    )
+    def test_minimize_returns_the_argmin(self, call):
+        _, _, (w_value, k_value) = self._evaluate(call, (self.k_ss / 2 - self.alpha) ** 2)
+
+        assert_allclose([w_value, k_value], [0.3, 0.6], rtol=1e-5)
+
+    def test_calls_reading_other_calls_solve_in_dependency_order(self):
+        """U reads v, which reads w through k. Listing u first exercises the ordering."""
+        u_ss, v_ss = sp.symbols("u_ss v_ss", positive=True)
+        call = parse_equation("u[ss] = root(u[ss], method=newton, x0=1);").rhs
+        known = {
+            u_ss: SteadyStateSolve(call=call, expression=u_ss - v_ss - 1),
+            v_ss: SteadyStateSolve(call=call, expression=v_ss - self.k_ss - 1),
+            self.w_ss: SteadyStateSolve(call=call, expression=self.k_ss**2 / 4 - self.alpha),
+            self.k_ss: 2 * self.w_ss,
+        }
+        cache = {}
+        (alpha_pt,), _, cache = sympy_to_pytensor([self.alpha], [], cache)
+
+        values = pytensor.function([alpha_pt], known_steady_state_graphs(known, self.definitions, cache))(0.3)
+
+        w = np.sqrt(0.3)
+        assert_allclose(values, [2 * w + 2, 2 * w + 1, w, 2 * w], rtol=1e-8)
+
+    def test_solution_is_differentiable_in_the_parameters(self):
+        alpha_pt, w_graph, _ = self._evaluate("root(w[ss], method=newton, x0=1)", self.k_ss**2 / 4 - self.alpha)
+
+        gradient = pytensor.function([alpha_pt], pytensor.grad(w_graph, alpha_pt))(0.3)
+
+        assert_allclose(gradient, 1 / (2 * np.sqrt(0.3)), rtol=1e-6)
 
 
 @pytest.mark.parametrize(
