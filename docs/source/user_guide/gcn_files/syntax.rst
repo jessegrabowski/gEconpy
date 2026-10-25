@@ -274,11 +274,11 @@ give every other value as a formula in it:
 ``root(expr, ...)`` solves ``expr = 0`` for the variable on the left-hand side, and ``minimize(expr, ...)`` returns the
 value of that variable at which ``expr`` is smallest. The expression can read the other entries of the block, which
 are substituted into it before it is solved. Every equation of the model is then checked against the result, as for
-any other analytical steady state, and the steady state is available to ``statespace_from_gcn`` as well as to
-``model_from_gcn``.
+any other analytical steady state, and the steady state is available to
+:func:`~gEconpy.model.build.statespace_from_gcn` as well as to :func:`~gEconpy.model.build.model_from_gcn`.
 
-The method names are those of ``scipy.optimize.root_scalar`` and ``scipy.optimize.minimize_scalar``. Each method
-starts from one keyword:
+The method names are those of :func:`scipy.optimize.root_scalar` and :func:`scipy.optimize.minimize_scalar`. Each
+method starts from one keyword:
 
 =============  ============================================  ==========================
 Call           Methods                                       Starting point
