@@ -113,6 +113,7 @@ gEconpy
     gEconpy.pytensorf <gEconpy.pytensorf>
     gEconpy.pytensorf.block <gEconpy.pytensorf.block>
     gEconpy.pytensorf.compile <gEconpy.pytensorf.compile>
+    gEconpy.pytensorf.optimize <gEconpy.pytensorf.optimize>
     gEconpy.pytensorf.real <gEconpy.pytensorf.real>
     gEconpy.pytensorf.real_eig <gEconpy.pytensorf.real_eig>
     gEconpy.rcparams <gEconpy.rcparams>
