@@ -250,6 +250,50 @@ The equations are taken as given and are not checked. If a steady state cannot b
 verify. A partial steady state is fine: the equations given are used, and the remaining variables go to the numerical
 solver.
 
+Solving one variable numerically
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Some steady states have a closed form for every variable but one, which is pinned by an equation that has no
+analytical solution. An identity of the steady state block can name that variable and the equation with ``root``, and
+give every other value as a formula in it:
+
+.. code-block:: text
+
+    block Steady_State
+    {
+        identities
+        {
+            w_I[ss] = root(gamma_I * Y_I[ss] / L_I[ss] - w_I[ss], method=newton, x0=0.7);
+
+            L_I[ss] = (1 - omega) * L_HI[ss];
+            Y_I[ss] = A_I[ss] * L_I[ss] ^ gamma_I;
+            # every other formula, in terms of w_I[ss]
+        };
+    };
+
+``root(expr, ...)`` solves ``expr = 0`` for the variable on the left-hand side, and ``minimize(expr, ...)`` returns the
+value of that variable at which ``expr`` is smallest. The expression can read the other entries of the block, which
+are substituted into it before it is solved. Every equation of the model is then checked against the result, as for
+any other analytical steady state, and the steady state is available to ``statespace_from_gcn`` as well as to
+``model_from_gcn``.
+
+The method names are those of ``scipy.optimize.root_scalar`` and ``scipy.optimize.minimize_scalar``. Each method
+starts from one keyword:
+
+=============  ============================================  ==========================
+Call           Methods                                       Starting point
+=============  ============================================  ==========================
+``root``       ``brentq``, ``brenth``, ``bisect``,            ``bounds=[a, b]``
+               ``ridder``, ``toms748``
+``root``       ``newton``, ``secant``, ``halley``             ``x0=value``
+``minimize``   ``bounded``                                    ``bounds=[a, b]``
+``minimize``   ``brent``, ``golden``                          ``bracket=[a, b]``, optional
+=============  ============================================  ==========================
+
+The keywords take numbers, and an interval takes two numbers in increasing order. A call is the whole right-hand side
+of an identity in the steady state block, its expression must depend on the variable it solves for, and one call may
+read the variable of another only if the second does not read the first back.
+
 
 .. _special-blocks:
 
