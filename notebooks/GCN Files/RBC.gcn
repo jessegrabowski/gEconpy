@@ -36,6 +36,10 @@ symbols
         name = "Rental rate of capital";
         bounds = (0, None);
     };
+    r_B[]
+    {
+        name = "Real bond rate";
+    };
     w[]
     {
         name = "Real wage";
@@ -117,6 +121,7 @@ block Steady_State
         A[ss] = 1;
         mc[ss] = 1;
         r[ss] = (1 / beta - (1 - delta));
+        r_B[ss] = 1 / beta - 1;
         w[ss] = (1 - alpha) * (alpha / r[ss]) ^ (alpha / (1 - alpha));
         Y[ss] = (r[ss] / (r[ss] - delta * alpha)) ^ (sigma_C / (sigma_C + sigma_L)) *
             (w[ss] * (w[ss] / (1 - alpha)) ^ sigma_L) ^ (1 / (sigma_C + sigma_L));
@@ -154,6 +159,11 @@ block Household
     {
         C[] + I[] = r[] * K[-1] + w[] * L[] : lambda[];
         K[] = (1 - delta) * K[-1] + I[];
+    };
+
+    identities
+    {
+        lambda[] = beta * E[][lambda[1]] * (1 + r_B[]);
     };
 
     calibration
