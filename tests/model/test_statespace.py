@@ -61,6 +61,10 @@ def _eval_augmented_matrices(ss_mod):
         pytest.param("full_nk.gcn", marks=pytest.mark.include_nk),
         "rbc_linearized.gcn",
         "sarima2_12.gcn",
+        pytest.param(
+            "tank_informal_root.gcn",
+            marks=pytest.mark.filterwarnings("ignore:Numba will use object mode:UserWarning"),
+        ),
     ],
 )
 def test_statespace_matrices_agree_with_model(gcn_file):
