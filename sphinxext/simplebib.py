@@ -89,7 +89,13 @@ def _format_entry(entry):
     text = f"{head} {title}." if title else head
 
     venue = _clean(
-        fields.get("journal") or fields.get("booktitle") or fields.get("publisher") or fields.get("school") or ""
+        fields.get("journal")
+        or fields.get("booktitle")
+        or fields.get("publisher")
+        or fields.get("school")
+        or fields.get("institution")
+        or fields.get("howpublished")
+        or ""
     )
     if venue:
         detail = venue

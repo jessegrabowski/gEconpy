@@ -3,6 +3,7 @@ import warnings
 from types import SimpleNamespace
 
 import arviz_base as azb
+import arviz_stats as azs
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -760,6 +761,18 @@ def test_plot_acf_forest_axis_count(posterior_acf):
     assert len(fig.axes) == posterior_acf.sizes["variable"]
 
 
+def test_plot_acf_intervals_use_sample_dims_and_skip_nan_draws(posterior_acf):
+    samples = posterior_acf.stack(sample=["chain", "draw"]).drop_vars(["sample", "chain", "draw"])
+    samples[{"lag": 1, "variable": 0, "variable_aux": 0, "sample": 0}] = np.nan
+
+    fig = plot_acf(samples, vars_to_plot=["Y"], sample_dims=("sample",), ci_probs=(0.5, 0.94))
+    outer_sticks = fig.axes[0].collections[0].get_segments()
+
+    clean = samples.sel(variable="Y", variable_aux="Y", lag=1).dropna("sample")
+    expected = azs.hdi(clean, prob=0.94, dim=["sample"]).values
+    np.testing.assert_allclose(outer_sticks[1][:, 1], expected)
+
+
 def test_plot_acf_reference_adds_data_legend(posterior_acf, reference_acf):
     fig = plot_acf(posterior_acf, reference=reference_acf)
     legend_texts = [text.get_text() for text in fig.axes[0].get_legend().get_texts()]
@@ -814,6 +827,15 @@ def test_plot_kalman_filter_accepts_mixed_case_output(prior_idata):
         idata["conditional_prior"], fake_data, kalman_output="Filtered", group="prior", vars_to_plot=["Y"]
     )
     assert len(fig.axes) == 1
+
+
+@pytest.mark.parametrize("ylabel, expected", [("Level", "Level"), (None, "")], ids=["custom", "none"])
+def test_plot_kalman_filter_ylabel(prior_idata, ylabel, expected):
+    idata, fake_data = prior_idata
+    fig = plot_kalman_filter(
+        idata["conditional_prior"], fake_data, group="prior", vars_to_plot=["Y", "C"], ylabel=ylabel
+    )
+    assert [axis.get_ylabel() for axis in fig.axes] == [expected, expected]
 
 
 def test_plot_kalman_filter_bad_output_raises(prior_idata):

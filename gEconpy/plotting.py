@@ -1299,6 +1299,7 @@ def plot_kalman_filter(
     figsize: tuple[int, int] = (14, 6),
     dpi: int = 144,
     observed: bool = False,
+    ylabel: str | None = "% Deviation from SS",
 ) -> Figure:
     """
     Plot the mean and 95 percent credible band of the Kalman filter output for each state.
@@ -1327,6 +1328,9 @@ def plot_kalman_filter(
     observed : bool, optional
         If True, plot the observed states from the ``*_observed`` variables of ``idata``. If False, plot the
         latent states. Defaults to False.
+    ylabel : str, optional
+        Label for the y-axis of every panel. Pass None to leave the axes unlabeled. Defaults to
+        "% Deviation from SS".
 
     Returns
     -------
@@ -1399,7 +1403,7 @@ def plot_kalman_filter(
         if variable in data.columns:
             axis.plot(time_idx, data[variable].values, color="k", ls="--")
 
-        axis.set(title=variable, xlabel=None, ylabel="% Deviation from SS")
+        axis.set(title=variable, xlabel=None, ylabel=ylabel)
         axis.tick_params(axis="x", rotation=45)
         _style_panel(axis)
 
@@ -2148,9 +2152,9 @@ def _draw_eigenvalue_panel(
         ax.legend(loc="best", fontsize="small", framealpha=0.9)
 
 
-def _acf_hdi_bounds(series: xr.DataArray, prob: float) -> tuple[np.ndarray, np.ndarray]:
+def _acf_hdi_bounds(series: xr.DataArray, prob: float, sample_dims: list[str]) -> tuple[np.ndarray, np.ndarray]:
     """Return the per-lag lower and upper bounds of the ``prob`` highest-density interval of ``series``."""
-    hdi = azs.hdi(series, prob=prob)
+    hdi = azs.hdi(series, prob=prob, dim=sample_dims, skipna=True)
     ci_dim = next(dim for dim in hdi.dims if dim != "lag")
     return hdi.isel({ci_dim: 0}).values, hdi.isel({ci_dim: 1}).values
 
@@ -2170,8 +2174,8 @@ def _plot_acf_intervals(
     """Draw a posterior-mean point plus two nested credible-interval sticks at each lag."""
     inner_prob, outer_prob = sorted(ci_probs)
     mean = series.mean(sample_dims).values
-    outer_lo, outer_hi = _acf_hdi_bounds(series, outer_prob)
-    inner_lo, inner_hi = _acf_hdi_bounds(series, inner_prob)
+    outer_lo, outer_hi = _acf_hdi_bounds(series, outer_prob, sample_dims)
+    inner_lo, inner_hi = _acf_hdi_bounds(series, inner_prob, sample_dims)
 
     x = lags + offset
     axis.vlines(x, outer_lo, outer_hi, **{"color": color, "lw": 1.0, **(outer_hdi_kwargs or {})})
