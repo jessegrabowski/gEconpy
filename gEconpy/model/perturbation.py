@@ -106,6 +106,10 @@ class DROrder(NamedTuple):
         """Positions in decision-rule order of the variables that appear at a lead. Dynare calls these ``klead``."""
         return np.arange(self.n_static_var + self.n_pred_only_var, len(self.var_order))
 
+    def static_mask(self, column_order: np.ndarray) -> np.ndarray:
+        """Whether each column of a matrix whose variable columns follow ``column_order`` holds a static variable."""
+        return np.isin(column_order, self.var_order[: self.n_static_var])
+
     @classmethod
     def from_model(cls, variables: list[TimeAwareSymbol], equations: list[sp.Expr]) -> "DROrder":
         """

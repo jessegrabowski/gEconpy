@@ -101,6 +101,7 @@ from gEconpy.solvers.backward_looking import solve_policy_function_with_backward
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, solve_policy_function_with_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt, interpret_gensys_output, solve_policy_function_with_gensys
 from gEconpy.solvers.second_order import solve_second_order
+from gEconpy.solvers.shared import solve_with_static_elimination
 from gEconpy.utilities import get_name, postprocess_optimizer_res, safe_to_ss
 
 _log = logging.getLogger(__name__)
@@ -1841,12 +1842,12 @@ class Model:
             "loglin_negative_ss": loglin_negative_ss,
             "verbose": verbose,
         }
-        jacobians, *_ = self.symbolic_linearization(**linearization_kwargs)
+        jacobians, *_, var_order = self.symbolic_linearization(**linearization_kwargs)
         A, B, C, D = graph_replace(jacobians, steady_state_graphs, strict=False)
-        if solver == "gensys":
-            T, R, _ = gensys_pt(A, B, C, D)
-        else:
-            T, R = cycle_reduction_pt(A, B, C, D)
+        solver_pt = gensys_pt if solver == "gensys" else cycle_reduction_pt
+        T, R, *_ = solve_with_static_elimination(
+            solver_pt, A, B, C, D, static_mask=self.dr_order.static_mask(var_order)
+        )
 
         # The solvers return T and R in decision-rule variable order, the basis of A, B and C.
         ghx = T[:, self.dr_order.lag_positions]

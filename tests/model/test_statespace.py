@@ -96,6 +96,60 @@ def test_statespace_matrices_agree_with_model(gcn_file):
         np.testing.assert_allclose(mod_matrix, ss_matrix, atol=1e-8, rtol=1e-8)
 
 
+@pytest.mark.parametrize("solver", ["gensys", "cycle_reduction", "scan_cycle_reduction"])
+def test_statespace_policy_matrices_agree_with_model(solver):
+    """The static variables of ``one_block_1_ss`` are eliminated before the solve and their rows restored after it."""
+    ss_mod = statespace_from_gcn(TEST_GCNS / "one_block_1_ss.gcn", verbose=False)
+    assert ss_mod._dr_order.n_static_var > 0
+
+    ss_mod.configure(observed_states=["Y"], solver=solver, verbose=False)
+    model = load_and_cache_model("one_block_1_ss.gcn")
+
+    T_ss, R_ss = _evaluate_at(ss_mod, [ss_mod.ssm["transition"], ss_mod.ssm["selection"]], model.parameters())
+    T, R = model.solve_model(
+        solver="gensys", return_matrices=True, verbose=False, steady_state_kwargs={"progressbar": False}
+    )
+
+    np.testing.assert_allclose(T_ss, T, atol=1e-8)
+    np.testing.assert_allclose(R_ss, R, atol=1e-8)
+
+
+def test_logp_gradient_through_static_elimination_matches_finite_differences():
+    """PyMC canonicalizes the logp before differentiating it, which must not reach the gradient of the QR basis."""
+    ss_mod = statespace_from_gcn(TEST_GCNS / "one_block_1_ss.gcn", verbose=False)
+    assert ss_mod._dr_order.n_static_var > 0
+
+    ss_mod.configure(observed_states=["Y"], solver="gensys", verbose=False)
+    rng = np.random.default_rng(0)
+    data = pd.DataFrame(
+        rng.normal(scale=0.01, size=(50,)),
+        columns=["Y"],
+        index=pd.date_range("2000-01-01", periods=50, freq="QS"),
+    )
+
+    with pm.Model() as m:
+        ss_mod.to_pymc()
+        pm.Gamma("sigma_epsilon", alpha=2, beta=100)
+        ss_mod.build_statespace_graph(data, add_norm_check=False)
+
+    calibration = load_and_cache_model("one_block_1_ss.gcn").parameters()
+    for name, value in calibration.items():
+        m.set_initval(m[name], value)
+    m.set_initval(m["sigma_epsilon"], 0.01)
+
+    point = m.initial_point()
+    logp = m.compile_logp()
+    gradient = m.compile_dlogp()(point)
+
+    step = 1e-5
+    value_names = [value_var.name for value_var in m.value_vars]
+    finite_differences = [
+        (logp(point | {name: point[name] + step}) - logp(point | {name: point[name] - step})) / (2 * step)
+        for name in value_names
+    ]
+    np.testing.assert_allclose(gradient, finite_differences, rtol=1e-4)
+
+
 @pytest.mark.parametrize(
     "gcn_file",
     ["one_block_1_ss.gcn", "open_rbc.gcn", "rbc_linearized.gcn", "sarima2_12.gcn"],
