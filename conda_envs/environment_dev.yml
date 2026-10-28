@@ -27,13 +27,9 @@ dependencies:
   - pybtex
   - pydata-sphinx-theme
   - watermark
-  - -e .
+  - -e ..
   - matplotlib<4
-  - numba<1
-  - numpy<3
   - pandas<4
-  - pytensor>=3.3.2, <4
-  - pymc>=6.3.0, <7
   - pymc-extras>=0.15.1, <1
   - preliz>=0.27.0, <1
   - pyparsing<4

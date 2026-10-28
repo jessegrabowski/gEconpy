@@ -63,8 +63,8 @@ The workspace defines tasks for the common jobs, which run without activating a 
     pixi run lint                # every pre-commit hook on every file
     pixi run docs-build          # the documentation, into docs/build/html
 
-For conda directly, ``conda_envs/environment_dev.yml`` is the same environment exported from the pixi workspace. Its
-pip section installs ``gEconpy`` in editable mode from ``.``, so run the command from the repository root:
+For conda directly, ``conda_envs/environment_dev.yml`` is the same environment exported from the pixi workspace, and
+its pip section installs ``gEconpy`` in editable mode:
 
 .. code-block:: bash
 
