@@ -2,6 +2,7 @@ import re
 import warnings
 
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -25,7 +26,12 @@ from gEconpy.model.pruning import (
     compile_pruned_second_order_system,
     pruned_second_order_path,
 )
-from gEconpy.model.statespace import _steady_state_intercept, data_from_prior, prepare_mixed_frequency_data
+from gEconpy.model.statespace import (
+    DSGEStateSpace,
+    _steady_state_intercept,
+    data_from_prior,
+    prepare_mixed_frequency_data,
+)
 from gEconpy.model.statistics import autocorrelation_matrix
 from tests._resources.cache_compiled_models import (
     load_and_cache_model,
@@ -1798,6 +1804,111 @@ def test_second_order_likelihood_of_a_linear_model_is_the_first_order_likelihood
         return m.compile_logp()(m.initial_point())
 
     assert_allclose(logp(order=2), logp(order=1), rtol=1e-10)
+
+
+LIKELIHOOD_REDUCTION_CASES = [
+    pytest.param("rbc_linearized.gcn", 1, {"observed_states": ["Y"]}, id="selector"),
+    pytest.param(
+        "rbc_linearized.gcn",
+        1,
+        {"observed_states": ["Y"], "measurement_error": ["Y"], "solver": "cycle_reduction"},
+        id="cycle_reduction",
+    ),
+    pytest.param(
+        "rbc_linearized.gcn",
+        1,
+        {"observed_states": ["Y"], "measurement_error": ["Y"], "solver": "scan_cycle_reduction"},
+        id="scan_cycle_reduction",
+    ),
+    pytest.param(
+        "rbc_linearized.gcn",
+        1,
+        {
+            "observed_states": ["Y"],
+            "measurement_error": ["Y"],
+            "temporal_aggregation": {"Y": "sum"},
+            "aggregation_period": 4,
+        },
+        id="cumulator",
+    ),
+    pytest.param(
+        NL_GCN,
+        1,
+        {
+            "observed_states": ["dY"],
+            "measurement_error": ["dY"],
+            "observation_equations": {"dY": "log(Y[]) - log(Y[-1])"},
+        },
+        id="lagged_observation_equation",
+    ),
+    pytest.param(
+        "one_block_1_ss_2shock.gcn",
+        2,
+        {"observed_states": ["Y", "C"], "measurement_error": ["Y", "C"]},
+        id="second_order",
+    ),
+]
+
+
+@pytest.mark.parametrize(("gcn_file", "order", "configuration"), LIKELIHOOD_REDUCTION_CASES)
+def test_states_left_out_of_the_likelihood_feed_no_kept_state_or_observation(gcn_file, order, configuration):
+    ss_mod = statespace_from_gcn(TEST_GCNS / gcn_file, order=order, verbose=False)
+    ss_mod.configure(constant_params="auto", verbose=False, **configuration)
+
+    keep = ss_mod._likelihood_state_positions
+    drop = np.setdiff1d(np.arange(ss_mod.k_states), keep)
+    param_values = load_and_cache_model(gcn_file).parameters()
+    T, Z = _evaluate_at(ss_mod, [ss_mod.ssm["transition"], pt.as_tensor(ss_mod.ssm["design"])], param_values)
+
+    assert drop.size > 0
+    assert_allclose(T[np.ix_(keep, drop)], 0.0, atol=1e-12)
+    assert_allclose(Z[:, drop], 0.0, atol=1e-12)
+
+
+@pytest.mark.filterwarnings("ignore:Provided data contains missing values")
+@pytest.mark.parametrize(("gcn_file", "order", "configuration"), LIKELIHOOD_REDUCTION_CASES)
+def test_likelihood_over_the_observed_and_lagged_states_is_the_full_system_likelihood(gcn_file, order, configuration):
+    ss_mod = statespace_from_gcn(TEST_GCNS / gcn_file, order=order, verbose=False)
+    ss_mod.configure(constant_params="auto", verbose=False, **configuration)
+
+    observed = configuration["observed_states"]
+    data = pd.DataFrame(
+        np.random.default_rng(0).normal(scale=0.01, size=(40, len(observed))),
+        columns=observed,
+        index=pd.date_range("2000-01-01", periods=40, freq="QS"),
+    )
+    data.iloc[[5, 17]] = np.nan
+
+    def logp_and_gradient():
+        with pm.Model(coords=ss_mod.coords) as m:
+            ss_mod.to_pymc()
+            for name in ss_mod.param_names:
+                if name not in m.named_vars:
+                    pm.Gamma(name, alpha=2, beta=100, dims=ss_mod.param_dims.get(name))
+            ss_mod.build_statespace_graph(data, add_norm_check=False)
+        return m.compile_fn([m.logp(), m.dlogp()])(m.initial_point())
+
+    reduced_logp, reduced_gradient = logp_and_gradient()
+    with mock.patch.object(DSGEStateSpace, "make_likelihood", PyMCStateSpace.make_likelihood):
+        full_logp, full_gradient = logp_and_gradient()
+
+    assert np.isfinite(reduced_logp)
+    assert_allclose(reduced_logp, full_logp, rtol=1e-8)
+    assert_allclose(reduced_gradient, full_gradient, rtol=1e-6, atol=1e-8)
+
+
+def test_likelihood_filters_the_lagged_and_observed_states_and_outputs_cover_every_state(rbc_statespace):
+    rbc_statespace.configure(observed_states=["Y"], constant_params="auto", verbose=False)
+    data = pd.DataFrame(np.zeros((10, 1)), columns=["Y"], index=pd.date_range("2000-01-01", periods=10, freq="QS"))
+
+    with pm.Model(coords=rbc_statespace.coords):
+        rbc_statespace.to_pymc()
+        rbc_statespace.build_statespace_graph(data, add_norm_check=False)
+        filtered_states = rbc_statespace.make_filter_outputs(names="filtered_states")["filtered_states"]
+
+    kept = np.array(rbc_statespace.state_names)[rbc_statespace._likelihood_state_positions]
+    assert kept.tolist() == ["A", "K", "Y"]
+    assert filtered_states.type.shape[-1] == rbc_statespace.k_states
 
 
 @pytest.mark.parametrize(

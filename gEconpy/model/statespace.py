@@ -902,6 +902,35 @@ class DSGEStateSpace(PyMCStateSpace):
             P0 = assume(P0, positive_definite=True)
         return P0
 
+    @property
+    def _likelihood_state_positions(self) -> np.ndarray:
+        """
+        Positions of the states the likelihood depends on.
+
+        These are the lagged model variables, the model variables that the observations and the cumulator and
+        observation-lag chains read, and those chains. Every other state has a zero column in the design matrix and
+        an analytically zero column in the transition matrix, which ``gensys`` returns zero to roundoff, so it never
+        feeds a kept state or an observation.
+        """
+        observation_variables = {*self._cumulator_variables, *self._obs_lag_depths}
+        for name in self.observed_states:
+            if name in self._obs_equations:
+                _, coeffs = self._obs_equations[name]
+                observation_variables.update(variable_name for variable_name, _lag in coeffs)
+            else:
+                observation_variables.add(name)
+
+        variable_names = {*self._lagged_state_names, *observation_variables}
+        variable_positions = [
+            column
+            for name in self._orig_state_names
+            if name in variable_names
+            for column in self._variable_columns(name)
+        ]
+        pair_positions = self._pruned_pair_columns if self.order == 2 else []
+        augmented_positions = np.arange(self._k_model_states, self.k_states)
+        return np.sort(np.concatenate([variable_positions, pair_positions, augmented_positions]).astype(int))
+
     def _pruned_system(
         self, T: pt.TensorVariable, R: pt.TensorVariable, shock_cov: pt.TensorVariable
     ) -> tuple[pt.TensorVariable, pt.TensorVariable, pt.TensorVariable, pt.TensorVariable]:
@@ -1418,6 +1447,30 @@ class DSGEStateSpace(PyMCStateSpace):
             "solver_tol": rcParams["statespace.solver_tol"] if solver_tol is None else solver_tol,
         }
         super().build_statespace_graph(data=data)
+
+    def make_likelihood(
+        self,
+        data: pt.TensorVariable,
+        matrices: list[pt.TensorVariable],
+        dims: tuple[str, ...] | None,
+        missing: np.ndarray,
+    ) -> pt.TensorVariable:
+        """
+        Register the Kalman filter likelihood of ``data``, filtering only the states the observations depend on.
+
+        The kept states form a closed subsystem, so the likelihood equals that of the full system. The initial
+        covariance is the stationary covariance of that subsystem, which relies on ``initial_state_cov`` being the
+        stationary covariance of the full system. Filtered and smoothed outputs drawn after estimation still cover
+        every state.
+        """
+        keep = self._likelihood_state_positions
+        if keep.size == self.k_states:
+            return super().make_likelihood(data, matrices, dims, missing)
+
+        x0, _P0, c, d, T, Z, R, H, Q = map(pt.as_tensor, matrices)
+        T, R, Z = T[keep][:, keep], R[keep], Z[:, keep]
+        P0 = self._stationary_state_covariance(T, R, Q)
+        return super().make_likelihood(data, [x0[keep], P0, c[keep], d, T, Z, R, H, Q], dims, missing)
 
     def _register_additional_statespace_variables(self) -> None:
         add_norm_check = self._graph_checks["add_norm_check"]
