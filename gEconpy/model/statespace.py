@@ -1,6 +1,7 @@
 import logging
 import warnings
 
+from functools import partial
 from types import EllipsisType
 from typing import Literal
 
@@ -59,6 +60,7 @@ from gEconpy.solvers.backward_looking import solve_policy_function_with_backward
 from gEconpy.solvers.cycle_reduction import cycle_reduction_pt, scan_cycle_reduction
 from gEconpy.solvers.gensys import gensys_pt
 from gEconpy.solvers.second_order import SecondOrderTerms, solve_second_order
+from gEconpy.solvers.shared import solve_with_static_elimination
 from gEconpy.solvers.stein import AdjointMethod, validate_adjoint_method
 
 _log = logging.getLogger(__name__)
@@ -182,7 +184,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self._second_order_derivatives = second_order_derivatives
         self.order = 1 if second_order_derivatives is None else 2
-        self._dr_order = DROrder.from_model(variables=variables, equations=equations) if self.order == 2 else None
+        self._dr_order = DROrder.from_model(variables=variables, equations=equations)
 
         self.full_covariance = False
         self.constant_parameters = []
@@ -244,14 +246,21 @@ class DSGEStateSpace(PyMCStateSpace):
     def _setup_policy_matrices(
         self, A: pt.TensorVariable, B: pt.TensorVariable, C: pt.TensorVariable, D: pt.TensorVariable
     ) -> tuple[pt.TensorVariable, pt.TensorVariable, pt.TensorVariable]:
+        static_mask = self._dr_order.static_mask(self.var_order)
+
+        def solve(solver):
+            return solve_with_static_elimination(
+                partial(solver, **self._solver_kwargs), A, B, C, D, static_mask=static_mask
+            )
+
         if self._solver == "gensys":
-            T, R, _success = gensys_pt(A, B, C, D, **self._solver_kwargs)
+            T, R, _success = solve(gensys_pt)
         elif self._solver == "cycle_reduction":
-            T, R = cycle_reduction_pt(A, B, C, D, **self._solver_kwargs)
+            T, R = solve(cycle_reduction_pt)
         elif self._solver == "backward_direct":
             T, R = solve_policy_function_with_backward_direct_pt(A, B, C, D)
         else:
-            T, R, n_steps = scan_cycle_reduction(A, B, C, D, **self._solver_kwargs)
+            T, R, n_steps = solve(scan_cycle_reduction)
             self._n_steps = n_steps
 
         # A, B, and C have columns in ``var_order`` and T shares that basis until it is remapped below, so the

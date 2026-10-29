@@ -9,8 +9,9 @@ gEconpy.solvers.shared
 
     o1_policy_function_adjoints
     pt_compute_selection_matrix
+    solve_with_static_elimination
     stabilize
 
 .. automodule:: gEconpy.solvers.shared
-    :members: o1_policy_function_adjoints, pt_compute_selection_matrix, stabilize
+    :members: o1_policy_function_adjoints, pt_compute_selection_matrix, solve_with_static_elimination, stabilize
     :undoc-members:
