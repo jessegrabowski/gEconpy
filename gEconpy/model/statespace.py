@@ -396,6 +396,11 @@ class DSGEStateSpace(PyMCStateSpace):
         n_states = self._dr_order.n_state_var
         return n_states * (n_states + 1) // 2
 
+    @property
+    def _pruned_pair_columns(self) -> np.ndarray:
+        """Return the state columns of the products of the lagged first-order states."""
+        return 2 * len(self.variables) + np.arange(self._n_pruned_pairs)
+
     def _make_obs_intercept(self) -> pt.TensorVariable:
         r"""
         Build the observation intercept vector :math:`d`.
@@ -886,11 +891,16 @@ class DSGEStateSpace(PyMCStateSpace):
 
         self.ssm["initial_state"] = initial_state
 
+        self.ssm["initial_state_cov"] = self._stationary_state_covariance(transition, selection, innovation_cov)
+
+    def _stationary_state_covariance(
+        self, transition: pt.TensorVariable, selection: pt.TensorVariable, innovation_cov: pt.TensorVariable
+    ) -> pt.TensorVariable:
         method = "direct" if self.use_direct_lyapunov else "bilinear"
         P0 = pt.linalg.solve_discrete_lyapunov(transition, selection @ innovation_cov @ selection.T, method=method)
         if self._stationary_covariance_is_positive_definite:
             P0 = assume(P0, positive_definite=True)
-        self.ssm["initial_state_cov"] = P0
+        return P0
 
     def _pruned_system(
         self, T: pt.TensorVariable, R: pt.TensorVariable, shock_cov: pt.TensorVariable
@@ -929,8 +939,7 @@ class DSGEStateSpace(PyMCStateSpace):
 
         # The variable blocks of the pruned system follow the decision rule. The states follow the model's variables.
         first_order, second_order = self._pruned_part_columns(dr_order.inv_var_order)
-        pairs = 2 * len(self.variables) + np.arange(self._n_pruned_pairs)
-        model_order = np.concatenate([first_order, second_order, pairs])
+        model_order = np.concatenate([first_order, second_order, self._pruned_pair_columns])
         return intercept[model_order], transition[model_order][:, model_order], selection[model_order], innovation_cov
 
     @property
