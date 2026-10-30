@@ -67,8 +67,20 @@ class TestEquationStepping:
         eq = x_t + x_tp1 + x_tm1
         assert step_equation_forward(eq) == x_tp1 + TimeAwareSymbol("x", 2) + x_t
 
+    @pytest.mark.parametrize(
+        ("step", "shift"), [(step_equation_forward, 1), (step_equation_backward, -1)], ids=["forward", "backward"]
+    )
+    def test_steady_state_symbols_stay_put(self, step, shift):
+        y_ss = TimeAwareSymbol("y", "ss")
+        assert step(x_t * y_ss) == TimeAwareSymbol("x", shift) * y_ss
+
 
 class TestDiffThroughTime:
+    def test_steady_state_value_of_the_control_scales_without_adding_a_shift(self):
+        beta = sp.Symbol("beta")
+        x_ss = x_t.to_ss()
+        assert diff_through_time(x_ss * x_t + x_tm1, x_t, beta) == x_ss + beta
+
     def test_geometric_sum(self):
         beta = sp.Symbol("beta")
         X = sum(TimeAwareSymbol("x", t) for t in range(-10, 10))
