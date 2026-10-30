@@ -260,7 +260,7 @@ def eigenvalue_sensitivity(
     # A, B, and C have columns in ``var_order``, so ``lead_var_idx`` (positions in the original variable order) is
     # translated to positions in the permuted column order.
     lead_var_idx = model.inv_var_order[model.lead_var_idx]
-    eigvals_re_pt, eigvals_im_pt = compute_bk_eigenvalues_pt(A_sym, B_sym, C_sym, D_sym, lead_var_idx)
+    eigvals_re_pt, eigvals_im_pt, _ = compute_bk_eigenvalues_pt(A_sym, B_sym, C_sym, D_sym, lead_var_idx)
     eigvals_re_pt = rewrite_pregrad(eigvals_re_pt)
     eigvals_im_pt = rewrite_pregrad(eigvals_im_pt)
 
