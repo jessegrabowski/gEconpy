@@ -148,7 +148,7 @@ def step_equation_forward(eq: sp.Expr) -> sp.Expr:
     eq : sympy expression
         Equation with all time indices incremented.
     """
-    to_step = [variable for variable in set(eq.atoms()) if hasattr(variable, "step_forward")]
+    to_step = [variable for variable in eq.atoms(TimeAwareSymbol) if variable.time_index != "ss"]
 
     for variable in sorted(to_step, key=lambda x: x.time_index, reverse=True):
         eq = eq.subs({variable: variable.step_forward()})
@@ -170,7 +170,7 @@ def step_equation_backward(eq: sp.Expr) -> sp.Expr:
     eq : sympy expression
         Equation with all time indices decremented.
     """
-    to_step = [variable for variable in set(eq.atoms()) if hasattr(variable, "step_backward")]
+    to_step = [variable for variable in eq.atoms(TimeAwareSymbol) if variable.time_index != "ss"]
 
     for variable in sorted(to_step, key=lambda x: x.time_index, reverse=False):
         eq = eq.subs({variable: variable.step_backward()})
@@ -207,7 +207,9 @@ def diff_through_time(eq: sp.Expr, dx: TimeAwareSymbol, discount_factor: sp.Expr
     total : sympy expression
         Sum of discounted derivatives across all relevant time shifts.
     """
-    times_in_eq = {a.time_index for a in eq.atoms(TimeAwareSymbol) if a.base_name == dx.base_name}
+    times_in_eq = {
+        a.time_index for a in eq.atoms(TimeAwareSymbol) if a.base_name == dx.base_name and a.time_index != "ss"
+    }
     if not times_in_eq:
         return sp.S.Zero
     n_iters = max(0, dx.time_index - min(times_in_eq))

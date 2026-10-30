@@ -1047,30 +1047,45 @@ def test_infinite_eigenvalues_are_reported_as_infinite():
     assert modulus[np.isfinite(modulus)].max() < 1e3
 
 
-def test_compute_bk_eigenvalues_pt():
-    model = load_and_cache_model("rbc_linearized.gcn")
-    A_np, B_np, C_np, D_np = model.linearize_model()
+@pytest.mark.parametrize("gcn_file", ["rbc_linearized.gcn", "one_block_1.gcn"], ids=["finite", "with_infinite"])
+def test_compute_bk_eigenvalues_pt_matches_qz(gcn_file):
+    model = load_and_cache_model(gcn_file)
+    A, B, C, D = model.linearize_model()
 
-    eigvals_real_np, eigvals_imag_np, _n_forward = compute_bk_eigenvalues(A_np, B_np, C_np, D_np)
-    lead_var_idx = np.where(np.abs(C_np).sum(axis=0) > 1e-8)[0]
+    real_np, imag_np, n_lead_columns_np = compute_bk_eigenvalues(A, B, C, D)
+    lead_var_idx = np.flatnonzero(np.abs(C).sum(axis=0) > 1e-8)
 
-    A_pt, B_pt, C_pt, D_pt = (pt.as_tensor_variable(M) for M in (A_np, B_np, C_np, D_np))
-    re_pt, im_pt = compute_bk_eigenvalues_pt(A_pt, B_pt, C_pt, D_pt, lead_var_idx)
-    re_val, im_val = re_pt.eval(), im_pt.eval()
+    outputs = compute_bk_eigenvalues_pt(*(pt.as_tensor_variable(M) for M in (A, B, C, D)), lead_var_idx)
+    real_pt, imag_pt, n_lead_columns_pt = (output.eval() for output in outputs)
 
-    modulus_np = np.sqrt(eigvals_real_np**2 + eigvals_imag_np**2)
-    modulus_pt = np.sqrt(re_val**2 + im_val**2)
-
-    # QZ and solve-plus-eig may return different infinite or spurious eigenvalues, but the count of unstable ones
-    # must agree, and so must the nonzero stable eigenvalues.
-    assert (modulus_np > 1).sum() == (modulus_pt > 1).sum()
-
-    stable_np = (modulus_np > 1e-8) & (modulus_np < 1)
-    stable_pt = (modulus_pt > 1e-8) & (modulus_pt < 1)
+    assert n_lead_columns_pt == n_lead_columns_np
+    assert_allclose(np.hypot(real_pt, imag_pt), np.hypot(real_np, imag_np), rtol=1e-6, atol=1e-10)
+    finite = np.isfinite(real_np)
     assert_allclose(
-        np.sort_complex(eigvals_real_np[stable_np] + 1j * eigvals_imag_np[stable_np]),
-        np.sort_complex(re_val[stable_pt] + 1j * im_val[stable_pt]),
-        rtol=1e-4,
+        np.sort_complex(real_pt[finite] + 1j * imag_pt[finite]),
+        np.sort_complex(real_np[finite] + 1j * imag_np[finite]),
+        rtol=1e-6,
+        atol=1e-10,
+    )
+
+
+def test_compute_bk_eigenvalues_pt_drops_empty_lead_columns():
+    """A lead column that is zero at the current values adds a zero eigenvalue and no unstable one."""
+    model = load_and_cache_model("rbc_linearized.gcn")
+    A, B, C, D = model.linearize_model()
+
+    real_np, imag_np, n_lead_columns_np = compute_bk_eigenvalues(A, B, C, D)
+    lead_var_idx = np.flatnonzero(np.abs(C).sum(axis=0) > 1e-8)
+    empty_column = np.setdiff1d(np.arange(C.shape[1]), lead_var_idx)[0]
+
+    outputs = compute_bk_eigenvalues_pt(
+        *(pt.as_tensor_variable(M) for M in (A, B, C, D)), np.sort(np.append(lead_var_idx, empty_column))
+    )
+    real_pt, imag_pt, n_lead_columns_pt = (output.eval() for output in outputs)
+
+    assert n_lead_columns_pt == n_lead_columns_np
+    assert_allclose(
+        np.sort(np.hypot(real_pt, imag_pt)), np.sort(np.append(np.hypot(real_np, imag_np), 0.0)), rtol=1e-6, atol=1e-10
     )
 
 

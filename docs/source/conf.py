@@ -63,6 +63,7 @@ exclude_patterns = [
     "_build",
     "**/.ipynb_checkpoints",
     "examples/GCN Files",
+    "examples/extra_installs.md",
     "Thumbs.db",
     ".DS_Store",
 ]
