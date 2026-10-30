@@ -1911,6 +1911,43 @@ def test_likelihood_filters_the_lagged_and_observed_states_and_outputs_cover_eve
     assert filtered_states.type.shape[-1] == rbc_statespace.k_states
 
 
+def test_loglikelihood_burn_leaves_the_first_periods_unscored(rbc_statespace):
+    rbc_statespace.configure(observed_states=["Y"], constant_params="auto", verbose=False)
+    data = pd.DataFrame(
+        np.random.default_rng(0).normal(scale=0.01, size=(40, 1)),
+        columns=["Y"],
+        index=pd.date_range("2000-01-01", periods=40, freq="QS"),
+    )
+
+    def likelihood_and_terms(loglikelihood_burn):
+        with pm.Model(coords=rbc_statespace.coords) as m:
+            rbc_statespace.to_pymc()
+            for name in rbc_statespace.param_names:
+                if name not in m.named_vars:
+                    pm.Gamma(name, alpha=2, beta=100, dims=rbc_statespace.param_dims.get(name))
+            rbc_statespace.build_statespace_graph(data, add_norm_check=False, loglikelihood_burn=loglikelihood_burn)
+        likelihood = m["obs"]
+        [terms] = m.replace_rvs_by_values([likelihood.owner.inputs[2]])
+        return m.compile_fn([m.logp(vars=[likelihood]), terms])(m.initial_point())
+
+    full_logp, full_terms = likelihood_and_terms(0)
+    burned_logp, burned_terms = likelihood_and_terms(10)
+
+    assert_allclose(burned_logp, full_logp - full_terms[:10].sum(), rtol=1e-10)
+    assert_allclose(burned_terms[:10], 0.0)
+    assert_allclose(burned_terms[10:], full_terms[10:], rtol=1e-12)
+
+
+@pytest.mark.parametrize("loglikelihood_burn", [-1, 10])
+def test_loglikelihood_burn_must_leave_periods_to_score(rbc_statespace, loglikelihood_burn):
+    rbc_statespace.configure(observed_states=["Y"], constant_params="auto", verbose=False)
+    data = pd.DataFrame(np.zeros((10, 1)), columns=["Y"], index=pd.date_range("2000-01-01", periods=10, freq="QS"))
+
+    with pm.Model(coords=rbc_statespace.coords), pytest.raises(ValueError, match="loglikelihood_burn"):
+        rbc_statespace.to_pymc()
+        rbc_statespace.build_statespace_graph(data, add_norm_check=False, loglikelihood_burn=loglikelihood_burn)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "exception", "match"),
     [
