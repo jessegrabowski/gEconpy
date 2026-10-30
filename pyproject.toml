@@ -304,8 +304,10 @@ arviz-stats = "<2"
 flowjax = "<20"
 ipykernel = "<8"
 jupytext = "<2"
+nbclassic = "<2"
 nbconvert = "<8"
 nutpie = "<1"
+openpyxl = "<4"
 preliz = "<1"
 python-graphviz = "<1"
 watermark = "<3"
@@ -313,6 +315,7 @@ xarray-einstats = "<1"
 
 [tool.pixi.feature.notebooks.pypi-dependencies]
 kuznets = "<2"
+nbclassic-mcp-bridge = "<2"
 time-series-transformers = "<1"
 
 [tool.pixi.feature.py313.dependencies]
