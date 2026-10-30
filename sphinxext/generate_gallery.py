@@ -53,6 +53,7 @@ folder_title_map = {
     "introductory": "Introductory",
     "estimation": "Estimation",
     "case_study": "Case Studies",
+    "paper_replications": "Paper Reproductions",
 }
 
 

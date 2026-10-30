@@ -11,7 +11,7 @@ repos:
     -   id: trailing-whitespace
     -   id: check-case-conflict
     -   id: check-added-large-files
-        exclude: ^notebooks/(estimation/(rbc_with_growth|mixed_frequency_estimation)|introductory/second_order_solver)\.ipynb$
+        exclude: ^notebooks/(estimation/(rbc_with_growth|mixed_frequency_estimation)|introductory/second_order_solver|paper_replications/smets_wouters_03)\.ipynb$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
   rev: v0.16.7
