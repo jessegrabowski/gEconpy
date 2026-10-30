@@ -707,7 +707,8 @@ def plot_eigenvalue_sensitivity(
     filter_zeros : bool, optional
         If True, leave out eigenvalues with modulus below ``zero_tol``. Defaults to True.
     filter_infinite : bool, optional
-        If True, leave out eigenvalues with modulus above ``inf_tol``. Defaults to True.
+        If True, leave out eigenvalues with modulus above ``inf_tol``. Infinite eigenvalues are always left out.
+        Defaults to True.
     zero_tol : float, optional
         Modulus below which an eigenvalue counts as zero. Defaults to 1e-6.
     inf_tol : float, optional
@@ -2001,7 +2002,7 @@ def _filter_eigenvalues(
         finite_mods = mod_vals[mod_vals < 1e6]
         inf_tol = max(10 * finite_mods.max(), 10.0) if len(finite_mods) > 0 else 1e6
 
-    mask = np.ones(len(mod_vals), dtype=bool)
+    mask = np.isfinite(mod_vals)
     if filter_zeros:
         mask &= mod_vals > zero_tol
     if filter_infinite:

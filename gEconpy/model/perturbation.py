@@ -28,6 +28,11 @@ _log = logging.getLogger(__name__)
 
 _FLOAT_ZERO_TOL = 1e-8
 
+# Shift of the inverted eigenproblem in compute_bk_eigenvalues_pt. It must not be an eigenvalue of the pencil, so it
+# avoids 0 (empty lead columns, static rows) and the unit roots +1 and -1, and stays near the unit circle, where shift
+# and invert resolves eigenvalues most accurately.
+_BK_SHIFT = -0.7
+
 
 class DROrder(NamedTuple):
     """
@@ -770,55 +775,81 @@ def compute_bk_eigenvalues_pt(
     C: TensorVariable,
     _D: TensorVariable,
     lead_var_idx: np.ndarray,
-) -> tuple[TensorVariable, TensorVariable]:
-    """
-    Compute the eigenvalues of the linearized DSGE system symbolically for the Blanchard-Kahn check.
+    tol: float = _FLOAT_ZERO_TOL,
+) -> tuple[TensorVariable, TensorVariable, TensorVariable]:
+    r"""
+    Compute the generalized eigenvalues of the linearized DSGE system symbolically for the Blanchard-Kahn check.
 
-    Builds the Sims (2002) augmented system and computes its eigenvalues with
-    :func:`~gEconpy.pytensorf.real_eig.real_eig`, so the result is differentiable with respect to the input matrices.
+    Builds the same rescaled Sims (2002) pencil :math:`(G_0, \Gamma_1)` as :func:`compute_bk_eigenvalues`. PyTensor has
+    no QZ decomposition, so the eigenvalues come from the shifted and inverted problem
+
+    .. math::
+
+        (\Gamma_1 - s G_0)^{-1} G_0 v = \nu v, \qquad \lambda = s + 1 / \nu,
+
+    which needs no inverse of the possibly singular :math:`G_0`. An infinite eigenvalue is exactly :math:`\nu = 0`.
+    The eigenvalues are computed with :func:`~gEconpy.pytensorf.real_eig.real_eig`, so they are differentiable with
+    respect to the input matrices.
 
     Parameters
     ----------
     A, B, C, _D : TensorVariable
         Jacobian matrices of the linearized DSGE system. ``_D`` is unused.
     lead_var_idx : ndarray of int
-        Column indices of the forward-looking variables. Must be known at graph-build time.
+        Column indices of the variables that can enter at ``t+1``. Must be known at graph-build time. A column whose
+        rescaled absolute sum is at most ``tol`` at the current values is dropped from the pencil, as in
+        :func:`compute_bk_eigenvalues`, and its place is taken by a zero eigenvalue so the output shape is static.
+    tol : float, optional
+        Threshold for empty lead columns, and the :math:`|\nu|` below which an eigenvalue counts as infinite.
+        Defaults to 1e-8.
 
     Returns
     -------
     eigvals_real : TensorVariable
-        Real parts of the eigenvalues, sorted by modulus.
+        Real parts of the eigenvalues, sorted by modulus. Infinite eigenvalues have a real part of ``inf``.
     eigvals_imag : TensorVariable
         Imaginary parts of the eigenvalues, sorted by modulus.
+    n_lead_columns : TensorVariable
+        Integer scalar, the number of columns in ``lead_var_idx`` that are nonzero at the current values.
     """
     lead_var_idx = np.asarray(lead_var_idx)
     n_vars = A.type.shape[0]
     if n_vars is None:
         raise ValueError("A must have a known static shape for symbolic BK eigenvalue computation.")
+    n_leads = len(lead_var_idx)
 
-    I_n = pt.eye(n_vars)
-    Z_n = pt.zeros((n_vars, n_vars))
+    # Same power-of-two equation scaling as _equation_scales.
+    row_max = pt.abs(pt.horizontal_stack(A, B, C)).max(axis=1, keepdims=True)
+    has_entries = row_max > 0
+    row_scale = pt.switch(has_entries, 2.0 ** -pt.ceil(pt.log2(pt.switch(has_entries, row_max, 1.0))), 1.0)
+    A, B, C = A * row_scale, B * row_scale, C * row_scale
 
-    Gamma_0 = pt.vertical_stack(
-        pt.horizontal_stack(B, C),
-        pt.horizontal_stack(-I_n, Z_n),
+    C_leads = C[:, lead_var_idx]
+    active = (pt.abs(C_leads).sum(axis=0) > tol).astype(A.dtype)
+    lead_selector = pt.eye(n_vars)[lead_var_idx]
+    Z_leads = pt.zeros((n_leads, n_vars))
+
+    # An inactive lead keeps an auxiliary row and column, but as a decoupled block with G0 = 1 and Gamma_1 = 0, whose
+    # eigenvalue is zero.
+    G0 = -pt.vertical_stack(
+        pt.horizontal_stack(B, C_leads * active),
+        pt.horizontal_stack(-lead_selector * active[:, None], -pt.diag(1 - active)),
     )
     Gamma_1 = pt.vertical_stack(
-        pt.horizontal_stack(A, Z_n),
-        pt.horizontal_stack(Z_n, I_n),
+        pt.horizontal_stack(A, Z_leads.T),
+        pt.horizontal_stack(Z_leads, pt.diag(active)),
     )
 
-    # Same row and column selection as _gensys_setup: every equation row plus one auxiliary row per lead variable.
-    eqs_and_leads_idx = np.concatenate([np.arange(n_vars), lead_var_idx + n_vars])
-    Gamma_0_sel = Gamma_0[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
-    Gamma_1_sel = Gamma_1[eqs_and_leads_idx, :][:, eqs_and_leads_idx]
+    nu_real, nu_imag = real_eig(pt.linalg.solve(Gamma_1 - _BK_SHIFT * G0, G0))
 
-    # Gamma_0 may be singular. Regularizing with eps*I turns infinite eigenvalues into O(1/eps) ones, which are still
-    # counted as unstable, while finite eigenvalues near the unit circle move by only O(eps).
-    n_sel = len(eqs_and_leads_idx)
-    G0_reg = -Gamma_0_sel + pt.eye(n_sel) * _FLOAT_ZERO_TOL
-    M = pt.linalg.solve(G0_reg, Gamma_1_sel)
-    return real_eig(M)
+    nu_squared_modulus = nu_real**2 + nu_imag**2
+    infinite = nu_squared_modulus <= tol**2
+    safe_squared_modulus = pt.switch(infinite, 1.0, nu_squared_modulus)
+    eigvals_real = pt.switch(infinite, np.inf, _BK_SHIFT + nu_real / safe_squared_modulus)
+    eigvals_imag = pt.switch(infinite, 0.0, -nu_imag / safe_squared_modulus)
+
+    order = pt.argsort(eigvals_real**2 + eigvals_imag**2)
+    return eigvals_real[order], eigvals_imag[order], active.sum().astype("int64")
 
 
 def check_bk_condition(
@@ -912,20 +943,18 @@ def check_bk_condition_pt(
     A, B, C, D : TensorVariable
         Jacobian matrices of the linearized DSGE system.
     lead_var_idx : ndarray of int
-        Column indices of the forward-looking variables. Must be known at graph-build time.
+        Column indices of the variables that can enter at ``t+1``. Must be known at graph-build time.
 
     Returns
     -------
     bk_satisfied : TensorVariable
         Boolean scalar, True when the Blanchard-Kahn condition is satisfied.
     n_forward : TensorVariable
-        Integer scalar, the number of forward-looking variables.
+        Integer scalar, the number of columns in ``lead_var_idx`` that are nonzero at the current values.
     n_unstable : TensorVariable
         Integer scalar, the number of eigenvalues with modulus greater than one.
     """
-    lead_var_idx = np.asarray(lead_var_idx)
-    n_forward = len(lead_var_idx)
-    eigvals_real, eigvals_imag = compute_bk_eigenvalues_pt(A, B, C, D, lead_var_idx)
+    eigvals_real, eigvals_imag, n_forward = compute_bk_eigenvalues_pt(A, B, C, D, lead_var_idx)
 
     # The BK check is a step function with zero gradient, so detaching the eigenvalues keeps the RealEig VJP, which
     # is only first-order differentiable, out of the Hessian graph.
@@ -936,4 +965,4 @@ def check_bk_condition_pt(
     n_unstable = (modulus > 1).sum()
     bk_satisfied = pt.eq(n_forward, n_unstable)
 
-    return bk_satisfied, pt.constant(n_forward), n_unstable
+    return bk_satisfied, n_forward, n_unstable
