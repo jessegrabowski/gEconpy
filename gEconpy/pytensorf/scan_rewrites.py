@@ -2,9 +2,9 @@ import dataclasses
 
 from pytensor.compile import optdb
 from pytensor.compile.ops import ViewOp
+from pytensor.conditional import IfElse
 from pytensor.graph.replace import clone_replace
 from pytensor.graph.rewriting.basic import copy_stack_trace, dfs_rewriter, node_rewriter
-from pytensor.ifelse import IfElse
 from pytensor.scan.op import Scan
 
 # JAX has no while scan, so the rewrite is kept out of fast_run. The Numba mode picks it up through its own "numba"

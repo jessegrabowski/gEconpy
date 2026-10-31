@@ -5,8 +5,8 @@ import pytensor
 import pytensor.tensor as pt
 
 from pytensor.compile.builders import OpFromGraph
+from pytensor.conditional import ifelse
 from pytensor.graph import Apply, Op
-from pytensor.ifelse import ifelse
 from pytensor.link.numba.dispatch import basic as numba_basic
 from pytensor.link.numba.dispatch.basic import register_funcify_default_op_cache_key
 from pytensor.link.numba.dispatch.linalg.solvers.triangular import _solve_triangular
