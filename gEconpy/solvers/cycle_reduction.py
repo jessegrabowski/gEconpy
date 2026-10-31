@@ -5,6 +5,7 @@ import pytensor
 import pytensor.tensor as pt
 
 from pytensor.compile.builders import OpFromGraph
+from pytensor.conditional import ifelse
 from pytensor.graph import Apply, Op
 from pytensor.link.numba.dispatch import basic as numba_basic
 from pytensor.link.numba.dispatch.basic import register_funcify_default_op_cache_key
@@ -459,7 +460,7 @@ def _scan_cycle_reduction(A, B, C, max_iter: int = 1000, tol: float = 1e-7) -> l
         return A0, A1, A2, A1_hat, A0_L1_norm, step_num + 1
 
     def step(A0, A1, A2, A1_hat, norm, step_num, idx_0, idx_1, tol):
-        return pytensor.ifelse(
+        return ifelse(
             norm < tol,
             noop(A0, A1, A2, A1_hat, norm, step_num),
             cycle_step(A0, A1, A2, A1_hat, step_num, idx_0, idx_1),

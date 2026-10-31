@@ -40,7 +40,7 @@ dependencies = [
     "numba<1",
     "numpy<3",
     "pandas<4",
-    "pytensor>=3.3.2,<4",
+    "pytensor>=3.3.6,<4",
     "pymc>=6.3.0,<7",
     "pymc_extras>=0.15.1,<1",
     "preliz>=0.27.0,<1",
@@ -279,7 +279,7 @@ platforms = ["osx-arm64", "linux-64", "win-64"]
 [tool.pixi.dependencies]
 numpy = "<3"
 numba = "<1"
-pytensor = ">=3.3.2,<4"
+pytensor = ">=3.3.6,<4"
 pymc = ">=6.3.0,<7"
 
 # gxx 16.2.0 on conda-forge win-64 cannot link (ld cannot find dllcrt2.o);

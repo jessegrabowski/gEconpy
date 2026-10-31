@@ -327,19 +327,11 @@ def _solve_steady_state_call(
     if call.func_name == "root":
         order = _DERIVATIVE_ORDER.get(call.method, 0)
         solution, _ = pt.optimize.root_scalar(
-            expression,
-            variable,
-            method=call.method,
-            jac=order >= 1,
-            hess=order >= 2,
-            optimizer_kwargs={"bracket": call.bounds} if call.bounds else None,
+            expression, variable, method=call.method, jac=order >= 1, hess=order >= 2, bracket=call.bounds
         )
     else:
-        optimizer_kwargs = (
-            {"bounds": call.bounds} if call.bounds else {"bracket": call.bracket} if call.bracket else None
-        )
         solution, _ = pt.optimize.minimize_scalar(
-            expression, variable, method=call.method, optimizer_kwargs=optimizer_kwargs
+            expression, variable, method=call.method, bracket=call.bracket, bounds=call.bounds
         )
 
     # The Op's first input is its starting point. scipy ignores it for the bracketing and scalar-minimize methods,
