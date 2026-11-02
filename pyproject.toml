@@ -48,7 +48,7 @@ dependencies = [
     "scipy<2",
     "sympy>=1.14.0,<2",
     "sympytensor>=2.2.0,<3",
-    "better-optimize>=0.4.2,<1",
+    "better-optimize>=0.5.1,<1",
     "ipython<10",
     "xarray<2027"
   ]
