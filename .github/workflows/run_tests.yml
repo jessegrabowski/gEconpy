@@ -121,9 +121,9 @@ jobs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .pytensor-compiledir
-        key: pytensor-compiledir-${{ steps.matrix-id.outputs.id }}-${{ github.run_id }}
+        key: pytensor-compiledir-v2-${{ steps.matrix-id.outputs.id }}-${{ github.run_id }}
         restore-keys: |
-          pytensor-compiledir-${{ steps.matrix-id.outputs.id }}-
+          pytensor-compiledir-v2-${{ steps.matrix-id.outputs.id }}-
 
     - name: Run tests
       run: |
