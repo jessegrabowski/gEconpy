@@ -4,8 +4,8 @@ import pytensor.tensor as pt
 import pytest
 
 from pytensor.compile.mode import get_mode
+from pytensor.conditional import ifelse
 from pytensor.graph.basic import equal_computations
-from pytensor.ifelse import ifelse
 from pytensor.scan.op import Scan
 
 from gEconpy.pytensorf.scan_rewrites import SCAN_UNTIL_TAG, scan_until_converged

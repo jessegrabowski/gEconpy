@@ -7,8 +7,8 @@ dependencies:
 - python >=3.12
 - numpy <3
 - numba <1
-- pytensor >=3.3.2,<4
-- pymc >=6.3.0,<7
+- pytensor >=3.3.7,<4
+- pymc >=6.4.0,<7
 - pip
 - pip:
   - pre-commit
@@ -30,11 +30,11 @@ dependencies:
   - -e ..
   - matplotlib<4
   - pandas<4
-  - pymc-extras>=0.15.1, <1
+  - pymc-extras>=0.16.0, <1
   - preliz>=0.27.0, <1
   - pyparsing<4
   - scipy<2
   - sympy>=1.14.0, <2
   - sympytensor>=2.2.0, <3
-  - better-optimize>=0.4.2, <1
+  - better-optimize>=0.5.1, <1
   - xarray<2027

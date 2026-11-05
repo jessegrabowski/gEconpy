@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
+from better_optimize import OptimizationInterrupted
+
 from gEconpy.solvers.sparse_root import (
     GaussNewtonTrustRegion,
     LevenbergMarquardt,
@@ -20,6 +22,19 @@ from gEconpy.solvers.sparse_root.globalization import ArmijoBacktracking
 
 def scaled_quadratic(x, scale):
     return scale * (x**2 - np.array([1.0, 4.0])), sp.diags(2.0 * scale * x, format="csc")
+
+
+def raises_on_third_step(exception):
+    calls = {"n": 0}
+
+    class RaisesOnThirdStep(NewtonDirection):
+        def compute(self, x, res, jac):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise exception
+            return super().compute(x, res, jac)
+
+    return RaisesOnThirdStep()
 
 
 def uphill_everywhere(x):
@@ -115,24 +130,26 @@ class TestSparseRootFailureMessages:
         assert result.message.endswith(suffix)
         np.testing.assert_array_equal(result.x, [5.0, 5.0])
 
-    @pytest.mark.parametrize("exception", [ZeroDivisionError, KeyboardInterrupt], ids=["error", "interrupt"])
-    def test_an_interrupted_solve_reports_the_last_accepted_iterate(self, exception):
-        calls = {"n": 0}
-
-        class RaisesOnThirdStep(NewtonDirection):
-            def compute(self, x, res, jac):
-                calls["n"] += 1
-                if calls["n"] == 3:
-                    raise exception
-                return super().compute(x, res, jac)
-
-        solver = newton_armijo(direction=RaisesOnThirdStep())
+    def test_a_failed_solve_reports_the_last_accepted_iterate(self):
+        solver = newton_armijo(direction=raises_on_third_step(ZeroDivisionError))
         result = sparse_root(scaled_quadratic, np.array([100.0, 100.0]), args=(1.0,), solver=solver, progressbar=False)
 
         assert not result.success
-        assert exception.__name__ in result.message
+        assert "ZeroDivisionError" in result.message
         assert result.nit == 2
         assert result.nsolve == 2
+        assert sp.issparse(result.jac)
+        np.testing.assert_array_equal(result.fun, scaled_quadratic(result.x, 1.0)[0])
+
+    def test_an_interrupted_solve_raises_with_the_last_accepted_iterate(self):
+        solver = newton_armijo(direction=raises_on_third_step(KeyboardInterrupt))
+
+        with pytest.raises(OptimizationInterrupted) as interrupted:
+            sparse_root(scaled_quadratic, np.array([100.0, 100.0]), args=(1.0,), solver=solver, progressbar=False)
+
+        result = interrupted.value.result
+        assert not result.success
+        assert "KeyboardInterrupt" in result.message
         assert sp.issparse(result.jac)
         np.testing.assert_array_equal(result.fun, scaled_quadratic(result.x, 1.0)[0])
 

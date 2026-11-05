@@ -100,22 +100,6 @@ class TestKnownSteadyStateGraphs:
         assert cache[key] is input_node
 
 
-def _pytensor_solves_bracket_methods() -> bool:
-    x = pt.dscalar("x")
-    solution, _ = pt.optimize.root_scalar(x - 1, x, method="brentq", optimizer_kwargs={"bracket": (0.0, 2.0)})
-    try:
-        pytensor.function([x], solution, mode="FAST_COMPILE")(0.5)
-    except AttributeError:
-        return False
-    return True
-
-
-requires_bracket_methods = pytest.mark.skipif(
-    not _pytensor_solves_bracket_methods(),
-    reason="pytensor's RootScalarOp cannot evaluate the Python floats scipy's bracketing methods pass",
-)
-
-
 @pytest.mark.filterwarnings("ignore:Numba will use object mode:UserWarning")
 class TestSolvedSteadyStateGraphs:
     alpha = sp.Symbol("alpha", positive=True)
@@ -137,7 +121,7 @@ class TestSolvedSteadyStateGraphs:
             "root(w[ss], method=newton, x0=1)",
             "root(w[ss], method=secant, x0=1)",
             "root(w[ss], method=halley, x0=1)",
-            pytest.param("root(w[ss], method=brentq, bounds=[0.01, 5])", marks=requires_bracket_methods),
+            "root(w[ss], method=brentq, bounds=[0.01, 5])",
         ],
         ids=["newton", "secant", "halley", "brentq"],
     )
