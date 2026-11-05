@@ -35,10 +35,16 @@ jobs:
             test-subset: "tests/model/test_model.py::test_numerical_steady_state tests/model/test_model.py::test_numerical_steady_state_with_calibrated_params tests/model/test_model.py::test_partially_analytical_steady_state"
             test-marker: ""
 
-          - subset-name: "Perturbation and Statespace Tests"
+          - subset-name: "Perturbation Tests"
             os: ubuntu-latest
             environment: default
-            test-subset: "tests/model/test_perturbation.py tests/model/test_statespace.py"
+            test-subset: "tests/model/test_perturbation.py"
+            test-marker: ""
+
+          - subset-name: "Statespace Tests"
+            os: ubuntu-latest
+            environment: default
+            test-subset: "tests/model/test_statespace.py"
             test-marker: ""
 
           - subset-name: "Other Model Tests"
