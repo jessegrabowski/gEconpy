@@ -317,7 +317,7 @@ def numba_funcify_GensysWrapper(op, node, **kwargs):  # noqa: ARG001
         success = (eu[0] == 1) and (eu[1] == 1)
         return T, success
 
-    cache_version = 3
+    cache_version = 4
     return gensys_wrapper, cache_version
 
 
@@ -651,7 +651,7 @@ def _gensys_core(
     if n_unstable == 0:
         C_tail = np.zeros((0, c.shape[1]), dtype=np.complex128)
     else:
-        C_tail = _solve_triangular(A_idx - B_idx, Q2 @ c_c, 0, False, False, True)
+        C_tail = _solve_triangular(A_idx - B_idx, Q2 @ c_c, False, False, True)
     C_complex = np.vstack((Tmat_Q @ c_c, C_tail))
 
     impact_rhs = np.vstack(
@@ -668,8 +668,8 @@ def _gensys_core(
     else:
         # `A_idx` is a view into `A`, so overwrite_b stays False to keep A's buffer intact. `Q2 @ psi_c` is a fresh
         # temporary and may be overwritten.
-        f_mat = _solve_triangular(B_idx, A_idx, 0, False, False, False)
-        f_wt = -_solve_triangular(B_idx, Q2 @ psi_c, 0, False, False, True)
+        f_mat = _solve_triangular(B_idx, A_idx, False, False, False)
+        f_wt = -_solve_triangular(B_idx, Q2 @ psi_c, False, False, True)
 
     # y_wt = G_0^{-1}[:, n_stable:n], obtained by solving G_0 @ y_wt = I[:, n_stable:n].
     eye_cols = np.zeros((n, n_unstable), dtype=np.complex128)
