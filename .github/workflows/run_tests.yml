@@ -143,7 +143,9 @@ jobs:
         # pytensor's default compiledir is ~/.pytensor on Linux but under %LOCALAPPDATA% on Windows, so it is set
         # explicitly to the one path the cache step names on every OS. It is relative because the PYTENSOR_FLAGS parser
         # drops backslashes, which turns an absolute Windows path such as D:\a\_temp into D:a_temp.
-        PYTENSOR_FLAGS: base_compiledir=.pytensor-compiledir,gcc__cxxflags=-march=x86-64-v3
+        # With numba fastmath on, a cache-loaded function and a freshly compiled one round differently, and tests that
+        # bake those results into graphs as constants then miss the cache on every run.
+        PYTENSOR_FLAGS: base_compiledir=.pytensor-compiledir,gcc__cxxflags=-march=x86-64-v3,numba__fastmath=False
         NUMBA_CPU_NAME: generic
 
     - name: Upload coverage file
