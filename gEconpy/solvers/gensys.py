@@ -2,6 +2,7 @@ import numpy as np
 import pytensor
 import pytensor.tensor as pt
 
+from numba.extending import overload, register_jitable
 from pytensor.graph.basic import Apply
 from pytensor.graph.op import Op
 from pytensor.link.numba.dispatch import basic as numba_basic
@@ -12,6 +13,7 @@ from pytensor.link.numba.dispatch.linalg.decomposition.svd import _svd_gesdd_ful
 from pytensor.link.numba.dispatch.linalg.solvers.lu_solve import _getrs
 from pytensor.link.numba.dispatch.linalg.solvers.triangular import _solve_triangular
 from pytensor.tensor import TensorVariable
+from scipy import linalg as scipy_linalg
 
 from gEconpy.solvers.shared import (
     o1_policy_function_adjoints,
@@ -354,7 +356,7 @@ def interpret_gensys_output(eu: list[int] | tuple[int, ...]) -> str:
     return message.strip()
 
 
-@numba_basic.numba_njit(final_function=True)
+@register_jitable
 def split_matrix_on_eigen_stability(A: np.ndarray, n_unstable: int) -> tuple[np.ndarray, np.ndarray]:
     """
     Split a matrix row-wise into its stable and unstable blocks.
@@ -377,14 +379,31 @@ def split_matrix_on_eigen_stability(A: np.ndarray, n_unstable: int) -> tuple[np.
     return A[: n - n_unstable], A[n - n_unstable :]
 
 
-@numba_basic.numba_njit(final_function=True)
+@register_jitable
 def _thin_svd_and_rank(eta: np.ndarray, realsmall: float):
     u, s, vh = _svd_gesdd_full(eta, full_matrices=False)
     keep = s > realsmall
     return u, s, vh, keep
 
 
-@numba_basic.numba_njit(final_function=True)
+def _solve_transposed_lu(lu: np.ndarray, piv: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """Solve ``M^T X = B`` given the LU factorization of ``M`` from ``_lu_factor``, overwriting ``B``."""
+    return scipy_linalg.lu_solve((lu, piv), B, trans=1, overwrite_b=True, check_finite=False)
+
+
+@overload(_solve_transposed_lu)
+def _solve_transposed_lu_numba(lu, piv, B):  # noqa: ARG001
+    # `_lu_factor` returns 0-based pivots but `_getrs` hands them straight to LAPACK, which expects 1-based. pytensor's
+    # `_lu_solve` would do this shift, but it cannot be called from njit code because its overload stub and
+    # implementation disagree on arity.
+    def impl(lu, piv, B):
+        X, _info = _getrs(lu, B, piv + np.int32(1), 1, True)
+        return X
+
+    return impl
+
+
+@register_jitable
 def _max_abs_or_one(X: np.ndarray) -> float:
     if X.size == 0:
         return 1.0
@@ -392,12 +411,12 @@ def _max_abs_or_one(X: np.ndarray) -> float:
     return largest if largest > 0 else 1.0
 
 
-@numba_basic.numba_njit(final_function=True)
+@register_jitable
 def _matrix_rank(A: np.ndarray, tol: float) -> int:
     if A.shape[0] == 0 or A.shape[1] == 0:
         return 0
-    # `_svd_gesdd_no_uv` does not raise on a LAPACK failure. It returns NaN singular values, and NaN > tol is False,
-    # so a failed decomposition reads as rank 0.
+    # Under numba, `_svd_gesdd_no_uv` does not raise on a LAPACK failure. It returns NaN singular values, and
+    # NaN > tol is False, so a failed decomposition reads as rank 0. Called from Python it raises LinAlgError.
     s = _svd_gesdd_no_uv(A)
     n_nonzero = 0
     for i in range(s.size):
@@ -406,7 +425,7 @@ def _matrix_rank(A: np.ndarray, tol: float) -> int:
     return n_nonzero
 
 
-@numba_basic.numba_njit(final_function=True)
+@register_jitable
 def _equation_scales(A: np.ndarray, B: np.ndarray, C: np.ndarray) -> np.ndarray:
     n_eq = A.shape[0]
     row_scale = np.ones((n_eq, 1), dtype=np.float64)
@@ -417,7 +436,7 @@ def _equation_scales(A: np.ndarray, B: np.ndarray, C: np.ndarray) -> np.ndarray:
     return row_scale
 
 
-@numba_basic.numba_njit(final_function=True)
+@register_jitable
 def _gensys_setup(
     A: np.ndarray,
     B: np.ndarray,
@@ -475,7 +494,7 @@ def _gensys_setup(
     return G0, Gamma_1, const, Psi, Pi, lead_var_idx
 
 
-@numba_basic.numba_njit(final_function=True)
+@register_jitable
 def _gensys_core(
     g0: np.ndarray,
     g1: np.ndarray,
@@ -495,7 +514,10 @@ def _gensys_core(
     np.ndarray,
 ]:
     """
-    Numba-compiled gensys core.
+    Gensys core, shared by the Python and numba paths.
+
+    Called from Python it runs as plain Python on scipy LAPACK. Called from numba code it compiles inline into the
+    caller.
 
     Always returns the full 9-tuple, with ``eu`` a length-3 int64 array. A coincident-zeros failure is signaled by
     ``eu = [-2, -2, 0]`` with zero-filled matrices, so the output types stay consistent across paths.
@@ -620,11 +642,8 @@ def _gensys_core(
     )
     G_0 = np.vstack((top_block, bottom_block))
 
-    # One LU of G_0 serves every solve below. `_lu_factor` returns 0-based pivots but `_getrs` hands them straight to
-    # LAPACK, which expects 1-based, so shift them here. `_lu_solve` itself cannot be called from njit code because
-    # its overload stub and implementation disagree on arity.
+    # One LU of G_0 serves every solve below.
     lu, piv = _lu_factor(G_0.T, True)
-    piv += np.int32(1)
 
     G_1_rhs = np.vstack(
         (
@@ -632,7 +651,7 @@ def _gensys_core(
             np.zeros((n_unstable, n), dtype=np.complex128),
         )
     )
-    G_1_c, _info = _getrs(lu, G_1_rhs, piv, 1, True)
+    G_1_c = _solve_transposed_lu(lu, piv, G_1_rhs)
     G_1 = (Z @ G_1_c @ Z_H).real
 
     A_idx = A[n_stable:n, n_stable:n]
@@ -654,7 +673,7 @@ def _gensys_core(
             np.zeros((n_unstable, n_shocks), dtype=np.complex128),
         )
     )
-    impact_complex, _info = _getrs(lu, impact_rhs, piv, 1, True)
+    impact_complex = _solve_transposed_lu(lu, piv, impact_rhs)
 
     if n_unstable == 0:
         f_mat = np.zeros((0, 0), dtype=np.complex128)
@@ -669,7 +688,7 @@ def _gensys_core(
     eye_cols = np.zeros((n, n_unstable), dtype=np.complex128)
     for j in range(n_unstable):
         eye_cols[n_stable + j, j] = 1.0 + 0.0j
-    y_wt_complex, _info = _getrs(lu, eye_cols, piv, 1, True)
+    y_wt_complex = _solve_transposed_lu(lu, piv, eye_cols)
     y_wt = Z @ y_wt_complex
 
     loose_rhs = np.vstack(
@@ -678,7 +697,7 @@ def _gensys_core(
             np.zeros((n_unstable, n_eta), dtype=np.complex128),
         )
     )
-    loose_complex, _info = _getrs(lu, loose_rhs, piv, 1, True)
+    loose_complex = _solve_transposed_lu(lu, piv, loose_rhs)
 
     C_out = (Z @ C_complex).real
     impact = (Z @ impact_complex).real
