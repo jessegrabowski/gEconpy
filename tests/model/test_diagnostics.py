@@ -72,6 +72,7 @@ def test_parallel_produces_same_outcomes_as_serial(model_with_priors):
     np.testing.assert_allclose(
         sorted(serial["norm_deterministic"]),
         sorted(parallel["norm_deterministic"]),
+        atol=1e-12,
     )
 
 

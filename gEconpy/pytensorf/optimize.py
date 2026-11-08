@@ -189,14 +189,11 @@ BRACKET_METHODS = {"brentq": make_brentq, "bisect": make_bisect}
 OPEN_METHODS = {"newton": make_newton, "halley": make_halley, "secant": make_secant}
 
 
-def solver_options(method: str, optimizer_kwargs: dict) -> dict | None:
+def solver_options(method: str, optimizer_kwargs: dict, bound_kwargs: tuple[str, ...]) -> dict | None:
     """Return the options ``method`` runs with, scipy's defaults filled in, or None when it is not implemented."""
     options = dict(optimizer_kwargs)
-    if method in BRACKET_METHODS and "bracket" in options:
-        lower, upper = (float(end) for end in options.pop("bracket"))
+    if method in BRACKET_METHODS and "bracket" in bound_kwargs:
         settings = {
-            "lower": lower,
-            "upper": upper,
             "xtol": float(options.pop("xtol", 2e-12)),
             "rtol": float(options.pop("rtol", 4 * np.finfo(np.float64).eps)),
             "maxiter": int(options.pop("maxiter", 100)),
@@ -210,7 +207,7 @@ def solver_options(method: str, optimizer_kwargs: dict) -> dict | None:
 
 @register_funcify_and_cache_key(RootScalarOp)
 def numba_funcify_RootScalarOp(op, node, **kwargs):
-    settings = solver_options(op.method, op.optimizer_kwargs)
+    settings = solver_options(op.method, op.optimizer_kwargs, op.bound_kwargs)
     if settings is None:
         return generate_fallback_impl(op, node, **kwargs), None
 
@@ -219,14 +216,19 @@ def numba_funcify_RootScalarOp(op, node, **kwargs):
         op.fgraph, fgraph_name="numba_root_scalar_objective", **kwargs
     )
 
+    # The node's inputs are the starting point, the objective's other inputs, then one vector per bound in
+    # ``op.bound_kwargs``.
+    n_args = len(op.fgraph.inputs) - 1
     as_output_dtype = np.dtype(node.outputs[0].type.dtype).type
     if op.method in BRACKET_METHODS:
         solve = BRACKET_METHODS[op.method](objective)
-        lower, upper, xtol, rtol, maxiter = (settings[key] for key in ("lower", "upper", "xtol", "rtol", "maxiter"))
+        bracket_position = n_args + op.bound_kwargs.index("bracket")
+        xtol, rtol, maxiter = settings["xtol"], settings["rtol"], settings["maxiter"]
 
         @numba_basic.numba_njit(fastmath=False)
-        def root_scalar(_x0, *args):
-            root, converged = solve(lower, upper, args, xtol, rtol, maxiter)
+        def root_scalar(_x0, *inputs):
+            bracket = inputs[bracket_position]
+            root, converged = solve(float(bracket[0]), float(bracket[1]), inputs[:n_args], xtol, rtol, maxiter)
             return np.asarray(as_output_dtype(root)), converged
 
     else:
@@ -234,14 +236,14 @@ def numba_funcify_RootScalarOp(op, node, **kwargs):
         xtol, maxiter = settings["xtol"], settings["maxiter"]
 
         @numba_basic.numba_njit(fastmath=False)
-        def root_scalar(x0, *args):
-            root, converged = solve(x0.item(), args, xtol, maxiter)
+        def root_scalar(x0, *inputs):
+            root, converged = solve(x0.item(), inputs[:n_args], xtol, maxiter)
             return np.asarray(as_output_dtype(root)), converged
 
     cache_key = None
     if objective_key is not None:
-        cache_version = 2
+        cache_version = 3
         cache_key = sha256(
-            str((type(op), cache_version, op.method, sorted(settings.items()), objective_key)).encode()
+            str((type(op), cache_version, op.method, op.bound_kwargs, sorted(settings.items()), objective_key)).encode()
         ).hexdigest()
     return root_scalar, cache_key

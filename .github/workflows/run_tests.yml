@@ -35,10 +35,16 @@ jobs:
             test-subset: "tests/model/test_model.py::test_numerical_steady_state tests/model/test_model.py::test_numerical_steady_state_with_calibrated_params tests/model/test_model.py::test_partially_analytical_steady_state"
             test-marker: ""
 
-          - subset-name: "Perturbation and Statespace Tests"
+          - subset-name: "Perturbation Tests"
             os: ubuntu-latest
             environment: default
-            test-subset: "tests/model/test_perturbation.py tests/model/test_statespace.py"
+            test-subset: "tests/model/test_perturbation.py"
+            test-marker: ""
+
+          - subset-name: "Statespace Tests"
+            os: ubuntu-latest
+            environment: default
+            test-subset: "tests/model/test_statespace.py"
             test-marker: ""
 
           - subset-name: "Other Model Tests"
@@ -121,9 +127,9 @@ jobs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .pytensor-compiledir
-        key: pytensor-compiledir-${{ steps.matrix-id.outputs.id }}-${{ github.run_id }}
+        key: pytensor-compiledir-v2-${{ steps.matrix-id.outputs.id }}-${{ github.run_id }}
         restore-keys: |
-          pytensor-compiledir-${{ steps.matrix-id.outputs.id }}-
+          pytensor-compiledir-v2-${{ steps.matrix-id.outputs.id }}-
 
     - name: Run tests
       run: |

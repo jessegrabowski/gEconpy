@@ -16,8 +16,8 @@ METHODS = [
     ("newton", {"jac": True}),
     ("halley", {"jac": True, "hess": True}),
     ("secant", {}),
-    ("brentq", {"optimizer_kwargs": {"bracket": (-2.0, 0.0)}}),
-    ("bisect", {"optimizer_kwargs": {"bracket": (-2.0, 0.0)}}),
+    ("brentq", {"bracket": (-2.0, 0.0)}),
+    ("bisect", {"bracket": (-2.0, 0.0)}),
 ]
 
 
@@ -65,12 +65,26 @@ def test_a_one_iteration_cap_stops_the_solve_before_it_converges(method, options
 )
 def test_an_invalid_bracket_does_not_converge(method, equation, bracket):
     x = pt.dscalar("x")
-    solution, success = pt.optimize.root_scalar(equation(x), x, method=method, optimizer_kwargs={"bracket": bracket})
+    solution, success = pt.optimize.root_scalar(equation(x), x, method=method, bracket=bracket)
 
     root, converged = pytensor.function([x], [solution, success], mode="NUMBA")(0.0)
 
     assert not converged
     assert np.isnan(root)
+
+
+@pytest.mark.parametrize("method", ["brentq", "bisect"])
+def test_a_bracket_can_depend_on_the_parameters(method):
+    x = pt.dscalar("x")
+    a = pt.dscalar("a")
+    solution, success = pt.optimize.root_scalar(
+        x + 2 * a * pt.cos(x), x, method=method, bracket=pt.stack([-2 * a, 0.0])
+    )
+
+    root, converged = pytensor.function([x, a], [solution, success], mode="NUMBA")(0.0, 1.0)
+
+    assert converged
+    np.testing.assert_allclose(root, ROOT, atol=1e-8)
 
 
 def test_the_root_keeps_the_variable_dtype():

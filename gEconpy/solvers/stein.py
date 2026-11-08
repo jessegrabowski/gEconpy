@@ -5,8 +5,8 @@ import pytensor
 import pytensor.tensor as pt
 
 from pytensor.compile.builders import OpFromGraph
+from pytensor.conditional import ifelse
 from pytensor.graph import Apply, Op
-from pytensor.ifelse import ifelse
 from pytensor.link.numba.dispatch import basic as numba_basic
 from pytensor.link.numba.dispatch.basic import register_funcify_default_op_cache_key
 from pytensor.link.numba.dispatch.linalg.solvers.triangular import _solve_triangular
@@ -289,9 +289,9 @@ def numba_funcify_TriangularStein(op, node, **kwargs):  # noqa: ARG001
             rhs = F_columns[j].copy()
             if j > 0:
                 rhs -= B @ (R_columns[j, :j] @ Y_columns[:j])
-            Y_columns[j] = _solve_triangular(A + R_columns[j, j] * B, rhs, 0, False, False, True)
+            Y_columns[j] = _solve_triangular(A + R_columns[j, j] * B, rhs, False, False, True)
 
         return np.ascontiguousarray(Y_columns.T)
 
-    cache_version = 1
+    cache_version = 2
     return triangular_stein, cache_version
