@@ -145,8 +145,6 @@ jobs:
         # drops backslashes, which turns an absolute Windows path such as D:\a\_temp into D:a_temp.
         PYTENSOR_FLAGS: base_compiledir=.pytensor-compiledir,gcc__cxxflags=-march=x86-64-v3
         NUMBA_CPU_NAME: generic
-        NUMBA_DEBUG_CACHE: ${{ matrix.subset-name == 'Statespace Tests' && '1' || '0' }}
-        PYTEST_ADDOPTS: ${{ matrix.subset-name == 'Statespace Tests' && '-s' || '' }}
 
     - name: Upload coverage file
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
