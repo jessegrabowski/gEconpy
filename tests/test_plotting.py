@@ -619,13 +619,17 @@ def test_plot_eigenvalue_sensitivity_one_panel_per_parameter(
 
 def test_plot_eigenvalue_sensitivity_reports_filtered_count(one_block_model, sensitivity_data):
     n_eigenvalues = sensitivity_data.sizes["eigenvalue"]
-    n_zero = int((sensitivity_data.eigenvalues.sel(component="modulus") < 1e-6).sum())
+    modulus = sensitivity_data.eigenvalues.sel(component="modulus")
+    n_zero = int((modulus < 1e-6).sum())
+    n_infinite = int(np.isinf(modulus).sum())
     assert 0 < n_zero < n_eigenvalues
 
-    zeros_only = plot_eigenvalue_sensitivity(one_block_model, sensitivity_data=sensitivity_data, filter_infinite=False)
+    zeros_and_infinite = plot_eigenvalue_sensitivity(
+        one_block_model, sensitivity_data=sensitivity_data, filter_infinite=False
+    )
     everything = plot_eigenvalue_sensitivity(one_block_model, sensitivity_data=sensitivity_data, inf_tol=0.0)
 
-    assert f"{n_zero} zero/infinite eigenvalues not shown" in zeros_only.get_suptitle()
+    assert f"{n_zero + n_infinite} zero/infinite eigenvalues not shown" in zeros_and_infinite.get_suptitle()
     assert f"{n_eigenvalues} zero/infinite eigenvalues not shown" in everything.get_suptitle()
 
 

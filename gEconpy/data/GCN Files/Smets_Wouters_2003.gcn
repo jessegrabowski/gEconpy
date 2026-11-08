@@ -1,0 +1,422 @@
+# Smets and Wouters (2003), "An Estimated Dynamic Stochastic General Equilibrium Model of the Euro Area", Journal of
+# the European Economic Association 1(5), adapted from the gEcon implementation by Klima, Podemski,
+# Retkiewicz-Wijtiwiak and Sowinska (2015). Like theirs, it corrects two equations of the paper: capital accumulates
+# as K[] = (1 - tau) * K[-1] + tau * I[] in the log-linear form, and the goods market clears net of the cost of
+# capital utilization. Parameter values are the posterior modes of Table 1 of the paper.
+#
+# The flexible-price, flexible-wage economy runs alongside the sticky one, because the Taylor rule responds to the gap
+# between the two outputs. Its variables carry the suffix _f. Like the paper's potential output, it has no markup or
+# equity premium shocks.
+
+tryreduce
+{
+    U[], U_f[], H[], H_f[], B[], B_f[], Div[], Div_f[], TC[], TC_f[], Pi_ws_f[], Pi_ps_f[], pi_star_w[];
+};
+
+block STEADY_STATE
+{
+    definitions
+    {
+        # Consumption takes c_y and government spending g_y of output, which leaves 1 - c_y - g_y for investment, and
+        # gross output is phi times output, so fixed costs are phi - 1 of output.
+        K_to_Y[ss] = (1 - c_y - g_y) / tau;
+        Y_gross_to_Y[ss] = phi;
+
+        K_to_L[ss] = (alpha * mc[ss] / r_k[ss]) ^ (1 / (1 - alpha));
+        Y_to_L[ss] = K_to_L[ss] ^ alpha / Y_gross_to_Y[ss];
+        C_to_L[ss] = c_y * Y_to_L[ss];
+    };
+    identities
+    {
+        epsilon_a[ss] = 1;
+        epsilon_b[ss] = 1;
+        epsilon_L[ss] = 1;
+        epsilon_I[ss] = 1;
+        epsilon_G[ss] = 1;
+        pi_obj[ss] = 1;
+
+        pi[ss] = 1;
+        pi_star[ss] = 1;
+        nu_p[ss] = 1;
+        nu_w[ss] = 1;
+        R[ss] = 1 / beta;
+        R_f[ss] = 1 / beta;
+
+        z[ss] = 1;
+        z_f[ss] = 1;
+        Q[ss] = 1;
+        Q_f[ss] = 1;
+        r_k[ss] = 1 / beta - (1 - tau);
+        r_k_f[ss] = r_k[ss];
+
+        mc[ss] = r_k[ss] * K_to_Y[ss] / (alpha * Y_gross_to_Y[ss]);
+        mc_f[ss] = mc[ss];
+        W[ss] = (1 - alpha) * mc[ss] * K_to_L[ss] ^ alpha;
+        W_f[ss] = W[ss];
+        w_star[ss] = W[ss];
+        W_i_f[ss] = W[ss];
+        W_disutil_f[ss] = W[ss] / (1 + lambda_w);
+
+        L[ss] = (W_disutil_f[ss] * ((1 - h) * C_to_L[ss]) ^ (-sigma_c) / omega) ^ (1 / (sigma_l + sigma_c));
+        L_s[ss] = L[ss];
+        L_f[ss] = L[ss];
+        L_s_f[ss] = L[ss];
+        L_i_f[ss] = L[ss];
+
+        L_d_f[ss] = L[ss];
+
+        K[ss] = K_to_L[ss] * L[ss];
+        K_f[ss] = K[ss];
+        K_d[ss] = K[ss];
+        K_d_f[ss] = K[ss];
+        I[ss] = tau * K[ss];
+        I_f[ss] = I[ss];
+        N[ss] = L[ss];
+        Y[ss] = Y_to_L[ss] * L[ss];
+        Y_s[ss] = Y[ss];
+        Y_f[ss] = Y[ss];
+        Y_j_f[ss] = Y[ss];
+        C[ss] = C_to_L[ss] * L[ss];
+        C_f[ss] = C[ss];
+        G[ss] = g_y * Y[ss];
+        G_f[ss] = G[ss];
+        T[ss] = G[ss];
+        T_f[ss] = G[ss];
+
+        lambda[ss] = ((1 - h) * C[ss]) ^ (-sigma_c);
+        lambda_f[ss] = lambda[ss];
+        q[ss] = lambda[ss];
+        q_f[ss] = lambda[ss];
+        mu_w_f[ss] = W[ss] - W_disutil_f[ss];
+        mu_p_f[ss] = 1 - mc[ss];
+        P_j_f[ss] = 1;
+
+        f_1[ss] = W_disutil_f[ss] * lambda[ss] * L[ss] / (1 - beta * xi_w);
+        f_2[ss] = f_1[ss];
+        g_2[ss] = lambda[ss] * mc[ss] * Y[ss] / (1 - beta * xi_p);
+        g_1[ss] = lambda[ss] * Y[ss] / (1 - beta * xi_p);
+    };
+};
+
+block HOUSEHOLD
+{
+    definitions
+    {
+        u[] = epsilon_b[] * ((C[] - H[]) ^ (1 - sigma_c) / (1 - sigma_c) -
+            omega * epsilon_L[] * L_s[] ^ (1 + sigma_l) / (1 + sigma_l));
+    };
+    controls
+    {
+        C[], I[], B[], z[];
+    };
+    objective
+    {
+        U[] = u[] + beta * E[][U[1]];
+    };
+    constraints
+    {
+        C[] + I[] + B[] / R[] = W[] * L[] + r_k[] * z[] * K[-1] - r_k[ss] / psi * (exp(psi * (z[] - 1)) - 1) * K[-1] +
+            Div[] + B[-1] / pi[] - T[] : lambda[];
+        K[] = (1 - tau) * K[-1] + (1 - varphi / 2 * (exp(-eta_Q[]) * I[] / I[-1] - 1) ^ 2) * I[] : q[];
+    };
+    identities
+    {
+        # External habit: the household takes last period's aggregate consumption as given.
+        H[] = h * C[-1];
+        Q[] = q[] / lambda[];
+
+        # The capital Euler equation is written out because the persistent investment shock epsilon_I[] has no
+        # primitive. Smets and Wouters (2003) estimate it as a shift in their log-linear equation for Tobin's Q, which
+        # this form reproduces. Their code puts the i.i.d. shock eta_Q[] in the investment equation, the reverse of
+        # equations (29) and (30) of the paper, and the file follows the code.
+        q[] = epsilon_I[] * beta * E[][lambda[1] * (r_k[1] * z[1] - r_k[ss] / psi * (exp(psi * (z[1] - 1)) - 1)) +
+            (1 - tau) * q[1]];
+    };
+    shocks
+    {
+        eta_Q[];
+    };
+    calibration
+    {
+        beta = 0.99;
+        tau = 0.025;
+        varphi = 6.771;
+        psi = 0.169;
+        sigma_c = 1.353;
+        h = 0.573;
+        sigma_l = 2.4;
+        omega = 1;
+    };
+};
+
+block WAGE_SETTING
+{
+    definitions
+    {
+        L_star[] = pi_star_w[] ^ (-(1 + lambda_w) / lambda_w) * L[];
+    };
+    identities
+    {
+        # A household that may reset its wage chooses w_star[] so that f_1[], the marginal value of the wage income it
+        # earns until the next reset, equals f_2[], the marginal disutility of the hours it supplies.
+        f_1[] = w_star[] * lambda[] * L_star[] / (1 + lambda_w) + beta * xi_w *
+            E[][(pi[] ^ gamma_w / pi[1]) ^ (-1 / lambda_w) * (w_star[1] / w_star[]) ^ (1 / lambda_w) * f_1[1]];
+        f_2[] = exp(eta_w[]) * epsilon_L[] * omega * epsilon_b[] * L_star[] ^ (1 + sigma_l) + beta * xi_w *
+            E[][(pi[] ^ gamma_w / pi[1]) ^ (-(1 + lambda_w) / lambda_w * (1 + sigma_l)) *
+                (w_star[1] / w_star[]) ^ ((1 + lambda_w) / lambda_w * (1 + sigma_l)) * f_2[1]];
+        f_1[] = f_2[];
+        pi_star_w[] = w_star[] / W[];
+
+        1 = xi_w * (pi[-1] ^ gamma_w / pi[] * W[-1] / W[]) ^ (-1 / lambda_w) +
+            (1 - xi_w) * pi_star_w[] ^ (-1 / lambda_w);
+        nu_w[] = (1 - xi_w) * pi_star_w[] ^ (-(1 + lambda_w) / lambda_w) +
+            xi_w * (pi[-1] ^ gamma_w / pi[] * W[-1] / W[]) ^ (-(1 + lambda_w) / lambda_w) * nu_w[-1];
+        L[] = L_s[] / nu_w[];
+
+        # Only a fraction 1 - xi_e of firms can adjust employment N[] to the hours they need in a period, so employment
+        # follows hours with a lag. The equation is the one in the code of Smets and Wouters (2003), a Calvo rule for the
+        # change in employment, and is stated in log deviations like theirs.
+        log(N[] / N[-1]) = E[][log(N[1] / N[])] + (1 - xi_e) ^ 2 / xi_e * (log(L[] / L[ss]) - log(N[] / N[ss]));
+    };
+    shocks
+    {
+        eta_w[];
+    };
+    calibration
+    {
+        gamma_w = 0.763;
+        lambda_w = 0.5;
+        xi_w = 0.737;
+        xi_e = 0.599;
+    };
+};
+
+block FIRM
+{
+    controls
+    {
+        K_d[], L[];
+    };
+    objective
+    {
+        @minimize
+        TC[] = W[] * L[] + r_k[] * K_d[];
+    };
+    constraints
+    {
+        Y_s[] = epsilon_a[] * K_d[] ^ alpha * L[] ^ (1 - alpha) - (phi - 1) * Y_s[ss] : mc[];
+    };
+    identities
+    {
+        K_d[] = z[] * K[-1];
+        Div[] = Y[] - TC[];
+    };
+    calibration
+    {
+        alpha = 0.3;
+        phi = 1.408;
+    };
+};
+
+block PRICE_SETTING
+{
+    identities
+    {
+        # A firm that may reset its price chooses pi_star[], the reset price relative to the price level, so that the
+        # discounted revenue g_1[] is the markup 1 + lambda_p over the discounted marginal cost g_2[].
+        g_1[] = (1 + lambda_p) * g_2[];
+        g_1[] = lambda[] * pi_star[] * Y[] + beta * xi_p *
+            E[][(pi[] ^ gamma_p / pi[1]) ^ (-1 / lambda_p) * pi_star[] / pi_star[1] * g_1[1]];
+        g_2[] = exp(eta_p[]) * lambda[] * mc[] * Y[] + beta * xi_p *
+            E[][(pi[] ^ gamma_p / pi[1]) ^ (-(1 + lambda_p) / lambda_p) * g_2[1]];
+
+        1 = xi_p * (pi[-1] ^ gamma_p / pi[]) ^ (-1 / lambda_p) + (1 - xi_p) * pi_star[] ^ (-1 / lambda_p);
+        nu_p[] = (1 - xi_p) * pi_star[] ^ (-(1 + lambda_p) / lambda_p) +
+            xi_p * (pi[-1] ^ gamma_p / pi[]) ^ (-(1 + lambda_p) / lambda_p) * nu_p[-1];
+        Y[] * nu_p[] = Y_s[];
+    };
+    shocks
+    {
+        eta_p[];
+    };
+    calibration
+    {
+        xi_p = 0.908;
+        gamma_p = 0.469;
+        # The price markup that makes consumption c_y of output in the steady state.
+        lambda_p = alpha * phi * tau / ((1 / beta - (1 - tau)) * (1 - c_y - g_y)) - 1;
+        c_y = 0.6;
+    };
+};
+
+block GOVERNMENT
+{
+    identities
+    {
+        G[] = g_y * Y[ss] * epsilon_G[];
+        G[] + B[-1] / pi[] = T[] + B[] / R[];
+        B[] = 0;
+    };
+    calibration
+    {
+        g_y = 0.18;
+    };
+};
+
+block MONETARY_POLICY
+{
+    identities
+    {
+        # The rule responds to lagged inflation relative to the objective pi_obj[], to the lagged output gap
+        # Y[-1] / Y_f[-1], and to the changes in inflation and in the output gap.
+        log(R[] / R[ss]) = rho * log(R[-1] / R[ss]) +
+            (1 - rho) * (log(pi_obj[]) + r_pi * (log(pi[-1]) - log(pi_obj[])) + r_Y * log(Y[-1] / Y_f[-1])) +
+            r_Delta_pi * (log(pi[]) - log(pi[-1])) +
+            r_Delta_y * (log(Y[] / Y_f[]) - log(Y[-1] / Y_f[-1])) + eta_R[];
+        log(pi_obj[]) = rho_pi_bar * log(pi_obj[-1]) + eta_pi[];
+    };
+    shocks
+    {
+        eta_R[], eta_pi[];
+    };
+    calibration
+    {
+        rho = 0.961;
+        r_pi = 1.684;
+        r_Y = 0.099;
+        r_Delta_pi = 0.14;
+        r_Delta_y = 0.159;
+        rho_pi_bar = 0.924;
+    };
+};
+
+block HOUSEHOLD_FLEXIBLE
+{
+    definitions
+    {
+        u_f[] = epsilon_b[] * ((C_f[] - H_f[]) ^ (1 - sigma_c) / (1 - sigma_c) -
+            omega * epsilon_L[] * L_s_f[] ^ (1 + sigma_l) / (1 + sigma_l));
+    };
+    controls
+    {
+        C_f[], I_f[], B_f[], z_f[], L_s_f[];
+    };
+    objective
+    {
+        U_f[] = u_f[] + beta * E[][U_f[1]];
+    };
+    constraints
+    {
+        C_f[] + I_f[] + B_f[] / R_f[] = W_disutil_f[] * L_s_f[] + Pi_ws_f[] + r_k_f[] * z_f[] * K_f[-1] -
+            r_k_f[ss] / psi * (exp(psi * (z_f[] - 1)) - 1) * K_f[-1] + Div_f[] + B_f[-1] - T_f[] : lambda_f[];
+        K_f[] = (1 - tau) * K_f[-1] + (1 - varphi / 2 * (I_f[] / I_f[-1] - 1) ^ 2) * I_f[] : q_f[];
+    };
+    identities
+    {
+        H_f[] = h * C_f[-1];
+        Q_f[] = q_f[] / lambda_f[];
+        q_f[] = epsilon_I[] * beta * E[][lambda_f[1] * (r_k_f[1] * z_f[1] -
+            r_k_f[ss] / psi * (exp(psi * (z_f[1] - 1)) - 1)) + (1 - tau) * q_f[1]];
+    };
+};
+
+block WAGE_SETTING_FLEXIBLE
+{
+    # Each worker sets its wage W_i_f[] every period as a markup over W_disutil_f[], the wage at which its household
+    # would supply the hours itself.
+    controls
+    {
+        W_i_f[], L_i_f[];
+    };
+    objective
+    {
+        Pi_ws_f[] = (W_i_f[] - W_disutil_f[]) * L_i_f[];
+    };
+    constraints
+    {
+        L_i_f[] = L_f[] * (W_i_f[] / W_f[]) ^ (-(1 + lambda_w) / lambda_w) : mu_w_f[];
+    };
+    identities
+    {
+        L_s_f[] = L_i_f[];
+        L_f[] = L_s_f[];
+    };
+};
+
+block FIRM_FLEXIBLE
+{
+    controls
+    {
+        K_d_f[], L_d_f[];
+    };
+    objective
+    {
+        @minimize
+        TC_f[] = W_f[] * L_d_f[] + r_k_f[] * K_d_f[];
+    };
+    constraints
+    {
+        Y_f[] = epsilon_a[] * K_d_f[] ^ alpha * L_d_f[] ^ (1 - alpha) - (phi - 1) * Y_s[ss] : mc_f[];
+    };
+    identities
+    {
+        K_d_f[] = z_f[] * K_f[-1];
+        L_d_f[] = L_f[];
+        Div_f[] = Y_f[] - TC_f[];
+    };
+};
+
+block PRICE_SETTING_FLEXIBLE
+{
+    # Each firm sets its price P_j_f[], relative to the price level, every period as a markup over marginal cost.
+    controls
+    {
+        Y_j_f[], P_j_f[];
+    };
+    objective
+    {
+        Pi_ps_f[] = (P_j_f[] - mc_f[]) * Y_j_f[];
+    };
+    constraints
+    {
+        Y_j_f[] = P_j_f[] ^ (-(1 + lambda_p) / lambda_p) * Y_f[] : mu_p_f[];
+    };
+    identities
+    {
+        Y_j_f[] = Y_f[];
+    };
+};
+
+block GOVERNMENT_FLEXIBLE
+{
+    identities
+    {
+        G_f[] = g_y * Y[ss] * epsilon_G[];
+        G_f[] + B_f[-1] = T_f[] + B_f[] / R_f[];
+        B_f[] = 0;
+    };
+};
+
+block EXOGENOUS_PROCESSES
+{
+    identities
+    {
+        log(epsilon_a[]) = rho_a * log(epsilon_a[-1]) + eta_a[];
+        log(epsilon_b[]) = rho_b * log(epsilon_b[-1]) + eta_b[];
+        log(epsilon_L[]) = rho_L * log(epsilon_L[-1]) - eta_L[];
+        log(epsilon_I[]) = rho_I * log(epsilon_I[-1]) + eta_I[];
+        log(epsilon_G[]) = rho_G * log(epsilon_G[-1]) + eta_G[];
+    };
+    shocks
+    {
+        eta_a[], eta_b[], eta_L[], eta_I[], eta_G[];
+    };
+    calibration
+    {
+        rho_a = 0.823;
+        rho_b = 0.855;
+        rho_L = 0.889;
+        rho_I = 0.927;
+        rho_G = 0.949;
+    };
+};

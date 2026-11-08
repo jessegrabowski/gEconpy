@@ -53,7 +53,15 @@ folder_title_map = {
     "introductory": "Introductory",
     "estimation": "Estimation",
     "case_study": "Case Studies",
+    "paper_replications": "Paper Reproductions",
 }
+
+# Cell tag that picks the cell whose first image becomes the notebook's gallery thumbnail.
+THUMBNAIL_TAG = "gallery-thumbnail"
+
+
+def _cell_images(cell):
+    return [output["data"]["image/png"] for output in cell.get("outputs", []) if "image/png" in output.get("data", {})]
 
 
 def is_tracked_by_git(filepath):
@@ -125,14 +133,21 @@ class NotebookGenerator:
             self.json_source = json.load(fid)
 
     def extract_preview_pic(self):
-        """By default, just uses the last image in the notebook."""
-        pic = None
-        for cell in self.json_source["cells"]:
-            for output in cell.get("outputs", []):
-                if "image/png" in output.get("data", []):
-                    pic = output["data"]["image/png"]
-        if pic is not None:
-            return base64.b64decode(pic)
+        """Return the first image of the cell tagged ``THUMBNAIL_TAG``, or else the last image in the notebook."""
+        cells = self.json_source["cells"]
+        tagged_cells = [cell for cell in cells if THUMBNAIL_TAG in cell.get("metadata", {}).get("tags", [])]
+        if tagged_cells:
+            tagged_pics = _cell_images(tagged_cells[0])
+            if tagged_pics:
+                return base64.b64decode(tagged_pics[0])
+            logger.warning(
+                f"The cell tagged {THUMBNAIL_TAG!r} in {self.basename} has no image output, using the last image",
+                type="thumbnail_extractor",
+            )
+
+        pics = [pic for cell in cells for pic in _cell_images(cell)]
+        if pics:
+            return base64.b64decode(pics[-1])
         return None
 
     def gen_previews(self):

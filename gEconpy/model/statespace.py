@@ -28,6 +28,7 @@ from pymc_extras.statespace.core.fit_recovery import (
 from pymc_extras.statespace.core.irf import DEFAULT_IRF_STEPS, _orthogonal_impulse_matrix, _shock_permutation
 from pymc_extras.statespace.core.properties import Coord, Parameter, Shock, State, SymbolicVariable
 from pymc_extras.statespace.core.statespace import PyMCStateSpace
+from pymc_extras.statespace.filters.distributions import SequenceMvNormal
 from pymc_extras.statespace.utils.constants import (
     ALL_STATE_AUX_DIM,
     ALL_STATE_DIM,
@@ -36,6 +37,7 @@ from pymc_extras.statespace.utils.constants import (
     MISSING_FILL,
     OBS_STATE_AUX_DIM,
     OBS_STATE_DIM,
+    OBSERVED_LIKELIHOOD_NAME,
     SHOCK_AUX_DIM,
     SHOCK_DIM,
     STRUCTURAL_SHOCK_DIM,
@@ -194,6 +196,7 @@ class DSGEStateSpace(PyMCStateSpace):
         self._solver = "gensys"
         self._solver_kwargs: dict | None = None
         self._graph_checks: dict = {}
+        self._loglikelihood_burn = 0
         self._linearized_system_subbed: list | None = None
         self._policy_graph: list | None = None
         self._first_order_policy_graph: tuple | None = None
@@ -1391,12 +1394,13 @@ class DSGEStateSpace(PyMCStateSpace):
         add_bk_check: bool = False,
         add_solver_success_check: bool = False,
         solver_tol: float | None = None,
+        loglikelihood_burn: int = 0,
     ) -> None:
         """
         Build the Kalman filter likelihood for ``data`` into the active PyMC model, plus DSGE diagnostics.
 
         Rebuilding into a model that already holds this graph only repoints it at ``data``. The diagnostic flags
-        are read on the first build and ignored afterwards.
+        and ``loglikelihood_burn`` are read on the first build and ignored afterwards.
 
         Parameters
         ----------
@@ -1413,6 +1417,9 @@ class DSGEStateSpace(PyMCStateSpace):
             ``solver_tol``. Defaults to False.
         solver_tol : float, optional
             Residual tolerance used by ``add_solver_success_check``. Defaults to ``rcParams["statespace.solver_tol"]``.
+        loglikelihood_burn : int, optional
+            Number of initial periods the Kalman filter runs through without adding them to the log-likelihood, the
+            ``presample`` of Dynare. Every later period is still scored conditional on them. Defaults to 0.
 
         Examples
         --------
@@ -1440,12 +1447,20 @@ class DSGEStateSpace(PyMCStateSpace):
                 ss_mod.build_statespace_graph(data)
                 print(pm_mod.compile_logp()(pm_mod.initial_point()))
         """
+        n_periods = None if isinstance(data, pt.TensorVariable) else len(data)
+        if loglikelihood_burn < 0 or (n_periods is not None and loglikelihood_burn >= n_periods):
+            raise ValueError(
+                f"loglikelihood_burn must be non-negative and less than the number of periods in data, "
+                f"got {loglikelihood_burn}"
+            )
+
         self._graph_checks = {
             "add_norm_check": add_norm_check,
             "add_bk_check": add_bk_check,
             "add_solver_success_check": add_solver_success_check,
             "solver_tol": rcParams["statespace.solver_tol"] if solver_tol is None else solver_tol,
         }
+        self._loglikelihood_burn = loglikelihood_burn
         super().build_statespace_graph(data=data)
 
     def make_likelihood(
@@ -1453,7 +1468,7 @@ class DSGEStateSpace(PyMCStateSpace):
         data: pt.TensorVariable,
         matrices: list[pt.TensorVariable],
         dims: tuple[str, ...] | None,
-        missing: np.ndarray,
+        missing: np.ndarray,  # noqa: ARG002
     ) -> pt.TensorVariable:
         """
         Register the Kalman filter likelihood of ``data``, filtering only the states the observations depend on.
@@ -1461,16 +1476,40 @@ class DSGEStateSpace(PyMCStateSpace):
         The kept states form a closed subsystem, so the likelihood equals that of the full system. The initial
         covariance is the stationary covariance of that subsystem, which relies on ``initial_state_cov`` being the
         stationary covariance of the full system. Filtered and smoothed outputs drawn after estimation still cover
-        every state.
+        every state. The first ``loglikelihood_burn`` periods are filtered but not scored.
         """
         keep = self._likelihood_state_positions
         if keep.size == self.k_states:
-            return super().make_likelihood(data, matrices, dims, missing)
+            return self._register_kalman_likelihood(data, matrices, dims)
 
         x0, _P0, c, d, T, Z, R, H, Q = map(pt.as_tensor, matrices)
         T, R, Z = T[keep][:, keep], R[keep], Z[:, keep]
         P0 = self._stationary_state_covariance(T, R, Q)
-        return super().make_likelihood(data, [x0[keep], P0, c[keep], d, T, Z, R, H, Q], dims, missing)
+        return self._register_kalman_likelihood(data, [x0[keep], P0, c[keep], d, T, Z, R, H, Q], dims)
+
+    def _register_kalman_likelihood(
+        self,
+        data: pt.TensorVariable,
+        matrices: list[pt.TensorVariable],
+        dims: tuple[str, ...] | None,
+    ) -> pt.TensorVariable:
+        kalman_filter, _ = self.make_filters()
+        filter_outputs = kalman_filter.build_graph(pt.as_tensor_variable(data), *matrices)
+
+        logp = filter_outputs.pop(-1)
+        *_, observed_states = filter_outputs[:3]
+        *_, observed_covariances = filter_outputs[3:]
+        if self._loglikelihood_burn:
+            logp = logp[: self._loglikelihood_burn].set(0.0)
+
+        return SequenceMvNormal(
+            OBSERVED_LIKELIHOOD_NAME,
+            mus=observed_states,
+            covs=observed_covariances,
+            logp=logp,
+            observed=data,
+            dims=dims,
+        )
 
     def _register_additional_statespace_variables(self) -> None:
         add_norm_check = self._graph_checks["add_norm_check"]
