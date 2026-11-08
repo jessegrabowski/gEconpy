@@ -445,13 +445,7 @@ def _gensys_setup(
     C = C * row_scale
     D = D * row_scale
 
-    col_abs_sum = np.zeros(C.shape[1], dtype=np.float64)
-    for j in range(C.shape[1]):
-        total = 0.0
-        for i in range(C.shape[0]):
-            total += abs(C[i, j])
-        col_abs_sum[j] = total
-    lead_var_idx = np.flatnonzero(col_abs_sum > tol)
+    lead_var_idx = np.flatnonzero(np.abs(C).sum(axis=0) > tol)
     n_leads = lead_var_idx.size
     eqs_and_leads_idx = np.concatenate((np.arange(n_eq), lead_var_idx + n_eq))
 
