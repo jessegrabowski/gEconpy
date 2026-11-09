@@ -187,6 +187,7 @@ def check_bk_condition(
         verbose=verbose,
         on_failure=on_failure,
         return_value=return_value,
+        mode=model._mode,
     )
 
 
@@ -602,7 +603,9 @@ def _check_one_draw(
         except _NUMERICAL_ERRORS:
             failure_step = "perturbation"
 
-    if failure_step is None and not bool(_check_bk_condition(A, B, C, D, verbose=False, return_value="bool")):
+    if failure_step is None and not bool(
+        _check_bk_condition(A, B, C, D, verbose=False, return_value="bool", mode=model._mode)
+    ):
         failure_step = "blanchard-kahn"
 
     if failure_step is None:

@@ -7,6 +7,7 @@ import pandas as pd
 import pytensor.tensor as pt
 import sympy as sp
 
+from pytensor.compile.mode import Mode
 from pytensor.gradient import disconnected_grad, pushforward
 from pytensor.graph import vectorize_graph
 from pytensor.graph.replace import graph_replace
@@ -19,19 +20,13 @@ from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.time_aware_symbol import TimeAwareSymbol
 from gEconpy.model.compile import build_symbolic_jacobians, make_cache_key
 from gEconpy.model.timing import make_all_variable_time_combinations
-from gEconpy.pytensorf.compile import rewrite_pregrad
-from gEconpy.pytensorf.real_eig import real_eig
-from gEconpy.solvers.gensys import _gensys_setup
+from gEconpy.pytensorf.compile import compile_pytensor_function, rewrite_pregrad
+from gEconpy.pytensorf.generalized_eig import generalized_eig
 from gEconpy.utilities import get_name
 
 _log = logging.getLogger(__name__)
 
 _FLOAT_ZERO_TOL = 1e-8
-
-# Shift of the inverted eigenproblem in compute_bk_eigenvalues_pt. It must not be an eigenvalue of the pencil, so it
-# avoids 0 (empty lead columns, static rows) and the unit roots +1 and -1, and stays near the unit circle, where shift
-# and invert resolves eigenvalues most accurately.
-_BK_SHIFT = -0.7
 
 
 class DROrder(NamedTuple):
@@ -725,13 +720,19 @@ def check_perturbation_solution(
 
 
 def compute_bk_eigenvalues(
-    A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray, tol: float = 1e-8
+    A: np.ndarray,
+    B: np.ndarray,
+    C: np.ndarray,
+    D: np.ndarray,
+    tol: float = 1e-8,
+    mode: str | Mode | None = None,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """
     Compute the generalized eigenvalues of the linearized DSGE system for the Blanchard-Kahn check.
 
-    Builds the Sims (2002) augmented system and computes its eigenvalues by ordered QZ decomposition. Eigenvalues are
-    sorted by ascending modulus.
+    Compiles and evaluates the graph of :func:`compute_bk_eigenvalues_pt` with
+    :func:`~gEconpy.pytensorf.compile.compile_pytensor_function`, so the two functions share one implementation. Lead
+    columns that are nonzero but empty after rescaling contribute no eigenvalue.
 
     Parameters
     ----------
@@ -739,13 +740,16 @@ def compute_bk_eigenvalues(
         Jacobian matrices of the linearized DSGE system.
     tol : float, optional
         Relative threshold. Each equation is first rescaled to unit size, then a column of ``C`` whose absolute
-        sum falls below ``tol`` counts as empty, and a pencil diagonal entry below ``tol`` marks an infinite
+        sum falls below ``tol`` counts as empty, and a QZ denominator ``beta`` below ``tol`` marks an infinite
         eigenvalue. Defaults to 1e-8.
+    mode : str or Mode, optional
+        PyTensor compilation mode. Defaults to None, PyTensor's default mode.
 
     Returns
     -------
     eigvals_real : ndarray
-        Real parts of the eigenvalues, sorted by modulus.
+        Real parts of the ``n_variables + n_lead_columns`` eigenvalues, sorted by modulus. Infinite eigenvalues have a
+        real part of ``inf``.
     eigvals_imag : ndarray
         Imaginary parts of the eigenvalues, sorted by modulus.
     n_lead_columns : int
@@ -753,20 +757,16 @@ def compute_bk_eigenvalues(
         at these parameter values. It is smaller than :attr:`~gEconpy.model.model.Model.n_forward` when every
         coefficient on some lead variable vanishes at the current parameterization.
     """
-    G0, Gamma_1, _, _, _, lead_var_idx = _gensys_setup(A, B, C, D, tol)
-    AA, BB, *_ = linalg.ordqz(G0, Gamma_1, sort="ouc", output="complex")
+    lead_var_idx = np.flatnonzero(np.abs(C).sum(axis=0) > 0)
+    inputs = [pt.tensor(name, dtype=M.dtype, shape=M.shape) for name, M in zip("ABCD", (A, B, C, D), strict=True)]
+    outputs = compute_bk_eigenvalues_pt(*inputs, lead_var_idx=lead_var_idx, tol=tol)
 
-    # A zero on the diagonal of AA is an infinite generalized eigenvalue, not a large one. Nudging the
-    # denominator by tol instead would bias every eigenvalue, and would amplify rather than damp the ones where
-    # the diagonal sits near -tol.
-    alpha, beta = np.diag(AA), np.diag(BB)
-    finite = np.abs(alpha) > tol
-    eigenvalues = np.full(alpha.shape, np.inf, dtype=complex)
-    eigenvalues[finite] = beta[finite] / alpha[finite]
+    f = compile_pytensor_function(inputs, outputs, mode=mode)
+    eigvals_real, eigvals_imag, n_lead_columns = f(A, B, C, D)
 
-    eigenvalues = eigenvalues[np.argsort(np.abs(eigenvalues))]
-
-    return np.real(eigenvalues), np.imag(eigenvalues), int(lead_var_idx.size)
+    # Each lead column that is empty at these values pads the pencil with a zero eigenvalue, which sorts first.
+    n_padding = lead_var_idx.size - int(n_lead_columns)
+    return eigvals_real[n_padding:], eigvals_imag[n_padding:], int(n_lead_columns)
 
 
 def compute_bk_eigenvalues_pt(
@@ -780,16 +780,10 @@ def compute_bk_eigenvalues_pt(
     r"""
     Compute the generalized eigenvalues of the linearized DSGE system symbolically for the Blanchard-Kahn check.
 
-    Builds the same rescaled Sims (2002) pencil :math:`(G_0, \Gamma_1)` as :func:`compute_bk_eigenvalues`. PyTensor has
-    no QZ decomposition, so the eigenvalues come from the shifted and inverted problem
-
-    .. math::
-
-        (\Gamma_1 - s G_0)^{-1} G_0 v = \nu v, \qquad \lambda = s + 1 / \nu,
-
-    which needs no inverse of the possibly singular :math:`G_0`. An infinite eigenvalue is exactly :math:`\nu = 0`.
-    The eigenvalues are computed with :func:`~gEconpy.pytensorf.real_eig.real_eig`, so they are differentiable with
-    respect to the input matrices.
+    Builds the Sims (2002) augmented pencil :math:`(G_0, \Gamma_1)` and computes its eigenvalues by QZ decomposition
+    with :func:`~gEconpy.pytensorf.generalized_eig.generalized_eig`, so they are differentiable with respect to the
+    input matrices. Each equation is first divided by a power of two near the largest absolute entry of its rows of
+    ``A``, ``B`` and ``C``, as in :func:`~gEconpy.solvers.gensys.gensys`.
 
     Parameters
     ----------
@@ -797,11 +791,11 @@ def compute_bk_eigenvalues_pt(
         Jacobian matrices of the linearized DSGE system. ``_D`` is unused.
     lead_var_idx : ndarray of int
         Column indices of the variables that can enter at ``t+1``. Must be known at graph-build time. A column whose
-        rescaled absolute sum is at most ``tol`` at the current values is dropped from the pencil, as in
-        :func:`compute_bk_eigenvalues`, and its place is taken by a zero eigenvalue so the output shape is static.
+        rescaled absolute sum is at most ``tol`` at the current values is dropped from the pencil, and its place is
+        taken by a zero eigenvalue so the output shape is static.
     tol : float, optional
-        Threshold for empty lead columns, and the :math:`|\nu|` below which an eigenvalue counts as infinite.
-        Defaults to 1e-8.
+        Threshold for empty lead columns, and the modulus of the QZ denominator ``beta`` at or below which an
+        eigenvalue counts as infinite. Defaults to 1e-8.
 
     Returns
     -------
@@ -818,7 +812,6 @@ def compute_bk_eigenvalues_pt(
         raise ValueError("A must have a known static shape for symbolic BK eigenvalue computation.")
     n_leads = len(lead_var_idx)
 
-    # Same power-of-two equation scaling as _equation_scales.
     row_max = pt.abs(pt.horizontal_stack(A, B, C)).max(axis=1, keepdims=True)
     has_entries = row_max > 0
     row_scale = pt.switch(has_entries, 2.0 ** -pt.ceil(pt.log2(pt.switch(has_entries, row_max, 1.0))), 1.0)
@@ -840,16 +833,8 @@ def compute_bk_eigenvalues_pt(
         pt.horizontal_stack(Z_leads, pt.diag(active)),
     )
 
-    nu_real, nu_imag = real_eig(pt.linalg.solve(Gamma_1 - _BK_SHIFT * G0, G0))
-
-    nu_squared_modulus = nu_real**2 + nu_imag**2
-    infinite = nu_squared_modulus <= tol**2
-    safe_squared_modulus = pt.switch(infinite, 1.0, nu_squared_modulus)
-    eigvals_real = pt.switch(infinite, np.inf, _BK_SHIFT + nu_real / safe_squared_modulus)
-    eigvals_imag = pt.switch(infinite, 0.0, -nu_imag / safe_squared_modulus)
-
-    order = pt.argsort(eigvals_real**2 + eigvals_imag**2)
-    return eigvals_real[order], eigvals_imag[order], active.sum().astype("int64")
+    eigvals_real, eigvals_imag = generalized_eig(Gamma_1, G0, tol=tol)
+    return eigvals_real, eigvals_imag, active.sum().astype("int64")
 
 
 def check_bk_condition(
@@ -861,6 +846,7 @@ def check_bk_condition(
     verbose: bool = True,
     on_failure: Literal["raise", "ignore"] = "ignore",
     return_value: Literal["dataframe", "bool", None] = "dataframe",
+    mode: str | Mode | None = None,
 ) -> bool | pd.DataFrame | None:
     r"""
     Check the Blanchard-Kahn condition of the linearized system.
@@ -882,6 +868,8 @@ def check_bk_condition(
         ``'ignore'``.
     return_value : str or None, optional
         One of ``'dataframe'``, ``'bool'``, or None. Selects what to return. Defaults to ``'dataframe'``.
+    mode : str or Mode, optional
+        PyTensor compilation mode for the eigenvalue computation. Defaults to None, PyTensor's default mode.
 
     Returns
     -------
@@ -899,7 +887,7 @@ def check_bk_condition(
     if return_value not in ["dataframe", "bool", None]:
         raise ValueError(f'Unknown return_value "{return_value}". Pass "dataframe", "bool", or None.')
 
-    eigvals_real, eigvals_imag, n_lead_columns = compute_bk_eigenvalues(A, B, C, D, tol)
+    eigvals_real, eigvals_imag, n_lead_columns = compute_bk_eigenvalues(A, B, C, D, tol=tol, mode=mode)
     modulus = np.sqrt(eigvals_real**2 + eigvals_imag**2)
     n_unstable = int((modulus > 1).sum())
     satisfied = bool(n_lead_columns == n_unstable)
@@ -956,8 +944,8 @@ def check_bk_condition_pt(
     """
     eigvals_real, eigvals_imag, n_forward = compute_bk_eigenvalues_pt(A, B, C, D, lead_var_idx)
 
-    # The BK check is a step function with zero gradient, so detaching the eigenvalues keeps the RealEig VJP, which
-    # is only first-order differentiable, out of the Hessian graph.
+    # The BK check is a step function with zero gradient, so detaching the eigenvalues keeps the GeneralizedEig
+    # pullback, which is only first-order differentiable, out of the Hessian graph.
     eigvals_real = disconnected_grad(eigvals_real)
     eigvals_imag = disconnected_grad(eigvals_imag)
 
