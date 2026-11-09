@@ -452,8 +452,9 @@ def _gensys_setup(
     stacked pencil and every tolerance downstream see equations of unit size whatever units they were written in.
 
     A lead variable is a column of the rescaled ``C`` whose absolute column sum exceeds ``tol``. Each lead variable
-    gets an auxiliary equation and an expectational error, so the stacked system has ``n_eq + n_leads`` rows. This is
-    the only place that rule is applied, so callers needing the same set take it from here.
+    gets an auxiliary equation and an expectational error, so the stacked system has ``n_eq + n_leads`` rows.
+    :func:`~gEconpy.model.perturbation.compute_bk_eigenvalues_pt` applies the same scaling and lead rule in PyTensor,
+    so a change to either rule belongs in both.
     """
     n_eq = A.shape[0]
     n_shocks = D.shape[1]

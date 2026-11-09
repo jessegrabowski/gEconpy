@@ -14,6 +14,7 @@ from numpy.testing import assert_allclose
 from pytensor.graph.basic import equal_computations
 from pytensor.graph.replace import clone_replace
 from pytensor.graph.traversal import explicit_graph_inputs
+from scipy import linalg
 
 from gEconpy.classes.containers import SymbolDictionary
 from gEconpy.classes.perturbation_solution import FirstOrderPerturbationSolution, SecondOrderPerturbationSolution
@@ -49,6 +50,7 @@ from gEconpy.model.steady_state.pytensor_engine import (
     build_minimize_graphs,
     build_root_graphs,
 )
+from gEconpy.solvers.gensys import _gensys_setup
 from gEconpy.utilities import safe_to_ss
 from tests._resources.cache_compiled_models import load_and_cache_model
 from tests._resources.expected_matrices import expected_linearization_result
@@ -1048,29 +1050,23 @@ def test_infinite_eigenvalues_are_reported_as_infinite():
 
 
 @pytest.mark.parametrize("gcn_file", ["rbc_linearized.gcn", "one_block_1.gcn"], ids=["finite", "with_infinite"])
-def test_compute_bk_eigenvalues_pt_matches_qz(gcn_file):
+def test_compute_bk_eigenvalues_match_scipy_on_gensys_pencil(gcn_file):
     model = load_and_cache_model(gcn_file)
     A, B, C, D = model.linearize_model()
 
-    real_np, imag_np, n_lead_columns_np = compute_bk_eigenvalues(A, B, C, D)
-    lead_var_idx = np.flatnonzero(np.abs(C).sum(axis=0) > 1e-8)
+    eigvals_real, eigvals_imag, n_lead_columns = compute_bk_eigenvalues(A, B, C, D)
+    G0, Gamma_1, *_, lead_var_idx = _gensys_setup(A, B, C, D, 1e-8)
+    alpha, beta = linalg.eigvals(Gamma_1, G0, homogeneous_eigvals=True)
+    finite = np.abs(beta) > 1e-8
+    expected = np.full(alpha.shape, np.inf)
+    expected[finite] = np.abs(alpha[finite] / beta[finite])
 
-    outputs = compute_bk_eigenvalues_pt(*(pt.as_tensor_variable(M) for M in (A, B, C, D)), lead_var_idx)
-    real_pt, imag_pt, n_lead_columns_pt = (output.eval() for output in outputs)
-
-    assert n_lead_columns_pt == n_lead_columns_np
-    assert_allclose(np.hypot(real_pt, imag_pt), np.hypot(real_np, imag_np), rtol=1e-6, atol=1e-10)
-    finite = np.isfinite(real_np)
-    assert_allclose(
-        np.sort_complex(real_pt[finite] + 1j * imag_pt[finite]),
-        np.sort_complex(real_np[finite] + 1j * imag_np[finite]),
-        rtol=1e-6,
-        atol=1e-10,
-    )
+    assert n_lead_columns == lead_var_idx.size
+    assert_allclose(np.hypot(eigvals_real, eigvals_imag), np.sort(expected), rtol=1e-10, atol=1e-12)
 
 
-def test_compute_bk_eigenvalues_pt_drops_empty_lead_columns():
-    """A lead column that is zero at the current values adds a zero eigenvalue and no unstable one."""
+def test_empty_lead_columns_add_no_unstable_eigenvalue():
+    """A lead column that is empty at the current values pads the symbolic pencil with a zero eigenvalue."""
     model = load_and_cache_model("rbc_linearized.gcn")
     A, B, C, D = model.linearize_model()
 
@@ -1088,27 +1084,43 @@ def test_compute_bk_eigenvalues_pt_drops_empty_lead_columns():
         np.sort(np.hypot(real_pt, imag_pt)), np.sort(np.append(np.hypot(real_np, imag_np), 0.0)), rtol=1e-6, atol=1e-10
     )
 
+    # A lead column that is nonzero but empty after rescaling pads the pencil, and the NumPy wrapper drops the padding.
+    C_tiny = C.copy()
+    C_tiny[0, empty_column] = 1e-14
+    real_tiny, imag_tiny, n_lead_columns_tiny = compute_bk_eigenvalues(A, B, C_tiny, D)
 
-def test_eigenvalue_sensitivity():
+    assert n_lead_columns_tiny == n_lead_columns_np
+    assert_allclose(real_tiny, real_np, atol=1e-12)
+    assert_allclose(imag_tiny, imag_np, atol=1e-12)
+
+
+def test_eigenvalue_sensitivity_matches_finite_differences():
+    """Gradients hold the steady state fixed, so the finite differences relinearize at the same steady state."""
     model = load_and_cache_model("basic_rbc.gcn")
-    A, B, C, D = model.linearize_model(verbose=False)
+    steady_state = model.steady_state(verbose=False, progressbar=False)
+    parameters = model.parameters()
 
-    re_np, im_np, _ = compute_bk_eigenvalues(A, B, C, D)
-    mod_np = np.sqrt(re_np**2 + im_np**2)
+    ds = eigenvalue_sensitivity(model, verbose=False, steady_state=steady_state)
+    re, im, modulus = (ds.eigenvalues.sel(component=c).values for c in ("real", "imaginary", "modulus"))
+    keep = (modulus > 1e-6) & np.isfinite(modulus)
+    grad_re, grad_im = (ds.gradients.sel(part=part).values[keep] for part in ("real", "imaginary"))
+    modulus_gradients = (grad_re * re[keep, None] + grad_im * im[keep, None]) / modulus[keep, None]
 
-    ds = eigenvalue_sensitivity(model, verbose=False)
-    mod_pt = ds.eigenvalues.sel(component="modulus").values
+    def finite_moduli(**updates):
+        eigvals_real, eigvals_imag, _ = compute_bk_eigenvalues(
+            *model.linearize_model(steady_state=steady_state, verbose=False, **{**parameters, **updates})
+        )
+        moduli = np.hypot(eigvals_real, eigvals_imag)
+        return moduli[(moduli > 1e-6) & np.isfinite(moduli)]
 
-    finite_np = mod_np[(mod_np > 1e-6) & (mod_np < 1e6)]
-    finite_pt = mod_pt[(mod_pt > 1e-6) & (mod_pt < 1e6)]
+    assert_allclose(finite_moduli(), modulus[keep], rtol=1e-10)
 
-    # QZ (numpy reference) and solve-plus-eig (sensitivity path) agree only to about 5 significant figures by
-    # construction, and the QZ ordering of the clustered eigenvalues wobbles run to run. rtol=1e-5 sits exactly on
-    # that boundary and flakes, so do not tighten.
-    assert_allclose(np.sort(finite_np), np.sort(finite_pt), rtol=1e-4)
-
-    grad_mags = np.sqrt(ds.gradients.sel(part="real").values ** 2 + ds.gradients.sel(part="imaginary").values ** 2)
-    assert grad_mags.max() > 1e-10
+    for column, name in enumerate(ds.parameter.values):
+        step = 1e-6 * max(abs(parameters[name]), 1.0)
+        numeric = (
+            finite_moduli(**{name: parameters[name] + step}) - finite_moduli(**{name: parameters[name] - step})
+        ) / (2 * step)
+        assert_allclose(modulus_gradients[:, column], numeric, rtol=1e-4, atol=1e-7, err_msg=name)
 
 
 def test_summarize_perturbation_solution():
