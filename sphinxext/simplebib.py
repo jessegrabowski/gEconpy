@@ -18,11 +18,13 @@ class bibliography_node(nodes.General, nodes.Element):
 
 
 def _cite_role(name, rawtext, text, lineno, inliner, options=None, content=None):  # noqa: ARG001
+    # `cite:t` names the authors in the sentence; `cite:p` is the bare marker.
+    textual = name.rpartition(":")[2] == "t"
     result = []
     for i, key in enumerate(k.strip() for k in text.split(",") if k.strip()):
         if i:
             result.append(nodes.Text(", "))
-        node = cite_ref("", key=key)
+        node = cite_ref("", key=key, textual=textual)
         result.append(node)
     return result, []
 
@@ -73,11 +75,14 @@ def _clean(value):
     return re.sub(r"\s+", " ", value.replace("{", "").replace("}", "")).strip()
 
 
+def _last_name(person):
+    return _clean(" ".join(person.prelast_names + person.last_names))
+
+
 def _format_person(person):
-    last = _clean(" ".join(person.prelast_names + person.last_names))
     given = [_clean(n) for n in person.first_names + person.middle_names]
     initials = " ".join(f"{n[0]}." for n in given if n)
-    return f"{last}, {initials}".rstrip(", ").strip()
+    return f"{_last_name(person)}, {initials}".rstrip(", ").strip()
 
 
 def _format_authors(persons):
@@ -85,6 +90,13 @@ def _format_authors(persons):
     if len(names) <= 1:
         return names[0] if names else ""
     return ", ".join(names[:-1]) + ", & " + names[-1]
+
+
+def _short_authors(persons):
+    names = [_last_name(p) for p in persons]
+    if len(names) > 2:
+        return f"{names[0]} et al."
+    return " and ".join(names)
 
 
 def _format_entry(entry):
@@ -139,7 +151,9 @@ def _resolve_page(app, doctree, docname):  # noqa: ARG001
         marker = nodes.reference("", f"[{number}]", internal=True, refid=_anchor(key))
         marker["ids"].append(ref_id)
         marker["classes"].append("simplebib-cite")
-        node.replace_self(marker)
+
+        authors = _short_authors(_persons(bib[key])) if node["textual"] else ""
+        node.replace_self([nodes.Text(f"{authors} "), marker] if authors else marker)
 
     for node in list(doctree.findall(bibliography_node)):
         if not numbers:
