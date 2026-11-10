@@ -139,9 +139,10 @@ def _resolve_page(app, doctree, docname):  # noqa: ARG001
     backrefs = {}  # key -> [ids of the in-text markers]
 
     for node in list(doctree.findall(cite_ref)):
-        key = node["key"]
+        # BibTeX keys are case-insensitive, and _load_bib stores them lowercased.
+        key = node["key"].lower()
         if key not in bib:
-            logger.warning(f"unknown citation key {key!r}", location=node, type="simplebib")
+            logger.warning(f"unknown citation key {node['key']!r}", location=node, type="simplebib")
             node.replace_self(nodes.Text("[?]"))
             continue
         number = numbers.setdefault(key, len(numbers) + 1)
