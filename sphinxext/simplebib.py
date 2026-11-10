@@ -37,11 +37,8 @@ class CiteDomain(Domain):
     def get_objects(self):
         return []
 
-    # The domain only registers the roles and stores no data, so there is nothing to clear or merge.
-    # Sphinx still requires both methods before it reads documents in parallel.
-    def clear_doc(self, docname):
-        pass
-
+    # The domain stores no data, so there is nothing to merge. Sphinx's default raises, which blocks
+    # parallel reads.
     def merge_domaindata(self, docnames, otherdata):
         pass
 
