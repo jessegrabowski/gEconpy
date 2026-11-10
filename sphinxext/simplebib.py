@@ -129,6 +129,15 @@ def _format_entry(entry):
     return text
 
 
+def _doi_link(entry):
+    doi = _clean(entry.fields.get("doi", ""))
+    # Entries copied from publisher pages often carry the resolver URL rather than the bare DOI.
+    doi = re.sub(r"^https?://(dx\.)?doi\.org/", "", doi)
+    if not doi:
+        return None
+    return nodes.reference("", f"doi:{doi}", refuri=f"https://doi.org/{doi}")
+
+
 def _anchor(key):
     return nodes.make_id(f"ref-{key}")
 
@@ -173,6 +182,10 @@ def _resolve_page(app, doctree, docname):
         for key, number in numbers.items():
             para = nodes.paragraph(ids=[_anchor(key)], classes=["simplebib-reference"])
             para += nodes.Text(f"[{number}] {_format_entry(bib[key])}")
+            doi_link = _doi_link(bib[key])
+            if doi_link is not None:
+                para += nodes.Text(" ")
+                para += doi_link
             for ref_id in backrefs[key]:
                 para += nodes.Text(" ")
                 back = nodes.reference("", "↩", internal=True, refid=ref_id)
