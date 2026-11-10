@@ -133,7 +133,7 @@ def _anchor(key):
     return nodes.make_id(f"ref-{key}")
 
 
-def _resolve_page(app, doctree, docname):  # noqa: ARG001
+def _resolve_page(app, doctree, docname):
     bib = app.env.simplebib_data
     numbers = {}  # key -> citation number (first-seen order)
     backrefs = {}  # key -> [ids of the in-text markers]
@@ -156,14 +156,23 @@ def _resolve_page(app, doctree, docname):  # noqa: ARG001
         authors = _short_authors(_persons(bib[key])) if node["textual"] else ""
         node.replace_self([nodes.Text(f"{authors} "), marker] if authors else marker)
 
-    for node in list(doctree.findall(bibliography_node)):
+    bibliographies = list(doctree.findall(bibliography_node))
+    if numbers and not bibliographies:
+        logger.warning(
+            f"{docname} cites {len(numbers)} reference(s) but has no bibliography, so its "
+            "citation markers link nowhere",
+            location=docname,
+            type="simplebib",
+        )
+
+    for node in bibliographies:
         if not numbers:
             node.replace_self([])
             continue
         listing = nodes.container(classes=["simplebib-references"])
-        for key in sorted(numbers, key=numbers.get):
+        for key, number in numbers.items():
             para = nodes.paragraph(ids=[_anchor(key)], classes=["simplebib-reference"])
-            para += nodes.Text(f"[{numbers[key]}] {_format_entry(bib[key])}")
+            para += nodes.Text(f"[{number}] {_format_entry(bib[key])}")
             for ref_id in backrefs[key]:
                 para += nodes.Text(" ")
                 back = nodes.reference("", "↩", internal=True, refid=ref_id)
