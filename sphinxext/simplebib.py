@@ -35,7 +35,15 @@ class CiteDomain(Domain):
     def get_objects(self):
         return []
 
-    def resolve_xref(self, *args):  # noqa: ARG002
+    # The domain only registers the roles and stores no data, so there is nothing to clear or merge.
+    # Sphinx still requires both methods before it reads documents in parallel.
+    def clear_doc(self, docname):
+        pass
+
+    def merge_domaindata(self, docnames, otherdata):
+        pass
+
+    def resolve_xref(self, env, fromdocname, builder, typ, target, node, contnode):  # noqa: ARG002
         return None
 
 
@@ -162,8 +170,8 @@ def setup(app):
     app.add_config_value("simplebib_bibfiles", ["references.bib"], "env")
     app.add_domain(CiteDomain)
     app.add_directive("bibliography", BibliographyDirective)
-    # These nodes are always replaced at doctree-resolved; the skip visitors
-    # are a safety net for any builder if one ever survives.
+    # These nodes are always replaced at doctree-resolved; the skip visitors are a safety net for any
+    # builder if one ever survives.
     skip = (_noop, None)
     for node in (cite_ref, bibliography_node):
         app.add_node(node, html=skip, latex=skip, text=skip, man=skip, texinfo=skip)

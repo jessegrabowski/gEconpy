@@ -221,3 +221,4 @@ def write_gallery():
 
 def setup(app):
     app.connect("builder-inited", main)
+    return {"parallel_read_safe": True, "parallel_write_safe": True}
