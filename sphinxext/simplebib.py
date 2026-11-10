@@ -122,11 +122,15 @@ def _format_entry(entry):
         if fields.get("volume"):
             detail += f", {fields['volume']}"
             if fields.get("number"):
-                detail += f"({fields['number']})"
+                detail += f"({_format_range(fields['number'])})"
         if fields.get("pages"):
-            detail += f", {_clean(fields['pages']).replace('--', '–')}"
+            detail += f", {_format_range(fields['pages'])}"
         text += f" {detail}."
     return text
+
+
+def _format_range(value):
+    return _clean(value).replace("--", "\N{EN DASH}")
 
 
 def _doi_link(entry):
@@ -188,7 +192,7 @@ def _resolve_page(app, doctree, docname):
                 para += doi_link
             for ref_id in backrefs[key]:
                 para += nodes.Text(" ")
-                back = nodes.reference("", "↩", internal=True, refid=ref_id)
+                back = nodes.reference("", "\N{LEFTWARDS ARROW WITH HOOK}", internal=True, refid=ref_id)
                 back["classes"].append("simplebib-backref")
                 para += back
             listing += para
