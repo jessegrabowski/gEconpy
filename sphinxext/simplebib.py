@@ -218,4 +218,12 @@ def setup(app):
         app.add_node(node, html=skip, latex=skip, text=skip, man=skip, texinfo=skip)
     app.connect("builder-inited", _init_bib)
     app.connect("doctree-resolved", _resolve_page)
-    return {"version": "0.1", "parallel_read_safe": True, "parallel_write_safe": True}
+    # Sphinx re-reads every page when env_version changes, so bump it whenever the attributes stored on
+    # cite_ref or bibliography_node change. Pages cached under the old shape would otherwise reach
+    # _resolve_page without them.
+    return {
+        "version": "0.1",
+        "env_version": 1,
+        "parallel_read_safe": True,
+        "parallel_write_safe": True,
+    }
