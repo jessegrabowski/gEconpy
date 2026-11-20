@@ -94,7 +94,7 @@ def test_empty_components_are_none():
 
 def test_model_conversion_skips_steady_state_block_and_expands_deep_lags():
     source = """
-    block Steady_State { identities { C[ss] = 1; }; };
+    block Steady_State { identities { C[ss] = 1; D[] = S[-4]; }; };
     block TEST { identities { C[] = S[-3]; }; };
     """
     block_dict = ast_model_to_block_dict(quick_parse(source))

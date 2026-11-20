@@ -1,5 +1,5 @@
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 import sympy as sp
@@ -18,7 +18,7 @@ from gEconpy.parser.ast import (
     variable_key,
 )
 from gEconpy.parser.errors import ParseLocation
-from gEconpy.parser.transform.expand_time_indices import expand_block_time_indices
+from gEconpy.parser.transform.expand_time_indices import expand_model_time_indices
 from gEconpy.parser.transform.to_sympy import ASTToSympyConverter, _checked_eq, ast_to_sympy
 
 EQUATION_COMPONENTS = ("definitions", "objective", "constraints", "identities", "calibration")
@@ -34,9 +34,10 @@ def ast_model_to_block_dict(
     """
     Convert every block of a model AST to a solved :class:`~gEconpy.model.block.basic.Block`.
 
-    Each block has its deep time indices expanded with
-    :func:`~gEconpy.parser.transform.expand_time_indices.expand_block_time_indices`, is converted with
-    :func:`ast_block_to_block`, and then has its optimization problem solved. The steady-state block is skipped.
+    The model has its deep time indices expanded with
+    :func:`~gEconpy.parser.transform.expand_time_indices.expand_model_time_indices`. Each block is then converted with
+    :func:`ast_block_to_block` and has its optimization problem solved. The steady-state block is skipped before
+    expansion.
 
     Parameters
     ----------
@@ -60,13 +61,10 @@ def ast_model_to_block_dict(
     if assumptions is None:
         assumptions = defaultdict(dict, model.assumptions or {})
 
+    dynamic_blocks = [ast_block for ast_block in model.blocks if not ast_block.is_steady_state]
     block_dict = {}
-    for ast_block in model.blocks:
-        if ast_block.is_steady_state:
-            continue
-
-        expanded_block = expand_block_time_indices(ast_block)
-        block = ast_block_to_block(expanded_block, assumptions, source=source, ss_solution_dict=ss_solution_dict)
+    for ast_block in expand_model_time_indices(replace(model, blocks=dynamic_blocks)).blocks:
+        block = ast_block_to_block(ast_block, assumptions, source=source, ss_solution_dict=ss_solution_dict)
         block.solve_optimization(try_simplify=simplify_blocks)
         block_dict[block.name] = block
 

@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from gEconpy.parser.ast import (
     STEADY_STATE,
     T_MINUS_1,
@@ -11,6 +13,7 @@ from gEconpy.parser.ast import (
     Number,
     Operator,
     Parameter,
+    SymbolDeclaration,
     T,
     TimeIndex,
     Variable,
@@ -22,7 +25,6 @@ from gEconpy.parser.transform.expand_time_indices import (
     DeepTimeIndexCollector,
     _create_lag_chain,
     _create_lead_chain,
-    expand_block_time_indices,
     expand_model_time_indices,
 )
 
@@ -93,7 +95,7 @@ class TestCreateChains:
         assert all(eq.rhs.expr.time_index == T_PLUS_1 for eq in equations)
 
 
-class TestExpandBlockTimeIndices:
+class TestSingleBlockModel:
     def test_passthrough_when_no_deep_indices(self):
         block = GCNBlock(
             name="TEST",
@@ -104,7 +106,7 @@ class TestExpandBlockTimeIndices:
                 )
             ],
         )
-        assert expand_block_time_indices(block) is block
+        assert expand_model_time_indices(GCNModel(blocks=[block])).blocks[0] is block
 
     def test_expands_deep_lag(self):
         block = GCNBlock(
@@ -116,7 +118,7 @@ class TestExpandBlockTimeIndices:
                 )
             ],
         )
-        result = expand_block_time_indices(block)
+        (result,) = expand_model_time_indices(GCNModel(blocks=[block])).blocks
 
         assert len(result.identities) == 3
         assert result.constraints[0].rhs == Variable(name="S__lag3", time_index=T_MINUS_1)
@@ -131,7 +133,7 @@ class TestExpandBlockTimeIndices:
                 )
             ],
         )
-        result = expand_block_time_indices(block)
+        (result,) = expand_model_time_indices(GCNModel(blocks=[block])).blocks
 
         assert len(result.identities) == 3
         v_eq = next(eq for eq in result.identities if eq.lhs.name == "V")
@@ -151,7 +153,7 @@ class TestExpandBlockTimeIndices:
                 )
             ],
         )
-        result = expand_block_time_indices(block)
+        (result,) = expand_model_time_indices(GCNModel(blocks=[block])).blocks
 
         lag_names = [eq.lhs.name for eq in result.identities if "__lag" in eq.lhs.name]
         lead_names = [eq.lhs.name for eq in result.identities if "__lead" in eq.lhs.name]
@@ -175,7 +177,7 @@ class TestExpandBlockTimeIndices:
                 )
             ],
         )
-        result = expand_block_time_indices(block)
+        (result,) = expand_model_time_indices(GCNModel(blocks=[block])).blocks
 
         assert result.definitions[0].rhs.name == "C__lag1"
         assert result.objective[0].rhs.name == "V__lead1"
@@ -191,7 +193,7 @@ class TestExpandBlockTimeIndices:
                 )
             ],
         )
-        result = expand_block_time_indices(block)
+        (result,) = expand_model_time_indices(GCNModel(blocks=[block])).blocks
 
         transformed_eq = next(e for e in result.identities if e.lhs.name == "z")
         assert transformed_eq.rhs.location == loc
@@ -209,7 +211,7 @@ class TestExpandBlockTimeIndices:
             calibration=[calibration],
             location=location,
         )
-        result = expand_block_time_indices(block)
+        (result,) = expand_model_time_indices(GCNModel(blocks=[block])).blocks
 
         assert result is not block
         assert result.shocks == [shock]
@@ -231,7 +233,7 @@ class TestExpandBlockTimeIndices:
                 )
             ],
         )
-        result = expand_block_time_indices(block)
+        (result,) = expand_model_time_indices(GCNModel(blocks=[block])).blocks
 
         assert result.controls == [
             Variable(name="C", time_index=T),
@@ -268,18 +270,38 @@ class TestExpandModelTimeIndices:
         assert len(result.blocks[0].identities) == 3
         assert len(result.blocks[1].identities) == 2
 
+    def test_chains_are_added_once_at_the_deepest_index_in_their_owning_block(self):
+        model = GCNModel(
+            blocks=[
+                GCNBlock(name="TECHNOLOGY", identities=[parse_equation("A[] = rho * A[-1] + x[-2];")]),
+                GCNBlock(name="FIRM", identities=[parse_equation("Y[] = A[] + x[-3];")]),
+            ]
+        )
+        result = expand_model_time_indices(model)
+
+        technology, firm = (block.identities for block in result.blocks)
+        assert [(eq.lhs.name, eq.rhs.name) for eq in technology[1:]] == [("x__lag1", "x"), ("x__lag2", "x__lag1")]
+        assert [eq.lhs.name for eq in firm] == ["Y"]
+
+        def references(equation):
+            return {(var.name, var.time_index.value) for var in collect_nodes_of_type(equation, Variable)}
+
+        assert references(technology[0]) == {("A", 0), ("A", -1), ("x__lag1", -1)}
+        assert references(firm[0]) == {("Y", 0), ("A", 0), ("x__lag2", -1)}
+
     def test_keeps_model_sections(self):
         model = GCNModel(
-            blocks=[GCNBlock(name="B", identities=[GCNEquation(lhs=Variable(name="x"), rhs=Variable(name="y"))])],
+            blocks=[GCNBlock(name="B", identities=[parse_equation("x[] = y[-2];")])],
             options={"output logfile": True},
             tryreduce=["U"],
             assumptions={"x": {"positive": True}},
             filename="model.gcn",
+            symbols={"x": SymbolDeclaration(symbol="x", latex="x")},
         )
         result = expand_model_time_indices(model)
 
-        assert result == model
-        assert result.filename == "model.gcn"
+        assert result.blocks != model.blocks
+        assert replace(result, blocks=model.blocks) == model
 
 
 class TestKydlandPrescottScenario:
@@ -290,7 +312,7 @@ class TestKydlandPrescottScenario:
             identities=[parse_equation("IF[] = phi1 * S[-3] + phi2 * S[-2] + phi3 * S[-1] + phi4 * S[];")],
         )
 
-        result = expand_block_time_indices(block)
+        (result,) = expand_model_time_indices(GCNModel(blocks=[block])).blocks
 
         assert len(result.identities) == 4
 

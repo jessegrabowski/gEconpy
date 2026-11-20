@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from gEconpy.parser.ast import (
     T_MINUS_1,
     T_PLUS_1,
@@ -15,58 +17,16 @@ AUX_LAG_SEPARATOR = "__lag"
 AUX_LEAD_SEPARATOR = "__lead"
 
 
-def expand_block_time_indices(block: GCNBlock) -> GCNBlock:
-    """
-    Rewrite a block so every time index lies in ``[-1, 0, 1]``.
-
-    A reference such as ``x[-4]`` becomes ``x__lag3[-1]``, and identities defining the chain ``x__lag1[] = x[-1]``,
-    ``x__lag2[] = x__lag1[-1]``, ``x__lag3[] = x__lag2[-1]`` are appended. Leads work the same way through
-    ``x__lead<k>`` variables, with each link wrapped in an expectation.
-
-    Parameters
-    ----------
-    block : GCNBlock
-        Block whose equations and controls may use arbitrary time indices.
-
-    Returns
-    -------
-    block : GCNBlock
-        An equivalent block with time indices restricted to ``[-1, 0, 1]``. The input block itself is returned when
-        it has no deep indices.
-    """
-    collector = DeepTimeIndexCollector()
-    for node in [*block.definitions, *block.objective, *block.constraints, *block.identities, *block.controls]:
-        collector.visit(node)
-
-    deep_lags, deep_leads = collector.deep_lags, collector.deep_leads
-    if not deep_lags and not deep_leads:
-        return block
-
-    auxiliary_identities = []
-    for var_name, min_lag in deep_lags.items():
-        auxiliary_identities.extend(_create_lag_chain(var_name, abs(min_lag) - 1))
-    for var_name, max_lead in deep_leads.items():
-        auxiliary_identities.extend(_create_lead_chain(var_name, max_lead - 1))
-
-    replacer = DeepTimeIndexReplacer(deep_lags, deep_leads)
-
-    return GCNBlock(
-        name=block.name,
-        definitions=[replacer.visit(eq) for eq in block.definitions],
-        controls=[replacer.visit(ctrl) for ctrl in block.controls],
-        objective=[replacer.visit(eq) for eq in block.objective],
-        constraints=[replacer.visit(eq) for eq in block.constraints],
-        identities=[replacer.visit(eq) for eq in [*block.identities, *auxiliary_identities]],
-        shocks=block.shocks,
-        shock_distributions=block.shock_distributions,
-        calibration=block.calibration,
-        location=block.location,
-    )
-
-
 def expand_model_time_indices(model: GCNModel) -> GCNModel:
     """
-    Apply :func:`~gEconpy.parser.transform.expand_time_indices.expand_block_time_indices` to every block of a model.
+    Rewrite every block of a model so every time index lies in ``[-1, 0, 1]``.
+
+    A reference such as ``x[-4]`` becomes ``x__lag3[-1]``, and identities defining the chain ``x__lag1[] = x[-1]``,
+    ``x__lag2[] = x__lag1[-1]``, ``x__lag3[] = x__lag2[-1]`` are added. Leads work the same way through
+    ``x__lead<k>`` variables, with each link wrapped in an expectation.
+
+    Each chain is added once for the whole model, at the deepest index any block uses, in the first block that uses
+    the deep index.
 
     Parameters
     ----------
@@ -76,15 +36,40 @@ def expand_model_time_indices(model: GCNModel) -> GCNModel:
     Returns
     -------
     model : GCNModel
-        An equivalent model with time indices restricted to ``[-1, 0, 1]``.
+        An equivalent model with time indices restricted to ``[-1, 0, 1]``. The input model itself is returned when
+        no block has deep indices.
     """
-    return GCNModel(
-        blocks=[expand_block_time_indices(block) for block in model.blocks],
-        options=model.options,
-        tryreduce=model.tryreduce,
-        assumptions=model.assumptions,
-        filename=model.filename,
-    )
+    blocks = model.blocks
+    deep_lags: dict[str, int] = {}
+    deep_leads: dict[str, int] = {}
+    chain_owners: dict[tuple[str, str], int] = {}
+
+    for index, block in enumerate(blocks):
+        collector = DeepTimeIndexCollector()
+        for node in [*block.definitions, *block.objective, *block.constraints, *block.identities, *block.controls]:
+            collector.visit(node)
+        for found, merged, kind, extreme in [
+            (collector.deep_lags, deep_lags, "lag", min),
+            (collector.deep_leads, deep_leads, "lead", max),
+        ]:
+            for name, offset in found.items():
+                merged[name] = extreme(merged.get(name, offset), offset)
+                chain_owners.setdefault((kind, name), index)
+
+    if not deep_lags and not deep_leads:
+        return model
+
+    chains: list[list[GCNEquation]] = [[] for _ in blocks]
+    for name, min_lag in deep_lags.items():
+        chains[chain_owners["lag", name]].extend(_create_lag_chain(name, abs(min_lag) - 1))
+    for name, max_lead in deep_leads.items():
+        chains[chain_owners["lead", name]].extend(_create_lead_chain(name, max_lead - 1))
+
+    replacer = DeepTimeIndexReplacer(deep_lags, deep_leads)
+    expanded = [
+        _rewrite_block(block, replacer, block_chains) for block, block_chains in zip(blocks, chains, strict=True)
+    ]
+    return replace(model, blocks=expanded)
 
 
 def make_lag_name(var_name: str, level: int) -> str:
@@ -209,3 +194,18 @@ def _create_lead_chain(var_name: str, depth: int) -> list[GCNEquation]:
             )
         )
     return equations
+
+
+def _rewrite_block(block: GCNBlock, replacer: DeepTimeIndexReplacer, chains: list[GCNEquation]) -> GCNBlock:
+    return GCNBlock(
+        name=block.name,
+        definitions=[replacer.visit(eq) for eq in block.definitions],
+        controls=[replacer.visit(ctrl) for ctrl in block.controls],
+        objective=[replacer.visit(eq) for eq in block.objective],
+        constraints=[replacer.visit(eq) for eq in block.constraints],
+        identities=[replacer.visit(eq) for eq in [*block.identities, *chains]],
+        shocks=block.shocks,
+        shock_distributions=block.shock_distributions,
+        calibration=block.calibration,
+        location=block.location,
+    )
