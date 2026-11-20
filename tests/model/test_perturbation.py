@@ -230,7 +230,7 @@ def _compile_composition(variables, equations, shocks, dr_order, loglin_variable
 def _numeric_composition(variables, equations, shocks, dr_order, values, ghx, ghu, logged):
     """Evaluate the composed residual with sympy and numpy, independently of the PyTensor graph."""
     lags, now, leads = make_all_variable_time_combinations(variables)
-    stacked = [*lags, *now, *leads, *shocks]
+    stacked = [*lags, *now, *leads, *shocks, *(shock.step_forward() for shock in shocks)]
     others = sorted(set().union(*(eq.free_symbols for eq in equations)) - set(stacked), key=lambda s: s.name)
     residual = sp.lambdify([stacked, others], [equations[i] for i in dr_order.eq_order], modules="numpy")
     theta = [values[symbol.name] for symbol in others]
@@ -247,7 +247,7 @@ def _numeric_composition(variables, equations, shocks, dr_order, values, ghx, gh
         deviation_tp1 = (ghx @ deviation_t[state_columns] + ghu @ u_next)[dr_order.inv_var_order]
         deviation_tm1 = np.zeros(len(variables))
         deviation_tm1[state_columns] = x
-        arguments = [*level(deviation_tm1), *level(deviation_t), *level(deviation_tp1), *u]
+        arguments = [*level(deviation_tm1), *level(deviation_t), *level(deviation_tp1), *u, *u_next]
         return np.array(residual(arguments, theta), dtype=float)
 
     return phi
@@ -264,12 +264,12 @@ def _central_difference_hessian(phi, m, h):
 
 
 class TestCompositionDerivatives:
-    def test_hessian_of_a_quadratic_model_matches_exact_differences(self):
+    def test_hessian_of_a_quadratic_model_with_a_shock_lead_matches_exact_differences(self):
         k, c = (TimeAwareSymbol(name, 0) for name in "kc")
         eps = TimeAwareSymbol("eps", 0)
         equations = [
             k - 0.5 * k.set_t(-1) ** 2 - k.set_t(-1) * eps,
-            c * c.set_t(1) - k**2 + 0.3 * c * eps,
+            c * c.set_t(1) - k**2 + 0.3 * c * eps + 0.4 * c.set_t(1) * eps.set_t(1) + 0.2 * eps.set_t(1) ** 2,
         ]
         variables, shocks = [k, c], [eps]
         dr_order = DROrder.from_model(variables, equations)

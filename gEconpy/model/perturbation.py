@@ -336,7 +336,7 @@ def composition_derivatives(
 
     .. math::
 
-        \Phi(x, u, u') = F\bigl(y_{ss} + S x,\; y_{ss} + g(x, u),\; y_{ss} + g(g_s(x, u), u'),\; u\bigr),
+        \Phi(x, u, u') = F\bigl(y_{ss} + S x,\; y_{ss} + g(x, u),\; y_{ss} + g(g_s(x, u), u'),\; u,\; u'\bigr),
         \qquad g(x, u) = g_x x + g_u u,
 
     where :math:`x` is the lagged state, :math:`u` the current shocks, :math:`u'` next period's shocks, :math:`S`
@@ -396,14 +396,16 @@ def composition_derivatives(
             key = make_cache_key(symbol.name, cls=TimeAwareSymbol)
             if key in cache:
                 replacements[cache[key]] = _level(ss_inputs[i], deviation, treatment)
-    for j, shock in enumerate(shocks):
-        key = make_cache_key(shock.name, cls=TimeAwareSymbol)
-        if key in cache:
-            replacements[cache[key]] = u[j]
+    shock_leads = [shock.step_forward() for shock in shocks]
+    for j, (shock, shock_lead) in enumerate(zip(shocks, shock_leads, strict=True)):
+        for symbol, value in ((shock, u[j]), (shock_lead, u_next[j])):
+            key = make_cache_key(symbol.name, cls=TimeAwareSymbol)
+            if key in cache:
+                replacements[cache[key]] = value
 
     residuals = rewrite_pregrad(graph_replace(pt.stack(equations_pt)[dr_order.eq_order], replacements, strict=False))
 
-    time_indexed_names = {symbol.name for symbol in (*lags, *now, *leads, *shocks)}
+    time_indexed_names = {symbol.name for symbol in (*lags, *now, *leads, *shocks, *shock_leads)}
     unreplaced = sorted(node.name for node in explicit_graph_inputs([residuals]) if node.name in time_indexed_names)
     if unreplaced:
         raise ValueError(f"Time-indexed symbols were not replaced by the policy: {unreplaced}")
