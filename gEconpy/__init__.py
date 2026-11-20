@@ -1,31 +1,6 @@
 import logging as _logging
-import os as _os
 
 from importlib.metadata import version as _version
-
-# Set PYTENSOR_FLAGS for users who import gEconpy before pytensor, then set the live config as well so the settings
-# also win when pytensor is already loaded, for example after ``import pymc``. Users can override either through their
-# own PYTENSOR_FLAGS.
-_existing_flags = _os.environ.get("PYTENSOR_FLAGS", "")
-if "optimizer_excluding" not in _existing_flags:
-    _excludes = ":".join(
-        [
-            "local_mul_zero",
-            "local_greedy_distributor",
-            "local_upcast_elemwise_constant_inputs",
-            "local_neg_to_mul",
-        ]
-    )
-    _new_flag = f"optimizer_excluding={_excludes}"
-    _os.environ["PYTENSOR_FLAGS"] = f"{_existing_flags},{_new_flag}".lstrip(",")
-if "traceback__limit" not in _existing_flags:
-    _os.environ["PYTENSOR_FLAGS"] = f"{_os.environ['PYTENSOR_FLAGS']},traceback__limit=0".lstrip(",")
-
-import pytensor as _pytensor
-
-# Only the environment-driven init honors optimizer_excluding, so it cannot be set on the live config. The traceback
-# flag matters most for gradient and compile speed and is settable live, so set it unconditionally.
-_pytensor.config.traceback__limit = 0
 
 # Side-effect imports: register JAX and Numba dispatch rules for internal pytensor Ops, the Join/dot/block graph
 # rewrites, and the rewrite that stops converged scans early. These modules expose no public API.

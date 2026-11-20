@@ -201,10 +201,6 @@ max-complexity = 10
 lines-between-types = 1
 
 [tool.ruff.lint.per-file-ignores]
-'gEconpy/__init__.py' = [
-    "E402", # Must set PYTENSOR_FLAGS before importing pytensor
-]
-
 'gEconpy/solvers/gensys.py' = [
     "ARG002", # Allow unused arguments in Pytensor Op classes
     "C901",    # Allow high complexity in the gensys core loop
