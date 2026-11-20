@@ -42,7 +42,7 @@ dependencies = [
     "pandas<4",
     "pytensor>=3.3.8,<4",
     "pymc>=6.4.0,<7",
-    "pymc_extras>=0.16.0,<1",
+    "pymc_extras>=0.17.0,<1",
     "preliz>=0.27.0,<1",
     "pyparsing<4",
     "scipy<2",
