@@ -1,0 +1,34 @@
+options
+{
+    linear = True;
+};
+
+
+block Steady_State
+{
+    identities
+    {
+        x[ss] = 0.0;
+    };
+};
+
+block ARMA_1_2
+{
+    identities
+    {
+        x[] = rho * x[-1] + epsilon[] + theta_1 * epsilon[-1] + theta_2 * epsilon[-2];
+    };
+
+    shocks
+    {
+        epsilon[] ~ Normal(mu=0, sigma=sigma_epsilon);
+    };
+
+    calibration
+    {
+        rho = 0.5;
+        theta_1 = 0.4;
+        theta_2 = 0.3;
+        sigma_epsilon = 1.0;
+    };
+};

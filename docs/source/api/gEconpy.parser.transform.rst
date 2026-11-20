@@ -7,7 +7,6 @@ gEconpy.parser.transform
 
 .. autosummary::
 
-    expand_time_indices.expand_block_time_indices
     expand_time_indices.expand_model_time_indices
     to_block.ast_model_to_block_dict
     to_distribution.ast_to_distribution_with_metadata
