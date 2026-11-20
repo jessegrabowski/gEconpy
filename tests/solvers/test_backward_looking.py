@@ -87,6 +87,18 @@ class TestBackwardLookingSolve:
         assert_allclose(T[x, var_names.index("x__lag12")], rho_1 * rho_12, atol=1e-12)
         assert_allclose(T[x, var_names.index("x__lag13")], rho_2 * rho_12, atol=1e-12)
 
+    def test_T_carries_lagged_shocks_through_auxiliary_states(self):
+        model = load_and_cache_model("arma_1_2.gcn")
+        solution = model.solve_model(return_matrices=False, verbose=False)
+        params = model.parameters()
+
+        var_names = [v.base_name for v in model.variables]
+        x, lag0, lag1 = (var_names.index(name) for name in ["x", "epsilon__lag0", "epsilon__lag1"])
+
+        assert_allclose(solution.T[x, [x, lag0, lag1]], [params["rho"], params["theta_1"], params["theta_2"]])
+        assert_allclose(solution.T[lag1, lag0], 1.0)
+        assert_allclose(solution.R[[x, lag0, lag1], 0], [1.0, 1.0, 0.0])
+
 
 class TestBackwardLookingIRF:
     def test_irf_matches_manual_simulation(self, sarima_solved):

@@ -25,12 +25,13 @@ from gEconpy.parser.transform.expand_time_indices import (
     DeepTimeIndexCollector,
     _create_lag_chain,
     _create_lead_chain,
+    _create_shock_lag_chain,
     expand_model_time_indices,
 )
 
 
 def _collect(node):
-    collector = DeepTimeIndexCollector()
+    collector = DeepTimeIndexCollector(shock_names=set())
     collector.visit(node)
     return collector.deep_lags, collector.deep_leads
 
@@ -93,6 +94,14 @@ class TestCreateChains:
             ("C__lead2", "C__lead1"),
         ]
         assert all(eq.rhs.expr.time_index == T_PLUS_1 for eq in equations)
+
+    def test_shock_lag_chain_starts_from_the_current_shock(self):
+        equations = _create_shock_lag_chain("epsilon", 3)
+        assert [(eq.lhs.name, eq.rhs.name, eq.rhs.time_index) for eq in equations] == [
+            ("epsilon__lag0", "epsilon", T),
+            ("epsilon__lag1", "epsilon__lag0", T_MINUS_1),
+            ("epsilon__lag2", "epsilon__lag1", T_MINUS_1),
+        ]
 
 
 class TestSingleBlockModel:
@@ -273,21 +282,35 @@ class TestExpandModelTimeIndices:
     def test_chains_are_added_once_at_the_deepest_index_in_their_owning_block(self):
         model = GCNModel(
             blocks=[
-                GCNBlock(name="TECHNOLOGY", identities=[parse_equation("A[] = rho * A[-1] + x[-2];")]),
-                GCNBlock(name="FIRM", identities=[parse_equation("Y[] = A[] + x[-3];")]),
+                GCNBlock(name="SHOCKS", shocks=[Variable(name="epsilon")]),
+                GCNBlock(
+                    name="TECHNOLOGY",
+                    identities=[parse_equation("A[] = rho * A[-1] + x[-2] + epsilon[] + epsilon[-2];")],
+                ),
+                GCNBlock(name="FIRM", identities=[parse_equation("Y[] = A[] + x[-3] + epsilon[-1];")]),
             ]
         )
         result = expand_model_time_indices(model)
 
-        technology, firm = (block.identities for block in result.blocks)
+        shocks, technology, firm = (block.identities for block in result.blocks)
+        assert [(eq.lhs.name, eq.rhs.name) for eq in shocks] == [
+            ("epsilon__lag0", "epsilon"),
+            ("epsilon__lag1", "epsilon__lag0"),
+        ]
         assert [(eq.lhs.name, eq.rhs.name) for eq in technology[1:]] == [("x__lag1", "x"), ("x__lag2", "x__lag1")]
         assert [eq.lhs.name for eq in firm] == ["Y"]
 
         def references(equation):
             return {(var.name, var.time_index.value) for var in collect_nodes_of_type(equation, Variable)}
 
-        assert references(technology[0]) == {("A", 0), ("A", -1), ("x__lag1", -1)}
-        assert references(firm[0]) == {("Y", 0), ("A", 0), ("x__lag2", -1)}
+        assert references(technology[0]) == {
+            ("A", 0),
+            ("A", -1),
+            ("x__lag1", -1),
+            ("epsilon", 0),
+            ("epsilon__lag1", -1),
+        }
+        assert references(firm[0]) == {("Y", 0), ("A", 0), ("x__lag2", -1), ("epsilon__lag0", -1)}
 
     def test_keeps_model_sections(self):
         model = GCNModel(
